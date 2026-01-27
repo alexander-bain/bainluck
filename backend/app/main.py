@@ -3,6 +3,7 @@ OddsTracker API
 Main FastAPI application entry point.
 """
 
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,13 +30,25 @@ app = FastAPI(
 )
 
 # CORS configuration
+allowed_origins = [
+    "http://localhost:3000",  # Next.js dev
+    "http://127.0.0.1:3000",
+]
+
+# Add production frontend URL from environment
+frontend_url = os.getenv("FRONTEND_URL")
+if frontend_url:
+    allowed_origins.append(frontend_url)
+
+# Also allow odds.alexbain.com variants
+allowed_origins.extend([
+    "https://odds.alexbain.com",
+    "https://www.odds.alexbain.com",
+])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Next.js dev
-        "http://127.0.0.1:3000",
-        # Add production domains here
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

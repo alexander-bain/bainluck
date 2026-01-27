@@ -24,11 +24,14 @@ async def list_events(
 ):
     """
     List upcoming and live events.
-    
+
     Returns events with their current win probabilities.
     """
-    # Build query
-    query = select(Event).options(selectinload(Event.sport))
+    # Build query - include odds snapshots for current odds
+    query = select(Event).options(
+        selectinload(Event.sport),
+        selectinload(Event.odds_snapshots)
+    )
     
     conditions = []
     
@@ -55,10 +58,10 @@ async def list_events(
     result = await db.execute(query)
     events = result.scalars().all()
     
-    # Format response
+    # Format response with odds
     return {
         "events": [
-            _format_event(e)
+            _format_event_with_odds(e)
             for e in events
         ],
         "count": len(events),
@@ -252,3 +255,35 @@ def _format_event(event: Event) -> dict:
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+
+def _format_event_with_odds(event: Event) -> dict:
+    """Format event for API response including current odds."""
+    response = _format_event(event)
+
+    # Get latest odds snapshot
+    if event.odds_snapshots:
+        latest_odds = max(
+            event.odds_snapshots,
+            key=lambda x: x.captured_at
+        )
+        response["current_odds"] = {
+            "bookmaker": latest_odds.bookmaker,
+            "captured_at": latest_odds.captured_at.isoformat(),
+            "home_moneyline": latest_odds.home_moneyline,
+            "away_moneyline": latest_odds.away_moneyline,
+            "home_probability": float(latest_odds.home_win_probability)
+                if latest_odds.home_win_probability else None,
+            "away_probability": float(latest_odds.away_win_probability)
+                if latest_odds.away_win_probability else None,
+            "spread": float(latest_odds.home_spread)
+                if latest_odds.home_spread else None,
+            "over_under": float(latest_odds.over_under)
+                if latest_odds.over_under else None,
+            "projected_home_score": float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None,
+            "projected_away_score": float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None,
+        }
+
+    return response

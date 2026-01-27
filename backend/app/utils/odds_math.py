@@ -88,40 +88,41 @@ def moneyline_to_probability(
 
 
 def project_scores(
-    home_prob: float, 
+    spread: float,
     over_under: float,
-    model: str = "linear"
 ) -> Tuple[float, float]:
     """
-    Project final scores based on win probability and total.
-    
-    The favorite is expected to score proportionally more,
-    but the relationship isn't perfectly linear.
-    
+    Project final scores based on spread and total.
+
+    The spread indicates expected point differential:
+    - Negative spread means home team is favored
+    - Positive spread means away team is favored
+
+    Math:
+    - home_score + away_score = over_under
+    - home_score - away_score = abs(spread) (if home favored)
+
     Args:
-        home_prob: Home team's win probability (0-1)
+        spread: Point spread (negative = home favored)
         over_under: Expected total points/runs/goals
-        model: Projection model to use
-    
+
     Returns:
         Tuple of (projected_home_score, projected_away_score)
-    
+
     Examples:
-        >>> project_scores(0.6, 220)  # NBA game, home favored
-        (116.6, 103.4)
+        >>> project_scores(-14.5, 226)  # Home favored by 14.5, total 226
+        (120.2, 105.8)
+        >>> project_scores(3.5, 45)  # Away favored by 3.5, total 45
+        (20.8, 24.2)
     """
-    if model == "linear":
-        # Simple linear model: favorite scores proportionally more
-        # Dampened so 60% win prob doesn't mean 60% of points
-        dampening = 0.3
-        home_share = 0.5 + (home_prob - 0.5) * dampening
-    else:
-        # Default to simple split
-        home_share = 0.5 + (home_prob - 0.5) * 0.25
-    
-    home_score = over_under * home_share
-    away_score = over_under * (1 - home_share)
-    
+    # Spread is typically negative when home is favored
+    # home_score - away_score = -spread (since negative spread means home wins by that margin)
+    # home_score + away_score = over_under
+    # Solving: home_score = (over_under - spread) / 2
+    #          away_score = (over_under + spread) / 2
+    home_score = (over_under - spread) / 2
+    away_score = (over_under + spread) / 2
+
     return round(home_score, 1), round(away_score, 1)
 
 

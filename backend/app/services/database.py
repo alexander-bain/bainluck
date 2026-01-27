@@ -27,10 +27,17 @@ elif DATABASE_URL.startswith("postgresql://") and "asyncpg" not in DATABASE_URL:
 
 
 # Create async engine
+# For Heroku, we need SSL for production databases
+connect_args = {}
+if "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL:
+    # Production database - require SSL
+    connect_args["ssl"] = "require"
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=os.getenv("DEBUG", "false").lower() == "true",
     pool_pre_ping=True,
+    connect_args=connect_args,
 )
 
 # Session factory

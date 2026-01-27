@@ -24,6 +24,14 @@ from app.utils.odds_math import moneyline_to_probability, project_scores
 # Redis URL from environment
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# Handle Heroku Redis SSL (rediss:// URLs require ssl_cert_reqs=None)
+broker_use_ssl = None
+if REDIS_URL.startswith("rediss://"):
+    import ssl
+    broker_use_ssl = {
+        "ssl_cert_reqs": ssl.CERT_NONE,
+    }
+
 # Create Celery app
 celery_app = Celery(
     "odds_tracker",
@@ -32,16 +40,22 @@ celery_app = Celery(
 )
 
 # Celery configuration
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-    task_track_started=True,
-    task_time_limit=300,  # 5 minute timeout
-    worker_prefetch_multiplier=1,
-)
+celery_config = {
+    "task_serializer": "json",
+    "accept_content": ["json"],
+    "result_serializer": "json",
+    "timezone": "UTC",
+    "enable_utc": True,
+    "task_track_started": True,
+    "task_time_limit": 300,  # 5 minute timeout
+    "worker_prefetch_multiplier": 1,
+}
+
+if broker_use_ssl:
+    celery_config["broker_use_ssl"] = broker_use_ssl
+    celery_config["redis_backend_use_ssl"] = broker_use_ssl
+
+celery_app.conf.update(**celery_config)
 
 # Beat schedule for periodic tasks
 celery_app.conf.beat_schedule = {
@@ -268,9 +282,9 @@ async def _create_snapshot(
             snapshot.under_odds = under_outcome.get("price")
 
     # Calculate projected scores if we have the data
-    if (snapshot.home_win_probability and snapshot.over_under):
+    if (snapshot.home_spread is not None and snapshot.over_under):
         home_score, away_score = project_scores(
-            float(snapshot.home_win_probability),
+            float(snapshot.home_spread),
             float(snapshot.over_under),
         )
         snapshot.projected_home_score = home_score
