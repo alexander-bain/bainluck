@@ -139,7 +139,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with current odds."""
     result = await db.execute(
         select(Event)
-        .options(selectinload(Event.odds_snapshots))
+        .options(selectinload(Event.odds_snapshots), selectinload(Event.sport))
         .where(Event.id == event_id)
     )
     event = result.scalar_one_or_none()
