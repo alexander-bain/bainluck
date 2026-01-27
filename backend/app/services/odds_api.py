@@ -1,0 +1,239 @@
+"""
+The Odds API integration service.
+
+Handles fetching odds from the-odds-api.com and transforming
+the data for storage.
+"""
+
+import os
+from datetime import datetime
+from typing import Optional
+
+import httpx
+from pydantic import BaseModel
+
+
+class OddsSnapshot(BaseModel):
+    """Represents a single odds reading for an event."""
+    event_id: str
+    sport_key: str
+    commence_time: datetime
+    home_team: str
+    away_team: str
+    bookmaker: str
+    
+    # Moneyline
+    home_moneyline: Optional[int] = None
+    away_moneyline: Optional[int] = None
+    
+    # Spread
+    home_spread: Optional[float] = None
+    home_spread_odds: Optional[int] = None
+    away_spread_odds: Optional[int] = None
+    
+    # Totals
+    over_under: Optional[float] = None
+    over_odds: Optional[int] = None
+    under_odds: Optional[int] = None
+
+
+class OddsAPIService:
+    """Service for interacting with The Odds API."""
+    
+    BASE_URL = "https://api.the-odds-api.com/v4"
+    
+    # Supported sports (can be expanded)
+    SPORTS = [
+        "americanfootball_nfl",
+        "americanfootball_ncaaf",
+        "basketball_nba",
+        "basketball_ncaab",
+        "baseball_mlb",
+        "icehockey_nhl",
+    ]
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize with API key from env or parameter."""
+        self.api_key = api_key or os.getenv("ODDS_API_KEY")
+        if not self.api_key:
+            raise ValueError("ODDS_API_KEY not set")
+        
+        self.client = httpx.AsyncClient(timeout=30.0)
+    
+    async def close(self):
+        """Close the HTTP client."""
+        await self.client.aclose()
+    
+    async def get_sports(self) -> list[dict]:
+        """
+        Get list of available sports.
+        
+        Returns:
+            List of sport objects with keys like:
+            - key: "basketball_nba"
+            - group: "Basketball"
+            - title: "NBA"
+            - active: True
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/sports",
+            params={"apiKey": self.api_key}
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    async def get_odds(
+        self, 
+        sport_key: str,
+        regions: str = "us",
+        markets: str = "h2h,spreads,totals",
+        odds_format: str = "american",
+    ) -> list[dict]:
+        """
+        Get current odds for a sport.
+        
+        Args:
+            sport_key: Sport identifier (e.g., "basketball_nba")
+            regions: Bookmaker regions ("us", "uk", "eu", "au")
+            markets: Bet types ("h2h" for moneyline, "spreads", "totals")
+            odds_format: "american" or "decimal"
+        
+        Returns:
+            List of events with odds from various bookmakers.
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/sports/{sport_key}/odds",
+            params={
+                "apiKey": self.api_key,
+                "regions": regions,
+                "markets": markets,
+                "oddsFormat": odds_format,
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    async def get_all_odds(
+        self, 
+        sports: Optional[list[str]] = None
+    ) -> list[OddsSnapshot]:
+        """
+        Fetch odds for multiple sports and flatten to snapshots.
+        
+        Args:
+            sports: List of sport keys, or None for all supported sports.
+        
+        Returns:
+            List of OddsSnapshot objects ready for database storage.
+        """
+        sports = sports or self.SPORTS
+        all_snapshots = []
+        
+        for sport_key in sports:
+            try:
+                events = await self.get_odds(sport_key)
+                snapshots = self._parse_events(events, sport_key)
+                all_snapshots.extend(snapshots)
+            except httpx.HTTPStatusError as e:
+                # Log but continue with other sports
+                print(f"Error fetching {sport_key}: {e}")
+                continue
+        
+        return all_snapshots
+    
+    def _parse_events(
+        self, 
+        events: list[dict], 
+        sport_key: str
+    ) -> list[OddsSnapshot]:
+        """
+        Parse API response into OddsSnapshot objects.
+        
+        Takes one snapshot per bookmaker per event.
+        """
+        snapshots = []
+        
+        for event in events:
+            event_id = event["id"]
+            commence_time = datetime.fromisoformat(
+                event["commence_time"].replace("Z", "+00:00")
+            )
+            home_team = event["home_team"]
+            away_team = event["away_team"]
+            
+            for bookmaker in event.get("bookmakers", []):
+                snapshot = OddsSnapshot(
+                    event_id=event_id,
+                    sport_key=sport_key,
+                    commence_time=commence_time,
+                    home_team=home_team,
+                    away_team=away_team,
+                    bookmaker=bookmaker["key"],
+                )
+                
+                # Parse markets
+                for market in bookmaker.get("markets", []):
+                    market_key = market["key"]
+                    outcomes = {o["name"]: o for o in market["outcomes"]}
+                    
+                    if market_key == "h2h":
+                        # Moneyline
+                        home_outcome = outcomes.get(home_team, {})
+                        away_outcome = outcomes.get(away_team, {})
+                        snapshot.home_moneyline = home_outcome.get("price")
+                        snapshot.away_moneyline = away_outcome.get("price")
+                    
+                    elif market_key == "spreads":
+                        # Point spread
+                        home_outcome = outcomes.get(home_team, {})
+                        away_outcome = outcomes.get(away_team, {})
+                        snapshot.home_spread = home_outcome.get("point")
+                        snapshot.home_spread_odds = home_outcome.get("price")
+                        snapshot.away_spread_odds = away_outcome.get("price")
+                    
+                    elif market_key == "totals":
+                        # Over/under
+                        over_outcome = outcomes.get("Over", {})
+                        under_outcome = outcomes.get("Under", {})
+                        snapshot.over_under = over_outcome.get("point")
+                        snapshot.over_odds = over_outcome.get("price")
+                        snapshot.under_odds = under_outcome.get("price")
+                
+                snapshots.append(snapshot)
+        
+        return snapshots
+    
+    async def check_quota(self) -> dict:
+        """
+        Check remaining API quota.
+        
+        The Odds API includes quota info in response headers.
+        This makes a lightweight request to check status.
+        
+        Returns:
+            Dict with 'requests_remaining' and 'requests_used'
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/sports",
+            params={"apiKey": self.api_key}
+        )
+        
+        return {
+            "requests_remaining": response.headers.get(
+                "x-requests-remaining", "unknown"
+            ),
+            "requests_used": response.headers.get(
+                "x-requests-used", "unknown"
+            ),
+        }
+
+
+# Convenience function for one-off fetches
+async def fetch_current_odds(sport_key: str) -> list[OddsSnapshot]:
+    """Fetch current odds for a single sport."""
+    service = OddsAPIService()
+    try:
+        events = await service.get_odds(sport_key)
+        return service._parse_events(events, sport_key)
+    finally:
+        await service.close()

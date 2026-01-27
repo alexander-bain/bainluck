@@ -1,0 +1,1 @@
+"""OddsTracker backend application."""
