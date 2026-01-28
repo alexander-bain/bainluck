@@ -335,19 +335,21 @@ async def _poll_all_odds():
                             await session.flush()
 
                         # Upsert event
+                        event_status = "scheduled" if commence_time > datetime.now(timezone.utc) else "live"
                         stmt = insert(Event).values(
                             external_id=event_data["id"],
                             sport_id=sport.id,
                             home_team_name=event_data["home_team"],
                             away_team_name=event_data["away_team"],
                             commence_time=commence_time,
-                            status="scheduled" if commence_time > datetime.now(timezone.utc) else "live",
+                            status=event_status,
                         ).on_conflict_do_update(
                             index_elements=["external_id"],
                             set_={
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
                                 "commence_time": commence_time,
+                                "status": event_status,  # Update status on each poll
                             }
                         ).returning(Event.id)
 
@@ -498,19 +500,21 @@ async def _poll_sport_odds(sport_key: str):
                     event_data["commence_time"].replace("Z", "+00:00")
                 )
 
+                event_status = "scheduled" if commence_time > datetime.now(timezone.utc) else "live"
                 stmt = insert(Event).values(
                     external_id=event_data["id"],
                     sport_id=sport.id,
                     home_team_name=event_data["home_team"],
                     away_team_name=event_data["away_team"],
                     commence_time=commence_time,
-                    status="scheduled" if commence_time > datetime.now(timezone.utc) else "live",
+                    status=event_status,
                 ).on_conflict_do_update(
                     index_elements=["external_id"],
                     set_={
                         "home_team_name": event_data["home_team"],
                         "away_team_name": event_data["away_team"],
                         "commence_time": commence_time,
+                        "status": event_status,  # Update status on each poll
                     }
                 ).returning(Event.id)
 

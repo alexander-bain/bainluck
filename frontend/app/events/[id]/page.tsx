@@ -289,6 +289,8 @@ export default function EventPage({ params }: EventPageProps) {
             history={historyData?.history ?? []}
             homeTeam={event.home_team}
             awayTeam={event.away_team}
+            commenceTime={event.commence_time}
+            isLive={isLive}
           />
         )}
       </div>

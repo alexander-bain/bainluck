@@ -248,6 +248,10 @@ async def get_event_odds_history(
                 if snap.away_win_probability else None,
             "over_under": float(snap.over_under)
                 if snap.over_under else None,
+            "projected_home_score": float(snap.projected_home_score)
+                if snap.projected_home_score else None,
+            "projected_away_score": float(snap.projected_away_score)
+                if snap.projected_away_score else None,
             "bookmaker": snap.bookmaker,
         })
     

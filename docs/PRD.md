@@ -397,38 +397,40 @@ POST /api/admin/aggregate           # Trigger aggregation job
 
 ## Feature Phases
 
-### Phase 1: MVP (Weeks 1–3)
-**Non-negotiable core features only.**
+### Phase 1: MVP ✅ Complete
+**Core visualization shipped to production.**
 
 - [x] Project setup and CI/CD
-- [ ] Database schema and migrations
-- [ ] Odds API integration
-- [ ] Live win probability (%)
+- [x] Database schema and migrations
+- [x] Odds API integration
+- [x] Live win probability (%)
+- [x] Web-first, mobile-optimized UI
+- [x] Auto-refresh (every 30 seconds)
 - [ ] Odds movement chart (pre-game → now)
-- [ ] Live updates with clear cadence & pausing states
-- [ ] Web-first, mobile-optimized UI
+- [ ] Live update state indicators (pausing states, blowout detection)
 
-### Phase 2: Personalization (Weeks 4–5)
+### Phase 2: Personalization (In Progress)
+- [x] Sorting by closeness (Closest Odds)
+- [x] Sorting by game time
 - [ ] Favorite teams (local storage first)
-- [ ] Sorting by closeness / live games / alphabetical
 - [ ] Firebase Auth integration (pull-based, not forced)
 - [ ] Persist favorites to database
 
-### Phase 3: Context & Polish (Weeks 6–8)
+### Phase 3: Context & Polish
 - [ ] Projected final scores (clearly labeled as illustrative)
 - [ ] Basic explanations for large probability swings
 - [ ] Game Excitement Index (experimental, for sorting/discovery)
 - [ ] Shareable web links with app promo banner
 - [ ] Tournament/championship tracking
 
-### Phase 4: iOS App (Weeks 9–12)
+### Phase 4: iOS App
 - [ ] SwiftUI app shell with parity to web
 - [ ] Second-screen optimized UI
 - [ ] Favorites and sorting
 - [ ] Share extension
 - [ ] Widgets (read-only)
 
-### Phase 5: Advanced (Weeks 13+)
+### Phase 5: Advanced
 - [ ] Push notifications for major probability swings
 - [ ] LLM-powered swing summaries
 

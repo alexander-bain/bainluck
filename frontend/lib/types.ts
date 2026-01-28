@@ -49,6 +49,8 @@ export interface OddsHistoryPoint {
   home_probability: number | null;
   away_probability: number | null;
   over_under: number | null;
+  projected_home_score: number | null;
+  projected_away_score: number | null;
   bookmaker: string;
 }
 
