@@ -12,6 +12,7 @@ import {
   SPORT_CATEGORIES,
   getCategoryForLeague,
   getLeagueDisplay,
+  isLeagueSupported,
   type SportCategory,
 } from "@/lib/sportCategories";
 
@@ -42,7 +43,10 @@ export default function HomePage() {
   );
 
   // Filter events by category if selected but no specific sport
-  let filteredEvents = eventsData?.events ?? [];
+  // Also enforce MECE - only show events with supported leagues
+  let filteredEvents = (eventsData?.events ?? []).filter((e) =>
+    e.sport && isLeagueSupported(e.sport)
+  );
   if (selectedCategory && !selectedSport) {
     const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
     if (category) {

@@ -3,23 +3,76 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, formatProbability, formatMoneyline, formatGameTime } from "@/lib/api";
+import { fetchEvent, fetchEventHistory, formatProbability, formatGameTime } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
+import { getLeagueDisplayWithEmoji } from "@/lib/sportCategories";
 
 interface EventPageProps {
   params: { id: string };
 }
 
 // Refresh intervals
-const LIVE_REFRESH_INTERVAL = 60000; // 60 seconds for live games (matches backend polling)
+const LIVE_REFRESH_INTERVAL = 60000; // 60 seconds for live games
 const SCHEDULED_REFRESH_INTERVAL = 120000; // 2 minutes for scheduled games
+
+/**
+ * Format a countdown from now until the target time
+ */
+function formatCountdown(targetTime: string): string {
+  const target = new Date(targetTime);
+  const now = new Date();
+  const diff = target.getTime() - now.getTime();
+
+  if (diff <= 0) return "Started";
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  } else if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  } else {
+    return `${minutes}m`;
+  }
+}
+
+/**
+ * Format game time for display
+ */
+function formatStartTime(commenceTime: string): string {
+  const date = new Date(commenceTime);
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const timeStr = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  if (date.toDateString() === today.toDateString()) {
+    return `Today at ${timeStr}`;
+  } else if (date.toDateString() === tomorrow.toDateString()) {
+    return `Tomorrow at ${timeStr}`;
+  } else {
+    const dateStr = date.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    return `${dateStr} at ${timeStr}`;
+  }
+}
 
 export default function EventPage({ params }: EventPageProps) {
   const eventId = parseInt(params.id, 10);
   const [countdown, setCountdown] = useState<number>(0);
+  const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
 
   // Fetch event details
@@ -41,7 +94,7 @@ export default function EventPage({ params }: EventPageProps) {
   const isLive = event?.status === "live";
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
-  // Countdown timer effect
+  // Countdown timer effect for refresh indicator
   useEffect(() => {
     const interval = setInterval(() => {
       const elapsed = Date.now() - lastRefresh;
@@ -52,6 +105,22 @@ export default function EventPage({ params }: EventPageProps) {
     return () => clearInterval(interval);
   }, [lastRefresh, refreshInterval]);
 
+  // Game countdown effect
+  useEffect(() => {
+    if (!event?.commence_time || isLive) {
+      setGameCountdown("");
+      return;
+    }
+
+    const updateCountdown = () => {
+      setGameCountdown(formatCountdown(event.commence_time));
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [event?.commence_time, isLive]);
+
   // Fetch odds history
   const {
     data: historyData,
@@ -60,7 +129,7 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     event ? ["history", eventId] : null,
     () => fetchEventHistory(eventId, 48),
-    { refreshInterval: 60000 } // Refresh every minute
+    { refreshInterval: 60000 }
   );
 
   if (eventLoading) {
@@ -85,6 +154,9 @@ export default function EventPage({ params }: EventPageProps) {
   const homeProb = odds?.home_probability;
   const awayProb = odds?.away_probability;
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
+
+  const hasCurrentScores = isLive && event.home_score !== null && event.away_score !== null;
+  const hasProjectedScores = odds?.projected_home_score !== null && odds?.projected_away_score !== null;
 
   return (
     <div className="space-y-6">
@@ -122,33 +194,52 @@ export default function EventPage({ params }: EventPageProps) {
             </svg>
             <span>{isLive ? "Live updates" : "Auto-refresh"}</span>
           </div>
-          <span className="text-gray-400">•</span>
+          <span className="text-gray-400">|</span>
           <span className="font-mono tabular-nums w-6 text-right">{countdown}s</span>
         </div>
       </div>
 
-      {/* Event Header */}
+      {/* Game Time Header - Prominent display */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        {/* Sport and Status Badges */}
         <div className="flex items-center gap-3 mb-4">
           {event.sport && (
-            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded uppercase">
-              {event.sport.replace(/_/g, " ")}
+            <span className="text-sm font-medium text-gray-600">
+              {getLeagueDisplayWithEmoji(event.sport)}
             </span>
           )}
           {isLive && (
-            <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded animate-pulse">
+            <span className="text-xs font-bold text-white bg-red-500 px-3 py-1 rounded-full animate-pulse">
               LIVE
             </span>
           )}
-          <span className="text-sm text-gray-500">
-            {formatGameTime(event.commence_time)}
-          </span>
         </div>
 
-        {/* Teams with large probabilities */}
-        <div className="space-y-6">
+        {/* Game Time - Large and Prominent */}
+        <div className="text-center mb-6">
+          {isLive ? (
+            <div className="text-2xl font-bold text-red-600">
+              Game In Progress
+            </div>
+          ) : (
+            <>
+              <div className="text-lg text-gray-600 mb-1">
+                {formatStartTime(event.commence_time)}
+              </div>
+              {gameCountdown && (
+                <div className="text-4xl font-bold text-gray-900">
+                  {gameCountdown}
+                </div>
+              )}
+              <div className="text-sm text-gray-500 mt-1">until game starts</div>
+            </>
+          )}
+        </div>
+
+        {/* Teams with probabilities */}
+        <div className="space-y-4">
           {/* Home Team */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center gap-3">
               <div
                 className={`w-3 h-3 rounded-full ${
@@ -156,26 +247,19 @@ export default function EventPage({ params }: EventPageProps) {
                 }`}
               />
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">
+                <h2 className="text-xl font-bold text-gray-900">
                   {event.home_team}
                 </h2>
-                <p className="text-sm text-gray-500">Home</p>
+                <p className="text-xs text-gray-500">Home</p>
               </div>
-              {isLive && event.home_score !== null && (
-                <span className="text-4xl font-bold text-gray-900 ml-4">
-                  {event.home_score}
-                </span>
-              )}
             </div>
-            <div className="text-right">
-              <span
-                className={`text-4xl font-bold ${
-                  homeFavorite ? "text-green-600" : "text-gray-500"
-                }`}
-              >
-                {formatProbability(homeProb)}
-              </span>
-            </div>
+            <span
+              className={`text-3xl font-bold ${
+                homeFavorite ? "text-green-600" : "text-gray-500"
+              }`}
+            >
+              {formatProbability(homeProb)}
+            </span>
           </div>
 
           {/* Probability Bar */}
@@ -189,7 +273,7 @@ export default function EventPage({ params }: EventPageProps) {
           />
 
           {/* Away Team */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center gap-3">
               <div
                 className={`w-3 h-3 rounded-full ${
@@ -197,74 +281,155 @@ export default function EventPage({ params }: EventPageProps) {
                 }`}
               />
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">
+                <h2 className="text-xl font-bold text-gray-900">
                   {event.away_team}
                 </h2>
-                <p className="text-sm text-gray-500">Away</p>
+                <p className="text-xs text-gray-500">Away</p>
               </div>
-              {isLive && event.away_score !== null && (
-                <span className="text-4xl font-bold text-gray-900 ml-4">
-                  {event.away_score}
-                </span>
-              )}
             </div>
-            <div className="text-right">
-              <span
-                className={`text-4xl font-bold ${
-                  !homeFavorite ? "text-blue-600" : "text-gray-500"
-                }`}
-              >
-                {formatProbability(awayProb)}
-              </span>
-            </div>
+            <span
+              className={`text-3xl font-bold ${
+                !homeFavorite ? "text-blue-600" : "text-gray-500"
+              }`}
+            >
+              {formatProbability(awayProb)}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Additional Odds Info */}
-      {odds && (odds.spread !== null || odds.over_under !== null || odds.projected_home_score !== null) && (
+      {/* Score Comparison Card - Current vs Projected */}
+      {(hasCurrentScores || hasProjectedScores) && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            Score {isLive ? "Comparison" : "Projection"}
+          </h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Current Score (Live only) */}
+            {hasCurrentScores && (
+              <div className="text-center p-6 bg-gradient-to-br from-green-50 to-green-100 rounded-xl border-2 border-green-200">
+                <p className="text-sm font-medium text-green-700 mb-3 uppercase tracking-wide">
+                  Current Score
+                </p>
+                <div className="flex items-center justify-center gap-4">
+                  <div className="text-center">
+                    <div className="text-5xl font-bold text-green-800">
+                      {event.home_score}
+                    </div>
+                    <div className="text-xs text-green-600 mt-1">
+                      {event.home_team.split(" ").pop()}
+                    </div>
+                  </div>
+                  <div className="text-2xl text-green-400">-</div>
+                  <div className="text-center">
+                    <div className="text-5xl font-bold text-green-800">
+                      {event.away_score}
+                    </div>
+                    <div className="text-xs text-green-600 mt-1">
+                      {event.away_team.split(" ").pop()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Projected Final Score */}
+            {hasProjectedScores && (
+              <div className={`text-center p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl border-2 border-blue-200 ${!hasCurrentScores ? "md:col-span-2 max-w-md mx-auto w-full" : ""}`}>
+                <p className="text-sm font-medium text-blue-700 mb-3 uppercase tracking-wide">
+                  Projected Final
+                </p>
+                <div className="flex items-center justify-center gap-4">
+                  <div className="text-center">
+                    <div className="text-5xl font-bold text-blue-800">
+                      {Math.round(odds!.projected_home_score!)}
+                    </div>
+                    <div className="text-xs text-blue-600 mt-1">
+                      {event.home_team.split(" ").pop()}
+                    </div>
+                  </div>
+                  <div className="text-2xl text-blue-400">-</div>
+                  <div className="text-center">
+                    <div className="text-5xl font-bold text-blue-800">
+                      {Math.round(odds!.projected_away_score!)}
+                    </div>
+                    <div className="text-xs text-blue-600 mt-1">
+                      {event.away_team.split(" ").pop()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Score Difference Indicator for Live Games */}
+          {hasCurrentScores && hasProjectedScores && (
+            <div className="mt-4 text-center text-sm text-gray-600">
+              {(() => {
+                const currentDiff = event.home_score! - event.away_score!;
+                const projectedDiff = Math.round(odds!.projected_home_score!) - Math.round(odds!.projected_away_score!);
+                const diffDelta = projectedDiff - currentDiff;
+
+                if (Math.abs(diffDelta) < 1) {
+                  return <span className="text-gray-500">Score on pace with projection</span>;
+                } else if (diffDelta > 0) {
+                  return (
+                    <span className="text-green-600">
+                      {event.home_team.split(" ").pop()} projected to extend lead by {diffDelta.toFixed(0)} pts
+                    </span>
+                  );
+                } else {
+                  return (
+                    <span className="text-blue-600">
+                      {event.away_team.split(" ").pop()} projected to close gap by {Math.abs(diffDelta).toFixed(0)} pts
+                    </span>
+                  );
+                }
+              })()}
+            </div>
+          )}
+
+          {odds?.bookmaker && (
+            <p className="text-xs text-gray-400 mt-4 text-center">
+              Based on {odds.bookmaker} lines | Updated {new Date(odds.captured_at).toLocaleTimeString()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Betting Lines */}
+      {odds && (odds.spread !== null || odds.over_under !== null) && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
             Betting Lines
           </h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             {odds.spread !== null && (
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500 mb-1">Spread</p>
                 <p className="text-xl font-bold text-gray-900">
                   {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
                 </p>
+                <p className="text-xs text-gray-400 mt-1">{event.home_team.split(" ").pop()}</p>
               </div>
             )}
             {odds.over_under !== null && (
               <div className="text-center p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500 mb-1">Over/Under</p>
+                <p className="text-sm text-gray-500 mb-1">Total</p>
                 <p className="text-xl font-bold text-gray-900">
-                  {odds.over_under}
-                </p>
-              </div>
-            )}
-            {odds.projected_home_score !== null && odds.projected_away_score !== null && (
-              <div className="text-center p-4 bg-gray-50 rounded-lg col-span-2">
-                <p className="text-sm text-gray-500 mb-1">Projected Score</p>
-                <p className="text-xl font-bold text-gray-900">
-                  {Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}
+                  O/U {odds.over_under}
                 </p>
               </div>
             )}
           </div>
-          {odds.bookmaker && (
-            <p className="text-xs text-gray-400 mt-4 text-center">
-              Odds from {odds.bookmaker} • Updated {new Date(odds.captured_at).toLocaleTimeString()}
-            </p>
-          )}
         </div>
       )}
 
       {/* Odds History Chart */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Probability History (48 hours)
+          Probability Trend
         </h3>
         {historyLoading ? (
           <div className="h-64 flex items-center justify-center">

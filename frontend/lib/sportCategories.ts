@@ -1,5 +1,19 @@
 /**
  * Sport categories for grouping leagues under parent sports.
+ *
+ * IMPORTANT: This must be MECE (Mutually Exclusive, Collectively Exhaustive)
+ * with the backend's OddsAPIService.SPORTS list. Every sport the backend polls
+ * must appear in exactly one category's leagues array.
+ *
+ * Backend SPORTS list (from backend/app/services/odds_api.py):
+ * - americanfootball_nfl, americanfootball_ncaaf
+ * - basketball_nba, basketball_ncaab, basketball_wnba
+ * - baseball_mlb
+ * - icehockey_nhl, icehockey_ahl
+ * - mma_mixed_martial_arts, boxing_boxing
+ * - golf_pga_championship
+ * - tennis_atp_aus_open, tennis_atp_us_open, tennis_atp_wimbledon, tennis_atp_french_open
+ * - politics_us_presidential_election_winner
  */
 
 export interface SportCategory {
@@ -9,19 +23,19 @@ export interface SportCategory {
   leagues: string[]; // Sport keys that belong to this category
 }
 
-// Sport categories with their leagues
+// Sport categories with their leagues - MUST match backend SPORTS list exactly
 export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "football",
     name: "Football",
     emoji: "🏈",
-    leagues: ["americanfootball_nfl", "americanfootball_ncaaf", "americanfootball_cfl", "americanfootball_xfl"],
+    leagues: ["americanfootball_nfl", "americanfootball_ncaaf"],
   },
   {
     key: "basketball",
     name: "Basketball",
     emoji: "🏀",
-    leagues: ["basketball_nba", "basketball_ncaab", "basketball_wnba", "basketball_wncaab", "basketball_euroleague"],
+    leagues: ["basketball_nba", "basketball_ncaab", "basketball_wnba"],
   },
   {
     key: "baseball",
@@ -37,7 +51,7 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   },
   {
     key: "combat",
-    name: "Combat",
+    name: "Combat Sports",
     emoji: "🥊",
     leagues: ["mma_mixed_martial_arts", "boxing_boxing"],
   },
@@ -45,7 +59,7 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     key: "golf",
     name: "Golf",
     emoji: "⛳",
-    leagues: ["golf_pga_championship", "golf_masters_tournament"],
+    leagues: ["golf_pga_championship"],
   },
   {
     key: "tennis",
@@ -66,25 +80,20 @@ export const LEAGUE_DISPLAY: Record<string, string> = {
   // Football
   americanfootball_nfl: "NFL",
   americanfootball_ncaaf: "NCAAF",
-  americanfootball_cfl: "CFL",
-  americanfootball_xfl: "XFL",
   // Basketball
   basketball_nba: "NBA",
   basketball_ncaab: "NCAAB",
   basketball_wnba: "WNBA",
-  basketball_wncaab: "WNCAAB",
-  basketball_euroleague: "EuroLeague",
   // Baseball
   baseball_mlb: "MLB",
   // Hockey
   icehockey_nhl: "NHL",
   icehockey_ahl: "AHL",
-  // Combat
+  // Combat Sports
   mma_mixed_martial_arts: "MMA",
   boxing_boxing: "Boxing",
   // Golf
-  golf_pga_championship: "PGA",
-  golf_masters_tournament: "Masters",
+  golf_pga_championship: "PGA Championship",
   // Tennis
   tennis_atp_aus_open: "Australian Open",
   tennis_atp_us_open: "US Open",
@@ -93,6 +102,11 @@ export const LEAGUE_DISPLAY: Record<string, string> = {
   // Politics
   politics_us_presidential_election_winner: "US Election",
 };
+
+// Set of all supported league keys (for validation)
+export const ALL_SUPPORTED_LEAGUES = new Set(
+  SPORT_CATEGORIES.flatMap((cat) => cat.leagues)
+);
 
 // Get category for a league key
 export function getCategoryForLeague(leagueKey: string): SportCategory | undefined {
@@ -109,4 +123,9 @@ export function getLeagueDisplayWithEmoji(leagueKey: string): string {
   const category = getCategoryForLeague(leagueKey);
   const leagueName = getLeagueDisplay(leagueKey);
   return category ? `${category.emoji} ${leagueName}` : leagueName;
+}
+
+// Check if a league is supported (in the MECE categorization)
+export function isLeagueSupported(leagueKey: string): boolean {
+  return ALL_SUPPORTED_LEAGUES.has(leagueKey);
 }

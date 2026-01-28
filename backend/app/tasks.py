@@ -229,6 +229,9 @@ async def _sync_sports():
     """Async implementation of sync_sports."""
     service = OddsAPIService()
 
+    # Only sync sports from our approved list
+    approved_sports = set(OddsAPIService.SPORTS)
+
     try:
         sports_data = await service.get_sports()
 
@@ -236,6 +239,10 @@ async def _sync_sports():
             synced = 0
             for sport in sports_data:
                 if not sport.get("active", False):
+                    continue
+
+                # Only sync sports that are in our approved list
+                if sport["key"] not in approved_sports:
                     continue
 
                 # Upsert sport
@@ -296,14 +303,9 @@ async def _poll_all_odds():
         has_live_games = False
 
         async with async_session_maker() as session:
-            # Get active sports from database
-            result = await session.execute(
-                select(Sport).where(Sport.active == True)
-            )
-            sports = result.scalars().all()
-
-            # If no sports in DB, use default list
-            sport_keys = [s.key for s in sports] if sports else OddsAPIService.SPORTS
+            # Always use the approved SPORTS list to avoid polling unwanted sports
+            # (like soccer) that might be in the database from sync_sports
+            sport_keys = OddsAPIService.SPORTS
 
             for sport_key in sport_keys:
                 try:
