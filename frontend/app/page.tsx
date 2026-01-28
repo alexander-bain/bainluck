@@ -12,7 +12,8 @@ import {
   SPORT_CATEGORIES,
   getCategoryForLeague,
   getLeagueDisplay,
-  isLeagueSupported,
+  getEmojiForLeague,
+  getCategoryName,
   type SportCategory,
 } from "@/lib/sportCategories";
 
@@ -43,15 +44,19 @@ export default function HomePage() {
   );
 
   // Filter events by category if selected but no specific sport
-  // Also enforce MECE - only show events with supported leagues
-  let filteredEvents = (eventsData?.events ?? []).filter((e) =>
-    e.sport && isLeagueSupported(e.sport)
-  );
+  // All events are shown (no whitelist filtering) - backend already excludes soccer
+  let filteredEvents = eventsData?.events ?? [];
   if (selectedCategory && !selectedSport) {
     const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
     if (category) {
+      // Filter by prefix matching
       filteredEvents = filteredEvents.filter((e) =>
-        e.sport && category.leagues.includes(e.sport)
+        e.sport && category.prefixes.some((prefix) => e.sport!.startsWith(prefix))
+      );
+    } else if (selectedCategory === "other") {
+      // "Other" category - sports that don't match any known prefix
+      filteredEvents = filteredEvents.filter((e) =>
+        e.sport && !getCategoryForLeague(e.sport)
       );
     }
   }
@@ -150,13 +155,14 @@ export default function HomePage() {
 
                   {/* Sport groups within this date */}
                   <div className="space-y-6">
-                    {Object.entries(sportGroups).map(([sportKey, leagueGroups]) => {
-                      const category = getCategoryForLeague(Object.keys(leagueGroups)[0]);
-                      const emoji = category?.emoji || "🏆";
-                      const sportName = category?.name || sportKey;
+                    {Object.entries(sportGroups).map(([categoryKey, leagueGroups]) => {
+                      // Get first league key to determine emoji
+                      const firstLeagueKey = Object.keys(leagueGroups)[0];
+                      const emoji = getEmojiForLeague(firstLeagueKey);
+                      const sportName = getCategoryName(firstLeagueKey);
 
                       return (
-                        <div key={sportKey} className="space-y-4">
+                        <div key={categoryKey} className="space-y-4">
                           {/* Sport header with emoji */}
                           <div className="flex items-center gap-2">
                             <span className="text-xl">{emoji}</span>

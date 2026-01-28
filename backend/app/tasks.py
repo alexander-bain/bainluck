@@ -229,8 +229,8 @@ async def _sync_sports():
     """Async implementation of sync_sports."""
     service = OddsAPIService()
 
-    # Only sync sports from our approved list
-    approved_sports = set(OddsAPIService.SPORTS)
+    # Blacklist: Only exclude soccer, sync everything else
+    excluded_prefixes = OddsAPIService.EXCLUDED_PREFIXES
 
     try:
         sports_data = await service.get_sports()
@@ -241,8 +241,9 @@ async def _sync_sports():
                 if not sport.get("active", False):
                     continue
 
-                # Only sync sports that are in our approved list
-                if sport["key"] not in approved_sports:
+                # Skip sports that match any excluded prefix (soccer)
+                sport_key = sport["key"]
+                if any(sport_key.startswith(prefix) for prefix in excluded_prefixes):
                     continue
 
                 # Upsert sport
@@ -303,9 +304,21 @@ async def _poll_all_odds():
         has_live_games = False
 
         async with async_session_maker() as session:
-            # Always use the approved SPORTS list to avoid polling unwanted sports
-            # (like soccer) that might be in the database from sync_sports
-            sport_keys = OddsAPIService.SPORTS
+            # Get all active sports from database (already filtered to exclude soccer)
+            result = await session.execute(
+                select(Sport).where(Sport.active == True)
+            )
+            sports = result.scalars().all()
+            sport_keys = [s.key for s in sports]
+
+            # If no sports in DB yet, we need to sync first
+            if not sport_keys:
+                return {
+                    "events": 0,
+                    "snapshots": 0,
+                    "sports": 0,
+                    "message": "No sports in database. Run sync_sports first.",
+                }
 
             for sport_key in sport_keys:
                 try:

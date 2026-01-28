@@ -436,18 +436,69 @@ POST /api/admin/aggregate           # Trigger aggregation job
 
 ---
 
-## Supported Sports (Initial)
+## Sports Coverage
 
-| Sport | API Key | Priority |
-|-------|---------|----------|
-| NFL | `americanfootball_nfl` | High |
-| NBA | `basketball_nba` | High |
-| MLB | `baseball_mlb` | High |
-| NHL | `icehockey_nhl` | Medium |
-| College Football | `americanfootball_ncaaf` | Medium |
-| College Basketball | `basketball_ncaab` | Medium |
-| Golf (Majors) | `golf_masters_winner` etc. | Low |
-| Tennis (Majors) | `tennis_atp_*` | Low |
+### Blacklist Approach
+
+OddsTracker uses a **blacklist** rather than a whitelist for sports coverage:
+
+- **Included**: All sports from The Odds API except those on the blacklist
+- **Excluded**: Soccer (all soccer_* leagues)
+
+This means the system automatically picks up new sports that The Odds API adds without requiring code changes.
+
+### Why No Soccer?
+
+Soccer odds are excluded because:
+1. **Different market dynamics**: Soccer betting markets behave differently with draws and complex scoring
+2. **Focus**: The product focuses on American sports and entertainment betting
+3. **Complexity**: Including soccer would require additional UI considerations for three-way outcomes
+
+### Sport Categories
+
+Sports are grouped into categories for the UI based on their API key prefix:
+
+| Category | Prefix(es) | Emoji |
+|----------|------------|-------|
+| Football | americanfootball_* | 🏈 |
+| Basketball | basketball_* | 🏀 |
+| Baseball | baseball_* | ⚾ |
+| Hockey | icehockey_* | 🏒 |
+| MMA | mma_* | 🥋 |
+| Boxing | boxing_* | 🥊 |
+| Golf | golf_* | ⛳ |
+| Tennis | tennis_* | 🎾 |
+| Cricket | cricket_* | 🏏 |
+| Rugby | rugbyleague_*, rugbyunion_* | 🏉 |
+| Aussie Rules | aussierules_* | 🦘 |
+| Politics | politics_* | 🗳️ |
+| Esports | esports_* | 🎮 |
+| Motorsport | motorsport_*, racing_* | 🏎️ |
+| Other | (any unmatched) | 🏆 |
+
+Unknown sports automatically fall into the "Other" category and are displayed with a trophy emoji.
+
+### High Priority Sports
+
+| Sport | API Key Pattern | Notes |
+|-------|-----------------|-------|
+| NFL | americanfootball_nfl | Primary focus |
+| NBA | basketball_nba | Primary focus |
+| MLB | baseball_mlb | Primary focus |
+| NHL | icehockey_nhl | Primary focus |
+| College Football | americanfootball_ncaaf | Strong user demand |
+| College Basketball | basketball_ncaab | March Madness priority |
+
+### Additional Sports (Automatically Included)
+
+All other sports from The Odds API are automatically included:
+- Minor leagues (AHL, KHL, etc.)
+- International leagues (EuroLeague, NPB, KBO, etc.)
+- Combat sports (UFC events, boxing matches)
+- Tennis majors and tournaments
+- Golf majors and tournaments
+- Politics (elections when available)
+- Any new sports The Odds API adds
 
 ---
 
