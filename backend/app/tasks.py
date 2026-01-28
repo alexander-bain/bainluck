@@ -6,10 +6,12 @@ This module sets up periodic tasks to:
 2. Store events and snapshots in the database
 3. Calculate probabilities
 
-Adaptive polling:
-- Polls every 2 min when odds are changing or games are live
-- Slows to 5 min after 3 consecutive unchanged polls
-- Slows to 10 min after 6 consecutive unchanged polls
+Adaptive polling (optimized for 90K calls/month):
+- Only polls sports with games in the next 12 hours
+- Polls every 3 min when games are live
+- Slows to 10 min when data is changing
+- Slows to 30 min after 3 consecutive unchanged polls
+- Slows to 60 min after 6 consecutive unchanged polls
 """
 
 import asyncio
@@ -83,10 +85,11 @@ POLL_STATE_KEY = "odds_tracker:poll_state"
 LAST_ODDS_HASH_KEY = "odds_tracker:last_odds_hash"
 
 # Polling intervals (in seconds)
-LIVE_POLL_INTERVAL = 60       # 1 minute when games are live
-FAST_POLL_INTERVAL = 180      # 3 minutes when data is changing
-MEDIUM_POLL_INTERVAL = 600    # 10 minutes after 3 unchanged polls
-SLOW_POLL_INTERVAL = 1800     # 30 minutes after 6 unchanged polls (overnight)
+# Conservative settings to stay within 90K calls/month (~3K/day)
+LIVE_POLL_INTERVAL = 180      # 3 minutes when games are live (was 1 min)
+FAST_POLL_INTERVAL = 600      # 10 minutes when data is changing (was 3 min)
+MEDIUM_POLL_INTERVAL = 1800   # 30 minutes after 3 unchanged polls (was 10 min)
+SLOW_POLL_INTERVAL = 3600     # 60 minutes after 6 unchanged polls (was 30 min)
 
 # Thresholds for slowing down
 MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
@@ -294,7 +297,13 @@ def poll_all_odds(self):
 
 
 async def _poll_all_odds():
-    """Async implementation of poll_all_odds with change detection."""
+    """
+    Async implementation of poll_all_odds with change detection.
+
+    Optimized to reduce API calls:
+    - Only polls sports with games starting in the next 12 hours or currently live
+    - Skips sports with no upcoming games
+    """
     service = OddsAPIService()
 
     try:
@@ -302,28 +311,42 @@ async def _poll_all_odds():
         total_snapshots = 0
         all_events_data = []  # Collect for hash computation
         has_live_games = False
+        sports_polled = 0
 
         async with async_session_maker() as session:
-            # Get all active sports from database (already filtered to exclude soccer)
-            result = await session.execute(
-                select(Sport).where(Sport.active == True)
-            )
-            sports = result.scalars().all()
-            sport_keys = [s.key for s in sports]
+            # Get sports that have games within the next 12 hours or are live
+            # This dramatically reduces API calls vs polling all sports
+            from datetime import timedelta
+            now = datetime.now(timezone.utc)
+            lookahead = now + timedelta(hours=12)
 
-            # If no sports in DB yet, we need to sync first
+            result = await session.execute(
+                select(Sport.key).distinct()
+                .join(Event)
+                .where(
+                    Sport.active == True,
+                    Event.status.in_(["scheduled", "live"]),
+                    Event.commence_time <= lookahead,
+                    Event.commence_time >= now - timedelta(hours=6)  # Include games that started up to 6h ago
+                )
+            )
+            sport_keys = [row[0] for row in result.all()]
+
+            # If no sports with upcoming games, skip polling entirely
             if not sport_keys:
                 return {
                     "events": 0,
                     "snapshots": 0,
                     "sports": 0,
-                    "message": "No sports in database. Run sync_sports first.",
+                    "message": "No sports with upcoming games in the next 12 hours.",
+                    "skipped": True,
                 }
 
             for sport_key in sport_keys:
                 try:
                     events_data = await service.get_odds(sport_key)
                     all_events_data.extend(events_data)
+                    sports_polled += 1
 
                     for event_data in events_data:
                         # Check if game is live
@@ -407,7 +430,8 @@ async def _poll_all_odds():
         return {
             "events": total_events,
             "snapshots": total_snapshots,
-            "sports": len(sport_keys),
+            "sports": sports_polled,
+            "sports_with_games": len(sport_keys),
             "data_changed": data_changed,
             "has_live_games": has_live_games,
         }
