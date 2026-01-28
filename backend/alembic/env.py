@@ -60,11 +60,17 @@ async def run_async_migrations() -> None:
     """Run migrations in async mode."""
     configuration = config.get_section(config.config_ini_section)
     configuration["sqlalchemy.url"] = DATABASE_URL
-    
+
+    # Add SSL for Heroku Postgres
+    connect_args = {}
+    if "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL:
+        connect_args["ssl"] = "require"
+
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:
