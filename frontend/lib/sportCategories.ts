@@ -6,6 +6,8 @@
  *
  * This file maps sport keys to categories and display names dynamically.
  * Unknown sports fall into an "Other" category rather than being hidden.
+ *
+ * Last updated: 2025-01-27
  */
 
 export interface SportCategory {
