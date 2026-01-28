@@ -203,7 +203,7 @@ export default function OddsChart({
       {/* Probability Chart */}
       <div>
         <h4 className="text-sm font-medium text-gray-700 mb-2">Win Probability</h4>
-        <div className="w-full h-48">
+        <div className="w-full h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -252,7 +252,7 @@ export default function OddsChart({
       {showScores && chartData.some((d) => d.homeScore !== null) && (
         <div>
           <h4 className="text-sm font-medium text-gray-700 mb-2">Projected Score</h4>
-          <div className="w-full h-40">
+          <div className="w-full h-56">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />

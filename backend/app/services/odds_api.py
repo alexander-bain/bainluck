@@ -55,6 +55,7 @@ class OddsAPIService:
         "baseball_mlb",
         # Hockey
         "icehockey_nhl",
+        "icehockey_ahl",
         # Combat Sports
         "mma_mixed_martial_arts",
         "boxing_boxing",

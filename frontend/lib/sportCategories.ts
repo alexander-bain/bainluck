@@ -33,7 +33,7 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     key: "hockey",
     name: "Hockey",
     emoji: "🏒",
-    leagues: ["icehockey_nhl"],
+    leagues: ["icehockey_nhl", "icehockey_ahl"],
   },
   {
     key: "combat",
@@ -78,6 +78,7 @@ export const LEAGUE_DISPLAY: Record<string, string> = {
   baseball_mlb: "MLB",
   // Hockey
   icehockey_nhl: "NHL",
+  icehockey_ahl: "AHL",
   // Combat
   mma_mixed_martial_arts: "MMA",
   boxing_boxing: "Boxing",

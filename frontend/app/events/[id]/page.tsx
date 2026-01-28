@@ -175,11 +175,6 @@ export default function EventPage({ params }: EventPageProps) {
               >
                 {formatProbability(homeProb)}
               </span>
-              {odds?.home_moneyline && (
-                <p className="text-sm text-gray-500 mt-1">
-                  {formatMoneyline(odds.home_moneyline)}
-                </p>
-              )}
             </div>
           </div>
 
@@ -221,11 +216,6 @@ export default function EventPage({ params }: EventPageProps) {
               >
                 {formatProbability(awayProb)}
               </span>
-              {odds?.away_moneyline && (
-                <p className="text-sm text-gray-500 mt-1">
-                  {formatMoneyline(odds.away_moneyline)}
-                </p>
-              )}
             </div>
           </div>
         </div>
