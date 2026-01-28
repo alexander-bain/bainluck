@@ -1,8 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { Sport } from "@/lib/types";
-import { SPORT_CATEGORIES, getLeagueDisplay, type SportCategory } from "@/lib/sportCategories";
+import {
+  SPORT_CATEGORIES,
+  getLeagueDisplay,
+  getCategoryForLeague,
+  getActiveCategoriesFromLeagues,
+  type SportCategory,
+} from "@/lib/sportCategories";
 
 interface SportFilterProps {
   sports: Sport[];
@@ -15,6 +21,7 @@ interface SportFilterProps {
 
 /**
  * Two-level sport filter: categories with emojis, then leagues.
+ * Uses prefix-based matching to categorize sports dynamically.
  */
 export default function SportFilter({
   sports,
@@ -24,20 +31,39 @@ export default function SportFilter({
   onSelectCategory,
   loading = false,
 }: SportFilterProps) {
-  // Get available categories (only show categories that have active leagues)
-  const availableLeagueKeys = new Set(sports.map((s) => s.key));
-  const availableCategories = SPORT_CATEGORIES.filter((cat) =>
-    cat.leagues.some((league) => availableLeagueKeys.has(league))
-  );
+  // Get all league keys
+  const allLeagueKeys = useMemo(() => sports.map((s) => s.key), [sports]);
 
-  // Get leagues for the selected category
-  const selectedCategoryData = selectedCategory
-    ? SPORT_CATEGORIES.find((c) => c.key === selectedCategory)
-    : null;
+  // Get available categories based on which sports we have
+  const availableCategories = useMemo(() => {
+    return getActiveCategoriesFromLeagues(allLeagueKeys);
+  }, [allLeagueKeys]);
 
-  const availableLeagues = selectedCategoryData
-    ? selectedCategoryData.leagues.filter((league) => availableLeagueKeys.has(league))
-    : [];
+  // Get leagues for the selected category using prefix matching
+  const availableLeagues = useMemo(() => {
+    if (!selectedCategory) return [];
+
+    const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
+    if (category) {
+      // Filter leagues that match this category's prefixes
+      return allLeagueKeys.filter((leagueKey) =>
+        category.prefixes.some((prefix) => leagueKey.startsWith(prefix))
+      );
+    } else if (selectedCategory === "other") {
+      // "Other" category - sports that don't match any known prefix
+      return allLeagueKeys.filter((leagueKey) => !getCategoryForLeague(leagueKey));
+    }
+    return [];
+  }, [selectedCategory, allLeagueKeys]);
+
+  // Get the selected category data
+  const selectedCategoryData = useMemo(() => {
+    if (!selectedCategory) return null;
+    if (selectedCategory === "other") {
+      return { key: "other", name: "Other", emoji: "🏆", prefixes: [] };
+    }
+    return SPORT_CATEGORIES.find((c) => c.key === selectedCategory) || null;
+  }, [selectedCategory]);
 
   if (loading) {
     return (
