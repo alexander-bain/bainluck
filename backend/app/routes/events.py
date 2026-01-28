@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, not_
+from sqlalchemy import select, and_, or_, not_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,18 +29,18 @@ async def list_events(
     List upcoming and live events.
 
     Returns events with their current win probabilities.
+    Memory-optimized: only fetches latest odds snapshot per event.
     """
-    # Build query - include odds snapshots for current odds
+    # Build query - only load sport, NOT all odds_snapshots (too much memory)
     query = select(Event).options(
         selectinload(Event.sport),
-        selectinload(Event.odds_snapshots)
     )
-    
+
     conditions = []
-    
+
     if sport:
         conditions.append(Event.sport.has(Sport.key == sport))
-    
+
     if status:
         conditions.append(Event.status == status)
     else:
@@ -70,16 +70,48 @@ async def list_events(
 
     if conditions:
         query = query.where(and_(*conditions))
-    
+
     query = query.order_by(Event.commence_time)
-    
+
     result = await db.execute(query)
     events = result.scalars().all()
-    
-    # Format response with odds
+
+    # Get only the latest odds snapshot for each event (memory efficient)
+    event_ids = [e.id for e in events]
+    latest_odds_map = {}
+
+    if event_ids:
+        # Subquery to get the max captured_at per event
+        latest_time_subq = (
+            select(
+                OddsSnapshot.event_id,
+                func.max(OddsSnapshot.captured_at).label("max_time")
+            )
+            .where(OddsSnapshot.event_id.in_(event_ids))
+            .group_by(OddsSnapshot.event_id)
+            .subquery()
+        )
+
+        # Get the actual snapshots matching the max times
+        latest_odds_query = (
+            select(OddsSnapshot)
+            .join(
+                latest_time_subq,
+                and_(
+                    OddsSnapshot.event_id == latest_time_subq.c.event_id,
+                    OddsSnapshot.captured_at == latest_time_subq.c.max_time
+                )
+            )
+        )
+
+        latest_odds_result = await db.execute(latest_odds_query)
+        for snap in latest_odds_result.scalars().all():
+            latest_odds_map[snap.event_id] = snap
+
+    # Format response with latest odds
     return {
         "events": [
-            _format_event_with_odds(e)
+            _format_event_with_latest_odds(e, latest_odds_map.get(e.id))
             for e in events
         ],
         "count": len(events),
@@ -289,6 +321,33 @@ def _format_event_with_odds(event: Event) -> dict:
             event.odds_snapshots,
             key=lambda x: x.captured_at
         )
+        response["current_odds"] = {
+            "bookmaker": latest_odds.bookmaker,
+            "captured_at": latest_odds.captured_at.isoformat(),
+            "home_moneyline": latest_odds.home_moneyline,
+            "away_moneyline": latest_odds.away_moneyline,
+            "home_probability": float(latest_odds.home_win_probability)
+                if latest_odds.home_win_probability else None,
+            "away_probability": float(latest_odds.away_win_probability)
+                if latest_odds.away_win_probability else None,
+            "spread": float(latest_odds.home_spread)
+                if latest_odds.home_spread else None,
+            "over_under": float(latest_odds.over_under)
+                if latest_odds.over_under else None,
+            "projected_home_score": float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None,
+            "projected_away_score": float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None,
+        }
+
+    return response
+
+
+def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnapshot]) -> dict:
+    """Format event for API response with pre-fetched latest odds (memory efficient)."""
+    response = _format_event(event)
+
+    if latest_odds:
         response["current_odds"] = {
             "bookmaker": latest_odds.bookmaker,
             "captured_at": latest_odds.captured_at.isoformat(),
