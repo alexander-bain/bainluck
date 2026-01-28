@@ -235,11 +235,11 @@ function groupByDateAndSport(
     }
 
     // Sport category key
-    const category = getCategoryForLeague(event.sport);
+    const category = event.sport ? getCategoryForLeague(event.sport) : undefined;
     const categoryKey = category?.key || "other";
 
     // League key
-    const leagueKey = event.sport;
+    const leagueKey = event.sport || "unknown";
 
     // Initialize nested structure
     if (!groups[dateKey]) {
