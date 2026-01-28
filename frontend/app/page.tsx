@@ -47,7 +47,7 @@ export default function HomePage() {
     const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
     if (category) {
       filteredEvents = filteredEvents.filter((e) =>
-        category.leagues.includes(e.sport)
+        e.sport && category.leagues.includes(e.sport)
       );
     }
   }
