@@ -5,12 +5,21 @@ This module sets up periodic tasks to:
 1. Fetch odds from The Odds API
 2. Store events and snapshots in the database
 3. Calculate probabilities
+
+Adaptive polling:
+- Polls every 2 min when odds are changing or games are live
+- Slows to 5 min after 3 consecutive unchanged polls
+- Slows to 10 min after 6 consecutive unchanged polls
 """
 
 import asyncio
+import hashlib
+import json
 import os
+import time
 from datetime import datetime, timezone
 
+import redis
 from celery import Celery
 from celery.schedules import crontab
 from sqlalchemy import select
@@ -59,15 +68,137 @@ celery_app.conf.update(**celery_config)
 
 # Beat schedule for periodic tasks
 celery_app.conf.beat_schedule = {
-    "poll-odds-every-5-minutes": {
+    "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
-        "schedule": 300.0,  # Every 5 minutes
+        "schedule": 60.0,  # Check every minute, but may skip based on adaptive logic
     },
     "sync-sports-hourly": {
         "task": "app.tasks.sync_sports",
         "schedule": crontab(minute=0),  # Every hour
     },
 }
+
+# Adaptive polling state keys in Redis
+POLL_STATE_KEY = "odds_tracker:poll_state"
+LAST_ODDS_HASH_KEY = "odds_tracker:last_odds_hash"
+
+# Polling intervals (in seconds)
+FAST_POLL_INTERVAL = 120      # 2 minutes when data is changing
+MEDIUM_POLL_INTERVAL = 300    # 5 minutes after 3 unchanged polls
+SLOW_POLL_INTERVAL = 600      # 10 minutes after 6 unchanged polls
+
+# Thresholds for slowing down
+MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
+SLOW_THRESHOLD = 6     # Slow to slow after this many unchanged polls
+
+
+def get_redis_client():
+    """Get Redis client with proper SSL handling for Heroku."""
+    import ssl
+
+    if REDIS_URL.startswith("rediss://"):
+        # Heroku Redis with SSL
+        return redis.from_url(
+            REDIS_URL,
+            ssl_cert_reqs=ssl.CERT_NONE
+        )
+    return redis.from_url(REDIS_URL)
+
+
+def compute_odds_hash(events_data: list) -> str:
+    """Compute hash of odds data to detect changes."""
+    # Extract just the odds-relevant data
+    odds_data = []
+    for event in events_data:
+        for bookmaker in event.get("bookmakers", []):
+            for market in bookmaker.get("markets", []):
+                for outcome in market.get("outcomes", []):
+                    odds_data.append({
+                        "event": event.get("id"),
+                        "bookmaker": bookmaker.get("key"),
+                        "market": market.get("key"),
+                        "outcome": outcome.get("name"),
+                        "price": outcome.get("price"),
+                        "point": outcome.get("point"),
+                    })
+
+    # Sort for consistent ordering
+    odds_data.sort(key=lambda x: (x["event"], x["bookmaker"], x["market"], x["outcome"]))
+
+    # Hash the JSON representation
+    data_str = json.dumps(odds_data, sort_keys=True)
+    return hashlib.md5(data_str.encode()).hexdigest()
+
+
+def should_poll_now() -> tuple[bool, str]:
+    """
+    Check if we should poll now based on adaptive logic.
+    Returns (should_poll, reason).
+    """
+    try:
+        r = get_redis_client()
+        state = r.hgetall(POLL_STATE_KEY)
+
+        if not state:
+            # First poll ever
+            return True, "first_poll"
+
+        last_poll_time = float(state.get(b"last_poll_time", 0))
+        unchanged_count = int(state.get(b"unchanged_count", 0))
+        has_live_games = state.get(b"has_live_games", b"false") == b"true"
+
+        elapsed = time.time() - last_poll_time
+
+        # Always poll frequently for live games
+        if has_live_games:
+            if elapsed >= FAST_POLL_INTERVAL:
+                return True, "live_games"
+            return False, f"live_wait_{int(FAST_POLL_INTERVAL - elapsed)}s"
+
+        # Determine interval based on unchanged count
+        if unchanged_count >= SLOW_THRESHOLD:
+            interval = SLOW_POLL_INTERVAL
+        elif unchanged_count >= MEDIUM_THRESHOLD:
+            interval = MEDIUM_POLL_INTERVAL
+        else:
+            interval = FAST_POLL_INTERVAL
+
+        if elapsed >= interval:
+            return True, f"interval_{interval}s"
+
+        return False, f"wait_{int(interval - elapsed)}s"
+
+    except Exception as e:
+        # If Redis fails, default to polling
+        print(f"Redis error in should_poll_now: {e}")
+        return True, "redis_error"
+
+
+def update_poll_state(data_changed: bool, has_live_games: bool, new_hash: str):
+    """Update the adaptive polling state in Redis."""
+    try:
+        r = get_redis_client()
+
+        # Get current unchanged count
+        current_count = int(r.hget(POLL_STATE_KEY, "unchanged_count") or 0)
+
+        if data_changed:
+            new_count = 0
+        else:
+            new_count = current_count + 1
+
+        r.hset(POLL_STATE_KEY, mapping={
+            "last_poll_time": time.time(),
+            "unchanged_count": new_count,
+            "has_live_games": "true" if has_live_games else "false",
+            "last_hash": new_hash,
+        })
+
+        # Set expiry so state cleans up if worker stops
+        r.expire(POLL_STATE_KEY, 3600)  # 1 hour
+
+    except Exception as e:
+        print(f"Redis error in update_poll_state: {e}")
 
 
 def run_async(coro):
@@ -133,24 +264,35 @@ async def _sync_sports():
 @celery_app.task(bind=True, max_retries=3)
 def poll_all_odds(self):
     """
-    Poll odds for all configured sports.
+    Poll odds for all configured sports with adaptive polling.
 
     This fetches current odds from The Odds API and stores
-    them as OddsSnapshot records.
+    them as OddsSnapshot records. Polling frequency adapts based on:
+    - Whether odds have changed recently
+    - Whether any games are currently live
     """
+    # Check if we should poll based on adaptive logic
+    should_poll, reason = should_poll_now()
+
+    if not should_poll:
+        return {"skipped": True, "reason": reason}
+
     try:
-        return run_async(_poll_all_odds())
+        result = run_async(_poll_all_odds())
+        return {**result, "poll_reason": reason}
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)
 
 
 async def _poll_all_odds():
-    """Async implementation of poll_all_odds."""
+    """Async implementation of poll_all_odds with change detection."""
     service = OddsAPIService()
 
     try:
         total_events = 0
         total_snapshots = 0
+        all_events_data = []  # Collect for hash computation
+        has_live_games = False
 
         async with async_session_maker() as session:
             # Get active sports from database
@@ -165,8 +307,16 @@ async def _poll_all_odds():
             for sport_key in sport_keys:
                 try:
                     events_data = await service.get_odds(sport_key)
+                    all_events_data.extend(events_data)
 
                     for event_data in events_data:
+                        # Check if game is live
+                        commence_time = datetime.fromisoformat(
+                            event_data["commence_time"].replace("Z", "+00:00")
+                        )
+                        if commence_time <= datetime.now(timezone.utc):
+                            has_live_games = True
+
                         # Get or create sport
                         sport_result = await session.execute(
                             select(Sport).where(Sport.key == sport_key)
@@ -184,10 +334,6 @@ async def _poll_all_odds():
                             await session.flush()
 
                         # Upsert event
-                        commence_time = datetime.fromisoformat(
-                            event_data["commence_time"].replace("Z", "+00:00")
-                        )
-
                         stmt = insert(Event).values(
                             external_id=event_data["id"],
                             sport_id=sport.id,
@@ -224,10 +370,28 @@ async def _poll_all_odds():
 
             await session.commit()
 
+        # Compute hash and check for changes
+        new_hash = compute_odds_hash(all_events_data)
+
+        # Get previous hash to detect changes
+        try:
+            r = get_redis_client()
+            prev_hash = r.hget(POLL_STATE_KEY, "last_hash")
+            prev_hash = prev_hash.decode() if prev_hash else None
+        except Exception:
+            prev_hash = None
+
+        data_changed = prev_hash is None or prev_hash != new_hash
+
+        # Update adaptive polling state
+        update_poll_state(data_changed, has_live_games, new_hash)
+
         return {
             "events": total_events,
             "snapshots": total_snapshots,
             "sports": len(sport_keys),
+            "data_changed": data_changed,
+            "has_live_games": has_live_games,
         }
     finally:
         await service.close()

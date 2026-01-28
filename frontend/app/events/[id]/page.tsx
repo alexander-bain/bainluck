@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, formatProbability, formatMoneyline, formatGameTime } from "@/lib/api";
@@ -12,8 +13,14 @@ interface EventPageProps {
   params: { id: string };
 }
 
+// Refresh intervals
+const LIVE_REFRESH_INTERVAL = 15000; // 15 seconds for live games
+const SCHEDULED_REFRESH_INTERVAL = 60000; // 60 seconds for scheduled games
+
 export default function EventPage({ params }: EventPageProps) {
   const eventId = parseInt(params.id, 10);
+  const [countdown, setCountdown] = useState<number>(0);
+  const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
 
   // Fetch event details
   const {
@@ -24,8 +31,26 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     ["event", eventId],
     () => fetchEvent(eventId),
-    { refreshInterval: 15000 } // Refresh every 15 seconds for live games
+    {
+      refreshInterval: (data) =>
+        data?.status === "live" ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL,
+      onSuccess: () => setLastRefresh(Date.now()),
+    }
   );
+
+  const isLive = event?.status === "live";
+  const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
+
+  // Countdown timer effect
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - lastRefresh;
+      const remaining = Math.max(0, refreshInterval - elapsed);
+      setCountdown(Math.ceil(remaining / 1000));
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [lastRefresh, refreshInterval]);
 
   // Fetch odds history
   const {
@@ -60,30 +85,47 @@ export default function EventPage({ params }: EventPageProps) {
   const homeProb = odds?.home_probability;
   const awayProb = odds?.away_probability;
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
-  const isLive = event.status === "live";
 
   return (
     <div className="space-y-6">
-      {/* Back link */}
-      <Link
-        href="/"
-        className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
-      >
-        <svg
-          className="w-4 h-4 mr-1"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+      {/* Back link and refresh indicator */}
+      <div className="flex items-center justify-between">
+        <Link
+          href="/"
+          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M15 19l-7-7 7-7"
-          />
-        </svg>
-        Back to events
-      </Link>
+          <svg
+            className="w-4 h-4 mr-1"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 19l-7-7 7-7"
+            />
+          </svg>
+          Back to events
+        </Link>
+
+        {/* Auto-refresh countdown */}
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          <div className="flex items-center gap-1">
+            <svg
+              className={`w-3 h-3 ${isLive ? "text-green-500 animate-pulse" : "text-gray-400"}`}
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <circle cx="10" cy="10" r="8" />
+            </svg>
+            <span>{isLive ? "Live updates" : "Auto-refresh"}</span>
+          </div>
+          <span className="text-gray-400">•</span>
+          <span className="font-mono tabular-nums w-6 text-right">{countdown}s</span>
+        </div>
+      </div>
 
       {/* Event Header */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
