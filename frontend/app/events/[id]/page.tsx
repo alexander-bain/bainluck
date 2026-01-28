@@ -14,8 +14,8 @@ interface EventPageProps {
 }
 
 // Refresh intervals
-const LIVE_REFRESH_INTERVAL = 15000; // 15 seconds for live games
-const SCHEDULED_REFRESH_INTERVAL = 60000; // 60 seconds for scheduled games
+const LIVE_REFRESH_INTERVAL = 60000; // 60 seconds for live games (matches backend polling)
+const SCHEDULED_REFRESH_INTERVAL = 120000; // 2 minutes for scheduled games
 
 export default function EventPage({ params }: EventPageProps) {
   const eventId = parseInt(params.id, 10);

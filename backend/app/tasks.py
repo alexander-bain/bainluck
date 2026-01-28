@@ -83,9 +83,10 @@ POLL_STATE_KEY = "odds_tracker:poll_state"
 LAST_ODDS_HASH_KEY = "odds_tracker:last_odds_hash"
 
 # Polling intervals (in seconds)
-FAST_POLL_INTERVAL = 120      # 2 minutes when data is changing
-MEDIUM_POLL_INTERVAL = 300    # 5 minutes after 3 unchanged polls
-SLOW_POLL_INTERVAL = 600      # 10 minutes after 6 unchanged polls
+LIVE_POLL_INTERVAL = 60       # 1 minute when games are live
+FAST_POLL_INTERVAL = 180      # 3 minutes when data is changing
+MEDIUM_POLL_INTERVAL = 600    # 10 minutes after 3 unchanged polls
+SLOW_POLL_INTERVAL = 1800     # 30 minutes after 6 unchanged polls (overnight)
 
 # Thresholds for slowing down
 MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
@@ -151,9 +152,9 @@ def should_poll_now() -> tuple[bool, str]:
 
         # Always poll frequently for live games
         if has_live_games:
-            if elapsed >= FAST_POLL_INTERVAL:
+            if elapsed >= LIVE_POLL_INTERVAL:
                 return True, "live_games"
-            return False, f"live_wait_{int(FAST_POLL_INTERVAL - elapsed)}s"
+            return False, f"live_wait_{int(LIVE_POLL_INTERVAL - elapsed)}s"
 
         # Determine interval based on unchanged count
         if unchanged_count >= SLOW_THRESHOLD:
