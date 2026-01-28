@@ -10,6 +10,37 @@ interface EventCardProps {
   showSport?: boolean;
 }
 
+// Map sport keys to friendly display names
+const SPORT_DISPLAY: Record<string, string> = {
+  americanfootball_nfl: "🏈 NFL",
+  americanfootball_ncaaf: "🏈 NCAAF",
+  americanfootball_cfl: "🏈 CFL",
+  basketball_nba: "🏀 NBA",
+  basketball_ncaab: "🏀 NCAAB",
+  basketball_wnba: "🏀 WNBA",
+  basketball_wncaab: "🏀 WNCAAB",
+  baseball_mlb: "⚾ MLB",
+  icehockey_nhl: "🏒 NHL",
+  soccer_usa_mls: "⚽ MLS",
+  soccer_epl: "⚽ EPL",
+  soccer_spain_la_liga: "⚽ La Liga",
+  soccer_germany_bundesliga: "⚽ Bundesliga",
+  soccer_italy_serie_a: "⚽ Serie A",
+  soccer_france_ligue_one: "⚽ Ligue 1",
+  soccer_uefa_champs_league: "⚽ UCL",
+  soccer_mexico_ligamx: "⚽ Liga MX",
+  soccer_argentina_primera_division: "⚽ Argentina",
+  golf_pga: "⛳ PGA",
+  tennis_atp: "🎾 ATP",
+  tennis_wta: "🎾 WTA",
+  mma_ufc: "🥊 UFC",
+  boxing: "🥊 Boxing",
+};
+
+function getSportDisplay(sportKey: string): string {
+  return SPORT_DISPLAY[sportKey] || sportKey.split("_").pop()?.toUpperCase() || sportKey;
+}
+
 /**
  * Card displaying a single event with win probabilities.
  */
@@ -31,8 +62,8 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center gap-2">
             {showSport && event.sport && (
-              <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded uppercase">
-                {event.sport.replace(/_/g, " ")}
+              <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                {getSportDisplay(event.sport)}
               </span>
             )}
             {isLive && (
