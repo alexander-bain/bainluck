@@ -312,3 +312,4 @@ export function getActiveCategoriesFromLeagues(leagueKeys: string[]): SportCateg
 
   return activeCategories;
 }
+// Force rebuild Tue Jan 27 20:21:38 PST 2026
