@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Note: /lib/ not lib/ to avoid blocking frontend/lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -19,6 +20,9 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# But include frontend lib
+!frontend/lib/
 
 # Virtual environments
 venv/

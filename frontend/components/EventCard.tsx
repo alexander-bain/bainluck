@@ -3,45 +3,12 @@
 import Link from "next/link";
 import type { Event, CurrentOdds } from "@/lib/types";
 import { formatProbability, formatGameTime, isStartingSoon } from "@/lib/api";
+import { getLeagueDisplayWithEmoji } from "@/lib/sportCategories";
 import ProbabilityBar from "./ProbabilityBar";
 
 interface EventCardProps {
   event: Event;
   showSport?: boolean;
-}
-
-// Map sport keys to friendly display names (no soccer!)
-const SPORT_DISPLAY: Record<string, string> = {
-  // American Football
-  americanfootball_nfl: "🏈 NFL",
-  americanfootball_ncaaf: "🏈 NCAAF",
-  americanfootball_cfl: "🏈 CFL",
-  // Basketball
-  basketball_nba: "🏀 NBA",
-  basketball_ncaab: "🏀 NCAAB",
-  basketball_wnba: "🏀 WNBA",
-  basketball_wncaab: "🏀 WNCAAB",
-  // Baseball
-  baseball_mlb: "⚾ MLB",
-  // Hockey
-  icehockey_nhl: "🏒 NHL",
-  // Combat Sports
-  mma_mixed_martial_arts: "🥊 MMA",
-  boxing_boxing: "🥋 Boxing",
-  // Golf
-  golf_pga_championship: "⛳ PGA",
-  golf_masters_tournament: "⛳ Masters",
-  // Tennis
-  tennis_atp_aus_open: "🎾 Aus Open",
-  tennis_atp_us_open: "🎾 US Open",
-  tennis_atp_wimbledon: "🎾 Wimbledon",
-  tennis_atp_french_open: "🎾 French Open",
-  // Politics
-  politics_us_presidential_election_winner: "🗳️ Election",
-};
-
-function getSportDisplay(sportKey: string): string {
-  return SPORT_DISPLAY[sportKey] || sportKey.split("_").pop()?.toUpperCase() || sportKey;
 }
 
 /**
@@ -66,7 +33,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           <div className="flex items-center gap-2">
             {showSport && event.sport && (
               <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                {getSportDisplay(event.sport)}
+                {getLeagueDisplayWithEmoji(event.sport)}
               </span>
             )}
             {isLive && (
