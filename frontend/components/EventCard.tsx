@@ -10,31 +10,34 @@ interface EventCardProps {
   showSport?: boolean;
 }
 
-// Map sport keys to friendly display names
+// Map sport keys to friendly display names (no soccer!)
 const SPORT_DISPLAY: Record<string, string> = {
+  // American Football
   americanfootball_nfl: "🏈 NFL",
   americanfootball_ncaaf: "🏈 NCAAF",
   americanfootball_cfl: "🏈 CFL",
+  // Basketball
   basketball_nba: "🏀 NBA",
   basketball_ncaab: "🏀 NCAAB",
   basketball_wnba: "🏀 WNBA",
   basketball_wncaab: "🏀 WNCAAB",
+  // Baseball
   baseball_mlb: "⚾ MLB",
+  // Hockey
   icehockey_nhl: "🏒 NHL",
-  soccer_usa_mls: "⚽ MLS",
-  soccer_epl: "⚽ EPL",
-  soccer_spain_la_liga: "⚽ La Liga",
-  soccer_germany_bundesliga: "⚽ Bundesliga",
-  soccer_italy_serie_a: "⚽ Serie A",
-  soccer_france_ligue_one: "⚽ Ligue 1",
-  soccer_uefa_champs_league: "⚽ UCL",
-  soccer_mexico_ligamx: "⚽ Liga MX",
-  soccer_argentina_primera_division: "⚽ Argentina",
-  golf_pga: "⛳ PGA",
-  tennis_atp: "🎾 ATP",
-  tennis_wta: "🎾 WTA",
-  mma_ufc: "🥊 UFC",
-  boxing: "🥊 Boxing",
+  // Combat Sports
+  mma_mixed_martial_arts: "🥊 MMA",
+  boxing_boxing: "🥋 Boxing",
+  // Golf
+  golf_pga_championship: "⛳ PGA",
+  golf_masters_tournament: "⛳ Masters",
+  // Tennis
+  tennis_atp_aus_open: "🎾 Aus Open",
+  tennis_atp_us_open: "🎾 US Open",
+  tennis_atp_wimbledon: "🎾 Wimbledon",
+  tennis_atp_french_open: "🎾 French Open",
+  // Politics
+  politics_us_presidential_election_winner: "🗳️ Election",
 };
 
 function getSportDisplay(sportKey: string): string {

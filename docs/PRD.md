@@ -1,16 +1,113 @@
 # OddsTracker - Product Requirements Document
 
-## Overview
+## Executive Summary
 
-OddsTracker is a sports betting odds visualization app that converts gambling odds into intuitive win probabilities, helping users understand the likelihood of outcomes without needing to interpret betting lines.
+OddsTracker is a visual-first sports odds experience that translates betting markets into intuitive, real-time representations of how a game is expected to unfold—before and during play.
+
+The product is designed primarily as a **second screen for casual sports fans**: people watching a game who want immediate, understandable context for what just happened and why it mattered, without having to interpret betting lines or think like gamblers.
+
+OddsTracker is not a sportsbook, not a pick-selling tool, and not a stats-heavy analytics platform. It is the cleanest, fastest way to visualize expectation shifts in live sports.
+
+---
+
+## Vision & North Star
 
 ### Vision
-Make sports betting odds accessible and understandable to everyone by translating complex betting lines into simple percentages and projected scores.
+Make betting odds understandable to non-bettors by turning them into clean, live, visual signals about game expectations.
 
-### Target Users
-- Sports fans who want to understand game expectations
-- Casual bettors seeking quick probability insights
+### North Star Statement
+**OddsTracker is the cleanest odds visualization tool on the internet.**
+
+### North Star Metric
+**Time-to-understanding**: How quickly a user can understand what changed in a game and how much it mattered.
+
+Proxy metrics: time on event view, repeat usage during live games, chart interactions.
+
+### The 10-Second Success Moment
+A new user should immediately think:
+
+> "Oh—this shows me how much that play actually changed the game."
+
+This applies equally to a touchdown, a red card, a key injury announcement, or a momentum swing late in a close game. The mental model is **expectation shift**, not gambling.
+
+---
+
+## Target Users
+
+### Primary User (v1 Focus)
+**Casual sports fans who don't bet much (or at all).**
+
+They:
+- Watch games live
+- Hear commentators reference odds or "win probability"
+- Want context, not picks
+- Are curious but not mathematically inclined
+- Are often watching on TV with a phone in hand
+
+### Secondary Users
 - Fantasy sports players tracking matchup likelihoods
+- Casual bettors seeking quick probability insights
+
+### Explicitly Deprioritized (for now)
+- Professional bettors
+- Arbitrage / line-shopping users
+- Heavy fantasy analytics users
+
+These users may still find value, but the product will not optimize for them in early versions.
+
+---
+
+## Product Principles
+
+1. **Visual > Numerical** — Percentages and charts beat odds formats every time.
+2. **Explain Movement, Not Advice** — We show what changed, not what to bet.
+3. **Second-Screen Native** — The product assumes the user is watching the game elsewhere.
+4. **Respect Attention** — No spammy notifications. Silence is sometimes the correct UX.
+5. **Responsible by Design** — Betting is contextual information, not the call to action.
+
+---
+
+## What This Product Is Not (Non-Goals)
+
+OddsTracker will **not** become:
+- A sportsbook or betting interface
+- A pick-selling or tout product
+- A social network
+- A news or commentary site
+- A heavy statistical modeling platform
+
+These exclusions are intentional and protect product clarity.
+
+---
+
+## Core User Experience
+
+### The Second-Screen Experience
+
+OddsTracker is designed to be open during live play, but only active when meaningful.
+
+#### Live Update Philosophy
+- Odds update when markets move meaningfully
+- No "fake" updates during blowouts or dead time
+- Users are told why updates pause
+
+#### UX States (Explicit)
+
+| State | Display |
+|-------|---------|
+| Live & Updating | "Live: Updating every ~60 seconds" |
+| Paused (No Movement) | "No significant changes—game is currently a blowout" |
+| Paused (Market Halted) | "Markets paused during review / injury / timeout" |
+| Upcoming Update | "Next update expected after current drive / possession" |
+
+This removes confusion and builds trust.
+
+#### Automatic Context (Lightweight)
+When a large shift occurs, OddsTracker may surface:
+- "That TD increased win probability by +14%"
+- "This injury moved the line significantly"
+
+No narration. No hype. Just facts.
 
 ---
 
@@ -212,6 +309,8 @@ def project_scores(home_prob: float, over_under: float) -> tuple[float, float]:
     
     This is a simplified model. The favorite is expected to score
     proportionally more of the total based on their win probability.
+    
+    Note: Clearly labeled as illustrative in the UI, not a prediction.
     """
     # Adjust for the correlation between winning and scoring more
     # A team with 60% win prob doesn't score 60% of points
@@ -238,6 +337,9 @@ def calculate_gei(home_prob: float, over_under: float, sport: str) -> float:
     - Expected to be high-scoring
     
     Reference: https://lukebenz.com/post/gei/
+    
+    Note: Experimental feature. Used as a sorting/discovery signal,
+    not core to product identity.
     """
     # Closeness factor: peaks at 0.5, drops toward 0 or 1
     closeness = 1 - abs(home_prob - 0.5) * 2
@@ -295,35 +397,39 @@ POST /api/admin/aggregate           # Trigger aggregation job
 
 ## Feature Phases
 
-### Phase 1: MVP (Weeks 1-3)
+### Phase 1: MVP (Weeks 1–3)
+**Non-negotiable core features only.**
+
 - [x] Project setup and CI/CD
 - [ ] Database schema and migrations
 - [ ] Odds API integration
-- [ ] Basic probability conversion
-- [ ] Simple web UI showing live probabilities
-- [ ] Historical odds chart per event
+- [ ] Live win probability (%)
+- [ ] Odds movement chart (pre-game → now)
+- [ ] Live updates with clear cadence & pausing states
+- [ ] Web-first, mobile-optimized UI
 
-### Phase 2: Personalization (Weeks 4-5)
+### Phase 2: Personalization (Weeks 4–5)
 - [ ] Favorite teams (local storage first)
-- [ ] Sorting options (alphabetical, by sport, by GEI)
-- [ ] Firebase Auth integration
+- [ ] Sorting by closeness / live games / alphabetical
+- [ ] Firebase Auth integration (pull-based, not forced)
 - [ ] Persist favorites to database
 
-### Phase 3: Enhanced Features (Weeks 6-8)
-- [ ] Projected final scores
-- [ ] Game Excitement Index
-- [ ] Tournament/championship tracking
+### Phase 3: Context & Polish (Weeks 6–8)
+- [ ] Projected final scores (clearly labeled as illustrative)
+- [ ] Basic explanations for large probability swings
+- [ ] Game Excitement Index (experimental, for sorting/discovery)
 - [ ] Shareable web links with app promo banner
+- [ ] Tournament/championship tracking
 
-### Phase 4: iOS App (Weeks 9-12)
-- [ ] SwiftUI app shell
-- [ ] API integration
+### Phase 4: iOS App (Weeks 9–12)
+- [ ] SwiftUI app shell with parity to web
+- [ ] Second-screen optimized UI
 - [ ] Favorites and sorting
 - [ ] Share extension
+- [ ] Widgets (read-only)
 
 ### Phase 5: Advanced (Weeks 13+)
-- [ ] Push notifications for probability swings
-- [ ] iOS widgets
+- [ ] Push notifications for major probability swings
 - [ ] LLM-powered swing summaries
 
 ---
@@ -363,24 +469,98 @@ POST /api/admin/aggregate           # Trigger aggregation job
 
 ---
 
+## Authentication Philosophy
+
+- **No required sign-in** — Logged-out experience must feel complete
+- Auth exists to unlock: Favorites, Notification controls, Future premium features
+- Auth is **pull-based, not forced**
+
+---
+
+## Notifications Strategy
+
+Notifications are high-risk and must earn their place.
+
+### Initial Stance
+- Off by default
+- User-configured only
+- Focused on major probability swings
+
+### Examples
+- "Win probability swung by 20%"
+- "Late-game flip in close matchup"
+
+**No constant pings. Silence is a feature.**
+
+---
+
+## Monetization (Future-Compatible, Not MVP)
+
+### Long-Term Options
+- Display ads (carefully placed, non-intrusive)
+- Premium tier (e.g., ad-free, deeper history, advanced alerts)
+
+### Explicitly Excluded
+- Selling picks
+- Aggressive affiliate betting funnels
+
+Monetization must not distort trust or clarity.
+
+---
+
+## Legal & Compliance
+
+- Neutral, compliant stance
+- No state-specific betting actions
+- No calls to action to place bets
+
+OddsTracker displays information, not transactions.
+
+---
+
 ## Success Metrics
 
+### Product Metrics
+- % of sessions during live games
+- Repeat opens during a single game
+- Time spent on event view
+
+### Technical Metrics
 - **Reliability**: 99.9% uptime for API
 - **Freshness**: Odds updated within 2 minutes of source
 - **Performance**: API response time < 200ms p95
-- **Engagement**: Daily active users, favorite teams per user
+
+### Trust Metrics
+- Low notification opt-out rates
+- Low bounce rate during paused states
 
 ---
 
 ## Open Questions
 
-1. **Auth trigger**: Which features require sign-in?
+1. **Swing thresholds**: What threshold defines a "meaningful" probability swing worth surfacing?
+
+2. **Automatic context**: How much automatic explanation is helpful vs noisy?
+
+3. **Auth trigger**: Which features require sign-in?
    - Favorites beyond X teams?
    - Notifications?
    - Historical data beyond 24 hours?
 
-2. **Monetization**: Future consideration
-   - Premium features?
-   - Ad-supported free tier?
+4. **Replay mode**: Should post-game replay mode exist to review how odds evolved?
 
-3. **Legal**: Sports betting display regulations by state?
+5. **Legal**: Sports betting display regulations by state?
+
+These are product experiments, not blockers.
+
+---
+
+## Final Note
+
+This product wins not by being smarter than users, but by being **clearer than everything else**.
+
+If OddsTracker succeeds, users won't say:
+> "This helped me bet."
+
+They'll say:
+> "I finally understood what was happening."

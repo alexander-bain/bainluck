@@ -1,7 +1,7 @@
 """Sports API endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Sport
@@ -9,19 +9,26 @@ from app.services import get_db, OddsAPIService
 
 router = APIRouter()
 
+# Excluded sport prefixes (no soccer!)
+EXCLUDED_SPORT_PREFIXES = ["soccer_"]
+
 
 @router.get("")
 async def list_sports(db: AsyncSession = Depends(get_db)):
     """
     List all supported sports.
-    
+
     Returns sports we're actively tracking with their metadata.
     """
-    result = await db.execute(
-        select(Sport).where(Sport.active == True).order_by(Sport.name)
-    )
+    query = select(Sport).where(Sport.active == True)
+
+    # Exclude soccer
+    for prefix in EXCLUDED_SPORT_PREFIXES:
+        query = query.where(not_(Sport.key.startswith(prefix)))
+
+    result = await db.execute(query.order_by(Sport.name))
     sports = result.scalars().all()
-    
+
     return {
         "sports": [
             {

@@ -9,7 +9,7 @@ interface SportFilterProps {
   loading?: boolean;
 }
 
-// Map sport keys to friendly names with emojis
+// Map sport keys to friendly names with emojis (no soccer!)
 const SPORT_DISPLAY: Record<string, string> = {
   // American Football
   americanfootball_nfl: "🏈 NFL",
@@ -26,26 +26,19 @@ const SPORT_DISPLAY: Record<string, string> = {
   baseball_mlb: "⚾ MLB",
   // Hockey
   icehockey_nhl: "🏒 NHL",
-  // Soccer
-  soccer_usa_mls: "⚽ MLS",
-  soccer_epl: "⚽ EPL",
-  soccer_spain_la_liga: "⚽ La Liga",
-  soccer_germany_bundesliga: "⚽ Bundesliga",
-  soccer_italy_serie_a: "⚽ Serie A",
-  soccer_france_ligue_one: "⚽ Ligue 1",
-  soccer_uefa_champs_league: "⚽ UCL",
-  soccer_mexico_ligamx: "⚽ Liga MX",
-  soccer_brazil_campeonato: "⚽ Brasileirão",
-  soccer_argentina_primera_division: "⚽ Argentina",
+  // Combat Sports
+  mma_mixed_martial_arts: "🥊 MMA",
+  boxing_boxing: "🥋 Boxing",
   // Golf
-  golf_pga: "⛳ PGA",
+  golf_pga_championship: "⛳ PGA",
+  golf_masters_tournament: "⛳ Masters",
   // Tennis
-  tennis_atp: "🎾 ATP",
-  tennis_wta: "🎾 WTA",
-  // MMA
-  mma_ufc: "🥊 UFC",
-  // Boxing
-  boxing: "🥊 Boxing",
+  tennis_atp_aus_open: "🎾 Australian Open",
+  tennis_atp_us_open: "🎾 US Open",
+  tennis_atp_wimbledon: "🎾 Wimbledon",
+  tennis_atp_french_open: "🎾 French Open",
+  // Politics
+  politics_us_presidential_election_winner: "🗳️ US Election",
 };
 
 function getSportDisplay(sport: Sport): string {

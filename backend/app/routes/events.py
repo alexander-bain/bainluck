@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +13,9 @@ from app.services import get_db, OddsAPIService, fetch_current_odds
 from app.utils import moneyline_to_probability, project_scores, calculate_gei
 
 router = APIRouter()
+
+# Excluded sport prefixes (no soccer!)
+EXCLUDED_SPORT_PREFIXES = ["soccer_"]
 
 
 @router.get("")
@@ -49,7 +52,11 @@ async def list_events(
     end_date = now + timedelta(days=days)
     conditions.append(Event.commence_time >= now)
     conditions.append(Event.commence_time <= end_date)
-    
+
+    # Exclude soccer (and any other excluded sports)
+    for prefix in EXCLUDED_SPORT_PREFIXES:
+        conditions.append(not_(Event.sport.has(Sport.key.startswith(prefix))))
+
     if conditions:
         query = query.where(and_(*conditions))
     

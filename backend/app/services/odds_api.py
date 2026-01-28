@@ -42,14 +42,31 @@ class OddsAPIService:
     
     BASE_URL = "https://api.the-odds-api.com/v4"
     
-    # Supported sports (can be expanded)
+    # Supported sports (no soccer!)
     SPORTS = [
+        # American Football
         "americanfootball_nfl",
         "americanfootball_ncaaf",
+        # Basketball
         "basketball_nba",
         "basketball_ncaab",
+        "basketball_wnba",
+        # Baseball
         "baseball_mlb",
+        # Hockey
         "icehockey_nhl",
+        # Combat Sports
+        "mma_mixed_martial_arts",
+        "boxing_boxing",
+        # Golf
+        "golf_pga_championship",
+        # Tennis
+        "tennis_atp_aus_open",
+        "tennis_atp_us_open",
+        "tennis_atp_wimbledon",
+        "tennis_atp_french_open",
+        # Politics (when available)
+        "politics_us_presidential_election_winner",
     ]
     
     def __init__(self, api_key: Optional[str] = None):
