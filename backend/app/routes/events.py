@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, not_
+from sqlalchemy import select, and_, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -46,12 +46,23 @@ async def list_events(
     else:
         # Default: show scheduled and live
         conditions.append(Event.status.in_(["scheduled", "live"]))
-    
-    # Date range
+
+    # Date range - but always include live games regardless of start time
     now = datetime.utcnow()
     end_date = now + timedelta(days=days)
-    conditions.append(Event.commence_time >= now)
-    conditions.append(Event.commence_time <= end_date)
+
+    # Show events that either:
+    # 1. Are live (regardless of when they started), OR
+    # 2. Are scheduled and start within the date range
+    conditions.append(
+        or_(
+            Event.status == "live",
+            and_(
+                Event.commence_time >= now,
+                Event.commence_time <= end_date
+            )
+        )
+    )
 
     # Exclude soccer (and any other excluded sports)
     for prefix in EXCLUDED_SPORT_PREFIXES:
