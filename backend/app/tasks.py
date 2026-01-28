@@ -6,12 +6,14 @@ This module sets up periodic tasks to:
 2. Store events and snapshots in the database
 3. Calculate probabilities
 
-Adaptive polling (optimized for 90K calls/month):
-- Only polls sports with games in the next 12 hours
-- Polls every 3 min when games are live
-- Slows to 10 min when data is changing
-- Slows to 30 min after 3 consecutive unchanged polls
-- Slows to 60 min after 6 consecutive unchanged polls
+Tiered polling (optimized for 90K calls/month):
+- Only polls sports with games starting within 6 hours
+- Live games: Poll every 60 seconds
+- Games starting in 0-2 hours: Poll every 5 minutes
+- Games starting in 2-6 hours: Poll every 15 minutes
+- No games in 6 hours: Don't poll that sport at all
+
+Estimated usage: ~500-1000 calls/day, well within 3K/day budget.
 """
 
 import asyncio
@@ -24,7 +26,7 @@ from datetime import datetime, timezone
 import redis
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
 
 from app.services.database import async_session_maker
@@ -85,11 +87,15 @@ POLL_STATE_KEY = "odds_tracker:poll_state"
 LAST_ODDS_HASH_KEY = "odds_tracker:last_odds_hash"
 
 # Polling intervals (in seconds)
-# Conservative settings to stay within 90K calls/month (~3K/day)
-LIVE_POLL_INTERVAL = 180      # 3 minutes when games are live (was 1 min)
-FAST_POLL_INTERVAL = 600      # 10 minutes when data is changing (was 3 min)
-MEDIUM_POLL_INTERVAL = 1800   # 30 minutes after 3 unchanged polls (was 10 min)
-SLOW_POLL_INTERVAL = 3600     # 60 minutes after 6 unchanged polls (was 30 min)
+# Tiered approach based on game proximity
+LIVE_POLL_INTERVAL = 60       # 1 minute for live games (the main use case!)
+SOON_POLL_INTERVAL = 300      # 5 minutes for games starting in 0-2 hours
+LATER_POLL_INTERVAL = 900     # 15 minutes for games starting in 2-6 hours
+
+# Legacy adaptive polling thresholds (for when no live games)
+FAST_POLL_INTERVAL = 600      # 10 minutes when data is changing
+MEDIUM_POLL_INTERVAL = 1800   # 30 minutes after unchanged polls
+SLOW_POLL_INTERVAL = 3600     # 60 minutes overnight
 
 # Thresholds for slowing down
 MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
@@ -298,63 +304,123 @@ def poll_all_odds(self):
 
 async def _poll_all_odds():
     """
-    Async implementation of poll_all_odds with change detection.
+    Async implementation of poll_all_odds with tiered per-sport polling.
 
-    Optimized to reduce API calls:
-    - Only polls sports with games starting in the next 12 hours or currently live
-    - Skips sports with no upcoming games
+    Tiered polling based on game proximity:
+    - Live games (in progress): Poll every 60 seconds
+    - Starting soon (0-2 hours): Poll every 5 minutes
+    - Starting later (2-6 hours): Poll every 15 minutes
+    - No games in 6 hours: Don't poll that sport
+
+    Uses per-sport last poll times stored in Redis.
     """
     service = OddsAPIService()
 
     try:
         total_events = 0
         total_snapshots = 0
-        all_events_data = []  # Collect for hash computation
+        all_events_data = []
         has_live_games = False
         sports_polled = 0
+        sports_skipped = 0
+
+        # Get Redis client for per-sport poll tracking
+        try:
+            r = get_redis_client()
+        except Exception:
+            r = None
 
         async with async_session_maker() as session:
-            # Get sports that have games within the next 12 hours or are live
-            # This dramatically reduces API calls vs polling all sports
             from datetime import timedelta
             now = datetime.now(timezone.utc)
-            lookahead = now + timedelta(hours=12)
 
+            # Get all sports with upcoming/live games in the next 6 hours
+            lookahead_6h = now + timedelta(hours=6)
+
+            # Query to get sports with their soonest game time
             result = await session.execute(
-                select(Sport.key).distinct()
+                select(
+                    Sport.key,
+                    func.min(Event.commence_time).label("soonest_game"),
+                    func.bool_or(Event.status == "live").label("has_live")
+                )
                 .join(Event)
                 .where(
                     Sport.active == True,
                     Event.status.in_(["scheduled", "live"]),
-                    Event.commence_time <= lookahead,
-                    Event.commence_time >= now - timedelta(hours=6)  # Include games that started up to 6h ago
+                    Event.commence_time <= lookahead_6h,
+                    Event.commence_time >= now - timedelta(hours=6)
                 )
+                .group_by(Sport.key)
             )
-            sport_keys = [row[0] for row in result.all()]
+            sport_data = result.all()
 
-            # If no sports with upcoming games, skip polling entirely
-            if not sport_keys:
+            if not sport_data:
                 return {
                     "events": 0,
                     "snapshots": 0,
                     "sports": 0,
-                    "message": "No sports with upcoming games in the next 12 hours.",
+                    "sports_skipped": 0,
+                    "message": "No sports with games in the next 6 hours.",
                     "skipped": True,
                 }
 
-            for sport_key in sport_keys:
+            for row in sport_data:
+                sport_key = row[0]
+                soonest_game = row[1]
+                is_live = row[2]
+
+                # Determine poll interval for this sport
+                if is_live or (soonest_game and soonest_game <= now):
+                    # Live game - poll every 60 seconds
+                    poll_interval = LIVE_POLL_INTERVAL
+                    tier = "live"
+                    has_live_games = True
+                elif soonest_game and soonest_game <= now + timedelta(hours=2):
+                    # Starting soon (0-2 hours) - poll every 5 minutes
+                    poll_interval = SOON_POLL_INTERVAL
+                    tier = "soon"
+                else:
+                    # Starting later (2-6 hours) - poll every 15 minutes
+                    poll_interval = LATER_POLL_INTERVAL
+                    tier = "later"
+
+                # Check if enough time has elapsed since last poll for this sport
+                should_poll_sport = True
+                if r:
+                    try:
+                        last_poll_key = f"odds_tracker:last_poll:{sport_key}"
+                        last_poll = r.get(last_poll_key)
+                        if last_poll:
+                            last_poll_time = float(last_poll.decode())
+                            elapsed = now.timestamp() - last_poll_time
+                            if elapsed < poll_interval:
+                                # Not enough time elapsed, skip this sport
+                                should_poll_sport = False
+                                sports_skipped += 1
+                    except Exception:
+                        pass  # If Redis fails, just poll
+
+                if not should_poll_sport:
+                    continue
+
                 try:
                     events_data = await service.get_odds(sport_key)
                     all_events_data.extend(events_data)
                     sports_polled += 1
 
+                    # Update last poll time in Redis
+                    if r:
+                        try:
+                            last_poll_key = f"odds_tracker:last_poll:{sport_key}"
+                            r.set(last_poll_key, str(now.timestamp()), ex=3600)
+                        except Exception:
+                            pass
+
                     for event_data in events_data:
-                        # Check if game is live
                         commence_time = datetime.fromisoformat(
                             event_data["commence_time"].replace("Z", "+00:00")
                         )
-                        if commence_time <= datetime.now(timezone.utc):
-                            has_live_games = True
 
                         # Get or create sport
                         sport_result = await session.execute(
@@ -363,7 +429,6 @@ async def _poll_all_odds():
                         sport = sport_result.scalar_one_or_none()
 
                         if not sport:
-                            # Create sport on the fly
                             sport = Sport(
                                 key=sport_key,
                                 name=sport_key.replace("_", " ").title(),
@@ -373,7 +438,7 @@ async def _poll_all_odds():
                             await session.flush()
 
                         # Upsert event
-                        event_status = "scheduled" if commence_time > datetime.now(timezone.utc) else "live"
+                        event_status = "scheduled" if commence_time > now else "live"
                         stmt = insert(Event).values(
                             external_id=event_data["id"],
                             sport_id=sport.id,
@@ -387,7 +452,7 @@ async def _poll_all_odds():
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
                                 "commence_time": commence_time,
-                                "status": event_status,  # Update status on each poll
+                                "status": event_status,
                             }
                         ).returning(Event.id)
 
@@ -430,8 +495,8 @@ async def _poll_all_odds():
         return {
             "events": total_events,
             "snapshots": total_snapshots,
-            "sports": sports_polled,
-            "sports_with_games": len(sport_keys),
+            "sports_polled": sports_polled,
+            "sports_skipped": sports_skipped,
             "data_changed": data_changed,
             "has_live_games": has_live_games,
         }
