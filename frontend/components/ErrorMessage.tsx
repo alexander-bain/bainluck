@@ -7,7 +7,7 @@ interface ErrorMessageProps {
 }
 
 /**
- * Error message display with optional retry button.
+ * Error message display - inline, actionable per design brief.
  */
 export default function ErrorMessage({
   title = "Something went wrong",
@@ -15,15 +15,15 @@ export default function ErrorMessage({
   onRetry,
 }: ErrorMessageProps) {
   return (
-    <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
-      <h3 className="text-red-800 font-semibold mb-1">{title}</h3>
-      <p className="text-red-600 text-sm mb-3">{message}</p>
+    <div className="bg-white border border-mist rounded-card p-4">
+      <p className="text-body-strong text-graphite mb-1">{title}</p>
+      <p className="text-caption text-rust mb-3">{message}</p>
       {onRetry && (
         <button
           onClick={onRetry}
-          className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
+          className="text-caption text-ink underline hover:no-underline transition-colors"
         >
-          Try Again
+          Tap to retry
         </button>
       )}
     </div>

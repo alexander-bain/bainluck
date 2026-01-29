@@ -2,17 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import JetBrains Mono for monospace probabilities */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&display=swap');
+
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-rgb: 249, 250, 251;
+  /* Colors */
+  --color-snow: #FAFAFA;
+  --color-white: #FFFFFF;
+  --color-graphite: #1A1A1A;
+  --color-slate: #6B7280;
+  --color-silver: #9CA3AF;
+  --color-mist: #E5E7EB;
+  --color-ink: #0F172A;
+  --color-charcoal: #374151;
+  --color-fog: #D1D5DB;
+  --color-forest: #059669;
+  --color-rust: #DC2626;
+  --color-emerald: #10B981;
+  --color-amber: #F59E0B;
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease-in-out;
+  --transition-base: 200ms ease-out;
+  --transition-slow: 300ms ease-out;
+  --transition-probability: 400ms ease-out;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
+  color: var(--color-graphite);
+  background: var(--color-snow);
 }
 
-/* Hide scrollbar for sport filter */
+/* Hide scrollbar for filter pills */
 .scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -20,4 +57,23 @@ body {
 
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
+}
+
+/* Live pulse animation */
+@keyframes pulse-live {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-live {
+  animation: pulse-live 2s ease-in-out infinite;
+}
+
+/* Probability transition */
+.probability-transition {
+  transition: width var(--transition-probability);
 }

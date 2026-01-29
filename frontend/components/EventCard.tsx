@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import type { Event, CurrentOdds } from "@/lib/types";
+import type { Event } from "@/lib/types";
 import { formatProbability, formatGameTime, isStartingSoon } from "@/lib/api";
-import { getLeagueDisplayWithEmoji } from "@/lib/sportCategories";
+import { getLeagueDisplay } from "@/lib/sportCategories";
 import ProbabilityBar from "./ProbabilityBar";
 
 interface EventCardProps {
@@ -12,7 +12,9 @@ interface EventCardProps {
 }
 
 /**
- * Card displaying a single event with win probabilities.
+ * Event card per design brief.
+ * Clean, typography-driven, no team colors.
+ * Probabilities in monospace, right-aligned.
  */
 export default function EventCard({ event, showSport = true }: EventCardProps) {
   const odds = event.current_odds;
@@ -27,51 +29,48 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
 
   return (
     <Link href={`/events/${event.id}`}>
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow cursor-pointer">
-        {/* Header: Sport badge and game time */}
+      <div className="bg-white rounded-card shadow-card p-4 hover:shadow-card-hover transition-shadow cursor-pointer">
+        {/* Header: Sport badge and live indicator */}
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center gap-2">
             {showSport && event.sport && (
-              <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                {getLeagueDisplayWithEmoji(event.sport)}
+              <span className="text-micro text-slate bg-mist px-2 py-0.5 rounded">
+                {getLeagueDisplay(event.sport)}
               </span>
             )}
             {isLive && (
-              <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded animate-pulse">
-                LIVE
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald animate-pulse-live" />
+                <span className="text-micro font-medium text-emerald">
+                  LIVE
+                </span>
+              </div>
             )}
             {startingSoon && (
-              <span className="text-xs font-medium text-orange-600 bg-orange-50 px-2 py-0.5 rounded">
-                Starting Soon
+              <span className="text-micro text-amber">
+                Soon
               </span>
             )}
           </div>
-          <span className="text-xs text-gray-500">
-            {formatGameTime(event.commence_time)}
-          </span>
         </div>
 
         {/* Teams and Probabilities */}
-        <div className="space-y-3">
+        <div className="space-y-2">
           {/* Home Team */}
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
-              {homeFavorite && homeProb !== null && (
-                <span className="w-2 h-2 rounded-full bg-green-500" />
-              )}
-              <span className={`font-semibold ${homeFavorite ? "text-gray-900" : "text-gray-700"}`}>
+              <span className={`text-title-3 ${homeFavorite ? "text-graphite" : "text-slate"}`}>
                 {event.home_team}
               </span>
               {isLive && event.home_score !== null && (
-                <span className="text-lg font-bold text-gray-900 ml-2">
+                <span className="text-body-strong text-graphite">
                   {event.home_score}
                 </span>
               )}
             </div>
             <span
-              className={`text-2xl font-bold ${
-                homeFavorite ? "text-green-600" : "text-gray-500"
+              className={`font-mono text-2xl font-bold tabular-nums ${
+                homeFavorite ? "text-graphite" : "text-silver"
               }`}
             >
               {formatProbability(homeProb)}
@@ -91,21 +90,18 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           {/* Away Team */}
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
-              {!homeFavorite && awayProb !== null && (
-                <span className="w-2 h-2 rounded-full bg-blue-500" />
-              )}
-              <span className={`font-semibold ${!homeFavorite ? "text-gray-900" : "text-gray-700"}`}>
+              <span className={`text-title-3 ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
                 {event.away_team}
               </span>
               {isLive && event.away_score !== null && (
-                <span className="text-lg font-bold text-gray-900 ml-2">
+                <span className="text-body-strong text-graphite">
                   {event.away_score}
                 </span>
               )}
             </div>
             <span
-              className={`text-2xl font-bold ${
-                !homeFavorite ? "text-blue-600" : "text-gray-500"
+              className={`font-mono text-2xl font-bold tabular-nums ${
+                !homeFavorite ? "text-graphite" : "text-silver"
               }`}
             >
               {formatProbability(awayProb)}
@@ -113,21 +109,12 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           </div>
         </div>
 
-        {/* Footer: Additional odds info */}
-        {odds && (odds.spread !== null || odds.over_under !== null) && (
-          <div className="mt-3 pt-3 border-t border-gray-100 flex gap-4 text-xs text-gray-500">
-            {odds.spread !== null && (
-              <span>
-                Spread: <span className="font-medium text-gray-700">{odds.spread > 0 ? `+${odds.spread}` : odds.spread}</span>
-              </span>
-            )}
-            {odds.over_under !== null && (
-              <span>
-                O/U: <span className="font-medium text-gray-700">{odds.over_under}</span>
-              </span>
-            )}
-          </div>
-        )}
+        {/* Footer: Game time */}
+        <div className="mt-3 pt-3 border-t border-mist">
+          <span className="text-caption text-slate">
+            {formatGameTime(event.commence_time)}
+          </span>
+        </div>
       </div>
     </Link>
   );

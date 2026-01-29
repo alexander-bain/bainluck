@@ -3,7 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { fetchEvents, fetchSports } from "@/lib/api";
-import type { Event, Sport } from "@/lib/types";
+import type { Event } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import SportFilter from "@/components/SportFilter";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -11,10 +11,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import {
   SPORT_CATEGORIES,
   getCategoryForLeague,
-  getLeagueDisplay,
-  getEmojiForLeague,
   getCategoryName,
-  type SportCategory,
 } from "@/lib/sportCategories";
 
 type SortOption = "time" | "closeness";
@@ -24,14 +21,12 @@ export default function HomePage() {
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>("time");
 
-  // Fetch sports list
   const {
     data: sportsData,
     error: sportsError,
     isLoading: sportsLoading,
   } = useSWR("sports", fetchSports);
 
-  // Fetch events (fetch all, filter client-side for category filtering)
   const {
     data: eventsData,
     error: eventsError,
@@ -43,18 +38,15 @@ export default function HomePage() {
     { refreshInterval: 30000 }
   );
 
-  // Filter events by category if selected but no specific sport
-  // All events are shown (no whitelist filtering) - backend already excludes soccer
+  // Filter events by category if selected
   let filteredEvents = eventsData?.events ?? [];
   if (selectedCategory && !selectedSport) {
     const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
     if (category) {
-      // Filter by prefix matching
       filteredEvents = filteredEvents.filter((e) =>
         e.sport && category.prefixes.some((prefix) => e.sport!.startsWith(prefix))
       );
     } else if (selectedCategory === "other") {
-      // "Other" category - sports that don't match any known prefix
       filteredEvents = filteredEvents.filter((e) =>
         e.sport && !getCategoryForLeague(e.sport)
       );
@@ -75,45 +67,37 @@ export default function HomePage() {
     return new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime();
   });
 
-  // Group events by date, then by sport category, then by league
-  const groupedEvents = groupByDateAndSport(sortedEvents, selectedCategory !== null);
+  // Group events by date
+  const groupedEvents = groupByDate(sortedEvents);
 
   const sports = sportsData?.sports ?? [];
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Upcoming Games
-        </h1>
-        <p className="text-gray-600">
-          Win probabilities updated every 30 seconds
-        </p>
-      </div>
+      {/* Filters - sticky on scroll */}
+      <div className="sticky top-16 bg-snow py-3 -mx-4 px-4 md:-mx-8 md:px-8 lg:-mx-12 lg:px-12 z-40">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <SportFilter
+            sports={sports}
+            selectedSport={selectedSport}
+            selectedCategory={selectedCategory}
+            onSelectSport={setSelectedSport}
+            onSelectCategory={setSelectedCategory}
+            loading={sportsLoading}
+          />
 
-      {/* Filters */}
-      <div className="flex flex-col gap-4">
-        <SportFilter
-          sports={sports}
-          selectedSport={selectedSport}
-          selectedCategory={selectedCategory}
-          onSelectSport={setSelectedSport}
-          onSelectCategory={setSelectedCategory}
-          loading={sportsLoading}
-        />
-
-        {/* Sort dropdown */}
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Sort by:</label>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortOption)}
-            className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
-          >
-            <option value="time">Game Time</option>
-            <option value="closeness">Closest Odds</option>
-          </select>
+          {/* Sort dropdown */}
+          <div className="flex items-center gap-2">
+            <label className="text-caption text-slate">Sort:</label>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              className="text-caption border border-mist rounded px-3 py-1.5 bg-white text-graphite focus:outline-none focus:ring-1 focus:ring-ink"
+            >
+              <option value="time">Game Time</option>
+              <option value="closeness">Closest Odds</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -136,9 +120,9 @@ export default function HomePage() {
       {!eventsLoading && !eventsError && (
         <>
           {sortedEvents.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="text-lg mb-2">No upcoming events found</p>
-              <p className="text-sm">
+            <div className="text-center py-16">
+              <p className="text-body text-slate mb-2">No upcoming events</p>
+              <p className="text-caption text-silver">
                 {selectedSport || selectedCategory
                   ? "Try selecting a different sport"
                   : "Check back later for more games"}
@@ -146,56 +130,22 @@ export default function HomePage() {
             </div>
           ) : (
             <div className="space-y-8">
-              {Object.entries(groupedEvents).map(([date, sportGroups]) => (
+              {Object.entries(groupedEvents).map(([date, events]) => (
                 <div key={date}>
                   {/* Date header */}
-                  <h2 className="text-lg font-semibold text-gray-700 mb-4 sticky top-[73px] bg-gray-50 py-2 -mx-4 px-4 z-10">
+                  <h2 className="text-caption-strong text-slate mb-4">
                     {date}
                   </h2>
 
-                  {/* Sport groups within this date */}
-                  <div className="space-y-6">
-                    {Object.entries(sportGroups).map(([categoryKey, leagueGroups]) => {
-                      // Get first league key to determine emoji
-                      const firstLeagueKey = Object.keys(leagueGroups)[0];
-                      const emoji = getEmojiForLeague(firstLeagueKey);
-                      const sportName = getCategoryName(firstLeagueKey);
-
-                      return (
-                        <div key={categoryKey} className="space-y-4">
-                          {/* Sport header with emoji */}
-                          <div className="flex items-center gap-2">
-                            <span className="text-xl">{emoji}</span>
-                            <h3 className="text-md font-medium text-gray-600">
-                              {sportName}
-                            </h3>
-                          </div>
-
-                          {/* League groups within this sport */}
-                          {Object.entries(leagueGroups).map(([leagueKey, events]) => (
-                            <div key={leagueKey} className="pl-4 border-l-2 border-gray-200">
-                              {/* League label (only if multiple leagues in sport) */}
-                              {Object.keys(leagueGroups).length > 1 && (
-                                <p className="text-xs text-gray-500 mb-2 font-medium">
-                                  {getLeagueDisplay(leagueKey)}
-                                </p>
-                              )}
-
-                              {/* Events grid */}
-                              <div className="grid gap-4 md:grid-cols-2">
-                                {events.map((event) => (
-                                  <EventCard
-                                    key={event.id}
-                                    event={event}
-                                    showSport={false}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })}
+                  {/* Events grid - responsive per design brief */}
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {events.map((event) => (
+                      <EventCard
+                        key={event.id}
+                        event={event}
+                        showSport={!selectedCategory}
+                      />
+                    ))}
                   </div>
                 </div>
               ))}
@@ -204,8 +154,8 @@ export default function HomePage() {
 
           {/* Event count */}
           {sortedEvents.length > 0 && (
-            <p className="text-center text-sm text-gray-500 pt-4">
-              Showing {sortedEvents.length} event{sortedEvents.length !== 1 ? "s" : ""}
+            <p className="text-center text-caption text-silver pt-4">
+              {sortedEvents.length} event{sortedEvents.length !== 1 ? "s" : ""}
             </p>
           )}
         </>
@@ -215,14 +165,11 @@ export default function HomePage() {
 }
 
 /**
- * Group events by date, then by sport category, then by league.
- * Returns: { date: { categoryKey: { leagueKey: Event[] } } }
+ * Group events by date.
+ * Returns: { date: Event[] }
  */
-function groupByDateAndSport(
-  events: Event[],
-  skipSportGrouping: boolean
-): Record<string, Record<string, Record<string, Event[]>>> {
-  const groups: Record<string, Record<string, Record<string, Event[]>>> = {};
+function groupByDate(events: Event[]): Record<string, Event[]> {
+  const groups: Record<string, Event[]> = {};
 
   for (const event of events) {
     const date = new Date(event.commence_time);
@@ -244,45 +191,10 @@ function groupByDateAndSport(
       });
     }
 
-    // Sport category key
-    const category = event.sport ? getCategoryForLeague(event.sport) : undefined;
-    const categoryKey = category?.key || "other";
-
-    // League key
-    const leagueKey = event.sport || "unknown";
-
-    // Initialize nested structure
     if (!groups[dateKey]) {
-      groups[dateKey] = {};
+      groups[dateKey] = [];
     }
-    if (!groups[dateKey][categoryKey]) {
-      groups[dateKey][categoryKey] = {};
-    }
-    if (!groups[dateKey][categoryKey][leagueKey]) {
-      groups[dateKey][categoryKey][leagueKey] = [];
-    }
-
-    groups[dateKey][categoryKey][leagueKey].push(event);
-  }
-
-  // Sort categories within each date by a predefined order
-  const categoryOrder = SPORT_CATEGORIES.map((c) => c.key);
-
-  for (const dateKey of Object.keys(groups)) {
-    const sortedCategories: Record<string, Record<string, Event[]>> = {};
-    const categoryKeys = Object.keys(groups[dateKey]).sort((a, b) => {
-      const aIndex = categoryOrder.indexOf(a);
-      const bIndex = categoryOrder.indexOf(b);
-      if (aIndex === -1 && bIndex === -1) return 0;
-      if (aIndex === -1) return 1;
-      if (bIndex === -1) return -1;
-      return aIndex - bIndex;
-    });
-
-    for (const catKey of categoryKeys) {
-      sortedCategories[catKey] = groups[dateKey][catKey];
-    }
-    groups[dateKey] = sortedCategories;
+    groups[dateKey].push(event);
   }
 
   return groups;

@@ -6,7 +6,7 @@ interface LoadingSpinnerProps {
 }
 
 /**
- * Loading spinner with optional text.
+ * Loading spinner with subtle animation.
  */
 export default function LoadingSpinner({
   size = "md",
@@ -21,9 +21,9 @@ export default function LoadingSpinner({
   return (
     <div className="flex flex-col items-center justify-center gap-3">
       <div
-        className={`${sizeClasses[size]} border-gray-300 border-t-gray-900 rounded-full animate-spin`}
+        className={`${sizeClasses[size]} border-mist border-t-charcoal rounded-full animate-spin`}
       />
-      {text && <span className="text-sm text-gray-500">{text}</span>}
+      {text && <span className="text-caption text-slate">{text}</span>}
     </div>
   );
 }
