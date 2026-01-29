@@ -104,3 +104,5 @@ ios/.build/
 *.tmp
 *.temp
 celerybeat-schedule
+.vercel
+.env*.local
