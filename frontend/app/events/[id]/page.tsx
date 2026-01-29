@@ -271,13 +271,13 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       {/* Projected Score (only on detail, not list per design brief) */}
-      {odds?.projected_home_score !== null && odds?.projected_away_score !== null && (
+      {odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-caption-strong text-slate mb-4">Projected Final</h3>
           <div className="flex items-center justify-center gap-8">
             <div className="text-center">
               <div className="font-mono text-title-1 text-graphite">
-                {Math.round(odds.projected_home_score!)}
+                {Math.round(odds.projected_home_score)}
               </div>
               <div className="text-micro text-slate mt-1">
                 {event.home_team.split(" ").pop()}
@@ -286,7 +286,7 @@ export default function EventPage({ params }: EventPageProps) {
             <div className="text-title-2 text-silver">-</div>
             <div className="text-center">
               <div className="font-mono text-title-1 text-graphite">
-                {Math.round(odds.projected_away_score!)}
+                {Math.round(odds.projected_away_score)}
               </div>
               <div className="text-micro text-slate mt-1">
                 {event.away_team.split(" ").pop()}
