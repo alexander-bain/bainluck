@@ -33,6 +33,11 @@ app = FastAPI(
 allowed_origins = [
     "http://localhost:3000",  # Next.js dev
     "http://127.0.0.1:3000",
+    "https://odds.alexbain.com",
+    "https://www.odds.alexbain.com",
+    # Vercel preview/production URLs
+    "https://odds-tracker.vercel.app",
+    "https://odds-tracker-git-master-alexander-bains-projects.vercel.app",
 ]
 
 # Add production frontend URL from environment
@@ -40,15 +45,13 @@ frontend_url = os.getenv("FRONTEND_URL")
 if frontend_url:
     allowed_origins.append(frontend_url)
 
-# Also allow odds.alexbain.com variants
-allowed_origins.extend([
-    "https://odds.alexbain.com",
-    "https://www.odds.alexbain.com",
-])
+# Allow all Vercel preview deployments
+allowed_origin_regex = r"https://odds-tracker.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
