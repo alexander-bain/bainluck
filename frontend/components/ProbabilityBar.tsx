@@ -7,12 +7,14 @@ interface ProbabilityBarProps {
   awayTeam: string;
   showLabels?: boolean;
   size?: "sm" | "md" | "lg";
+  isLive?: boolean;
 }
 
 /**
- * Horizontal probability bar per design brief.
- * Charcoal for favorite side, Fog for underdog.
- * No gradients, no team colors.
+ * Redesigned probability bar:
+ * - Slimmer, more subtle
+ * - Green accent for live games
+ * - Smooth transitions
  */
 export default function ProbabilityBar({
   homeProbability,
@@ -21,6 +23,7 @@ export default function ProbabilityBar({
   awayTeam,
   showLabels = true,
   size = "md",
+  isLive = false,
 }: ProbabilityBarProps) {
   const homeProb = homeProbability ?? 0.5;
   const awayProb = awayProbability ?? 0.5;
@@ -34,9 +37,9 @@ export default function ProbabilityBar({
 
   const homeFavored = homePercent >= awayPercent;
 
-  // Size classes per design brief
+  // Size classes
   const sizeClasses = {
-    sm: "h-2",
+    sm: "h-1.5",
     md: "h-2",
     lg: "h-3",
   };
@@ -44,33 +47,37 @@ export default function ProbabilityBar({
   // No data state
   if (homeProbability === null && awayProbability === null) {
     return (
-      <div className={`${sizeClasses[size]} w-full rounded bg-mist`} />
+      <div className={`${sizeClasses[size]} w-full rounded-full bg-slate/10`} />
     );
   }
+
+  // Colors based on state
+  const favoriteColor = isLive ? "bg-emerald-500" : "bg-graphite";
+  const underdogColor = "bg-slate/20";
 
   return (
     <div className="w-full">
       {showLabels && (
-        <div className="flex justify-between text-caption text-slate mb-1">
+        <div className="flex justify-between text-xs text-slate mb-1">
           <span className="truncate max-w-[45%]">{homeTeam}</span>
           <span className="truncate max-w-[45%] text-right">{awayTeam}</span>
         </div>
       )}
       <div
-        className={`${sizeClasses[size]} w-full rounded overflow-hidden flex`}
+        className={`${sizeClasses[size]} w-full rounded-full overflow-hidden flex bg-slate/10`}
       >
         {/* Home team side */}
         <div
-          className={`probability-transition ${
-            homeFavored ? "bg-charcoal" : "bg-fog"
+          className={`transition-all duration-300 ${
+            homeFavored ? favoriteColor : underdogColor
           }`}
           style={{ width: `${homePercent}%` }}
         />
 
         {/* Away team side */}
         <div
-          className={`probability-transition ${
-            !homeFavored ? "bg-charcoal" : "bg-fog"
+          className={`transition-all duration-300 ${
+            !homeFavored ? favoriteColor : underdogColor
           }`}
           style={{ width: `${awayPercent}%` }}
         />

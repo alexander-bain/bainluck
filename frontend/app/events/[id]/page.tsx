@@ -8,7 +8,7 @@ import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
-import { getLeagueDisplay } from "@/lib/sportCategories";
+import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 
 interface EventPageProps {
   params: { id: string };
@@ -58,6 +58,12 @@ function formatStartTime(commenceTime: string): string {
   }
 }
 
+// Check if odds suggest a blowout (one team >85%)
+function isBlowout(homeProb: number | null | undefined): boolean {
+  if (homeProb === null || homeProb === undefined) return false;
+  return homeProb > 0.85 || homeProb < 0.15;
+}
+
 export default function EventPage({ params }: EventPageProps) {
   const eventId = parseInt(params.id, 10);
   const [countdown, setCountdown] = useState<number>(0);
@@ -80,6 +86,7 @@ export default function EventPage({ params }: EventPageProps) {
   );
 
   const isLive = event?.status === "live";
+  const isCompleted = event?.status === "completed";
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   useEffect(() => {
@@ -92,7 +99,7 @@ export default function EventPage({ params }: EventPageProps) {
   }, [lastRefresh, refreshInterval]);
 
   useEffect(() => {
-    if (!event?.commence_time || isLive) {
+    if (!event?.commence_time || isLive || isCompleted) {
       setGameCountdown("");
       return;
     }
@@ -102,7 +109,7 @@ export default function EventPage({ params }: EventPageProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [event?.commence_time, isLive]);
+  }, [event?.commence_time, isLive, isCompleted]);
 
   const {
     data: historyData,
@@ -136,6 +143,11 @@ export default function EventPage({ params }: EventPageProps) {
   const homeProb = odds?.home_probability;
   const awayProb = odds?.away_probability;
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
+  const gameIsBlowout = isLive && isBlowout(homeProb);
+  const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
+
+  // Calculate countdown progress percentage
+  const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
 
   return (
     <div className="space-y-6">
@@ -158,65 +170,158 @@ export default function EventPage({ params }: EventPageProps) {
               d="M15 19l-7-7 7-7"
             />
           </svg>
-          Back to events
+          ← Back to events
         </Link>
 
-        {/* Freshness indicator */}
-        <div className="flex items-center gap-2 text-micro text-slate">
-          <div className="flex items-center gap-1.5">
-            {isLive && (
-              <span className="w-2 h-2 rounded-full bg-emerald animate-pulse-live" />
-            )}
-            <span>Next update in</span>
+        {/* Visual countdown timer */}
+        {!isCompleted && (
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              {isLive && (
+                <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  LIVE
+                </span>
+              )}
+              <span className="text-slate">Next update:</span>
+            </div>
+            {/* Circular countdown */}
+            <div className="relative w-10 h-10">
+              <svg className="w-10 h-10 transform -rotate-90">
+                <circle
+                  cx="20"
+                  cy="20"
+                  r="16"
+                  fill="none"
+                  stroke="#E5E7EB"
+                  strokeWidth="3"
+                />
+                <circle
+                  cx="20"
+                  cy="20"
+                  r="16"
+                  fill="none"
+                  stroke={isLive ? "#10B981" : "#6B7280"}
+                  strokeWidth="3"
+                  strokeDasharray={`${countdownProgress} 100`}
+                  strokeLinecap="round"
+                  className="transition-all duration-100"
+                />
+              </svg>
+              <span className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-graphite">
+                {countdown}
+              </span>
+            </div>
           </div>
-          <span className="font-mono tabular-nums">{countdown}s</span>
-        </div>
+        )}
       </div>
 
       {/* Hero Section */}
-      <div className="bg-white rounded-card shadow-card p-6">
-        {/* Sport badge */}
-        {event.sport && (
-          <span className="text-micro text-slate bg-mist px-2 py-0.5 rounded inline-block mb-4">
-            {getLeagueDisplay(event.sport)}
-          </span>
-        )}
+      <div className={`rounded-card shadow-card p-6 ${
+        isLive
+          ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
+          : isCompleted
+          ? "bg-slate-50 border border-slate-200"
+          : "bg-white"
+      }`}>
+        {/* Sport badge with emoji */}
+        <div className="flex items-center justify-between mb-4">
+          {event.sport && (
+            <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
+              <span className="text-lg">{sportEmoji}</span>
+              <span className="text-slate font-medium">
+                {getLeagueDisplay(event.sport)}
+              </span>
+            </span>
+          )}
 
-        {/* Game time */}
+          {/* Status badge */}
+          {isCompleted && (
+            <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
+              ✅ Final
+            </span>
+          )}
+        </div>
+
+        {/* Game time/status */}
         <div className="text-center mb-6">
           {isLive ? (
-            <div className="flex items-center justify-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald animate-pulse-live" />
-              <span className="text-title-2 text-emerald">Live</span>
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-2xl font-bold text-emerald-600">🔴 LIVE</span>
+              </div>
+              {gameIsBlowout && (
+                <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
+                  <span>⚠️</span>
+                  <span>Blowout — odds may update less frequently</span>
+                </div>
+              )}
+            </div>
+          ) : isCompleted ? (
+            <div className="text-slate">
+              <div className="text-caption mb-1">Game ended</div>
+              <div className="text-lg font-medium">
+                {formatStartTime(event.commence_time)}
+              </div>
             </div>
           ) : (
             <>
               <div className="text-caption text-slate mb-1">
-                {formatStartTime(event.commence_time)}
+                📅 {formatStartTime(event.commence_time)}
               </div>
               {gameCountdown && (
                 <div className="text-display text-graphite">
-                  {gameCountdown}
+                  ⏰ {gameCountdown}
                 </div>
               )}
             </>
           )}
         </div>
 
-        {/* Teams with probabilities - hero layout */}
+        {/* Score display for live/completed games */}
+        {(isLive || isCompleted) && event.home_score !== null && event.away_score !== null && (
+          <div className="flex items-center justify-center gap-6 mb-6 py-4 bg-white/50 rounded-lg">
+            <div className="text-center">
+              <div className={`text-4xl font-bold font-mono ${
+                isLive ? "text-emerald-600" : "text-graphite"
+              }`}>
+                {event.home_score}
+              </div>
+              <div className="text-sm text-slate mt-1">
+                {event.home_team.split(" ").pop()}
+              </div>
+            </div>
+            <div className="text-2xl text-slate">—</div>
+            <div className="text-center">
+              <div className={`text-4xl font-bold font-mono ${
+                isLive ? "text-emerald-600" : "text-graphite"
+              }`}>
+                {event.away_score}
+              </div>
+              <div className="text-sm text-slate mt-1">
+                {event.away_team.split(" ").pop()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Teams with probabilities */}
         <div className="space-y-4">
           {/* Home Team */}
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className={`text-title-2 ${homeFavorite ? "text-graphite" : "text-slate"}`}>
+            <div className="flex items-center gap-3">
+              <h2 className={`text-xl font-semibold ${homeFavorite ? "text-graphite" : "text-slate"}`}>
                 {event.home_team}
               </h2>
-              {isLive && event.home_score !== null && (
-                <span className="text-title-1 text-graphite">{event.home_score}</span>
+              {homeFavorite && homeProb && homeProb > 0.5 && (
+                <span className="text-xs bg-graphite/10 text-graphite px-2 py-0.5 rounded">
+                  Favorite
+                </span>
               )}
             </div>
             <span
-              className={`font-mono text-display tabular-nums ${
+              className={`font-mono text-3xl font-bold tabular-nums ${
                 homeFavorite ? "text-graphite" : "text-silver"
               }`}
             >
@@ -224,7 +329,7 @@ export default function EventPage({ params }: EventPageProps) {
             </span>
           </div>
 
-          {/* Probability Bar */}
+          {/* Probability Bar with color */}
           <ProbabilityBar
             homeProbability={homeProb}
             awayProbability={awayProb}
@@ -232,20 +337,23 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeam={event.away_team}
             showLabels={false}
             size="lg"
+            isLive={isLive}
           />
 
           {/* Away Team */}
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className={`text-title-2 ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
+            <div className="flex items-center gap-3">
+              <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
                 {event.away_team}
               </h2>
-              {isLive && event.away_score !== null && (
-                <span className="text-title-1 text-graphite">{event.away_score}</span>
+              {!homeFavorite && awayProb && awayProb > 0.5 && (
+                <span className="text-xs bg-graphite/10 text-graphite px-2 py-0.5 rounded">
+                  Favorite
+                </span>
               )}
             </div>
             <span
-              className={`font-mono text-display tabular-nums ${
+              className={`font-mono text-3xl font-bold tabular-nums ${
                 !homeFavorite ? "text-graphite" : "text-silver"
               }`}
             >
@@ -256,63 +364,90 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Data freshness strip */}
         {odds?.captured_at && (
-          <div className="mt-6 pt-4 border-t border-mist flex justify-between text-micro text-slate">
-            <span>
-              Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
+          <div className="mt-6 pt-4 border-t border-mist/50 flex justify-between text-sm text-slate">
+            <span className="flex items-center gap-1">
+              🕐 Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
                 hour: "numeric",
                 minute: "2-digit",
               })}
             </span>
             {odds.bookmaker && (
-              <span>Source: {odds.bookmaker}</span>
+              <span>📊 Source: {odds.bookmaker}</span>
             )}
           </div>
         )}
       </div>
 
-      {/* Projected Score (only on detail, not list per design brief) */}
+      {/* Projected Score Section */}
       {odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
         <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-caption-strong text-slate mb-4">Projected Final</h3>
+          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
+            🎯 {isCompleted ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
+          </h3>
           <div className="flex items-center justify-center gap-8">
             <div className="text-center">
-              <div className="font-mono text-title-1 text-graphite">
+              <div className="font-mono text-2xl font-bold text-graphite">
                 {Math.round(odds.projected_home_score)}
               </div>
-              <div className="text-micro text-slate mt-1">
+              <div className="text-xs text-slate mt-1">
                 {event.home_team.split(" ").pop()}
               </div>
+              {isCompleted && event.home_score !== null && (
+                <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
+                  Math.abs(event.home_score - odds.projected_home_score) <= 3
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-amber-100 text-amber-700"
+                }`}>
+                  Actual: {event.home_score}
+                </div>
+              )}
             </div>
-            <div className="text-title-2 text-silver">-</div>
+            <div className="text-xl text-silver">vs</div>
             <div className="text-center">
-              <div className="font-mono text-title-1 text-graphite">
+              <div className="font-mono text-2xl font-bold text-graphite">
                 {Math.round(odds.projected_away_score)}
               </div>
-              <div className="text-micro text-slate mt-1">
+              <div className="text-xs text-slate mt-1">
                 {event.away_team.split(" ").pop()}
               </div>
+              {isCompleted && event.away_score !== null && (
+                <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
+                  Math.abs(event.away_score - odds.projected_away_score) <= 3
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-amber-100 text-amber-700"
+                }`}>
+                  Actual: {event.away_score}
+                </div>
+              )}
             </div>
           </div>
+          {!isCompleted && (
+            <p className="text-center text-xs text-slate mt-4">
+              💡 Based on current odds and over/under
+            </p>
+          )}
         </div>
       )}
 
-      {/* Betting Lines (only on detail per design brief) */}
+      {/* Betting Lines */}
       {odds && (odds.spread !== null || odds.over_under !== null) && (
         <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-caption-strong text-slate mb-4">Lines</h3>
+          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
+            📈 Lines
+          </h3>
           <div className="grid grid-cols-2 gap-4">
             {odds.spread !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg">
-                <p className="text-micro text-slate mb-1">Spread</p>
-                <p className="font-mono text-title-2 text-graphite">
+              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
+                <p className="text-xs text-slate mb-1">Spread</p>
+                <p className="font-mono text-xl font-bold text-graphite">
                   {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
                 </p>
               </div>
             )}
             {odds.over_under !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg">
-                <p className="text-micro text-slate mb-1">Total</p>
-                <p className="font-mono text-title-2 text-graphite">
+              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
+                <p className="text-xs text-slate mb-1">Over/Under</p>
+                <p className="font-mono text-xl font-bold text-graphite">
                   {odds.over_under}
                 </p>
               </div>
@@ -323,18 +458,20 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Trend Chart */}
       <div className="bg-white rounded-card shadow-card p-6">
-        <h3 className="text-caption-strong text-slate mb-4">Last 24 Hours</h3>
+        <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
+          📉 Probability Trend (Last 48 Hours)
+        </h3>
         {historyLoading ? (
           <div className="h-48 flex items-center justify-center">
             <LoadingSpinner size="sm" />
           </div>
         ) : historyError ? (
-          <div className="h-48 flex items-center justify-center text-caption text-slate">
+          <div className="h-48 flex items-center justify-center text-sm text-slate">
             Unable to load history
           </div>
         ) : historyData?.history?.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-caption text-slate">
-            Tracking will begin when odds are available
+          <div className="h-48 flex items-center justify-center text-sm text-slate">
+            📊 Tracking will begin when odds are available
           </div>
         ) : (
           <OddsChart
