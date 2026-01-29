@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import type { Event } from "@/lib/types";
-import { formatProbability, formatGameTime, isStartingSoon } from "@/lib/api";
-import { getLeagueDisplay } from "@/lib/sportCategories";
-import ProbabilityBar from "./ProbabilityBar";
+import { formatProbability, isStartingSoon } from "@/lib/api";
+import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 
 interface EventCardProps {
   event: Event;
@@ -12,9 +11,11 @@ interface EventCardProps {
 }
 
 /**
- * Event card per design brief.
- * Clean, typography-driven, no team colors.
- * Probabilities in monospace, right-aligned.
+ * Redesigned Event card with:
+ * - Information density: state, time, score, projected score
+ * - Color for importance: live games green, close games amber border
+ * - Emoji throughout
+ * - Compact probability display
  */
 export default function EventCard({ event, showSport = true }: EventCardProps) {
   const odds = event.current_odds;
@@ -22,54 +23,101 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
   const awayProb = odds?.away_probability;
 
   const isLive = event.status === "live";
-  const startingSoon = !isLive && isStartingSoon(event.commence_time);
+  const isCompleted = event.status === "completed";
+  const startingSoon = !isLive && !isCompleted && isStartingSoon(event.commence_time);
 
   // Determine favorite
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
+  // Is this a close game? (within 10% of 50/50)
+  const isCloseGame = homeProb !== null && homeProb !== undefined &&
+    Math.abs(homeProb - 0.5) < 0.1;
+
+  // Format time compactly
+  const gameTime = new Date(event.commence_time);
+  const timeStr = gameTime.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  // Get sport emoji
+  const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
+
+  // Card border/background based on state
+  const cardClasses = isLive
+    ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
+    : isCloseGame && !isCompleted
+    ? "bg-white border-2 border-amber-200"
+    : "bg-white border border-mist";
+
   return (
     <Link href={`/events/${event.id}`}>
-      <div className="bg-white rounded-card shadow-card p-4 hover:shadow-card-hover transition-shadow cursor-pointer">
-        {/* Header: Sport badge and live indicator */}
-        <div className="flex justify-between items-center mb-3">
-          <div className="flex items-center gap-2">
+      <div
+        className={`rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer ${cardClasses}`}
+      >
+        {/* Header: Sport, League, Status */}
+        <div className="flex justify-between items-start mb-3">
+          <div className="flex items-center gap-2 flex-wrap">
             {showSport && event.sport && (
-              <span className="text-micro text-slate bg-mist px-2 py-0.5 rounded">
-                {getLeagueDisplay(event.sport)}
+              <span className="text-sm bg-slate/10 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <span>{sportEmoji}</span>
+                <span className="text-slate font-medium">
+                  {getLeagueDisplay(event.sport)}
+                </span>
               </span>
             )}
+          </div>
+
+          {/* Status Badge */}
+          <div className="flex items-center gap-1.5">
             {isLive && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald animate-pulse-live" />
-                <span className="text-micro font-medium text-emerald">
-                  LIVE
-                </span>
-              </div>
+              <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                LIVE
+              </span>
+            )}
+            {isCompleted && (
+              <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
+                ✅ Final
+              </span>
             )}
             {startingSoon && (
-              <span className="text-micro text-amber">
-                Soon
+              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                ⏰ Soon
+              </span>
+            )}
+            {!isLive && !isCompleted && !startingSoon && (
+              <span className="text-xs text-slate">
+                {timeStr}
               </span>
             )}
           </div>
         </div>
 
-        {/* Teams and Probabilities */}
+        {/* Main Content: Teams, Scores, Probabilities */}
         <div className="space-y-2">
-          {/* Home Team */}
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span className={`text-title-3 ${homeFavorite ? "text-graphite" : "text-slate"}`}>
+          {/* Home Team Row */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span
+                className={`text-base font-semibold truncate ${
+                  homeFavorite ? "text-graphite" : "text-slate"
+                }`}
+              >
                 {event.home_team}
               </span>
-              {isLive && event.home_score !== null && (
-                <span className="text-body-strong text-graphite">
+              {/* Live/Final Score */}
+              {(isLive || isCompleted) && event.home_score !== null && (
+                <span className={`text-lg font-bold ${
+                  isLive ? "text-emerald-600" : "text-graphite"
+                }`}>
                   {event.home_score}
                 </span>
               )}
             </div>
+            {/* Probability */}
             <span
-              className={`font-mono text-2xl font-bold tabular-nums ${
+              className={`font-mono text-xl font-bold tabular-nums ${
                 homeFavorite ? "text-graphite" : "text-silver"
               }`}
             >
@@ -77,30 +125,48 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
             </span>
           </div>
 
-          {/* Probability Bar */}
-          <ProbabilityBar
-            homeProbability={homeProb}
-            awayProbability={awayProb}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            showLabels={false}
-            size="sm"
-          />
+          {/* Probability Bar - slim and subtle */}
+          <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-slate/10">
+            <div
+              className={`transition-all duration-300 ${
+                homeFavorite
+                  ? isLive ? "bg-emerald-500" : "bg-graphite"
+                  : "bg-slate/30"
+              }`}
+              style={{ width: `${(homeProb ?? 0.5) * 100}%` }}
+            />
+            <div
+              className={`transition-all duration-300 ${
+                !homeFavorite
+                  ? isLive ? "bg-emerald-500" : "bg-graphite"
+                  : "bg-slate/30"
+              }`}
+              style={{ width: `${(awayProb ?? 0.5) * 100}%` }}
+            />
+          </div>
 
-          {/* Away Team */}
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span className={`text-title-3 ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
+          {/* Away Team Row */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span
+                className={`text-base font-semibold truncate ${
+                  !homeFavorite ? "text-graphite" : "text-slate"
+                }`}
+              >
                 {event.away_team}
               </span>
-              {isLive && event.away_score !== null && (
-                <span className="text-body-strong text-graphite">
+              {/* Live/Final Score */}
+              {(isLive || isCompleted) && event.away_score !== null && (
+                <span className={`text-lg font-bold ${
+                  isLive ? "text-emerald-600" : "text-graphite"
+                }`}>
                   {event.away_score}
                 </span>
               )}
             </div>
+            {/* Probability */}
             <span
-              className={`font-mono text-2xl font-bold tabular-nums ${
+              className={`font-mono text-xl font-bold tabular-nums ${
                 !homeFavorite ? "text-graphite" : "text-silver"
               }`}
             >
@@ -109,11 +175,38 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           </div>
         </div>
 
-        {/* Footer: Game time */}
-        <div className="mt-3 pt-3 border-t border-mist">
-          <span className="text-caption text-slate">
-            {formatGameTime(event.commence_time)}
-          </span>
+        {/* Footer: Projected Score for future games, Time for live/completed */}
+        <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center">
+          {/* Projected Score (only for future games with odds) */}
+          {!isLive && !isCompleted && odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
+            <div className="flex items-center gap-1.5 text-sm">
+              <span className="text-slate">Projected:</span>
+              <span className="font-mono font-medium text-graphite">
+                {Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}
+              </span>
+            </div>
+          )}
+
+          {/* For live/completed, show time info */}
+          {(isLive || isCompleted) && (
+            <div className="text-xs text-slate">
+              {isLive ? "🔄 Updating live" : `Played ${timeStr}`}
+            </div>
+          )}
+
+          {/* Empty state filler */}
+          {!isLive && !isCompleted && (!odds?.projected_home_score || !odds?.projected_away_score) && (
+            <div className="text-xs text-slate">
+              {timeStr}
+            </div>
+          )}
+
+          {/* Close game indicator */}
+          {isCloseGame && !isCompleted && (
+            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+              🔥 Close
+            </span>
+          )}
         </div>
       </div>
     </Link>

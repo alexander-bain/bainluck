@@ -19,7 +19,7 @@ interface SportFilterProps {
 }
 
 /**
- * Filter pills for sports - text only, no emojis per design brief.
+ * Filter pills for sports with emoji.
  * Horizontally scrolling on mobile.
  */
 export default function SportFilter({
@@ -56,7 +56,7 @@ export default function SportFilter({
         {[1, 2, 3, 4, 5, 6].map((i) => (
           <div
             key={i}
-            className="h-9 w-16 bg-mist rounded-full animate-pulse flex-shrink-0"
+            className="h-9 w-20 bg-mist rounded-full animate-pulse flex-shrink-0"
           />
         ))}
       </div>
@@ -81,13 +81,13 @@ export default function SportFilter({
     }
   };
 
-  // Map category keys to display abbreviations
-  const getCategoryLabel = (key: string): string => {
+  // Map category keys to display with emoji
+  const getCategoryDisplay = (key: string, emoji: string): { label: string; emoji: string } => {
     const labels: Record<string, string> = {
-      football: "NFL",
-      basketball: "NBA",
-      baseball: "MLB",
-      hockey: "NHL",
+      football: "Football",
+      basketball: "Basketball",
+      baseball: "Baseball",
+      hockey: "Hockey",
       mma: "MMA",
       boxing: "Boxing",
       golf: "Golf",
@@ -101,7 +101,7 @@ export default function SportFilter({
       motorsport: "Racing",
       other: "Other",
     };
-    return labels[key] || key;
+    return { label: labels[key] || key, emoji };
   };
 
   return (
@@ -111,29 +111,33 @@ export default function SportFilter({
         {/* All button */}
         <button
           onClick={() => handleCategoryClick(null)}
-          className={`px-4 py-2 rounded-full text-caption font-medium whitespace-nowrap transition-all flex-shrink-0 ${
+          className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 flex items-center gap-1.5 ${
             selectedCategory === null
-              ? "bg-ink text-white"
-              : "bg-transparent text-slate border border-mist hover:bg-mist/50"
+              ? "bg-graphite text-white shadow-sm"
+              : "bg-white text-slate border border-mist hover:bg-mist/50 hover:border-slate/30"
           }`}
         >
-          All
+          🏆 All Sports
         </button>
 
         {/* Category buttons */}
-        {availableCategories.map((category) => (
-          <button
-            key={category.key}
-            onClick={() => handleCategoryClick(category.key)}
-            className={`px-4 py-2 rounded-full text-caption font-medium whitespace-nowrap transition-all flex-shrink-0 ${
-              selectedCategory === category.key
-                ? "bg-ink text-white"
-                : "bg-transparent text-slate border border-mist hover:bg-mist/50"
-            }`}
-          >
-            {getCategoryLabel(category.key)}
-          </button>
-        ))}
+        {availableCategories.map((category) => {
+          const display = getCategoryDisplay(category.key, category.emoji);
+          return (
+            <button
+              key={category.key}
+              onClick={() => handleCategoryClick(category.key)}
+              className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 flex items-center gap-1.5 ${
+                selectedCategory === category.key
+                  ? "bg-graphite text-white shadow-sm"
+                  : "bg-white text-slate border border-mist hover:bg-mist/50 hover:border-slate/30"
+              }`}
+            >
+              <span>{display.emoji}</span>
+              <span>{display.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* League sub-filter */}
@@ -141,23 +145,23 @@ export default function SportFilter({
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
           <button
             onClick={() => onSelectSport(null)}
-            className={`px-3 py-1.5 rounded-full text-micro whitespace-nowrap transition-colors ${
+            className={`px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors flex-shrink-0 ${
               selectedSport === null
-                ? "bg-charcoal text-white"
-                : "bg-mist text-slate hover:bg-fog"
+                ? "bg-slate text-white"
+                : "bg-slate/10 text-slate hover:bg-slate/20"
             }`}
           >
-            All
+            All Leagues
           </button>
 
           {availableLeagues.map((leagueKey) => (
             <button
               key={leagueKey}
               onClick={() => handleLeagueClick(leagueKey)}
-              className={`px-3 py-1.5 rounded-full text-micro whitespace-nowrap transition-colors ${
+              className={`px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors flex-shrink-0 ${
                 selectedSport === leagueKey
-                  ? "bg-charcoal text-white"
-                  : "bg-mist text-slate hover:bg-fog"
+                  ? "bg-slate text-white"
+                  : "bg-slate/10 text-slate hover:bg-slate/20"
               }`}
             >
               {getLeagueDisplay(leagueKey)}
