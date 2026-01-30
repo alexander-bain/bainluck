@@ -468,14 +468,35 @@ export default function EventPage({ params }: EventPageProps) {
                   minute: "2-digit",
                 })}
               </span>
-              {sourceAnalysis.sources.length > 0 && (
-                <span
-                  className="text-xs text-silver cursor-help"
-                  title={sourceAnalysis.sources.join(", ")}
-                >
-                  {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
-                </span>
-              )}
+              <div className="flex items-center gap-4 text-xs text-silver">
+                {odds.spread !== null && (
+                  <span className="font-mono">
+                    Spread {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
+                  </span>
+                )}
+                {odds.over_under !== null && (
+                  <span className="font-mono">
+                    O/U {odds.over_under}
+                  </span>
+                )}
+                {(() => {
+                  // Get bookmaker names from multiple sources
+                  const bookmakerNames = event.bookmaker_odds?.map(b => b.bookmaker)
+                    || (historyData?.bookmaker_history ? Object.keys(historyData.bookmaker_history) : []);
+                  const count = bookmakerNames.length || odds.bookmaker_count || 0;
+                  if (count > 0) {
+                    return (
+                      <span
+                        className="cursor-help border-b border-dotted border-silver"
+                        title={bookmakerNames.length > 0 ? bookmakerNames.join(", ") : undefined}
+                      >
+                        {count} source{count !== 1 ? "s" : ""}
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
             </div>
             {sourceAnalysis.divergenceWarning && (
               <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded">
