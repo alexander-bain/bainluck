@@ -14,8 +14,8 @@ from app.utils import moneyline_to_probability, project_scores, calculate_gei, a
 
 router = APIRouter()
 
-# Excluded sport prefixes (no soccer!)
-EXCLUDED_SPORT_PREFIXES = ["soccer_"]
+# Excluded sport prefixes (soccer, cricket, rugby, AFL)
+EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
 
 
 @router.get("")
