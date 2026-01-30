@@ -94,26 +94,27 @@ async def list_events(
     aggregated_odds_map = {}
 
     if event_ids:
-        # Subquery to get the max captured_at per event
+        # Subquery to get the max captured_at per event, rounded to the minute
+        # (snapshots from the same poll may have slightly different timestamps)
         latest_time_subq = (
             select(
                 OddsSnapshot.event_id,
-                func.max(OddsSnapshot.captured_at).label("max_time")
+                func.date_trunc('minute', func.max(OddsSnapshot.captured_at)).label("max_time_rounded")
             )
             .where(OddsSnapshot.event_id.in_(event_ids))
             .group_by(OddsSnapshot.event_id)
             .subquery()
         )
 
-        # Get all snapshots from the latest poll time for each event
-        # (multiple bookmakers captured at the same time)
+        # Get all snapshots from the latest minute for each event
+        # (multiple bookmakers from same poll)
         latest_odds_query = (
             select(OddsSnapshot)
             .join(
                 latest_time_subq,
                 and_(
                     OddsSnapshot.event_id == latest_time_subq.c.event_id,
-                    OddsSnapshot.captured_at == latest_time_subq.c.max_time
+                    func.date_trunc('minute', OddsSnapshot.captured_at) == latest_time_subq.c.max_time_rounded
                 )
             )
         )
@@ -264,13 +265,15 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     response = _format_event(event)
 
     if event.odds_snapshots:
-        # Get the latest capture time
+        # Get the latest capture time, rounded to the minute for grouping
+        # (snapshots from the same poll may have slightly different timestamps)
         latest_time = max(s.captured_at for s in event.odds_snapshots)
+        latest_time_rounded = latest_time.replace(second=0, microsecond=0)
 
-        # Get all snapshots from that time (multiple bookmakers)
+        # Get all snapshots from that minute (multiple bookmakers from same poll)
         latest_snapshots = [
             s for s in event.odds_snapshots
-            if s.captured_at == latest_time
+            if s.captured_at.replace(second=0, microsecond=0) == latest_time_rounded
         ]
 
         # Aggregate across bookmakers
