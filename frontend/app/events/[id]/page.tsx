@@ -169,6 +169,8 @@ export default function EventPage({ params }: EventPageProps) {
 
   const isLive = event?.status === "live";
   const isCompleted = event?.status === "completed";
+  const isClosed = event?.status === "closed";
+  const isFinished = isCompleted || isClosed;
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   useEffect(() => {
@@ -181,7 +183,7 @@ export default function EventPage({ params }: EventPageProps) {
   }, [lastRefresh, refreshInterval]);
 
   useEffect(() => {
-    if (!event?.commence_time || isLive || isCompleted) {
+    if (!event?.commence_time || isLive || isFinished) {
       setGameCountdown("");
       return;
     }
@@ -191,7 +193,7 @@ export default function EventPage({ params }: EventPageProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [event?.commence_time, isLive, isCompleted]);
+  }, [event?.commence_time, isLive, isFinished]);
 
   const {
     data: historyData,
@@ -259,7 +261,7 @@ export default function EventPage({ params }: EventPageProps) {
         </Link>
 
         {/* Visual countdown timer */}
-        {!isCompleted && (
+        {!isFinished && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {isLive && (
@@ -305,7 +307,7 @@ export default function EventPage({ params }: EventPageProps) {
       <div className={`rounded-card shadow-card p-6 ${
         isLive
           ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-          : isCompleted
+          : isFinished
           ? "bg-slate-50 border border-slate-200"
           : "bg-white"
       }`}>
@@ -326,6 +328,11 @@ export default function EventPage({ params }: EventPageProps) {
               ✅ Final
             </span>
           )}
+          {isClosed && (
+            <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
+              🔒 Closed
+            </span>
+          )}
         </div>
 
         {/* Game time/status */}
@@ -343,9 +350,9 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
             </div>
-          ) : isCompleted ? (
+          ) : isFinished ? (
             <div className="text-slate">
-              <div className="text-caption mb-1">Game ended</div>
+              <div className="text-caption mb-1">{isClosed ? "Game closed" : "Game ended"}</div>
               <div className="text-lg font-medium">
                 {formatStartTime(event.commence_time)}
               </div>
@@ -364,8 +371,8 @@ export default function EventPage({ params }: EventPageProps) {
           )}
         </div>
 
-        {/* Score display for live/completed games */}
-        {(isLive || isCompleted) && event.home_score !== null && event.away_score !== null && (
+        {/* Score display for live/finished games */}
+        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
           <div className="flex items-center justify-center gap-6 mb-6 py-4 bg-white/50 rounded-lg">
             <div className="text-center">
               <div className={`text-4xl font-bold font-mono ${
@@ -450,18 +457,33 @@ export default function EventPage({ params }: EventPageProps) {
         {/* Data freshness strip */}
         {odds?.captured_at && (
           <div className="mt-6 pt-4 border-t border-mist/50 space-y-2">
-            <div className="flex flex-wrap justify-between gap-2 text-sm text-slate">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-slate">
               <span className="flex items-center gap-1">
                 🕐 Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
                   hour: "numeric",
                   minute: "2-digit",
                 })}
               </span>
-              {sourceAnalysis.sources.length > 0 && (
-                <span className="text-xs text-silver">
-                  {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
-                </span>
-              )}
+              <div className="flex items-center gap-4 text-xs text-silver">
+                {odds.spread !== null && (
+                  <span className="font-mono">
+                    Spread {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
+                  </span>
+                )}
+                {odds.over_under !== null && (
+                  <span className="font-mono">
+                    O/U {odds.over_under}
+                  </span>
+                )}
+                {sourceAnalysis.sources.length > 0 && (
+                  <span
+                    className="cursor-help border-b border-dotted border-silver"
+                    title={sourceAnalysis.sources.join(", ")}
+                  >
+                    {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
             </div>
             {sourceAnalysis.divergenceWarning && (
               <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded">
@@ -477,9 +499,9 @@ export default function EventPage({ params }: EventPageProps) {
       {odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            🎯 {isCompleted ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
+            🎯 {isFinished ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
           </h3>
-          <div className="flex items-center justify-center gap-8 mb-4">
+          <div className="flex items-center justify-center gap-8">
             <div className="text-center">
               <div className="font-mono text-2xl font-bold text-graphite">
                 {Math.round(odds.projected_home_score)}
@@ -487,7 +509,7 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="text-xs text-slate mt-1">
                 {event.home_team.split(" ").pop()}
               </div>
-              {isCompleted && event.home_score !== null && (
+              {isFinished && event.home_score !== null && (
                 <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
                   Math.abs(event.home_score - odds.projected_home_score) <= 3
                     ? "bg-emerald-100 text-emerald-700"
@@ -505,7 +527,7 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="text-xs text-slate mt-1">
                 {event.away_team.split(" ").pop()}
               </div>
-              {isCompleted && event.away_score !== null && (
+              {isFinished && event.away_score !== null && (
                 <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
                   Math.abs(event.away_score - odds.projected_away_score) <= 3
                     ? "bg-emerald-100 text-emerald-700"
@@ -516,47 +538,22 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           </div>
-
-          {/* Score Trend Chart */}
-          {historyData?.history && historyData.history.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-mist/50">
-              <h4 className="text-xs font-medium text-slate mb-3">Score Trend</h4>
-              <ScoreChart
-                history={historyData.history}
-                homeTeam={event.home_team}
-                awayTeam={event.away_team}
-                commenceTime={event.commence_time}
-                isLive={isLive}
-              />
-            </div>
-          )}
         </div>
       )}
 
-      {/* Betting Lines */}
-      {odds && (odds.spread !== null || odds.over_under !== null) && (
+      {/* Score Trend Chart - shown independently if there's history data */}
+      {historyData?.history && historyData.history.length > 0 && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            📈 Lines
+            📊 Projected Score Trend
           </h3>
-          <div className="grid grid-cols-2 gap-4">
-            {odds.spread !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
-                <p className="text-xs text-slate mb-1">Spread</p>
-                <p className="font-mono text-xl font-bold text-graphite">
-                  {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
-                </p>
-              </div>
-            )}
-            {odds.over_under !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
-                <p className="text-xs text-slate mb-1">Over/Under</p>
-                <p className="font-mono text-xl font-bold text-graphite">
-                  {odds.over_under}
-                </p>
-              </div>
-            )}
-          </div>
+          <ScoreChart
+            history={historyData.history}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+            commenceTime={event.commence_time}
+            isLive={isLive}
+          />
         </div>
       )}
 

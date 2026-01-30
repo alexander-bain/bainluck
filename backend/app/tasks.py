@@ -29,8 +29,9 @@ from datetime import datetime, timezone
 import redis
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import selectinload
 
 from app.services.database import async_session_maker
 from app.services.odds_api import OddsAPIService
@@ -104,6 +105,28 @@ SLOW_POLL_INTERVAL = 600      # 10 minutes after many unchanged polls
 # Thresholds for slowing down
 MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
 SLOW_THRESHOLD = 6     # Slow to slow after this many unchanged polls
+
+# Sport-specific max durations (in hours) for staleness detection
+# Used to infer when a match has likely ended if odds go stale
+SPORT_MAX_DURATIONS = {
+    # Tennis can go very long, especially Grand Slam 5-setters
+    "tennis": 6.0,
+    # Most team sports are 2-4 hours
+    "basketball": 3.5,
+    "baseball": 5.0,  # Extra innings possible
+    "americanfootball": 4.5,
+    "icehockey": 3.5,
+    "mma": 4.0,  # Full card duration
+    "boxing": 3.0,
+    "golf": 8.0,  # Round can be long
+    "lacrosse": 3.0,
+    # Default for unknown sports
+    "default": 4.0,
+}
+
+# Staleness thresholds for marking events as "closed"
+ODDS_STALE_MINUTES = 30  # Minutes without odds update to consider stale
+MIN_HOURS_BEFORE_STALENESS_CHECK = 1.5  # Don't check staleness until match has been live this long
 
 
 def get_redis_client():
@@ -215,6 +238,114 @@ def update_poll_state(data_changed: bool, has_live_games: bool, new_hash: str):
         print(f"Redis error in update_poll_state: {e}")
 
 
+def get_max_duration_for_sport(sport_key: str) -> float:
+    """
+    Get the maximum expected duration (in hours) for a sport.
+
+    Used for staleness detection - we only mark events as "closed"
+    if they've been live longer than this duration AND odds are stale.
+    """
+    # Check for exact match first
+    for sport_prefix, duration in SPORT_MAX_DURATIONS.items():
+        if sport_prefix == "default":
+            continue
+        if sport_key.startswith(sport_prefix):
+            return duration
+
+    return SPORT_MAX_DURATIONS["default"]
+
+
+async def detect_and_close_stale_events(session) -> int:
+    """
+    Detect live events with stale odds and mark them as "closed".
+
+    This provides a fallback when the Scores API doesn't report completion,
+    which can happen with tennis and other sports.
+
+    An event is marked as "closed" when:
+    1. It's currently "live" status
+    2. It started at least MIN_HOURS_BEFORE_STALENESS_CHECK hours ago
+    3. Either:
+       a. It has no odds snapshots at all (bookmakers stopped offering odds), OR
+       b. The latest odds snapshot is older than ODDS_STALE_MINUTES
+    4. AND the match has been live longer than the sport's typical max duration
+
+    Returns the number of events marked as closed.
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    closed_count = 0
+
+    # Find all live events that started more than MIN_HOURS ago
+    min_start_time = now - timedelta(hours=MIN_HOURS_BEFORE_STALENESS_CHECK)
+
+    result = await session.execute(
+        select(Event)
+        .join(Sport)
+        .where(
+            Event.status == "live",
+            Event.commence_time <= min_start_time,
+        )
+        .options(selectinload(Event.sport))
+    )
+    live_events = result.scalars().all()
+
+    for event in live_events:
+        try:
+            hours_since_start = (now - event.commence_time).total_seconds() / 3600
+            sport_key = event.sport.key if event.sport else "default"
+            max_duration = get_max_duration_for_sport(sport_key)
+
+            # Only consider staleness if match has exceeded typical duration
+            if hours_since_start < max_duration:
+                continue
+
+            # Get the latest odds snapshot for this event
+            latest_snapshot_result = await session.execute(
+                select(OddsSnapshot)
+                .where(OddsSnapshot.event_id == event.id)
+                .order_by(OddsSnapshot.captured_at.desc())
+                .limit(1)
+            )
+            latest_snapshot = latest_snapshot_result.scalar_one_or_none()
+
+            should_close = False
+            close_reason = ""
+
+            if latest_snapshot is None:
+                # No odds at all - bookmakers never offered odds or stopped entirely
+                # Only close if match has been live a while
+                if hours_since_start > max_duration:
+                    should_close = True
+                    close_reason = "no_odds_data"
+            else:
+                # Check if odds are stale
+                # Use valid_until if available (more accurate), otherwise captured_at
+                last_odds_time = latest_snapshot.valid_until or latest_snapshot.captured_at
+                minutes_since_odds = (now - last_odds_time).total_seconds() / 60
+
+                if minutes_since_odds >= ODDS_STALE_MINUTES:
+                    should_close = True
+                    close_reason = f"stale_odds_{int(minutes_since_odds)}min"
+
+            if should_close:
+                await session.execute(
+                    Event.__table__.update()
+                    .where(Event.id == event.id)
+                    .values(status="closed")
+                )
+                closed_count += 1
+                print(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
+                      f"as closed: {close_reason}, {hours_since_start:.1f}h since start")
+
+        except Exception as e:
+            print(f"Error checking staleness for event {event.id}: {e}")
+            continue
+
+    return closed_count
+
+
 def run_async(coro):
     """Helper to run async code in sync context."""
     loop = asyncio.new_event_loop()
@@ -254,9 +385,11 @@ async def _sync_sports():
                 if not sport.get("active", False):
                     continue
 
-                # Skip sports that match any excluded prefix (soccer)
+                # Skip sports that match any excluded prefix or keyword
                 sport_key = sport["key"]
                 if any(sport_key.startswith(prefix) for prefix in excluded_prefixes):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
                     continue
 
                 # Upsert sport
@@ -317,6 +450,7 @@ async def _poll_all_odds():
     - No games in 6 hours: Don't poll that sport
 
     Uses per-sport last poll times stored in Redis.
+    Also fetches scores for live/completed games.
     """
     service = OddsAPIService()
 
@@ -327,6 +461,7 @@ async def _poll_all_odds():
         has_live_games = False
         sports_polled = 0
         sports_skipped = 0
+        scores_updated = 0
 
         # Get Redis client for per-sport poll tracking
         try:
@@ -373,6 +508,12 @@ async def _poll_all_odds():
                 sport_key = row[0]
                 soonest_game = row[1]
                 is_live = row[2]
+
+                # Skip excluded sports (in case they're still in the database)
+                if any(sport_key.startswith(prefix) for prefix in OddsAPIService.EXCLUDED_PREFIXES):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
+                    continue
 
                 # Determine poll interval for this sport
                 if is_live or (soonest_game and soonest_game <= now):
@@ -441,7 +582,10 @@ async def _poll_all_odds():
                             session.add(sport)
                             await session.flush()
 
-                        # Upsert event
+                        # Upsert event with conditional status update
+                        # - New events: set status based on commence_time
+                        # - Existing "scheduled" events: update to "live" if started
+                        # - Existing "live"/"completed" events: don't change status
                         event_status = "scheduled" if commence_time > now else "live"
                         stmt = insert(Event).values(
                             external_id=event_data["id"],
@@ -456,7 +600,12 @@ async def _poll_all_odds():
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
                                 "commence_time": commence_time,
-                                "status": event_status,
+                                # Only update status if currently "scheduled"
+                                # This allows scheduled->live but preserves completed
+                                "status": case(
+                                    (Event.status == "scheduled", event_status),
+                                    else_=Event.status
+                                ),
                             }
                         ).returning(Event.id)
 
@@ -479,6 +628,83 @@ async def _poll_all_odds():
                 except Exception as e:
                     print(f"Error polling {sport_key}: {e}")
                     continue
+
+            # Fetch scores for sports with events that have started
+            # Use a 3-day window to capture longer events like tennis matches
+            # that may start one day and finish the next
+            sports_needing_scores = await session.execute(
+                select(Sport.key)
+                .join(Event)
+                .where(
+                    Sport.active == True,
+                    Event.commence_time <= now,  # Event has started
+                    Event.commence_time >= now - timedelta(days=3),  # Within last 3 days
+                    Event.status.in_(["live", "completed"]),  # Only live or completed
+                )
+                .distinct()
+            )
+            sports_for_scores = [row[0] for row in sports_needing_scores.all()]
+
+            for sport_key in sports_for_scores:
+                try:
+                    # Request scores from last 3 days to match the query window
+                    scores_data = await service.get_scores(sport_key, days_from=3)
+
+                    for score_event in scores_data:
+                        try:
+                            external_id = score_event.get("id")
+                            is_completed = score_event.get("completed", False)
+
+                            # Parse scores from the API response
+                            event_scores = score_event.get("scores")
+                            home_team = score_event.get("home_team")
+                            away_team = score_event.get("away_team")
+
+                            # Find scores for home and away teams
+                            home_score = None
+                            away_score = None
+
+                            if event_scores is not None:
+                                for team_score in event_scores:
+                                    score_str = team_score.get("score")
+                                    # Safely parse score - handles empty strings, None, non-numeric
+                                    try:
+                                        score_val = int(score_str) if score_str else None
+                                    except (ValueError, TypeError):
+                                        score_val = None
+
+                                    if team_score.get("name") == home_team:
+                                        home_score = score_val
+                                    elif team_score.get("name") == away_team:
+                                        away_score = score_val
+
+                            # Always update status, and update scores if available
+                            event_status = "completed" if is_completed else "live"
+                            update_values = {"status": event_status}
+
+                            if home_score is not None:
+                                update_values["home_score"] = home_score
+                            if away_score is not None:
+                                update_values["away_score"] = away_score
+
+                            await session.execute(
+                                Event.__table__.update()
+                                .where(Event.external_id == external_id)
+                                .values(**update_values)
+                            )
+                            scores_updated += 1
+
+                        except Exception as e:
+                            print(f"Error updating score for event {score_event.get('id')}: {e}")
+                            continue
+
+                except Exception as e:
+                    print(f"Error fetching scores for {sport_key}: {e}")
+                    continue
+
+            # Detect and mark stale events as "closed"
+            # This catches matches that the Scores API didn't report as completed
+            events_closed = await detect_and_close_stale_events(session)
 
             await session.commit()
 
@@ -503,6 +729,8 @@ async def _poll_all_odds():
             "snapshots": total_snapshots,
             "sports_polled": sports_polled,
             "sports_skipped": sports_skipped,
+            "scores_updated": scores_updated,
+            "events_closed": events_closed,
             "data_changed": data_changed,
             "has_live_games": has_live_games,
         }
@@ -719,7 +947,11 @@ async def _poll_sport_odds(sport_key: str):
                         "home_team_name": event_data["home_team"],
                         "away_team_name": event_data["away_team"],
                         "commence_time": commence_time,
-                        "status": event_status,  # Update status on each poll
+                        # Only update status if currently "scheduled"
+                        "status": case(
+                            (Event.status == "scheduled", event_status),
+                            else_=Event.status
+                        ),
                     }
                 ).returning(Event.id)
 

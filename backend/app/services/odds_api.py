@@ -46,10 +46,17 @@ class OddsAPIService:
     # All other sports from the API are included
     EXCLUDED_PREFIXES = [
         "soccer_",        # Soccer/Football
-        "cricket_",       # Cricket
+        "cricket_",       # Cricket (standard prefix)
         "rugbyleague_",   # Rugby League
         "rugbyunion_",    # Rugby Union
         "aussierules_",   # AFL (Australian Football)
+    ]
+
+    # Additional keywords to exclude (matched anywhere in sport key)
+    EXCLUDED_KEYWORDS = [
+        "_t20",           # Cricket T20 formats
+        "_odi",           # Cricket ODI formats
+        "_test",          # Cricket test matches
     ]
     
     def __init__(self, api_key: Optional[str] = None):
@@ -83,7 +90,7 @@ class OddsAPIService:
         return response.json()
     
     async def get_odds(
-        self, 
+        self,
         sport_key: str,
         regions: str = "us",
         markets: str = "h2h,spreads,totals",
@@ -91,13 +98,13 @@ class OddsAPIService:
     ) -> list[dict]:
         """
         Get current odds for a sport.
-        
+
         Args:
             sport_key: Sport identifier (e.g., "basketball_nba")
             regions: Bookmaker regions ("us", "uk", "eu", "au")
             markets: Bet types ("h2h" for moneyline, "spreads", "totals")
             odds_format: "american" or "decimal"
-        
+
         Returns:
             List of events with odds from various bookmakers.
         """
@@ -108,6 +115,38 @@ class OddsAPIService:
                 "regions": regions,
                 "markets": markets,
                 "oddsFormat": odds_format,
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_scores(
+        self,
+        sport_key: str,
+        days_from: int = 1,
+    ) -> list[dict]:
+        """
+        Get scores for a sport, including live and recently completed games.
+
+        Args:
+            sport_key: Sport identifier (e.g., "basketball_nba")
+            days_from: Number of days in the past to return completed games.
+                       Default 1 returns games from yesterday onwards.
+
+        Returns:
+            List of events with scores. Each event includes:
+            - id: Event external ID
+            - sport_key: Sport identifier
+            - commence_time: Game start time
+            - home_team, away_team: Team names
+            - completed: Boolean indicating if game is finished
+            - scores: List of {name, score} for each team (null if not started)
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/sports/{sport_key}/scores",
+            params={
+                "apiKey": self.api_key,
+                "daysFrom": days_from,
             }
         )
         response.raise_for_status()

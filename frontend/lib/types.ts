@@ -29,7 +29,7 @@ export interface Event {
   home_team: string;
   away_team: string;
   commence_time: string;
-  status: "scheduled" | "live" | "completed";
+  status: "scheduled" | "live" | "completed" | "closed";
   home_score: number | null;
   away_score: number | null;
   current_odds?: CurrentOdds;
@@ -61,6 +61,7 @@ export interface BookmakerHistoryPoint {
   timestamp: string;
   home_probability: number | null;
   away_probability: number | null;
+  valid_until?: string; // If set, value was constant from timestamp to valid_until
 }
 
 export interface EventHistoryResponse {

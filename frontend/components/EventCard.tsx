@@ -24,14 +24,16 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
 
   const isLive = event.status === "live";
   const isCompleted = event.status === "completed";
-  const startingSoon = !isLive && !isCompleted && isStartingSoon(event.commence_time);
+  const isClosed = event.status === "closed";
+  const isFinished = isCompleted || isClosed;
+  const startingSoon = !isLive && !isFinished && isStartingSoon(event.commence_time);
 
   // Determine favorite
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
   // Is this a close game? (within 10% of 50/50)
   const isCloseGame = homeProb !== null && homeProb !== undefined &&
-    Math.abs(homeProb - 0.5) < 0.1;
+    Math.abs(homeProb - 0.5) < 0.1 && !isFinished;
 
   // Format time compactly
   const gameTime = new Date(event.commence_time);
@@ -46,7 +48,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
   // Card border/background based on state
   const cardClasses = isLive
     ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-    : isCloseGame && !isCompleted
+    : isCloseGame
     ? "bg-white border-2 border-amber-200"
     : "bg-white border border-mist";
 
@@ -81,12 +83,17 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
                 ✅ Final
               </span>
             )}
+            {isClosed && (
+              <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
+                🔒 Closed
+              </span>
+            )}
             {startingSoon && (
               <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                 ⏰ Soon
               </span>
             )}
-            {!isLive && !isCompleted && !startingSoon && (
+            {!isLive && !isFinished && !startingSoon && (
               <span className="text-xs text-slate">
                 {timeStr}
               </span>
@@ -107,7 +114,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
                 {event.home_team}
               </span>
               {/* Live/Final Score */}
-              {(isLive || isCompleted) && event.home_score !== null && (
+              {(isLive || isFinished) && event.home_score !== null && (
                 <span className={`text-lg font-bold ${
                   isLive ? "text-emerald-600" : "text-graphite"
                 }`}>
@@ -156,7 +163,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
                 {event.away_team}
               </span>
               {/* Live/Final Score */}
-              {(isLive || isCompleted) && event.away_score !== null && (
+              {(isLive || isFinished) && event.away_score !== null && (
                 <span className={`text-lg font-bold ${
                   isLive ? "text-emerald-600" : "text-graphite"
                 }`}>
@@ -175,10 +182,10 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           </div>
         </div>
 
-        {/* Footer: Projected Score for future games, Time for live/completed */}
+        {/* Footer: Projected Score for future games, Time for live/finished */}
         <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center">
           {/* Projected Score (only for future games with odds) */}
-          {!isLive && !isCompleted && odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
+          {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
             <div className="flex items-center gap-1.5 text-sm">
               <span className="text-slate">Projected:</span>
               <span className="font-mono font-medium text-graphite">
@@ -187,22 +194,22 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
             </div>
           )}
 
-          {/* For live/completed, show time info */}
-          {(isLive || isCompleted) && (
+          {/* For live/finished, show time info */}
+          {(isLive || isFinished) && (
             <div className="text-xs text-slate">
               {isLive ? "🔄 Updating live" : `Played ${timeStr}`}
             </div>
           )}
 
           {/* Empty state filler */}
-          {!isLive && !isCompleted && (!odds?.projected_home_score || !odds?.projected_away_score) && (
+          {!isLive && !isFinished && (!odds?.projected_home_score || !odds?.projected_away_score) && (
             <div className="text-xs text-slate">
               {timeStr}
             </div>
           )}
 
           {/* Close game indicator */}
-          {isCloseGame && !isCompleted && (
+          {isCloseGame && (
             <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
               🔥 Close
             </span>

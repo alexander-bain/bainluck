@@ -16,6 +16,8 @@ router = APIRouter()
 
 # Excluded sport prefixes (soccer, cricket, rugby, AFL)
 EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
+# Excluded sport keywords (matched anywhere in sport key)
+EXCLUDED_SPORT_KEYWORDS = ["_t20", "_odi", "_test"]
 
 
 @router.get("")
@@ -46,8 +48,9 @@ async def list_events(
     if status:
         conditions.append(Event.status == status)
     else:
-        # Default: show scheduled, live, and recently completed
-        conditions.append(Event.status.in_(["scheduled", "live", "completed"]))
+        # Default: show scheduled, live, completed, and closed
+        # "closed" = inferred completion via stale odds (Scores API didn't confirm)
+        conditions.append(Event.status.in_(["scheduled", "live", "completed", "closed"]))
 
     # Date range - but always include live games regardless of start time
     now = datetime.utcnow()
@@ -58,7 +61,7 @@ async def list_events(
     # Show events that either:
     # 1. Are live (regardless of when they started), OR
     # 2. Are scheduled and start within the date range, OR
-    # 3. Are completed and started yesterday or today
+    # 3. Are completed/closed and started yesterday or today
     conditions.append(
         or_(
             Event.status == "live",
@@ -68,7 +71,7 @@ async def list_events(
                 Event.commence_time <= end_date
             ),
             and_(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.commence_time >= yesterday_start
             )
         )
@@ -335,14 +338,31 @@ async def get_event_odds_history(
                 raise HTTPException(status_code=404, detail="Event not found")
 
     # Get snapshots within time range
+    # Include snapshots where:
+    # 1. captured_at >= cutoff (created within the window), OR
+    # 2. captured_at < cutoff AND valid_until >= cutoff (created before but still valid during window)
+    # This ensures we show trend lines even when odds haven't changed for a while
     cutoff = datetime.utcnow() - timedelta(hours=hours)
+    now = datetime.utcnow()
 
     result = await db.execute(
         select(OddsSnapshot)
         .where(
             and_(
                 OddsSnapshot.event_id == event_id,
-                OddsSnapshot.captured_at >= cutoff,
+                or_(
+                    # Case 1: Snapshot created within the time window
+                    OddsSnapshot.captured_at >= cutoff,
+                    # Case 2: Snapshot created before window but was valid during it
+                    and_(
+                        OddsSnapshot.captured_at < cutoff,
+                        or_(
+                            OddsSnapshot.valid_until >= cutoff,
+                            # Include if valid_until is NULL (snapshot never superseded)
+                            OddsSnapshot.valid_until.is_(None)
+                        )
+                    )
+                )
             )
         )
         .order_by(OddsSnapshot.captured_at)
@@ -350,12 +370,28 @@ async def get_event_odds_history(
     snapshots = result.scalars().all()
 
     # Group snapshots by capture time and aggregate across bookmakers
+    # For snapshots that started before the cutoff but were valid during it,
+    # create a synthetic data point at the cutoff time
     from collections import defaultdict
     snapshots_by_time = defaultdict(list)
     for snap in snapshots:
-        # Round to the nearest minute for grouping
-        time_key = snap.captured_at.replace(second=0, microsecond=0)
-        snapshots_by_time[time_key].append(snap)
+        if snap.captured_at >= cutoff:
+            # Normal case: use actual capture time
+            time_key = snap.captured_at.replace(second=0, microsecond=0)
+            snapshots_by_time[time_key].append(snap)
+        else:
+            # Snapshot predates cutoff but was valid during window
+            # Create synthetic point at cutoff to show starting value
+            time_key = cutoff.replace(second=0, microsecond=0)
+            snapshots_by_time[time_key].append(snap)
+
+            # Also add a point at valid_until or now to show the line extends
+            if snap.valid_until and snap.valid_until <= now:
+                end_key = snap.valid_until.replace(second=0, microsecond=0)
+            else:
+                end_key = now.replace(second=0, microsecond=0)
+            if end_key != time_key:
+                snapshots_by_time[end_key].append(snap)
 
     # Aggregate each time bucket
     history = []
@@ -378,7 +414,7 @@ async def get_event_odds_history(
         })
 
     # Build per-bookmaker history for individual sportsbook lines
-    # Group snapshots by bookmaker
+    # Group snapshots by bookmaker, applying same time window logic
     snapshots_by_bookmaker = defaultdict(list)
     for snap in snapshots:
         snapshots_by_bookmaker[snap.bookmaker].append(snap)
@@ -390,11 +426,35 @@ async def get_event_odds_history(
         bookmaker_history[bookmaker] = [
             {
                 "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
-                "home_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
-                "away_probability": float(snap.away_win_probability) if snap.away_win_probability else None,
+                "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
+                "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
+                "valid_until": snap.valid_until.replace(second=0, microsecond=0).isoformat() if snap.valid_until else None,
             }
-            for snap in bm_snaps_sorted
-        ]
+            if snap.captured_at >= cutoff:
+                # Normal case: use actual capture time
+                bm_points.append({
+                    "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
+                    **point_data
+                })
+            else:
+                # Snapshot predates cutoff but was valid during window
+                # Create synthetic point at cutoff and at end time
+                bm_points.append({
+                    "timestamp": cutoff.replace(second=0, microsecond=0).isoformat(),
+                    **point_data
+                })
+                if snap.valid_until and snap.valid_until <= now:
+                    end_time = snap.valid_until.replace(second=0, microsecond=0)
+                else:
+                    end_time = now.replace(second=0, microsecond=0)
+                if end_time != cutoff.replace(second=0, microsecond=0):
+                    bm_points.append({
+                        "timestamp": end_time.isoformat(),
+                        **point_data
+                    })
+        # Sort by timestamp and deduplicate
+        bm_points_sorted = sorted(bm_points, key=lambda p: p["timestamp"])
+        bookmaker_history[bookmaker] = bm_points_sorted
 
     return {
         "event_id": event_id,
@@ -403,6 +463,8 @@ async def get_event_odds_history(
         "history": history,
         "bookmaker_history": bookmaker_history,
         "points": len(history),
+        "bookmaker_count": len(bookmaker_history),
+        "snapshot_count": len(snapshots),
     }
 
 
