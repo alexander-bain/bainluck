@@ -16,8 +16,25 @@ router = APIRouter()
 
 # Excluded sport prefixes (soccer, cricket, rugby, AFL)
 EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
-# Excluded sport keywords (matched anywhere in sport key)
-EXCLUDED_SPORT_KEYWORDS = ["_t20", "_odi", "_test"]
+
+# Excluded sport keywords (catch-all for sports that might have non-standard keys)
+EXCLUDED_SPORT_KEYWORDS = ["cricket", "rugby", "t20", "odi", "test_match", "afl", "nrl", "six_nations"]
+
+
+def is_excluded_sport(sport_key: str) -> bool:
+    """Check if a sport key matches any exclusion pattern."""
+    if not sport_key:
+        return False
+    sport_key_lower = sport_key.lower()
+    # Check prefixes
+    for prefix in EXCLUDED_SPORT_PREFIXES:
+        if sport_key_lower.startswith(prefix):
+            return True
+    # Check keywords
+    for keyword in EXCLUDED_SPORT_KEYWORDS:
+        if keyword in sport_key_lower:
+            return True
+    return False
 
 
 @router.get("")
@@ -78,8 +95,13 @@ async def list_events(
     )
 
     # Exclude soccer, cricket, rugby, AFL - filter directly on joined Sport table
+    # Use ilike for case-insensitive matching
     for prefix in EXCLUDED_SPORT_PREFIXES:
-        conditions.append(not_(Sport.key.like(f"{prefix}%")))
+        conditions.append(not_(Sport.key.ilike(f"{prefix}%")))
+
+    # Also exclude by keywords (catch sports with non-standard key formats)
+    for keyword in EXCLUDED_SPORT_KEYWORDS:
+        conditions.append(not_(Sport.key.ilike(f"%{keyword}%")))
 
     if conditions:
         query = query.where(and_(*conditions))
@@ -88,6 +110,9 @@ async def list_events(
 
     result = await db.execute(query)
     events = result.scalars().all()
+
+    # Double-check exclusion in Python (failsafe in case SQL filtering has issues)
+    events = [e for e in events if not (e.sport and is_excluded_sport(e.sport.key))]
 
     # Get the latest odds snapshots for each event, aggregated across bookmakers
     event_ids = [e.id for e in events]
