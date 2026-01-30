@@ -123,9 +123,17 @@ export default function OddsChart({
 
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
-      filtered[bookmaker] = points.filter(
-        (point) => parseISO(point.timestamp) >= cutoffTime
-      );
+      filtered[bookmaker] = points.filter((point) => {
+        const pointTime = parseISO(point.timestamp);
+        // Include if point starts after cutoff
+        if (pointTime >= cutoffTime) return true;
+        // Also include if point has valid_until that extends into the range
+        if (point.valid_until) {
+          const validUntil = parseISO(point.valid_until);
+          if (validUntil >= cutoffTime) return true;
+        }
+        return false;
+      });
     }
     return filtered;
   }, [bookmakerHistory, timeRange, commenceTime]);

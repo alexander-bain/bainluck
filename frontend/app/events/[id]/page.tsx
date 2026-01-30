@@ -74,13 +74,12 @@ interface SourceAnalysis {
 
 // Analyze sources from history data to detect divergence
 function analyzeSourcesFromHistory(
-  history: Array<{
+  bookmakerHistory: Record<string, Array<{
     timestamp: string;
     home_probability: number | null;
-    bookmaker: string;
-  }>
+  }>> | undefined
 ): SourceAnalysis {
-  if (!history || history.length === 0) {
+  if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0) {
     return {
       sources: [],
       hasSignificantDivergence: false,
@@ -89,20 +88,25 @@ function analyzeSourcesFromHistory(
     };
   }
 
-  // Get unique bookmakers
-  const sources = Array.from(new Set(history.map((h) => h.bookmaker).filter(Boolean)));
+  // Get unique bookmakers from the bookmaker_history keys
+  const sources = Object.keys(bookmakerHistory);
 
   // Look at recent data (last hour) to detect divergence
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
-  const recentHistory = history.filter(
-    (h) => new Date(h.timestamp).getTime() > oneHourAgo && h.home_probability !== null
-  );
 
   // Group by bookmaker and get their latest probabilities
   const bookmakerProbs: Record<string, number> = {};
-  for (const point of recentHistory) {
-    if (point.home_probability !== null) {
-      bookmakerProbs[point.bookmaker] = point.home_probability;
+  for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
+    // Get the most recent point within the last hour
+    const recentPoints = points.filter(
+      (p) => new Date(p.timestamp).getTime() > oneHourAgo && p.home_probability !== null
+    );
+    if (recentPoints.length > 0) {
+      // Use the latest point
+      const latest = recentPoints[recentPoints.length - 1];
+      if (latest.home_probability !== null) {
+        bookmakerProbs[bookmaker] = latest.home_probability;
+      }
     }
   }
 
@@ -229,7 +233,7 @@ export default function EventPage({ params }: EventPageProps) {
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
 
   // Analyze sources from history data
-  const sourceAnalysis = analyzeSourcesFromHistory(historyData?.history ?? []);
+  const sourceAnalysis = analyzeSourcesFromHistory(historyData?.bookmaker_history);
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
