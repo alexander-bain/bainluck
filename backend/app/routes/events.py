@@ -37,6 +37,31 @@ def is_excluded_sport(sport_key: str) -> bool:
     return False
 
 
+@router.get("/debug/sport-keys")
+async def debug_sport_keys(db: AsyncSession = Depends(get_db)):
+    """Debug endpoint to see all sport keys in the database."""
+    result = await db.execute(
+        select(Sport.key, Sport.name, func.count(Event.id).label("event_count"))
+        .join(Event, Sport.id == Event.sport_id)
+        .where(Event.status.in_(["scheduled", "live"]))
+        .group_by(Sport.key, Sport.name)
+        .order_by(Sport.key)
+    )
+    sports = result.all()
+
+    return {
+        "sports": [
+            {
+                "key": s[0],
+                "name": s[1],
+                "event_count": s[2],
+                "would_be_excluded": is_excluded_sport(s[0]),
+            }
+            for s in sports
+        ]
+    }
+
+
 @router.get("")
 async def list_events(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
