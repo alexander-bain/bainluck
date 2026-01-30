@@ -463,13 +463,15 @@ async def get_event_odds_history(
                     "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
                     **point_data
                 })
-            elif snap.valid_until and snap.valid_until >= cutoff:
-                # Snapshot predates cutoff but was valid during window
-                # Create synthetic point at cutoff
-                bm_points.append({
-                    "timestamp": cutoff.replace(second=0, microsecond=0).isoformat(),
-                    **point_data
-                })
+            else:
+                # Snapshot predates cutoff - check if it was valid during window
+                # Include if: valid_until >= cutoff OR valid_until is NULL (still current)
+                if snap.valid_until is None or snap.valid_until >= cutoff:
+                    # Create synthetic point at cutoff
+                    bm_points.append({
+                        "timestamp": cutoff.replace(second=0, microsecond=0).isoformat(),
+                        **point_data
+                    })
 
         # Sort by timestamp
         bm_points_sorted = sorted(bm_points, key=lambda p: p["timestamp"])
