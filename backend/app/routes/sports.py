@@ -2,7 +2,7 @@
 
 import os
 from fastapi import APIRouter, Depends, HTTPException, Header
-from sqlalchemy import select, not_, delete
+from sqlalchemy import select, not_, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Sport, Event, OddsSnapshot
@@ -23,9 +23,10 @@ async def list_sports(db: AsyncSession = Depends(get_db)):
     """
     query = select(Sport).where(Sport.active == True)
 
-    # Exclude soccer
-    for prefix in EXCLUDED_SPORT_PREFIXES:
-        query = query.where(not_(Sport.key.startswith(prefix)))
+    # Exclude soccer, cricket, rugby, AFL using SQL LIKE
+    exclusion_conditions = [Sport.key.like(f"{prefix}%") for prefix in EXCLUDED_SPORT_PREFIXES]
+    if exclusion_conditions:
+        query = query.where(not_(or_(*exclusion_conditions)))
 
     result = await db.execute(query.order_by(Sport.name))
     sports = result.scalars().all()
@@ -97,13 +98,13 @@ async def get_sport(sport_key: str, db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.post("/admin/cleanup-soccer")
-async def cleanup_soccer(
+@router.post("/admin/cleanup-excluded")
+async def cleanup_excluded_sports(
     x_admin_token: str = Header(..., alias="X-Admin-Token"),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Remove all soccer sports, events, and odds snapshots.
+    Remove all excluded sports (soccer, cricket, rugby, AFL), events, and odds snapshots.
 
     This is an admin-only endpoint protected by a secret token.
     """
@@ -112,17 +113,18 @@ async def cleanup_soccer(
     if not expected_token or x_admin_token != expected_token:
         raise HTTPException(status_code=403, detail="Invalid admin token")
 
-    # Find soccer sports
+    # Find all excluded sports using LIKE for each prefix
+    exclusion_conditions = [Sport.key.like(f"{prefix}%") for prefix in EXCLUDED_SPORT_PREFIXES]
     result = await db.execute(
-        select(Sport).where(Sport.key.like("soccer_%"))
+        select(Sport).where(or_(*exclusion_conditions))
     )
-    soccer_sports = result.scalars().all()
+    excluded_sports = result.scalars().all()
 
     removed_sports = []
     total_events = 0
     total_snapshots = 0
 
-    for sport in soccer_sports:
+    for sport in excluded_sports:
         # Get events for this sport
         events_result = await db.execute(
             select(Event).where(Event.sport_id == sport.id)

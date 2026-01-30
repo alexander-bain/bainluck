@@ -31,6 +31,7 @@ from celery import Celery
 from celery.schedules import crontab
 from sqlalchemy import select, func, case
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import selectinload
 
 from app.services.database import async_session_maker
 from app.services.odds_api import OddsAPIService
@@ -104,6 +105,28 @@ SLOW_POLL_INTERVAL = 600      # 10 minutes after many unchanged polls
 # Thresholds for slowing down
 MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
 SLOW_THRESHOLD = 6     # Slow to slow after this many unchanged polls
+
+# Sport-specific max durations (in hours) for staleness detection
+# Used to infer when a match has likely ended if odds go stale
+SPORT_MAX_DURATIONS = {
+    # Tennis can go very long, especially Grand Slam 5-setters
+    "tennis": 6.0,
+    # Most team sports are 2-4 hours
+    "basketball": 3.5,
+    "baseball": 5.0,  # Extra innings possible
+    "americanfootball": 4.5,
+    "icehockey": 3.5,
+    "mma": 4.0,  # Full card duration
+    "boxing": 3.0,
+    "golf": 8.0,  # Round can be long
+    "lacrosse": 3.0,
+    # Default for unknown sports
+    "default": 4.0,
+}
+
+# Staleness thresholds for marking events as "closed"
+ODDS_STALE_MINUTES = 30  # Minutes without odds update to consider stale
+MIN_HOURS_BEFORE_STALENESS_CHECK = 1.5  # Don't check staleness until match has been live this long
 
 
 def get_redis_client():
@@ -213,6 +236,114 @@ def update_poll_state(data_changed: bool, has_live_games: bool, new_hash: str):
 
     except Exception as e:
         print(f"Redis error in update_poll_state: {e}")
+
+
+def get_max_duration_for_sport(sport_key: str) -> float:
+    """
+    Get the maximum expected duration (in hours) for a sport.
+
+    Used for staleness detection - we only mark events as "closed"
+    if they've been live longer than this duration AND odds are stale.
+    """
+    # Check for exact match first
+    for sport_prefix, duration in SPORT_MAX_DURATIONS.items():
+        if sport_prefix == "default":
+            continue
+        if sport_key.startswith(sport_prefix):
+            return duration
+
+    return SPORT_MAX_DURATIONS["default"]
+
+
+async def detect_and_close_stale_events(session) -> int:
+    """
+    Detect live events with stale odds and mark them as "closed".
+
+    This provides a fallback when the Scores API doesn't report completion,
+    which can happen with tennis and other sports.
+
+    An event is marked as "closed" when:
+    1. It's currently "live" status
+    2. It started at least MIN_HOURS_BEFORE_STALENESS_CHECK hours ago
+    3. Either:
+       a. It has no odds snapshots at all (bookmakers stopped offering odds), OR
+       b. The latest odds snapshot is older than ODDS_STALE_MINUTES
+    4. AND the match has been live longer than the sport's typical max duration
+
+    Returns the number of events marked as closed.
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    closed_count = 0
+
+    # Find all live events that started more than MIN_HOURS ago
+    min_start_time = now - timedelta(hours=MIN_HOURS_BEFORE_STALENESS_CHECK)
+
+    result = await session.execute(
+        select(Event)
+        .join(Sport)
+        .where(
+            Event.status == "live",
+            Event.commence_time <= min_start_time,
+        )
+        .options(selectinload(Event.sport))
+    )
+    live_events = result.scalars().all()
+
+    for event in live_events:
+        try:
+            hours_since_start = (now - event.commence_time).total_seconds() / 3600
+            sport_key = event.sport.key if event.sport else "default"
+            max_duration = get_max_duration_for_sport(sport_key)
+
+            # Only consider staleness if match has exceeded typical duration
+            if hours_since_start < max_duration:
+                continue
+
+            # Get the latest odds snapshot for this event
+            latest_snapshot_result = await session.execute(
+                select(OddsSnapshot)
+                .where(OddsSnapshot.event_id == event.id)
+                .order_by(OddsSnapshot.captured_at.desc())
+                .limit(1)
+            )
+            latest_snapshot = latest_snapshot_result.scalar_one_or_none()
+
+            should_close = False
+            close_reason = ""
+
+            if latest_snapshot is None:
+                # No odds at all - bookmakers never offered odds or stopped entirely
+                # Only close if match has been live a while
+                if hours_since_start > max_duration:
+                    should_close = True
+                    close_reason = "no_odds_data"
+            else:
+                # Check if odds are stale
+                # Use valid_until if available (more accurate), otherwise captured_at
+                last_odds_time = latest_snapshot.valid_until or latest_snapshot.captured_at
+                minutes_since_odds = (now - last_odds_time).total_seconds() / 60
+
+                if minutes_since_odds >= ODDS_STALE_MINUTES:
+                    should_close = True
+                    close_reason = f"stale_odds_{int(minutes_since_odds)}min"
+
+            if should_close:
+                await session.execute(
+                    Event.__table__.update()
+                    .where(Event.id == event.id)
+                    .values(status="closed")
+                )
+                closed_count += 1
+                print(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
+                      f"as closed: {close_reason}, {hours_since_start:.1f}h since start")
+
+        except Exception as e:
+            print(f"Error checking staleness for event {event.id}: {e}")
+            continue
+
+    return closed_count
 
 
 def run_async(coro):
@@ -571,6 +702,10 @@ async def _poll_all_odds():
                     print(f"Error fetching scores for {sport_key}: {e}")
                     continue
 
+            # Detect and mark stale events as "closed"
+            # This catches matches that the Scores API didn't report as completed
+            events_closed = await detect_and_close_stale_events(session)
+
             await session.commit()
 
         # Compute hash and check for changes
@@ -595,6 +730,7 @@ async def _poll_all_odds():
             "sports_polled": sports_polled,
             "sports_skipped": sports_skipped,
             "scores_updated": scores_updated,
+            "events_closed": events_closed,
             "data_changed": data_changed,
             "has_live_games": has_live_games,
         }

@@ -173,6 +173,8 @@ export default function EventPage({ params }: EventPageProps) {
 
   const isLive = event?.status === "live";
   const isCompleted = event?.status === "completed";
+  const isClosed = event?.status === "closed";
+  const isFinished = isCompleted || isClosed;
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   useEffect(() => {
@@ -185,7 +187,7 @@ export default function EventPage({ params }: EventPageProps) {
   }, [lastRefresh, refreshInterval]);
 
   useEffect(() => {
-    if (!event?.commence_time || isLive || isCompleted) {
+    if (!event?.commence_time || isLive || isFinished) {
       setGameCountdown("");
       return;
     }
@@ -195,7 +197,7 @@ export default function EventPage({ params }: EventPageProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [event?.commence_time, isLive, isCompleted]);
+  }, [event?.commence_time, isLive, isFinished]);
 
   const {
     data: historyData,
@@ -263,7 +265,7 @@ export default function EventPage({ params }: EventPageProps) {
         </Link>
 
         {/* Visual countdown timer */}
-        {!isCompleted && (
+        {!isFinished && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {isLive && (
@@ -309,7 +311,7 @@ export default function EventPage({ params }: EventPageProps) {
       <div className={`rounded-card shadow-card p-6 ${
         isLive
           ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-          : isCompleted
+          : isFinished
           ? "bg-slate-50 border border-slate-200"
           : "bg-white"
       }`}>
@@ -330,6 +332,11 @@ export default function EventPage({ params }: EventPageProps) {
               ✅ Final
             </span>
           )}
+          {isClosed && (
+            <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
+              🔒 Closed
+            </span>
+          )}
         </div>
 
         {/* Game time/status */}
@@ -347,9 +354,9 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
             </div>
-          ) : isCompleted ? (
+          ) : isFinished ? (
             <div className="text-slate">
-              <div className="text-caption mb-1">Game ended</div>
+              <div className="text-caption mb-1">{isClosed ? "Game closed" : "Game ended"}</div>
               <div className="text-lg font-medium">
                 {formatStartTime(event.commence_time)}
               </div>
@@ -368,8 +375,8 @@ export default function EventPage({ params }: EventPageProps) {
           )}
         </div>
 
-        {/* Score display for live/completed games */}
-        {(isLive || isCompleted) && event.home_score !== null && event.away_score !== null && (
+        {/* Score display for live/finished games */}
+        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
           <div className="flex items-center justify-center gap-6 mb-6 py-4 bg-white/50 rounded-lg">
             <div className="text-center">
               <div className={`text-4xl font-bold font-mono ${
@@ -454,7 +461,7 @@ export default function EventPage({ params }: EventPageProps) {
         {/* Data freshness strip */}
         {odds?.captured_at && (
           <div className="mt-6 pt-4 border-t border-mist/50 space-y-2">
-            <div className="flex flex-wrap justify-between gap-2 text-sm text-slate">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-slate">
               <span className="flex items-center gap-1">
                 🕐 Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
                   hour: "numeric",
@@ -493,33 +500,6 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={isLive}
           />
-        </div>
-      )}
-
-      {/* Betting Lines */}
-      {odds && (odds.spread !== null || odds.over_under !== null) && (
-        <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            📈 Lines
-          </h3>
-          <div className="grid grid-cols-2 gap-4">
-            {odds.spread !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
-                <p className="text-xs text-slate mb-1">Spread</p>
-                <p className="font-mono text-xl font-bold text-graphite">
-                  {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
-                </p>
-              </div>
-            )}
-            {odds.over_under !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
-                <p className="text-xs text-slate mb-1">Over/Under</p>
-                <p className="font-mono text-xl font-bold text-graphite">
-                  {odds.over_under}
-                </p>
-              </div>
-            )}
-          </div>
         </div>
       )}
 

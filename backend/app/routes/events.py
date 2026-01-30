@@ -16,8 +16,25 @@ router = APIRouter()
 
 # Excluded sport prefixes (soccer, cricket, rugby, AFL)
 EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
-# Excluded sport keywords (matched anywhere in sport key)
-EXCLUDED_SPORT_KEYWORDS = ["_t20", "_odi", "_test"]
+
+# Excluded sport keywords (catch-all for sports that might have non-standard keys)
+EXCLUDED_SPORT_KEYWORDS = ["cricket", "rugby", "t20", "odi", "test_match", "afl", "nrl", "six_nations"]
+
+
+def is_excluded_sport(sport_key: str) -> bool:
+    """Check if a sport key matches any exclusion pattern."""
+    if not sport_key:
+        return False
+    sport_key_lower = sport_key.lower()
+    # Check prefixes
+    for prefix in EXCLUDED_SPORT_PREFIXES:
+        if sport_key_lower.startswith(prefix):
+            return True
+    # Check keywords
+    for keyword in EXCLUDED_SPORT_KEYWORDS:
+        if keyword in sport_key_lower:
+            return True
+    return False
 
 
 @router.get("")
@@ -33,21 +50,24 @@ async def list_events(
     Returns events with their current win probabilities.
     Memory-optimized: only fetches latest odds snapshot per event.
     """
-    # Build query - only load sport, NOT all odds_snapshots (too much memory)
-    query = select(Event).options(
-        selectinload(Event.sport),
+    # Build query with explicit join to Sport for reliable filtering
+    query = (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(selectinload(Event.sport))
     )
 
     conditions = []
 
     if sport:
-        conditions.append(Event.sport.has(Sport.key == sport))
+        conditions.append(Sport.key == sport)
 
     if status:
         conditions.append(Event.status == status)
     else:
-        # Default: show scheduled, live, and recently completed
-        conditions.append(Event.status.in_(["scheduled", "live", "completed"]))
+        # Default: show scheduled, live, completed, and closed
+        # "closed" = inferred completion via stale odds (Scores API didn't confirm)
+        conditions.append(Event.status.in_(["scheduled", "live", "completed", "closed"]))
 
     # Date range - but always include live games regardless of start time
     now = datetime.utcnow()
@@ -58,7 +78,7 @@ async def list_events(
     # Show events that either:
     # 1. Are live (regardless of when they started), OR
     # 2. Are scheduled and start within the date range, OR
-    # 3. Are completed and started yesterday or today
+    # 3. Are completed/closed and started yesterday or today
     conditions.append(
         or_(
             Event.status == "live",
@@ -68,18 +88,20 @@ async def list_events(
                 Event.commence_time <= end_date
             ),
             and_(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.commence_time >= yesterday_start
             )
         )
     )
 
-    # Exclude soccer (and any other excluded sports by prefix)
+    # Exclude soccer, cricket, rugby, AFL - filter directly on joined Sport table
+    # Use ilike for case-insensitive matching
     for prefix in EXCLUDED_SPORT_PREFIXES:
-        conditions.append(not_(Event.sport.has(Sport.key.startswith(prefix))))
-    # Exclude sports by keyword (e.g., cricket T20, ODI, test matches)
+        conditions.append(not_(Sport.key.ilike(f"{prefix}%")))
+
+    # Also exclude by keywords (catch sports with non-standard key formats)
     for keyword in EXCLUDED_SPORT_KEYWORDS:
-        conditions.append(not_(Event.sport.has(Sport.key.contains(keyword))))
+        conditions.append(not_(Sport.key.ilike(f"%{keyword}%")))
 
     if conditions:
         query = query.where(and_(*conditions))
@@ -88,6 +110,9 @@ async def list_events(
 
     result = await db.execute(query)
     events = result.scalars().all()
+
+    # Double-check exclusion in Python (failsafe in case SQL filtering has issues)
+    events = [e for e in events if not (e.sport and is_excluded_sport(e.sport.key))]
 
     # Get the latest odds snapshots for each event, aggregated across bookmakers
     event_ids = [e.id for e in events]
@@ -506,6 +531,8 @@ async def debug_event_snapshots(
             "id": snap.id,
             "bookmaker": snap.bookmaker,
             "captured_at": snap.captured_at.isoformat(),
+            "valid_until": snap.valid_until.isoformat() if snap.valid_until else None,
+            "reading_count": snap.reading_count,
             "home_moneyline": snap.home_moneyline,
             "away_moneyline": snap.away_moneyline,
             "home_win_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
