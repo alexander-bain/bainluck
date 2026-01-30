@@ -494,12 +494,18 @@ async def _poll_all_odds():
             )
             sport_data = result.all()
 
+            # Even if no sports need odds polling, we should still check for stale events
+            # and update scores for recently started games
             if not sport_data:
+                # Still run staleness detection for any live events that may have ended
+                events_closed = await detect_and_close_stale_events(session)
+                await session.commit()
                 return {
                     "events": 0,
                     "snapshots": 0,
                     "sports": 0,
                     "sports_skipped": 0,
+                    "events_closed": events_closed,
                     "message": "No sports with games in the next 6 hours.",
                     "skipped": True,
                 }
