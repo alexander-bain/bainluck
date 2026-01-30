@@ -72,9 +72,17 @@ async def list_events(
         )
     )
 
-    # Exclude soccer (and any other excluded sports)
+    # Exclude soccer, cricket, rugby, AFL (and any other excluded sports)
+    # Build exclusion conditions using SQL LIKE for reliable prefix matching
+    exclusion_conditions = []
     for prefix in EXCLUDED_SPORT_PREFIXES:
-        conditions.append(not_(Event.sport.has(Sport.key.startswith(prefix))))
+        exclusion_conditions.append(Sport.key.like(f"{prefix}%"))
+
+    # Exclude events where sport matches any excluded prefix
+    if exclusion_conditions:
+        conditions.append(
+            not_(Event.sport.has(or_(*exclusion_conditions)))
+        )
 
     if conditions:
         query = query.where(and_(*conditions))
