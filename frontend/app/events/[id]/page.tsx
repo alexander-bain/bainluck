@@ -450,18 +450,33 @@ export default function EventPage({ params }: EventPageProps) {
         {/* Data freshness strip */}
         {odds?.captured_at && (
           <div className="mt-6 pt-4 border-t border-mist/50 space-y-2">
-            <div className="flex flex-wrap justify-between gap-2 text-sm text-slate">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-slate">
               <span className="flex items-center gap-1">
                 🕐 Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
                   hour: "numeric",
                   minute: "2-digit",
                 })}
               </span>
-              {sourceAnalysis.sources.length > 0 && (
-                <span className="text-xs text-silver">
-                  {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
-                </span>
-              )}
+              <div className="flex items-center gap-4 text-xs text-silver">
+                {odds.spread !== null && (
+                  <span className="font-mono">
+                    Spread {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
+                  </span>
+                )}
+                {odds.over_under !== null && (
+                  <span className="font-mono">
+                    O/U {odds.over_under}
+                  </span>
+                )}
+                {sourceAnalysis.sources.length > 0 && (
+                  <span
+                    className="cursor-help border-b border-dotted border-silver"
+                    title={sourceAnalysis.sources.join(", ")}
+                  >
+                    {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
             </div>
             {sourceAnalysis.divergenceWarning && (
               <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded">
@@ -530,33 +545,6 @@ export default function EventPage({ params }: EventPageProps) {
               />
             </div>
           )}
-        </div>
-      )}
-
-      {/* Betting Lines */}
-      {odds && (odds.spread !== null || odds.over_under !== null) && (
-        <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            📈 Lines
-          </h3>
-          <div className="grid grid-cols-2 gap-4">
-            {odds.spread !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
-                <p className="text-xs text-slate mb-1">Spread</p>
-                <p className="font-mono text-xl font-bold text-graphite">
-                  {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
-                </p>
-              </div>
-            )}
-            {odds.over_under !== null && (
-              <div className="text-center p-4 bg-snow rounded-lg border border-mist">
-                <p className="text-xs text-slate mb-1">Over/Under</p>
-                <p className="font-mono text-xl font-bold text-graphite">
-                  {odds.over_under}
-                </p>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
