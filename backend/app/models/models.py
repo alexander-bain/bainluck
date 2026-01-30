@@ -137,7 +137,13 @@ class OddsSnapshot(Base):
     away_win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
     projected_home_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
     projected_away_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
-    
+
+    # Deduplication fields
+    # reading_count: how many times we polled and saw this exact same value
+    # valid_until: last time we confirmed this value (for charting continuity)
+    reading_count: Mapped[int] = mapped_column(Integer, default=1)
+    valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
     # Relationships
     event: Mapped["Event"] = relationship(back_populates="odds_snapshots")
 

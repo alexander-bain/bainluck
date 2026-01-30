@@ -97,14 +97,35 @@ export default function ScoreChart({
   }
 
   // Transform data for chart
+  // Expand points with valid_until into two points for flat line display
   const chartData: ChartDataPoint[] = filteredHistory
     .filter((point) => point.projected_home_score !== null && point.projected_away_score !== null)
-    .map((point) => ({
-      timestamp: point.timestamp,
-      time: format(parseISO(point.timestamp), "h:mm a"),
-      homeScore: point.projected_home_score,
-      awayScore: point.projected_away_score,
-    }));
+    .flatMap((point) => {
+      const startPoint: ChartDataPoint = {
+        timestamp: point.timestamp,
+        time: format(parseISO(point.timestamp), "h:mm a"),
+        homeScore: point.projected_home_score,
+        awayScore: point.projected_away_score,
+      };
+
+      // If valid_until exists and is different from timestamp, add end point for flat line
+      if (point.valid_until) {
+        const endTime = parseISO(point.valid_until);
+        const startTime = parseISO(point.timestamp);
+        // Only add if valid_until is significantly later (>1 min)
+        if (endTime.getTime() - startTime.getTime() > 60000) {
+          const endPoint: ChartDataPoint = {
+            timestamp: point.valid_until,
+            time: format(endTime, "h:mm a"),
+            homeScore: point.projected_home_score,
+            awayScore: point.projected_away_score,
+          };
+          return [startPoint, endPoint];
+        }
+      }
+
+      return [startPoint];
+    });
 
   if (chartData.length === 0) {
     return null;

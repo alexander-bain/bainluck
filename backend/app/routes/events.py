@@ -269,10 +269,10 @@ async def get_event_odds_history(
     snapshots = result.scalars().all()
     
     # Format for charting
-    # Average across bookmakers for each timestamp bucket
+    # Include valid_until for drawing flat lines between data points
     history = []
     for snap in snapshots:
-        history.append({
+        point = {
             "timestamp": snap.captured_at.isoformat(),
             "home_probability": float(snap.home_win_probability)
                 if snap.home_win_probability else None,
@@ -285,7 +285,13 @@ async def get_event_odds_history(
             "projected_away_score": float(snap.projected_away_score)
                 if snap.projected_away_score else None,
             "bookmaker": snap.bookmaker,
-        })
+        }
+        # Include valid_until if available (for deduped rows)
+        if hasattr(snap, 'valid_until') and snap.valid_until:
+            point["valid_until"] = snap.valid_until.isoformat()
+        if hasattr(snap, 'reading_count'):
+            point["reading_count"] = snap.reading_count
+        history.append(point)
     
     return {
         "event_id": event_id,
