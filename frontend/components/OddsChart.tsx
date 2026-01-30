@@ -229,6 +229,21 @@ export default function OddsChart({
       }
     }
 
+    // Third pass: ensure all bookmaker keys exist on all data points (as null if missing)
+    // This is required for connectNulls to work - undefined values don't connect
+    const allBookmakers = Object.keys(filteredBookmakerHistory);
+    const allPoints = Array.from(dataMap.values());
+    for (const point of allPoints) {
+      for (const bookmaker of allBookmakers) {
+        if (point[`${bookmaker}_home`] === undefined) {
+          point[`${bookmaker}_home`] = null;
+        }
+        if (point[`${bookmaker}_away`] === undefined) {
+          point[`${bookmaker}_away`] = null;
+        }
+      }
+    }
+
     // Sort by timestamp and return as array
     return Array.from(dataMap.values()).sort(
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
@@ -322,14 +337,15 @@ export default function OddsChart({
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
-            {/* Individual bookmaker lines - grey, rendered first so they appear behind aggregate */}
+            {/* Individual bookmaker lines - grey dashed, rendered first so they appear behind aggregate */}
             {bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_home`}
                 type="monotone"
                 dataKey={`${bookmaker}_home`}
-                stroke="rgba(156, 163, 175, 0.5)"
+                stroke="rgba(107, 114, 128, 0.6)"
                 strokeWidth={1}
+                strokeDasharray="4 2"
                 dot={false}
                 activeDot={false}
                 connectNulls
@@ -341,8 +357,9 @@ export default function OddsChart({
                 key={`${bookmaker}_away`}
                 type="monotone"
                 dataKey={`${bookmaker}_away`}
-                stroke="rgba(156, 163, 175, 0.5)"
+                stroke="rgba(107, 114, 128, 0.6)"
                 strokeWidth={1}
+                strokeDasharray="4 2"
                 dot={false}
                 activeDot={false}
                 connectNulls
