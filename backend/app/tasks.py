@@ -6,14 +6,17 @@ This module sets up periodic tasks to:
 2. Store events and snapshots in the database
 3. Calculate probabilities
 
-Tiered polling (optimized for 90K calls/month):
+Tiered polling (optimized for 5M calls/month):
 - Only polls sports with games starting within 6 hours
-- Live games: Poll every 60 seconds
-- Games starting in 0-2 hours: Poll every 5 minutes
-- Games starting in 2-6 hours: Poll every 15 minutes
+- Live games: Poll every 32 seconds
+- Games starting in 0-2 hours: Poll every 60 seconds
+- Games starting in 2-6 hours: Poll every 2 minutes
 - No games in 6 hours: Don't poll that sport at all
 
-Estimated usage: ~500-1000 calls/day, well within 3K/day budget.
+Adaptive slowdown: If odds aren't changing, polling slows down automatically
+to conserve API calls.
+
+Estimated capacity: ~1.9 calls/second, ~166K calls/day.
 """
 
 import asyncio
@@ -74,7 +77,7 @@ celery_app.conf.update(**celery_config)
 celery_app.conf.beat_schedule = {
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
-        "schedule": 60.0,  # Check every minute, but may skip based on adaptive logic
+        "schedule": 30.0,  # Check every 30 seconds, but may skip based on adaptive logic
     },
     "sync-sports-hourly": {
         "task": "app.tasks.sync_sports",
@@ -91,15 +94,16 @@ POLL_STATE_KEY = "odds_tracker:poll_state"
 LAST_ODDS_HASH_KEY = "odds_tracker:last_odds_hash"
 
 # Polling intervals (in seconds)
-# Tiered approach based on game proximity
-LIVE_POLL_INTERVAL = 60       # 1 minute for live games (the main use case!)
-SOON_POLL_INTERVAL = 300      # 5 minutes for games starting in 0-2 hours
-LATER_POLL_INTERVAL = 900     # 15 minutes for games starting in 2-6 hours
+# Tiered approach based on game proximity (optimized for 5M calls/month)
+LIVE_POLL_INTERVAL = 32       # 32 seconds for live games (the main use case!)
+SOON_POLL_INTERVAL = 60       # 1 minute for games starting in 0-2 hours
+LATER_POLL_INTERVAL = 120     # 2 minutes for games starting in 2-6 hours
 
-# Legacy adaptive polling thresholds (for when no live games)
-FAST_POLL_INTERVAL = 600      # 10 minutes when data is changing
-MEDIUM_POLL_INTERVAL = 1800   # 30 minutes after unchanged polls
-SLOW_POLL_INTERVAL = 3600     # 60 minutes overnight
+# Adaptive polling thresholds (for when odds aren't changing)
+# When odds stay the same, gradually slow down to conserve API calls
+FAST_POLL_INTERVAL = 60       # 1 minute when data is changing
+MEDIUM_POLL_INTERVAL = 300    # 5 minutes after unchanged polls
+SLOW_POLL_INTERVAL = 600      # 10 minutes after many unchanged polls
 
 # Thresholds for slowing down
 MEDIUM_THRESHOLD = 3   # Slow to medium after this many unchanged polls
@@ -311,12 +315,13 @@ async def _poll_all_odds():
     Async implementation of poll_all_odds with tiered per-sport polling.
 
     Tiered polling based on game proximity:
-    - Live games (in progress): Poll every 60 seconds
-    - Starting soon (0-2 hours): Poll every 5 minutes
-    - Starting later (2-6 hours): Poll every 15 minutes
+    - Live games (in progress): Poll every 32 seconds
+    - Starting soon (0-2 hours): Poll every 60 seconds
+    - Starting later (2-6 hours): Poll every 2 minutes
     - No games in 6 hours: Don't poll that sport
 
     Uses per-sport last poll times stored in Redis.
+    Adaptive slowdown kicks in when odds aren't changing.
     """
     service = OddsAPIService()
 
@@ -376,16 +381,16 @@ async def _poll_all_odds():
 
                 # Determine poll interval for this sport
                 if is_live or (soonest_game and soonest_game <= now):
-                    # Live game - poll every 60 seconds
+                    # Live game - poll every 32 seconds
                     poll_interval = LIVE_POLL_INTERVAL
                     tier = "live"
                     has_live_games = True
                 elif soonest_game and soonest_game <= now + timedelta(hours=2):
-                    # Starting soon (0-2 hours) - poll every 5 minutes
+                    # Starting soon (0-2 hours) - poll every 60 seconds
                     poll_interval = SOON_POLL_INTERVAL
                     tier = "soon"
                 else:
-                    # Starting later (2-6 hours) - poll every 15 minutes
+                    # Starting later (2-6 hours) - poll every 2 minutes
                     poll_interval = LATER_POLL_INTERVAL
                     tier = "later"
 
