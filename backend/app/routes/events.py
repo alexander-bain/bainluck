@@ -250,6 +250,12 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    # Filter out excluded sports (cricket, rugby, AFL, etc.)
+    if event.sport:
+        for prefix in EXCLUDED_SPORT_PREFIXES:
+            if event.sport.key.startswith(prefix):
+                raise HTTPException(status_code=404, detail="Event not found")
+
     response = _format_event(event)
 
     if event.odds_snapshots:
@@ -311,12 +317,20 @@ async def get_event_odds_history(
     """
     # Verify event exists
     event_result = await db.execute(
-        select(Event).where(Event.id == event_id)
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.id == event_id)
     )
     event = event_result.scalar_one_or_none()
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # Filter out excluded sports (cricket, rugby, AFL, etc.)
+    if event.sport:
+        for prefix in EXCLUDED_SPORT_PREFIXES:
+            if event.sport.key.startswith(prefix):
+                raise HTTPException(status_code=404, detail="Event not found")
 
     # Get snapshots within time range
     cutoff = datetime.utcnow() - timedelta(hours=hours)
@@ -403,12 +417,20 @@ async def debug_event_snapshots(
     """
     # Verify event exists
     event_result = await db.execute(
-        select(Event).where(Event.id == event_id)
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.id == event_id)
     )
     event = event_result.scalar_one_or_none()
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # Filter out excluded sports (cricket, rugby, AFL, etc.)
+    if event.sport:
+        for prefix in EXCLUDED_SPORT_PREFIXES:
+            if event.sport.key.startswith(prefix):
+                raise HTTPException(status_code=404, detail="Event not found")
 
     # Get recent snapshots
     result = await db.execute(
