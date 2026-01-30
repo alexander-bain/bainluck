@@ -84,27 +84,6 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   },
   // Tier 3: Tertiary sports (niche audience)
   {
-    key: "cricket",
-    name: "Cricket",
-    emoji: "🏏",
-    prefixes: ["cricket_"],
-    tier: 3,
-  },
-  {
-    key: "rugby",
-    name: "Rugby",
-    emoji: "🏉",
-    prefixes: ["rugbyleague_", "rugbyunion_"],
-    tier: 3,
-  },
-  {
-    key: "aussierules",
-    name: "Aussie Rules",
-    emoji: "🦘",
-    prefixes: ["aussierules_"],
-    tier: 3,
-  },
-  {
     key: "politics",
     name: "Politics",
     emoji: "🗳️",
@@ -253,20 +232,6 @@ export const LEAGUE_DISPLAY: Record<string, string> = {
   tennis_atp_french_open: "French Open",
   tennis_atp_french_open_singles: "French Open (ATP)",
   tennis_wta_french_open_singles: "French Open (WTA)",
-  // Cricket
-  cricket_ipl: "IPL",
-  cricket_bbl: "BBL",
-  cricket_test_match: "Test Match",
-  cricket_odi: "ODI",
-  cricket_t20: "T20",
-  cricket_international_t20: "International T20",
-  // Rugby
-  rugbyleague_nrl: "NRL",
-  rugbyleague_nrl_state_of_origin: "State of Origin",
-  rugbyunion_six_nations: "Six Nations",
-  rugbyunion_super_rugby: "Super Rugby",
-  // Aussie Rules
-  aussierules_afl: "AFL",
   // Lacrosse
   lacrosse_ncaa: "NCAA Lacrosse",
   lacrosse_pll: "PLL",

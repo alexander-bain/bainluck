@@ -40,6 +40,7 @@ export default function HomePage() {
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("smart");
   const [collapsedSports, setCollapsedSports] = useState<Set<string>>(new Set());
+  const [completedCollapsed, setCompletedCollapsed] = useState<boolean>(true);
 
   const {
     data: sportsData,
@@ -58,8 +59,8 @@ export default function HomePage() {
     { refreshInterval: 30000 }
   );
 
-  // Filter events by category if selected
-  const filteredEvents = useMemo(() => {
+  // Filter events by category if selected, separating completed from active
+  const { filteredEvents, completedEvents } = useMemo(() => {
     let events = eventsData?.events ?? [];
     if (selectedCategory && !selectedSport) {
       const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
@@ -73,7 +74,14 @@ export default function HomePage() {
         );
       }
     }
-    return events;
+    // Separate completed events from active (scheduled/live)
+    const active = events.filter((e) => e.status !== "completed");
+    const completed = events
+      .filter((e) => e.status === "completed")
+      .sort((a, b) =>
+        new Date(b.commence_time).getTime() - new Date(a.commence_time).getTime()
+      );
+    return { filteredEvents: active, completedEvents: completed };
   }, [eventsData?.events, selectedCategory, selectedSport]);
 
   // Get featured events (live + close games starting soon)
@@ -359,10 +367,48 @@ export default function HomePage() {
             </div>
           )}
 
+          {/* Completed Games Section */}
+          {completedEvents.length > 0 && (
+            <section className="border-t border-mist pt-6">
+              <button
+                onClick={() => setCompletedCollapsed(!completedCollapsed)}
+                className="flex items-center gap-2 mb-4 w-full text-left group"
+              >
+                <span className="text-lg">✅</span>
+                <h2 className="text-title-3 font-semibold text-slate">
+                  Completed Games
+                </h2>
+                <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
+                  {completedEvents.length}
+                </span>
+                <span className="ml-auto text-slate group-hover:text-graphite transition-colors">
+                  {completedCollapsed ? (
+                    <ChevronRight className="w-5 h-5" />
+                  ) : (
+                    <ChevronDown className="w-5 h-5" />
+                  )}
+                </span>
+              </button>
+
+              {!completedCollapsed && (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {completedEvents.map((event) => (
+                    <EventCard
+                      key={`completed-${event.id}`}
+                      event={event}
+                      showSport={!selectedCategory && !selectedSport}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
           {/* Event count */}
-          {filteredEvents.length > 0 && (
+          {(filteredEvents.length > 0 || completedEvents.length > 0) && (
             <p className="text-center text-caption text-silver pt-4">
-              {filteredEvents.length} event{filteredEvents.length !== 1 ? "s" : ""}
+              {filteredEvents.length} upcoming event{filteredEvents.length !== 1 ? "s" : ""}
+              {completedEvents.length > 0 && ` · ${completedEvents.length} completed`}
             </p>
           )}
         </>

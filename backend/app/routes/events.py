@@ -44,22 +44,30 @@ async def list_events(
     if status:
         conditions.append(Event.status == status)
     else:
-        # Default: show scheduled and live
-        conditions.append(Event.status.in_(["scheduled", "live"]))
+        # Default: show scheduled, live, and recently completed
+        conditions.append(Event.status.in_(["scheduled", "live", "completed"]))
 
     # Date range - but always include live games regardless of start time
     now = datetime.utcnow()
     end_date = now + timedelta(days=days)
+    # Include completed events from yesterday and today
+    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     # Show events that either:
     # 1. Are live (regardless of when they started), OR
-    # 2. Are scheduled and start within the date range
+    # 2. Are scheduled and start within the date range, OR
+    # 3. Are completed and started yesterday or today
     conditions.append(
         or_(
             Event.status == "live",
             and_(
+                Event.status == "scheduled",
                 Event.commence_time >= now,
                 Event.commence_time <= end_date
+            ),
+            and_(
+                Event.status == "completed",
+                Event.commence_time >= yesterday_start
             )
         )
     )
