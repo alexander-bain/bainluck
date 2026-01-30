@@ -392,6 +392,8 @@ async def get_event_odds_history(
         "history": history,
         "bookmaker_history": bookmaker_history,
         "points": len(history),
+        "bookmaker_count": len(bookmaker_history),
+        "snapshot_count": len(snapshots),
     }
 
 
