@@ -480,10 +480,11 @@ export default function EventPage({ params }: EventPageProps) {
                   </span>
                 )}
                 {(() => {
-                  // Get bookmaker names from multiple sources
+                  // Get bookmaker count from current_odds (most reliable)
+                  // Get names from bookmaker_odds or history for tooltip
                   const bookmakerNames = event.bookmaker_odds?.map(b => b.bookmaker)
                     || (historyData?.bookmaker_history ? Object.keys(historyData.bookmaker_history) : []);
-                  const count = bookmakerNames.length || odds.bookmaker_count || 0;
+                  const count = odds.bookmaker_count || bookmakerNames.length || 0;
                   if (count > 0) {
                     return (
                       <span
