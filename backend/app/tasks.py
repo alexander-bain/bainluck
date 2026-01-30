@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 import redis
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.dialects.postgresql import insert
 
 from app.services.database import async_session_maker
@@ -317,6 +317,7 @@ async def _poll_all_odds():
     - No games in 6 hours: Don't poll that sport
 
     Uses per-sport last poll times stored in Redis.
+    Also fetches scores for live/completed games.
     """
     service = OddsAPIService()
 
@@ -327,6 +328,7 @@ async def _poll_all_odds():
         has_live_games = False
         sports_polled = 0
         sports_skipped = 0
+        scores_updated = 0
 
         # Get Redis client for per-sport poll tracking
         try:
@@ -441,7 +443,10 @@ async def _poll_all_odds():
                             session.add(sport)
                             await session.flush()
 
-                        # Upsert event
+                        # Upsert event with conditional status update
+                        # - New events: set status based on commence_time
+                        # - Existing "scheduled" events: update to "live" if started
+                        # - Existing "live"/"completed" events: don't change status
                         event_status = "scheduled" if commence_time > now else "live"
                         stmt = insert(Event).values(
                             external_id=event_data["id"],
@@ -456,7 +461,12 @@ async def _poll_all_odds():
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
                                 "commence_time": commence_time,
-                                "status": event_status,
+                                # Only update status if currently "scheduled"
+                                # This allows scheduled->live but preserves completed
+                                "status": case(
+                                    (Event.status == "scheduled", event_status),
+                                    else_=Event.status
+                                ),
                             }
                         ).returning(Event.id)
 
@@ -478,6 +488,73 @@ async def _poll_all_odds():
 
                 except Exception as e:
                     print(f"Error polling {sport_key}: {e}")
+                    continue
+
+            # Fetch scores for sports with events that have started
+            # Include events that: started in the last day (for completed games)
+            # or started and not yet completed (for live games)
+            sports_needing_scores = await session.execute(
+                select(Sport.key)
+                .join(Event)
+                .where(
+                    Sport.active == True,
+                    Event.commence_time <= now,  # Event has started
+                    Event.commence_time >= now - timedelta(days=1),  # Within last day
+                    Event.status != "scheduled",  # Exclude future games
+                )
+                .distinct()
+            )
+            sports_for_scores = [row[0] for row in sports_needing_scores.all()]
+
+            for sport_key in sports_for_scores:
+                try:
+                    scores_data = await service.get_scores(sport_key, days_from=1)
+
+                    for score_event in scores_data:
+                        external_id = score_event.get("id")
+                        is_completed = score_event.get("completed", False)
+
+                        # Parse scores from the API response
+                        event_scores = score_event.get("scores")
+                        home_team = score_event.get("home_team")
+                        away_team = score_event.get("away_team")
+
+                        # Find scores for home and away teams
+                        home_score = None
+                        away_score = None
+
+                        if event_scores is not None:
+                            for team_score in event_scores:
+                                score_str = team_score.get("score")
+                                # Safely parse score - handles empty strings, None, non-numeric
+                                try:
+                                    score_val = int(score_str) if score_str else None
+                                except (ValueError, TypeError):
+                                    score_val = None
+
+                                if team_score.get("name") == home_team:
+                                    home_score = score_val
+                                elif team_score.get("name") == away_team:
+                                    away_score = score_val
+
+                        # Always update status, and update scores if available
+                        event_status = "completed" if is_completed else "live"
+                        update_values = {"status": event_status}
+
+                        if home_score is not None:
+                            update_values["home_score"] = home_score
+                        if away_score is not None:
+                            update_values["away_score"] = away_score
+
+                        await session.execute(
+                            Event.__table__.update()
+                            .where(Event.external_id == external_id)
+                            .values(**update_values)
+                        )
+                        scores_updated += 1
+
+                except Exception as e:
+                    print(f"Error fetching scores for {sport_key}: {e}")
                     continue
 
             await session.commit()
@@ -503,6 +580,7 @@ async def _poll_all_odds():
             "snapshots": total_snapshots,
             "sports_polled": sports_polled,
             "sports_skipped": sports_skipped,
+            "scores_updated": scores_updated,
             "data_changed": data_changed,
             "has_live_games": has_live_games,
         }
@@ -719,7 +797,11 @@ async def _poll_sport_odds(sport_key: str):
                         "home_team_name": event_data["home_team"],
                         "away_team_name": event_data["away_team"],
                         "commence_time": commence_time,
-                        "status": event_status,  # Update status on each poll
+                        # Only update status if currently "scheduled"
+                        "status": case(
+                            (Event.status == "scheduled", event_status),
+                            else_=Event.status
+                        ),
                     }
                 ).returning(Event.id)
 
