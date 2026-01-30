@@ -439,7 +439,7 @@ async def get_event_odds_history(
         })
 
     # Build per-bookmaker history for individual sportsbook lines
-    # Group snapshots by bookmaker, applying same time window logic
+    # Group snapshots by bookmaker
     snapshots_by_bookmaker = defaultdict(list)
     for snap in snapshots:
         snapshots_by_bookmaker[snap.bookmaker].append(snap)
@@ -448,13 +448,15 @@ async def get_event_odds_history(
     for bookmaker, bm_snaps in snapshots_by_bookmaker.items():
         # Sort by time
         bm_snaps_sorted = sorted(bm_snaps, key=lambda s: s.captured_at)
-        bookmaker_history[bookmaker] = [
-            {
-                "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
+        bm_points = []
+
+        for snap in bm_snaps_sorted:
+            point_data = {
                 "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
                 "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
                 "valid_until": snap.valid_until.replace(second=0, microsecond=0).isoformat() if snap.valid_until else None,
             }
+
             if snap.captured_at >= cutoff:
                 # Normal case: use actual capture time
                 bm_points.append({
@@ -462,22 +464,16 @@ async def get_event_odds_history(
                     **point_data
                 })
             else:
-                # Snapshot predates cutoff but was valid during window
-                # Create synthetic point at cutoff and at end time
-                bm_points.append({
-                    "timestamp": cutoff.replace(second=0, microsecond=0).isoformat(),
-                    **point_data
-                })
-                if snap.valid_until and snap.valid_until <= now:
-                    end_time = snap.valid_until.replace(second=0, microsecond=0)
-                else:
-                    end_time = now.replace(second=0, microsecond=0)
-                if end_time != cutoff.replace(second=0, microsecond=0):
+                # Snapshot predates cutoff - check if it was valid during window
+                # Include if: valid_until >= cutoff OR valid_until is NULL (still current)
+                if snap.valid_until is None or snap.valid_until >= cutoff:
+                    # Create synthetic point at cutoff
                     bm_points.append({
-                        "timestamp": end_time.isoformat(),
+                        "timestamp": cutoff.replace(second=0, microsecond=0).isoformat(),
                         **point_data
                     })
-        # Sort by timestamp and deduplicate
+
+        # Sort by timestamp
         bm_points_sorted = sorted(bm_points, key=lambda p: p["timestamp"])
         bookmaker_history[bookmaker] = bm_points_sorted
 

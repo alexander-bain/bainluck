@@ -123,9 +123,17 @@ export default function OddsChart({
 
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
-      filtered[bookmaker] = points.filter(
-        (point) => parseISO(point.timestamp) >= cutoffTime
-      );
+      filtered[bookmaker] = points.filter((point) => {
+        const pointTime = parseISO(point.timestamp);
+        // Include if point starts after cutoff
+        if (pointTime >= cutoffTime) return true;
+        // Also include if point has valid_until that extends into the range
+        if (point.valid_until) {
+          const validUntil = parseISO(point.valid_until);
+          if (validUntil >= cutoffTime) return true;
+        }
+        return false;
+      });
     }
     return filtered;
   }, [bookmakerHistory, timeRange, commenceTime]);
@@ -314,7 +322,34 @@ export default function OddsChart({
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
-            {/* Aggregate lines - thick, colorful, rendered first so bookmaker lines overlay */}
+            {/* Individual bookmaker lines - grey, rendered first so they appear behind aggregate */}
+            {bookmakers.map((bookmaker) => (
+              <Line
+                key={`${bookmaker}_home`}
+                type="monotone"
+                dataKey={`${bookmaker}_home`}
+                stroke="rgba(156, 163, 175, 0.5)"
+                strokeWidth={1}
+                dot={false}
+                activeDot={false}
+                connectNulls
+                legendType="none"
+              />
+            ))}
+            {bookmakers.map((bookmaker) => (
+              <Line
+                key={`${bookmaker}_away`}
+                type="monotone"
+                dataKey={`${bookmaker}_away`}
+                stroke="rgba(156, 163, 175, 0.5)"
+                strokeWidth={1}
+                dot={false}
+                activeDot={false}
+                connectNulls
+                legendType="none"
+              />
+            ))}
+            {/* Aggregate lines - thick, colorful, rendered last so they appear on top */}
             <Line
               type="monotone"
               dataKey="homeProb"
@@ -335,33 +370,6 @@ export default function OddsChart({
               activeDot={{ r: 4 }}
               connectNulls
             />
-            {/* Individual bookmaker lines - rendered after aggregate so variations are visible */}
-            {bookmakers.map((bookmaker) => (
-              <Line
-                key={`${bookmaker}_home`}
-                type="monotone"
-                dataKey={`${bookmaker}_home`}
-                stroke="rgba(34, 197, 94, 0.35)"
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={false}
-                connectNulls
-                legendType="none"
-              />
-            ))}
-            {bookmakers.map((bookmaker) => (
-              <Line
-                key={`${bookmaker}_away`}
-                type="monotone"
-                dataKey={`${bookmaker}_away`}
-                stroke="rgba(59, 130, 246, 0.35)"
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={false}
-                connectNulls
-                legendType="none"
-              />
-            ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
