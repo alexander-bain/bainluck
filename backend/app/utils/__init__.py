@@ -8,6 +8,8 @@ from app.utils.odds_math import (
     calculate_gei,
     format_probability,
     probability_to_american,
+    aggregate_probabilities,
+    aggregate_bookmaker_odds,
 )
 
 __all__ = [
@@ -19,4 +21,6 @@ __all__ = [
     "calculate_gei",
     "format_probability",
     "probability_to_american",
+    "aggregate_probabilities",
+    "aggregate_bookmaker_odds",
 ]

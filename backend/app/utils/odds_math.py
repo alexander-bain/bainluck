@@ -5,7 +5,9 @@ This module handles all the math for converting betting odds
 to probabilities, projected scores, and excitement indices.
 """
 
-from typing import Tuple
+from typing import List, Optional, Tuple
+
+from statistics import mean, median
 
 
 def american_to_probability(odds: int) -> float:
@@ -206,9 +208,9 @@ def format_probability(prob: float, style: str = "percent") -> str:
 def probability_to_american(prob: float) -> int:
     """
     Convert probability back to American odds.
-    
+
     Useful for displaying "fair odds" after removing vig.
-    
+
     Examples:
         >>> probability_to_american(0.6)
         -150
@@ -219,3 +221,132 @@ def probability_to_american(prob: float) -> int:
         return round(-100 * prob / (1 - prob))
     else:
         return round(100 * (1 - prob) / prob)
+
+
+def aggregate_probabilities(
+    probabilities: List[float],
+    method: str = "mean"
+) -> Optional[float]:
+    """
+    Aggregate win probabilities from multiple bookmakers.
+
+    Args:
+        probabilities: List of probabilities from different bookmakers (0-1)
+        method: Aggregation method - "mean", "median", or "trimmed_mean"
+
+    Returns:
+        Aggregated probability or None if no valid probabilities
+
+    Examples:
+        >>> aggregate_probabilities([0.55, 0.57, 0.54])
+        0.5533  # Mean of the three
+        >>> aggregate_probabilities([0.55, 0.57, 0.54], method="median")
+        0.55  # Median value
+    """
+    # Filter out None and invalid values
+    valid_probs = [p for p in probabilities if p is not None and 0 <= p <= 1]
+
+    if not valid_probs:
+        return None
+
+    if len(valid_probs) == 1:
+        return valid_probs[0]
+
+    if method == "median":
+        return median(valid_probs)
+    elif method == "trimmed_mean" and len(valid_probs) >= 3:
+        # Remove highest and lowest, then average
+        sorted_probs = sorted(valid_probs)
+        trimmed = sorted_probs[1:-1]
+        return mean(trimmed) if trimmed else mean(valid_probs)
+    else:  # Default to mean
+        return mean(valid_probs)
+
+
+def aggregate_bookmaker_odds(
+    bookmaker_snapshots: List[dict],
+    method: str = "mean"
+) -> dict:
+    """
+    Aggregate odds data from multiple bookmakers into a single consensus.
+
+    Args:
+        bookmaker_snapshots: List of dicts with keys:
+            - home_win_probability: float
+            - away_win_probability: float
+            - over_under: float (optional)
+            - home_spread: float (optional)
+            - projected_home_score: float (optional)
+            - projected_away_score: float (optional)
+        method: Aggregation method ("mean", "median", "trimmed_mean")
+
+    Returns:
+        Dict with aggregated values and metadata:
+            - home_probability: aggregated home win probability
+            - away_probability: aggregated away win probability
+            - over_under: aggregated total (if available)
+            - home_spread: aggregated spread (if available)
+            - projected_home_score: aggregated projected score
+            - projected_away_score: aggregated projected score
+            - bookmaker_count: number of bookmakers included
+            - min_home_probability: lowest home probability
+            - max_home_probability: highest home probability
+    """
+    if not bookmaker_snapshots:
+        return {
+            "home_probability": None,
+            "away_probability": None,
+            "over_under": None,
+            "home_spread": None,
+            "projected_home_score": None,
+            "projected_away_score": None,
+            "bookmaker_count": 0,
+            "min_home_probability": None,
+            "max_home_probability": None,
+        }
+
+    # Extract values, handling both dict keys and attribute access
+    def get_val(item, key):
+        if isinstance(item, dict):
+            return item.get(key)
+        return getattr(item, key, None)
+
+    home_probs = [get_val(s, "home_win_probability") for s in bookmaker_snapshots]
+    away_probs = [get_val(s, "away_win_probability") for s in bookmaker_snapshots]
+    over_unders = [get_val(s, "over_under") for s in bookmaker_snapshots]
+    home_spreads = [get_val(s, "home_spread") for s in bookmaker_snapshots]
+    proj_home = [get_val(s, "projected_home_score") for s in bookmaker_snapshots]
+    proj_away = [get_val(s, "projected_away_score") for s in bookmaker_snapshots]
+
+    # Convert Decimal types to float
+    home_probs = [float(p) if p is not None else None for p in home_probs]
+    away_probs = [float(p) if p is not None else None for p in away_probs]
+    over_unders = [float(p) if p is not None else None for p in over_unders]
+    home_spreads = [float(p) if p is not None else None for p in home_spreads]
+    proj_home = [float(p) if p is not None else None for p in proj_home]
+    proj_away = [float(p) if p is not None else None for p in proj_away]
+
+    # Filter valid home probabilities for min/max calculation
+    valid_home_probs = [p for p in home_probs if p is not None and 0 <= p <= 1]
+
+    # Aggregate each metric
+    agg_home = aggregate_probabilities(home_probs, method)
+    agg_away = aggregate_probabilities(away_probs, method)
+
+    # For over_under and spreads, use mean of valid values
+    valid_ou = [v for v in over_unders if v is not None]
+    valid_spread = [v for v in home_spreads if v is not None]
+    valid_proj_home = [v for v in proj_home if v is not None]
+    valid_proj_away = [v for v in proj_away if v is not None]
+
+    return {
+        "home_probability": round(agg_home, 4) if agg_home is not None else None,
+        "away_probability": round(agg_away, 4) if agg_away is not None else None,
+        "over_under": round(mean(valid_ou), 1) if valid_ou else None,
+        "home_spread": round(mean(valid_spread), 1) if valid_spread else None,
+        "projected_home_score": round(mean(valid_proj_home), 1) if valid_proj_home else None,
+        "projected_away_score": round(mean(valid_proj_away), 1) if valid_proj_away else None,
+        "bookmaker_count": len(valid_home_probs),
+        "min_home_probability": round(min(valid_home_probs), 4) if valid_home_probs else None,
+        "max_home_probability": round(max(valid_home_probs), 4) if valid_home_probs else None,
+    }

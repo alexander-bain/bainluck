@@ -31,8 +31,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.services.database import async_session_maker
 from app.services.odds_api import OddsAPIService
-from app.models import Sport, Event, OddsSnapshot
-from app.utils.odds_math import moneyline_to_probability, project_scores
+from app.models import Sport, Event, OddsSnapshot, OddsAggregated
+from app.utils.odds_math import moneyline_to_probability, project_scores, aggregate_probabilities
 
 # Redis URL from environment
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -79,6 +79,10 @@ celery_app.conf.beat_schedule = {
     "sync-sports-hourly": {
         "task": "app.tasks.sync_sports",
         "schedule": crontab(minute=0),  # Every hour
+    },
+    "aggregate-odds-hourly": {
+        "task": "app.tasks.aggregate_odds",
+        "schedule": crontab(minute=30),  # Every hour at :30
     },
 }
 
@@ -639,3 +643,121 @@ async def _poll_sport_odds(sport_key: str):
         }
     finally:
         await service.close()
+
+
+@celery_app.task(bind=True, max_retries=3)
+def aggregate_odds(self):
+    """
+    Aggregate odds snapshots into hourly summaries.
+
+    This task:
+    1. Groups snapshots by event and time bucket (1 hour)
+    2. Calculates average/min/max probabilities across all bookmakers
+    3. Stores aggregated data in OddsAggregated table
+    4. Optionally prunes old raw snapshots to save storage
+    """
+    try:
+        return run_async(_aggregate_odds())
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+
+
+async def _aggregate_odds():
+    """Async implementation of aggregate_odds."""
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    # Aggregate the previous hour's data
+    period_end = now.replace(minute=0, second=0, microsecond=0)
+    period_start = period_end - timedelta(hours=1)
+
+    async with async_session_maker() as session:
+        # Get all events with snapshots in this time period
+        event_query = (
+            select(OddsSnapshot.event_id)
+            .where(
+                OddsSnapshot.captured_at >= period_start,
+                OddsSnapshot.captured_at < period_end,
+            )
+            .distinct()
+        )
+        event_result = await session.execute(event_query)
+        event_ids = [row[0] for row in event_result.all()]
+
+        if not event_ids:
+            return {"aggregated": 0, "message": "No snapshots to aggregate"}
+
+        aggregated_count = 0
+
+        for event_id in event_ids:
+            # Get all snapshots for this event in the time period
+            snapshot_query = (
+                select(OddsSnapshot)
+                .where(
+                    OddsSnapshot.event_id == event_id,
+                    OddsSnapshot.captured_at >= period_start,
+                    OddsSnapshot.captured_at < period_end,
+                )
+            )
+            snapshot_result = await session.execute(snapshot_query)
+            snapshots = snapshot_result.scalars().all()
+
+            if not snapshots:
+                continue
+
+            # Extract probabilities from all bookmaker snapshots
+            home_probs = [
+                float(s.home_win_probability)
+                for s in snapshots
+                if s.home_win_probability is not None
+            ]
+            away_probs = [
+                float(s.away_win_probability)
+                for s in snapshots
+                if s.away_win_probability is not None
+            ]
+            totals = [
+                float(s.over_under)
+                for s in snapshots
+                if s.over_under is not None
+            ]
+
+            if not home_probs:
+                continue
+
+            # Calculate aggregates
+            avg_home = aggregate_probabilities(home_probs, method="mean")
+            min_home = min(home_probs)
+            max_home = max(home_probs)
+            avg_total = sum(totals) / len(totals) if totals else None
+
+            # Upsert aggregated record
+            stmt = insert(OddsAggregated).values(
+                event_id=event_id,
+                period_start=period_start,
+                period_end=period_end,
+                avg_home_win_prob=round(avg_home, 4) if avg_home else None,
+                min_home_win_prob=round(min_home, 4),
+                max_home_win_prob=round(max_home, 4),
+                avg_projected_total=round(avg_total, 1) if avg_total else None,
+                snapshot_count=len(snapshots),
+            ).on_conflict_do_update(
+                index_elements=["event_id", "period_start"],
+                set_={
+                    "avg_home_win_prob": round(avg_home, 4) if avg_home else None,
+                    "min_home_win_prob": round(min_home, 4),
+                    "max_home_win_prob": round(max_home, 4),
+                    "avg_projected_total": round(avg_total, 1) if avg_total else None,
+                    "snapshot_count": len(snapshots),
+                }
+            )
+            await session.execute(stmt)
+            aggregated_count += 1
+
+        await session.commit()
+
+        return {
+            "aggregated": aggregated_count,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+        }
