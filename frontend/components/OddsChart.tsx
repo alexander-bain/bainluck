@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { format, parseISO } from "date-fns";
-import type { OddsHistoryPoint } from "@/lib/types";
+import type { OddsHistoryPoint, BookmakerHistoryPoint } from "@/lib/types";
 
 interface OddsChartProps {
   history: OddsHistoryPoint[];
@@ -20,6 +20,7 @@ interface OddsChartProps {
   awayTeam: string;
   commenceTime?: string;
   isLive?: boolean;
+  bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
 }
 
 type TimeRange = "all" | "24h" | "12h" | "6h" | "3h" | "1h" | "live";
@@ -29,6 +30,7 @@ interface ChartDataPoint {
   time: string;
   homeProb: number | null;
   awayProb: number | null;
+  [key: string]: string | number | null; // For dynamic bookmaker keys
 }
 
 const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
@@ -51,6 +53,7 @@ export default function OddsChart({
   awayTeam,
   commenceTime,
   isLive = false,
+  bookmakerHistory,
 }: OddsChartProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>(isLive ? "live" : "24h");
 
@@ -88,6 +91,50 @@ export default function OddsChart({
     return history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
   }, [history, timeRange, commenceTime]);
 
+  // Filter bookmaker history based on time range
+  const filteredBookmakerHistory = useMemo(() => {
+    if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0) return {};
+
+    const now = new Date();
+    let cutoffTime: Date;
+
+    switch (timeRange) {
+      case "live":
+        cutoffTime = commenceTime ? parseISO(commenceTime) : now;
+        break;
+      case "1h":
+        cutoffTime = new Date(now.getTime() - 1 * 60 * 60 * 1000);
+        break;
+      case "3h":
+        cutoffTime = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+        break;
+      case "6h":
+        cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+        break;
+      case "12h":
+        cutoffTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
+        break;
+      case "24h":
+        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      default:
+        return bookmakerHistory;
+    }
+
+    const filtered: Record<string, BookmakerHistoryPoint[]> = {};
+    for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
+      filtered[bookmaker] = points.filter(
+        (point) => parseISO(point.timestamp) >= cutoffTime
+      );
+    }
+    return filtered;
+  }, [bookmakerHistory, timeRange, commenceTime]);
+
+  // Get list of bookmakers for rendering individual lines
+  const bookmakers = useMemo(() => {
+    return Object.keys(filteredBookmakerHistory);
+  }, [filteredBookmakerHistory]);
+
   if (!history || history.length === 0) {
     return (
       <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
@@ -98,32 +145,67 @@ export default function OddsChart({
 
   // Transform data for chart
   // Expand points with valid_until into two points for flat line display
-  const chartData: ChartDataPoint[] = filteredHistory.flatMap((point) => {
-    const startPoint: ChartDataPoint = {
-      timestamp: point.timestamp,
-      time: format(parseISO(point.timestamp), "h:mm a"),
-      homeProb: point.home_probability !== null ? point.home_probability * 100 : null,
-      awayProb: point.away_probability !== null ? point.away_probability * 100 : null,
-    };
+  const chartData: ChartDataPoint[] = useMemo(() => {
+    // Create a map of timestamp -> chart data point
+    const dataMap = new Map<string, ChartDataPoint>();
 
-    // If valid_until exists and is different from timestamp, add end point for flat line
-    if (point.valid_until) {
-      const endTime = parseISO(point.valid_until);
-      const startTime = parseISO(point.timestamp);
-      // Only add if valid_until is significantly later (>1 min)
-      if (endTime.getTime() - startTime.getTime() > 60000) {
-        const endPoint: ChartDataPoint = {
-          timestamp: point.valid_until,
-          time: format(endTime, "h:mm a"),
-          homeProb: point.home_probability !== null ? point.home_probability * 100 : null,
-          awayProb: point.away_probability !== null ? point.away_probability * 100 : null,
-        };
-        return [startPoint, endPoint];
+    // First pass: add aggregate data points
+    for (const point of filteredHistory) {
+      const startPoint: ChartDataPoint = {
+        timestamp: point.timestamp,
+        time: format(parseISO(point.timestamp), "h:mm a"),
+        homeProb: point.home_probability !== null ? point.home_probability * 100 : null,
+        awayProb: point.away_probability !== null ? point.away_probability * 100 : null,
+      };
+      dataMap.set(point.timestamp, startPoint);
+
+      // If valid_until exists and is different from timestamp, add end point for flat line
+      if (point.valid_until) {
+        const endTime = parseISO(point.valid_until);
+        const startTime = parseISO(point.timestamp);
+        // Only add if valid_until is significantly later (>1 min)
+        if (endTime.getTime() - startTime.getTime() > 60000) {
+          const endPoint: ChartDataPoint = {
+            timestamp: point.valid_until,
+            time: format(endTime, "h:mm a"),
+            homeProb: point.home_probability !== null ? point.home_probability * 100 : null,
+            awayProb: point.away_probability !== null ? point.away_probability * 100 : null,
+          };
+          if (!dataMap.has(point.valid_until)) {
+            dataMap.set(point.valid_until, endPoint);
+          }
+        }
       }
     }
 
-    return [startPoint];
-  });
+    // Second pass: add bookmaker-specific data
+    for (const [bookmaker, points] of Object.entries(filteredBookmakerHistory)) {
+      for (const point of points) {
+        const existing = dataMap.get(point.timestamp);
+        if (existing) {
+          // Add bookmaker data to existing point
+          existing[`${bookmaker}_home`] = point.home_probability !== null ? point.home_probability * 100 : null;
+          existing[`${bookmaker}_away`] = point.away_probability !== null ? point.away_probability * 100 : null;
+        } else {
+          // Create new point with bookmaker data
+          const newPoint: ChartDataPoint = {
+            timestamp: point.timestamp,
+            time: format(parseISO(point.timestamp), "h:mm a"),
+            homeProb: null,
+            awayProb: null,
+            [`${bookmaker}_home`]: point.home_probability !== null ? point.home_probability * 100 : null,
+            [`${bookmaker}_away`]: point.away_probability !== null ? point.away_probability * 100 : null,
+          };
+          dataMap.set(point.timestamp, newPoint);
+        }
+      }
+    }
+
+    // Sort by timestamp and return as array
+    return Array.from(dataMap.values()).sort(
+      (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
+    );
+  }, [filteredHistory, filteredBookmakerHistory]);
 
   // Calculate Y-axis domain for probability (with some padding around actual values)
   const probValues = chartData
@@ -202,6 +284,36 @@ export default function OddsChart({
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
+            {/* Individual bookmaker lines - thin, faint grey, rendered first so they're behind aggregate */}
+            {bookmakers.map((bookmaker) => (
+              <Line
+                key={`${bookmaker}_home`}
+                type="monotone"
+                dataKey={`${bookmaker}_home`}
+                stroke="#9ca3af"
+                strokeWidth={1}
+                strokeOpacity={0.4}
+                dot={false}
+                activeDot={false}
+                connectNulls
+                legendType="none"
+              />
+            ))}
+            {bookmakers.map((bookmaker) => (
+              <Line
+                key={`${bookmaker}_away`}
+                type="monotone"
+                dataKey={`${bookmaker}_away`}
+                stroke="#9ca3af"
+                strokeWidth={1}
+                strokeOpacity={0.4}
+                dot={false}
+                activeDot={false}
+                connectNulls
+                legendType="none"
+              />
+            ))}
+            {/* Aggregate lines - thick, colorful, rendered last so they're on top */}
             <Line
               type="monotone"
               dataKey="homeProb"

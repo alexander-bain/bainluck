@@ -584,6 +584,7 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeam={event.away_team}
             commenceTime={event.commence_time}
             isLive={isLive}
+            bookmakerHistory={historyData?.bookmaker_history}
           />
         )}
       </div>
