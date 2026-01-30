@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import useSWR from "swr";
 import { fetchEvents, fetchSports } from "@/lib/api";
 import type { Event } from "@/lib/types";
@@ -11,15 +11,35 @@ import ErrorMessage from "@/components/ErrorMessage";
 import {
   SPORT_CATEGORIES,
   getCategoryForLeague,
-  getCategoryName,
+  getLeagueDisplay,
+  getLeagueTier,
+  isFeaturedEvent,
+  calculateExcitementScore,
 } from "@/lib/sportCategories";
 
-type SortOption = "time" | "closeness";
+type ViewMode = "smart" | "time" | "closeness";
+
+interface LeagueGroup {
+  leagueKey: string;
+  leagueName: string;
+  tier: 1 | 2 | 3;
+  events: Event[];
+}
+
+interface SportGroup {
+  categoryKey: string;
+  categoryName: string;
+  emoji: string;
+  tier: 1 | 2 | 3;
+  leagues: LeagueGroup[];
+  totalEvents: number;
+}
 
 export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>("time");
+  const [viewMode, setViewMode] = useState<ViewMode>("smart");
+  const [collapsedSports, setCollapsedSports] = useState<Set<string>>(new Set());
 
   const {
     data: sportsData,
@@ -39,36 +59,136 @@ export default function HomePage() {
   );
 
   // Filter events by category if selected
-  let filteredEvents = eventsData?.events ?? [];
-  if (selectedCategory && !selectedSport) {
-    const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
-    if (category) {
-      filteredEvents = filteredEvents.filter((e) =>
-        e.sport && category.prefixes.some((prefix) => e.sport!.startsWith(prefix))
-      );
-    } else if (selectedCategory === "other") {
-      filteredEvents = filteredEvents.filter((e) =>
-        e.sport && !getCategoryForLeague(e.sport)
+  const filteredEvents = useMemo(() => {
+    let events = eventsData?.events ?? [];
+    if (selectedCategory && !selectedSport) {
+      const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
+      if (category) {
+        events = events.filter((e) =>
+          e.sport && category.prefixes.some((prefix) => e.sport!.startsWith(prefix))
+        );
+      } else if (selectedCategory === "other") {
+        events = events.filter((e) =>
+          e.sport && !getCategoryForLeague(e.sport)
+        );
+      }
+    }
+    return events;
+  }, [eventsData?.events, selectedCategory, selectedSport]);
+
+  // Get featured events (live + close games starting soon)
+  const featuredEvents = useMemo(() => {
+    return filteredEvents
+      .filter((e) => isFeaturedEvent(e))
+      .sort((a, b) => calculateExcitementScore(b) - calculateExcitementScore(a))
+      .slice(0, 6); // Max 6 featured events
+  }, [filteredEvents]);
+
+  // Group events by sport category, then by league
+  const sportGroups = useMemo((): SportGroup[] => {
+    const groups = new Map<string, SportGroup>();
+
+    for (const event of filteredEvents) {
+      if (!event.sport) continue;
+
+      const category = getCategoryForLeague(event.sport);
+      const categoryKey = category?.key ?? "other";
+      const categoryName = category?.name ?? "Other";
+      const categoryEmoji = category?.emoji ?? "🏆";
+      const categoryTier = category?.tier ?? 3;
+
+      if (!groups.has(categoryKey)) {
+        groups.set(categoryKey, {
+          categoryKey,
+          categoryName,
+          emoji: categoryEmoji,
+          tier: categoryTier,
+          leagues: [],
+          totalEvents: 0,
+        });
+      }
+
+      const sportGroup = groups.get(categoryKey)!;
+      sportGroup.totalEvents++;
+
+      // Find or create league group
+      let leagueGroup = sportGroup.leagues.find((l) => l.leagueKey === event.sport);
+      if (!leagueGroup) {
+        leagueGroup = {
+          leagueKey: event.sport,
+          leagueName: getLeagueDisplay(event.sport),
+          tier: getLeagueTier(event.sport),
+          events: [],
+        };
+        sportGroup.leagues.push(leagueGroup);
+      }
+
+      leagueGroup.events.push(event);
+    }
+
+    // Sort leagues within each sport by tier, then alphabetically
+    const groupsArray = Array.from(groups.values());
+    for (const group of groupsArray) {
+      group.leagues.sort((a, b) => {
+        if (a.tier !== b.tier) return a.tier - b.tier;
+        return a.leagueName.localeCompare(b.leagueName);
+      });
+
+      // Sort events within each league by game time
+      for (const league of group.leagues) {
+        league.events.sort((a, b) =>
+          new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime()
+        );
+      }
+    }
+
+    // Sort sport groups by tier, then by total events
+    return groupsArray.sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      return b.totalEvents - a.totalEvents;
+    });
+  }, [filteredEvents]);
+
+  // For flat view modes (time/closeness), sort events
+  const sortedEvents = useMemo(() => {
+    if (viewMode === "smart") return [];
+
+    const sorted = [...filteredEvents];
+    if (viewMode === "closeness") {
+      sorted.sort((a, b) => {
+        const aCloseness = Math.abs(
+          (a.current_odds?.home_probability ?? 0.5) - 0.5
+        );
+        const bCloseness = Math.abs(
+          (b.current_odds?.home_probability ?? 0.5) - 0.5
+        );
+        return aCloseness - bCloseness;
+      });
+    } else {
+      sorted.sort((a, b) =>
+        new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime()
       );
     }
-  }
+    return sorted;
+  }, [filteredEvents, viewMode]);
 
-  // Sort events
-  const sortedEvents = [...filteredEvents].sort((a, b) => {
-    if (sortBy === "closeness") {
-      const aCloseness = Math.abs(
-        (a.current_odds?.home_probability ?? 0.5) - 0.5
-      );
-      const bCloseness = Math.abs(
-        (b.current_odds?.home_probability ?? 0.5) - 0.5
-      );
-      return aCloseness - bCloseness;
-    }
-    return new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime();
-  });
+  // Group flat events by date for time/closeness views
+  const groupedByDate = useMemo(() => {
+    if (viewMode === "smart") return {};
+    return groupByDate(sortedEvents);
+  }, [sortedEvents, viewMode]);
 
-  // Group events by date
-  const groupedEvents = groupByDate(sortedEvents);
+  const toggleSportCollapse = (categoryKey: string) => {
+    setCollapsedSports((prev) => {
+      const next = new Set(prev);
+      if (next.has(categoryKey)) {
+        next.delete(categoryKey);
+      } else {
+        next.add(categoryKey);
+      }
+      return next;
+    });
+  };
 
   const sports = sportsData?.sports ?? [];
 
@@ -86,15 +206,16 @@ export default function HomePage() {
             loading={sportsLoading}
           />
 
-          {/* Sort dropdown */}
+          {/* View mode dropdown */}
           <div className="flex items-center gap-2">
-            <label className="text-caption text-slate">Sort:</label>
+            <label className="text-caption text-slate">View:</label>
             <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as ViewMode)}
               className="text-caption border border-mist rounded px-3 py-1.5 bg-white text-graphite focus:outline-none focus:ring-1 focus:ring-ink"
             >
-              <option value="time">Game Time</option>
+              <option value="smart">By Sport</option>
+              <option value="time">By Time</option>
               <option value="closeness">Closest Odds</option>
             </select>
           </div>
@@ -116,10 +237,10 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Events List */}
+      {/* Events Display */}
       {!eventsLoading && !eventsError && (
         <>
-          {sortedEvents.length === 0 ? (
+          {filteredEvents.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-body text-slate mb-2">No upcoming events</p>
               <p className="text-caption text-silver">
@@ -128,16 +249,102 @@ export default function HomePage() {
                   : "Check back later for more games"}
               </p>
             </div>
-          ) : (
+          ) : viewMode === "smart" ? (
+            /* Smart View: Featured + Sport Groups */
             <div className="space-y-8">
-              {Object.entries(groupedEvents).map(([date, events]) => (
+              {/* Featured Section */}
+              {featuredEvents.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-lg">🔥</span>
+                    <h2 className="text-title-3 font-semibold text-graphite">
+                      Live & Close Games
+                    </h2>
+                    <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
+                      {featuredEvents.length}
+                    </span>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {featuredEvents.map((event) => (
+                      <EventCard
+                        key={`featured-${event.id}`}
+                        event={event}
+                        showSport={true}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Sport Category Sections */}
+              {sportGroups.map((sportGroup) => (
+                <section key={sportGroup.categoryKey}>
+                  {/* Sport Header */}
+                  <button
+                    onClick={() => toggleSportCollapse(sportGroup.categoryKey)}
+                    className="flex items-center gap-2 mb-4 w-full text-left group"
+                  >
+                    <span className="text-lg">{sportGroup.emoji}</span>
+                    <h2 className="text-title-3 font-semibold text-graphite">
+                      {sportGroup.categoryName}
+                    </h2>
+                    <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
+                      {sportGroup.totalEvents}
+                    </span>
+                    <span className="ml-auto text-slate group-hover:text-graphite transition-colors">
+                      {collapsedSports.has(sportGroup.categoryKey) ? (
+                        <ChevronRight className="w-5 h-5" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5" />
+                      )}
+                    </span>
+                  </button>
+
+                  {/* Sport Content */}
+                  {!collapsedSports.has(sportGroup.categoryKey) && (
+                    <div className="space-y-6 pl-7">
+                      {sportGroup.leagues.map((league) => (
+                        <div key={league.leagueKey}>
+                          {/* League Header */}
+                          <div className="flex items-center gap-2 mb-3">
+                            <h3 className="text-body font-medium text-graphite">
+                              {league.leagueName}
+                            </h3>
+                            {league.tier === 1 && (
+                              <span className="text-micro bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                                Major
+                              </span>
+                            )}
+                            <span className="text-caption text-silver">
+                              {league.events.length} game{league.events.length !== 1 ? "s" : ""}
+                            </span>
+                          </div>
+
+                          {/* League Events */}
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            {league.events.map((event) => (
+                              <EventCard
+                                key={event.id}
+                                event={event}
+                                showSport={false}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ))}
+            </div>
+          ) : (
+            /* Flat Views: By Time or Closeness */
+            <div className="space-y-8">
+              {Object.entries(groupedByDate).map(([date, events]) => (
                 <div key={date}>
-                  {/* Date header */}
                   <h2 className="text-caption-strong text-slate mb-4">
                     {date}
                   </h2>
-
-                  {/* Events grid - responsive per design brief */}
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {events.map((event) => (
                       <EventCard
@@ -153,9 +360,9 @@ export default function HomePage() {
           )}
 
           {/* Event count */}
-          {sortedEvents.length > 0 && (
+          {filteredEvents.length > 0 && (
             <p className="text-center text-caption text-silver pt-4">
-              {sortedEvents.length} event{sortedEvents.length !== 1 ? "s" : ""}
+              {filteredEvents.length} event{filteredEvents.length !== 1 ? "s" : ""}
             </p>
           )}
         </>
@@ -166,7 +373,6 @@ export default function HomePage() {
 
 /**
  * Group events by date.
- * Returns: { date: Event[] }
  */
 function groupByDate(events: Event[]): Record<string, Event[]> {
   const groups: Record<string, Event[]> = {};
@@ -177,7 +383,6 @@ function groupByDate(events: Event[]): Record<string, Event[]> {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Date key
     let dateKey: string;
     if (date.toDateString() === today.toDateString()) {
       dateKey = "Today";
@@ -198,4 +403,35 @@ function groupByDate(events: Event[]): Record<string, Event[]> {
   }
 
   return groups;
+}
+
+/**
+ * Simple chevron icons
+ */
+function ChevronDown({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
+function ChevronRight({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+  );
 }

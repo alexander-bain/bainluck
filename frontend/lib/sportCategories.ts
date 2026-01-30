@@ -386,4 +386,91 @@ export function getActiveCategoriesFromLeagues(leagueKeys: string[]): SportCateg
 
   return activeCategories;
 }
+/**
+ * Calculate an excitement score for an event.
+ * Higher scores = more exciting/important games that should surface first.
+ *
+ * Factors:
+ * - Live games get high priority
+ * - Close matchups (within 10% of 50/50) are exciting
+ * - Starting soon (within 1 hour) gets boost
+ * - Higher tier leagues get slight boost
+ *
+ * Returns a score from 0-100
+ */
+export function calculateExcitementScore(
+  event: {
+    status: "scheduled" | "live" | "completed";
+    commence_time: string;
+    sport: string | null;
+    current_odds?: {
+      home_probability: number | null;
+    };
+  }
+): number {
+  let score = 0;
+
+  // Live games: +50 points
+  if (event.status === "live") {
+    score += 50;
+  }
+
+  // Close games (within 10% of 50/50): +30 points max
+  const homeProb = event.current_odds?.home_probability ?? 0.5;
+  const closeness = 1 - Math.abs(homeProb - 0.5) * 2; // 1.0 = perfectly even, 0.0 = one-sided
+  if (closeness > 0.8) {
+    // Within 10% of 50/50
+    score += 30 * closeness;
+  }
+
+  // Starting soon (within 1 hour): +15 points
+  const now = new Date();
+  const gameTime = new Date(event.commence_time);
+  const hoursUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+  if (hoursUntil > 0 && hoursUntil <= 1) {
+    score += 15;
+  } else if (hoursUntil > 1 && hoursUntil <= 3) {
+    score += 5;
+  }
+
+  // League tier boost: Tier 1 = +5, Tier 2 = +2, Tier 3 = 0
+  if (event.sport) {
+    const tier = getLeagueTier(event.sport);
+    if (tier === 1) score += 5;
+    else if (tier === 2) score += 2;
+  }
+
+  return Math.min(100, score);
+}
+
+/**
+ * Determine if an event is "featured" (exciting enough to highlight)
+ * Featured = Live OR (close game AND starting within 3 hours)
+ */
+export function isFeaturedEvent(
+  event: {
+    status: "scheduled" | "live" | "completed";
+    commence_time: string;
+    current_odds?: {
+      home_probability: number | null;
+    };
+  }
+): boolean {
+  // Live games are always featured
+  if (event.status === "live") {
+    return true;
+  }
+
+  // Close games starting soon are featured
+  const homeProb = event.current_odds?.home_probability ?? 0.5;
+  const isClose = Math.abs(homeProb - 0.5) <= 0.1; // Within 10% of 50/50
+
+  const now = new Date();
+  const gameTime = new Date(event.commence_time);
+  const hoursUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+  const startingSoon = hoursUntil > 0 && hoursUntil <= 3;
+
+  return isClose && startingSoon;
+}
+
 // Force rebuild Wed Jan 28 2026 - tiered polling update
