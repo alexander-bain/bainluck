@@ -473,52 +473,6 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {/* Projected Score Section */}
-      {odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
-        <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            🎯 {isCompleted ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
-          </h3>
-          <div className="flex items-center justify-center gap-8">
-            <div className="text-center">
-              <div className="font-mono text-2xl font-bold text-graphite">
-                {Math.round(odds.projected_home_score)}
-              </div>
-              <div className="text-xs text-slate mt-1">
-                {event.home_team.split(" ").pop()}
-              </div>
-              {isCompleted && event.home_score !== null && (
-                <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
-                  Math.abs(event.home_score - odds.projected_home_score) <= 3
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-amber-100 text-amber-700"
-                }`}>
-                  Actual: {event.home_score}
-                </div>
-              )}
-            </div>
-            <div className="text-xl text-silver">vs</div>
-            <div className="text-center">
-              <div className="font-mono text-2xl font-bold text-graphite">
-                {Math.round(odds.projected_away_score)}
-              </div>
-              <div className="text-xs text-slate mt-1">
-                {event.away_team.split(" ").pop()}
-              </div>
-              {isCompleted && event.away_score !== null && (
-                <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
-                  Math.abs(event.away_score - odds.projected_away_score) <= 3
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-amber-100 text-amber-700"
-                }`}>
-                  Actual: {event.away_score}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Score Trend Chart - shown independently if there's history data */}
       {historyData?.history && historyData.history.length > 0 && (
         <div className="bg-white rounded-card shadow-card p-6">
