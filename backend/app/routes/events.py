@@ -94,29 +94,30 @@ async def list_events(
     aggregated_odds_map = {}
 
     if event_ids:
-        # Subquery to get the max captured_at per event, rounded to the minute
-        # (snapshots from the same poll may have slightly different timestamps)
-        latest_time_subq = (
+        # Get the most recent snapshot per bookmaker per event
+        # (deduplication means different bookmakers may have different latest times)
+
+        # Subquery: rank snapshots by recency within each event+bookmaker group
+        ranked_subq = (
             select(
+                OddsSnapshot.id,
                 OddsSnapshot.event_id,
-                func.date_trunc('minute', func.max(OddsSnapshot.captured_at)).label("max_time_rounded")
+                func.row_number().over(
+                    partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                    order_by=OddsSnapshot.captured_at.desc()
+                ).label("rn")
             )
             .where(OddsSnapshot.event_id.in_(event_ids))
-            .group_by(OddsSnapshot.event_id)
             .subquery()
         )
 
-        # Get all snapshots from the latest minute for each event
-        # (multiple bookmakers from same poll)
+        # Get only the most recent snapshot per bookmaker per event (rn=1)
         latest_odds_query = (
             select(OddsSnapshot)
-            .join(
-                latest_time_subq,
-                and_(
-                    OddsSnapshot.event_id == latest_time_subq.c.event_id,
-                    func.date_trunc('minute', OddsSnapshot.captured_at) == latest_time_subq.c.max_time_rounded
-                )
-            )
+            .join(ranked_subq, and_(
+                OddsSnapshot.id == ranked_subq.c.id,
+                ranked_subq.c.rn == 1
+            ))
         )
 
         latest_odds_result = await db.execute(latest_odds_query)
@@ -129,10 +130,11 @@ async def list_events(
             snapshots_by_event[snap.event_id].append(snap)
 
         for event_id, snaps in snapshots_by_event.items():
+            latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
                 "snapshots": snaps,
                 "aggregated": aggregate_bookmaker_odds(snaps),
-                "captured_at": snaps[0].captured_at if snaps else None,
+                "captured_at": latest_time,
             }
 
     # Format response with aggregated odds
@@ -265,16 +267,15 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     response = _format_event(event)
 
     if event.odds_snapshots:
-        # Get the latest capture time, rounded to the minute for grouping
-        # (snapshots from the same poll may have slightly different timestamps)
-        latest_time = max(s.captured_at for s in event.odds_snapshots)
-        latest_time_rounded = latest_time.replace(second=0, microsecond=0)
+        # Get the most recent snapshot for each bookmaker
+        # (deduplication means different bookmakers may have different latest times)
+        latest_by_bookmaker = {}
+        for s in event.odds_snapshots:
+            if s.bookmaker not in latest_by_bookmaker or s.captured_at > latest_by_bookmaker[s.bookmaker].captured_at:
+                latest_by_bookmaker[s.bookmaker] = s
 
-        # Get all snapshots from that minute (multiple bookmakers from same poll)
-        latest_snapshots = [
-            s for s in event.odds_snapshots
-            if s.captured_at.replace(second=0, microsecond=0) == latest_time_rounded
-        ]
+        latest_snapshots = list(latest_by_bookmaker.values())
+        latest_time = max(s.captured_at for s in latest_snapshots)
 
         # Aggregate across bookmakers
         aggregated = aggregate_bookmaker_odds(latest_snapshots)
