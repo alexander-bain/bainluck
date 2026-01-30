@@ -16,6 +16,8 @@ router = APIRouter()
 
 # Excluded sport prefixes (soccer, cricket, rugby, AFL)
 EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
+# Excluded sport keywords (matched anywhere in sport key)
+EXCLUDED_SPORT_KEYWORDS = ["_t20", "_odi", "_test"]
 
 
 @router.get("")
@@ -72,9 +74,12 @@ async def list_events(
         )
     )
 
-    # Exclude soccer (and any other excluded sports)
+    # Exclude soccer (and any other excluded sports by prefix)
     for prefix in EXCLUDED_SPORT_PREFIXES:
         conditions.append(not_(Event.sport.has(Sport.key.startswith(prefix))))
+    # Exclude sports by keyword (e.g., cricket T20, ODI, test matches)
+    for keyword in EXCLUDED_SPORT_KEYWORDS:
+        conditions.append(not_(Event.sport.has(Sport.key.contains(keyword))))
 
     if conditions:
         query = query.where(and_(*conditions))

@@ -254,9 +254,11 @@ async def _sync_sports():
                 if not sport.get("active", False):
                     continue
 
-                # Skip sports that match any excluded prefix (soccer)
+                # Skip sports that match any excluded prefix or keyword
                 sport_key = sport["key"]
                 if any(sport_key.startswith(prefix) for prefix in excluded_prefixes):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
                     continue
 
                 # Upsert sport
@@ -375,6 +377,12 @@ async def _poll_all_odds():
                 sport_key = row[0]
                 soonest_game = row[1]
                 is_live = row[2]
+
+                # Skip excluded sports (in case they're still in the database)
+                if any(sport_key.startswith(prefix) for prefix in OddsAPIService.EXCLUDED_PREFIXES):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
+                    continue
 
                 # Determine poll interval for this sport
                 if is_live or (soonest_game and soonest_game <= now):
