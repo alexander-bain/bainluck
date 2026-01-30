@@ -135,14 +135,6 @@ export default function OddsChart({
     return Object.keys(filteredBookmakerHistory);
   }, [filteredBookmakerHistory]);
 
-  if (!history || history.length === 0) {
-    return (
-      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
-        No history data available
-      </div>
-    );
-  }
-
   // Transform data for chart
   // Expand points with valid_until into two points for flat line display
   const chartData: ChartDataPoint[] = useMemo(() => {
@@ -206,6 +198,15 @@ export default function OddsChart({
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
   }, [filteredHistory, filteredBookmakerHistory]);
+
+  // Early return for empty history - must be after all hooks
+  if (!history || history.length === 0) {
+    return (
+      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
+        No history data available
+      </div>
+    );
+  }
 
   // Calculate Y-axis domain for probability (with some padding around actual values)
   const probValues = chartData
