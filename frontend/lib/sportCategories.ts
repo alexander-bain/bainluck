@@ -15,6 +15,7 @@ export interface SportCategory {
   name: string;
   emoji: string;
   prefixes: string[]; // Sport key prefixes that belong to this category
+  tier: 1 | 2 | 3; // 1 = primary (Football, Basketball, Baseball), 2 = secondary, 3 = tertiary
 }
 
 /**
@@ -22,98 +23,170 @@ export interface SportCategory {
  * A sport key is matched to the first category whose prefix it starts with.
  */
 export const SPORT_CATEGORIES: SportCategory[] = [
+  // Tier 1: Primary sports (most users care about these)
   {
     key: "football",
     name: "Football",
     emoji: "🏈",
     prefixes: ["americanfootball_"],
+    tier: 1,
   },
   {
     key: "basketball",
     name: "Basketball",
     emoji: "🏀",
     prefixes: ["basketball_"],
+    tier: 1,
   },
   {
     key: "baseball",
     name: "Baseball",
     emoji: "⚾",
     prefixes: ["baseball_"],
+    tier: 1,
   },
+  // Tier 2: Secondary sports (popular but niche)
   {
     key: "hockey",
     name: "Hockey",
     emoji: "🏒",
     prefixes: ["icehockey_"],
+    tier: 2,
   },
   {
     key: "mma",
     name: "MMA",
     emoji: "🥋",
     prefixes: ["mma_"],
+    tier: 2,
   },
   {
     key: "boxing",
     name: "Boxing",
     emoji: "🥊",
     prefixes: ["boxing_"],
+    tier: 2,
   },
   {
     key: "golf",
     name: "Golf",
     emoji: "⛳",
     prefixes: ["golf_"],
+    tier: 2,
   },
   {
     key: "tennis",
     name: "Tennis",
     emoji: "🎾",
     prefixes: ["tennis_"],
+    tier: 2,
   },
+  // Tier 3: Tertiary sports (niche audience)
   {
     key: "cricket",
     name: "Cricket",
     emoji: "🏏",
     prefixes: ["cricket_"],
+    tier: 3,
   },
   {
     key: "rugby",
     name: "Rugby",
     emoji: "🏉",
     prefixes: ["rugbyleague_", "rugbyunion_"],
+    tier: 3,
   },
   {
     key: "aussierules",
     name: "Aussie Rules",
     emoji: "🦘",
     prefixes: ["aussierules_"],
+    tier: 3,
   },
   {
     key: "politics",
     name: "Politics",
     emoji: "🗳️",
     prefixes: ["politics_"],
+    tier: 3,
   },
   {
     key: "esports",
     name: "Esports",
     emoji: "🎮",
     prefixes: ["esports_"],
+    tier: 3,
   },
   {
     key: "lacrosse",
     name: "Lacrosse",
     emoji: "🥍",
     prefixes: ["lacrosse_"],
+    tier: 3,
   },
   {
     key: "motorsport",
     name: "Motorsport",
     emoji: "🏎️",
     prefixes: ["motorsport_", "racing_"],
+    tier: 3,
   },
   // Other category is a catch-all (handled in code, not here)
 ];
+
+/**
+ * League tiers for prioritizing major leagues.
+ * 1 = Major pro league (NFL, NBA, MLB, NHL)
+ * 2 = Major college or secondary pro (NCAAF, NCAAB, WNBA)
+ * 3 = Minor leagues and international
+ */
+export const LEAGUE_TIERS: Record<string, 1 | 2 | 3> = {
+  // Football
+  americanfootball_nfl: 1,
+  americanfootball_ncaaf: 2,
+  americanfootball_cfl: 3,
+  americanfootball_xfl: 3,
+  americanfootball_ufl: 3,
+  // Basketball
+  basketball_nba: 1,
+  basketball_ncaab: 2,
+  basketball_wnba: 2,
+  basketball_wncaab: 3,
+  basketball_euroleague: 3,
+  basketball_nbl: 3,
+  // Baseball
+  baseball_mlb: 1,
+  baseball_ncaa: 3,
+  baseball_npb: 3,
+  baseball_kbo: 3,
+  // Hockey
+  icehockey_nhl: 1,
+  icehockey_ahl: 3,
+  icehockey_khl: 3,
+  icehockey_shl: 3,
+  // MMA/Boxing
+  mma_ufc: 2,
+  mma_mixed_martial_arts: 2,
+  boxing_boxing: 2,
+  // Golf
+  golf_pga_tour: 2,
+  golf_masters_tournament: 2,
+  golf_pga_championship: 2,
+  golf_us_open: 2,
+  golf_the_open: 2,
+  // Tennis
+  tennis_atp_aus_open: 2,
+  tennis_atp_wimbledon: 2,
+  tennis_atp_us_open: 2,
+  tennis_atp_french_open: 2,
+};
+
+/**
+ * Get league tier (default to 3 for unknown leagues)
+ */
+export function getLeagueTier(leagueKey: string): 1 | 2 | 3 {
+  return LEAGUE_TIERS[leagueKey] ?? 3;
+}
 
 /**
  * Known league display names.
@@ -307,6 +380,7 @@ export function getActiveCategoriesFromLeagues(leagueKeys: string[]): SportCateg
       name: "Other",
       emoji: "🏆",
       prefixes: [],
+      tier: 3,
     });
   }
 

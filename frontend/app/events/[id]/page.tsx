@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
+import ScoreChart from "@/components/ScoreChart";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
@@ -62,6 +63,87 @@ function formatStartTime(commenceTime: string): string {
 function isBlowout(homeProb: number | null | undefined): boolean {
   if (homeProb === null || homeProb === undefined) return false;
   return homeProb > 0.85 || homeProb < 0.15;
+}
+
+interface SourceAnalysis {
+  sources: string[];
+  hasSignificantDivergence: boolean;
+  divergenceWarning: string | null;
+  maxDivergence: number;
+}
+
+// Analyze sources from history data to detect divergence
+function analyzeSourcesFromHistory(
+  history: Array<{
+    timestamp: string;
+    home_probability: number | null;
+    bookmaker: string;
+  }>
+): SourceAnalysis {
+  if (!history || history.length === 0) {
+    return {
+      sources: [],
+      hasSignificantDivergence: false,
+      divergenceWarning: null,
+      maxDivergence: 0,
+    };
+  }
+
+  // Get unique bookmakers
+  const sources = Array.from(new Set(history.map((h) => h.bookmaker).filter(Boolean)));
+
+  // Look at recent data (last hour) to detect divergence
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  const recentHistory = history.filter(
+    (h) => new Date(h.timestamp).getTime() > oneHourAgo && h.home_probability !== null
+  );
+
+  // Group by bookmaker and get their latest probabilities
+  const bookmakerProbs: Record<string, number> = {};
+  for (const point of recentHistory) {
+    if (point.home_probability !== null) {
+      bookmakerProbs[point.bookmaker] = point.home_probability;
+    }
+  }
+
+  const probValues = Object.values(bookmakerProbs);
+  if (probValues.length < 2) {
+    return {
+      sources,
+      hasSignificantDivergence: false,
+      divergenceWarning: null,
+      maxDivergence: 0,
+    };
+  }
+
+  const maxProb = Math.max(...probValues);
+  const minProb = Math.min(...probValues);
+  const maxDivergence = Math.abs(maxProb - minProb);
+
+  // Significant divergence if >10% difference
+  const hasSignificantDivergence = maxDivergence > 0.1;
+
+  let divergenceWarning: string | null = null;
+  if (maxDivergence > 0.15) {
+    // Find outlier bookmaker
+    const outliers = Object.entries(bookmakerProbs).filter(([, prob]) => {
+      const distFromMax = Math.abs(prob - maxProb);
+      const distFromMin = Math.abs(prob - minProb);
+      return distFromMax < 0.02 || distFromMin < 0.02;
+    });
+    if (outliers.length === 1) {
+      divergenceWarning = `${outliers[0][0]} shows different odds than other sources`;
+    } else {
+      divergenceWarning = "Sources show significantly different odds";
+    }
+  }
+
+  return {
+    sources,
+    hasSignificantDivergence,
+    divergenceWarning,
+    maxDivergence,
+  };
 }
 
 export default function EventPage({ params }: EventPageProps) {
@@ -145,6 +227,9 @@ export default function EventPage({ params }: EventPageProps) {
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
   const gameIsBlowout = isLive && isBlowout(homeProb);
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
+
+  // Analyze sources from history data
+  const sourceAnalysis = analyzeSourcesFromHistory(historyData?.history ?? []);
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
@@ -364,15 +449,25 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Data freshness strip */}
         {odds?.captured_at && (
-          <div className="mt-6 pt-4 border-t border-mist/50 flex justify-between text-sm text-slate">
-            <span className="flex items-center gap-1">
-              🕐 Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </span>
-            {odds.bookmaker && (
-              <span>📊 Source: {odds.bookmaker}</span>
+          <div className="mt-6 pt-4 border-t border-mist/50 space-y-2">
+            <div className="flex flex-wrap justify-between gap-2 text-sm text-slate">
+              <span className="flex items-center gap-1">
+                🕐 Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+              {sourceAnalysis.sources.length > 0 && (
+                <span className="text-xs text-silver">
+                  {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            {sourceAnalysis.divergenceWarning && (
+              <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded">
+                <span>⚠️</span>
+                <span>{sourceAnalysis.divergenceWarning}</span>
+              </div>
             )}
           </div>
         )}
@@ -384,7 +479,7 @@ export default function EventPage({ params }: EventPageProps) {
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
             🎯 {isCompleted ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
           </h3>
-          <div className="flex items-center justify-center gap-8">
+          <div className="flex items-center justify-center gap-8 mb-4">
             <div className="text-center">
               <div className="font-mono text-2xl font-bold text-graphite">
                 {Math.round(odds.projected_home_score)}
@@ -421,10 +516,19 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           </div>
-          {!isCompleted && (
-            <p className="text-center text-xs text-slate mt-4">
-              💡 Based on current odds and over/under
-            </p>
+
+          {/* Score Trend Chart */}
+          {historyData?.history && historyData.history.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-mist/50">
+              <h4 className="text-xs font-medium text-slate mb-3">Score Trend</h4>
+              <ScoreChart
+                history={historyData.history}
+                homeTeam={event.home_team}
+                awayTeam={event.away_team}
+                commenceTime={event.commence_time}
+                isLive={isLive}
+              />
+            </div>
           )}
         </div>
       )}

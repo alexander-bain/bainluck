@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Sport } from "@/lib/types";
 import {
   SPORT_CATEGORIES,
   getLeagueDisplay,
   getCategoryForLeague,
   getActiveCategoriesFromLeagues,
+  getLeagueTier,
 } from "@/lib/sportCategories";
 
 interface SportFilterProps {
@@ -20,7 +21,7 @@ interface SportFilterProps {
 
 /**
  * Filter pills for sports with emoji.
- * Horizontally scrolling on mobile.
+ * Hierarchical design with primary sports (Football, Basketball, Baseball) prominent.
  */
 export default function SportFilter({
   sports,
@@ -30,24 +31,40 @@ export default function SportFilter({
   onSelectCategory,
   loading = false,
 }: SportFilterProps) {
+  const [showMoreSports, setShowMoreSports] = useState(false);
   const allLeagueKeys = useMemo(() => sports.map((s) => s.key), [sports]);
 
   const availableCategories = useMemo(() => {
     return getActiveCategoriesFromLeagues(allLeagueKeys);
   }, [allLeagueKeys]);
 
+  // Split categories into primary (tier 1) and secondary/tertiary
+  const primaryCategories = useMemo(() => {
+    return availableCategories.filter((c) => c.tier === 1);
+  }, [availableCategories]);
+
+  const secondaryCategories = useMemo(() => {
+    return availableCategories.filter((c) => c.tier !== 1);
+  }, [availableCategories]);
+
+  // Sort leagues by tier (major leagues first)
   const availableLeagues = useMemo(() => {
     if (!selectedCategory) return [];
 
     const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
+    let leagues: string[];
     if (category) {
-      return allLeagueKeys.filter((leagueKey) =>
+      leagues = allLeagueKeys.filter((leagueKey) =>
         category.prefixes.some((prefix) => leagueKey.startsWith(prefix))
       );
     } else if (selectedCategory === "other") {
-      return allLeagueKeys.filter((leagueKey) => !getCategoryForLeague(leagueKey));
+      leagues = allLeagueKeys.filter((leagueKey) => !getCategoryForLeague(leagueKey));
+    } else {
+      leagues = [];
     }
-    return [];
+
+    // Sort by tier (major leagues first)
+    return leagues.sort((a, b) => getLeagueTier(a) - getLeagueTier(b));
   }, [selectedCategory, allLeagueKeys]);
 
   if (loading) {
@@ -106,67 +123,121 @@ export default function SportFilter({
 
   return (
     <div className="space-y-3">
-      {/* Category pills */}
-      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+      {/* Primary category pills - prominent display */}
+      <div className="flex flex-wrap gap-2">
         {/* All button */}
         <button
           onClick={() => handleCategoryClick(null)}
-          className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 flex items-center gap-1.5 ${
+          className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
             selectedCategory === null
               ? "bg-graphite text-white shadow-sm"
               : "bg-white text-slate border border-mist hover:bg-mist/50 hover:border-slate/30"
           }`}
         >
-          🏆 All Sports
+          🏆 All
         </button>
 
-        {/* Category buttons */}
-        {availableCategories.map((category) => {
+        {/* Primary sports (Football, Basketball, Baseball) - larger, more prominent */}
+        {primaryCategories.map((category) => {
           const display = getCategoryDisplay(category.key, category.emoji);
           return (
             <button
               key={category.key}
               onClick={() => handleCategoryClick(category.key)}
-              className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 ${
                 selectedCategory === category.key
                   ? "bg-graphite text-white shadow-sm"
-                  : "bg-white text-slate border border-mist hover:bg-mist/50 hover:border-slate/30"
+                  : "bg-white text-graphite border-2 border-graphite/20 hover:border-graphite/40 hover:bg-mist/30"
               }`}
             >
-              <span>{display.emoji}</span>
+              <span className="text-base">{display.emoji}</span>
               <span>{display.label}</span>
             </button>
           );
         })}
-      </div>
 
-      {/* League sub-filter */}
-      {selectedCategory && availableLeagues.length > 1 && (
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+        {/* More Sports toggle - only show if there are secondary categories */}
+        {secondaryCategories.length > 0 && (
           <button
-            onClick={() => onSelectSport(null)}
-            className={`px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors flex-shrink-0 ${
-              selectedSport === null
-                ? "bg-slate text-white"
+            onClick={() => setShowMoreSports(!showMoreSports)}
+            className={`px-3 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
+              showMoreSports || secondaryCategories.some((c) => c.key === selectedCategory)
+                ? "bg-slate/20 text-graphite"
                 : "bg-slate/10 text-slate hover:bg-slate/20"
             }`}
           >
-            All Leagues
+            <span>{showMoreSports ? "Less" : "More"}</span>
+            <svg
+              className={`w-3 h-3 transition-transform ${showMoreSports ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {/* Secondary sports - shown when expanded or when one is selected */}
+      {(showMoreSports || secondaryCategories.some((c) => c.key === selectedCategory)) &&
+        secondaryCategories.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {secondaryCategories.map((category) => {
+              const display = getCategoryDisplay(category.key, category.emoji);
+              return (
+                <button
+                  key={category.key}
+                  onClick={() => handleCategoryClick(category.key)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
+                    selectedCategory === category.key
+                      ? "bg-slate text-white"
+                      : "bg-slate/10 text-slate hover:bg-slate/20"
+                  }`}
+                >
+                  <span>{display.emoji}</span>
+                  <span>{display.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+      {/* League sub-filter - sorted by tier */}
+      {selectedCategory && availableLeagues.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-mist/50">
+          <span className="text-xs text-silver self-center mr-1">Leagues:</span>
+          <button
+            onClick={() => onSelectSport(null)}
+            className={`px-2.5 py-1 rounded text-xs whitespace-nowrap transition-colors ${
+              selectedSport === null
+                ? "bg-graphite text-white"
+                : "bg-white text-slate border border-mist hover:bg-mist/50"
+            }`}
+          >
+            All
           </button>
 
-          {availableLeagues.map((leagueKey) => (
-            <button
-              key={leagueKey}
-              onClick={() => handleLeagueClick(leagueKey)}
-              className={`px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition-colors flex-shrink-0 ${
-                selectedSport === leagueKey
-                  ? "bg-slate text-white"
-                  : "bg-slate/10 text-slate hover:bg-slate/20"
-              }`}
-            >
-              {getLeagueDisplay(leagueKey)}
-            </button>
-          ))}
+          {availableLeagues.map((leagueKey) => {
+            const tier = getLeagueTier(leagueKey);
+            return (
+              <button
+                key={leagueKey}
+                onClick={() => handleLeagueClick(leagueKey)}
+                className={`px-2.5 py-1 rounded text-xs whitespace-nowrap transition-colors ${
+                  selectedSport === leagueKey
+                    ? "bg-graphite text-white"
+                    : tier === 1
+                    ? "bg-white text-graphite border border-graphite/30 font-medium hover:bg-mist/50"
+                    : tier === 2
+                    ? "bg-white text-slate border border-mist hover:bg-mist/50"
+                    : "bg-slate/5 text-silver border border-transparent hover:bg-slate/10"
+                }`}
+              >
+                {getLeagueDisplay(leagueKey)}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
