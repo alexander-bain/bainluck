@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 import redis
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, or_, and_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 
@@ -301,33 +301,47 @@ async def detect_and_close_stale_events(session) -> int:
             if hours_since_start < max_duration:
                 continue
 
-            # Get the latest odds snapshot for this event
-            latest_snapshot_result = await session.execute(
-                select(OddsSnapshot)
-                .where(OddsSnapshot.event_id == event.id)
-                .order_by(OddsSnapshot.captured_at.desc())
-                .limit(1)
+            # Check if ANY bookmaker has provided odds recently
+            # We need to find the most recently updated snapshot across all bookmakers
+            # valid_until is updated when we see the same odds again; captured_at is when odds changed
+            stale_threshold = now - timedelta(minutes=ODDS_STALE_MINUTES)
+
+            # Count snapshots that have been updated recently
+            recent_snapshot_count = await session.execute(
+                select(func.count())
+                .select_from(OddsSnapshot)
+                .where(
+                    OddsSnapshot.event_id == event.id,
+                    or_(
+                        OddsSnapshot.valid_until >= stale_threshold,
+                        and_(
+                            OddsSnapshot.valid_until == None,
+                            OddsSnapshot.captured_at >= stale_threshold
+                        )
+                    )
+                )
             )
-            latest_snapshot = latest_snapshot_result.scalar_one_or_none()
+            recent_count = recent_snapshot_count.scalar()
 
             should_close = False
             close_reason = ""
 
-            if latest_snapshot is None:
-                # No odds at all - bookmakers never offered odds or stopped entirely
-                # Only close if match has been live a while
-                if hours_since_start > max_duration:
+            if recent_count == 0:
+                # No bookmaker has updated odds recently - check if we ever had odds
+                any_snapshot = await session.execute(
+                    select(func.count())
+                    .select_from(OddsSnapshot)
+                    .where(OddsSnapshot.event_id == event.id)
+                )
+                total_snapshots = any_snapshot.scalar()
+
+                if total_snapshots == 0:
                     should_close = True
                     close_reason = "no_odds_data"
-            else:
-                # Check if odds are stale
-                # Use valid_until if available (more accurate), otherwise captured_at
-                last_odds_time = latest_snapshot.valid_until or latest_snapshot.captured_at
-                minutes_since_odds = (now - last_odds_time).total_seconds() / 60
-
-                if minutes_since_odds >= ODDS_STALE_MINUTES:
+                else:
+                    # Had odds but all bookmakers stopped updating
                     should_close = True
-                    close_reason = f"stale_odds_{int(minutes_since_odds)}min"
+                    close_reason = f"all_bookmakers_stale"
 
             if should_close:
                 await session.execute(
@@ -494,12 +508,18 @@ async def _poll_all_odds():
             )
             sport_data = result.all()
 
+            # Even if no sports need odds polling, we should still check for stale events
+            # and update scores for recently started games
             if not sport_data:
+                # Still run staleness detection for any live events that may have ended
+                events_closed = await detect_and_close_stale_events(session)
+                await session.commit()
                 return {
                     "events": 0,
                     "snapshots": 0,
                     "sports": 0,
                     "sports_skipped": 0,
+                    "events_closed": events_closed,
                     "message": "No sports with games in the next 6 hours.",
                     "skipped": True,
                 }
