@@ -464,14 +464,16 @@ async def _poll_all_odds():
                         event_id = result.scalar_one()
                         total_events += 1
 
-                        # Create odds snapshots
+                        # Create odds snapshots (with deduplication)
                         for bookmaker in event_data.get("bookmakers", []):
-                            snapshot = await _create_snapshot(
+                            snapshot, is_new = await _create_or_update_snapshot(
+                                session,
                                 event_id,
                                 bookmaker,
                                 event_data
                             )
-                            session.add(snapshot)
+                            if is_new:
+                                session.add(snapshot)
                             total_snapshots += 1
 
                 except Exception as e:
@@ -508,16 +510,24 @@ async def _poll_all_odds():
         await service.close()
 
 
-async def _create_snapshot(
-    event_id: int,
-    bookmaker: dict,
-    event_data: dict
-) -> OddsSnapshot:
-    """Create an OddsSnapshot from API data."""
-    snapshot = OddsSnapshot(
-        event_id=event_id,
-        bookmaker=bookmaker["key"],
-        captured_at=datetime.now(timezone.utc),
+def _snapshots_are_equal(existing: OddsSnapshot, new_values: dict) -> bool:
+    """Check if the key odds values are the same."""
+    # Compare the fields that matter for deduplication
+    # Using rough equality for decimals
+    def eq(a, b):
+        if a is None and b is None:
+            return True
+        if a is None or b is None:
+            return False
+        # For numeric types, compare values
+        return float(a) == float(b) if isinstance(a, (int, float)) or hasattr(a, '__float__') else a == b
+
+    return (
+        eq(existing.home_moneyline, new_values.get("home_moneyline")) and
+        eq(existing.away_moneyline, new_values.get("away_moneyline")) and
+        eq(existing.home_spread, new_values.get("home_spread")) and
+        eq(existing.over_under, new_values.get("over_under")) and
+        eq(existing.home_win_probability, new_values.get("home_win_probability"))
     )
 
     # Debug: log available markets for this bookmaker
@@ -535,24 +545,23 @@ async def _create_snapshot(
         if market_key == "h2h":
             home_outcome = outcomes.get(home_team, {})
             away_outcome = outcomes.get(away_team, {})
-            snapshot.home_moneyline = home_outcome.get("price")
-            snapshot.away_moneyline = away_outcome.get("price")
+            values["home_moneyline"] = home_outcome.get("price")
+            values["away_moneyline"] = away_outcome.get("price")
 
-            # Calculate probabilities
-            if snapshot.home_moneyline and snapshot.away_moneyline:
+            if values["home_moneyline"] and values["away_moneyline"]:
                 home_prob, away_prob = moneyline_to_probability(
-                    snapshot.home_moneyline,
-                    snapshot.away_moneyline,
+                    values["home_moneyline"],
+                    values["away_moneyline"],
                 )
-                snapshot.home_win_probability = round(home_prob, 4)
-                snapshot.away_win_probability = round(away_prob, 4)
+                values["home_win_probability"] = round(home_prob, 4)
+                values["away_win_probability"] = round(away_prob, 4)
 
         elif market_key == "spreads":
             home_outcome = outcomes.get(home_team, {})
             away_outcome = outcomes.get(away_team, {})
-            snapshot.home_spread = home_outcome.get("point")
-            snapshot.home_spread_odds = home_outcome.get("price")
-            snapshot.away_spread_odds = away_outcome.get("price")
+            values["home_spread"] = home_outcome.get("point")
+            values["home_spread_odds"] = home_outcome.get("price")
+            values["away_spread_odds"] = away_outcome.get("price")
 
         elif market_key == "totals":
             # Try exact match first, then case-insensitive
@@ -562,11 +571,43 @@ async def _create_snapshot(
             snapshot.over_odds = over_outcome.get("price")
             snapshot.under_odds = under_outcome.get("price")
 
-    # Calculate projected scores if we have the data
-    if (snapshot.home_spread is not None and snapshot.over_under):
+    # Calculate projected scores
+    if values["home_spread"] is not None and values["over_under"]:
         home_score, away_score = project_scores(
-            float(snapshot.home_spread),
-            float(snapshot.over_under),
+            float(values["home_spread"]),
+            float(values["over_under"]),
+        )
+        values["projected_home_score"] = home_score
+        values["projected_away_score"] = away_score
+
+    return values
+
+
+async def _create_or_update_snapshot(
+    session,
+    event_id: int,
+    bookmaker: dict,
+    event_data: dict
+) -> tuple[OddsSnapshot, bool]:
+    """
+    Create a new snapshot or update existing if values unchanged.
+
+    Returns (snapshot, is_new) tuple.
+    - If values changed: creates new snapshot, returns (new_snapshot, True)
+    - If values same: updates existing snapshot's reading_count/valid_until, returns (existing, False)
+    """
+    now = datetime.now(timezone.utc)
+    bookmaker_key = bookmaker["key"]
+
+    # Parse the new values
+    new_values = _parse_snapshot_values(bookmaker, event_data)
+
+    # Find the most recent snapshot for this event+bookmaker
+    result = await session.execute(
+        select(OddsSnapshot)
+        .where(
+            OddsSnapshot.event_id == event_id,
+            OddsSnapshot.bookmaker == bookmaker_key
         )
         snapshot.projected_home_score = home_score
         snapshot.projected_away_score = away_score
@@ -583,6 +624,21 @@ async def _create_snapshot(
               f"markets={available_markets}, spread={snapshot.home_spread}, "
               f"over_under={snapshot.over_under}")
 
+
+async def _create_snapshot(
+    event_id: int,
+    bookmaker: dict,
+    event_data: dict
+) -> OddsSnapshot:
+    """Create an OddsSnapshot from API data. (Legacy - used by poll_sport_odds)"""
+    values = _parse_snapshot_values(bookmaker, event_data)
+    snapshot = OddsSnapshot(
+        event_id=event_id,
+        bookmaker=bookmaker["key"],
+        captured_at=datetime.now(timezone.utc),
+        reading_count=1,
+        **values
+    )
     return snapshot
 
 

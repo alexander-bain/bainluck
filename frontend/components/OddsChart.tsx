@@ -97,12 +97,33 @@ export default function OddsChart({
   }
 
   // Transform data for chart
-  const chartData: ChartDataPoint[] = filteredHistory.map((point) => ({
-    timestamp: point.timestamp,
-    time: format(parseISO(point.timestamp), "h:mm a"),
-    homeProb: point.home_probability !== null ? point.home_probability * 100 : null,
-    awayProb: point.away_probability !== null ? point.away_probability * 100 : null,
-  }));
+  // Expand points with valid_until into two points for flat line display
+  const chartData: ChartDataPoint[] = filteredHistory.flatMap((point) => {
+    const startPoint: ChartDataPoint = {
+      timestamp: point.timestamp,
+      time: format(parseISO(point.timestamp), "h:mm a"),
+      homeProb: point.home_probability !== null ? point.home_probability * 100 : null,
+      awayProb: point.away_probability !== null ? point.away_probability * 100 : null,
+    };
+
+    // If valid_until exists and is different from timestamp, add end point for flat line
+    if (point.valid_until) {
+      const endTime = parseISO(point.valid_until);
+      const startTime = parseISO(point.timestamp);
+      // Only add if valid_until is significantly later (>1 min)
+      if (endTime.getTime() - startTime.getTime() > 60000) {
+        const endPoint: ChartDataPoint = {
+          timestamp: point.valid_until,
+          time: format(endTime, "h:mm a"),
+          homeProb: point.home_probability !== null ? point.home_probability * 100 : null,
+          awayProb: point.away_probability !== null ? point.away_probability * 100 : null,
+        };
+        return [startPoint, endPoint];
+      }
+    }
+
+    return [startPoint];
+  });
 
   // Calculate Y-axis domain for probability (with some padding around actual values)
   const probValues = chartData
