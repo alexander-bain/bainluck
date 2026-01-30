@@ -520,12 +520,17 @@ async def _create_snapshot(
         captured_at=datetime.now(timezone.utc),
     )
 
+    # Debug: log available markets for this bookmaker
+    available_markets = [m["key"] for m in bookmaker.get("markets", [])]
+    home_team = event_data["home_team"]
+    away_team = event_data["away_team"]
+
     # Parse markets
     for market in bookmaker.get("markets", []):
         market_key = market["key"]
         outcomes = {o["name"]: o for o in market["outcomes"]}
-        home_team = event_data["home_team"]
-        away_team = event_data["away_team"]
+        # Also create lowercase version for case-insensitive matching
+        outcomes_lower = {o["name"].lower(): o for o in market["outcomes"]}
 
         if market_key == "h2h":
             home_outcome = outcomes.get(home_team, {})
@@ -550,8 +555,9 @@ async def _create_snapshot(
             snapshot.away_spread_odds = away_outcome.get("price")
 
         elif market_key == "totals":
-            over_outcome = outcomes.get("Over", {})
-            under_outcome = outcomes.get("Under", {})
+            # Try exact match first, then case-insensitive
+            over_outcome = outcomes.get("Over") or outcomes_lower.get("over", {})
+            under_outcome = outcomes.get("Under") or outcomes_lower.get("under", {})
             snapshot.over_under = over_outcome.get("point")
             snapshot.over_odds = over_outcome.get("price")
             snapshot.under_odds = under_outcome.get("price")
@@ -564,6 +570,18 @@ async def _create_snapshot(
         )
         snapshot.projected_home_score = home_score
         snapshot.projected_away_score = away_score
+        # Success log (only occasionally to avoid spam)
+        if event_id % 100 == 0:
+            print(f"[DEBUG] Projected scores calculated: {home_team} {home_score} vs {away_team} {away_score}")
+    elif "spreads" not in available_markets or "totals" not in available_markets:
+        # API didn't return spread/totals markets - this is the likely issue
+        print(f"[DEBUG] API missing markets for {bookmaker['key']}: "
+              f"available={available_markets}, expected=['h2h','spreads','totals']")
+    else:
+        # Markets exist but data wasn't parsed - debug the parsing
+        print(f"[DEBUG] Parsing issue for {bookmaker['key']} ({home_team} vs {away_team}): "
+              f"markets={available_markets}, spread={snapshot.home_spread}, "
+              f"over_under={snapshot.over_under}")
 
     return snapshot
 

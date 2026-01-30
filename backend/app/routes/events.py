@@ -362,6 +362,75 @@ async def get_event_odds_history(
     }
 
 
+@router.get("/{event_id}/debug")
+async def debug_event_snapshots(
+    event_id: int,
+    limit: int = Query(10, description="Number of snapshots to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Debug endpoint to check raw snapshot data for an event.
+
+    Returns recent snapshots with all fields to diagnose data issues.
+    """
+    # Verify event exists
+    event_result = await db.execute(
+        select(Event).where(Event.id == event_id)
+    )
+    event = event_result.scalar_one_or_none()
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    # Get recent snapshots
+    result = await db.execute(
+        select(OddsSnapshot)
+        .where(OddsSnapshot.event_id == event_id)
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(limit)
+    )
+    snapshots = result.scalars().all()
+
+    # Return raw data for debugging
+    snapshot_data = []
+    for snap in snapshots:
+        snapshot_data.append({
+            "id": snap.id,
+            "bookmaker": snap.bookmaker,
+            "captured_at": snap.captured_at.isoformat(),
+            "home_moneyline": snap.home_moneyline,
+            "away_moneyline": snap.away_moneyline,
+            "home_win_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
+            "away_win_probability": float(snap.away_win_probability) if snap.away_win_probability else None,
+            "home_spread": float(snap.home_spread) if snap.home_spread else None,
+            "home_spread_odds": snap.home_spread_odds,
+            "away_spread_odds": snap.away_spread_odds,
+            "over_under": float(snap.over_under) if snap.over_under else None,
+            "over_odds": snap.over_odds,
+            "under_odds": snap.under_odds,
+            "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score else None,
+            "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score else None,
+        })
+
+    # Summary statistics
+    has_spread = sum(1 for s in snapshot_data if s["home_spread"] is not None)
+    has_totals = sum(1 for s in snapshot_data if s["over_under"] is not None)
+    has_projected = sum(1 for s in snapshot_data if s["projected_home_score"] is not None)
+
+    return {
+        "event_id": event_id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "total_snapshots": len(snapshot_data),
+        "summary": {
+            "snapshots_with_spread": has_spread,
+            "snapshots_with_totals": has_totals,
+            "snapshots_with_projected_scores": has_projected,
+        },
+        "snapshots": snapshot_data,
+    }
+
+
 def _format_event(event: Event) -> dict:
     """Format event for API response."""
     return {
