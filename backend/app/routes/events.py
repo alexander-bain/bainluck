@@ -510,6 +510,8 @@ async def debug_event_snapshots(
             "id": snap.id,
             "bookmaker": snap.bookmaker,
             "captured_at": snap.captured_at.isoformat(),
+            "valid_until": snap.valid_until.isoformat() if snap.valid_until else None,
+            "reading_count": snap.reading_count,
             "home_moneyline": snap.home_moneyline,
             "away_moneyline": snap.away_moneyline,
             "home_win_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
