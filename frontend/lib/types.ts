@@ -10,16 +10,21 @@ export interface Sport {
 }
 
 export interface CurrentOdds {
-  bookmaker: string;
+  bookmaker?: string;
   captured_at: string;
-  home_moneyline: number | null;
-  away_moneyline: number | null;
+  home_moneyline?: number | null;
+  away_moneyline?: number | null;
   home_probability: number | null; // 0.0-1.0
   away_probability: number | null; // 0.0-1.0
   spread: number | null;
   over_under: number | null;
   projected_home_score: number | null;
   projected_away_score: number | null;
+  bookmaker_count?: number;
+  probability_range?: {
+    min: number | null;
+    max: number | null;
+  };
 }
 
 export interface Event {
@@ -40,8 +45,17 @@ export interface EventsResponse {
   count: number;
 }
 
+export interface BookmakerOddsDetail {
+  bookmaker: string;
+  home_moneyline: number | null;
+  away_moneyline: number | null;
+  home_probability: number | null;
+  away_probability: number | null;
+}
+
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
+  bookmaker_odds?: BookmakerOddsDetail[];
 }
 
 export interface OddsHistoryPoint {

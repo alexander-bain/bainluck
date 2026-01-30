@@ -468,12 +468,12 @@ export default function EventPage({ params }: EventPageProps) {
                     O/U {odds.over_under}
                   </span>
                 )}
-                {sourceAnalysis.sources.length > 0 && (
+                {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
                   <span
                     className="cursor-help border-b border-dotted border-silver"
-                    title={sourceAnalysis.sources.join(", ")}
+                    title={event.bookmaker_odds.map(b => b.bookmaker).join(", ")}
                   >
-                    {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
+                    {event.bookmaker_odds.length} source{event.bookmaker_odds.length !== 1 ? "s" : ""}
                   </span>
                 )}
               </div>
