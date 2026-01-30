@@ -31,15 +31,17 @@ async def list_events(
     Returns events with their current win probabilities.
     Memory-optimized: only fetches latest odds snapshot per event.
     """
-    # Build query - only load sport, NOT all odds_snapshots (too much memory)
-    query = select(Event).options(
-        selectinload(Event.sport),
+    # Build query with explicit join to Sport for reliable filtering
+    query = (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(selectinload(Event.sport))
     )
 
     conditions = []
 
     if sport:
-        conditions.append(Event.sport.has(Sport.key == sport))
+        conditions.append(Sport.key == sport)
 
     if status:
         conditions.append(Event.status == status)
@@ -72,17 +74,9 @@ async def list_events(
         )
     )
 
-    # Exclude soccer, cricket, rugby, AFL (and any other excluded sports)
-    # Build exclusion conditions using SQL LIKE for reliable prefix matching
-    exclusion_conditions = []
+    # Exclude soccer, cricket, rugby, AFL - filter directly on joined Sport table
     for prefix in EXCLUDED_SPORT_PREFIXES:
-        exclusion_conditions.append(Sport.key.like(f"{prefix}%"))
-
-    # Exclude events where sport matches any excluded prefix
-    if exclusion_conditions:
-        conditions.append(
-            not_(Event.sport.has(or_(*exclusion_conditions)))
-        )
+        conditions.append(not_(Sport.key.like(f"{prefix}%")))
 
     if conditions:
         query = query.where(and_(*conditions))
