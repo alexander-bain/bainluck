@@ -291,9 +291,8 @@ export default function OddsChart({
                 key={`${bookmaker}_home`}
                 type="monotone"
                 dataKey={`${bookmaker}_home`}
-                stroke="#9ca3af"
+                stroke="rgba(156, 163, 175, 0.4)"
                 strokeWidth={1}
-                strokeOpacity={0.4}
                 dot={false}
                 activeDot={false}
                 connectNulls
@@ -305,9 +304,8 @@ export default function OddsChart({
                 key={`${bookmaker}_away`}
                 type="monotone"
                 dataKey={`${bookmaker}_away`}
-                stroke="#9ca3af"
+                stroke="rgba(156, 163, 175, 0.4)"
                 strokeWidth={1}
-                strokeOpacity={0.4}
                 dot={false}
                 activeDot={false}
                 connectNulls
