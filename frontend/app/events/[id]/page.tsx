@@ -15,7 +15,7 @@ interface EventPageProps {
   params: { id: string };
 }
 
-const LIVE_REFRESH_INTERVAL = 60000;
+const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 function formatCountdown(targetTime: string): string {
@@ -200,7 +200,7 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     event ? ["history", eventId] : null,
     () => fetchEventHistory(eventId, 48),
-    { refreshInterval: 60000 }
+    { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
   if (eventLoading) {
