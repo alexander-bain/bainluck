@@ -92,8 +92,17 @@ export default function ScoreChart({
     (point) => point.projected_home_score !== null && point.projected_away_score !== null
   );
 
-  if (!history || history.length === 0 || !hasScoreData) {
-    return null; // Don't render if no score data
+  if (!history || history.length === 0) {
+    return null; // Don't render if no history at all
+  }
+
+  // Show message if history exists but no projected scores
+  if (!hasScoreData) {
+    return (
+      <div className="text-center py-4 text-sm text-gray-500">
+        Projected score history not yet available for this event.
+      </div>
+    );
   }
 
   // Transform data for chart
