@@ -57,11 +57,18 @@ export interface OddsHistoryPoint {
   reading_count?: number; // How many times this value was confirmed
 }
 
+export interface BookmakerHistoryPoint {
+  timestamp: string;
+  home_probability: number | null;
+  away_probability: number | null;
+}
+
 export interface EventHistoryResponse {
   event_id: number;
   home_team: string;
   away_team: string;
   history: OddsHistoryPoint[];
+  bookmaker_history?: Record<string, BookmakerHistoryPoint[]>;
   points: number;
 }
 

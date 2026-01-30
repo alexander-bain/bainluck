@@ -353,11 +353,31 @@ async def get_event_odds_history(
             },
         })
 
+    # Build per-bookmaker history for individual sportsbook lines
+    # Group snapshots by bookmaker
+    snapshots_by_bookmaker = defaultdict(list)
+    for snap in snapshots:
+        snapshots_by_bookmaker[snap.bookmaker].append(snap)
+
+    bookmaker_history = {}
+    for bookmaker, bm_snaps in snapshots_by_bookmaker.items():
+        # Sort by time
+        bm_snaps_sorted = sorted(bm_snaps, key=lambda s: s.captured_at)
+        bookmaker_history[bookmaker] = [
+            {
+                "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
+                "home_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
+                "away_probability": float(snap.away_win_probability) if snap.away_win_probability else None,
+            }
+            for snap in bm_snaps_sorted
+        ]
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "history": history,
+        "bookmaker_history": bookmaker_history,
         "points": len(history),
     }
 
