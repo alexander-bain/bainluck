@@ -254,9 +254,11 @@ async def _sync_sports():
                 if not sport.get("active", False):
                     continue
 
-                # Skip sports that match any excluded prefix (soccer)
+                # Skip sports that match any excluded prefix or keyword
                 sport_key = sport["key"]
                 if any(sport_key.startswith(prefix) for prefix in excluded_prefixes):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
                     continue
 
                 # Upsert sport
@@ -376,6 +378,12 @@ async def _poll_all_odds():
                 soonest_game = row[1]
                 is_live = row[2]
 
+                # Skip excluded sports (in case they're still in the database)
+                if any(sport_key.startswith(prefix) for prefix in OddsAPIService.EXCLUDED_PREFIXES):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
+                    continue
+
                 # Determine poll interval for this sport
                 if is_live or (soonest_game and soonest_game <= now):
                     # Live game - poll every 60 seconds
@@ -491,16 +499,16 @@ async def _poll_all_odds():
                     continue
 
             # Fetch scores for sports with events that have started
-            # Include events that: started in the last day (for completed games)
-            # or started and not yet completed (for live games)
+            # Use a 3-day window to capture longer events like tennis matches
+            # that may start one day and finish the next
             sports_needing_scores = await session.execute(
                 select(Sport.key)
                 .join(Event)
                 .where(
                     Sport.active == True,
                     Event.commence_time <= now,  # Event has started
-                    Event.commence_time >= now - timedelta(days=1),  # Within last day
-                    Event.status != "scheduled",  # Exclude future games
+                    Event.commence_time >= now - timedelta(days=3),  # Within last 3 days
+                    Event.status.in_(["live", "completed"]),  # Only live or completed
                 )
                 .distinct()
             )
@@ -508,50 +516,56 @@ async def _poll_all_odds():
 
             for sport_key in sports_for_scores:
                 try:
-                    scores_data = await service.get_scores(sport_key, days_from=1)
+                    # Request scores from last 3 days to match the query window
+                    scores_data = await service.get_scores(sport_key, days_from=3)
 
                     for score_event in scores_data:
-                        external_id = score_event.get("id")
-                        is_completed = score_event.get("completed", False)
+                        try:
+                            external_id = score_event.get("id")
+                            is_completed = score_event.get("completed", False)
 
-                        # Parse scores from the API response
-                        event_scores = score_event.get("scores")
-                        home_team = score_event.get("home_team")
-                        away_team = score_event.get("away_team")
+                            # Parse scores from the API response
+                            event_scores = score_event.get("scores")
+                            home_team = score_event.get("home_team")
+                            away_team = score_event.get("away_team")
 
-                        # Find scores for home and away teams
-                        home_score = None
-                        away_score = None
+                            # Find scores for home and away teams
+                            home_score = None
+                            away_score = None
 
-                        if event_scores is not None:
-                            for team_score in event_scores:
-                                score_str = team_score.get("score")
-                                # Safely parse score - handles empty strings, None, non-numeric
-                                try:
-                                    score_val = int(score_str) if score_str else None
-                                except (ValueError, TypeError):
-                                    score_val = None
+                            if event_scores is not None:
+                                for team_score in event_scores:
+                                    score_str = team_score.get("score")
+                                    # Safely parse score - handles empty strings, None, non-numeric
+                                    try:
+                                        score_val = int(score_str) if score_str else None
+                                    except (ValueError, TypeError):
+                                        score_val = None
 
-                                if team_score.get("name") == home_team:
-                                    home_score = score_val
-                                elif team_score.get("name") == away_team:
-                                    away_score = score_val
+                                    if team_score.get("name") == home_team:
+                                        home_score = score_val
+                                    elif team_score.get("name") == away_team:
+                                        away_score = score_val
 
-                        # Always update status, and update scores if available
-                        event_status = "completed" if is_completed else "live"
-                        update_values = {"status": event_status}
+                            # Always update status, and update scores if available
+                            event_status = "completed" if is_completed else "live"
+                            update_values = {"status": event_status}
 
-                        if home_score is not None:
-                            update_values["home_score"] = home_score
-                        if away_score is not None:
-                            update_values["away_score"] = away_score
+                            if home_score is not None:
+                                update_values["home_score"] = home_score
+                            if away_score is not None:
+                                update_values["away_score"] = away_score
 
-                        await session.execute(
-                            Event.__table__.update()
-                            .where(Event.external_id == external_id)
-                            .values(**update_values)
-                        )
-                        scores_updated += 1
+                            await session.execute(
+                                Event.__table__.update()
+                                .where(Event.external_id == external_id)
+                                .values(**update_values)
+                            )
+                            scores_updated += 1
+
+                        except Exception as e:
+                            print(f"Error updating score for event {score_event.get('id')}: {e}")
+                            continue
 
                 except Exception as e:
                     print(f"Error fetching scores for {sport_key}: {e}")
