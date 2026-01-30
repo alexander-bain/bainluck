@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Event, OddsSnapshot, Sport
 from app.services import get_db, OddsAPIService, fetch_current_odds
-from app.utils import moneyline_to_probability, project_scores, calculate_gei
+from app.utils import moneyline_to_probability, project_scores, calculate_gei, aggregate_bookmaker_odds
 
 router = APIRouter()
 
@@ -76,9 +76,9 @@ async def list_events(
     result = await db.execute(query)
     events = result.scalars().all()
 
-    # Get only the latest odds snapshot for each event (memory efficient)
+    # Get the latest odds snapshots for each event, aggregated across bookmakers
     event_ids = [e.id for e in events]
-    latest_odds_map = {}
+    aggregated_odds_map = {}
 
     if event_ids:
         # Subquery to get the max captured_at per event
@@ -92,7 +92,8 @@ async def list_events(
             .subquery()
         )
 
-        # Get the actual snapshots matching the max times
+        # Get all snapshots from the latest poll time for each event
+        # (multiple bookmakers captured at the same time)
         latest_odds_query = (
             select(OddsSnapshot)
             .join(
@@ -105,13 +106,25 @@ async def list_events(
         )
 
         latest_odds_result = await db.execute(latest_odds_query)
-        for snap in latest_odds_result.scalars().all():
-            latest_odds_map[snap.event_id] = snap
+        all_snapshots = latest_odds_result.scalars().all()
 
-    # Format response with latest odds
+        # Group snapshots by event and aggregate
+        from collections import defaultdict
+        snapshots_by_event = defaultdict(list)
+        for snap in all_snapshots:
+            snapshots_by_event[snap.event_id].append(snap)
+
+        for event_id, snaps in snapshots_by_event.items():
+            aggregated_odds_map[event_id] = {
+                "snapshots": snaps,
+                "aggregated": aggregate_bookmaker_odds(snaps),
+                "captured_at": snaps[0].captured_at if snaps else None,
+            }
+
+    # Format response with aggregated odds
     return {
         "events": [
-            _format_event_with_latest_odds(e, latest_odds_map.get(e.id))
+            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id))
             for e in events
         ],
         "count": len(events),
@@ -138,13 +151,15 @@ async def list_live_events(db: AsyncSession = Depends(get_db)):
 async def get_live_odds(sport_key: str):
     """
     Fetch live odds directly from API (not from database).
-    
+
     Useful for real-time updates without waiting for the
     polling job. Use sparingly to conserve API quota.
+
+    Returns both individual bookmaker odds and aggregated consensus.
     """
     try:
         snapshots = await fetch_current_odds(sport_key)
-        
+
         # Group by event
         events_map = {}
         for snap in snapshots:
@@ -155,8 +170,9 @@ async def get_live_odds(sport_key: str):
                     "away_team": snap.away_team,
                     "commence_time": snap.commence_time.isoformat(),
                     "bookmakers": [],
+                    "_snapshots": [],  # Temporary for aggregation
                 }
-            
+
             # Calculate probability
             home_prob = None
             away_prob = None
@@ -164,8 +180,8 @@ async def get_live_odds(sport_key: str):
                 home_prob, away_prob = moneyline_to_probability(
                     snap.home_moneyline, snap.away_moneyline
                 )
-            
-            events_map[snap.event_id]["bookmakers"].append({
+
+            bookmaker_data = {
                 "key": snap.bookmaker,
                 "home_moneyline": snap.home_moneyline,
                 "away_moneyline": snap.away_moneyline,
@@ -173,8 +189,34 @@ async def get_live_odds(sport_key: str):
                 "away_probability": round(away_prob, 4) if away_prob else None,
                 "spread": snap.home_spread,
                 "over_under": float(snap.over_under) if snap.over_under else None,
+            }
+            events_map[snap.event_id]["bookmakers"].append(bookmaker_data)
+
+            # Store for aggregation
+            events_map[snap.event_id]["_snapshots"].append({
+                "home_win_probability": home_prob,
+                "away_win_probability": away_prob,
+                "over_under": snap.over_under,
+                "home_spread": snap.home_spread,
             })
-        
+
+        # Add aggregated consensus to each event
+        for event_data in events_map.values():
+            aggregated = aggregate_bookmaker_odds(event_data["_snapshots"])
+            event_data["consensus"] = {
+                "home_probability": aggregated["home_probability"],
+                "away_probability": aggregated["away_probability"],
+                "over_under": aggregated["over_under"],
+                "spread": aggregated["home_spread"],
+                "bookmaker_count": aggregated["bookmaker_count"],
+                "probability_range": {
+                    "min": aggregated["min_home_probability"],
+                    "max": aggregated["max_home_probability"],
+                },
+            }
+            # Remove temporary storage
+            del event_data["_snapshots"]
+
         return {
             "sport": sport_key,
             "events": list(events_map.values()),
@@ -189,47 +231,61 @@ async def get_live_odds(sport_key: str):
 
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
-    """Get event details with current odds."""
+    """Get event details with aggregated odds from all bookmakers."""
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.odds_snapshots), selectinload(Event.sport))
         .where(Event.id == event_id)
     )
     event = result.scalar_one_or_none()
-    
+
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
-    # Get latest odds snapshot
-    latest_odds = None
-    if event.odds_snapshots:
-        latest_odds = max(
-            event.odds_snapshots, 
-            key=lambda x: x.captured_at
-        )
-    
+
     response = _format_event(event)
-    
-    if latest_odds:
+
+    if event.odds_snapshots:
+        # Get the latest capture time
+        latest_time = max(s.captured_at for s in event.odds_snapshots)
+
+        # Get all snapshots from that time (multiple bookmakers)
+        latest_snapshots = [
+            s for s in event.odds_snapshots
+            if s.captured_at == latest_time
+        ]
+
+        # Aggregate across bookmakers
+        aggregated = aggregate_bookmaker_odds(latest_snapshots)
+
         response["current_odds"] = {
-            "bookmaker": latest_odds.bookmaker,
-            "captured_at": latest_odds.captured_at.isoformat(),
-            "home_moneyline": latest_odds.home_moneyline,
-            "away_moneyline": latest_odds.away_moneyline,
-            "home_probability": float(latest_odds.home_win_probability) 
-                if latest_odds.home_win_probability else None,
-            "away_probability": float(latest_odds.away_win_probability)
-                if latest_odds.away_win_probability else None,
-            "spread": float(latest_odds.home_spread) 
-                if latest_odds.home_spread else None,
-            "over_under": float(latest_odds.over_under)
-                if latest_odds.over_under else None,
-            "projected_home_score": float(latest_odds.projected_home_score)
-                if latest_odds.projected_home_score else None,
-            "projected_away_score": float(latest_odds.projected_away_score)
-                if latest_odds.projected_away_score else None,
+            "captured_at": latest_time.isoformat(),
+            "home_probability": aggregated["home_probability"],
+            "away_probability": aggregated["away_probability"],
+            "spread": aggregated["home_spread"],
+            "over_under": aggregated["over_under"],
+            "projected_home_score": aggregated["projected_home_score"],
+            "projected_away_score": aggregated["projected_away_score"],
+            "bookmaker_count": aggregated["bookmaker_count"],
+            "probability_range": {
+                "min": aggregated["min_home_probability"],
+                "max": aggregated["max_home_probability"],
+            },
         }
-    
+
+        # Also include individual bookmaker odds for transparency
+        response["bookmaker_odds"] = [
+            {
+                "bookmaker": s.bookmaker,
+                "home_moneyline": s.home_moneyline,
+                "away_moneyline": s.away_moneyline,
+                "home_probability": float(s.home_win_probability)
+                    if s.home_win_probability else None,
+                "away_probability": float(s.away_win_probability)
+                    if s.away_win_probability else None,
+            }
+            for s in latest_snapshots
+        ]
+
     return response
 
 
@@ -241,21 +297,22 @@ async def get_event_odds_history(
 ):
     """
     Get odds history for trending chart.
-    
-    Returns probability snapshots over time for visualization.
+
+    Returns aggregated probability snapshots over time for visualization.
+    Each data point represents the consensus across all bookmakers at that time.
     """
     # Verify event exists
     event_result = await db.execute(
         select(Event).where(Event.id == event_id)
     )
     event = event_result.scalar_one_or_none()
-    
+
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
+
     # Get snapshots within time range
     cutoff = datetime.utcnow() - timedelta(hours=hours)
-    
+
     result = await db.execute(
         select(OddsSnapshot)
         .where(
@@ -267,38 +324,110 @@ async def get_event_odds_history(
         .order_by(OddsSnapshot.captured_at)
     )
     snapshots = result.scalars().all()
-    
-    # Format for charting
-    # Include valid_until for drawing flat lines between data points
-    history = []
+
+    # Group snapshots by capture time and aggregate across bookmakers
+    from collections import defaultdict
+    snapshots_by_time = defaultdict(list)
     for snap in snapshots:
-        point = {
-            "timestamp": snap.captured_at.isoformat(),
-            "home_probability": float(snap.home_win_probability)
-                if snap.home_win_probability else None,
-            "away_probability": float(snap.away_win_probability)
-                if snap.away_win_probability else None,
-            "over_under": float(snap.over_under)
-                if snap.over_under else None,
-            "projected_home_score": float(snap.projected_home_score)
-                if snap.projected_home_score else None,
-            "projected_away_score": float(snap.projected_away_score)
-                if snap.projected_away_score else None,
-            "bookmaker": snap.bookmaker,
-        }
-        # Include valid_until if available (for deduped rows)
-        if hasattr(snap, 'valid_until') and snap.valid_until:
-            point["valid_until"] = snap.valid_until.isoformat()
-        if hasattr(snap, 'reading_count'):
-            point["reading_count"] = snap.reading_count
-        history.append(point)
-    
+        # Round to the nearest minute for grouping
+        time_key = snap.captured_at.replace(second=0, microsecond=0)
+        snapshots_by_time[time_key].append(snap)
+
+    # Aggregate each time bucket
+    history = []
+    for timestamp in sorted(snapshots_by_time.keys()):
+        snaps = snapshots_by_time[timestamp]
+        aggregated = aggregate_bookmaker_odds(snaps)
+
+        history.append({
+            "timestamp": timestamp.isoformat(),
+            "home_probability": aggregated["home_probability"],
+            "away_probability": aggregated["away_probability"],
+            "over_under": aggregated["over_under"],
+            "projected_home_score": aggregated["projected_home_score"],
+            "projected_away_score": aggregated["projected_away_score"],
+            "bookmaker_count": aggregated["bookmaker_count"],
+            "probability_range": {
+                "min": aggregated["min_home_probability"],
+                "max": aggregated["max_home_probability"],
+            },
+        })
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "history": history,
         "points": len(history),
+    }
+
+
+@router.get("/{event_id}/debug")
+async def debug_event_snapshots(
+    event_id: int,
+    limit: int = Query(10, description="Number of snapshots to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Debug endpoint to check raw snapshot data for an event.
+
+    Returns recent snapshots with all fields to diagnose data issues.
+    """
+    # Verify event exists
+    event_result = await db.execute(
+        select(Event).where(Event.id == event_id)
+    )
+    event = event_result.scalar_one_or_none()
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    # Get recent snapshots
+    result = await db.execute(
+        select(OddsSnapshot)
+        .where(OddsSnapshot.event_id == event_id)
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(limit)
+    )
+    snapshots = result.scalars().all()
+
+    # Return raw data for debugging
+    snapshot_data = []
+    for snap in snapshots:
+        snapshot_data.append({
+            "id": snap.id,
+            "bookmaker": snap.bookmaker,
+            "captured_at": snap.captured_at.isoformat(),
+            "home_moneyline": snap.home_moneyline,
+            "away_moneyline": snap.away_moneyline,
+            "home_win_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
+            "away_win_probability": float(snap.away_win_probability) if snap.away_win_probability else None,
+            "home_spread": float(snap.home_spread) if snap.home_spread else None,
+            "home_spread_odds": snap.home_spread_odds,
+            "away_spread_odds": snap.away_spread_odds,
+            "over_under": float(snap.over_under) if snap.over_under else None,
+            "over_odds": snap.over_odds,
+            "under_odds": snap.under_odds,
+            "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score else None,
+            "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score else None,
+        })
+
+    # Summary statistics
+    has_spread = sum(1 for s in snapshot_data if s["home_spread"] is not None)
+    has_totals = sum(1 for s in snapshot_data if s["over_under"] is not None)
+    has_projected = sum(1 for s in snapshot_data if s["projected_home_score"] is not None)
+
+    return {
+        "event_id": event_id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "total_snapshots": len(snapshot_data),
+        "summary": {
+            "snapshots_with_spread": has_spread,
+            "snapshots_with_totals": has_totals,
+            "snapshots_with_projected_scores": has_projected,
+        },
+        "snapshots": snapshot_data,
     }
 
 
@@ -371,6 +500,32 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
                 if latest_odds.projected_home_score else None,
             "projected_away_score": float(latest_odds.projected_away_score)
                 if latest_odds.projected_away_score else None,
+        }
+
+    return response
+
+
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict]) -> dict:
+    """Format event for API response with aggregated odds from multiple bookmakers."""
+    response = _format_event(event)
+
+    if odds_data and odds_data.get("aggregated"):
+        aggregated = odds_data["aggregated"]
+        captured_at = odds_data.get("captured_at")
+
+        response["current_odds"] = {
+            "captured_at": captured_at.isoformat() if captured_at else None,
+            "home_probability": aggregated["home_probability"],
+            "away_probability": aggregated["away_probability"],
+            "spread": aggregated["home_spread"],
+            "over_under": aggregated["over_under"],
+            "projected_home_score": aggregated["projected_home_score"],
+            "projected_away_score": aggregated["projected_away_score"],
+            "bookmaker_count": aggregated["bookmaker_count"],
+            "probability_range": {
+                "min": aggregated["min_home_probability"],
+                "max": aggregated["max_home_probability"],
+            },
         }
 
     return response

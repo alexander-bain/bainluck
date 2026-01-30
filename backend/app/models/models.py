@@ -150,23 +150,27 @@ class OddsSnapshot(Base):
 
 class OddsAggregated(Base):
     """Aggregated odds history (permanent storage)."""
-    
+
     __tablename__ = "odds_aggregated"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
     period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    
+
     avg_home_win_prob: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
     min_home_win_prob: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
     max_home_win_prob: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
-    
+
     avg_projected_total: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
     snapshot_count: Mapped[int] = mapped_column(Integer, default=0)
-    
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "period_start", name="uq_event_period"),
     )
 
 
