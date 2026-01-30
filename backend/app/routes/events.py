@@ -422,12 +422,14 @@ async def get_event_odds_history(
 
     bookmaker_history = {}
     for bookmaker, bm_snaps in snapshots_by_bookmaker.items():
-        # Build time-series data with proper handling of spanning snapshots
-        bm_points = []
-        for snap in bm_snaps:
-            point_data = {
-                "home_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
-                "away_probability": float(snap.away_win_probability) if snap.away_win_probability else None,
+        # Sort by time
+        bm_snaps_sorted = sorted(bm_snaps, key=lambda s: s.captured_at)
+        bookmaker_history[bookmaker] = [
+            {
+                "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
+                "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
+                "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
+                "valid_until": snap.valid_until.replace(second=0, microsecond=0).isoformat() if snap.valid_until else None,
             }
             if snap.captured_at >= cutoff:
                 # Normal case: use actual capture time
