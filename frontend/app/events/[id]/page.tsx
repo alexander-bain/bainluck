@@ -462,7 +462,10 @@ export default function EventPage({ params }: EventPageProps) {
                 })}
               </span>
               {sourceAnalysis.sources.length > 0 && (
-                <span className="text-xs text-silver">
+                <span
+                  className="text-xs text-silver cursor-help"
+                  title={sourceAnalysis.sources.join(", ")}
+                >
                   {sourceAnalysis.sources.length} source{sourceAnalysis.sources.length !== 1 ? "s" : ""}
                 </span>
               )}
