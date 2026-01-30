@@ -1,7 +1,8 @@
 /**
  * Sport categories for grouping leagues under parent sports.
  *
- * BLACKLIST APPROACH: The backend excludes only soccer (soccer_*).
+ * BLACKLIST APPROACH: The backend excludes soccer, cricket, rugby, and AFL.
+ * (soccer_*, cricket_*, rugbyleague_*, rugbyunion_*, aussierules_*)
  * Everything else from The Odds API is included and should be categorized here.
  *
  * This file maps sport keys to categories and display names dynamically.

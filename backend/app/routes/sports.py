@@ -10,8 +10,8 @@ from app.services import get_db, OddsAPIService
 
 router = APIRouter()
 
-# Excluded sport prefixes (no soccer!)
-EXCLUDED_SPORT_PREFIXES = ["soccer_"]
+# Excluded sport prefixes (soccer, cricket, rugby, AFL)
+EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
 
 
 @router.get("")
