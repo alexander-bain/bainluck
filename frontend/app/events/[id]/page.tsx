@@ -169,6 +169,8 @@ export default function EventPage({ params }: EventPageProps) {
 
   const isLive = event?.status === "live";
   const isCompleted = event?.status === "completed";
+  const isClosed = event?.status === "closed";
+  const isFinished = isCompleted || isClosed;
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   useEffect(() => {
@@ -181,7 +183,7 @@ export default function EventPage({ params }: EventPageProps) {
   }, [lastRefresh, refreshInterval]);
 
   useEffect(() => {
-    if (!event?.commence_time || isLive || isCompleted) {
+    if (!event?.commence_time || isLive || isFinished) {
       setGameCountdown("");
       return;
     }
@@ -191,7 +193,7 @@ export default function EventPage({ params }: EventPageProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [event?.commence_time, isLive, isCompleted]);
+  }, [event?.commence_time, isLive, isFinished]);
 
   const {
     data: historyData,
@@ -259,7 +261,7 @@ export default function EventPage({ params }: EventPageProps) {
         </Link>
 
         {/* Visual countdown timer */}
-        {!isCompleted && (
+        {!isFinished && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {isLive && (
@@ -305,7 +307,7 @@ export default function EventPage({ params }: EventPageProps) {
       <div className={`rounded-card shadow-card p-6 ${
         isLive
           ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-          : isCompleted
+          : isFinished
           ? "bg-slate-50 border border-slate-200"
           : "bg-white"
       }`}>
@@ -326,6 +328,11 @@ export default function EventPage({ params }: EventPageProps) {
               ✅ Final
             </span>
           )}
+          {isClosed && (
+            <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
+              🔒 Closed
+            </span>
+          )}
         </div>
 
         {/* Game time/status */}
@@ -343,9 +350,9 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
             </div>
-          ) : isCompleted ? (
+          ) : isFinished ? (
             <div className="text-slate">
-              <div className="text-caption mb-1">Game ended</div>
+              <div className="text-caption mb-1">{isClosed ? "Game closed" : "Game ended"}</div>
               <div className="text-lg font-medium">
                 {formatStartTime(event.commence_time)}
               </div>
@@ -364,8 +371,8 @@ export default function EventPage({ params }: EventPageProps) {
           )}
         </div>
 
-        {/* Score display for live/completed games */}
-        {(isLive || isCompleted) && event.home_score !== null && event.away_score !== null && (
+        {/* Score display for live/finished games */}
+        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
           <div className="flex items-center justify-center gap-6 mb-6 py-4 bg-white/50 rounded-lg">
             <div className="text-center">
               <div className={`text-4xl font-bold font-mono ${
@@ -492,7 +499,7 @@ export default function EventPage({ params }: EventPageProps) {
       {odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            🎯 {isCompleted ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
+            🎯 {isFinished ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
           </h3>
           <div className="flex items-center justify-center gap-8 mb-4">
             <div className="text-center">
@@ -502,7 +509,7 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="text-xs text-slate mt-1">
                 {event.home_team.split(" ").pop()}
               </div>
-              {isCompleted && event.home_score !== null && (
+              {isFinished && event.home_score !== null && (
                 <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
                   Math.abs(event.home_score - odds.projected_home_score) <= 3
                     ? "bg-emerald-100 text-emerald-700"
@@ -520,7 +527,7 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="text-xs text-slate mt-1">
                 {event.away_team.split(" ").pop()}
               </div>
-              {isCompleted && event.away_score !== null && (
+              {isFinished && event.away_score !== null && (
                 <div className={`text-xs mt-2 px-2 py-0.5 rounded ${
                   Math.abs(event.away_score - odds.projected_away_score) <= 3
                     ? "bg-emerald-100 text-emerald-700"

@@ -74,14 +74,14 @@ export default function HomePage() {
         );
       }
     }
-    // Separate completed events from active (scheduled/live)
-    const active = events.filter((e) => e.status !== "completed");
-    const completed = events
-      .filter((e) => e.status === "completed")
+    // Separate finished events (completed/closed) from active (scheduled/live)
+    const active = events.filter((e) => e.status !== "completed" && e.status !== "closed");
+    const finished = events
+      .filter((e) => e.status === "completed" || e.status === "closed")
       .sort((a, b) =>
         new Date(b.commence_time).getTime() - new Date(a.commence_time).getTime()
       );
-    return { filteredEvents: active, completedEvents: completed };
+    return { filteredEvents: active, completedEvents: finished };
   }, [eventsData?.events, selectedCategory, selectedSport]);
 
   // Get featured events (live + close games starting soon)

@@ -366,7 +366,7 @@ export function getActiveCategoriesFromLeagues(leagueKeys: string[]): SportCateg
  */
 export function calculateExcitementScore(
   event: {
-    status: "scheduled" | "live" | "completed";
+    status: "scheduled" | "live" | "completed" | "closed";
     commence_time: string;
     sport: string | null;
     current_odds?: {
@@ -415,7 +415,7 @@ export function calculateExcitementScore(
  */
 export function isFeaturedEvent(
   event: {
-    status: "scheduled" | "live" | "completed";
+    status: "scheduled" | "live" | "completed" | "closed";
     commence_time: string;
     current_odds?: {
       home_probability: number | null;

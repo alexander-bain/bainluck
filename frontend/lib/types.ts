@@ -29,7 +29,7 @@ export interface Event {
   home_team: string;
   away_team: string;
   commence_time: string;
-  status: "scheduled" | "live" | "completed";
+  status: "scheduled" | "live" | "completed" | "closed";
   home_score: number | null;
   away_score: number | null;
   current_odds?: CurrentOdds;
