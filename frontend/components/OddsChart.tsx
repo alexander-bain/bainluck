@@ -170,14 +170,18 @@ export default function OddsChart({
       }
     }
 
-    // Second pass: add bookmaker-specific data
+    // Second pass: add bookmaker-specific data with valid_until expansion
     for (const [bookmaker, points] of Object.entries(filteredBookmakerHistory)) {
       for (const point of points) {
+        const homeProb = point.home_probability !== null ? point.home_probability * 100 : null;
+        const awayProb = point.away_probability !== null ? point.away_probability * 100 : null;
+
+        // Add start point
         const existing = dataMap.get(point.timestamp);
         if (existing) {
           // Add bookmaker data to existing point
-          existing[`${bookmaker}_home`] = point.home_probability !== null ? point.home_probability * 100 : null;
-          existing[`${bookmaker}_away`] = point.away_probability !== null ? point.away_probability * 100 : null;
+          existing[`${bookmaker}_home`] = homeProb;
+          existing[`${bookmaker}_away`] = awayProb;
         } else {
           // Create new point with bookmaker data
           const newPoint: ChartDataPoint = {
@@ -185,10 +189,34 @@ export default function OddsChart({
             time: format(parseISO(point.timestamp), "h:mm a"),
             homeProb: null,
             awayProb: null,
-            [`${bookmaker}_home`]: point.home_probability !== null ? point.home_probability * 100 : null,
-            [`${bookmaker}_away`]: point.away_probability !== null ? point.away_probability * 100 : null,
+            [`${bookmaker}_home`]: homeProb,
+            [`${bookmaker}_away`]: awayProb,
           };
           dataMap.set(point.timestamp, newPoint);
+        }
+
+        // If valid_until exists, add end point for continuous line
+        if (point.valid_until) {
+          const endTime = parseISO(point.valid_until);
+          const startTime = parseISO(point.timestamp);
+          // Only add if valid_until is significantly later (>1 min)
+          if (endTime.getTime() - startTime.getTime() > 60000) {
+            const existingEnd = dataMap.get(point.valid_until);
+            if (existingEnd) {
+              existingEnd[`${bookmaker}_home`] = homeProb;
+              existingEnd[`${bookmaker}_away`] = awayProb;
+            } else {
+              const endPoint: ChartDataPoint = {
+                timestamp: point.valid_until,
+                time: format(endTime, "h:mm a"),
+                homeProb: null,
+                awayProb: null,
+                [`${bookmaker}_home`]: homeProb,
+                [`${bookmaker}_away`]: awayProb,
+              };
+              dataMap.set(point.valid_until, endPoint);
+            }
+          }
         }
       }
     }

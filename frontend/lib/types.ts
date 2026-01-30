@@ -61,6 +61,7 @@ export interface BookmakerHistoryPoint {
   timestamp: string;
   home_probability: number | null;
   away_probability: number | null;
+  valid_until?: string; // If set, value was constant from timestamp to valid_until
 }
 
 export interface EventHistoryResponse {

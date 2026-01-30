@@ -479,7 +479,7 @@ export default function EventPage({ params }: EventPageProps) {
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
             🎯 {isCompleted ? "Projected vs Actual" : isLive ? "Projected Final" : "Projected Score"}
           </h3>
-          <div className="flex items-center justify-center gap-8 mb-4">
+          <div className="flex items-center justify-center gap-8">
             <div className="text-center">
               <div className="font-mono text-2xl font-bold text-graphite">
                 {Math.round(odds.projected_home_score)}
@@ -516,20 +516,22 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Score Trend Chart */}
-          {historyData?.history && historyData.history.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-mist/50">
-              <h4 className="text-xs font-medium text-slate mb-3">Score Trend</h4>
-              <ScoreChart
-                history={historyData.history}
-                homeTeam={event.home_team}
-                awayTeam={event.away_team}
-                commenceTime={event.commence_time}
-                isLive={isLive}
-              />
-            </div>
-          )}
+      {/* Score Trend Chart - shown independently if there's history data */}
+      {historyData?.history && historyData.history.length > 0 && (
+        <div className="bg-white rounded-card shadow-card p-6">
+          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
+            📊 Projected Score Trend
+          </h3>
+          <ScoreChart
+            history={historyData.history}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+            commenceTime={event.commence_time}
+            isLive={isLive}
+          />
         </div>
       )}
 

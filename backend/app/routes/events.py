@@ -393,8 +393,9 @@ async def get_event_odds_history(
         bookmaker_history[bookmaker] = [
             {
                 "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
-                "home_probability": float(snap.home_win_probability) if snap.home_win_probability else None,
-                "away_probability": float(snap.away_win_probability) if snap.away_win_probability else None,
+                "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
+                "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
+                "valid_until": snap.valid_until.replace(second=0, microsecond=0).isoformat() if snap.valid_until else None,
             }
             for snap in bm_snaps_sorted
         ]
