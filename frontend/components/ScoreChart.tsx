@@ -151,27 +151,18 @@ export default function ScoreChart({
   }, [filteredBookmakerHistory]);
 
   // Check if we have any projected score data
-  const hasScoreData = history.some(
-    (point) => point.projected_home_score !== null && point.projected_away_score !== null
-  );
-
-  if (!history || history.length === 0) {
-    return null; // Don't render if no history at all
-  }
-
-  // Show message if history exists but no projected scores
-  // This happens when the event doesn't have spread/totals markets (e.g., tennis)
-  if (!hasScoreData) {
-    // Check if any history points have over/under data (which is needed for score projection)
-    const hasOverUnder = history.some((point) => point.over_under !== null);
-    return (
-      <div className="text-center py-4 text-sm text-gray-500">
-        {hasOverUnder
-          ? "Projected score history not yet available for this event."
-          : "Score projections require spread/totals data which is not available for this event type."}
-      </div>
+  const hasScoreData = useMemo(() => {
+    if (!history || history.length === 0) return false;
+    return history.some(
+      (point) => point.projected_home_score !== null && point.projected_away_score !== null
     );
-  }
+  }, [history]);
+
+  // Check if any history points have over/under data (which is needed for score projection)
+  const hasOverUnder = useMemo(() => {
+    if (!history || history.length === 0) return false;
+    return history.some((point) => point.over_under !== null);
+  }, [history]);
 
   // Transform data for chart
   // Expand points with valid_until into two points for flat line display
@@ -282,6 +273,23 @@ export default function ScoreChart({
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
   }, [filteredHistory, filteredBookmakerHistory]);
+
+  // Early returns - placed after all hooks to satisfy React rules
+  if (!history || history.length === 0) {
+    return null; // Don't render if no history at all
+  }
+
+  // Show message if history exists but no projected scores
+  // This happens when the event doesn't have spread/totals markets (e.g., tennis)
+  if (!hasScoreData) {
+    return (
+      <div className="text-center py-4 text-sm text-gray-500">
+        {hasOverUnder
+          ? "Projected score history not yet available for this event."
+          : "Score projections require spread/totals data which is not available for this event type."}
+      </div>
+    );
+  }
 
   if (chartData.length === 0) {
     return null;
