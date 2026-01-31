@@ -40,7 +40,7 @@ const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
   { value: "6h", label: "6h" },
   { value: "3h", label: "3h" },
   { value: "1h", label: "1h" },
-  { value: "live", label: "Live" },
+  { value: "live", label: "Since Start" },
 ];
 
 /**
@@ -291,7 +291,35 @@ export default function ScoreChart({
   }
 
   if (chartData.length === 0) {
-    return null;
+    return (
+      <div className="space-y-4">
+        {/* Time range selector */}
+        <div className="flex flex-wrap items-center gap-1">
+          {TIME_RANGE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setTimeRange(option.value)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                timeRange === option.value
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-center py-8 text-sm text-gray-500">
+          No projected score data available for the selected time range.
+          <button
+            onClick={() => setTimeRange("all")}
+            className="ml-2 text-blue-600 hover:underline"
+          >
+            Show all data
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // Calculate Y-axis domain with padding (min-5 to max+5, but never below 0)

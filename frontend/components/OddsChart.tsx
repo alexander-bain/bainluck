@@ -40,7 +40,7 @@ const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
   { value: "6h", label: "6h" },
   { value: "3h", label: "3h" },
   { value: "1h", label: "1h" },
-  { value: "live", label: "Live" },
+  { value: "live", label: "Since Start" },
 ];
 
 /**

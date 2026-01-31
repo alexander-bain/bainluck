@@ -59,7 +59,11 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
   const homeProb = odds?.home_probability;
   const awayProb = odds?.away_probability;
 
-  const isLive = event.status === "live";
+  // Check if game has actually started based on commence_time
+  const hasStarted = new Date(event.commence_time).getTime() <= Date.now();
+
+  // Only consider "live" if status is "live" AND game has actually started
+  const isLive = event.status === "live" && hasStarted;
   const isCompleted = event.status === "completed";
   const isClosed = event.status === "closed";
   const isFinished = isCompleted || isClosed;
@@ -100,9 +104,9 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
     : "bg-white border border-mist";
 
   return (
-    <Link href={`/events/${event.id}`}>
+    <Link href={`/events/${event.id}`} className="h-full">
       <div
-        className={`rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer ${cardClasses}`}
+        className={`h-full flex flex-col rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer ${cardClasses}`}
       >
         {/* Header: Sport, League, Status */}
         <div className="flex justify-between items-start mb-3">
@@ -188,7 +192,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
         ) : null}
 
         {/* Main Content: Teams, Scores, Probabilities */}
-        <div className="space-y-2">
+        <div className="space-y-2 flex-grow">
           {/* Home Team Row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -282,7 +286,10 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           <div className="flex items-center gap-2">
             {/* Bookmaker count indicator */}
             {odds?.bookmaker_count && odds.bookmaker_count > 1 && (
-              <span className="text-xs text-silver" title={event.bookmaker_odds?.map(b => b.bookmaker).join(", ")}>
+              <span
+                className="text-xs text-silver cursor-help border-b border-dotted border-silver/50 hover:text-slate hover:border-slate transition-colors px-1 py-0.5 -mx-1"
+                title={event.bookmaker_odds?.map(b => b.bookmaker).join(", ")}
+              >
                 {odds.bookmaker_count} books
               </span>
             )}
