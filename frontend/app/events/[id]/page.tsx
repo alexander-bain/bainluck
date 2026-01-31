@@ -7,6 +7,7 @@ import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
 import ScoreChart from "@/components/ScoreChart";
+import BookmakerTable from "@/components/BookmakerTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
@@ -553,6 +554,20 @@ export default function EventPage({ params }: EventPageProps) {
           />
         )}
       </div>
+
+      {/* Win Probabilities by Sportsbook */}
+      {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
+        <div className="bg-white rounded-card shadow-card p-6">
+          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
+            📊 Win Probabilities by Sportsbook
+          </h3>
+          <BookmakerTable
+            bookmakerOdds={event.bookmaker_odds}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+          />
+        </div>
+      )}
     </div>
   );
 }
