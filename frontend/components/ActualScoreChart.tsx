@@ -10,7 +10,6 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  ReferenceLine,
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import type { ScoreHistoryPoint } from "@/lib/types";
@@ -233,13 +232,6 @@ export default function ActualScoreChart({
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
-            {/* Reference line at tie score */}
-            <ReferenceLine
-              y={(chartData[chartData.length - 1]?.homeScore + chartData[chartData.length - 1]?.awayScore) / 2}
-              stroke="#e5e7eb"
-              strokeDasharray="5 5"
-              strokeWidth={1}
-            />
             <Line
               type="stepAfter"
               dataKey="homeScore"
