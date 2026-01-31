@@ -279,34 +279,31 @@ export default function HomePage() {
           ) : viewMode === "smart" ? (
             /* Smart View: Featured + Sport Groups */
             <div className="space-y-8">
-              {/* Featured Section */}
+              {/* Highlights Section */}
               {featuredEvents.length > 0 && (() => {
-                // Count live vs upcoming
-                const liveCount = featuredEvents.filter((e) => getFeatureReason(e) === "live").length;
-                const upcomingCount = featuredEvents.length - liveCount;
-                const sectionTitle = liveCount > 0 && upcomingCount > 0
-                  ? "Live & Starting Soon"
-                  : liveCount > 0
-                  ? "Live Games"
-                  : "Starting Soon";
+                // Categorize featured events
+                const liveEvents = featuredEvents.filter((e) => getFeatureReason(e) === "live");
+                const closeEvents = featuredEvents.filter((e) => getFeatureReason(e) === "close_game");
+                const soonEvents = featuredEvents.filter((e) => getFeatureReason(e) === "starting_soon");
+
+                // Build subtitle explanation
+                const subtitleParts: string[] = [];
+                if (liveEvents.length > 0) subtitleParts.push(`${liveEvents.length} in progress`);
+                if (closeEvents.length > 0) subtitleParts.push(`${closeEvents.length} close matchup${closeEvents.length > 1 ? "s" : ""}`);
+                if (soonEvents.length > 0) subtitleParts.push(`${soonEvents.length} starting soon`);
 
                 return (
                   <section>
-                    <div className="flex items-center gap-2 mb-4">
-                      <span className="text-lg">{liveCount > 0 ? "🔴" : "⏰"}</span>
-                      <h2 className="text-title-3 font-semibold text-graphite">
-                        {sectionTitle}
-                      </h2>
-                      {liveCount > 0 && (
-                        <span className="text-caption text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full font-medium">
-                          {liveCount} live
-                        </span>
-                      )}
-                      {upcomingCount > 0 && (
-                        <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
-                          {upcomingCount} upcoming
-                        </span>
-                      )}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">✨</span>
+                        <h2 className="text-title-3 font-semibold text-graphite">
+                          Highlights
+                        </h2>
+                      </div>
+                      <span className="text-caption text-slate">
+                        {subtitleParts.join(" · ")}
+                      </span>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
                       {featuredEvents.map((event) => (
@@ -361,7 +358,7 @@ export default function HomePage() {
                               </span>
                             )}
                             <span className="text-caption text-silver">
-                              {league.events.length} game{league.events.length !== 1 ? "s" : ""}
+                              {league.events.length} event{league.events.length !== 1 ? "s" : ""}
                             </span>
                           </div>
 

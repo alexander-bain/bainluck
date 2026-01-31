@@ -35,7 +35,7 @@ from sqlalchemy.orm import selectinload
 
 from app.services.database import async_session_maker
 from app.services.odds_api import OddsAPIService
-from app.models import Sport, Event, OddsSnapshot
+from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.utils.odds_math import moneyline_to_probability, project_scores
 
 # Redis URL from environment
@@ -713,6 +713,25 @@ async def _poll_all_odds():
                                 update_values["home_score"] = home_score
                             if away_score is not None:
                                 update_values["away_score"] = away_score
+
+                            # Get current event to check if score changed
+                            event_result = await session.execute(
+                                select(Event).where(Event.external_id == external_id)
+                            )
+                            event_obj = event_result.scalar_one_or_none()
+
+                            # Record score snapshot if scores changed
+                            if event_obj and home_score is not None and away_score is not None:
+                                old_home = event_obj.home_score
+                                old_away = event_obj.away_score
+                                if old_home != home_score or old_away != away_score:
+                                    # Score changed - record a snapshot
+                                    score_snap = ScoreSnapshot(
+                                        event_id=event_obj.id,
+                                        home_score=home_score,
+                                        away_score=away_score,
+                                    )
+                                    session.add(score_snap)
 
                             await session.execute(
                                 Event.__table__.update()
