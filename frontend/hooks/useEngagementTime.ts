@@ -1,0 +1,148 @@
+'use client';
+
+import { useEffect, useRef, useCallback } from 'react';
+import { usePathname } from 'next/navigation';
+import { useAnalyticsContext } from '@/components/Analytics';
+import { GA_CONFIG } from '@/lib/analytics';
+import type { TimeOnPageParams } from '@/lib/analytics';
+
+interface UseEngagementTimeOptions {
+  /** Page type for categorization */
+  pageType: TimeOnPageParams['page_type'];
+  /** Event ID if on event detail page */
+  eventId?: number;
+  /** Whether tracking is enabled */
+  enabled?: boolean;
+}
+
+interface EngagementState {
+  /** When the user arrived on this page */
+  startTime: number;
+  /** Total time user has been actively engaged */
+  activeTime: number;
+  /** Whether user is currently active (tab visible) */
+  isActive: boolean;
+  /** Last time we recorded activity */
+  lastActiveTime: number;
+}
+
+/**
+ * Hook to track time spent on page
+ *
+ * Distinguishes between:
+ * - Total time on page (including when tab is hidden)
+ * - Active time (only when tab is visible and user is engaged)
+ *
+ * Sends engagement event when user leaves the page.
+ */
+export function useEngagementTime({
+  pageType,
+  eventId,
+  enabled = true,
+}: UseEngagementTimeOptions): void {
+  const pathname = usePathname();
+  const { track } = useAnalyticsContext();
+
+  // Engagement state
+  const state = useRef<EngagementState>({
+    startTime: Date.now(),
+    activeTime: 0,
+    isActive: true,
+    lastActiveTime: Date.now(),
+  });
+
+  const lastPathname = useRef(pathname);
+
+  // Update active time
+  const updateActiveTime = useCallback(() => {
+    if (state.current.isActive) {
+      const now = Date.now();
+      state.current.activeTime += now - state.current.lastActiveTime;
+      state.current.lastActiveTime = now;
+    }
+  }, []);
+
+  // Send time on page event
+  const sendTimeOnPage = useCallback(() => {
+    if (!enabled) return;
+
+    updateActiveTime();
+
+    const totalSeconds = Math.round((Date.now() - state.current.startTime) / 1000);
+    const activeSeconds = Math.round(state.current.activeTime / 1000);
+
+    // Only track if there was meaningful engagement
+    if (totalSeconds >= GA_CONFIG.ENGAGEMENT.MIN_ENGAGED_TIME) {
+      track('time_on_page', {
+        page_type: pageType,
+        seconds: totalSeconds,
+        page_path: lastPathname.current,
+        event_id: eventId,
+        active_time_seconds: activeSeconds,
+      });
+    }
+  }, [enabled, updateActiveTime, track, pageType, eventId]);
+
+  // Handle visibility change
+  const handleVisibilityChange = useCallback(() => {
+    if (document.visibilityState === 'hidden') {
+      // User switched away - update active time and pause
+      updateActiveTime();
+      state.current.isActive = false;
+
+      // Send engagement data (user might not come back)
+      sendTimeOnPage();
+    } else {
+      // User came back - resume tracking
+      state.current.isActive = true;
+      state.current.lastActiveTime = Date.now();
+    }
+  }, [updateActiveTime, sendTimeOnPage]);
+
+  // Reset state when pathname changes
+  useEffect(() => {
+    if (pathname !== lastPathname.current) {
+      // Send time for previous page
+      sendTimeOnPage();
+
+      // Reset state for new page
+      state.current = {
+        startTime: Date.now(),
+        activeTime: 0,
+        isActive: !document.hidden,
+        lastActiveTime: Date.now(),
+      };
+      lastPathname.current = pathname;
+    }
+  }, [pathname, sendTimeOnPage]);
+
+  // Set up visibility listener
+  useEffect(() => {
+    if (!enabled || typeof document === 'undefined') return;
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Also send on beforeunload for reliability
+    const handleUnload = () => {
+      sendTimeOnPage();
+    };
+    window.addEventListener('beforeunload', handleUnload);
+
+    // Periodic update of active time (every 30 seconds)
+    const interval = setInterval(() => {
+      if (state.current.isActive) {
+        updateActiveTime();
+      }
+    }, 30000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleUnload);
+      clearInterval(interval);
+      // Send final time on cleanup
+      sendTimeOnPage();
+    };
+  }, [enabled, handleVisibilityChange, sendTimeOnPage, updateActiveTime]);
+}
+
+export default useEngagementTime;

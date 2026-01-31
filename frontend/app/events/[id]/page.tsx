@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
@@ -12,6 +12,13 @@ import BookmakerTable from "@/components/BookmakerTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
+import {
+  useAnalytics,
+  usePageTracking,
+  useScrollDepth,
+  useEngagementTime,
+} from "@/hooks";
+import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 
 interface EventPageProps {
   params: { id: string };
@@ -197,6 +204,11 @@ export default function EventPage({ params }: EventPageProps) {
   const [countdown, setCountdown] = useState<number>(0);
   const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
+  const hasTrackedDetailView = useRef(false);
+  const hasTrackedStaleData = useRef(false);
+
+  // Analytics
+  const { track, trackStaleDataView, trackNavigationClick, recordEvent } = useAnalytics();
 
   const {
     data: event,
@@ -234,6 +246,69 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Effectively live = live AND not stale AND not needs review
   const effectivelyLive = isLive && !isNeedsReview && !isStale;
+
+  // Track page view with event-specific parameters
+  usePageTracking({
+    pageType: 'event_detail',
+    pageTitle: event ? `${event.home_team} vs ${event.away_team} - OddsTracker` : 'Event - OddsTracker',
+    additionalParams: event ? {
+      event_id: event.id,
+      sport: event.sport || undefined,
+      league: event.sport || undefined,
+      event_status: event.status,
+    } : {},
+    deps: [event?.id],
+  });
+
+  // Track scroll depth
+  useScrollDepth({
+    pageType: 'event_detail',
+    eventId: event?.id,
+    enabled: !!event,
+  });
+
+  // Track engagement time
+  useEngagementTime({
+    pageType: 'event_detail',
+    eventId: event?.id,
+    enabled: !!event,
+  });
+
+  // Track event detail view (once per page load)
+  useEffect(() => {
+    if (event && !hasTrackedDetailView.current) {
+      hasTrackedDetailView.current = true;
+
+      track('event_detail_view', {
+        event_id: event.id,
+        sport: event.sport || 'unknown',
+        league: event.sport || 'unknown',
+        home_team: event.home_team,
+        away_team: event.away_team,
+        status: event.status,
+        home_probability: event.current_odds?.home_probability ?? null,
+        away_probability: event.current_odds?.away_probability ?? null,
+        is_close_game: isCloseGame(event.current_odds?.home_probability),
+        is_live: event.status === 'live',
+        is_stale: isStale,
+        is_needs_review: isNeedsReview,
+        bookmaker_count: event.current_odds?.bookmaker_count ?? event.bookmaker_odds?.length ?? 0,
+        minutes_to_start: calculateMinutesToStart(event.commence_time),
+        entry_method: document.referrer.includes(window.location.hostname) ? 'card_click' : 'direct',
+      });
+
+      // Record for session stats
+      recordEvent(event.id, event.sport || undefined);
+    }
+  }, [event, isStale, isNeedsReview, track, recordEvent]);
+
+  // Track stale data view (once if data becomes stale)
+  useEffect(() => {
+    if (isStale && staleMinutes && !hasTrackedStaleData.current && event) {
+      hasTrackedStaleData.current = true;
+      trackStaleDataView(event.id, staleMinutes, isLive, 'odds');
+    }
+  }, [isStale, staleMinutes, isLive, event, trackStaleDataView]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -304,6 +379,7 @@ export default function EventPage({ params }: EventPageProps) {
       <div className="flex items-center justify-between">
         <Link
           href="/"
+          onClick={() => trackNavigationClick('back', `/events/${eventId}`, '/')}
           className="inline-flex items-center text-caption text-slate hover:text-graphite transition-colors"
         >
           <svg
@@ -646,6 +722,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             lastScoreUpdate={odds?.captured_at}
+            eventId={event.id}
           />
           {/* Blowout/stale warning */}
           {isStale && isLive && (
@@ -678,6 +755,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
+            eventId={event.id}
           />
         </div>
       )}
@@ -707,6 +785,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
+            eventId={event.id}
           />
         )}
       </div>

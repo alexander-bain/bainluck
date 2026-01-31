@@ -3,11 +3,19 @@
 import Link from "next/link";
 import type { Event } from "@/lib/types";
 import { formatProbability, isStartingSoon } from "@/lib/api";
-import { getLeagueDisplay, getEmojiForLeague, formatTimeUntil } from "@/lib/sportCategories";
+import { getLeagueDisplay, getEmojiForLeague, formatTimeUntil, getLeagueTier } from "@/lib/sportCategories";
+import { useAnalytics } from "@/hooks";
+import { calculateMinutesToStart, isCloseGame as checkCloseGame } from "@/lib/analytics";
+
+type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results';
 
 interface EventCardProps {
   event: Event;
   showSport?: boolean;
+  /** Source section for analytics tracking */
+  sourceSection?: SourceSection;
+  /** Position in list for analytics tracking */
+  positionIndex?: number;
 }
 
 // Staleness thresholds
@@ -54,10 +62,21 @@ function checkEventStaleness(event: Event): {
  * - Emoji throughout
  * - Compact probability display
  */
-export default function EventCard({ event, showSport = true }: EventCardProps) {
+export default function EventCard({
+  event,
+  showSport = true,
+  sourceSection = 'sport_category',
+  positionIndex = 0,
+}: EventCardProps) {
+  const { trackEventCardClick } = useAnalytics();
   const odds = event.current_odds;
   const homeProb = odds?.home_probability;
   const awayProb = odds?.away_probability;
+
+  // Handle card click with analytics
+  const handleCardClick = () => {
+    trackEventCardClick(event, sourceSection, positionIndex);
+  };
 
   // Check if game has actually started based on commence_time
   const hasStarted = new Date(event.commence_time).getTime() <= Date.now();
@@ -104,7 +123,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
     : "bg-white border border-mist";
 
   return (
-    <Link href={`/events/${event.id}`} className="h-full">
+    <Link href={`/events/${event.id}`} className="h-full" onClick={handleCardClick}>
       <div
         className={`h-full flex flex-col rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer ${cardClasses}`}
       >

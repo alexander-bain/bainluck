@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   LineChart,
   Line,
@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import type { OddsHistoryPoint, BookmakerHistoryPoint } from "@/lib/types";
+import { useAnalytics } from "@/hooks";
 
 interface OddsChartProps {
   history: OddsHistoryPoint[];
@@ -21,6 +22,8 @@ interface OddsChartProps {
   commenceTime?: string;
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
+  /** Event ID for analytics tracking */
+  eventId?: number;
 }
 
 type TimeRange = "all" | "24h" | "12h" | "6h" | "3h" | "1h" | "live";
@@ -54,7 +57,10 @@ export default function OddsChart({
   commenceTime,
   isLive = false,
   bookmakerHistory,
+  eventId,
 }: OddsChartProps) {
+  const { trackChartTimeRange, recordChart } = useAnalytics();
+
   // Determine if the event has started based on commence time
   const hasStarted = commenceTime
     ? new Date(commenceTime).getTime() <= Date.now()
@@ -64,6 +70,22 @@ export default function OddsChart({
   const [timeRange, setTimeRange] = useState<TimeRange>(
     isLive || hasStarted ? "live" : "all"
   );
+
+  // Handle time range change with analytics
+  const handleTimeRangeChange = useCallback((newRange: TimeRange, filteredCount: number) => {
+    if (eventId) {
+      trackChartTimeRange(
+        'probability_trend',
+        eventId,
+        newRange,
+        timeRange,
+        filteredCount > 0,
+        filteredCount
+      );
+    }
+    recordChart();
+    setTimeRange(newRange);
+  }, [eventId, timeRange, trackChartTimeRange, recordChart]);
 
   // Filter options based on whether event has started
   const availableTimeRanges = TIME_RANGE_OPTIONS.filter(
@@ -352,7 +374,7 @@ export default function OddsChart({
         {availableTimeRanges.map((option) => (
           <button
             key={option.value}
-            onClick={() => setTimeRange(option.value)}
+            onClick={() => handleTimeRangeChange(option.value, filteredHistory.length)}
             className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
               timeRange === option.value
                 ? "bg-gray-900 text-white"

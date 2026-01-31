@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import type { Sport } from "@/lib/types";
 import {
   SPORT_CATEGORIES,
@@ -9,6 +9,7 @@ import {
   getActiveCategoriesFromLeagues,
   getLeagueTier,
 } from "@/lib/sportCategories";
+import { useAnalytics } from "@/hooks";
 
 interface SportFilterProps {
   sports: Sport[];
@@ -33,6 +34,7 @@ export default function SportFilter({
 }: SportFilterProps) {
   const [showMoreSports, setShowMoreSports] = useState(false);
   const allLeagueKeys = useMemo(() => sports.map((s) => s.key), [sports]);
+  const { trackCategoryFilter, trackLeagueFilter, trackMoreSportsToggle } = useAnalytics();
 
   const availableCategories = useMemo(() => {
     return getActiveCategoriesFromLeagues(allLeagueKeys);
@@ -67,6 +69,54 @@ export default function SportFilter({
     return leagues.sort((a, b) => getLeagueTier(a) - getLeagueTier(b));
   }, [selectedCategory, allLeagueKeys]);
 
+  // Must define all hooks before any conditional returns
+  const handleCategoryClick = useCallback((categoryKey: string | null) => {
+    const isDeselecting = categoryKey === selectedCategory;
+
+    // Track analytics
+    trackCategoryFilter(
+      isDeselecting ? null : categoryKey,
+      isDeselecting ? 'deselect' : 'select',
+      selectedCategory
+    );
+
+    if (isDeselecting) {
+      onSelectCategory(null);
+      onSelectSport(null);
+    } else {
+      onSelectCategory(categoryKey);
+      onSelectSport(null);
+    }
+  }, [selectedCategory, onSelectCategory, onSelectSport, trackCategoryFilter]);
+
+  const handleLeagueClick = useCallback((leagueKey: string) => {
+    const isDeselecting = leagueKey === selectedSport;
+
+    // Track analytics
+    trackLeagueFilter(
+      isDeselecting ? null : leagueKey,
+      isDeselecting ? 'deselect' : 'select',
+      selectedCategory || 'unknown',
+      selectedSport
+    );
+
+    if (isDeselecting) {
+      onSelectSport(null);
+    } else {
+      onSelectSport(leagueKey);
+    }
+  }, [selectedSport, selectedCategory, onSelectSport, trackLeagueFilter]);
+
+  const handleMoreSportsToggle = useCallback(() => {
+    const newExpanded = !showMoreSports;
+    const visibleCategories = newExpanded
+      ? [...primaryCategories, ...secondaryCategories].map(c => c.key)
+      : primaryCategories.map(c => c.key);
+
+    trackMoreSportsToggle(newExpanded, visibleCategories);
+    setShowMoreSports(newExpanded);
+  }, [showMoreSports, primaryCategories, secondaryCategories, trackMoreSportsToggle]);
+
   if (loading) {
     return (
       <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
@@ -79,24 +129,6 @@ export default function SportFilter({
       </div>
     );
   }
-
-  const handleCategoryClick = (categoryKey: string | null) => {
-    if (categoryKey === selectedCategory) {
-      onSelectCategory(null);
-      onSelectSport(null);
-    } else {
-      onSelectCategory(categoryKey);
-      onSelectSport(null);
-    }
-  };
-
-  const handleLeagueClick = (leagueKey: string) => {
-    if (leagueKey === selectedSport) {
-      onSelectSport(null);
-    } else {
-      onSelectSport(leagueKey);
-    }
-  };
 
   // Map category keys to display with emoji
   const getCategoryDisplay = (key: string, emoji: string): { label: string; emoji: string } => {
@@ -159,7 +191,7 @@ export default function SportFilter({
         {/* More Sports toggle - only show if there are secondary categories */}
         {secondaryCategories.length > 0 && (
           <button
-            onClick={() => setShowMoreSports(!showMoreSports)}
+            onClick={handleMoreSportsToggle}
             className={`px-3 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
               showMoreSports || secondaryCategories.some((c) => c.key === selectedCategory)
                 ? "bg-slate/20 text-graphite"
