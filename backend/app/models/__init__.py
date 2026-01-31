@@ -9,6 +9,7 @@ from app.models.models import (
     UserFavorite,
     Tournament,
     TournamentOdds,
+    ScoreSnapshot,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "UserFavorite",
     "Tournament",
     "TournamentOdds",
+    "ScoreSnapshot",
 ]
