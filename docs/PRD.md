@@ -405,19 +405,24 @@ POST /api/admin/aggregate           # Trigger aggregation job
 - [x] Odds API integration
 - [x] Live win probability (%)
 - [x] Web-first, mobile-optimized UI
-- [x] Auto-refresh (every 30 seconds)
-- [ ] Odds movement chart (pre-game → now)
-- [ ] Live update state indicators (pausing states, blowout detection)
+- [x] Auto-refresh (configurable: 32s live, 120s scheduled)
+- [x] Odds movement chart (Probability Trend with time range filters)
+- [x] Live update state indicators (stale data warnings, blowout detection, "Needs Review" states)
+- [x] Per-bookmaker probability breakdown (gray lines on charts, hover tooltips)
 
 ### Phase 2: Personalization (In Progress)
 - [x] Sorting by closeness (Closest Odds)
 - [x] Sorting by game time
+- [x] Sport/league filtering with category grouping
 - [ ] Favorite teams (local storage first)
 - [ ] Firebase Auth integration (pull-based, not forced)
 - [ ] Persist favorites to database
 
-### Phase 3: Context & Polish
-- [ ] Projected final scores (clearly labeled as illustrative)
+### Phase 3: Context & Polish ✅ Mostly Complete
+- [x] Projected final scores (ScoreChart with per-bookmaker breakdown)
+- [x] Prominent event start time display with timezone
+- [x] Intelligent chart defaults (All for scheduled, Since Start for live)
+- [x] Context-aware time range options (hide "Since Start" for unstarted events)
 - [ ] Basic explanations for large probability swings
 - [ ] Game Excitement Index (experimental, for sorting/discovery)
 - [ ] Shareable web links with app promo banner
@@ -433,6 +438,46 @@ POST /api/admin/aggregate           # Trigger aggregation job
 ### Phase 5: Advanced
 - [ ] Push notifications for major probability swings
 - [ ] LLM-powered swing summaries
+
+---
+
+## Recent Improvements (January 2026)
+
+### Event Detail Page Enhancements
+- **Prominent start time**: Full date with weekday, time, and timezone displayed clearly
+- **Countdown clarity**: "Starts in 2h 30m" format instead of ambiguous icons
+- **Chart defaults**: Scheduled events default to "All" (full history), live events to "Since Start"
+- **Context-aware filtering**: "Since Start" option hidden for events that haven't started
+
+### Data Visualization
+- **Per-bookmaker trends**: Individual sportsbook lines shown as gray background lines
+- **Projected score charts**: Separate chart showing expected final scores from spread/totals
+- **Stale data indicators**: Clear warnings when odds haven't updated recently
+- **Blowout detection**: Explains when odds updates slow during lopsided games
+
+### UI/UX Polish
+- **Live indicator**: Pulsing green badge with real-time countdown to next update
+- **Source transparency**: Hover over source count to see bookmaker names
+- **Divergence warnings**: Alert when bookmakers disagree significantly
+
+---
+
+## Suggested Next Steps
+
+### High Priority (UX Polish)
+1. **Swing explanations**: When probability changes >10%, show brief context ("After TD", "Following injury report")
+2. **Shareable links**: Clean URL paths with OpenGraph previews for social sharing
+3. **Empty state improvements**: Better messaging when no games are scheduled
+
+### Medium Priority (Features)
+4. **Local favorites**: Store favorite teams in localStorage for quick filtering
+5. **Score progression chart**: Show actual score changes over time during live games (partially implemented)
+6. **Game Excitement Index**: Surface close, high-scoring games for discovery
+
+### Lower Priority (Infrastructure)
+7. **Performance**: Implement SWR cache warming for faster initial loads
+8. **Historical data**: Allow viewing completed games' probability trends
+9. **API documentation**: OpenAPI spec for potential third-party integrations
 
 ---
 
