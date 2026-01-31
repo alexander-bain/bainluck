@@ -138,8 +138,10 @@ export default function ActualScoreChart({
 
         {/* Message about score history */}
         <div className="text-center py-4 text-sm text-gray-500">
-          Score history tracking will show how the game score progressed over time.
-          {isLive && <span className="block mt-1 text-gray-400">Updates available during live games.</span>}
+          Score progression tracking is not yet available for this event.
+          <span className="block mt-1 text-gray-400">
+            {isLive ? "Live score updates are provided by sportsbooks." : "Score shown is from when books closed."}
+          </span>
         </div>
       </div>
     );

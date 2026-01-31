@@ -56,7 +56,6 @@ export default function OddsChart({
   bookmakerHistory,
 }: OddsChartProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>(isLive ? "live" : "24h");
-  const [showBookmakerLines, setShowBookmakerLines] = useState<boolean>(true);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
@@ -335,39 +334,21 @@ export default function OddsChart({
 
   return (
     <div className="space-y-4">
-      {/* Time range selector and bookmaker toggle */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1">
-          {TIME_RANGE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => setTimeRange(option.value)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-                timeRange === option.value
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        {/* Bookmaker lines toggle - only show if there are multiple bookmakers */}
-        {bookmakers.length > 0 && (
+      {/* Time range selector */}
+      <div className="flex flex-wrap items-center gap-1">
+        {TIME_RANGE_OPTIONS.map((option) => (
           <button
-            onClick={() => setShowBookmakerLines(!showBookmakerLines)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1.5 ${
-              showBookmakerLines
-                ? "bg-gray-200 text-gray-700"
-                : "bg-gray-100 text-gray-500"
+            key={option.value}
+            onClick={() => setTimeRange(option.value)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+              timeRange === option.value
+                ? "bg-gray-900 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
-            title={showBookmakerLines ? "Hide individual sportsbook lines" : "Show individual sportsbook lines"}
           >
-            <span className="w-3 h-0.5 bg-gray-400 rounded"></span>
-            <span className="hidden sm:inline">{showBookmakerLines ? "Hide" : "Show"} sources</span>
-            <span className="sm:hidden">{bookmakers.length}</span>
+            {option.label}
           </button>
-        )}
+        ))}
       </div>
 
       {/* Probability Chart */}
@@ -393,7 +374,7 @@ export default function OddsChart({
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
             {/* Individual bookmaker lines - thin grey, rendered first so they appear behind aggregate */}
-            {showBookmakerLines && bookmakers.map((bookmaker) => (
+            {bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_home`}
                 type="monotone"
@@ -406,7 +387,7 @@ export default function OddsChart({
                 legendType="none"
               />
             ))}
-            {showBookmakerLines && bookmakers.map((bookmaker) => (
+            {bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_away`}
                 type="monotone"
@@ -447,7 +428,7 @@ export default function OddsChart({
       </div>
 
       {/* Info about gray lines */}
-      {showBookmakerLines && bookmakers.length > 0 && (
+      {bookmakers.length > 0 && (
         <p className="text-xs text-gray-400 text-center">
           Gray lines show individual sportsbooks • Tap/hover for details
         </p>

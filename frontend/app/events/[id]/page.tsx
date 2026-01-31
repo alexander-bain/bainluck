@@ -400,12 +400,12 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Status badge */}
           {isCompleted && (
             <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
-              ✅ Final
+              ✅ Closed
             </span>
           )}
           {isClosed && (
             <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
-              🔒 Closed
+              ✅ Closed
             </span>
           )}
         </div>
@@ -445,9 +445,9 @@ export default function EventPage({ params }: EventPageProps) {
             </div>
           ) : isFinished ? (
             <div className="text-slate">
-              <div className="text-caption mb-1">{isClosed ? "Game closed" : "Game ended"}</div>
+              <div className="text-caption mb-1">Books closed</div>
               <div className="text-lg font-medium">
-                {formatStartTime(event.commence_time)}
+                {odds?.captured_at ? formatStartTime(odds.captured_at) : formatStartTime(event.commence_time)}
               </div>
             </div>
           ) : (
@@ -466,28 +466,35 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Score display for live/finished games */}
         {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
-          <div className="flex items-center justify-center gap-6 mb-6 py-4 bg-white/50 rounded-lg">
-            <div className="text-center">
-              <div className={`text-4xl font-bold font-mono ${
-                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
-              }`}>
-                {event.home_score}
+          <div className="mb-6 py-4 bg-white/50 rounded-lg">
+            <div className="flex items-center justify-center gap-6">
+              <div className="text-center">
+                <div className={`text-4xl font-bold font-mono ${
+                  effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+                }`}>
+                  {event.home_score}
+                </div>
+                <div className="text-sm text-slate mt-1">
+                  {event.home_team.split(" ").pop()}
+                </div>
               </div>
-              <div className="text-sm text-slate mt-1">
-                {event.home_team.split(" ").pop()}
+              <div className="text-2xl text-slate">—</div>
+              <div className="text-center">
+                <div className={`text-4xl font-bold font-mono ${
+                  effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+                }`}>
+                  {event.away_score}
+                </div>
+                <div className="text-sm text-slate mt-1">
+                  {event.away_team.split(" ").pop()}
+                </div>
               </div>
             </div>
-            <div className="text-2xl text-slate">—</div>
-            <div className="text-center">
-              <div className={`text-4xl font-bold font-mono ${
-                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
-              }`}>
-                {event.away_score}
+            {isFinished && (
+              <div className="text-center mt-2 text-xs text-slate">
+                Score when books closed (may not be final)
               </div>
-              <div className="text-sm text-slate mt-1">
-                {event.away_team.split(" ").pop()}
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -552,7 +559,10 @@ export default function EventPage({ params }: EventPageProps) {
           <div className="mt-6 pt-4 border-t border-mist/50 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-slate">
               <span className="flex items-center gap-1">
-                🕐 Updated {new Date(odds.captured_at).toLocaleTimeString("en-US", {
+                🕐 Updated {new Date(odds.captured_at).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                })} at {new Date(odds.captured_at).toLocaleTimeString("en-US", {
                   hour: "numeric",
                   minute: "2-digit",
                 })}
@@ -657,7 +667,7 @@ export default function EventPage({ params }: EventPageProps) {
       {/* Trend Chart */}
       <div className="bg-white rounded-card shadow-card p-6">
         <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-          📉 Probability Trend (Last 48 Hours)
+          📉 Probability Trend
         </h3>
         {historyLoading ? (
           <div className="h-48 flex items-center justify-center">
