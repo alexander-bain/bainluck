@@ -336,6 +336,7 @@ export default function EventPage({ params }: EventPageProps) {
     data: historyData,
     error: historyError,
     isLoading: historyLoading,
+    mutate: refreshHistory,
   } = useSWR(
     event ? ["history", eventId] : null,
     () => fetchEventHistory(eventId, 48),
@@ -721,7 +722,7 @@ export default function EventPage({ params }: EventPageProps) {
               {historyError.message || 'Unknown error'}
             </span>
             <button
-              onClick={() => refreshEvent()}
+              onClick={() => refreshHistory()}
               className="text-xs text-blue-600 hover:underline mt-2"
             >
               Retry
