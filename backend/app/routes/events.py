@@ -467,6 +467,12 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                 "away_probability": float(s.away_win_probability)
                     if s.away_win_probability else None,
                 "captured_at": s.captured_at.isoformat(),
+                "spread": float(s.home_spread) if s.home_spread else None,
+                "over_under": float(s.over_under) if s.over_under else None,
+                "projected_home_score": float(s.projected_home_score)
+                    if s.projected_home_score else None,
+                "projected_away_score": float(s.projected_away_score)
+                    if s.projected_away_score else None,
             }
             for s in latest_snapshots
         ]
@@ -594,6 +600,8 @@ async def get_event_odds_history(
                 "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
                 "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
                 "valid_until": snap.valid_until.replace(second=0, microsecond=0).isoformat() if snap.valid_until else None,
+                "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
+                "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
 
             if snap.captured_at >= cutoff:
@@ -815,6 +823,12 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict]) 
                     "away_probability": float(s.away_win_probability)
                         if s.away_win_probability else None,
                     "captured_at": s.captured_at.isoformat(),
+                    "spread": float(s.home_spread) if s.home_spread else None,
+                    "over_under": float(s.over_under) if s.over_under else None,
+                    "projected_home_score": float(s.projected_home_score)
+                        if s.projected_home_score else None,
+                    "projected_away_score": float(s.projected_away_score)
+                        if s.projected_away_score else None,
                 }
                 for s in snapshots
             ]

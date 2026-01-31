@@ -53,6 +53,10 @@ export interface BookmakerOddsDetail {
   home_probability: number | null;
   away_probability: number | null;
   captured_at: string; // When this bookmaker last updated their odds
+  spread?: number | null;
+  over_under?: number | null;
+  projected_home_score?: number | null;
+  projected_away_score?: number | null;
 }
 
 export interface EventDetailResponse extends Event {

@@ -52,6 +52,20 @@ export default function BookmakerTable({
     return null;
   }
 
+  // Filter out bookmakers without probability data (they only have spread/totals)
+  const oddsWithProbability = bookmakerOdds.filter(
+    (odds) => odds.home_probability !== null && odds.away_probability !== null
+  );
+
+  // If no bookmakers have probability data, show a message
+  if (oddsWithProbability.length === 0) {
+    return (
+      <div className="text-center py-4 text-sm text-slate">
+        No win probability data available from sportsbooks for this event.
+      </div>
+    );
+  }
+
   // Check if any odds are stale (>30 minutes old)
   const now = new Date();
   const isStale = (isoString: string): boolean => {
@@ -61,14 +75,14 @@ export default function BookmakerTable({
   };
 
   // Sort by home probability descending to show range clearly
-  const sortedOdds = [...bookmakerOdds].sort((a, b) => {
+  const sortedOdds = [...oddsWithProbability].sort((a, b) => {
     const aProb = a.home_probability ?? 0;
     const bProb = b.home_probability ?? 0;
     return bProb - aProb;
   });
 
   // Calculate average ONLY from non-stale sportsbooks (those still actively updating)
-  const activeOdds = bookmakerOdds.filter(
+  const activeOdds = oddsWithProbability.filter(
     (b) => b.captured_at && !isStale(b.captured_at)
   );
   const validHomeProbs = activeOdds
@@ -80,14 +94,19 @@ export default function BookmakerTable({
       : null;
 
   // Count how many are stale vs active
-  const staleCount = bookmakerOdds.filter(
+  const staleCount = oddsWithProbability.filter(
     (b) => b.captured_at && isStale(b.captured_at)
   ).length;
-  const activeCount = bookmakerOdds.length - staleCount;
+  const activeCount = oddsWithProbability.length - staleCount;
 
   // Shorten team names for table header
   const shortHomeTeam = homeTeam.split(" ").pop() || homeTeam;
   const shortAwayTeam = awayTeam.split(" ").pop() || awayTeam;
+
+  // Check if any bookmaker has projected scores
+  const hasAnyProjectedScores = bookmakerOdds.some(
+    (odds) => odds.projected_home_score != null && odds.projected_away_score != null
+  );
 
   return (
     <div className="overflow-x-auto">
@@ -98,10 +117,12 @@ export default function BookmakerTable({
               Sportsbook
             </th>
             <th className="text-center py-3 px-4 font-semibold text-slate">
-              {shortHomeTeam} (Home)
+              <div>{shortHomeTeam}</div>
+              {hasAnyProjectedScores && <div className="text-xs font-normal text-gray-400">(proj. score)</div>}
             </th>
             <th className="text-center py-3 px-4 font-semibold text-slate">
-              {shortAwayTeam} (Away)
+              <div>{shortAwayTeam}</div>
+              {hasAnyProjectedScores && <div className="text-xs font-normal text-gray-400">(proj. score)</div>}
             </th>
             <th className="text-center py-3 px-4 font-semibold text-slate">
               Status
@@ -116,6 +137,7 @@ export default function BookmakerTable({
             const homeProb = odds.home_probability;
             const awayProb = odds.away_probability;
             const stale = odds.captured_at ? isStale(odds.captured_at) : false;
+            const hasProjectedScore = odds.projected_home_score != null && odds.projected_away_score != null;
 
             // Highlight if this book differs significantly from average (>5%)
             const isDivergent =
@@ -136,11 +158,25 @@ export default function BookmakerTable({
                     <span className="ml-2 text-xs text-amber-600">*</span>
                   )}
                 </td>
-                <td className="py-3 px-4 text-center font-mono tabular-nums">
-                  {homeProb !== null ? `${(homeProb * 100).toFixed(1)}%` : "-"}
+                <td className="py-3 px-4 text-center">
+                  <div className="font-mono tabular-nums">
+                    {homeProb !== null ? `${(homeProb * 100).toFixed(1)}%` : "-"}
+                  </div>
+                  {hasProjectedScore && (
+                    <div className="text-xs text-gray-400 mt-0.5" title="Projected score">
+                      {Math.round(odds.projected_home_score!)}
+                    </div>
+                  )}
                 </td>
-                <td className="py-3 px-4 text-center font-mono tabular-nums">
-                  {awayProb !== null ? `${(awayProb * 100).toFixed(1)}%` : "-"}
+                <td className="py-3 px-4 text-center">
+                  <div className="font-mono tabular-nums">
+                    {awayProb !== null ? `${(awayProb * 100).toFixed(1)}%` : "-"}
+                  </div>
+                  {hasProjectedScore && (
+                    <div className="text-xs text-gray-400 mt-0.5" title="Projected score">
+                      {Math.round(odds.projected_away_score!)}
+                    </div>
+                  )}
                 </td>
                 <td className="py-3 px-4 text-center">
                   {stale ? (
@@ -172,7 +208,7 @@ export default function BookmakerTable({
                 Average (Consensus)
                 {staleCount > 0 && (
                   <span className="ml-2 text-xs font-normal text-slate">
-                    ({activeCount} of {bookmakerOdds.length} open)
+                    ({activeCount} of {oddsWithProbability.length} open)
                   </span>
                 )}
               </td>
