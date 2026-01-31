@@ -111,6 +111,69 @@ async def debug_api_bookmakers(sport_key: str):
         await service.close()
 
 
+@router.get("/debug/db-bookmakers")
+async def debug_db_bookmakers(db: AsyncSession = Depends(get_db)):
+    """
+    Debug endpoint to check what bookmakers are stored in the database.
+
+    Shows events that have odds from multiple bookmakers, proving
+    the system CAN store multi-bookmaker data.
+    """
+    # Find events with multiple bookmakers
+    result = await db.execute(
+        select(
+            Event.id,
+            Event.home_team_name,
+            Event.away_team_name,
+            func.count(func.distinct(OddsSnapshot.bookmaker)).label("bookmaker_count"),
+            func.array_agg(func.distinct(OddsSnapshot.bookmaker)).label("bookmakers")
+        )
+        .join(OddsSnapshot, Event.id == OddsSnapshot.event_id)
+        .group_by(Event.id, Event.home_team_name, Event.away_team_name)
+        .having(func.count(func.distinct(OddsSnapshot.bookmaker)) > 1)
+        .order_by(func.count(func.distinct(OddsSnapshot.bookmaker)).desc())
+        .limit(10)
+    )
+    multi_bookmaker_events = result.all()
+
+    # Get overall stats
+    total_result = await db.execute(
+        select(
+            func.count(func.distinct(OddsSnapshot.bookmaker)).label("total_bookmakers"),
+            func.count(func.distinct(OddsSnapshot.event_id)).label("total_events_with_odds")
+        )
+    )
+    totals = total_result.one()
+
+    # Get all unique bookmakers in the database
+    bookmakers_result = await db.execute(
+        select(func.distinct(OddsSnapshot.bookmaker))
+    )
+    all_bookmakers = [row[0] for row in bookmakers_result.all()]
+
+    return {
+        "summary": {
+            "total_unique_bookmakers_in_db": totals[0],
+            "total_events_with_odds": totals[1],
+            "events_with_multiple_bookmakers": len(multi_bookmaker_events),
+            "all_bookmakers": sorted(all_bookmakers),
+        },
+        "events_with_multiple_bookmakers": [
+            {
+                "event_id": row[0],
+                "home_team": row[1],
+                "away_team": row[2],
+                "bookmaker_count": row[3],
+                "bookmakers": row[4],
+            }
+            for row in multi_bookmaker_events
+        ],
+        "diagnosis": "If events_with_multiple_bookmakers is empty but total_unique_bookmakers > 1, "
+                     "then bookmakers are not overlapping on the same events. "
+                     "If total_unique_bookmakers = 1, the API is only returning one bookmaker."
+    }
+
+
 @router.get("")
 async def list_events(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
