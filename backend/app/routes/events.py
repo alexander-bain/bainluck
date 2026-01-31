@@ -281,10 +281,8 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Filter out excluded sports (cricket, rugby, AFL, etc.)
-    if event.sport:
-        for prefix in EXCLUDED_SPORT_PREFIXES:
-            if event.sport.key.startswith(prefix):
-                raise HTTPException(status_code=404, detail="Event not found")
+    if event.sport and is_excluded_sport(event.sport.key):
+        raise HTTPException(status_code=404, detail="Event not found")
 
     response = _format_event(event)
 
@@ -357,10 +355,8 @@ async def get_event_odds_history(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Filter out excluded sports (cricket, rugby, AFL, etc.)
-    if event.sport:
-        for prefix in EXCLUDED_SPORT_PREFIXES:
-            if event.sport.key.startswith(prefix):
-                raise HTTPException(status_code=404, detail="Event not found")
+    if event.sport and is_excluded_sport(event.sport.key):
+        raise HTTPException(status_code=404, detail="Event not found")
 
     # Get snapshots within time range
     # Include snapshots where:
@@ -512,10 +508,8 @@ async def debug_event_snapshots(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Filter out excluded sports (cricket, rugby, AFL, etc.)
-    if event.sport:
-        for prefix in EXCLUDED_SPORT_PREFIXES:
-            if event.sport.key.startswith(prefix):
-                raise HTTPException(status_code=404, detail="Event not found")
+    if event.sport and is_excluded_sport(event.sport.key):
+        raise HTTPException(status_code=404, detail="Event not found")
 
     # Get recent snapshots
     result = await db.execute(
