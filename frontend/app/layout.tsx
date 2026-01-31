@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import { GoogleAnalytics, AnalyticsProvider, ConsentBanner } from "@/components/Analytics";
 
 export const metadata: Metadata = {
   title: "OddsTracker - Win Probabilities",
@@ -15,37 +16,43 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="font-sans">
-        <div className="min-h-screen flex flex-col bg-snow">
-          {/* Header */}
-          <header className="bg-white border-b border-mist sticky top-0 z-50">
-            <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
-              <div className="flex items-center justify-between">
-                <Link href="/" className="flex items-center gap-2">
-                  <span className="text-2xl">🎯</span>
-                  <span className="text-title-2 text-graphite">
-                    OddsTracker
-                  </span>
-                </Link>
+        <GoogleAnalytics />
+        <AnalyticsProvider>
+          <div className="min-h-screen flex flex-col bg-snow">
+            {/* Header */}
+            <header className="bg-white border-b border-mist sticky top-0 z-50">
+              <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
+                <div className="flex items-center justify-between">
+                  <Link href="/" className="flex items-center gap-2">
+                    <span className="text-2xl">🎯</span>
+                    <span className="text-title-2 text-graphite">
+                      OddsTracker
+                    </span>
+                  </Link>
+                </div>
               </div>
-            </div>
-          </header>
+            </header>
 
-          {/* Main Content */}
-          <main className="flex-1">
-            <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-6">
-              {children}
-            </div>
-          </main>
+            {/* Main Content */}
+            <main className="flex-1">
+              <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-6">
+                {children}
+              </div>
+            </main>
 
-          {/* Footer */}
-          <footer className="bg-white border-t border-mist mt-auto">
-            <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
-              <p className="text-center text-caption text-slate">
-                📊 Win probabilities updated in real-time
-              </p>
-            </div>
-          </footer>
-        </div>
+            {/* Footer */}
+            <footer className="bg-white border-t border-mist mt-auto">
+              <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
+                <p className="text-center text-caption text-slate">
+                  📊 Win probabilities updated in real-time
+                </p>
+              </div>
+            </footer>
+          </div>
+
+          {/* Consent Banner - shows if user hasn't made a choice */}
+          <ConsentBanner />
+        </AnalyticsProvider>
       </body>
     </html>
   );

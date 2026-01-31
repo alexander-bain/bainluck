@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import useSWR from "swr";
 import { fetchEvents, fetchSports } from "@/lib/api";
 import type { Event } from "@/lib/types";
@@ -18,6 +18,12 @@ import {
   formatTimeUntil,
   calculateExcitementScore,
 } from "@/lib/sportCategories";
+import {
+  useAnalytics,
+  usePageTracking,
+  useScrollDepth,
+  useEngagementTime,
+} from "@/hooks";
 
 type ViewMode = "smart" | "time" | "closeness";
 
@@ -44,6 +50,21 @@ export default function HomePage() {
   const [collapsedSports, setCollapsedSports] = useState<Set<string>>(new Set());
   const [recentlyClosedCollapsed, setRecentlyClosedCollapsed] = useState<boolean>(false);
   const [archivedCollapsed, setArchivedCollapsed] = useState<boolean>(true);
+
+  // Analytics
+  const { trackViewModeChange, trackSectionToggle, trackApiError, trackRetryClick } = useAnalytics();
+
+  // Track page view
+  usePageTracking({
+    pageType: 'home',
+    pageTitle: 'OddsTracker - Home',
+  });
+
+  // Track scroll depth
+  useScrollDepth({ pageType: 'home' });
+
+  // Track engagement time
+  useEngagementTime({ pageType: 'home' });
 
   const {
     data: sportsData,
@@ -205,17 +226,60 @@ export default function HomePage() {
     return groupByDate(sortedEvents);
   }, [sortedEvents, viewMode]);
 
-  const toggleSportCollapse = (categoryKey: string) => {
+  const toggleSportCollapse = useCallback((categoryKey: string, categoryName: string, eventCount: number) => {
     setCollapsedSports((prev) => {
       const next = new Set(prev);
+      const isCollapsing = !next.has(categoryKey);
       if (next.has(categoryKey)) {
         next.delete(categoryKey);
       } else {
         next.add(categoryKey);
       }
+
+      // Track analytics
+      trackSectionToggle(
+        isCollapsing ? 'collapse' : 'expand',
+        'sport_category',
+        categoryName,
+        categoryKey,
+        eventCount
+      );
+
       return next;
     });
-  };
+  }, [trackSectionToggle]);
+
+  // Handle view mode change with analytics
+  const handleViewModeChange = useCallback((newMode: ViewMode) => {
+    trackViewModeChange(newMode, viewMode);
+    setViewMode(newMode);
+  }, [viewMode, trackViewModeChange]);
+
+  // Handle recently closed toggle with analytics
+  const handleRecentlyClosedToggle = useCallback(() => {
+    const newState = !recentlyClosedCollapsed;
+    trackSectionToggle(
+      newState ? 'collapse' : 'expand',
+      'recently_finished',
+      'Recently Finished',
+      undefined,
+      recentlyClosedEvents.length
+    );
+    setRecentlyClosedCollapsed(newState);
+  }, [recentlyClosedCollapsed, recentlyClosedEvents.length, trackSectionToggle]);
+
+  // Handle archived toggle with analytics
+  const handleArchivedToggle = useCallback(() => {
+    const newState = !archivedCollapsed;
+    trackSectionToggle(
+      newState ? 'collapse' : 'expand',
+      'archived',
+      'Archived',
+      undefined,
+      archivedEvents.length
+    );
+    setArchivedCollapsed(newState);
+  }, [archivedCollapsed, archivedEvents.length, trackSectionToggle]);
 
   const sports = sportsData?.sports ?? [];
 
@@ -238,7 +302,7 @@ export default function HomePage() {
             <label className="text-caption text-slate">View:</label>
             <select
               value={viewMode}
-              onChange={(e) => setViewMode(e.target.value as ViewMode)}
+              onChange={(e) => handleViewModeChange(e.target.value as ViewMode)}
               className="text-caption border border-mist rounded px-3 py-1.5 bg-white text-graphite focus:outline-none focus:ring-1 focus:ring-ink"
             >
               <option value="smart">By Sport</option>
@@ -309,11 +373,13 @@ export default function HomePage() {
                       )}
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                      {featuredEvents.map((event) => (
+                      {featuredEvents.map((event, index) => (
                         <EventCard
                           key={`featured-${event.id}`}
                           event={event}
                           showSport={true}
+                          sourceSection="featured"
+                          positionIndex={index}
                         />
                       ))}
                     </div>
@@ -326,7 +392,7 @@ export default function HomePage() {
                 <section key={sportGroup.categoryKey}>
                   {/* Sport Header */}
                   <button
-                    onClick={() => toggleSportCollapse(sportGroup.categoryKey)}
+                    onClick={() => toggleSportCollapse(sportGroup.categoryKey, sportGroup.categoryName, sportGroup.totalEvents)}
                     className="flex items-center gap-2 mb-4 w-full text-left group"
                   >
                     <span className="text-lg">{sportGroup.emoji}</span>
@@ -367,11 +433,13 @@ export default function HomePage() {
 
                           {/* League Events */}
                           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                            {league.events.map((event) => (
+                            {league.events.map((event, index) => (
                               <EventCard
                                 key={event.id}
                                 event={event}
                                 showSport={false}
+                                sourceSection="sport_category"
+                                positionIndex={index}
                               />
                             ))}
                           </div>
@@ -391,11 +459,13 @@ export default function HomePage() {
                     {date}
                   </h2>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                    {events.map((event) => (
+                    {events.map((event, index) => (
                       <EventCard
                         key={event.id}
                         event={event}
                         showSport={!selectedCategory}
+                        sourceSection="sport_category"
+                        positionIndex={index}
                       />
                     ))}
                   </div>
@@ -408,7 +478,7 @@ export default function HomePage() {
           {recentlyClosedEvents.length > 0 && (
             <section className="border-t border-mist pt-6">
               <button
-                onClick={() => setRecentlyClosedCollapsed(!recentlyClosedCollapsed)}
+                onClick={handleRecentlyClosedToggle}
                 className="flex items-center gap-2 mb-4 w-full text-left group"
               >
                 <span className="text-lg">✅</span>
@@ -429,11 +499,13 @@ export default function HomePage() {
 
               {!recentlyClosedCollapsed && (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                  {recentlyClosedEvents.map((event) => (
+                  {recentlyClosedEvents.map((event, index) => (
                     <EventCard
                       key={`recent-${event.id}`}
                       event={event}
                       showSport={!selectedCategory && !selectedSport}
+                      sourceSection="recently_finished"
+                      positionIndex={index}
                     />
                   ))}
                 </div>
@@ -445,7 +517,7 @@ export default function HomePage() {
           {archivedEvents.length > 0 && (
             <section className="border-t border-mist/50 pt-6">
               <button
-                onClick={() => setArchivedCollapsed(!archivedCollapsed)}
+                onClick={handleArchivedToggle}
                 className="flex items-center gap-2 mb-4 w-full text-left group"
               >
                 <span className="text-lg">📦</span>
@@ -466,11 +538,13 @@ export default function HomePage() {
 
               {!archivedCollapsed && (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                  {archivedEvents.map((event) => (
+                  {archivedEvents.map((event, index) => (
                     <EventCard
                       key={`archived-${event.id}`}
                       event={event}
                       showSport={!selectedCategory && !selectedSport}
+                      sourceSection="archived"
+                      positionIndex={index}
                     />
                   ))}
                 </div>

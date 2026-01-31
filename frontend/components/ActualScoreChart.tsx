@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   LineChart,
   Line,
@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import type { ScoreHistoryPoint } from "@/lib/types";
+import { useAnalytics } from "@/hooks";
 
 interface ActualScoreChartProps {
   scoreHistory?: ScoreHistoryPoint[];
@@ -23,6 +24,8 @@ interface ActualScoreChartProps {
   commenceTime?: string;
   isLive?: boolean;
   lastScoreUpdate?: string;
+  /** Event ID for analytics tracking */
+  eventId?: number;
 }
 
 type TimeRange = "all" | "1h" | "30m" | "15m";
@@ -54,8 +57,19 @@ export default function ActualScoreChart({
   commenceTime,
   isLive = false,
   lastScoreUpdate,
+  eventId,
 }: ActualScoreChartProps) {
+  const { trackChartTimeRange, recordChart } = useAnalytics();
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
+
+  // Handle time range change with analytics
+  const handleTimeRangeChange = useCallback((newRange: TimeRange, dataCount: number) => {
+    if (eventId) {
+      trackChartTimeRange('actual_score', eventId, newRange as 'all' | '1h', timeRange as 'all' | '1h', dataCount > 0, dataCount);
+    }
+    recordChart();
+    setTimeRange(newRange);
+  }, [eventId, timeRange, trackChartTimeRange, recordChart]);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
@@ -194,7 +208,7 @@ export default function ActualScoreChart({
           {TIME_RANGE_OPTIONS.map((option) => (
             <button
               key={option.value}
-              onClick={() => setTimeRange(option.value)}
+              onClick={() => handleTimeRangeChange(option.value, chartData.length)}
               className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
                 timeRange === option.value
                   ? "bg-gray-900 text-white"
@@ -276,7 +290,7 @@ export default function ActualScoreChart({
         <div className="text-center py-4 text-sm text-gray-500">
           No score changes in the selected time range.
           <button
-            onClick={() => setTimeRange("all")}
+            onClick={() => handleTimeRangeChange("all", scoreHistory?.length || 0)}
             className="ml-2 text-blue-600 hover:underline"
           >
             Show full game

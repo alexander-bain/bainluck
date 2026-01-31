@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   LineChart,
   Line,
@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import type { OddsHistoryPoint, BookmakerHistoryPoint } from "@/lib/types";
+import { useAnalytics } from "@/hooks";
 
 interface ScoreChartProps {
   history: OddsHistoryPoint[];
@@ -21,6 +22,8 @@ interface ScoreChartProps {
   commenceTime?: string;
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
+  /** Event ID for analytics tracking */
+  eventId?: number;
 }
 
 type TimeRange = "all" | "24h" | "12h" | "6h" | "3h" | "1h" | "live";
@@ -54,7 +57,10 @@ export default function ScoreChart({
   commenceTime,
   isLive = false,
   bookmakerHistory,
+  eventId,
 }: ScoreChartProps) {
+  const { trackChartTimeRange, recordChart } = useAnalytics();
+
   // Determine if the event has started based on commence time
   const hasStarted = commenceTime
     ? new Date(commenceTime).getTime() <= Date.now()
@@ -64,6 +70,15 @@ export default function ScoreChart({
   const [timeRange, setTimeRange] = useState<TimeRange>(
     isLive || hasStarted ? "live" : "all"
   );
+
+  // Handle time range change with analytics
+  const handleTimeRangeChange = useCallback((newRange: TimeRange, dataCount: number) => {
+    if (eventId) {
+      trackChartTimeRange('projected_score', eventId, newRange, timeRange, dataCount > 0, dataCount);
+    }
+    recordChart();
+    setTimeRange(newRange);
+  }, [eventId, timeRange, trackChartTimeRange, recordChart]);
 
   // Filter options based on whether event has started
   const availableTimeRanges = TIME_RANGE_OPTIONS.filter(
@@ -311,7 +326,7 @@ export default function ScoreChart({
           {availableTimeRanges.map((option) => (
             <button
               key={option.value}
-              onClick={() => setTimeRange(option.value)}
+              onClick={() => handleTimeRangeChange(option.value, chartData.length)}
               className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
                 timeRange === option.value
                   ? "bg-gray-900 text-white"
@@ -325,7 +340,7 @@ export default function ScoreChart({
         <div className="text-center py-8 text-sm text-gray-500">
           No projected score data available for the selected time range.
           <button
-            onClick={() => setTimeRange("all")}
+            onClick={() => handleTimeRangeChange("all", history.length)}
             className="ml-2 text-blue-600 hover:underline"
           >
             Show all data
@@ -415,7 +430,7 @@ export default function ScoreChart({
         {availableTimeRanges.map((option) => (
           <button
             key={option.value}
-            onClick={() => setTimeRange(option.value)}
+            onClick={() => handleTimeRangeChange(option.value, chartData.length)}
             className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
               timeRange === option.value
                 ? "bg-gray-900 text-white"
@@ -519,7 +534,7 @@ export default function ScoreChart({
         <div className="text-center py-4 text-sm text-gray-500">
           No data available for the selected time range.
           <button
-            onClick={() => setTimeRange("all")}
+            onClick={() => handleTimeRangeChange("all", history.length)}
             className="ml-2 text-blue-600 hover:underline"
           >
             Show all data
