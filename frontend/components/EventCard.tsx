@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Event } from "@/lib/types";
 import { formatProbability, isStartingSoon } from "@/lib/api";
-import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
+import { getLeagueDisplay, getEmojiForLeague, formatTimeUntil } from "@/lib/sportCategories";
 
 interface EventCardProps {
   event: Event;
@@ -89,9 +89,11 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
 
   // Card border/background based on state
+  // Only show stale styling for live games, not for scheduled events
+  const showStaleStyle = isLive && (isNeedsReview || isStale);
   const cardClasses = effectivelyLive
     ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-    : isNeedsReview || isStale
+    : showStaleStyle
     ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
     : isCloseGame
     ? "bg-white border-2 border-amber-200"
@@ -145,9 +147,9 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
                 🔒 Closed
               </span>
             )}
-            {startingSoon && (
-              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
-                ⏰ Soon
+            {startingSoon && !isLive && !isFinished && (
+              <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                ⏰ {formatTimeUntil(event.commence_time)}
               </span>
             )}
             {!isLive && !isFinished && !startingSoon && (
@@ -262,10 +264,10 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
             </div>
           )}
 
-          {/* For live/finished, show time info */}
+          {/* For live/finished, show time info - don't duplicate stale indicator */}
           {(isLive || isFinished) && (
             <div className="text-xs text-slate">
-              {effectivelyLive ? "🔄 Updating live" : isStale ? `⚠️ Stale (${staleMinutes}m ago)` : isNeedsReview ? "⚠️ Status unclear" : `Played ${timeStr}`}
+              {effectivelyLive ? "🔄 Live" : isFinished ? `Played ${timeStr}` : `Started ${timeStr}`}
             </div>
           )}
 

@@ -78,6 +78,14 @@ export interface BookmakerHistoryPoint {
   home_probability: number | null;
   away_probability: number | null;
   valid_until?: string; // If set, value was constant from timestamp to valid_until
+  projected_home_score?: number | null;
+  projected_away_score?: number | null;
+}
+
+export interface ScoreHistoryPoint {
+  timestamp: string;
+  home_score: number;
+  away_score: number;
 }
 
 export interface EventHistoryResponse {
@@ -86,6 +94,7 @@ export interface EventHistoryResponse {
   away_team: string;
   history: OddsHistoryPoint[];
   bookmaker_history?: Record<string, BookmakerHistoryPoint[]>;
+  score_history?: ScoreHistoryPoint[];
   points: number;
 }
 
