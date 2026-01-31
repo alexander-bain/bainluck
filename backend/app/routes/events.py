@@ -1,6 +1,6 @@
 """Events API endpoints."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -207,7 +207,7 @@ async def list_events(
         conditions.append(Event.status.in_(["scheduled", "live", "completed", "closed"]))
 
     # Date range - but always include live games regardless of start time
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     end_date = now + timedelta(days=days)
     # Include completed events from yesterday and today
     yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -506,8 +506,8 @@ async def get_event_odds_history(
     # 1. captured_at >= cutoff (created within the window), OR
     # 2. captured_at < cutoff AND valid_until >= cutoff (created before but still valid during window)
     # This ensures we show trend lines even when odds haven't changed for a while
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=hours)
 
     result = await db.execute(
         select(OddsSnapshot)

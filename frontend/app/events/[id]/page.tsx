@@ -212,7 +212,14 @@ export default function EventPage({ params }: EventPageProps) {
     }
   );
 
-  const isLive = event?.status === "live";
+  // Check if the game has actually started (commence_time is in the past)
+  const hasStarted = event?.commence_time
+    ? new Date(event.commence_time).getTime() <= Date.now()
+    : false;
+
+  // Only consider "live" if the status is "live" AND the game has actually started
+  // This guards against cases where the backend status might be incorrect
+  const isLive = event?.status === "live" && hasStarted;
   const isCompleted = event?.status === "completed";
   const isClosed = event?.status === "closed";
   const isFinished = isCompleted || isClosed;

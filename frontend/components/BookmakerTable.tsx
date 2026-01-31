@@ -52,26 +52,6 @@ export default function BookmakerTable({
     return null;
   }
 
-  // Sort by home probability descending to show range clearly
-  const sortedOdds = [...bookmakerOdds].sort((a, b) => {
-    const aProb = a.home_probability ?? 0;
-    const bProb = b.home_probability ?? 0;
-    return bProb - aProb;
-  });
-
-  // Calculate average for comparison
-  const validHomeProbs = bookmakerOdds
-    .map((b) => b.home_probability)
-    .filter((p): p is number => p !== null);
-  const avgHomeProb =
-    validHomeProbs.length > 0
-      ? validHomeProbs.reduce((a, b) => a + b, 0) / validHomeProbs.length
-      : null;
-
-  // Shorten team names for table header
-  const shortHomeTeam = homeTeam.split(" ").pop() || homeTeam;
-  const shortAwayTeam = awayTeam.split(" ").pop() || awayTeam;
-
   // Check if any odds are stale (>30 minutes old)
   const now = new Date();
   const isStale = (isoString: string): boolean => {
@@ -79,6 +59,35 @@ export default function BookmakerTable({
     const diffMs = now.getTime() - date.getTime();
     return diffMs > 30 * 60 * 1000; // 30 minutes
   };
+
+  // Sort by home probability descending to show range clearly
+  const sortedOdds = [...bookmakerOdds].sort((a, b) => {
+    const aProb = a.home_probability ?? 0;
+    const bProb = b.home_probability ?? 0;
+    return bProb - aProb;
+  });
+
+  // Calculate average ONLY from non-stale sportsbooks (those still actively updating)
+  const activeOdds = bookmakerOdds.filter(
+    (b) => b.captured_at && !isStale(b.captured_at)
+  );
+  const validHomeProbs = activeOdds
+    .map((b) => b.home_probability)
+    .filter((p): p is number => p !== null);
+  const avgHomeProb =
+    validHomeProbs.length > 0
+      ? validHomeProbs.reduce((a, b) => a + b, 0) / validHomeProbs.length
+      : null;
+
+  // Count how many are stale vs active
+  const staleCount = bookmakerOdds.filter(
+    (b) => b.captured_at && isStale(b.captured_at)
+  ).length;
+  const activeCount = bookmakerOdds.length - staleCount;
+
+  // Shorten team names for table header
+  const shortHomeTeam = homeTeam.split(" ").pop() || homeTeam;
+  const shortAwayTeam = awayTeam.split(" ").pop() || awayTeam;
 
   return (
     <div className="overflow-x-auto">
@@ -93,6 +102,9 @@ export default function BookmakerTable({
             </th>
             <th className="text-center py-3 px-4 font-semibold text-slate">
               {shortAwayTeam} (Away)
+            </th>
+            <th className="text-center py-3 px-4 font-semibold text-slate">
+              Status
             </th>
             <th className="text-right py-3 px-4 font-semibold text-slate">
               Last Updated
@@ -130,6 +142,17 @@ export default function BookmakerTable({
                 <td className="py-3 px-4 text-center font-mono tabular-nums">
                   {awayProb !== null ? `${(awayProb * 100).toFixed(1)}%` : "-"}
                 </td>
+                <td className="py-3 px-4 text-center">
+                  {stale ? (
+                    <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                      Closed
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      Open
+                    </span>
+                  )}
+                </td>
                 <td
                   className={`py-3 px-4 text-right text-xs ${
                     stale ? "text-amber-600" : "text-slate"
@@ -137,7 +160,6 @@ export default function BookmakerTable({
                   title={odds.captured_at ? formatAbsoluteTime(odds.captured_at) : undefined}
                 >
                   {odds.captured_at ? formatRelativeTime(odds.captured_at) : "-"}
-                  {stale && <span className="ml-1">⏰</span>}
                 </td>
               </tr>
             );
@@ -146,13 +168,21 @@ export default function BookmakerTable({
         {avgHomeProb !== null && (
           <tfoot>
             <tr className="bg-slate/5 font-semibold">
-              <td className="py-3 px-4 text-graphite">Average (Consensus)</td>
+              <td className="py-3 px-4 text-graphite">
+                Average (Consensus)
+                {staleCount > 0 && (
+                  <span className="ml-2 text-xs font-normal text-slate">
+                    ({activeCount} of {bookmakerOdds.length} open)
+                  </span>
+                )}
+              </td>
               <td className="py-3 px-4 text-center font-mono tabular-nums text-graphite">
                 {(avgHomeProb * 100).toFixed(1)}%
               </td>
               <td className="py-3 px-4 text-center font-mono tabular-nums text-graphite">
                 {((1 - avgHomeProb) * 100).toFixed(1)}%
               </td>
+              <td className="py-3 px-4"></td>
               <td className="py-3 px-4"></td>
             </tr>
           </tfoot>
