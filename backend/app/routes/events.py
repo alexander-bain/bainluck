@@ -344,6 +344,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         }
 
         # Also include individual bookmaker odds for transparency
+        # Include captured_at so users can see when each book last updated
         response["bookmaker_odds"] = [
             {
                 "bookmaker": s.bookmaker,
@@ -353,6 +354,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                     if s.home_win_probability else None,
                 "away_probability": float(s.away_win_probability)
                     if s.away_win_probability else None,
+                "captured_at": s.captured_at.isoformat(),
             }
             for s in latest_snapshots
         ]
