@@ -268,7 +268,6 @@ async def detect_and_close_stale_events(session) -> int:
     3. Either:
        a. It has no odds snapshots at all (bookmakers stopped offering odds), OR
        b. The latest odds snapshot is older than ODDS_STALE_MINUTES
-    4. AND the match has been live longer than the sport's typical max duration
 
     Returns the number of events marked as closed.
     """
@@ -294,12 +293,6 @@ async def detect_and_close_stale_events(session) -> int:
     for event in live_events:
         try:
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
-            sport_key = event.sport.key if event.sport else "default"
-            max_duration = get_max_duration_for_sport(sport_key)
-
-            # Only consider staleness if match has exceeded typical duration
-            if hours_since_start < max_duration:
-                continue
 
             # Check if ANY bookmaker has provided odds recently
             # We need to find the most recently updated snapshot across all bookmakers
@@ -341,7 +334,7 @@ async def detect_and_close_stale_events(session) -> int:
                 else:
                     # Had odds but all bookmakers stopped updating
                     should_close = True
-                    close_reason = f"all_bookmakers_stale"
+                    close_reason = "all_bookmakers_stale"
 
             if should_close:
                 await session.execute(
