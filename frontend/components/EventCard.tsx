@@ -10,6 +10,43 @@ interface EventCardProps {
   showSport?: boolean;
 }
 
+// Staleness thresholds
+const STALE_ODDS_MINUTES = 30; // Odds not updated in 30 minutes = stale
+const MAX_LIVE_HOURS = 4; // If "live" for more than 4 hours, needs review
+
+/**
+ * Check if an event's live status is stale and needs review.
+ * Returns: { isStale: boolean, isNeedsReview: boolean, staleMinutes: number | null }
+ */
+function checkEventStaleness(event: Event): {
+  isStale: boolean;
+  isNeedsReview: boolean;
+  staleMinutes: number | null;
+} {
+  const now = new Date();
+  const commenceTime = new Date(event.commence_time);
+  const hoursSinceStart = (now.getTime() - commenceTime.getTime()) / (1000 * 60 * 60);
+
+  // Check if event has been "live" for too long (>4 hours without completion)
+  const isNeedsReview = event.status === "live" && hoursSinceStart > MAX_LIVE_HOURS;
+
+  // Check if odds data is stale (not updated in 30+ minutes)
+  let isStale = false;
+  let staleMinutes: number | null = null;
+
+  if (event.current_odds?.captured_at) {
+    const lastUpdate = new Date(event.current_odds.captured_at);
+    const minutesSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
+
+    if (minutesSinceUpdate > STALE_ODDS_MINUTES) {
+      isStale = true;
+      staleMinutes = Math.round(minutesSinceUpdate);
+    }
+  }
+
+  return { isStale, isNeedsReview, staleMinutes };
+}
+
 /**
  * Redesigned Event card with:
  * - Information density: state, time, score, projected score
@@ -27,6 +64,12 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
   const isClosed = event.status === "closed";
   const isFinished = isCompleted || isClosed;
   const startingSoon = !isLive && !isFinished && isStartingSoon(event.commence_time);
+
+  // Check for stale data
+  const { isStale, isNeedsReview, staleMinutes } = checkEventStaleness(event);
+
+  // If event needs review (live for too long), treat it as potentially closed
+  const effectivelyLive = isLive && !isNeedsReview && !isStale;
 
   // Determine favorite
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
@@ -46,8 +89,10 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
 
   // Card border/background based on state
-  const cardClasses = isLive
+  const cardClasses = effectivelyLive
     ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
+    : isNeedsReview || isStale
+    ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
     : isCloseGame
     ? "bg-white border-2 border-amber-200"
     : "bg-white border border-mist";
@@ -72,7 +117,19 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
 
           {/* Status Badge */}
           <div className="flex items-center gap-1.5">
-            {isLive && (
+            {/* Stale/Review status takes priority over live */}
+            {isNeedsReview && (
+              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                ⚠️ Review
+              </span>
+            )}
+            {isStale && !isNeedsReview && isLive && (
+              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold"
+                    title={staleMinutes ? `Last updated ${staleMinutes} minutes ago` : undefined}>
+                📡 Stale
+              </span>
+            )}
+            {effectivelyLive && (
               <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 LIVE
@@ -101,6 +158,37 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           </div>
         </div>
 
+        {/* Prominent Score Display for live/finished games */}
+        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null ? (
+          <div className="flex items-center justify-center gap-4 py-2 mb-2 bg-white/60 rounded-lg">
+            <div className="text-center">
+              <div className={`text-2xl font-bold font-mono ${
+                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+              }`}>
+                {event.home_score}
+              </div>
+              <div className="text-xs text-slate truncate max-w-[80px]">
+                {event.home_team.split(" ").pop()}
+              </div>
+            </div>
+            <div className="text-lg text-slate font-medium">—</div>
+            <div className="text-center">
+              <div className={`text-2xl font-bold font-mono ${
+                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+              }`}>
+                {event.away_score}
+              </div>
+              <div className="text-xs text-slate truncate max-w-[80px]">
+                {event.away_team.split(" ").pop()}
+              </div>
+            </div>
+          </div>
+        ) : isLive && (event.home_score === null || event.away_score === null) ? (
+          <div className="flex items-center justify-center py-2 mb-2 text-sm text-slate bg-white/60 rounded-lg">
+            <span>📊 Score data pending...</span>
+          </div>
+        ) : null}
+
         {/* Main Content: Teams, Scores, Probabilities */}
         <div className="space-y-2">
           {/* Home Team Row */}
@@ -113,14 +201,6 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
               >
                 {event.home_team}
               </span>
-              {/* Live/Final Score */}
-              {(isLive || isFinished) && event.home_score !== null && (
-                <span className={`text-lg font-bold ${
-                  isLive ? "text-emerald-600" : "text-graphite"
-                }`}>
-                  {event.home_score}
-                </span>
-              )}
             </div>
             {/* Probability */}
             <span
@@ -137,7 +217,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
             <div
               className={`transition-all duration-300 ${
                 homeFavorite
-                  ? isLive ? "bg-emerald-500" : "bg-graphite"
+                  ? effectivelyLive ? "bg-emerald-500" : "bg-graphite"
                   : "bg-slate/30"
               }`}
               style={{ width: `${(homeProb ?? 0.5) * 100}%` }}
@@ -145,7 +225,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
             <div
               className={`transition-all duration-300 ${
                 !homeFavorite
-                  ? isLive ? "bg-emerald-500" : "bg-graphite"
+                  ? effectivelyLive ? "bg-emerald-500" : "bg-graphite"
                   : "bg-slate/30"
               }`}
               style={{ width: `${(awayProb ?? 0.5) * 100}%` }}
@@ -162,14 +242,6 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
               >
                 {event.away_team}
               </span>
-              {/* Live/Final Score */}
-              {(isLive || isFinished) && event.away_score !== null && (
-                <span className={`text-lg font-bold ${
-                  isLive ? "text-emerald-600" : "text-graphite"
-                }`}>
-                  {event.away_score}
-                </span>
-              )}
             </div>
             {/* Probability */}
             <span
@@ -197,7 +269,7 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
           {/* For live/finished, show time info */}
           {(isLive || isFinished) && (
             <div className="text-xs text-slate">
-              {isLive ? "🔄 Updating live" : `Played ${timeStr}`}
+              {effectivelyLive ? "🔄 Updating live" : isStale ? `⚠️ Stale (${staleMinutes}m ago)` : isNeedsReview ? "⚠️ Status unclear" : `Played ${timeStr}`}
             </div>
           )}
 

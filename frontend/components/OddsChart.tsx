@@ -337,15 +337,14 @@ export default function OddsChart({
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
-            {/* Individual bookmaker lines - grey dashed, rendered first so they appear behind aggregate */}
+            {/* Individual bookmaker lines - thin grey, rendered first so they appear behind aggregate */}
             {bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_home`}
                 type="monotone"
                 dataKey={`${bookmaker}_home`}
-                stroke="rgba(107, 114, 128, 0.6)"
+                stroke="rgba(156, 163, 175, 0.5)"
                 strokeWidth={1}
-                strokeDasharray="4 2"
                 dot={false}
                 activeDot={false}
                 connectNulls
@@ -357,24 +356,24 @@ export default function OddsChart({
                 key={`${bookmaker}_away`}
                 type="monotone"
                 dataKey={`${bookmaker}_away`}
-                stroke="rgba(107, 114, 128, 0.6)"
+                stroke="rgba(156, 163, 175, 0.5)"
                 strokeWidth={1}
-                strokeDasharray="4 2"
                 dot={false}
                 activeDot={false}
                 connectNulls
                 legendType="none"
               />
             ))}
-            {/* Aggregate lines - thick, colorful, rendered last so they appear on top */}
+            {/* Aggregate lines - bold, rendered last so they appear on top */}
             <Line
               type="monotone"
               dataKey="homeProb"
               name={homeTeam}
               stroke="#22c55e"
-              strokeWidth={2}
+              strokeWidth={3}
+              strokeOpacity={1}
               dot={false}
-              activeDot={{ r: 4 }}
+              activeDot={{ r: 5 }}
               connectNulls
             />
             <Line
@@ -382,9 +381,10 @@ export default function OddsChart({
               dataKey="awayProb"
               name={awayTeam}
               stroke="#3b82f6"
-              strokeWidth={2}
+              strokeWidth={3}
+              strokeOpacity={1}
               dot={false}
-              activeDot={{ r: 4 }}
+              activeDot={{ r: 5 }}
               connectNulls
             />
           </LineChart>

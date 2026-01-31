@@ -19,6 +19,10 @@ interface EventPageProps {
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
+// Staleness thresholds
+const STALE_ODDS_MINUTES = 30; // Odds not updated in 30 minutes = stale
+const MAX_LIVE_HOURS = 4; // If "live" for more than 4 hours, needs review
+
 function formatCountdown(targetTime: string): string {
   const target = new Date(targetTime);
   const now = new Date();
@@ -64,6 +68,42 @@ function formatStartTime(commenceTime: string): string {
 function isBlowout(homeProb: number | null | undefined): boolean {
   if (homeProb === null || homeProb === undefined) return false;
   return homeProb > 0.85 || homeProb < 0.15;
+}
+
+/**
+ * Check if an event's live status is stale and needs review.
+ */
+function checkEventStaleness(
+  status: string,
+  commenceTime: string,
+  capturedAt?: string
+): {
+  isStale: boolean;
+  isNeedsReview: boolean;
+  staleMinutes: number | null;
+} {
+  const now = new Date();
+  const commence = new Date(commenceTime);
+  const hoursSinceStart = (now.getTime() - commence.getTime()) / (1000 * 60 * 60);
+
+  // Check if event has been "live" for too long (>4 hours without completion)
+  const isNeedsReview = status === "live" && hoursSinceStart > MAX_LIVE_HOURS;
+
+  // Check if odds data is stale (not updated in 30+ minutes)
+  let isStale = false;
+  let staleMinutes: number | null = null;
+
+  if (capturedAt) {
+    const lastUpdate = new Date(capturedAt);
+    const minutesSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
+
+    if (minutesSinceUpdate > STALE_ODDS_MINUTES) {
+      isStale = true;
+      staleMinutes = Math.round(minutesSinceUpdate);
+    }
+  }
+
+  return { isStale, isNeedsReview, staleMinutes };
 }
 
 interface SourceAnalysis {
@@ -178,6 +218,15 @@ export default function EventPage({ params }: EventPageProps) {
   const isFinished = isCompleted || isClosed;
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
+  // Check for stale data
+  const staleness = event
+    ? checkEventStaleness(event.status, event.commence_time, event.current_odds?.captured_at)
+    : { isStale: false, isNeedsReview: false, staleMinutes: null };
+  const { isStale, isNeedsReview, staleMinutes } = staleness;
+
+  // Effectively live = live AND not stale AND not needs review
+  const effectivelyLive = isLive && !isNeedsReview && !isStale;
+
   useEffect(() => {
     const interval = setInterval(() => {
       const elapsed = Date.now() - lastRefresh;
@@ -269,7 +318,18 @@ export default function EventPage({ params }: EventPageProps) {
         {!isFinished && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
-              {isLive && (
+              {isNeedsReview && (
+                <span className="flex items-center gap-1.5 bg-amber-100 text-amber-700 px-2 py-1 rounded-full text-xs font-semibold">
+                  ⚠️ Review
+                </span>
+              )}
+              {isStale && !isNeedsReview && isLive && (
+                <span className="flex items-center gap-1.5 bg-amber-100 text-amber-700 px-2 py-1 rounded-full text-xs font-semibold"
+                      title={staleMinutes ? `Last updated ${staleMinutes} minutes ago` : undefined}>
+                  📡 Stale
+                </span>
+              )}
+              {effectivelyLive && (
                 <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   LIVE
@@ -293,7 +353,7 @@ export default function EventPage({ params }: EventPageProps) {
                   cy="20"
                   r="16"
                   fill="none"
-                  stroke={isLive ? "#10B981" : "#6B7280"}
+                  stroke={effectivelyLive ? "#10B981" : (isStale || isNeedsReview) ? "#F59E0B" : "#6B7280"}
                   strokeWidth="3"
                   strokeDasharray={`${countdownProgress} 100`}
                   strokeLinecap="round"
@@ -310,8 +370,10 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Hero Section */}
       <div className={`rounded-card shadow-card p-6 ${
-        isLive
+        effectivelyLive
           ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
+          : (isStale || isNeedsReview) && isLive
+          ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
           : isFinished
           ? "bg-slate-50 border border-slate-200"
           : "bg-white"
@@ -342,7 +404,7 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Game time/status */}
         <div className="text-center mb-6">
-          {isLive ? (
+          {effectivelyLive ? (
             <div className="space-y-2">
               <div className="flex items-center justify-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
@@ -354,6 +416,24 @@ export default function EventPage({ params }: EventPageProps) {
                   <span>Blowout — odds may update less frequently</span>
                 </div>
               )}
+            </div>
+          ) : isNeedsReview ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-2xl font-bold text-amber-600">⚠️ NEEDS REVIEW</span>
+              </div>
+              <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
+                <span>Event has been live for over 4 hours without completion</span>
+              </div>
+            </div>
+          ) : isStale && isLive ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-2xl font-bold text-amber-600">📡 STALE DATA</span>
+              </div>
+              <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
+                <span>Odds last updated {staleMinutes} minutes ago</span>
+              </div>
             </div>
           ) : isFinished ? (
             <div className="text-slate">
@@ -381,7 +461,7 @@ export default function EventPage({ params }: EventPageProps) {
           <div className="flex items-center justify-center gap-6 mb-6 py-4 bg-white/50 rounded-lg">
             <div className="text-center">
               <div className={`text-4xl font-bold font-mono ${
-                isLive ? "text-emerald-600" : "text-graphite"
+                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
               }`}>
                 {event.home_score}
               </div>
@@ -392,7 +472,7 @@ export default function EventPage({ params }: EventPageProps) {
             <div className="text-2xl text-slate">—</div>
             <div className="text-center">
               <div className={`text-4xl font-bold font-mono ${
-                isLive ? "text-emerald-600" : "text-graphite"
+                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
               }`}>
                 {event.away_score}
               </div>
@@ -434,7 +514,7 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeam={event.away_team}
             showLabels={false}
             size="lg"
-            isLive={isLive}
+            isLive={effectivelyLive}
           />
 
           {/* Away Team */}
@@ -521,7 +601,7 @@ export default function EventPage({ params }: EventPageProps) {
             homeTeam={event.home_team}
             awayTeam={event.away_team}
             commenceTime={event.commence_time}
-            isLive={isLive}
+            isLive={effectivelyLive}
           />
         </div>
       )}
@@ -549,7 +629,7 @@ export default function EventPage({ params }: EventPageProps) {
             homeTeam={event.home_team}
             awayTeam={event.away_team}
             commenceTime={event.commence_time}
-            isLive={isLive}
+            isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
           />
         )}
