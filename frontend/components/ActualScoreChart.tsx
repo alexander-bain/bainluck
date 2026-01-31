@@ -142,14 +142,6 @@ export default function ActualScoreChart({
           </div>
         )}
 
-        {/* Staleness warning */}
-        {isScoreStale && (
-          <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-4 py-2 rounded-lg text-sm">
-            <span>⚠️</span>
-            <span>Score last updated {scoreStaleMinutes} minutes ago</span>
-          </div>
-        )}
-
         {/* Message about score history */}
         <div className="text-center py-4 text-sm text-gray-500">
           Score progression tracking is not yet available for this event.
@@ -220,12 +212,6 @@ export default function ActualScoreChart({
           ))}
         </div>
 
-        {/* Staleness indicator */}
-        {isScoreStale && (
-          <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full">
-            ⚠️ {scoreStaleMinutes}m ago
-          </span>
-        )}
       </div>
 
       {/* Score Chart */}
