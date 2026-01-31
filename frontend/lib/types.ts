@@ -51,6 +51,7 @@ export interface BookmakerOddsDetail {
   away_moneyline: number | null;
   home_probability: number | null;
   away_probability: number | null;
+  captured_at: string; // When this bookmaker last updated their odds
 }
 
 export interface EventDetailResponse extends Event {
