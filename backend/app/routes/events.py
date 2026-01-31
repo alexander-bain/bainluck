@@ -625,21 +625,27 @@ async def get_event_odds_history(
         bookmaker_history[bookmaker] = bm_points_sorted
 
     # Build score history from ScoreSnapshots
-    score_result = await db.execute(
-        select(ScoreSnapshot)
-        .where(ScoreSnapshot.event_id == event_id)
-        .order_by(ScoreSnapshot.captured_at)
-    )
-    score_snapshots = score_result.scalars().all()
+    # Wrap in try/except in case the table doesn't exist yet (migration not run)
+    score_history = []
+    try:
+        score_result = await db.execute(
+            select(ScoreSnapshot)
+            .where(ScoreSnapshot.event_id == event_id)
+            .order_by(ScoreSnapshot.captured_at)
+        )
+        score_snapshots = score_result.scalars().all()
 
-    score_history = [
-        {
-            "timestamp": snap.captured_at.isoformat(),
-            "home_score": snap.home_score,
-            "away_score": snap.away_score,
-        }
-        for snap in score_snapshots
-    ]
+        score_history = [
+            {
+                "timestamp": snap.captured_at.isoformat(),
+                "home_score": snap.home_score,
+                "away_score": snap.away_score,
+            }
+            for snap in score_snapshots
+        ]
+    except Exception:
+        # Table may not exist yet - return empty history
+        pass
 
     return {
         "event_id": event_id,
