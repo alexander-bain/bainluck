@@ -233,18 +233,37 @@ class Tournament(Base):
 
 class TournamentOdds(Base):
     """Odds for tournament/championship winners."""
-    
+
     __tablename__ = "tournament_odds"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id"))
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
     captured_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), 
+        DateTime(timezone=True),
         server_default=func.now()
     )
     odds: Mapped[Optional[int]] = mapped_column(Integer)
     win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
-    
+
     # Relationships
     tournament: Mapped["Tournament"] = relationship(back_populates="odds")
+
+
+class ScoreSnapshot(Base):
+    """Score history snapshots for live score progression tracking."""
+
+    __tablename__ = "score_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True
+    )
+    home_score: Mapped[int] = mapped_column(Integer)
+    away_score: Mapped[int] = mapped_column(Integer)
+
+    # Relationships
+    event: Mapped["Event"] = relationship()

@@ -27,10 +27,6 @@ interface EventPageProps {
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
-// Staleness thresholds
-const STALE_ODDS_MINUTES = 30; // Odds not updated in 30 minutes = stale
-const MAX_LIVE_HOURS = 4; // If "live" for more than 4 hours, needs review
-
 function formatCountdown(targetTime: string): string {
   const target = new Date(targetTime);
   const now = new Date();
@@ -76,42 +72,6 @@ function formatStartTime(commenceTime: string): string {
 function isBlowout(homeProb: number | null | undefined): boolean {
   if (homeProb === null || homeProb === undefined) return false;
   return homeProb > 0.85 || homeProb < 0.15;
-}
-
-/**
- * Check if an event's live status is stale and needs review.
- */
-function checkEventStaleness(
-  status: string,
-  commenceTime: string,
-  capturedAt?: string
-): {
-  isStale: boolean;
-  isNeedsReview: boolean;
-  staleMinutes: number | null;
-} {
-  const now = new Date();
-  const commence = new Date(commenceTime);
-  const hoursSinceStart = (now.getTime() - commence.getTime()) / (1000 * 60 * 60);
-
-  // Check if event has been "live" for too long (>4 hours without completion)
-  const isNeedsReview = status === "live" && hoursSinceStart > MAX_LIVE_HOURS;
-
-  // Check if odds data is stale (not updated in 30+ minutes)
-  let isStale = false;
-  let staleMinutes: number | null = null;
-
-  if (capturedAt) {
-    const lastUpdate = new Date(capturedAt);
-    const minutesSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
-
-    if (minutesSinceUpdate > STALE_ODDS_MINUTES) {
-      isStale = true;
-      staleMinutes = Math.round(minutesSinceUpdate);
-    }
-  }
-
-  return { isStale, isNeedsReview, staleMinutes };
 }
 
 interface SourceAnalysis {
@@ -205,10 +165,9 @@ export default function EventPage({ params }: EventPageProps) {
   const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
   const hasTrackedDetailView = useRef(false);
-  const hasTrackedStaleData = useRef(false);
 
   // Analytics
-  const { track, trackStaleDataView, trackNavigationClick, recordEvent } = useAnalytics();
+  const { track, trackNavigationClick, recordEvent } = useAnalytics();
 
   const {
     data: event,
@@ -238,13 +197,7 @@ export default function EventPage({ params }: EventPageProps) {
   const isFinished = isCompleted || isClosed;
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
-  // Check for stale data
-  const staleness = event
-    ? checkEventStaleness(event.status, event.commence_time, event.current_odds?.captured_at)
-    : { isStale: false, isNeedsReview: false, staleMinutes: null };
-  const { isStale, isNeedsReview, staleMinutes } = staleness;
-
-  // Show all live events as live (stale/needs review tracked internally for analytics only)
+  // Effectively live = event is live status
   const effectivelyLive = isLive;
 
   // Track page view with event-specific parameters
@@ -290,8 +243,6 @@ export default function EventPage({ params }: EventPageProps) {
         away_probability: event.current_odds?.away_probability ?? null,
         is_close_game: isCloseGame(event.current_odds?.home_probability),
         is_live: event.status === 'live',
-        is_stale: isStale,
-        is_needs_review: isNeedsReview,
         bookmaker_count: event.current_odds?.bookmaker_count ?? event.bookmaker_odds?.length ?? 0,
         minutes_to_start: calculateMinutesToStart(event.commence_time),
         entry_method: document.referrer.includes(window.location.hostname) ? 'card_click' : 'direct',
@@ -300,15 +251,7 @@ export default function EventPage({ params }: EventPageProps) {
       // Record for session stats
       recordEvent(event.id, event.sport || undefined);
     }
-  }, [event, isStale, isNeedsReview, track, recordEvent]);
-
-  // Track stale data view (once if data becomes stale)
-  useEffect(() => {
-    if (isStale && staleMinutes && !hasTrackedStaleData.current && event) {
-      hasTrackedStaleData.current = true;
-      trackStaleDataView(event.id, staleMinutes, isLive, 'odds');
-    }
-  }, [isStale, staleMinutes, isLive, event, trackStaleDataView]);
+  }, [event, track, recordEvent]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -403,7 +346,6 @@ export default function EventPage({ params }: EventPageProps) {
         {!isFinished && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
-              {/* Note: "Needs Review" and "Stale" indicators are tracked internally but not shown to users */}
               {effectivelyLive && (
                 <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -483,6 +425,9 @@ export default function EventPage({ params }: EventPageProps) {
                 <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-2xl font-bold text-emerald-600">🔴 LIVE</span>
               </div>
+              <div className="text-sm text-slate">
+                Started {formatStartTime(event.commence_time)}
+              </div>
               {gameIsBlowout && (
                 <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
                   <span>⚠️</span>
@@ -498,28 +443,24 @@ export default function EventPage({ params }: EventPageProps) {
               </div>
             </div>
           ) : (
-            <div className="space-y-1">
-              {/* Prominent start time display */}
-              <div className="text-lg font-semibold text-graphite">
-                {formatStartTime(event.commence_time)}
-              </div>
-              <div className="text-sm text-slate">
-                {new Date(event.commence_time).toLocaleDateString("en-US", {
-                  weekday: "long",
-                  month: "long",
+            <div className="space-y-2">
+              {/* Clean start time display with countdown */}
+              {gameCountdown && (
+                <div className="text-2xl font-bold text-graphite">
+                  ⏱️ Starts in {gameCountdown}
+                </div>
+              )}
+              <div className="text-lg text-graphite">
+                📅 {new Date(event.commence_time).toLocaleDateString("en-US", {
+                  weekday: "short",
+                  month: "short",
                   day: "numeric",
-                  year: "numeric",
                 })} at {new Date(event.commence_time).toLocaleTimeString("en-US", {
                   hour: "numeric",
                   minute: "2-digit",
                   timeZoneName: "short",
                 })}
               </div>
-              {gameCountdown && (
-                <div className="text-2xl font-bold text-graphite mt-2">
-                  Starts in {gameCountdown}
-                </div>
-              )}
             </div>
           )}
         </div>

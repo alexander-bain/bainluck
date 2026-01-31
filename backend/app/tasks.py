@@ -35,7 +35,7 @@ from sqlalchemy.orm import selectinload
 
 from app.services.database import async_session_maker
 from app.services.odds_api import OddsAPIService
-from app.models import Sport, Event, OddsSnapshot
+from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.utils.odds_math import moneyline_to_probability, project_scores
 
 # Redis URL from environment
@@ -268,7 +268,6 @@ async def detect_and_close_stale_events(session) -> int:
     3. Either:
        a. It has no odds snapshots at all (bookmakers stopped offering odds), OR
        b. The latest odds snapshot is older than ODDS_STALE_MINUTES
-    4. AND the match has been live longer than the sport's typical max duration
 
     Returns the number of events marked as closed.
     """
@@ -294,12 +293,6 @@ async def detect_and_close_stale_events(session) -> int:
     for event in live_events:
         try:
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
-            sport_key = event.sport.key if event.sport else "default"
-            max_duration = get_max_duration_for_sport(sport_key)
-
-            # Only consider staleness if match has exceeded typical duration
-            if hours_since_start < max_duration:
-                continue
 
             # Check if ANY bookmaker has provided odds recently
             # We need to find the most recently updated snapshot across all bookmakers
@@ -341,7 +334,7 @@ async def detect_and_close_stale_events(session) -> int:
                 else:
                     # Had odds but all bookmakers stopped updating
                     should_close = True
-                    close_reason = f"all_bookmakers_stale"
+                    close_reason = "all_bookmakers_stale"
 
             if should_close:
                 await session.execute(
@@ -713,6 +706,25 @@ async def _poll_all_odds():
                                 update_values["home_score"] = home_score
                             if away_score is not None:
                                 update_values["away_score"] = away_score
+
+                            # Get current event to check if score changed
+                            event_result = await session.execute(
+                                select(Event).where(Event.external_id == external_id)
+                            )
+                            event_obj = event_result.scalar_one_or_none()
+
+                            # Record score snapshot if scores changed
+                            if event_obj and home_score is not None and away_score is not None:
+                                old_home = event_obj.home_score
+                                old_away = event_obj.away_score
+                                if old_home != home_score or old_away != away_score:
+                                    # Score changed - record a snapshot
+                                    score_snap = ScoreSnapshot(
+                                        event_id=event_obj.id,
+                                        home_score=home_score,
+                                        away_score=away_score,
+                                    )
+                                    session.add(score_snap)
 
                             await session.execute(
                                 Event.__table__.update()

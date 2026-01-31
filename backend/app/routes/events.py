@@ -8,7 +8,7 @@ from sqlalchemy import select, and_, or_, not_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Event, OddsSnapshot, Sport
+from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot
 from app.services import get_db, OddsAPIService, fetch_current_odds
 from app.utils import moneyline_to_probability, project_scores, calculate_gei, aggregate_bookmaker_odds
 
@@ -624,12 +624,36 @@ async def get_event_odds_history(
         bm_points_sorted = sorted(bm_points, key=lambda p: p["timestamp"])
         bookmaker_history[bookmaker] = bm_points_sorted
 
+    # Build score history from ScoreSnapshots
+    # Wrap in try/except in case the table doesn't exist yet (migration not run)
+    score_history = []
+    try:
+        score_result = await db.execute(
+            select(ScoreSnapshot)
+            .where(ScoreSnapshot.event_id == event_id)
+            .order_by(ScoreSnapshot.captured_at)
+        )
+        score_snapshots = score_result.scalars().all()
+
+        score_history = [
+            {
+                "timestamp": snap.captured_at.isoformat(),
+                "home_score": snap.home_score,
+                "away_score": snap.away_score,
+            }
+            for snap in score_snapshots
+        ]
+    except Exception:
+        # Table may not exist yet - return empty history
+        pass
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "history": history,
         "bookmaker_history": bookmaker_history,
+        "score_history": score_history,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),
