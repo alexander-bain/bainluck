@@ -1,16 +1,47 @@
 """Health check endpoints."""
 
+import os
+import subprocess
 from fastapi import APIRouter, Query
 
 from app.services.odds_api import OddsAPIService
 
 router = APIRouter()
 
+# Get git commit at startup (cached)
+def _get_git_commit():
+    """Get current git commit hash."""
+    # First try environment variable (set during build)
+    commit = os.getenv("GIT_COMMIT") or os.getenv("HEROKU_SLUG_COMMIT")
+    if commit:
+        return commit[:8]
+
+    # Fallback: try git command (only works in dev)
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+
+    return "unknown"
+
+GIT_COMMIT = _get_git_commit()
+
 
 @router.get("/health")
 async def health_check():
-    """Basic health check."""
-    return {"status": "healthy"}
+    """Basic health check with version info."""
+    return {
+        "status": "healthy",
+        "version": "0.1.0",
+        "commit": GIT_COMMIT,
+    }
 
 
 @router.get("/health/ready")
