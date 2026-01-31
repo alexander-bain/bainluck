@@ -674,6 +674,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict]) 
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]
         captured_at = odds_data.get("captured_at")
+        snapshots = odds_data.get("snapshots", [])
 
         response["current_odds"] = {
             "captured_at": captured_at.isoformat() if captured_at else None,
@@ -689,5 +690,21 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict]) 
                 "max": aggregated["max_home_probability"],
             },
         }
+
+        # Include individual bookmaker odds for transparency
+        if snapshots:
+            response["bookmaker_odds"] = [
+                {
+                    "bookmaker": s.bookmaker,
+                    "home_moneyline": s.home_moneyline,
+                    "away_moneyline": s.away_moneyline,
+                    "home_probability": float(s.home_win_probability)
+                        if s.home_win_probability else None,
+                    "away_probability": float(s.away_win_probability)
+                        if s.away_win_probability else None,
+                    "captured_at": s.captured_at.isoformat(),
+                }
+                for s in snapshots
+            ]
 
     return response

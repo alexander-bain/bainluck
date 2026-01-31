@@ -183,10 +183,6 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
               </div>
             </div>
           </div>
-        ) : isLive && (event.home_score === null || event.away_score === null) ? (
-          <div className="flex items-center justify-center py-2 mb-2 text-sm text-slate bg-white/60 rounded-lg">
-            <span>📊 Score data pending...</span>
-          </div>
         ) : null}
 
         {/* Main Content: Teams, Scores, Probabilities */}
@@ -280,12 +276,21 @@ export default function EventCard({ event, showSport = true }: EventCardProps) {
             </div>
           )}
 
-          {/* Close game indicator */}
-          {isCloseGame && (
-            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
-              🔥 Close
-            </span>
-          )}
+          {/* Right side: Close game indicator and/or bookmaker count */}
+          <div className="flex items-center gap-2">
+            {/* Bookmaker count indicator */}
+            {odds?.bookmaker_count && odds.bookmaker_count > 1 && (
+              <span className="text-xs text-silver" title={event.bookmaker_odds?.map(b => b.bookmaker).join(", ")}>
+                {odds.bookmaker_count} books
+              </span>
+            )}
+            {/* Close game indicator */}
+            {isCloseGame && (
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+                🔥 Close
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </Link>

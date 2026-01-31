@@ -684,18 +684,23 @@ async def _poll_all_odds():
                             home_score = None
                             away_score = None
 
-                            if event_scores is not None:
+                            if event_scores is not None and len(event_scores) > 0:
                                 for team_score in event_scores:
                                     score_str = team_score.get("score")
                                     # Safely parse score - handles empty strings, None, non-numeric
+                                    # Note: score of 0 is valid and should be stored
                                     try:
-                                        score_val = int(score_str) if score_str else None
+                                        if score_str is not None and score_str != "":
+                                            score_val = int(score_str)
+                                        else:
+                                            score_val = None
                                     except (ValueError, TypeError):
                                         score_val = None
 
-                                    if team_score.get("name") == home_team:
+                                    team_name = team_score.get("name")
+                                    if team_name == home_team:
                                         home_score = score_val
-                                    elif team_score.get("name") == away_team:
+                                    elif team_name == away_team:
                                         away_score = score_val
 
                             # Always update status, and update scores if available

@@ -409,9 +409,50 @@ export function calculateExcitementScore(
   return Math.min(100, score);
 }
 
+// Staleness thresholds for featured events
+const STALE_ODDS_MINUTES = 30; // Odds not updated in 30 minutes = stale
+const MAX_LIVE_HOURS = 4; // If "live" for more than 4 hours, needs review
+
+/**
+ * Check if a live event has stale data.
+ * Returns true if data is stale or event needs review.
+ */
+function isEventStaleOrNeedsReview(
+  event: {
+    status: "scheduled" | "live" | "completed" | "closed";
+    commence_time: string;
+    current_odds?: {
+      home_probability: number | null;
+      captured_at?: string;
+    };
+  }
+): boolean {
+  if (event.status !== "live") return false;
+
+  const now = new Date();
+  const commenceTime = new Date(event.commence_time);
+  const hoursSinceStart = (now.getTime() - commenceTime.getTime()) / (1000 * 60 * 60);
+
+  // Check if event has been "live" for too long (>4 hours without completion)
+  if (hoursSinceStart > MAX_LIVE_HOURS) {
+    return true;
+  }
+
+  // Check if odds data is stale (not updated in 30+ minutes)
+  if (event.current_odds?.captured_at) {
+    const lastUpdate = new Date(event.current_odds.captured_at);
+    const minutesSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
+    if (minutesSinceUpdate > STALE_ODDS_MINUTES) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Determine if an event is "featured" (exciting enough to highlight)
- * Featured = Live OR (close game AND starting within 3 hours)
+ * Featured = Live (and not stale) OR (close game AND starting within 3 hours)
  */
 export function isFeaturedEvent(
   event: {
@@ -419,12 +460,13 @@ export function isFeaturedEvent(
     commence_time: string;
     current_odds?: {
       home_probability: number | null;
+      captured_at?: string;
     };
   }
 ): boolean {
-  // Live games are always featured
+  // Live games are featured ONLY if not stale/needs review
   if (event.status === "live") {
-    return true;
+    return !isEventStaleOrNeedsReview(event);
   }
 
   // Close games starting soon are featured
