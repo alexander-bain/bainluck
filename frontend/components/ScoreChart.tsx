@@ -33,14 +33,14 @@ interface ChartDataPoint {
   [key: string]: string | number | null; // For dynamic bookmaker keys
 }
 
-const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
+const TIME_RANGE_OPTIONS: { value: TimeRange; label: string; requiresStarted?: boolean }[] = [
   { value: "all", label: "All" },
   { value: "24h", label: "24h" },
   { value: "12h", label: "12h" },
   { value: "6h", label: "6h" },
   { value: "3h", label: "3h" },
   { value: "1h", label: "1h" },
-  { value: "live", label: "Since Start" },
+  { value: "live", label: "Since Start", requiresStarted: true },
 ];
 
 /**
@@ -55,7 +55,20 @@ export default function ScoreChart({
   isLive = false,
   bookmakerHistory,
 }: ScoreChartProps) {
-  const [timeRange, setTimeRange] = useState<TimeRange>(isLive ? "live" : "24h");
+  // Determine if the event has started based on commence time
+  const hasStarted = commenceTime
+    ? new Date(commenceTime).getTime() <= Date.now()
+    : false;
+
+  // Default time range: "live" for started events, "all" for scheduled events
+  const [timeRange, setTimeRange] = useState<TimeRange>(
+    isLive || hasStarted ? "live" : "all"
+  );
+
+  // Filter options based on whether event has started
+  const availableTimeRanges = TIME_RANGE_OPTIONS.filter(
+    (option) => !option.requiresStarted || hasStarted
+  );
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
@@ -295,7 +308,7 @@ export default function ScoreChart({
       <div className="space-y-4">
         {/* Time range selector */}
         <div className="flex flex-wrap items-center gap-1">
-          {TIME_RANGE_OPTIONS.map((option) => (
+          {availableTimeRanges.map((option) => (
             <button
               key={option.value}
               onClick={() => setTimeRange(option.value)}
@@ -399,7 +412,7 @@ export default function ScoreChart({
     <div className="space-y-4">
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1">
-        {TIME_RANGE_OPTIONS.map((option) => (
+        {availableTimeRanges.map((option) => (
           <button
             key={option.value}
             onClick={() => setTimeRange(option.value)}

@@ -451,16 +451,29 @@ export default function EventPage({ params }: EventPageProps) {
               </div>
             </div>
           ) : (
-            <>
-              <div className="text-caption text-slate mb-1">
-                📅 {formatStartTime(event.commence_time)}
+            <div className="space-y-1">
+              {/* Prominent start time display */}
+              <div className="text-lg font-semibold text-graphite">
+                {formatStartTime(event.commence_time)}
+              </div>
+              <div className="text-sm text-slate">
+                {new Date(event.commence_time).toLocaleDateString("en-US", {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                })} at {new Date(event.commence_time).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZoneName: "short",
+                })}
               </div>
               {gameCountdown && (
-                <div className="text-display text-graphite">
-                  ⏰ {gameCountdown}
+                <div className="text-2xl font-bold text-graphite mt-2">
+                  Starts in {gameCountdown}
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
 
