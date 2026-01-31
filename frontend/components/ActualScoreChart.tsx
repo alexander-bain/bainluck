@@ -106,7 +106,7 @@ export default function ActualScoreChart({
     return (
       <div className="space-y-4">
         {/* Show current score if available */}
-        {currentHomeScore !== null && currentAwayScore !== null && (
+        {currentHomeScore != null && currentAwayScore != null && (
           <div className="flex items-center justify-center gap-6 py-6 bg-gray-50 rounded-lg">
             <div className="text-center">
               <div className="text-3xl font-bold font-mono text-gray-800">
@@ -255,7 +255,7 @@ export default function ActualScoreChart({
       </div>
 
       {/* Current score summary */}
-      {currentHomeScore !== null && currentAwayScore !== null && (
+      {currentHomeScore != null && currentAwayScore != null && (
         <div className="flex items-center justify-center gap-4 text-sm">
           <span className="text-gray-500">Current:</span>
           <span className="font-mono font-bold text-green-600">{currentHomeScore}</span>
