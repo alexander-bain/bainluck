@@ -62,6 +62,55 @@ async def debug_sport_keys(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/debug/api-bookmakers/{sport_key}")
+async def debug_api_bookmakers(sport_key: str):
+    """
+    Debug endpoint to check what bookmakers the API is returning.
+
+    This makes a direct call to the-odds-api.com to see all available
+    bookmakers for a sport. Useful for diagnosing why only one bookmaker
+    appears in the data.
+    """
+    service = OddsAPIService()
+    try:
+        events_data = await service.get_odds(sport_key)
+
+        # Collect all unique bookmakers across all events
+        all_bookmakers = set()
+        events_summary = []
+
+        for event in events_data:
+            event_bookmakers = [b["key"] for b in event.get("bookmakers", [])]
+            all_bookmakers.update(event_bookmakers)
+            events_summary.append({
+                "id": event["id"],
+                "home_team": event["home_team"],
+                "away_team": event["away_team"],
+                "bookmaker_count": len(event_bookmakers),
+                "bookmakers": event_bookmakers,
+            })
+
+        # Check API quota
+        quota = await service.check_quota()
+
+        return {
+            "sport_key": sport_key,
+            "total_events": len(events_data),
+            "unique_bookmakers": sorted(list(all_bookmakers)),
+            "bookmaker_count": len(all_bookmakers),
+            "api_quota": quota,
+            "events": events_summary[:5],  # First 5 events for brevity
+            "note": "If only 1 bookmaker appears, your API subscription tier may limit available bookmakers."
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "sport_key": sport_key,
+        }
+    finally:
+        await service.close()
+
+
 @router.get("")
 async def list_events(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
