@@ -715,8 +715,17 @@ export default function EventPage({ params }: EventPageProps) {
             <LoadingSpinner size="sm" />
           </div>
         ) : historyError ? (
-          <div className="h-48 flex items-center justify-center text-sm text-slate">
-            Unable to load history
+          <div className="h-48 flex flex-col items-center justify-center text-sm text-slate gap-2">
+            <span>Unable to load history</span>
+            <span className="text-xs text-silver">
+              {historyError.message || 'Unknown error'}
+            </span>
+            <button
+              onClick={() => refreshEvent()}
+              className="text-xs text-blue-600 hover:underline mt-2"
+            >
+              Retry
+            </button>
           </div>
         ) : historyData?.history?.length === 0 ? (
           <div className="h-48 flex items-center justify-center text-sm text-slate">
