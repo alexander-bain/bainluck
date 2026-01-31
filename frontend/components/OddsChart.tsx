@@ -56,6 +56,7 @@ export default function OddsChart({
   bookmakerHistory,
 }: OddsChartProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>(isLive ? "live" : "24h");
+  const [showBookmakerLines, setShowBookmakerLines] = useState<boolean>(true);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
@@ -267,7 +268,7 @@ export default function OddsChart({
   const minProb = probValues.length > 0 ? Math.floor(Math.min(...probValues) / 5) * 5 : 0;
   const maxProb = probValues.length > 0 ? Math.ceil(Math.max(...probValues) / 5) * 5 : 100;
 
-  // Custom tooltip
+  // Custom tooltip with bookmaker grouping
   const CustomTooltip = ({
     active,
     payload,
@@ -278,10 +279,35 @@ export default function OddsChart({
     label?: string;
   }) => {
     if (active && payload && payload.length) {
+      // Separate aggregate lines from bookmaker lines
+      const aggregateEntries = payload.filter(
+        (e) => e.dataKey === "homeProb" || e.dataKey === "awayProb"
+      );
+      const bookmakerEntries = payload.filter(
+        (e) => e.dataKey !== "homeProb" && e.dataKey !== "awayProb" && e.value !== null
+      );
+
+      // Group bookmaker entries by bookmaker name
+      const bookmakerGroups: Record<string, { home?: number; away?: number }> = {};
+      for (const entry of bookmakerEntries) {
+        const parts = entry.dataKey.split("_");
+        const type = parts.pop(); // 'home' or 'away'
+        const bookmaker = parts.join("_");
+        if (!bookmakerGroups[bookmaker]) {
+          bookmakerGroups[bookmaker] = {};
+        }
+        if (type === "home") {
+          bookmakerGroups[bookmaker].home = entry.value;
+        } else {
+          bookmakerGroups[bookmaker].away = entry.value;
+        }
+      }
+
       return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
+        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
-          {payload.map((entry, index) => (
+          {/* Aggregate probabilities */}
+          {aggregateEntries.map((entry, index) => (
             <p
               key={index}
               className="text-sm font-semibold"
@@ -290,6 +316,17 @@ export default function OddsChart({
               {entry.name}: {entry.value?.toFixed(1)}%
             </p>
           ))}
+          {/* Bookmaker breakdown */}
+          {Object.keys(bookmakerGroups).length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <p className="text-xs text-gray-400 mb-1">By sportsbook:</p>
+              {Object.entries(bookmakerGroups).map(([bookmaker, probs]) => (
+                <p key={bookmaker} className="text-xs text-gray-500">
+                  {bookmaker}: {probs.home?.toFixed(0)}% / {probs.away?.toFixed(0)}%
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       );
     }
@@ -298,21 +335,39 @@ export default function OddsChart({
 
   return (
     <div className="space-y-4">
-      {/* Time range selector */}
-      <div className="flex flex-wrap items-center gap-1">
-        {TIME_RANGE_OPTIONS.map((option) => (
+      {/* Time range selector and bookmaker toggle */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1">
+          {TIME_RANGE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setTimeRange(option.value)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                timeRange === option.value
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {/* Bookmaker lines toggle - only show if there are multiple bookmakers */}
+        {bookmakers.length > 0 && (
           <button
-            key={option.value}
-            onClick={() => setTimeRange(option.value)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-              timeRange === option.value
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            onClick={() => setShowBookmakerLines(!showBookmakerLines)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1.5 ${
+              showBookmakerLines
+                ? "bg-gray-200 text-gray-700"
+                : "bg-gray-100 text-gray-500"
             }`}
+            title={showBookmakerLines ? "Hide individual sportsbook lines" : "Show individual sportsbook lines"}
           >
-            {option.label}
+            <span className="w-3 h-0.5 bg-gray-400 rounded"></span>
+            <span className="hidden sm:inline">{showBookmakerLines ? "Hide" : "Show"} sources</span>
+            <span className="sm:hidden">{bookmakers.length}</span>
           </button>
-        ))}
+        )}
       </div>
 
       {/* Probability Chart */}
@@ -338,7 +393,7 @@ export default function OddsChart({
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
             {/* Individual bookmaker lines - thin grey, rendered first so they appear behind aggregate */}
-            {bookmakers.map((bookmaker) => (
+            {showBookmakerLines && bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_home`}
                 type="monotone"
@@ -346,12 +401,12 @@ export default function OddsChart({
                 stroke="rgba(156, 163, 175, 0.5)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={false}
+                activeDot={{ r: 3, fill: "#9ca3af" }}
                 connectNulls
                 legendType="none"
               />
             ))}
-            {bookmakers.map((bookmaker) => (
+            {showBookmakerLines && bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_away`}
                 type="monotone"
@@ -359,7 +414,7 @@ export default function OddsChart({
                 stroke="rgba(156, 163, 175, 0.5)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={false}
+                activeDot={{ r: 3, fill: "#9ca3af" }}
                 connectNulls
                 legendType="none"
               />
@@ -390,6 +445,13 @@ export default function OddsChart({
           </LineChart>
         </ResponsiveContainer>
       </div>
+
+      {/* Info about gray lines */}
+      {showBookmakerLines && bookmakers.length > 0 && (
+        <p className="text-xs text-gray-400 text-center">
+          Gray lines show individual sportsbooks • Tap/hover for details
+        </p>
+      )}
 
       {/* No data message for filtered range */}
       {filteredHistory.length === 0 && history.length > 0 && (

@@ -7,6 +7,7 @@ import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
 import ScoreChart from "@/components/ScoreChart";
+import ActualScoreChart from "@/components/ActualScoreChart";
 import BookmakerTable from "@/components/BookmakerTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -597,7 +598,46 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {/* Score Trend Chart - shown independently if there's history data */}
+      {/* Actual Score Chart - for live/finished games */}
+      {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
+        <div className="bg-white rounded-card shadow-card p-6">
+          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
+            🏆 Score Progression
+            {isStale && (
+              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-normal">
+                May be outdated
+              </span>
+            )}
+          </h3>
+          <ActualScoreChart
+            scoreHistory={historyData?.score_history}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+            currentHomeScore={event.home_score}
+            currentAwayScore={event.away_score}
+            commenceTime={event.commence_time}
+            isLive={effectivelyLive}
+            lastScoreUpdate={odds?.captured_at}
+          />
+          {/* Blowout/stale warning */}
+          {isStale && isLive && (
+            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <span className="text-amber-600">⚠️</span>
+                <div className="text-sm text-amber-800">
+                  <p className="font-medium">Score updates may be delayed</p>
+                  <p className="text-amber-700 mt-1">
+                    Sportsbooks sometimes stop updating odds during blowouts.
+                    The score shown ({event.home_score} - {event.away_score}) was last confirmed {staleMinutes} minutes ago.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Projected Score Trend Chart - shown independently if there's history data */}
       {historyData?.history && historyData.history.length > 0 && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
@@ -609,6 +649,7 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeam={event.away_team}
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
+            bookmakerHistory={historyData?.bookmaker_history}
           />
         </div>
       )}

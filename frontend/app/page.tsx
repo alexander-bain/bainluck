@@ -14,6 +14,8 @@ import {
   getLeagueDisplay,
   getLeagueTier,
   isFeaturedEvent,
+  getFeatureReason,
+  formatTimeUntil,
   calculateExcitementScore,
 } from "@/lib/sportCategories";
 
@@ -40,7 +42,8 @@ export default function HomePage() {
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("smart");
   const [collapsedSports, setCollapsedSports] = useState<Set<string>>(new Set());
-  const [completedCollapsed, setCompletedCollapsed] = useState<boolean>(true);
+  const [recentlyClosedCollapsed, setRecentlyClosedCollapsed] = useState<boolean>(false);
+  const [archivedCollapsed, setArchivedCollapsed] = useState<boolean>(true);
 
   const {
     data: sportsData,
@@ -59,8 +62,8 @@ export default function HomePage() {
     { refreshInterval: 30000 }
   );
 
-  // Filter events by category if selected, separating completed from active
-  const { filteredEvents, completedEvents } = useMemo(() => {
+  // Filter events by category if selected, separating by temporal category
+  const { filteredEvents, recentlyClosedEvents, archivedEvents } = useMemo(() => {
     let events = eventsData?.events ?? [];
     if (selectedCategory && !selectedSport) {
       const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
@@ -74,14 +77,30 @@ export default function HomePage() {
         );
       }
     }
-    // Separate finished events (completed/closed) from active (scheduled/live)
+
+    const now = new Date();
+    // Separate finished events into recently closed (<24h) and archived (>24h)
     const active = events.filter((e) => e.status !== "completed" && e.status !== "closed");
-    const finished = events
-      .filter((e) => e.status === "completed" || e.status === "closed")
-      .sort((a, b) =>
-        new Date(b.commence_time).getTime() - new Date(a.commence_time).getTime()
-      );
-    return { filteredEvents: active, completedEvents: finished };
+
+    const finishedEvents = events.filter((e) => e.status === "completed" || e.status === "closed");
+
+    const recentlyClosed = finishedEvents
+      .filter((e) => {
+        const eventDate = new Date(e.commence_time);
+        const hoursAgo = (now.getTime() - eventDate.getTime()) / (1000 * 60 * 60);
+        return hoursAgo <= 24;
+      })
+      .sort((a, b) => new Date(b.commence_time).getTime() - new Date(a.commence_time).getTime());
+
+    const archived = finishedEvents
+      .filter((e) => {
+        const eventDate = new Date(e.commence_time);
+        const hoursAgo = (now.getTime() - eventDate.getTime()) / (1000 * 60 * 60);
+        return hoursAgo > 24;
+      })
+      .sort((a, b) => new Date(b.commence_time).getTime() - new Date(a.commence_time).getTime());
+
+    return { filteredEvents: active, recentlyClosedEvents: recentlyClosed, archivedEvents: archived };
   }, [eventsData?.events, selectedCategory, selectedSport]);
 
   // Get featured events (live + close games starting soon)
@@ -261,28 +280,46 @@ export default function HomePage() {
             /* Smart View: Featured + Sport Groups */
             <div className="space-y-8">
               {/* Featured Section */}
-              {featuredEvents.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="text-lg">🔥</span>
-                    <h2 className="text-title-3 font-semibold text-graphite">
-                      Live & Close Games
-                    </h2>
-                    <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
-                      {featuredEvents.length}
-                    </span>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {featuredEvents.map((event) => (
-                      <EventCard
-                        key={`featured-${event.id}`}
-                        event={event}
-                        showSport={true}
-                      />
-                    ))}
-                  </div>
-                </section>
-              )}
+              {featuredEvents.length > 0 && (() => {
+                // Count live vs upcoming
+                const liveCount = featuredEvents.filter((e) => getFeatureReason(e) === "live").length;
+                const upcomingCount = featuredEvents.length - liveCount;
+                const sectionTitle = liveCount > 0 && upcomingCount > 0
+                  ? "Live & Starting Soon"
+                  : liveCount > 0
+                  ? "Live Games"
+                  : "Starting Soon";
+
+                return (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <span className="text-lg">{liveCount > 0 ? "🔴" : "⏰"}</span>
+                      <h2 className="text-title-3 font-semibold text-graphite">
+                        {sectionTitle}
+                      </h2>
+                      {liveCount > 0 && (
+                        <span className="text-caption text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full font-medium">
+                          {liveCount} live
+                        </span>
+                      )}
+                      {upcomingCount > 0 && (
+                        <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
+                          {upcomingCount} upcoming
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {featuredEvents.map((event) => (
+                        <EventCard
+                          key={`featured-${event.id}`}
+                          event={event}
+                          showSport={true}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })()}
 
               {/* Sport Category Sections */}
               {sportGroups.map((sportGroup) => (
@@ -367,22 +404,22 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Completed Games Section */}
-          {completedEvents.length > 0 && (
+          {/* Recently Closed Games Section */}
+          {recentlyClosedEvents.length > 0 && (
             <section className="border-t border-mist pt-6">
               <button
-                onClick={() => setCompletedCollapsed(!completedCollapsed)}
+                onClick={() => setRecentlyClosedCollapsed(!recentlyClosedCollapsed)}
                 className="flex items-center gap-2 mb-4 w-full text-left group"
               >
                 <span className="text-lg">✅</span>
                 <h2 className="text-title-3 font-semibold text-slate">
-                  Completed Games
+                  Recently Finished
                 </h2>
                 <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
-                  {completedEvents.length}
+                  {recentlyClosedEvents.length}
                 </span>
                 <span className="ml-auto text-slate group-hover:text-graphite transition-colors">
-                  {completedCollapsed ? (
+                  {recentlyClosedCollapsed ? (
                     <ChevronRight className="w-5 h-5" />
                   ) : (
                     <ChevronDown className="w-5 h-5" />
@@ -390,11 +427,48 @@ export default function HomePage() {
                 </span>
               </button>
 
-              {!completedCollapsed && (
+              {!recentlyClosedCollapsed && (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {completedEvents.map((event) => (
+                  {recentlyClosedEvents.map((event) => (
                     <EventCard
-                      key={`completed-${event.id}`}
+                      key={`recent-${event.id}`}
+                      event={event}
+                      showSport={!selectedCategory && !selectedSport}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Archived Games Section */}
+          {archivedEvents.length > 0 && (
+            <section className="border-t border-mist/50 pt-6">
+              <button
+                onClick={() => setArchivedCollapsed(!archivedCollapsed)}
+                className="flex items-center gap-2 mb-4 w-full text-left group"
+              >
+                <span className="text-lg">📦</span>
+                <h2 className="text-title-3 font-semibold text-silver">
+                  Archived
+                </h2>
+                <span className="text-caption text-silver bg-mist/30 px-2 py-0.5 rounded">
+                  {archivedEvents.length}
+                </span>
+                <span className="ml-auto text-silver group-hover:text-slate transition-colors">
+                  {archivedCollapsed ? (
+                    <ChevronRight className="w-5 h-5" />
+                  ) : (
+                    <ChevronDown className="w-5 h-5" />
+                  )}
+                </span>
+              </button>
+
+              {!archivedCollapsed && (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {archivedEvents.map((event) => (
+                    <EventCard
+                      key={`archived-${event.id}`}
                       event={event}
                       showSport={!selectedCategory && !selectedSport}
                     />
@@ -405,10 +479,11 @@ export default function HomePage() {
           )}
 
           {/* Event count */}
-          {(filteredEvents.length > 0 || completedEvents.length > 0) && (
+          {(filteredEvents.length > 0 || recentlyClosedEvents.length > 0 || archivedEvents.length > 0) && (
             <p className="text-center text-caption text-silver pt-4">
-              {filteredEvents.length} upcoming event{filteredEvents.length !== 1 ? "s" : ""}
-              {completedEvents.length > 0 && ` · ${completedEvents.length} completed`}
+              {filteredEvents.length} upcoming
+              {recentlyClosedEvents.length > 0 && ` · ${recentlyClosedEvents.length} recent`}
+              {archivedEvents.length > 0 && ` · ${archivedEvents.length} archived`}
             </p>
           )}
         </>
@@ -418,7 +493,93 @@ export default function HomePage() {
 }
 
 /**
- * Group events by date.
+ * Temporal categories for event organization
+ */
+type TemporalCategory = "today" | "tomorrow" | "this_week" | "upcoming" | "recently_closed" | "archived";
+
+interface TemporalGroup {
+  key: TemporalCategory;
+  label: string;
+  emoji: string;
+  events: Event[];
+  collapsed?: boolean;
+}
+
+/**
+ * Get temporal category for an event
+ */
+function getTemporalCategory(event: Event): TemporalCategory {
+  const now = new Date();
+  const eventDate = new Date(event.commence_time);
+  const isFinished = event.status === "completed" || event.status === "closed";
+
+  if (isFinished) {
+    // Check how long ago it finished
+    const hoursAgo = (now.getTime() - eventDate.getTime()) / (1000 * 60 * 60);
+    return hoursAgo <= 24 ? "recently_closed" : "archived";
+  }
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const dayAfterTomorrow = new Date(today);
+  dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+  const nextWeek = new Date(today);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  const eventDay = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+
+  if (eventDay.getTime() === today.getTime()) return "today";
+  if (eventDay.getTime() === tomorrow.getTime()) return "tomorrow";
+  if (eventDay < nextWeek) return "this_week";
+  return "upcoming";
+}
+
+/**
+ * Group events by temporal category
+ */
+function groupByTemporal(events: Event[]): TemporalGroup[] {
+  const categoryConfig: { key: TemporalCategory; label: string; emoji: string; collapsed?: boolean }[] = [
+    { key: "today", label: "Today", emoji: "📅" },
+    { key: "tomorrow", label: "Tomorrow", emoji: "📆" },
+    { key: "this_week", label: "This Week", emoji: "🗓️" },
+    { key: "upcoming", label: "Later", emoji: "⏳" },
+    { key: "recently_closed", label: "Recently Closed", emoji: "✅" },
+    { key: "archived", label: "Archived", emoji: "📦", collapsed: true },
+  ];
+
+  const groups: Record<TemporalCategory, Event[]> = {
+    today: [],
+    tomorrow: [],
+    this_week: [],
+    upcoming: [],
+    recently_closed: [],
+    archived: [],
+  };
+
+  for (const event of events) {
+    const category = getTemporalCategory(event);
+    groups[category].push(event);
+  }
+
+  // Sort events within each group by commence time
+  for (const key of Object.keys(groups) as TemporalCategory[]) {
+    groups[key].sort((a, b) =>
+      new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime()
+    );
+  }
+
+  // Return only non-empty groups
+  return categoryConfig
+    .filter((config) => groups[config.key].length > 0)
+    .map((config) => ({
+      ...config,
+      events: groups[config.key],
+    }));
+}
+
+/**
+ * Group events by date (legacy function for time/closeness views).
  */
 function groupByDate(events: Event[]): Record<string, Event[]> {
   const groups: Record<string, Event[]> = {};
