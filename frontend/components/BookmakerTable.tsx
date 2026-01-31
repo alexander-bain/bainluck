@@ -52,6 +52,20 @@ export default function BookmakerTable({
     return null;
   }
 
+  // Filter out bookmakers without probability data (they only have spread/totals)
+  const oddsWithProbability = bookmakerOdds.filter(
+    (odds) => odds.home_probability !== null && odds.away_probability !== null
+  );
+
+  // If no bookmakers have probability data, show a message
+  if (oddsWithProbability.length === 0) {
+    return (
+      <div className="text-center py-4 text-sm text-slate">
+        No win probability data available from sportsbooks for this event.
+      </div>
+    );
+  }
+
   // Check if any odds are stale (>30 minutes old)
   const now = new Date();
   const isStale = (isoString: string): boolean => {
@@ -61,14 +75,14 @@ export default function BookmakerTable({
   };
 
   // Sort by home probability descending to show range clearly
-  const sortedOdds = [...bookmakerOdds].sort((a, b) => {
+  const sortedOdds = [...oddsWithProbability].sort((a, b) => {
     const aProb = a.home_probability ?? 0;
     const bProb = b.home_probability ?? 0;
     return bProb - aProb;
   });
 
   // Calculate average ONLY from non-stale sportsbooks (those still actively updating)
-  const activeOdds = bookmakerOdds.filter(
+  const activeOdds = oddsWithProbability.filter(
     (b) => b.captured_at && !isStale(b.captured_at)
   );
   const validHomeProbs = activeOdds
@@ -80,10 +94,10 @@ export default function BookmakerTable({
       : null;
 
   // Count how many are stale vs active
-  const staleCount = bookmakerOdds.filter(
+  const staleCount = oddsWithProbability.filter(
     (b) => b.captured_at && isStale(b.captured_at)
   ).length;
-  const activeCount = bookmakerOdds.length - staleCount;
+  const activeCount = oddsWithProbability.length - staleCount;
 
   // Shorten team names for table header
   const shortHomeTeam = homeTeam.split(" ").pop() || homeTeam;
@@ -194,7 +208,7 @@ export default function BookmakerTable({
                 Average (Consensus)
                 {staleCount > 0 && (
                   <span className="ml-2 text-xs font-normal text-slate">
-                    ({activeCount} of {bookmakerOdds.length} open)
+                    ({activeCount} of {oddsWithProbability.length} open)
                   </span>
                 )}
               </td>

@@ -372,7 +372,14 @@ export default function OddsChart({
               tickFormatter={(value) => `${value}%`}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
+            <Legend
+              wrapperStyle={{ fontSize: "12px" }}
+              iconType="circle"
+              payload={[
+                { value: homeTeam, type: 'circle', color: '#22c55e' },
+                { value: awayTeam, type: 'circle', color: '#3b82f6' },
+              ]}
+            />
             {/* Individual bookmaker lines - thin grey, rendered first so they appear behind aggregate */}
             {bookmakers.map((bookmaker) => (
               <Line
