@@ -38,6 +38,7 @@ export interface Event {
   home_score: number | null;
   away_score: number | null;
   current_odds?: CurrentOdds;
+  bookmaker_odds?: BookmakerOddsDetail[];
 }
 
 export interface EventsResponse {
