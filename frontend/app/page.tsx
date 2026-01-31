@@ -308,7 +308,7 @@ export default function HomePage() {
                         </span>
                       )}
                     </div>
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
                       {featuredEvents.map((event) => (
                         <EventCard
                           key={`featured-${event.id}`}
@@ -347,7 +347,7 @@ export default function HomePage() {
 
                   {/* Sport Content */}
                   {!collapsedSports.has(sportGroup.categoryKey) && (
-                    <div className="space-y-6 pl-7">
+                    <div className="space-y-6">
                       {sportGroup.leagues.map((league) => (
                         <div key={league.leagueKey}>
                           {/* League Header */}
@@ -366,7 +366,7 @@ export default function HomePage() {
                           </div>
 
                           {/* League Events */}
-                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
                             {league.events.map((event) => (
                               <EventCard
                                 key={event.id}
@@ -390,7 +390,7 @@ export default function HomePage() {
                   <h2 className="text-caption-strong text-slate mb-4">
                     {date}
                   </h2>
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
                     {events.map((event) => (
                       <EventCard
                         key={event.id}
@@ -428,7 +428,7 @@ export default function HomePage() {
               </button>
 
               {!recentlyClosedCollapsed && (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
                   {recentlyClosedEvents.map((event) => (
                     <EventCard
                       key={`recent-${event.id}`}
@@ -465,7 +465,7 @@ export default function HomePage() {
               </button>
 
               {!archivedCollapsed && (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
                   {archivedEvents.map((event) => (
                     <EventCard
                       key={`archived-${event.id}`}

@@ -93,6 +93,19 @@ export default function BookmakerTable({
       ? validHomeProbs.reduce((a, b) => a + b, 0) / validHomeProbs.length
       : null;
 
+  // Calculate average projected scores from active bookmakers that have score data
+  const activeWithScores = activeOdds.filter(
+    (b) => b.projected_home_score != null && b.projected_away_score != null
+  );
+  const avgProjectedHomeScore =
+    activeWithScores.length > 0
+      ? activeWithScores.reduce((sum, b) => sum + (b.projected_home_score ?? 0), 0) / activeWithScores.length
+      : null;
+  const avgProjectedAwayScore =
+    activeWithScores.length > 0
+      ? activeWithScores.reduce((sum, b) => sum + (b.projected_away_score ?? 0), 0) / activeWithScores.length
+      : null;
+
   // Count how many are stale vs active
   const staleCount = oddsWithProbability.filter(
     (b) => b.captured_at && isStale(b.captured_at)
@@ -212,11 +225,25 @@ export default function BookmakerTable({
                   </span>
                 )}
               </td>
-              <td className="py-3 px-4 text-center font-mono tabular-nums text-graphite">
-                {(avgHomeProb * 100).toFixed(1)}%
+              <td className="py-3 px-4 text-center">
+                <div className="font-mono tabular-nums text-graphite">
+                  {(avgHomeProb * 100).toFixed(1)}%
+                </div>
+                {avgProjectedHomeScore !== null && (
+                  <div className="text-xs text-gray-400 font-normal mt-0.5" title="Projected score">
+                    {Math.round(avgProjectedHomeScore)}
+                  </div>
+                )}
               </td>
-              <td className="py-3 px-4 text-center font-mono tabular-nums text-graphite">
-                {((1 - avgHomeProb) * 100).toFixed(1)}%
+              <td className="py-3 px-4 text-center">
+                <div className="font-mono tabular-nums text-graphite">
+                  {((1 - avgHomeProb) * 100).toFixed(1)}%
+                </div>
+                {avgProjectedAwayScore !== null && (
+                  <div className="text-xs text-gray-400 font-normal mt-0.5" title="Projected score">
+                    {Math.round(avgProjectedAwayScore)}
+                  </div>
+                )}
               </td>
               <td className="py-3 px-4"></td>
               <td className="py-3 px-4"></td>

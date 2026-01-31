@@ -587,7 +587,7 @@ export default function EventPage({ params }: EventPageProps) {
                   if (count > 0) {
                     return (
                       <span
-                        className="cursor-help border-b border-dotted border-silver"
+                        className="cursor-help border-b border-dotted border-silver hover:text-slate hover:border-slate transition-colors px-1 py-0.5 -mx-1"
                         title={bookmakerNames.length > 0 ? bookmakerNames.join(", ") : undefined}
                       >
                         {count} source{count !== 1 ? "s" : ""}
