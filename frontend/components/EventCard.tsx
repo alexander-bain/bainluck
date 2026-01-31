@@ -91,8 +91,8 @@ export default function EventCard({
   // Check for stale data
   const { isStale, isNeedsReview, staleMinutes } = checkEventStaleness(event);
 
-  // If event needs review (live for too long), treat it as potentially closed
-  const effectivelyLive = isLive && !isNeedsReview && !isStale;
+  // Show all live events as live (stale/needs review tracked internally for analytics only)
+  const effectivelyLive = isLive;
 
   // Determine favorite
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
@@ -111,13 +111,9 @@ export default function EventCard({
   // Get sport emoji
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
 
-  // Card border/background based on state
-  // Only show stale styling for live games, not for scheduled events
-  const showStaleStyle = isLive && (isNeedsReview || isStale);
+  // Card border/background based on state (no amber warning styles for users)
   const cardClasses = effectivelyLive
     ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-    : showStaleStyle
-    ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
     : isCloseGame
     ? "bg-white border-2 border-amber-200"
     : "bg-white border border-mist";
@@ -142,18 +138,7 @@ export default function EventCard({
 
           {/* Status Badge */}
           <div className="flex items-center gap-1.5">
-            {/* Stale/Review status takes priority over live */}
-            {isNeedsReview && (
-              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
-                ⚠️ Review
-              </span>
-            )}
-            {isStale && !isNeedsReview && isLive && (
-              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold"
-                    title={staleMinutes ? `Last updated ${staleMinutes} minutes ago` : undefined}>
-                📡 Stale
-              </span>
-            )}
+            {/* Note: "Needs Review" and "Stale" indicators are tracked internally but not shown to users */}
             {effectivelyLive && (
               <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -188,7 +173,7 @@ export default function EventCard({
           <div className="flex items-center justify-center gap-4 py-2 mb-2 bg-white/60 rounded-lg">
             <div className="text-center">
               <div className={`text-2xl font-bold font-mono ${
-                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+                effectivelyLive ? "text-emerald-600" : "text-graphite"
               }`}>
                 {event.home_score}
               </div>
@@ -199,7 +184,7 @@ export default function EventCard({
             <div className="text-lg text-slate font-medium">—</div>
             <div className="text-center">
               <div className={`text-2xl font-bold font-mono ${
-                effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+                effectivelyLive ? "text-emerald-600" : "text-graphite"
               }`}>
                 {event.away_score}
               </div>

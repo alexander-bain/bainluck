@@ -244,8 +244,8 @@ export default function EventPage({ params }: EventPageProps) {
     : { isStale: false, isNeedsReview: false, staleMinutes: null };
   const { isStale, isNeedsReview, staleMinutes } = staleness;
 
-  // Effectively live = live AND not stale AND not needs review
-  const effectivelyLive = isLive && !isNeedsReview && !isStale;
+  // Show all live events as live (stale/needs review tracked internally for analytics only)
+  const effectivelyLive = isLive;
 
   // Track page view with event-specific parameters
   usePageTracking({
@@ -402,17 +402,7 @@ export default function EventPage({ params }: EventPageProps) {
         {!isFinished && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
-              {isNeedsReview && (
-                <span className="flex items-center gap-1.5 bg-amber-100 text-amber-700 px-2 py-1 rounded-full text-xs font-semibold">
-                  ⚠️ Review
-                </span>
-              )}
-              {isStale && !isNeedsReview && isLive && (
-                <span className="flex items-center gap-1.5 bg-amber-100 text-amber-700 px-2 py-1 rounded-full text-xs font-semibold"
-                      title={staleMinutes ? `Last updated ${staleMinutes} minutes ago` : undefined}>
-                  📡 Stale
-                </span>
-              )}
+              {/* Note: "Needs Review" and "Stale" indicators are tracked internally but not shown to users */}
               {effectivelyLive && (
                 <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -437,7 +427,7 @@ export default function EventPage({ params }: EventPageProps) {
                   cy="20"
                   r="16"
                   fill="none"
-                  stroke={effectivelyLive ? "#10B981" : (isStale || isNeedsReview) ? "#F59E0B" : "#6B7280"}
+                  stroke={effectivelyLive ? "#10B981" : "#6B7280"}
                   strokeWidth="3"
                   strokeDasharray={`${countdownProgress} 100`}
                   strokeLinecap="round"
@@ -456,8 +446,6 @@ export default function EventPage({ params }: EventPageProps) {
       <div className={`rounded-card shadow-card p-6 ${
         effectivelyLive
           ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-          : (isStale || isNeedsReview) && isLive
-          ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
           : isFinished
           ? "bg-slate-50 border border-slate-200"
           : "bg-white"
@@ -501,24 +489,6 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
             </div>
-          ) : isNeedsReview ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-center gap-2">
-                <span className="text-2xl font-bold text-amber-600">⚠️ NEEDS REVIEW</span>
-              </div>
-              <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
-                <span>Event has been live for over 4 hours without completion</span>
-              </div>
-            </div>
-          ) : isStale && isLive ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-center gap-2">
-                <span className="text-2xl font-bold text-amber-600">📡 STALE DATA</span>
-              </div>
-              <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
-                <span>Odds last updated {staleMinutes} minutes ago</span>
-              </div>
-            </div>
           ) : isFinished ? (
             <div className="text-slate">
               <div className="text-caption mb-1">Books closed</div>
@@ -559,7 +529,7 @@ export default function EventPage({ params }: EventPageProps) {
             <div className="flex items-center justify-center gap-6">
               <div className="text-center">
                 <div className={`text-4xl font-bold font-mono ${
-                  effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+                  effectivelyLive ? "text-emerald-600" : "text-graphite"
                 }`}>
                   {event.home_score}
                 </div>
@@ -570,7 +540,7 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="text-2xl text-slate">—</div>
               <div className="text-center">
                 <div className={`text-4xl font-bold font-mono ${
-                  effectivelyLive ? "text-emerald-600" : (isStale || isNeedsReview) ? "text-amber-600" : "text-graphite"
+                  effectivelyLive ? "text-emerald-600" : "text-graphite"
                 }`}>
                   {event.away_score}
                 </div>
@@ -702,11 +672,6 @@ export default function EventPage({ params }: EventPageProps) {
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
             🏆 Score Progression
-            {isStale && (
-              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-normal">
-                May be outdated
-              </span>
-            )}
           </h3>
           <ActualScoreChart
             scoreHistory={historyData?.score_history}
@@ -719,21 +684,6 @@ export default function EventPage({ params }: EventPageProps) {
             lastScoreUpdate={odds?.captured_at}
             eventId={event.id}
           />
-          {/* Blowout/stale warning */}
-          {isStale && isLive && (
-            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-              <div className="flex items-start gap-2">
-                <span className="text-amber-600">⚠️</span>
-                <div className="text-sm text-amber-800">
-                  <p className="font-medium">Score updates may be delayed</p>
-                  <p className="text-amber-700 mt-1">
-                    Sportsbooks sometimes stop updating odds during blowouts.
-                    The score shown ({event.home_score} - {event.away_score}) was last confirmed {staleMinutes} minutes ago.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
