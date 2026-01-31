@@ -418,6 +418,9 @@ export default function EventPage({ params }: EventPageProps) {
                 <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-2xl font-bold text-emerald-600">🔴 LIVE</span>
               </div>
+              <div className="text-sm text-slate">
+                Started {formatStartTime(event.commence_time)}
+              </div>
               {gameIsBlowout && (
                 <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
                   <span>⚠️</span>
@@ -430,6 +433,9 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="flex items-center justify-center gap-2">
                 <span className="text-2xl font-bold text-amber-600">⚠️ NEEDS REVIEW</span>
               </div>
+              <div className="text-sm text-slate mb-1">
+                Started {formatStartTime(event.commence_time)}
+              </div>
               <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
                 <span>Event has been live for over 4 hours without completion</span>
               </div>
@@ -438,6 +444,9 @@ export default function EventPage({ params }: EventPageProps) {
             <div className="space-y-2">
               <div className="flex items-center justify-center gap-2">
                 <span className="text-2xl font-bold text-amber-600">📡 STALE DATA</span>
+              </div>
+              <div className="text-sm text-slate mb-1">
+                Started {formatStartTime(event.commence_time)}
               </div>
               <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
                 <span>Odds last updated {staleMinutes} minutes ago</span>
