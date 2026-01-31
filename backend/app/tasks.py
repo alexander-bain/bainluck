@@ -652,6 +652,8 @@ async def _poll_all_odds():
             # Fetch scores for sports with events that have started
             # Use a 3-day window to capture longer events like tennis matches
             # that may start one day and finish the next
+            # Include "scheduled" events that have started - the scores API will
+            # update their status to "live" or "completed" as appropriate
             sports_needing_scores = await session.execute(
                 select(Sport.key)
                 .join(Event)
@@ -659,7 +661,7 @@ async def _poll_all_odds():
                     Sport.active == True,
                     Event.commence_time <= now,  # Event has started
                     Event.commence_time >= now - timedelta(days=3),  # Within last 3 days
-                    Event.status.in_(["live", "completed"]),  # Only live or completed
+                    Event.status.in_(["scheduled", "live", "completed"]),  # Include scheduled events that started
                 )
                 .distinct()
             )
