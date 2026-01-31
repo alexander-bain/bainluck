@@ -92,7 +92,7 @@ class OddsAPIService:
     async def get_odds(
         self,
         sport_key: str,
-        regions: str = "us",
+        regions: str = "us,us2",
         markets: str = "h2h,spreads,totals",
         odds_format: str = "american",
     ) -> list[dict]:
@@ -101,7 +101,12 @@ class OddsAPIService:
 
         Args:
             sport_key: Sport identifier (e.g., "basketball_nba")
-            regions: Bookmaker regions ("us", "uk", "eu", "au")
+            regions: Bookmaker regions - comma-separated. Options:
+                     "us" = Primary US bookmakers (DraftKings, FanDuel, BetMGM, etc.)
+                     "us2" = Secondary US bookmakers (additional books)
+                     "uk" = UK bookmakers
+                     "eu" = EU bookmakers
+                     "au" = Australian bookmakers
             markets: Bet types ("h2h" for moneyline, "spreads", "totals")
             odds_format: "american" or "decimal"
 
