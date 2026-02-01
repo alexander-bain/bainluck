@@ -27,6 +27,35 @@ export interface CurrentOdds {
   };
 }
 
+export interface HighlightFlags {
+  is_live: boolean;
+  is_close_matchup: boolean;
+  is_blowout: boolean;
+  favorite_switched: boolean;
+  probability_swing: "major" | "minor" | "stable";
+  score_swing: "major" | "minor" | "stable";
+  is_starting_soon: boolean;
+  is_recently_finished: boolean;
+  is_upset: boolean;
+  league_tier: number;
+}
+
+export interface Highlight {
+  score: number;
+  reasons: string[];
+  label: string | null;
+  should_feature: boolean;
+  flags: HighlightFlags;
+}
+
+export interface OpeningOdds {
+  home_probability: number;
+  away_probability: number | null;
+  spread: number | null;
+  over_under: number | null;
+  favorite: "home" | "away" | "even" | null;
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -39,6 +68,8 @@ export interface Event {
   away_score: number | null;
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
+  highlight?: Highlight;
+  opening_odds?: OpeningOdds;
 }
 
 export interface EventsResponse {

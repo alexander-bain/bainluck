@@ -124,11 +124,16 @@ export default function HomePage() {
     return { filteredEvents: active, recentlyClosedEvents: recentlyClosed, archivedEvents: archived };
   }, [eventsData?.events, selectedCategory, selectedSport]);
 
-  // Get featured events (live + close games starting soon)
+  // Get featured events using backend highlight scoring
   const featuredEvents = useMemo(() => {
     return filteredEvents
-      .filter((e) => isFeaturedEvent(e))
-      .sort((a, b) => calculateExcitementScore(b) - calculateExcitementScore(a))
+      .filter((e) => e.highlight?.should_feature || isFeaturedEvent(e))
+      .sort((a, b) => {
+        // Sort by highlight score (from backend) if available, fall back to excitement score
+        const scoreA = a.highlight?.score ?? calculateExcitementScore(a);
+        const scoreB = b.highlight?.score ?? calculateExcitementScore(b);
+        return scoreB - scoreA;
+      })
       .slice(0, 6); // Max 6 featured events
   }, [filteredEvents]);
 
@@ -345,16 +350,26 @@ export default function HomePage() {
             <div className="space-y-8">
               {/* Highlights Section */}
               {featuredEvents.length > 0 && (() => {
-                // Categorize featured events
-                const liveEvents = featuredEvents.filter((e) => getFeatureReason(e) === "live");
-                const closeEvents = featuredEvents.filter((e) => getFeatureReason(e) === "close_game");
-                const soonEvents = featuredEvents.filter((e) => getFeatureReason(e) === "starting_soon");
+                // Categorize featured events using backend highlight data
+                const liveEvents = featuredEvents.filter((e) =>
+                  e.highlight?.flags?.is_live || e.status === "live"
+                );
+                const upsetEvents = featuredEvents.filter((e) =>
+                  e.highlight?.flags?.favorite_switched && !e.highlight?.flags?.is_live
+                );
+                const closeEvents = featuredEvents.filter((e) =>
+                  e.highlight?.flags?.is_close_matchup && !e.highlight?.flags?.is_live
+                );
+                const soonEvents = featuredEvents.filter((e) =>
+                  e.highlight?.flags?.is_starting_soon && !e.highlight?.flags?.is_live
+                );
 
                 // Build subtitle explanation
                 const subtitleParts: string[] = [];
-                if (liveEvents.length > 0) subtitleParts.push(`${liveEvents.length} in progress`);
-                if (closeEvents.length > 0) subtitleParts.push(`${closeEvents.length} close matchup${closeEvents.length > 1 ? "s" : ""}`);
-                if (soonEvents.length > 0) subtitleParts.push(`${soonEvents.length} starting soon`);
+                if (liveEvents.length > 0) subtitleParts.push(`${liveEvents.length} live`);
+                if (upsetEvents.length > 0) subtitleParts.push(`${upsetEvents.length} upset${upsetEvents.length > 1 ? "s" : ""}`);
+                if (closeEvents.length > 0) subtitleParts.push(`${closeEvents.length} close`);
+                if (soonEvents.length > 0) subtitleParts.push(`${soonEvents.length} soon`);
 
                 return (
                   <section>
@@ -377,6 +392,7 @@ export default function HomePage() {
                           showSport={true}
                           sourceSection="featured"
                           positionIndex={index}
+                          highlightLabel={event.highlight?.label}
                         />
                       ))}
                     </div>

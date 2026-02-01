@@ -16,43 +16,8 @@ interface EventCardProps {
   sourceSection?: SourceSection;
   /** Position in list for analytics tracking */
   positionIndex?: number;
-}
-
-// Staleness thresholds
-const STALE_ODDS_MINUTES = 30; // Odds not updated in 30 minutes = stale
-const MAX_LIVE_HOURS = 4; // If "live" for more than 4 hours, needs review
-
-/**
- * Check if an event's live status is stale and needs review.
- * Returns: { isStale: boolean, isNeedsReview: boolean, staleMinutes: number | null }
- */
-function checkEventStaleness(event: Event): {
-  isStale: boolean;
-  isNeedsReview: boolean;
-  staleMinutes: number | null;
-} {
-  const now = new Date();
-  const commenceTime = new Date(event.commence_time);
-  const hoursSinceStart = (now.getTime() - commenceTime.getTime()) / (1000 * 60 * 60);
-
-  // Check if event has been "live" for too long (>4 hours without completion)
-  const isNeedsReview = event.status === "live" && hoursSinceStart > MAX_LIVE_HOURS;
-
-  // Check if odds data is stale (not updated in 30+ minutes)
-  let isStale = false;
-  let staleMinutes: number | null = null;
-
-  if (event.current_odds?.captured_at) {
-    const lastUpdate = new Date(event.current_odds.captured_at);
-    const minutesSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
-
-    if (minutesSinceUpdate > STALE_ODDS_MINUTES) {
-      isStale = true;
-      staleMinutes = Math.round(minutesSinceUpdate);
-    }
-  }
-
-  return { isStale, isNeedsReview, staleMinutes };
+  /** Optional highlight label from backend */
+  highlightLabel?: string | null;
 }
 
 /**
@@ -67,6 +32,7 @@ export default function EventCard({
   showSport = true,
   sourceSection = 'sport_category',
   positionIndex = 0,
+  highlightLabel,
 }: EventCardProps) {
   const { trackEventCardClick } = useAnalytics();
   const odds = event.current_odds;
@@ -88,10 +54,7 @@ export default function EventCard({
   const isFinished = isCompleted || isClosed;
   const startingSoon = !isLive && !isFinished && isStartingSoon(event.commence_time);
 
-  // Check for stale data
-  const { isStale, isNeedsReview, staleMinutes } = checkEventStaleness(event);
-
-  // Show all live events as live (stale/needs review tracked internally for analytics only)
+  // Use highlight flags from backend if available
   const effectivelyLive = isLive;
 
   // Determine favorite
@@ -111,9 +74,15 @@ export default function EventCard({
   // Get sport emoji
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
 
-  // Card border/background based on state (no amber warning styles for users)
+  // Use highlight flags for styling if available
+  const isFeaturedHighlight = event.highlight?.flags?.favorite_switched ||
+    event.highlight?.flags?.is_upset;
+
+  // Card border/background based on state
   const cardClasses = effectivelyLive
     ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
+    : isFeaturedHighlight
+    ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
     : isCloseGame
     ? "bg-white border-2 border-amber-200"
     : "bg-white border border-mist";
@@ -138,11 +107,16 @@ export default function EventCard({
 
           {/* Status Badge */}
           <div className="flex items-center gap-1.5">
-            {/* Note: "Needs Review" and "Stale" indicators are tracked internally but not shown to users */}
+            {/* Highlight label from backend (e.g., "Upset brewing", "Close game") */}
+            {highlightLabel && !effectivelyLive && (
+              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                {highlightLabel}
+              </span>
+            )}
             {effectivelyLive && (
               <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                LIVE
+                {highlightLabel || "LIVE"}
               </span>
             )}
             {isCompleted && (
@@ -155,12 +129,12 @@ export default function EventCard({
                 🔒 Closed
               </span>
             )}
-            {startingSoon && !isLive && !isFinished && (
+            {startingSoon && !isLive && !isFinished && !highlightLabel && (
               <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                 ⏰ {formatTimeUntil(event.commence_time)}
               </span>
             )}
-            {!isLive && !isFinished && !startingSoon && (
+            {!isLive && !isFinished && !startingSoon && !highlightLabel && (
               <span className="text-xs text-slate">
                 {timeStr}
               </span>
