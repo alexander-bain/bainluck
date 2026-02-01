@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import type { Event } from "@/lib/types";
-import { formatProbability, isStartingSoon } from "@/lib/api";
-import { getLeagueDisplay, getEmojiForLeague, formatTimeUntil, getLeagueTier } from "@/lib/sportCategories";
+import { formatProbability } from "@/lib/api";
+import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
-import { calculateMinutesToStart, isCloseGame as checkCloseGame } from "@/lib/analytics";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results';
 
@@ -52,7 +51,6 @@ export default function EventCard({
   const isCompleted = event.status === "completed";
   const isClosed = event.status === "closed";
   const isFinished = isCompleted || isClosed;
-  const startingSoon = !isLive && !isFinished && isStartingSoon(event.commence_time);
 
   // Use highlight flags from backend if available
   const effectivelyLive = isLive;
@@ -105,8 +103,14 @@ export default function EventCard({
             )}
           </div>
 
-          {/* Status Badge */}
+          {/* Status Badge and Time */}
           <div className="flex items-center gap-1.5">
+            {/* Start time for scheduled games - always show in this location */}
+            {!isLive && !isFinished && (
+              <span className="text-xs text-slate">
+                {timeStr}
+              </span>
+            )}
             {/* Highlight label from backend (e.g., "Upset brewing", "Close game") */}
             {highlightLabel && !effectivelyLive && (
               <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
@@ -127,16 +131,6 @@ export default function EventCard({
             {isClosed && (
               <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
                 🔒 Closed
-              </span>
-            )}
-            {startingSoon && !isLive && !isFinished && !highlightLabel && (
-              <span className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">
-                ⏰ {formatTimeUntil(event.commence_time)}
-              </span>
-            )}
-            {!isLive && !isFinished && !startingSoon && !highlightLabel && (
-              <span className="text-xs text-slate">
-                {timeStr}
               </span>
             )}
           </div>
@@ -234,33 +228,25 @@ export default function EventCard({
           </div>
         </div>
 
-        {/* Footer: Projected Score for future games, Time for live/finished */}
+        {/* Footer: Projected Score for future games, bookmaker count */}
         <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center">
-          {/* Projected Score (only for future games with odds) */}
-          {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null && (
-            <div className="flex items-center gap-1.5 text-sm">
-              <span className="text-slate">Projected:</span>
-              <span className="font-mono font-medium text-graphite">
-                {Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}
+          {/* Left side: Projected Score (only for future games with odds) */}
+          <div className="flex items-center gap-1.5 text-sm">
+            {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
+              <>
+                <span className="text-slate">Projected:</span>
+                <span className="font-mono font-medium text-graphite">
+                  {Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}
+                </span>
+              </>
+            ) : (isLive || isFinished) ? (
+              <span className="text-xs text-slate">
+                {effectivelyLive ? "🔄 Live updates" : `Played ${timeStr}`}
               </span>
-            </div>
-          )}
+            ) : null}
+          </div>
 
-          {/* For live/finished, show time info - don't duplicate stale indicator */}
-          {(isLive || isFinished) && (
-            <div className="text-xs text-slate">
-              {effectivelyLive ? "🔄 Live" : isFinished ? `Played ${timeStr}` : `Started ${timeStr}`}
-            </div>
-          )}
-
-          {/* Empty state filler */}
-          {!isLive && !isFinished && (!odds?.projected_home_score || !odds?.projected_away_score) && (
-            <div className="text-xs text-slate">
-              {timeStr}
-            </div>
-          )}
-
-          {/* Right side: Close game indicator and/or bookmaker count */}
+          {/* Right side: Bookmaker count and Close game indicator */}
           <div className="flex items-center gap-2">
             {/* Bookmaker count indicator */}
             {odds?.bookmaker_count && odds.bookmaker_count > 1 && (

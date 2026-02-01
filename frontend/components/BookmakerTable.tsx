@@ -137,11 +137,8 @@ export default function BookmakerTable({
               <div>{shortAwayTeam}</div>
               {hasAnyProjectedScores && <div className="text-xs font-normal text-gray-400">(proj. score)</div>}
             </th>
-            <th className="text-center py-3 px-4 font-semibold text-slate">
-              Status
-            </th>
             <th className="text-right py-3 px-4 font-semibold text-slate">
-              Last Updated
+              Status
             </th>
           </tr>
         </thead>
@@ -191,7 +188,10 @@ export default function BookmakerTable({
                     </div>
                   )}
                 </td>
-                <td className="py-3 px-4 text-center">
+                <td
+                  className="py-3 px-4 text-right"
+                  title={odds.captured_at ? formatAbsoluteTime(odds.captured_at) : undefined}
+                >
                   {stale ? (
                     <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
                       Closed
@@ -201,14 +201,9 @@ export default function BookmakerTable({
                       Open
                     </span>
                   )}
-                </td>
-                <td
-                  className={`py-3 px-4 text-right text-xs ${
-                    stale ? "text-amber-600" : "text-slate"
-                  }`}
-                  title={odds.captured_at ? formatAbsoluteTime(odds.captured_at) : undefined}
-                >
-                  {odds.captured_at ? formatRelativeTime(odds.captured_at) : "-"}
+                  <div className="text-xs text-gray-400 mt-1">
+                    {odds.captured_at ? formatRelativeTime(odds.captured_at) : "-"}
+                  </div>
                 </td>
               </tr>
             );
@@ -245,7 +240,6 @@ export default function BookmakerTable({
                   </div>
                 )}
               </td>
-              <td className="py-3 px-4"></td>
               <td className="py-3 px-4"></td>
             </tr>
           </tfoot>
