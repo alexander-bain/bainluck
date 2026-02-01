@@ -10,8 +10,8 @@ from app.services import get_db, OddsAPIService
 
 router = APIRouter()
 
-# Excluded sport prefixes (soccer, cricket, rugby, AFL)
-EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
+# Excluded sport prefixes (rugby only - soccer, cricket, aussie rules now enabled)
+EXCLUDED_SPORT_PREFIXES = ["rugbyleague_", "rugbyunion_"]
 
 
 @router.get("")
@@ -104,7 +104,7 @@ async def cleanup_excluded_sports(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Remove all excluded sports (soccer, cricket, rugby, AFL), events, and odds snapshots.
+    Remove all excluded sports (rugby), events, and odds snapshots.
 
     This is an admin-only endpoint protected by a secret token.
     """
