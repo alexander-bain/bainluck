@@ -53,6 +53,8 @@ export default function HomePage() {
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
   // Sport sections are collapsed by default (empty set = all collapsed)
   const [expandedSports, setExpandedSports] = useState<Set<string>>(new Set());
+  // League sections are also collapsed by default
+  const [expandedLeagues, setExpandedLeagues] = useState<Set<string>>(new Set());
 
   // Analytics
   const { trackSectionToggle } = useAnalytics();
@@ -254,6 +256,29 @@ export default function HomePage() {
     });
   }, [trackSectionToggle]);
 
+  const toggleLeagueExpand = useCallback((leagueKey: string, leagueName: string, eventCount: number) => {
+    setExpandedLeagues((prev) => {
+      const next = new Set(prev);
+      const isExpanding = !next.has(leagueKey);
+      if (next.has(leagueKey)) {
+        next.delete(leagueKey);
+      } else {
+        next.add(leagueKey);
+      }
+
+      // Track analytics
+      trackSectionToggle(
+        isExpanding ? 'expand' : 'collapse',
+        'league',
+        leagueName,
+        leagueKey,
+        eventCount
+      );
+
+      return next;
+    });
+  }, [trackSectionToggle]);
+
   const sports = sportsData?.sports ?? [];
 
   return (
@@ -399,11 +424,21 @@ export default function HomePage() {
 
                   {/* Sport Content */}
                   {expandedSports.has(sportGroup.categoryKey) && (
-                    <div className="space-y-6">
+                    <div className="space-y-4">
                       {sportGroup.leagues.map((league) => (
                         <div key={league.leagueKey}>
-                          {/* League Header */}
-                          <div className="flex items-center gap-2 mb-3">
+                          {/* League Header - clickable toggle */}
+                          <button
+                            onClick={() => toggleLeagueExpand(league.leagueKey, league.leagueName, league.events.length)}
+                            className="flex items-center gap-2 mb-2 w-full text-left group"
+                          >
+                            <span className="text-slate group-hover:text-graphite transition-colors">
+                              {expandedLeagues.has(league.leagueKey) ? (
+                                <ChevronDown className="w-4 h-4" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4" />
+                              )}
+                            </span>
                             <h3 className="text-body font-medium text-graphite">
                               {league.leagueName}
                             </h3>
@@ -415,20 +450,22 @@ export default function HomePage() {
                             <span className="text-caption text-silver">
                               {league.events.length} event{league.events.length !== 1 ? "s" : ""}
                             </span>
-                          </div>
+                          </button>
 
                           {/* League Events */}
-                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                            {league.events.map((event, index) => (
-                              <EventCard
-                                key={event.id}
-                                event={event}
-                                showSport={false}
-                                sourceSection="sport_category"
-                                positionIndex={index}
-                              />
-                            ))}
-                          </div>
+                          {expandedLeagues.has(league.leagueKey) && (
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
+                              {league.events.map((event, index) => (
+                                <EventCard
+                                  key={event.id}
+                                  event={event}
+                                  showSport={false}
+                                  sourceSection="sport_category"
+                                  positionIndex={index}
+                                />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

@@ -164,9 +164,9 @@ export interface BookmakerHoverParams {
 
 export interface SectionToggleParams {
   action: 'expand' | 'collapse';
-  section_type: 'sport_category' | 'featured' | 'recently_finished' | 'archived' | 'more_sports';
+  section_type: 'sport_category' | 'league' | 'featured' | 'recently_finished' | 'archived' | 'more_sports';
   section_name: string;
-  /** For sport categories */
+  /** For sport categories or leagues */
   sport_category?: string;
   /** Number of items in the section */
   item_count?: number;
