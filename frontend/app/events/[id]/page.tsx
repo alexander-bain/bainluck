@@ -436,11 +436,19 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           ) : isFinished ? (
-            <div className="text-slate">
-              <div className="text-caption mb-1">Books closed</div>
+            <div className="text-slate space-y-1">
               <div className="text-lg font-medium">
-                {odds?.captured_at ? formatStartTime(odds.captured_at) : formatStartTime(event.commence_time)}
+                📅 {new Date(event.commence_time).toLocaleDateString("en-US", {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                })} at {new Date(event.commence_time).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZoneName: "short",
+                })}
               </div>
+              <div className="text-caption">Game finished • Books closed</div>
             </div>
           ) : (
             <div className="space-y-2">
