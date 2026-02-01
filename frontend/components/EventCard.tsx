@@ -54,10 +54,7 @@ export default function EventCard({
   const isFinished = isCompleted || isClosed;
   const startingSoon = !isLive && !isFinished && isStartingSoon(event.commence_time);
 
-  // Check for stale data
-  const { isStale, isNeedsReview, staleMinutes } = checkEventStaleness(event);
-
-  // Show all live events as live (stale/needs review tracked internally for analytics only)
+  // Use highlight flags from backend if available
   const effectivelyLive = isLive;
 
   // Determine favorite
@@ -77,9 +74,15 @@ export default function EventCard({
   // Get sport emoji
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
 
-  // Card border/background based on state (no amber warning styles for users)
+  // Use highlight flags for styling if available
+  const isFeaturedHighlight = event.highlight?.flags?.favorite_switched ||
+    event.highlight?.flags?.is_upset;
+
+  // Card border/background based on state
   const cardClasses = effectivelyLive
     ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
+    : isFeaturedHighlight
+    ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
     : isCloseGame
     ? "bg-white border-2 border-amber-200"
     : "bg-white border border-mist";
@@ -104,7 +107,12 @@ export default function EventCard({
 
           {/* Status Badge */}
           <div className="flex items-center gap-1.5">
-            {/* Note: "Needs Review" and "Stale" indicators are tracked internally but not shown to users */}
+            {/* Highlight label from backend (e.g., "Upset brewing", "Close game") */}
+            {highlightLabel && !effectivelyLive && (
+              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                {highlightLabel}
+              </span>
+            )}
             {effectivelyLive && (
               <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
