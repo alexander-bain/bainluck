@@ -56,10 +56,19 @@ export default function OddsChart({
   eventStatus,
 }: OddsChartProps) {
   // Determine default time range based on event status:
-  // - Closed/completed/live events: default to "Since Start"
+  // - Closed/completed/live events: default to "Since Start" IF there's post-start data
   // - Open/scheduled events: default to "All"
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
-  const defaultTimeRange: TimeRange = isClosed || isLive ? "live" : "all";
+
+  // Check if there's any data after commence time for "Since Start" filter
+  const hasPostStartData = useMemo(() => {
+    if (!history || history.length === 0 || !commenceTime) return false;
+    const cutoffTime = parseISO(commenceTime);
+    return history.some((point) => parseISO(point.timestamp) >= cutoffTime);
+  }, [history, commenceTime]);
+
+  // Only default to "Since Start" if there's actually post-start data
+  const defaultTimeRange: TimeRange = (isClosed || isLive) && hasPostStartData ? "live" : "all";
 
   const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
 
