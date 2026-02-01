@@ -84,6 +84,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_sports",
         "schedule": crontab(minute=0),  # Every hour
     },
+    "discover-new-events": {
+        "task": "app.tasks.discover_events",
+        "schedule": crontab(minute="*/15"),  # Every 15 minutes - discover events for all sports
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -419,6 +423,118 @@ async def _sync_sports():
             await session.commit()
 
         return {"synced": synced}
+    finally:
+        await service.close()
+
+
+@celery_app.task(bind=True, max_retries=3)
+def discover_events(self):
+    """
+    Discover events for ALL active sports, including those with no events yet.
+
+    This solves the chicken-and-egg problem where sports without events
+    never get polled. Runs every 15 minutes to pick up new games.
+    """
+    try:
+        return run_async(_discover_events())
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=120)
+
+
+async def _discover_events():
+    """
+    Async implementation of discover_events.
+
+    Polls ALL active sports (not just those with upcoming events) to discover
+    new games. This ensures NCAA basketball, etc. get picked up even if they
+    currently have no events in the database.
+    """
+    service = OddsAPIService()
+
+    try:
+        total_events = 0
+        total_new_events = 0
+        sports_polled = 0
+
+        async with async_session_maker() as session:
+            # Get ALL active sports (not filtering by existing events)
+            result = await session.execute(
+                select(Sport).where(Sport.active == True)
+            )
+            sports = result.scalars().all()
+
+            for sport in sports:
+                sport_key = sport.key
+
+                # Skip excluded sports
+                if any(sport_key.startswith(prefix) for prefix in OddsAPIService.EXCLUDED_PREFIXES):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
+                    continue
+
+                try:
+                    # Fetch odds for this sport
+                    events_data = await service.get_odds(sport_key)
+                    sports_polled += 1
+
+                    for event_data in events_data:
+                        commence_time = datetime.fromisoformat(
+                            event_data["commence_time"].replace("Z", "+00:00")
+                        )
+
+                        # Determine event status
+                        now = datetime.now(timezone.utc)
+                        if commence_time <= now:
+                            event_status = "live"
+                        else:
+                            event_status = "scheduled"
+
+                        # Upsert event
+                        stmt = insert(Event).values(
+                            external_id=event_data["id"],
+                            sport_id=sport.id,
+                            home_team_name=event_data["home_team"],
+                            away_team_name=event_data["away_team"],
+                            commence_time=commence_time,
+                            status=event_status,
+                        ).on_conflict_do_update(
+                            index_elements=["external_id"],
+                            set_={
+                                "home_team_name": event_data["home_team"],
+                                "away_team_name": event_data["away_team"],
+                                "commence_time": commence_time,
+                                "status": case(
+                                    (Event.status == "scheduled", event_status),
+                                    else_=Event.status
+                                ),
+                            }
+                        ).returning(Event.id)
+
+                        result = await session.execute(stmt)
+                        event_id = result.scalar_one()
+                        total_events += 1
+
+                        # Check if this was a new event (simple heuristic)
+                        # If the event has no snapshots, it's likely new
+                        snapshot_check = await session.execute(
+                            select(func.count(OddsSnapshot.id))
+                            .where(OddsSnapshot.event_id == event_id)
+                        )
+                        if snapshot_check.scalar() == 0:
+                            total_new_events += 1
+
+                except Exception as e:
+                    # Log but continue with other sports
+                    print(f"Error discovering events for {sport_key}: {e}")
+                    continue
+
+            await session.commit()
+
+        return {
+            "sports_polled": sports_polled,
+            "events_found": total_events,
+            "new_events": total_new_events,
+        }
     finally:
         await service.close()
 
