@@ -56,10 +56,15 @@ export function initializeAnalytics(): void {
   // Initialize dataLayer
   window.dataLayer = window.dataLayer || [];
 
-  // Create gtag function
-  window.gtag = function gtag(...args: unknown[]) {
-    window.dataLayer.push(args);
-  };
+  // Only create gtag function if not already defined by the inline script
+  // The inline script in GoogleAnalytics.tsx defines it correctly
+  if (typeof window.gtag !== 'function') {
+    // eslint-disable-next-line prefer-rest-params
+    window.gtag = function gtag() {
+      // Must use arguments, not rest params, for gtag to work correctly
+      window.dataLayer.push(arguments);
+    };
+  }
 
   // Set default consent (denied until user accepts)
   window.gtag('consent', 'default', GA_CONFIG.DEFAULT_CONSENT);
