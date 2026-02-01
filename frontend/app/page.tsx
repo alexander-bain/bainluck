@@ -425,49 +425,65 @@ export default function HomePage() {
                   {/* Sport Content */}
                   {expandedSports.has(sportGroup.categoryKey) && (
                     <div className="space-y-4">
-                      {sportGroup.leagues.map((league) => (
-                        <div key={league.leagueKey}>
-                          {/* League Header - clickable toggle */}
-                          <button
-                            onClick={() => toggleLeagueExpand(league.leagueKey, league.leagueName, league.events.length)}
-                            className="flex items-center gap-2 mb-2 w-full text-left group"
-                          >
-                            <span className="text-slate group-hover:text-graphite transition-colors">
-                              {expandedLeagues.has(league.leagueKey) ? (
-                                <ChevronDown className="w-4 h-4" />
-                              ) : (
-                                <ChevronRight className="w-4 h-4" />
-                              )}
-                            </span>
-                            <h3 className="text-body font-medium text-graphite">
-                              {league.leagueName}
-                            </h3>
-                            {league.tier === 1 && (
-                              <span className="text-micro bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
-                                Major
-                              </span>
-                            )}
-                            <span className="text-caption text-silver">
-                              {league.events.length} event{league.events.length !== 1 ? "s" : ""}
-                            </span>
-                          </button>
-
-                          {/* League Events */}
-                          {expandedLeagues.has(league.leagueKey) && (
-                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
-                              {league.events.map((event, index) => (
-                                <EventCard
-                                  key={event.id}
-                                  event={event}
-                                  showSport={false}
-                                  sourceSection="sport_category"
-                                  positionIndex={index}
-                                />
-                              ))}
-                            </div>
-                          )}
+                      {/* Single league: show events directly without extra toggle */}
+                      {sportGroup.leagues.length === 1 ? (
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
+                          {sportGroup.leagues[0].events.map((event, index) => (
+                            <EventCard
+                              key={event.id}
+                              event={event}
+                              showSport={false}
+                              sourceSection="sport_category"
+                              positionIndex={index}
+                            />
+                          ))}
                         </div>
-                      ))}
+                      ) : (
+                        /* Multiple leagues: show collapsible league toggles */
+                        sportGroup.leagues.map((league) => (
+                          <div key={league.leagueKey}>
+                            {/* League Header - clickable toggle */}
+                            <button
+                              onClick={() => toggleLeagueExpand(league.leagueKey, league.leagueName, league.events.length)}
+                              className="flex items-center gap-2 mb-2 w-full text-left group"
+                            >
+                              <span className="text-slate group-hover:text-graphite transition-colors">
+                                {expandedLeagues.has(league.leagueKey) ? (
+                                  <ChevronDown className="w-4 h-4" />
+                                ) : (
+                                  <ChevronRight className="w-4 h-4" />
+                                )}
+                              </span>
+                              <h3 className="text-body font-medium text-graphite">
+                                {league.leagueName}
+                              </h3>
+                              {league.tier === 1 && (
+                                <span className="text-micro bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                                  Major
+                                </span>
+                              )}
+                              <span className="text-caption text-silver">
+                                {league.events.length} event{league.events.length !== 1 ? "s" : ""}
+                              </span>
+                            </button>
+
+                            {/* League Events */}
+                            {expandedLeagues.has(league.leagueKey) && (
+                              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
+                                {league.events.map((event, index) => (
+                                  <EventCard
+                                    key={event.id}
+                                    event={event}
+                                    showSport={false}
+                                    sourceSection="sport_category"
+                                    positionIndex={index}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
                     </div>
                   )}
                 </section>
