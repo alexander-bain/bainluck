@@ -141,9 +141,6 @@ export interface EventDetailViewParams {
   away_probability: number | null;
   is_close_game: boolean;
   is_live: boolean;
-  /** Is the data stale? */
-  is_stale: boolean;
-  is_needs_review: boolean;
   /** Number of bookmakers with data */
   bookmaker_count: number;
   /** Time until/since game start */
