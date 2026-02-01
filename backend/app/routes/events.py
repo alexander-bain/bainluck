@@ -22,11 +22,11 @@ from app.utils import (
 
 router = APIRouter()
 
-# Excluded sport prefixes (soccer, cricket, rugby, AFL)
-EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
+# Excluded sport prefixes (rugby only - soccer, cricket, aussie rules now enabled)
+EXCLUDED_SPORT_PREFIXES = ["rugbyleague_", "rugbyunion_"]
 
 # Excluded sport keywords (catch-all for sports that might have non-standard keys)
-EXCLUDED_SPORT_KEYWORDS = ["cricket", "rugby", "t20", "odi", "test_match", "afl", "nrl", "six_nations"]
+EXCLUDED_SPORT_KEYWORDS = ["rugby", "nrl", "six_nations"]
 
 
 def is_excluded_sport(sport_key: str) -> bool:
