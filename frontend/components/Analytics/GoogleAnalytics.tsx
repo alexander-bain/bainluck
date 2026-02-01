@@ -54,9 +54,10 @@ export function GoogleAnalytics() {
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
 
-            // Set default consent before any data collection
+            // Set default consent - analytics enabled by default for US users
+            // (GDPR regions would need consent banner interaction)
             gtag('consent', 'default', {
-              'analytics_storage': 'denied',
+              'analytics_storage': 'granted',
               'ad_storage': 'denied',
               'ad_user_data': 'denied',
               'ad_personalization': 'denied'

@@ -9,9 +9,9 @@ export const GA_CONFIG = {
   /** Enable debug mode in development */
   DEBUG_MODE: process.env.NODE_ENV === 'development',
 
-  /** Consent defaults (for GDPR compliance) */
+  /** Consent defaults - analytics enabled by default for US users */
   DEFAULT_CONSENT: {
-    analytics_storage: 'denied' as const,
+    analytics_storage: 'granted' as const,
     ad_storage: 'denied' as const,
     ad_user_data: 'denied' as const,
     ad_personalization: 'denied' as const,
