@@ -613,7 +613,7 @@ export default function EventPage({ params }: EventPageProps) {
       {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            🏆 Score Progression
+            🏆 Actual Score
           </h3>
           <ActualScoreChart
             scoreHistory={historyData?.score_history}

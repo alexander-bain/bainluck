@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -23,11 +23,16 @@ interface OddsChartProps {
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
   /** Event ID for analytics tracking */
   eventId?: number;
-  /** Event status - determines filtering: closed/completed shows "Since Start", open shows "All" */
+  /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
   eventStatus?: string;
 }
 
 type TimeRange = "all" | "live";
+
+const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "live", label: "Since Start" },
+];
 
 interface ChartDataPoint {
   timestamp: string;
@@ -50,11 +55,13 @@ export default function OddsChart({
   bookmakerHistory,
   eventStatus,
 }: OddsChartProps) {
-  // Determine time range based on event status:
-  // - Closed/completed events: show "Since Start" (live game data only)
-  // - Open/scheduled events: show "All" (full history)
+  // Determine default time range based on event status:
+  // - Closed/completed/live events: default to "Since Start"
+  // - Open/scheduled events: default to "All"
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
-  const timeRange: TimeRange = isClosed || isLive ? "live" : "all";
+  const defaultTimeRange: TimeRange = isClosed || isLive ? "live" : "all";
+
+  const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
@@ -284,6 +291,23 @@ export default function OddsChart({
 
   return (
     <div className="space-y-4">
+      {/* Time range selector - only All and Since Start */}
+      <div className="flex flex-wrap items-center gap-1">
+        {TIME_RANGE_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            onClick={() => setTimeRange(option.value)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+              timeRange === option.value
+                ? "bg-gray-900 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
       {/* Probability Chart */}
       <div className="w-full h-80">
         <ResponsiveContainer width="100%" height="100%">
