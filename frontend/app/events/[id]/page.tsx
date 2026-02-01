@@ -642,7 +642,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
-            eventId={event.id}
+            eventStatus={event.status}
           />
         </div>
       )}
@@ -681,7 +681,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
-            eventId={event.id}
+            eventStatus={event.status}
           />
         )}
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -13,7 +13,6 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import type { OddsHistoryPoint, BookmakerHistoryPoint } from "@/lib/types";
-import { useAnalytics } from "@/hooks";
 
 interface ScoreChartProps {
   history: OddsHistoryPoint[];
@@ -24,9 +23,11 @@ interface ScoreChartProps {
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
   /** Event ID for analytics tracking */
   eventId?: number;
+  /** Event status - determines filtering: closed/completed shows "Since Start", open shows "All" */
+  eventStatus?: string;
 }
 
-type TimeRange = "all" | "24h" | "12h" | "6h" | "3h" | "1h" | "live";
+type TimeRange = "all" | "live";
 
 interface ChartDataPoint {
   timestamp: string;
@@ -35,16 +36,6 @@ interface ChartDataPoint {
   awayScore: number | null;
   [key: string]: string | number | null; // For dynamic bookmaker keys
 }
-
-const TIME_RANGE_OPTIONS: { value: TimeRange; label: string; requiresStarted?: boolean }[] = [
-  { value: "all", label: "All" },
-  { value: "24h", label: "24h" },
-  { value: "12h", label: "12h" },
-  { value: "6h", label: "6h" },
-  { value: "3h", label: "3h" },
-  { value: "1h", label: "1h" },
-  { value: "live", label: "Since Start", requiresStarted: true },
-];
 
 /**
  * Line chart showing projected score changes over time.
@@ -57,64 +48,23 @@ export default function ScoreChart({
   commenceTime,
   isLive = false,
   bookmakerHistory,
-  eventId,
+  eventStatus,
 }: ScoreChartProps) {
-  const { trackChartTimeRange, recordChart } = useAnalytics();
-
-  // Determine if the event has started based on commence time
-  const hasStarted = commenceTime
-    ? new Date(commenceTime).getTime() <= Date.now()
-    : false;
-
-  // Default time range: "live" for started events, "all" for scheduled events
-  const [timeRange, setTimeRange] = useState<TimeRange>(
-    isLive || hasStarted ? "live" : "all"
-  );
-
-  // Handle time range change with analytics
-  const handleTimeRangeChange = useCallback((newRange: TimeRange, dataCount: number) => {
-    if (eventId) {
-      trackChartTimeRange('projected_score', eventId, newRange, timeRange, dataCount > 0, dataCount);
-    }
-    recordChart();
-    setTimeRange(newRange);
-  }, [eventId, timeRange, trackChartTimeRange, recordChart]);
-
-  // Filter options based on whether event has started
-  const availableTimeRanges = TIME_RANGE_OPTIONS.filter(
-    (option) => !option.requiresStarted || hasStarted
-  );
+  // Determine time range based on event status:
+  // - Closed/completed events: show "Since Start" (live game data only)
+  // - Open/scheduled events: show "All" (full history)
+  const isClosed = eventStatus === "closed" || eventStatus === "completed";
+  const timeRange: TimeRange = isClosed || isLive ? "live" : "all";
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
 
-    const now = new Date();
-    let cutoffTime: Date;
+    // "all" mode: show full history
+    if (timeRange === "all") return history;
 
-    switch (timeRange) {
-      case "live":
-        cutoffTime = commenceTime ? parseISO(commenceTime) : now;
-        break;
-      case "1h":
-        cutoffTime = new Date(now.getTime() - 1 * 60 * 60 * 1000);
-        break;
-      case "3h":
-        cutoffTime = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-        break;
-      case "6h":
-        cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-        break;
-      case "12h":
-        cutoffTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
-        break;
-      case "24h":
-        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      default:
-        return history;
-    }
-
+    // "live" mode: show from game start time
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     return history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
   }, [history, timeRange, commenceTime]);
 
@@ -122,51 +72,30 @@ export default function ScoreChart({
   const filteredBookmakerHistory = useMemo(() => {
     if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0) return {};
 
-    const now = new Date();
-    let cutoffTime: Date;
-
-    switch (timeRange) {
-      case "live":
-        cutoffTime = commenceTime ? parseISO(commenceTime) : now;
-        break;
-      case "1h":
-        cutoffTime = new Date(now.getTime() - 1 * 60 * 60 * 1000);
-        break;
-      case "3h":
-        cutoffTime = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-        break;
-      case "6h":
-        cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-        break;
-      case "12h":
-        cutoffTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
-        break;
-      case "24h":
-        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      default:
-        return bookmakerHistory;
+    // "all" mode: show full history (only bookmakers with score data)
+    if (timeRange === "all") {
+      const filtered: Record<string, BookmakerHistoryPoint[]> = {};
+      for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
+        const withScores = points.filter(
+          (point) => point.projected_home_score !== null && point.projected_home_score !== undefined
+        );
+        if (withScores.length > 0) {
+          filtered[bookmaker] = withScores;
+        }
+      }
+      return filtered;
     }
+
+    // "live" mode: show from game start time only
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
 
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
-      // Only include bookmakers that have projected score data
       const withScores = points.filter((point) => {
         const hasScores = point.projected_home_score !== null && point.projected_home_score !== undefined;
         if (!hasScores) return false;
-
         const pointTime = parseISO(point.timestamp);
-        // Include if point starts after cutoff
-        if (pointTime >= cutoffTime) return true;
-        // For "Since Start" mode, we only want points that started after game start
-        // Don't include pre-game points just because their valid_until extends past game start
-        if (timeRange === "live") return false;
-        // For other time ranges, include if point has valid_until that extends into the range
-        if (point.valid_until) {
-          const validUntil = parseISO(point.valid_until);
-          if (validUntil >= cutoffTime) return true;
-        }
-        return false;
+        return pointTime >= cutoffTime;
       });
       if (withScores.length > 0) {
         filtered[bookmaker] = withScores;
@@ -310,47 +239,16 @@ export default function ScoreChart({
   }
 
   // Show message if history exists but no projected scores
-  // This happens when the event doesn't have spread/totals markets (e.g., tennis)
   if (!hasScoreData) {
     return (
       <div className="text-center py-4 text-sm text-gray-500">
-        {hasOverUnder
-          ? "Projected score history not yet available for this event."
-          : "Score projections require spread/totals data which is not available for this event type."}
+        Score projections are not available for this event.
       </div>
     );
   }
 
   if (chartData.length === 0) {
-    return (
-      <div className="space-y-4">
-        {/* Time range selector */}
-        <div className="flex flex-wrap items-center gap-1">
-          {availableTimeRanges.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => handleTimeRangeChange(option.value, chartData.length)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-                timeRange === option.value
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        <div className="text-center py-8 text-sm text-gray-500">
-          No projected score data available for the selected time range.
-          <button
-            onClick={() => handleTimeRangeChange("all", history.length)}
-            className="ml-2 text-blue-600 hover:underline"
-          >
-            Show all data
-          </button>
-        </div>
-      </div>
-    );
+    return null; // No chart data to show
   }
 
   // Calculate Y-axis domain with padding (min-5 to max+5, but never below 0)
@@ -428,23 +326,6 @@ export default function ScoreChart({
 
   return (
     <div className="space-y-4">
-      {/* Time range selector */}
-      <div className="flex flex-wrap items-center gap-1">
-        {availableTimeRanges.map((option) => (
-          <button
-            key={option.value}
-            onClick={() => handleTimeRangeChange(option.value, chartData.length)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-              timeRange === option.value
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
       {/* Score Chart */}
       <div className="w-full h-64">
         <ResponsiveContainer width="100%" height="100%">
@@ -530,19 +411,6 @@ export default function ScoreChart({
         <p className="text-xs text-gray-400 text-center">
           Gray lines show individual sportsbooks • Tap/hover for details
         </p>
-      )}
-
-      {/* No data message for filtered range */}
-      {filteredHistory.length === 0 && history.length > 0 && (
-        <div className="text-center py-4 text-sm text-gray-500">
-          No data available for the selected time range.
-          <button
-            onClick={() => handleTimeRangeChange("all", history.length)}
-            className="ml-2 text-blue-600 hover:underline"
-          >
-            Show all data
-          </button>
-        </div>
       )}
     </div>
   );
