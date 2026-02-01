@@ -425,22 +425,12 @@ export default function HomePage() {
                   {/* Sport Content */}
                   {expandedSports.has(sportGroup.categoryKey) && (
                     <div className="space-y-4">
-                      {/* Single league: show events directly without extra toggle */}
-                      {sportGroup.leagues.length === 1 ? (
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                          {sportGroup.leagues[0].events.map((event, index) => (
-                            <EventCard
-                              key={event.id}
-                              event={event}
-                              showSport={false}
-                              sourceSection="sport_category"
-                              positionIndex={index}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        /* Multiple leagues: show collapsible league toggles */
-                        sportGroup.leagues.map((league) => (
+                      {sportGroup.leagues.map((league) => {
+                        // Auto-expand if only one league in this sport
+                        const isSingleLeague = sportGroup.leagues.length === 1;
+                        const isExpanded = isSingleLeague || expandedLeagues.has(league.leagueKey);
+
+                        return (
                           <div key={league.leagueKey}>
                             {/* League Header - clickable toggle */}
                             <button
@@ -448,7 +438,7 @@ export default function HomePage() {
                               className="flex items-center gap-2 mb-2 w-full text-left group"
                             >
                               <span className="text-slate group-hover:text-graphite transition-colors">
-                                {expandedLeagues.has(league.leagueKey) ? (
+                                {isExpanded ? (
                                   <ChevronDown className="w-4 h-4" />
                                 ) : (
                                   <ChevronRight className="w-4 h-4" />
@@ -468,7 +458,7 @@ export default function HomePage() {
                             </button>
 
                             {/* League Events */}
-                            {expandedLeagues.has(league.leagueKey) && (
+                            {isExpanded && (
                               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
                                 {league.events.map((event, index) => (
                                   <EventCard
@@ -482,8 +472,8 @@ export default function HomePage() {
                               </div>
                             )}
                           </div>
-                        ))
-                      )}
+                        );
+                      })}
                     </div>
                   )}
                 </section>
