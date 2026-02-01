@@ -51,7 +51,8 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
-  const [collapsedSports, setCollapsedSports] = useState<Set<string>>(new Set());
+  // Sport sections are collapsed by default (empty set = all collapsed)
+  const [expandedSports, setExpandedSports] = useState<Set<string>>(new Set());
 
   // Analytics
   const { trackSectionToggle } = useAnalytics();
@@ -113,6 +114,11 @@ export default function HomePage() {
   // Filter events by category and date filter
   const filteredEvents = useMemo(() => {
     let events = eventsData?.events ?? [];
+
+    // Filter out events without probability data (no moneyline odds)
+    events = events.filter((e) =>
+      e.current_odds?.home_probability != null && e.current_odds?.away_probability != null
+    );
 
     // First, filter by sport category if selected
     if (selectedCategory && !selectedSport) {
@@ -225,10 +231,10 @@ export default function HomePage() {
     });
   }, [filteredEvents]);
 
-  const toggleSportCollapse = useCallback((categoryKey: string, categoryName: string, eventCount: number) => {
-    setCollapsedSports((prev) => {
+  const toggleSportExpand = useCallback((categoryKey: string, categoryName: string, eventCount: number) => {
+    setExpandedSports((prev) => {
       const next = new Set(prev);
-      const isCollapsing = !next.has(categoryKey);
+      const isExpanding = !next.has(categoryKey);
       if (next.has(categoryKey)) {
         next.delete(categoryKey);
       } else {
@@ -237,7 +243,7 @@ export default function HomePage() {
 
       // Track analytics
       trackSectionToggle(
-        isCollapsing ? 'collapse' : 'expand',
+        isExpanding ? 'expand' : 'collapse',
         'sport_category',
         categoryName,
         categoryKey,
@@ -372,7 +378,7 @@ export default function HomePage() {
                 <section key={sportGroup.categoryKey}>
                   {/* Sport Header */}
                   <button
-                    onClick={() => toggleSportCollapse(sportGroup.categoryKey, sportGroup.categoryName, sportGroup.totalEvents)}
+                    onClick={() => toggleSportExpand(sportGroup.categoryKey, sportGroup.categoryName, sportGroup.totalEvents)}
                     className="flex items-center gap-2 mb-4 w-full text-left group"
                   >
                     <span className="text-lg">{sportGroup.emoji}</span>
@@ -383,16 +389,16 @@ export default function HomePage() {
                       {sportGroup.totalEvents}
                     </span>
                     <span className="ml-auto text-slate group-hover:text-graphite transition-colors">
-                      {collapsedSports.has(sportGroup.categoryKey) ? (
-                        <ChevronRight className="w-5 h-5" />
-                      ) : (
+                      {expandedSports.has(sportGroup.categoryKey) ? (
                         <ChevronDown className="w-5 h-5" />
+                      ) : (
+                        <ChevronRight className="w-5 h-5" />
                       )}
                     </span>
                   </button>
 
                   {/* Sport Content */}
-                  {!collapsedSports.has(sportGroup.categoryKey) && (
+                  {expandedSports.has(sportGroup.categoryKey) && (
                     <div className="space-y-6">
                       {sportGroup.leagues.map((league) => (
                         <div key={league.leagueKey}>
