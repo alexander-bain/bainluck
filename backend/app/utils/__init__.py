@@ -11,6 +11,14 @@ from app.utils.odds_math import (
     aggregate_probabilities,
     aggregate_bookmaker_odds,
 )
+from app.utils.highlights import (
+    compute_highlight,
+    get_highlight_label,
+    should_highlight,
+    EventFlags,
+    HighlightResult,
+    get_league_tier,
+)
 
 __all__ = [
     "american_to_probability",
@@ -23,4 +31,10 @@ __all__ = [
     "probability_to_american",
     "aggregate_probabilities",
     "aggregate_bookmaker_odds",
+    "compute_highlight",
+    "get_highlight_label",
+    "should_highlight",
+    "EventFlags",
+    "HighlightResult",
+    "get_league_tier",
 ]

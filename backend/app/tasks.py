@@ -627,6 +627,12 @@ async def _poll_all_odds():
                         total_events += 1
 
                         # Create odds snapshots (with deduplication)
+                        # Track values for setting opening odds
+                        first_home_prob = None
+                        first_away_prob = None
+                        first_spread = None
+                        first_ou = None
+
                         for bookmaker in event_data.get("bookmakers", []):
                             snapshot, is_new = await _create_or_update_snapshot(
                                 session,
@@ -636,7 +642,21 @@ async def _poll_all_odds():
                             )
                             if is_new:
                                 session.add(snapshot)
+                                # Capture first valid odds for opening odds
+                                if first_home_prob is None and snapshot.home_win_probability:
+                                    first_home_prob = float(snapshot.home_win_probability)
+                                    first_away_prob = float(snapshot.away_win_probability) if snapshot.away_win_probability else None
+                                    first_spread = float(snapshot.home_spread) if snapshot.home_spread else None
+                                    first_ou = float(snapshot.over_under) if snapshot.over_under else None
                             total_snapshots += 1
+
+                        # Set opening odds if this is the first time we have odds
+                        if first_home_prob is not None:
+                            await _maybe_set_opening_odds(
+                                session, event_id,
+                                first_home_prob, first_away_prob,
+                                first_spread, first_ou
+                            )
 
                 except Exception as e:
                     print(f"Error polling {sport_key}: {e}")
@@ -860,6 +880,56 @@ def _parse_snapshot_values(bookmaker: dict, event_data: dict) -> dict:
         values["projected_away_score"] = away_score
 
     return values
+
+
+async def _maybe_set_opening_odds(
+    session,
+    event_id: int,
+    home_prob: float | None,
+    away_prob: float | None,
+    home_spread: float | None,
+    over_under: float | None,
+):
+    """
+    Set opening odds on an event if they haven't been set yet.
+
+    Opening odds are only set once (first time we receive odds for an event).
+    They're used to detect favorite switches, line movement, etc.
+    """
+    if home_prob is None:
+        return
+
+    # Check if opening odds already set
+    result = await session.execute(
+        select(Event.opening_home_probability)
+        .where(Event.id == event_id)
+    )
+    current_opening = result.scalar_one_or_none()
+
+    if current_opening is not None:
+        # Already set, don't update
+        return
+
+    # Determine opening favorite
+    if home_prob > 0.52:
+        opening_favorite = "home"
+    elif home_prob < 0.48:
+        opening_favorite = "away"
+    else:
+        opening_favorite = "even"
+
+    # Set opening odds
+    await session.execute(
+        Event.__table__.update()
+        .where(Event.id == event_id)
+        .values(
+            opening_home_probability=home_prob,
+            opening_away_probability=away_prob,
+            opening_home_spread=home_spread,
+            opening_over_under=over_under,
+            opening_favorite=opening_favorite,
+        )
+    )
 
 
 async def _create_or_update_snapshot(
