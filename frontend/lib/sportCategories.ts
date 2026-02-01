@@ -82,6 +82,28 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["tennis_"],
     tier: 2,
   },
+  // Tier 2: International sports
+  {
+    key: "soccer",
+    name: "Soccer",
+    emoji: "⚽",
+    prefixes: ["soccer_"],
+    tier: 2,
+  },
+  {
+    key: "cricket",
+    name: "Cricket",
+    emoji: "🏏",
+    prefixes: ["cricket_"],
+    tier: 2,
+  },
+  {
+    key: "aussierules",
+    name: "Aussie Rules",
+    emoji: "🏉",
+    prefixes: ["aussierules_"],
+    tier: 2,
+  },
   // Tier 3: Tertiary sports (niche audience)
   {
     key: "politics",

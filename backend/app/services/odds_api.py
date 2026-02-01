@@ -45,19 +45,12 @@ class OddsAPIService:
     # Blacklisted sport prefixes - these sports are excluded from API calls
     # All other sports from the API are included
     EXCLUDED_PREFIXES = [
-        "soccer_",        # Soccer/Football
-        "cricket_",       # Cricket (standard prefix)
         "rugbyleague_",   # Rugby League
         "rugbyunion_",    # Rugby Union
-        "aussierules_",   # AFL (Australian Football)
     ]
 
     # Additional keywords to exclude (matched anywhere in sport key)
-    EXCLUDED_KEYWORDS = [
-        "_t20",           # Cricket T20 formats
-        "_odi",           # Cricket ODI formats
-        "_test",          # Cricket test matches
-    ]
+    EXCLUDED_KEYWORDS: list[str] = []
     
     def __init__(self, api_key: Optional[str] = None):
         """Initialize with API key from env or parameter."""
