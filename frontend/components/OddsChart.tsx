@@ -162,7 +162,10 @@ export default function OddsChart({
         const pointTime = parseISO(point.timestamp);
         // Include if point starts after cutoff
         if (pointTime >= cutoffTime) return true;
-        // Also include if point has valid_until that extends into the range
+        // For "Since Start" mode, we only want points that started after game start
+        // Don't include pre-game points just because their valid_until extends past game start
+        if (timeRange === "live") return false;
+        // For other time ranges, include if point has valid_until that extends into the range
         if (point.valid_until) {
           const validUntil = parseISO(point.valid_until);
           if (validUntil >= cutoffTime) return true;
