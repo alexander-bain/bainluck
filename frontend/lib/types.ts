@@ -56,21 +56,21 @@ export interface OpeningOdds {
   favorite: "home" | "away" | "even" | null;
 }
 
-export interface GEIComponents {
-  win_probability_volatility: number;
-  late_game_uncertainty: number;
-  expectation_deviation: number;
-  comeback_factor: number;
-  overtime_bonus: number;
+export interface PulseComponents {
+  heart_rate: number;
+  amplitude: number;
+  arrhythmia: number;
+  vitals: number;
+  time_weight: number;
+  lead_changes: number;
 }
 
-export interface ExcitementData {
-  raw_gei: number;
-  percentile_global: number | null;
-  percentile_sport: number | null;
-  label: string;
-  emoji: string;
-  components?: GEIComponents;
+export interface PulseData {
+  score: number;           // 1-100
+  status: string;          // 'racing' | 'strong' | 'steady' | 'weak' | 'flatline'
+  label: string;           // 'Must-Watch', 'Exciting', etc.
+  emoji: string;           // 🫀 💓 💗 🩺 📉
+  components?: PulseComponents;
 }
 
 export interface Event {
@@ -87,7 +87,7 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
-  excitement?: ExcitementData;
+  pulse?: PulseData;
 }
 
 export interface EventsResponse {
@@ -111,7 +111,7 @@ export interface BookmakerOddsDetail {
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
-  excitement?: ExcitementData;
+  pulse?: PulseData;
 }
 
 export interface OddsHistoryPoint {

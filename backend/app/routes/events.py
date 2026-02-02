@@ -114,12 +114,10 @@ async def get_highlights(
 
         formatted = _format_event(event, gei_percentiles)
 
-        # Check percentile threshold (handle None percentile)
-        percentile = formatted.get("excitement", {}).get("percentile_global")
-        if percentile is not None and percentile >= min_percentile:
-            highlights.append(formatted)
-        elif min_percentile == 0 and formatted.get("excitement"):
-            # With min_percentile=0, include all events with excitement data
+        # Check Pulse score threshold
+        pulse = formatted.get("pulse", {})
+        pulse_score = pulse.get("score", 0)
+        if pulse_score >= min_percentile:
             highlights.append(formatted)
 
         if len(highlights) >= limit:
@@ -860,19 +858,15 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
         "away_score": event.away_score,
     }
 
-    # Add GEI data if available (for completed events)
-    # Wrap in try/except in case GEI columns don't exist yet (migration not applied)
+    # Add Pulse data if available (for live and completed events)
+    # Wrap in try/except in case columns don't exist yet (migration not applied)
     try:
         if event.raw_gei is not None:
-            from app.utils.gei import get_gei_label, get_gei_emoji
+            from app.utils.pulse import get_pulse_label, get_pulse_emoji, get_pulse_status
             import json
 
-            sport_key = event.sport.key if event.sport else None
-            raw_gei = float(event.raw_gei)
-
-            # Calculate percentiles from thresholds if provided
-            percentile_global = _calculate_percentile(raw_gei, gei_percentiles, 'global') if gei_percentiles else None
-            percentile_sport = _calculate_percentile(raw_gei, gei_percentiles, sport_key) if gei_percentiles and sport_key else None
+            # raw_gei stores score/100 (e.g., 0.75 = score 75)
+            pulse_score = max(1, min(100, round(float(event.raw_gei) * 100)))
 
             # Parse components if stored
             components = None
@@ -882,16 +876,15 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
                 except json.JSONDecodeError:
                     pass
 
-            response["excitement"] = {
-                "raw_gei": raw_gei,
-                "percentile_global": percentile_global,
-                "percentile_sport": percentile_sport,
-                "label": get_gei_label(percentile_global or 50),
-                "emoji": get_gei_emoji(percentile_global or 50),
+            response["pulse"] = {
+                "score": pulse_score,
+                "status": get_pulse_status(pulse_score),
+                "label": get_pulse_label(pulse_score),
+                "emoji": get_pulse_emoji(pulse_score),
                 "components": components,
             }
     except Exception:
-        # GEI columns may not exist yet - skip excitement data
+        # Pulse columns may not exist yet - skip pulse data
         pass
 
     return response
