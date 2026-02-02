@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -13,7 +13,6 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import type { ScoreHistoryPoint } from "@/lib/types";
-import { useAnalytics } from "@/hooks";
 
 interface ActualScoreChartProps {
   scoreHistory?: ScoreHistoryPoint[];
@@ -28,8 +27,6 @@ interface ActualScoreChartProps {
   eventId?: number;
 }
 
-type TimeRange = "all" | "1h" | "30m" | "15m";
-
 interface ChartDataPoint {
   timestamp: string;
   time: string;
@@ -37,16 +34,10 @@ interface ChartDataPoint {
   awayScore: number;
 }
 
-const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
-  { value: "all", label: "Full Game" },
-  { value: "1h", label: "1h" },
-  { value: "30m", label: "30m" },
-  { value: "15m", label: "15m" },
-];
-
 /**
  * Line chart showing actual game score progression over time.
  * Displays how the score changed throughout the game.
+ * Shows all available data - no filtering.
  */
 export default function ActualScoreChart({
   scoreHistory,
@@ -54,66 +45,18 @@ export default function ActualScoreChart({
   awayTeam,
   currentHomeScore,
   currentAwayScore,
-  commenceTime,
   isLive = false,
-  lastScoreUpdate,
-  eventId,
 }: ActualScoreChartProps) {
-  const { trackChartTimeRange, recordChart } = useAnalytics();
-  const [timeRange, setTimeRange] = useState<TimeRange>("all");
-
-  // Handle time range change with analytics
-  const handleTimeRangeChange = useCallback((newRange: TimeRange, dataCount: number) => {
-    if (eventId) {
-      trackChartTimeRange('actual_score', eventId, newRange as 'all' | '1h', timeRange as 'all' | '1h', dataCount > 0, dataCount);
-    }
-    recordChart();
-    setTimeRange(newRange);
-  }, [eventId, timeRange, trackChartTimeRange, recordChart]);
-
-  // Filter history based on time range
-  const filteredHistory = useMemo(() => {
-    if (!scoreHistory || scoreHistory.length === 0) return [];
-
-    const now = new Date();
-    let cutoffTime: Date;
-
-    switch (timeRange) {
-      case "15m":
-        cutoffTime = new Date(now.getTime() - 15 * 60 * 1000);
-        break;
-      case "30m":
-        cutoffTime = new Date(now.getTime() - 30 * 60 * 1000);
-        break;
-      case "1h":
-        cutoffTime = new Date(now.getTime() - 60 * 60 * 1000);
-        break;
-      default:
-        return scoreHistory;
-    }
-
-    return scoreHistory.filter((point) => parseISO(point.timestamp) >= cutoffTime);
-  }, [scoreHistory, timeRange]);
-
-  // Transform data for chart
+  // Transform all score history data for chart
   const chartData: ChartDataPoint[] = useMemo(() => {
-    return filteredHistory.map((point) => ({
+    if (!scoreHistory || scoreHistory.length === 0) return [];
+    return scoreHistory.map((point) => ({
       timestamp: point.timestamp,
       time: format(parseISO(point.timestamp), "h:mm"),
       homeScore: point.home_score,
       awayScore: point.away_score,
     }));
-  }, [filteredHistory]);
-
-  // Check staleness of score data
-  const scoreStaleMinutes = useMemo(() => {
-    if (!lastScoreUpdate) return null;
-    const lastUpdate = new Date(lastScoreUpdate);
-    const now = new Date();
-    return Math.round((now.getTime() - lastUpdate.getTime()) / (1000 * 60));
-  }, [lastScoreUpdate]);
-
-  const isScoreStale = scoreStaleMinutes !== null && scoreStaleMinutes > 10;
+  }, [scoreHistory]);
 
   // If no score history, show placeholder with current score if available
   if (!scoreHistory || scoreHistory.length === 0) {
@@ -194,26 +137,6 @@ export default function ActualScoreChart({
 
   return (
     <div className="space-y-4">
-      {/* Time range selector */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1">
-          {TIME_RANGE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => handleTimeRangeChange(option.value, chartData.length)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-                timeRange === option.value
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-      </div>
-
       {/* Score Chart */}
       <div className="w-full h-64">
         <ResponsiveContainer width="100%" height="100%">
@@ -268,19 +191,6 @@ export default function ActualScoreChart({
               ({currentHomeScore > currentAwayScore ? homeTeam.split(" ").pop() : awayTeam.split(" ").pop()} +{Math.abs(currentHomeScore - currentAwayScore)})
             </span>
           )}
-        </div>
-      )}
-
-      {/* No data message for filtered range */}
-      {filteredHistory.length === 0 && scoreHistory && scoreHistory.length > 0 && (
-        <div className="text-center py-4 text-sm text-gray-500">
-          No score changes in the selected time range.
-          <button
-            onClick={() => handleTimeRangeChange("all", scoreHistory?.length || 0)}
-            className="ml-2 text-blue-600 hover:underline"
-          >
-            Show full game
-          </button>
         </div>
       )}
     </div>

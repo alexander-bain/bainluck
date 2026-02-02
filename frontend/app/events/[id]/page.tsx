@@ -451,11 +451,19 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           ) : isFinished ? (
-            <div className="text-slate">
-              <div className="text-caption mb-1">Books closed</div>
+            <div className="text-slate space-y-1">
               <div className="text-lg font-medium">
-                {odds?.captured_at ? formatStartTime(odds.captured_at) : formatStartTime(event.commence_time)}
+                📅 {new Date(event.commence_time).toLocaleDateString("en-US", {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                })} at {new Date(event.commence_time).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZoneName: "short",
+                })}
               </div>
+              <div className="text-caption">Game finished • Books closed</div>
             </div>
           ) : (
             <div className="space-y-2">
@@ -700,7 +708,7 @@ export default function EventPage({ params }: EventPageProps) {
       {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            🏆 Score Progression
+            🏆 Actual Score
           </h3>
           <ActualScoreChart
             scoreHistory={historyData?.score_history}
@@ -729,7 +737,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
-            eventId={event.id}
+            eventStatus={event.status}
           />
         </div>
       )}
@@ -768,7 +776,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
-            eventId={event.id}
+            eventStatus={event.status}
           />
         )}
       </div>

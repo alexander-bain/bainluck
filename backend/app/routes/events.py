@@ -10,16 +10,23 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile
 from app.services import get_db, OddsAPIService, fetch_current_odds
-from app.utils import moneyline_to_probability, project_scores, calculate_gei, aggregate_bookmaker_odds
-from app.utils.gei import get_gei_label, get_gei_emoji, calculate_expected_excitement
+from app.utils import (
+    moneyline_to_probability,
+    project_scores,
+    calculate_gei,
+    aggregate_bookmaker_odds,
+    compute_highlight,
+    get_highlight_label,
+    should_highlight,
+)
 
 router = APIRouter()
 
-# Excluded sport prefixes (soccer, cricket, rugby, AFL)
-EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
+# Excluded sport prefixes (rugby only - soccer, cricket, aussie rules now enabled)
+EXCLUDED_SPORT_PREFIXES = ["rugbyleague_", "rugbyunion_"]
 
 # Excluded sport keywords (catch-all for sports that might have non-standard keys)
-EXCLUDED_SPORT_KEYWORDS = ["cricket", "rugby", "t20", "odi", "test_match", "afl", "nrl", "six_nations"]
+EXCLUDED_SPORT_KEYWORDS = ["rugby", "nrl", "six_nations"]
 
 
 def is_excluded_sport(sport_key: str) -> bool:
@@ -948,10 +955,20 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     """Format event for API response with aggregated odds from multiple bookmakers."""
     response = _format_event(event, gei_percentiles)
 
+    current_home_prob = None
+    current_away_prob = None
+    current_spread = None
+    current_ou = None
+
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]
         captured_at = odds_data.get("captured_at")
         snapshots = odds_data.get("snapshots", [])
+
+        current_home_prob = aggregated["home_probability"]
+        current_away_prob = aggregated["away_probability"]
+        current_spread = aggregated["home_spread"]
+        current_ou = aggregated["over_under"]
 
         response["current_odds"] = {
             "captured_at": captured_at.isoformat() if captured_at else None,
@@ -989,5 +1006,50 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                 }
                 for s in snapshots
             ]
+
+    # Compute highlight data
+    highlight_result = compute_highlight(
+        status=event.status,
+        commence_time=event.commence_time,
+        sport_key=event.sport.key if event.sport else None,
+        current_home_prob=current_home_prob,
+        current_away_prob=current_away_prob,
+        current_home_spread=current_spread,
+        current_over_under=current_ou,
+        opening_home_prob=float(event.opening_home_probability) if event.opening_home_probability else None,
+        opening_away_prob=float(event.opening_away_probability) if event.opening_away_probability else None,
+        opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
+        opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
+        opening_favorite=event.opening_favorite,
+    )
+
+    response["highlight"] = {
+        "score": highlight_result.score,
+        "reasons": highlight_result.reasons,
+        "label": get_highlight_label(highlight_result),
+        "should_feature": should_highlight(highlight_result),
+        "flags": {
+            "is_live": highlight_result.flags.is_live,
+            "is_close_matchup": highlight_result.flags.is_close_matchup,
+            "is_blowout": highlight_result.flags.is_blowout,
+            "favorite_switched": highlight_result.flags.favorite_switched,
+            "probability_swing": highlight_result.flags.probability_swing,
+            "score_swing": highlight_result.flags.score_swing,
+            "is_starting_soon": highlight_result.flags.is_starting_soon,
+            "is_recently_finished": highlight_result.flags.is_recently_finished,
+            "is_upset": highlight_result.flags.is_upset,
+            "league_tier": highlight_result.flags.league_tier,
+        },
+    }
+
+    # Include opening odds for transparency
+    if event.opening_home_probability:
+        response["opening_odds"] = {
+            "home_probability": float(event.opening_home_probability),
+            "away_probability": float(event.opening_away_probability) if event.opening_away_probability else None,
+            "spread": float(event.opening_home_spread) if event.opening_home_spread else None,
+            "over_under": float(event.opening_over_under) if event.opening_over_under else None,
+            "favorite": event.opening_favorite,
+        }
 
     return response

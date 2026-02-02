@@ -66,33 +66,36 @@ class Team(Base):
 
 class Event(Base):
     """Individual games/matches."""
-    
+
     __tablename__ = "events"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"))
     external_id: Mapped[str] = mapped_column(String(100), unique=True)
     home_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
     away_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
-    
+
     # For quick lookups before team records exist
     home_team_name: Mapped[str] = mapped_column(String(200))
     away_team_name: Mapped[str] = mapped_column(String(200))
-    
+
     commence_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
-    
+
     home_score: Mapped[Optional[int]] = mapped_column(Integer)
     away_score: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Opening odds (set once when first odds received, never updated)
+    # Used to detect favorite switches, score swings, etc.
+    opening_home_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    opening_away_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    opening_home_spread: Mapped[Optional[float]] = mapped_column(Numeric(4, 1))
+    opening_over_under: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
+    opening_favorite: Mapped[Optional[str]] = mapped_column(String(10))  # 'home', 'away', 'even'
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
-
-    # Game Excitement Index fields
-    raw_gei: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
-    gei_components: Mapped[Optional[str]] = mapped_column(Text)  # JSON of component scores
-    gei_computed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="events")
