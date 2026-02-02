@@ -15,6 +15,118 @@ from app.utils import probability_to_american
 router = APIRouter()
 
 
+# NOTE: Specific routes MUST come before /{market_id} to avoid being matched as IDs
+
+
+@router.get("/available")
+async def get_available_futures():
+    """
+    Get list of sports with futures markets available from The Odds API.
+
+    Useful for discovering what futures can be tracked.
+    """
+    try:
+        service = OddsAPIService()
+        sports = await service.get_sports_with_outrights()
+        await service.close()
+
+        return {
+            "sports": [
+                {
+                    "key": s["key"],
+                    "group": s.get("group"),
+                    "title": s.get("title"),
+                    "description": s.get("description"),
+                }
+                for s in sports
+            ],
+            "count": len(sports),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
+
+
+@router.get("/movers")
+async def get_futures_movers(
+    hours: int = Query(24, description="Timeframe for movement calculation"),
+    limit: int = Query(20, description="Number of movers to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get outcomes with biggest probability changes.
+
+    Useful for discovering betting line movement and market sentiment shifts.
+    """
+    # Get outcomes with significant 24h changes
+    query = (
+        select(FuturesOutcome)
+        .options(selectinload(FuturesOutcome.market))
+        .where(FuturesOutcome.probability_change_24h.isnot(None))
+        .order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
+        .limit(limit)
+    )
+
+    result = await db.execute(query)
+    outcomes = result.scalars().all()
+
+    return {
+        "movers": [
+            {
+                "outcome_id": o.id,
+                "name": o.name,
+                "market_id": o.market_id,
+                "market_name": o.market.name if o.market else None,
+                "current_probability": float(o.current_probability) if o.current_probability else None,
+                "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+                "current_american_odds": o.current_american_odds,
+                "rank": o.rank,
+                "rank_change_24h": o.rank_change_24h,
+            }
+            for o in outcomes
+        ],
+        "timeframe_hours": hours,
+    }
+
+
+@router.get("/live/{sport_key}")
+async def get_live_futures(
+    sport_key: str,
+):
+    """
+    Fetch live futures odds directly from The Odds API.
+
+    Bypasses the database for real-time data. Useful for debugging
+    or when you need the absolute latest odds.
+    """
+    try:
+        service = OddsAPIService()
+        api_response = await service.get_futures_odds(sport_key)
+        markets = service._parse_futures(api_response, sport_key)
+        await service.close()
+
+        return {
+            "sport_key": sport_key,
+            "markets": [
+                {
+                    "bookmaker": m.bookmaker,
+                    "market_name": m.market_name,
+                    "outcomes": [
+                        {
+                            "name": o.name,
+                            "american_odds": o.american_odds,
+                            "probability": round(o.probability, 4),
+                        }
+                        for o in sorted(m.outcomes, key=lambda x: x.probability, reverse=True)
+                    ],
+                }
+                for m in markets
+            ],
+            "bookmaker_count": len(markets),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
+
+
 @router.get("")
 async def list_futures_markets(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
@@ -159,115 +271,6 @@ async def get_futures_history(
         "hours": hours,
         "outcomes": list(outcome_history.values()),
     }
-
-
-@router.get("/movers")
-async def get_futures_movers(
-    hours: int = Query(24, description="Timeframe for movement calculation"),
-    limit: int = Query(20, description="Number of movers to return"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get outcomes with biggest probability changes.
-
-    Useful for discovering betting line movement and market sentiment shifts.
-    """
-    # Get outcomes with significant 24h changes
-    query = (
-        select(FuturesOutcome)
-        .options(selectinload(FuturesOutcome.market))
-        .where(FuturesOutcome.probability_change_24h.isnot(None))
-        .order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
-        .limit(limit)
-    )
-
-    result = await db.execute(query)
-    outcomes = result.scalars().all()
-
-    return {
-        "movers": [
-            {
-                "outcome_id": o.id,
-                "name": o.name,
-                "market_id": o.market_id,
-                "market_name": o.market.name if o.market else None,
-                "current_probability": float(o.current_probability) if o.current_probability else None,
-                "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
-                "current_american_odds": o.current_american_odds,
-                "rank": o.rank,
-                "rank_change_24h": o.rank_change_24h,
-            }
-            for o in outcomes
-        ],
-        "timeframe_hours": hours,
-    }
-
-
-@router.get("/live/{sport_key}")
-async def get_live_futures(
-    sport_key: str,
-):
-    """
-    Fetch live futures odds directly from The Odds API.
-
-    Bypasses the database for real-time data. Useful for debugging
-    or when you need the absolute latest odds.
-    """
-    try:
-        service = OddsAPIService()
-        api_response = await service.get_futures_odds(sport_key)
-        markets = service._parse_futures(api_response, sport_key)
-        await service.close()
-
-        return {
-            "sport_key": sport_key,
-            "markets": [
-                {
-                    "bookmaker": m.bookmaker,
-                    "market_name": m.market_name,
-                    "outcomes": [
-                        {
-                            "name": o.name,
-                            "american_odds": o.american_odds,
-                            "probability": round(o.probability, 4),
-                        }
-                        for o in sorted(m.outcomes, key=lambda x: x.probability, reverse=True)
-                    ],
-                }
-                for m in markets
-            ],
-            "bookmaker_count": len(markets),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
-
-
-@router.get("/available")
-async def get_available_futures():
-    """
-    Get list of sports with futures markets available from The Odds API.
-
-    Useful for discovering what futures can be tracked.
-    """
-    try:
-        service = OddsAPIService()
-        sports = await service.get_sports_with_outrights()
-        await service.close()
-
-        return {
-            "sports": [
-                {
-                    "key": s["key"],
-                    "group": s.get("group"),
-                    "title": s.get("title"),
-                    "description": s.get("description"),
-                }
-                for s in sports
-            ],
-            "count": len(sports),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
 
 
 def _format_market_summary(market: FuturesMarket) -> dict:

@@ -30,6 +30,23 @@ export default function RootLayout({
                       OddsTracker
                     </span>
                   </Link>
+
+                  {/* Navigation */}
+                  <nav className="flex items-center gap-1">
+                    <Link
+                      href="/"
+                      className="px-3 py-1.5 text-sm font-medium text-slate hover:text-graphite hover:bg-slate/5 rounded-full transition-colors"
+                    >
+                      Games
+                    </Link>
+                    <Link
+                      href="/futures"
+                      className="px-3 py-1.5 text-sm font-medium text-slate hover:text-graphite hover:bg-slate/5 rounded-full transition-colors"
+                    >
+                      Futures
+                    </Link>
+                  </nav>
+
                   <SearchBox />
                 </div>
               </div>
@@ -79,4 +96,3 @@ export default function RootLayout({
     </html>
   );
 }
-

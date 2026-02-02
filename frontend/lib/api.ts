@@ -8,7 +8,10 @@ import type {
   EventHistoryResponse,
   SportsResponse,
   LiveOddsResponse,
-  SearchResponse,
+  FuturesMarketsResponse,
+  FuturesMarketDetailResponse,
+  FuturesHistoryResponse,
+  FuturesMoversResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -21,19 +24,7 @@ async function apiFetch<T>(endpoint: string): Promise<T> {
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-    // Handle FastAPI validation errors (detail can be an array of objects)
-    let message: string;
-    if (typeof error.detail === "string") {
-      message = error.detail;
-    } else if (Array.isArray(error.detail)) {
-      // FastAPI validation error format: [{loc: [...], msg: "...", type: "..."}]
-      message = error.detail.map((e: { msg?: string }) => e.msg).join(", ");
-    } else if (error.detail?.msg) {
-      message = error.detail.msg;
-    } else {
-      message = `API error: ${res.status}`;
-    }
-    throw new Error(message);
+    throw new Error(error.detail || `API error: ${res.status}`);
   }
 
   return res.json();
@@ -91,31 +82,6 @@ export async function fetchLiveOdds(sportKey: string): Promise<LiveOddsResponse>
 }
 
 /**
- * Search events by team name, city, or keyword
- */
-export async function searchEvents(params: {
-  q: string;
-  sport?: string;
-  page?: number;
-  per_page?: number;
-  days_back?: number;
-  include_upcoming?: boolean;
-}): Promise<SearchResponse> {
-  const searchParams = new URLSearchParams();
-  searchParams.set("q", params.q);
-
-  if (params.sport) searchParams.set("sport", params.sport);
-  if (params.page) searchParams.set("page", params.page.toString());
-  if (params.per_page) searchParams.set("per_page", params.per_page.toString());
-  if (params.days_back) searchParams.set("days_back", params.days_back.toString());
-  if (params.include_upcoming !== undefined) {
-    searchParams.set("include_upcoming", params.include_upcoming.toString());
-  }
-
-  return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`);
-}
-
-/**
  * Format probability as percentage string
  */
 export function formatProbability(prob: number | null | undefined): string {
@@ -153,4 +119,70 @@ export function isStartingSoon(isoString: string): boolean {
   const now = new Date();
   const diff = gameTime.getTime() - now.getTime();
   return diff > 0 && diff < 60 * 60 * 1000; // Within 1 hour
+}
+
+// ============================================================================
+// Futures/Outrights API
+// ============================================================================
+
+/**
+ * Fetch list of futures markets with optional filters
+ */
+export async function fetchFuturesMarkets(params?: {
+  sport?: string;
+  status?: string;
+  limit?: number;
+}): Promise<FuturesMarketsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params?.sport) searchParams.set("sport", params.sport);
+  if (params?.status) searchParams.set("status", params.status);
+  if (params?.limit) searchParams.set("limit", params.limit.toString());
+
+  const query = searchParams.toString();
+  return apiFetch<FuturesMarketsResponse>(`/api/futures${query ? `?${query}` : ""}`);
+}
+
+/**
+ * Fetch a single futures market by ID
+ */
+export async function fetchFuturesMarket(id: number): Promise<FuturesMarketDetailResponse> {
+  return apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}`);
+}
+
+/**
+ * Fetch odds history for a futures market
+ */
+export async function fetchFuturesHistory(
+  marketId: number,
+  hours = 168,
+  outcomeId?: number
+): Promise<FuturesHistoryResponse> {
+  const params = new URLSearchParams();
+  params.set("hours", hours.toString());
+  if (outcomeId) params.set("outcome_id", outcomeId.toString());
+
+  return apiFetch<FuturesHistoryResponse>(
+    `/api/futures/${marketId}/history?${params.toString()}`
+  );
+}
+
+/**
+ * Fetch futures movers (biggest probability changes)
+ */
+export async function fetchFuturesMovers(
+  hours = 24,
+  limit = 20
+): Promise<FuturesMoversResponse> {
+  return apiFetch<FuturesMoversResponse>(
+    `/api/futures/movers?hours=${hours}&limit=${limit}`
+  );
+}
+
+/**
+ * Format American odds for display
+ */
+export function formatAmericanOdds(odds: number | null | undefined): string {
+  if (odds === null || odds === undefined) return "-";
+  return odds > 0 ? `+${odds}` : `${odds}`;
 }

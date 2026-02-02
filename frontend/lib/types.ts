@@ -56,21 +56,21 @@ export interface OpeningOdds {
   favorite: "home" | "away" | "even" | null;
 }
 
-export interface PulseComponents {
-  heart_rate: number;
-  amplitude: number;
-  arrhythmia: number;
-  vitals: number;
-  time_weight: number;
-  lead_changes: number;
+export interface GEIComponents {
+  win_probability_volatility: number;
+  late_game_uncertainty: number;
+  expectation_deviation: number;
+  comeback_factor: number;
+  overtime_bonus: number;
 }
 
-export interface PulseData {
-  score: number;           // 1-100
-  status: string;          // 'racing' | 'strong' | 'steady' | 'weak' | 'flatline'
-  label: string;           // 'Must-Watch', 'Exciting', etc.
-  emoji: string;           // 🫀 💓 💗 🩺 📉
-  components?: PulseComponents;
+export interface ExcitementData {
+  raw_gei: number;
+  percentile_global: number | null;
+  percentile_sport: number | null;
+  label: string;
+  emoji: string;
+  components?: GEIComponents;
 }
 
 export interface Event {
@@ -87,7 +87,7 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
-  pulse?: PulseData;
+  excitement?: ExcitementData;
 }
 
 export interface EventsResponse {
@@ -111,7 +111,7 @@ export interface BookmakerOddsDetail {
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
-  pulse?: PulseData;
+  excitement?: ExcitementData;
 }
 
 export interface OddsHistoryPoint {
@@ -180,29 +180,83 @@ export interface LiveOddsResponse {
   count: number;
 }
 
-export interface SearchPagination {
-  page: number;
-  per_page: number;
-  total_results: number;
-  total_pages: number;
-  has_next: boolean;
-  has_prev: boolean;
+// Futures/Outrights types
+export interface FuturesOutcome {
+  id: number;
+  name: string;
+  probability: number | null;
+  american_odds: number | null;
+  rank: number | null;
+  rank_change_24h: number | null;
+  probability_change_24h: number | null;
+  movement: number | null; // alias for probability_change_24h in list view
+  opening_probability: number | null;
+  opening_american_odds: number | null;
+  is_winner: boolean | null;
+  last_updated: string | null;
 }
 
-export interface SearchSportInfo {
-  key: string;
+export interface FuturesMarket {
+  id: number;
   name: string;
+  description: string | null;
+  sport: string | null;
+  sport_name: string | null;
+  category: string | null;
+  status: "open" | "resolved" | "closed";
+  source: string | null;
+  external_id: string | null;
+  mutually_exclusive: boolean;
+  resolution_date: string | null;
+  top_outcomes?: FuturesOutcome[];
+  outcomes?: FuturesOutcome[];
+  outcome_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface FuturesMarketsResponse {
+  markets: FuturesMarket[];
   count: number;
 }
 
-export interface SearchResponse {
-  query: string;
-  results: Event[];
-  pagination: SearchPagination;
-  sports: SearchSportInfo[];
-  filters: {
-    sport: string | null;
-    days_back: number;
-    include_upcoming: boolean;
-  };
+export interface FuturesMarketDetailResponse extends FuturesMarket {
+  outcomes: FuturesOutcome[];
+}
+
+export interface FuturesHistoryPoint {
+  timestamp: string;
+  probability: number | null;
+  american_odds: number | null;
+  bookmaker: string;
+}
+
+export interface FuturesOutcomeHistory {
+  outcome_id: number;
+  name: string;
+  history: FuturesHistoryPoint[];
+}
+
+export interface FuturesHistoryResponse {
+  market_id: number;
+  market_name: string;
+  hours: number;
+  outcomes: FuturesOutcomeHistory[];
+}
+
+export interface FuturesMover {
+  outcome_id: number;
+  name: string;
+  market_id: number;
+  market_name: string | null;
+  current_probability: number | null;
+  probability_change_24h: number | null;
+  current_american_odds: number | null;
+  rank: number | null;
+  rank_change_24h: number | null;
+}
+
+export interface FuturesMoversResponse {
+  movers: FuturesMover[];
+  timeframe_hours: number;
 }
