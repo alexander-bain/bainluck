@@ -26,7 +26,7 @@ export default function AboutPage() {
         </h2>
         <div className="bg-white rounded-xl p-6 border border-mist shadow-sm space-y-4">
           <p className="text-slate leading-relaxed">
-            You're watching a game and someone asks, "What are the odds?" You check
+            You&apos;re watching a game and someone asks, &ldquo;What are the odds?&rdquo; You check
             a sportsbook and see: <span className="font-mono bg-slate/10 px-2 py-0.5 rounded">-150 / +130</span>
           </p>
           <p className="text-slate leading-relaxed">
@@ -34,9 +34,9 @@ export default function AboutPage() {
             Should you be excited about this matchup?
           </p>
           <p className="text-slate leading-relaxed">
-            Betting odds are designed for gamblers, not fans. They're confusing,
+            Betting odds are designed for gamblers, not fans. They&apos;re confusing,
             inconsistent across regions (American vs. Decimal vs. Fractional),
-            and don't tell you what you actually want to know.
+            and don&apos;t tell you what you actually want to know.
           </p>
         </div>
       </section>
@@ -50,7 +50,7 @@ export default function AboutPage() {
           <p className="text-slate leading-relaxed">
             OddsTracker converts those cryptic numbers into simple{" "}
             <strong className="text-graphite">win probabilities</strong>.
-            Instead of "-150 / +130", you see:
+            Instead of &ldquo;-150 / +130&rdquo;, you see:
           </p>
 
           <div className="bg-snow rounded-lg p-4 border border-mist">
@@ -68,8 +68,8 @@ export default function AboutPage() {
           </div>
 
           <p className="text-slate leading-relaxed">
-            Now you instantly know Team A is favored, but it's not a lock—Team B
-            has a real shot. That's useful information, presented clearly.
+            Now you instantly know Team A is favored, but it&apos;s not a lock—Team B
+            has a real shot. That&apos;s useful information, presented clearly.
           </p>
         </div>
       </section>
@@ -126,7 +126,7 @@ export default function AboutPage() {
         </h2>
         <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-xl p-6 border border-orange-200 shadow-sm space-y-4">
           <p className="text-slate leading-relaxed">
-            We don't just show you odds—we help you find the{" "}
+            We don&apos;t just show you odds—we help you find the{" "}
             <strong className="text-graphite">most exciting games</strong>.
           </p>
           <p className="text-slate leading-relaxed">
@@ -152,7 +152,7 @@ export default function AboutPage() {
           <p className="text-slate leading-relaxed">
             We aggregate odds from multiple sportsbooks to give you the{" "}
             <strong className="text-graphite">consensus probability</strong>—what
-            the market as a whole thinks will happen, not just one bookmaker's opinion.
+            the market as a whole thinks will happen, not just one bookmaker&apos;s opinion.
           </p>
           <p className="text-slate leading-relaxed">
             For live games, we update every 30 seconds so you always see the
@@ -182,7 +182,7 @@ export default function AboutPage() {
             </li>
             <li className="flex gap-3">
               <span className="text-emerald-500">✓</span>
-              <span><strong className="text-graphite">No gambling advice</strong> — We're informational only</span>
+              <span><strong className="text-graphite">No gambling advice</strong> — We&apos;re informational only</span>
             </li>
           </ul>
         </div>

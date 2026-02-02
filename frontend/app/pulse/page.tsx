@@ -16,8 +16,8 @@ export default function PulseExplainerPage() {
         <div className="text-6xl">💓</div>
         <h1 className="text-title-1 text-graphite">What is Pulse?</h1>
         <p className="text-lg text-slate max-w-xl mx-auto">
-          Pulse is OddsTracker's excitement score that tells you how thrilling
-          a game is—at a glance. Think of it as a game's heartbeat.
+          Pulse is OddsTracker&apos;s excitement score that tells you how thrilling
+          a game is—at a glance. Think of it as a game&apos;s heartbeat.
         </p>
       </div>
 
@@ -28,7 +28,7 @@ export default function PulseExplainerPage() {
         </h2>
         <div className="bg-white rounded-xl p-6 border border-mist shadow-sm space-y-4">
           <p className="text-slate leading-relaxed">
-            During a game, betting odds constantly shift based on what's happening
+            During a game, betting odds constantly shift based on what&apos;s happening
             on the field. When one team scores, their odds of winning go up.
             When momentum swings, the odds swing too.
           </p>
@@ -40,8 +40,8 @@ export default function PulseExplainerPage() {
           </p>
           <div className="bg-snow rounded-lg p-4 border border-mist">
             <p className="text-sm text-slate italic">
-              "Pulse answers the question: If I only have time to watch one game,
-              which one should I pick?"
+              &ldquo;Pulse answers the question: If I only have time to watch one game,
+              which one should I pick?&rdquo;
             </p>
           </div>
         </div>
@@ -100,7 +100,7 @@ export default function PulseExplainerPage() {
                   </span>
                 </div>
                 <p className="text-slate text-sm leading-relaxed">
-                  Genuinely exciting with real moments of drama. The outcome wasn't
+                  Genuinely exciting with real moments of drama. The outcome wasn&apos;t
                   certain, and there were stretches where anything could happen.
                 </p>
                 <div className="mt-3 p-3 bg-orange-50 rounded-lg">
@@ -131,7 +131,7 @@ export default function PulseExplainerPage() {
                 </div>
                 <p className="text-slate text-sm leading-relaxed">
                   A competitive game with some tension, but the favorite generally
-                  controlled the pace. Worth watching if you're a fan of either team.
+                  controlled the pace. Worth watching if you&apos;re a fan of either team.
                 </p>
                 <div className="mt-3 p-3 bg-amber-50 rounded-lg">
                   <p className="text-xs text-amber-800">
@@ -315,12 +315,12 @@ export default function PulseExplainerPage() {
 
           <details className="bg-white rounded-xl border border-mist shadow-sm group">
             <summary className="p-4 cursor-pointer font-semibold text-graphite flex items-center justify-between">
-              Why doesn't every game have a Pulse score?
+              Why doesn&apos;t every game have a Pulse score?
               <span className="text-slate group-open:rotate-180 transition-transform">▼</span>
             </summary>
             <div className="px-4 pb-4 text-slate text-sm">
               We need enough odds data throughout the game to calculate Pulse accurately.
-              Games that just started or have limited betting activity won't have a score yet.
+              Games that just started or have limited betting activity won&apos;t have a score yet.
             </div>
           </details>
 
