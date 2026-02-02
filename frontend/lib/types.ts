@@ -56,6 +56,23 @@ export interface OpeningOdds {
   favorite: "home" | "away" | "even" | null;
 }
 
+export interface GEIComponents {
+  win_probability_volatility: number;
+  late_game_uncertainty: number;
+  expectation_deviation: number;
+  comeback_factor: number;
+  overtime_bonus: number;
+}
+
+export interface ExcitementData {
+  raw_gei: number;
+  percentile_global: number | null;
+  percentile_sport: number | null;
+  label: string;
+  emoji: string;
+  components?: GEIComponents;
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -70,6 +87,7 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
+  excitement?: ExcitementData;
 }
 
 export interface EventsResponse {
@@ -93,6 +111,7 @@ export interface BookmakerOddsDetail {
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
+  excitement?: ExcitementData;
 }
 
 export interface OddsHistoryPoint {

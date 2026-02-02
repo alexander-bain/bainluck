@@ -275,3 +275,23 @@ class ScoreSnapshot(Base):
 
     # Relationships
     event: Mapped["Event"] = relationship()
+
+
+class GEIPercentile(Base):
+    """Percentile thresholds for Game Excitement Index scoring."""
+
+    __tablename__ = "gei_percentiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(50), nullable=False)  # 'global', 'basketball_nba', etc.
+    percentile: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-100
+    raw_gei_threshold: Mapped[float] = mapped_column(Numeric(6, 4))  # Raw GEI value at this percentile
+    sample_size: Mapped[int] = mapped_column(Integer)  # Number of events in this scope
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("scope", "percentile", name="uq_scope_percentile"),
+    )

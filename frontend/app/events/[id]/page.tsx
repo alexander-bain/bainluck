@@ -232,6 +232,19 @@ export default function EventPage({ params }: EventPageProps) {
     if (event && !hasTrackedDetailView.current) {
       hasTrackedDetailView.current = true;
 
+      // Check staleness for analytics (not shown to user)
+      const now = new Date();
+      const commenceTime = new Date(event.commence_time);
+      const hoursSinceStart = (now.getTime() - commenceTime.getTime()) / (1000 * 60 * 60);
+      const isNeedsReview = event.status === "live" && hoursSinceStart > 4;
+
+      let isStale = false;
+      if (event.current_odds?.captured_at) {
+        const lastUpdate = new Date(event.current_odds.captured_at);
+        const minutesSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
+        isStale = minutesSinceUpdate > 30;
+      }
+
       track('event_detail_view', {
         event_id: event.id,
         sport: event.sport || 'unknown',
@@ -243,6 +256,8 @@ export default function EventPage({ params }: EventPageProps) {
         away_probability: event.current_odds?.away_probability ?? null,
         is_close_game: isCloseGame(event.current_odds?.home_probability),
         is_live: event.status === 'live',
+        is_stale: isStale,
+        is_needs_review: isNeedsReview,
         bookmaker_count: event.current_odds?.bookmaker_count ?? event.bookmaker_odds?.length ?? 0,
         minutes_to_start: calculateMinutesToStart(event.commence_time),
         entry_method: document.referrer.includes(window.location.hostname) ? 'card_click' : 'direct',
@@ -502,6 +517,78 @@ export default function EventPage({ params }: EventPageProps) {
             {isFinished && (
               <div className="text-center mt-2 text-xs text-slate">
                 Score when books closed (may not be final)
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Game Excitement Index for completed events */}
+        {isFinished && event.excitement && (
+          <div className="mb-6 py-4 px-5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border border-amber-200">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-amber-800 flex items-center gap-2">
+                {event.excitement.emoji || "⚡"} Game Excitement Index
+              </h3>
+              {event.excitement.percentile_global && (
+                <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                  event.excitement.percentile_global >= 95
+                    ? "bg-orange-200 text-orange-800"
+                    : event.excitement.percentile_global >= 90
+                    ? "bg-amber-200 text-amber-800"
+                    : event.excitement.percentile_global >= 75
+                    ? "bg-yellow-200 text-yellow-800"
+                    : "bg-slate-200 text-slate-700"
+                }`}>
+                  {event.excitement.percentile_global}th Percentile
+                </span>
+              )}
+            </div>
+
+            <div className="text-center mb-4">
+              <div className="text-2xl font-bold text-amber-700">
+                {event.excitement.label}
+              </div>
+              {event.excitement.percentile_global && (
+                <div className="text-sm text-amber-600 mt-1">
+                  More exciting than {event.excitement.percentile_global}% of games
+                </div>
+              )}
+            </div>
+
+            {/* GEI Components Breakdown */}
+            {event.excitement.components && (
+              <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-amber-200">
+                <div className="text-center">
+                  <div className="text-xs text-amber-600 uppercase tracking-wide">Win Prob Swings</div>
+                  <div className="text-lg font-mono font-semibold text-amber-800">
+                    {Math.round(event.excitement.components.win_probability_volatility * 100)}%
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-amber-600 uppercase tracking-wide">Late Drama</div>
+                  <div className="text-lg font-mono font-semibold text-amber-800">
+                    {Math.round(event.excitement.components.late_game_uncertainty * 100)}%
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-amber-600 uppercase tracking-wide">Upset Factor</div>
+                  <div className="text-lg font-mono font-semibold text-amber-800">
+                    {Math.round(event.excitement.components.expectation_deviation * 100)}%
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs text-amber-600 uppercase tracking-wide">Comeback</div>
+                  <div className="text-lg font-mono font-semibold text-amber-800">
+                    {Math.round(event.excitement.components.comeback_factor * 100)}%
+                  </div>
+                </div>
+                {event.excitement.components.overtime_bonus > 0 && (
+                  <div className="col-span-2 text-center pt-2 border-t border-amber-200">
+                    <span className="inline-flex items-center gap-1 text-sm text-orange-700 bg-orange-100 px-2 py-0.5 rounded">
+                      ⏱️ Overtime Bonus: +{Math.round(event.excitement.components.overtime_bonus * 100)}%
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -10,6 +10,7 @@ from app.models.models import (
     Tournament,
     TournamentOdds,
     ScoreSnapshot,
+    GEIPercentile,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "Tournament",
     "TournamentOdds",
     "ScoreSnapshot",
+    "GEIPercentile",
 ]
