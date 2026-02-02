@@ -300,3 +300,120 @@ class GEIPercentile(Base):
     __table_args__ = (
         UniqueConstraint("scope", "percentile", name="uq_scope_percentile"),
     )
+
+
+class FuturesMarket(Base):
+    """A futures market (e.g., 'NBA Championship 2025-26', 'Super Bowl Winner')."""
+
+    __tablename__ = "futures_markets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)  # 'odds_api', 'kalshi'
+    external_id: Mapped[str] = mapped_column(String(200), nullable=False)  # sport_key or event_ticker
+    sport_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sports.id"))
+
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(50), default="championship")  # championship, mvp, division, prop
+
+    # For multi-outcome markets, whether exactly one outcome can win
+    mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    resolution_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open, suspended, resolved
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_futures_source_external"),
+    )
+
+    # Relationships
+    sport: Mapped[Optional["Sport"]] = relationship()
+    outcomes: Mapped[list["FuturesOutcome"]] = relationship(
+        back_populates="market", cascade="all, delete-orphan"
+    )
+
+
+class FuturesOutcome(Base):
+    """A single outcome in a futures market (e.g., 'Los Angeles Lakers')."""
+
+    __tablename__ = "futures_outcomes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    market_id: Mapped[int] = mapped_column(ForeignKey("futures_markets.id"), index=True)
+    external_id: Mapped[str] = mapped_column(String(200))  # outcome name or ticker
+
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
+
+    # Current consensus odds (denormalized for quick display)
+    current_probability: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))  # 0.0-1.0
+    current_american_odds: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # For Kalshi: store bid/ask spread (nullable for traditional books)
+    current_yes_bid: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    current_yes_ask: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+
+    # Opening odds (for detecting movement)
+    opening_probability: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))
+    opening_american_odds: Mapped[Optional[int]] = mapped_column(Integer)
+    opening_captured_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Movement tracking
+    probability_change_24h: Mapped[Optional[float]] = mapped_column(Numeric(7, 6))
+    rank: Mapped[Optional[int]] = mapped_column(Integer)
+    rank_change_24h: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Resolution
+    is_winner: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    last_updated: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("market_id", "external_id", name="uq_outcome_market_external"),
+    )
+
+    # Relationships
+    market: Mapped["FuturesMarket"] = relationship(back_populates="outcomes")
+    team: Mapped[Optional["Team"]] = relationship()
+    snapshots: Mapped[list["FuturesOddsSnapshot"]] = relationship(
+        back_populates="outcome", cascade="all, delete-orphan"
+    )
+
+
+class FuturesOddsSnapshot(Base):
+    """Historical odds snapshot for a futures outcome from a specific bookmaker."""
+
+    __tablename__ = "futures_odds_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outcome_id: Mapped[int] = mapped_column(ForeignKey("futures_outcomes.id"), index=True)
+    bookmaker: Mapped[str] = mapped_column(String(50))  # 'draftkings', 'fanduel', 'kalshi'
+
+    # Normalized probability (always calculated)
+    probability: Mapped[float] = mapped_column(Numeric(7, 6))
+
+    # Source-specific raw data
+    american_odds: Mapped[Optional[int]] = mapped_column(Integer)  # For traditional books
+    yes_bid: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # For Kalshi
+    yes_ask: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # For Kalshi
+    last_price: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # For Kalshi
+
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    # Deduplication (same pattern as OddsSnapshot)
+    reading_count: Mapped[int] = mapped_column(Integer, default=1)
+    valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Relationships
+    outcome: Mapped["FuturesOutcome"] = relationship(back_populates="snapshots")

@@ -8,6 +8,7 @@ import type {
   EventHistoryResponse,
   SportsResponse,
   LiveOddsResponse,
+  SearchResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -20,7 +21,19 @@ async function apiFetch<T>(endpoint: string): Promise<T> {
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-    throw new Error(error.detail || `API error: ${res.status}`);
+    // Handle FastAPI validation errors (detail can be an array of objects)
+    let message: string;
+    if (typeof error.detail === "string") {
+      message = error.detail;
+    } else if (Array.isArray(error.detail)) {
+      // FastAPI validation error format: [{loc: [...], msg: "...", type: "..."}]
+      message = error.detail.map((e: { msg?: string }) => e.msg).join(", ");
+    } else if (error.detail?.msg) {
+      message = error.detail.msg;
+    } else {
+      message = `API error: ${res.status}`;
+    }
+    throw new Error(message);
   }
 
   return res.json();
@@ -75,6 +88,31 @@ export async function fetchSports(): Promise<SportsResponse> {
  */
 export async function fetchLiveOdds(sportKey: string): Promise<LiveOddsResponse> {
   return apiFetch<LiveOddsResponse>(`/api/events/live-odds/${sportKey}`);
+}
+
+/**
+ * Search events by team name, city, or keyword
+ */
+export async function searchEvents(params: {
+  q: string;
+  sport?: string;
+  page?: number;
+  per_page?: number;
+  days_back?: number;
+  include_upcoming?: boolean;
+}): Promise<SearchResponse> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("q", params.q);
+
+  if (params.sport) searchParams.set("sport", params.sport);
+  if (params.page) searchParams.set("page", params.page.toString());
+  if (params.per_page) searchParams.set("per_page", params.per_page.toString());
+  if (params.days_back) searchParams.set("days_back", params.days_back.toString());
+  if (params.include_upcoming !== undefined) {
+    searchParams.set("include_upcoming", params.include_upcoming.toString());
+  }
+
+  return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`);
 }
 
 /**

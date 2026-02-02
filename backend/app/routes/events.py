@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, not_, func
+from sqlalchemy import select, and_, or_, not_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -131,6 +131,192 @@ async def get_highlights(
             "min_percentile": min_percentile,
         },
         "count": len(highlights),
+    }
+
+
+@router.get("/search")
+async def search_events(
+    q: str = Query(..., min_length=2, description="Search query (team name, city, etc.)"),
+    sport: Optional[str] = Query(None, description="Filter by sport key (e.g., basketball_nba)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(25, ge=1, le=100, description="Results per page"),
+    days_back: int = Query(30, ge=1, le=365, description="How many days back to search"),
+    include_upcoming: bool = Query(True, description="Include scheduled games"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Search for events by team name, city, or other keywords.
+
+    Returns paginated results grouped by sport/league for disambiguation
+    when multiple teams share the same name (e.g., "Celtics" in NBA vs other leagues).
+
+    Results are ordered:
+    1. Live games (currently in progress)
+    2. Upcoming scheduled games (soonest first)
+    3. Completed games (most recent first)
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days_back)
+    search_pattern = f"%{q}%"
+
+    # Build base query - search both home and away team names
+    query = (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(selectinload(Event.sport))
+        .where(
+            or_(
+                Event.home_team_name.ilike(search_pattern),
+                Event.away_team_name.ilike(search_pattern),
+            ),
+            Event.commence_time >= cutoff,
+        )
+    )
+
+    # Filter by status based on include_upcoming
+    if include_upcoming:
+        query = query.where(Event.status.in_(["scheduled", "live", "completed", "closed"]))
+    else:
+        query = query.where(Event.status.in_(["live", "completed", "closed"]))
+
+    # Filter by sport if specified
+    if sport:
+        query = query.where(Sport.key == sport)
+
+    # Exclude rugby and other unwanted sports
+    for prefix in EXCLUDED_SPORT_PREFIXES:
+        query = query.where(not_(Sport.key.ilike(f"{prefix}%")))
+    for keyword in EXCLUDED_SPORT_KEYWORDS:
+        query = query.where(not_(Sport.key.ilike(f"%{keyword}%")))
+
+    # Custom ordering: live first, then upcoming (soonest), then completed (most recent)
+    # Using CASE statement for status priority
+    status_order = case(
+        (Event.status == "live", 0),
+        (Event.status == "scheduled", 1),
+        else_=2
+    )
+    # For scheduled: order by commence_time ASC (soonest first)
+    # For completed: order by commence_time DESC (most recent first)
+    # We handle this by using different sort keys based on status
+    query = query.order_by(
+        status_order,
+        # For live/scheduled, sort ascending; for completed, we want descending
+        # Using a compound sort: status priority, then time
+        case(
+            (Event.status.in_(["live", "scheduled"]), Event.commence_time),
+            else_=None
+        ).asc().nulls_last(),
+        case(
+            (Event.status.in_(["completed", "closed"]), Event.commence_time),
+            else_=None
+        ).desc().nulls_last(),
+    )
+
+    # Get total count (before pagination)
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total_count = total_result.scalar()
+
+    # Apply pagination
+    offset = (page - 1) * per_page
+    query = query.offset(offset).limit(per_page)
+
+    # Execute
+    result = await db.execute(query)
+    events = result.scalars().all()
+
+    # Double-check exclusion in Python (failsafe)
+    events = [e for e in events if not (e.sport and is_excluded_sport(e.sport.key))]
+
+    # Get latest aggregated odds for each event
+    event_ids = [e.id for e in events]
+    aggregated_odds_map = {}
+
+    if event_ids:
+        # Get the most recent snapshot per bookmaker per event
+        ranked_subq = (
+            select(
+                OddsSnapshot.id,
+                OddsSnapshot.event_id,
+                func.row_number().over(
+                    partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                    order_by=OddsSnapshot.captured_at.desc()
+                ).label("rn")
+            )
+            .where(OddsSnapshot.event_id.in_(event_ids))
+            .subquery()
+        )
+
+        latest_odds_query = (
+            select(OddsSnapshot)
+            .join(ranked_subq, and_(
+                OddsSnapshot.id == ranked_subq.c.id,
+                ranked_subq.c.rn == 1
+            ))
+        )
+
+        latest_odds_result = await db.execute(latest_odds_query)
+        all_snapshots = latest_odds_result.scalars().all()
+
+        # Group snapshots by event and aggregate
+        from collections import defaultdict
+        snapshots_by_event = defaultdict(list)
+        for snap in all_snapshots:
+            snapshots_by_event[snap.event_id].append(snap)
+
+        for event_id, snaps in snapshots_by_event.items():
+            latest_time = max(s.captured_at for s in snaps) if snaps else None
+            aggregated_odds_map[event_id] = {
+                "snapshots": snaps,
+                "aggregated": aggregate_bookmaker_odds(snaps),
+                "captured_at": latest_time,
+            }
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
+    # Format results and group by sport
+    formatted_results = []
+    sports_found = {}
+
+    for event in events:
+        formatted = _format_event_with_aggregated_odds(
+            event, aggregated_odds_map.get(event.id), gei_percentiles
+        )
+        formatted_results.append(formatted)
+
+        # Track sports for disambiguation info
+        sport_key = event.sport.key if event.sport else "unknown"
+        sport_name = event.sport.name if event.sport else "Unknown"
+        if sport_key not in sports_found:
+            sports_found[sport_key] = {
+                "key": sport_key,
+                "name": sport_name,
+                "count": 0,
+            }
+        sports_found[sport_key]["count"] += 1
+
+    # Calculate pagination metadata
+    total_pages = (total_count + per_page - 1) // per_page
+
+    return {
+        "query": q,
+        "results": formatted_results,
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total_results": total_count,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1,
+        },
+        "sports": list(sports_found.values()),
+        "filters": {
+            "sport": sport,
+            "days_back": days_back,
+            "include_upcoming": include_upcoming,
+        },
     }
 
 

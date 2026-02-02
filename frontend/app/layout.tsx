@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
 import { GoogleAnalytics, AnalyticsProvider, ConsentBanner } from "@/components/Analytics";
+import SearchBox from "@/components/SearchBox";
 
 export const metadata: Metadata = {
   title: "OddsTracker - Win Probabilities",
@@ -22,13 +23,14 @@ export default function RootLayout({
             {/* Header */}
             <header className="bg-white border-b border-mist sticky top-0 z-50">
               <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-4">
                   <Link href="/" className="flex items-center gap-2">
                     <span className="text-2xl">🎯</span>
                     <span className="text-title-2 text-graphite">
                       OddsTracker
                     </span>
                   </Link>
+                  <SearchBox />
                 </div>
               </div>
             </header>
