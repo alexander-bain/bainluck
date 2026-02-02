@@ -12,6 +12,7 @@ import type {
   FuturesMarketDetailResponse,
   FuturesHistoryResponse,
   FuturesMoversResponse,
+  SearchResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -79,6 +80,24 @@ export async function fetchSports(): Promise<SportsResponse> {
  */
 export async function fetchLiveOdds(sportKey: string): Promise<LiveOddsResponse> {
   return apiFetch<LiveOddsResponse>(`/api/events/live-odds/${sportKey}`);
+}
+
+/**
+ * Search events by team name or other criteria
+ */
+export async function searchEvents(params: {
+  q: string;
+  sport?: string;
+  page?: number;
+  per_page?: number;
+}): Promise<SearchResponse> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("q", params.q);
+  if (params.sport) searchParams.set("sport", params.sport);
+  if (params.page) searchParams.set("page", params.page.toString());
+  if (params.per_page) searchParams.set("per_page", params.per_page.toString());
+
+  return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`);
 }
 
 /**

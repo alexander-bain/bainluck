@@ -279,3 +279,13 @@ export interface FuturesMoversResponse {
   movers: FuturesMover[];
   timeframe_hours: number;
 }
+
+// Search types
+export interface SearchResponse {
+  events: Event[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+  query: string;
+}
