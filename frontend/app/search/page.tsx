@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { searchEvents } from "@/lib/api";
@@ -8,7 +8,16 @@ import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import EventCard from "@/components/EventCard";
 import type { SearchResponse } from "@/lib/types";
 
-export default function SearchPage() {
+function SearchLoading() {
+  return (
+    <div className="text-center py-12">
+      <div className="text-4xl mb-4 animate-pulse">🔍</div>
+      <p className="text-slate">Loading search...</p>
+    </div>
+  );
+}
+
+function SearchContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const query = searchParams.get("q") || "";
@@ -207,5 +216,13 @@ export default function SearchPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<SearchLoading />}>
+      <SearchContent />
+    </Suspense>
   );
 }
