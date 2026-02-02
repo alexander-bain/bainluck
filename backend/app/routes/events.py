@@ -46,19 +46,27 @@ def is_excluded_sport(sport_key: str) -> bool:
 
 
 async def _load_gei_percentiles(db: AsyncSession) -> dict:
-    """Load GEI percentile thresholds from database."""
-    result = await db.execute(
-        select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
-    )
-    rows = result.all()
+    """Load GEI percentile thresholds from database.
 
-    percentiles = {}
-    for scope, percentile, threshold in rows:
-        if scope not in percentiles:
-            percentiles[scope] = {}
-        percentiles[scope][percentile] = float(threshold) if threshold else 0
+    Returns empty dict if table doesn't exist or query fails,
+    allowing the API to function without GEI data.
+    """
+    try:
+        result = await db.execute(
+            select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
+        )
+        rows = result.all()
 
-    return percentiles
+        percentiles = {}
+        for scope, percentile, threshold in rows:
+            if scope not in percentiles:
+                percentiles[scope] = {}
+            percentiles[scope][percentile] = float(threshold) if threshold else 0
+
+        return percentiles
+    except Exception:
+        # Table may not exist yet - return empty dict
+        return {}
 
 
 @router.get("/highlights")
@@ -849,33 +857,38 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
     }
 
     # Add GEI data if available (for completed events)
-    if event.raw_gei is not None:
-        from app.utils.gei import get_gei_label, get_gei_emoji
-        import json
+    # Wrap in try/except in case GEI columns don't exist yet (migration not applied)
+    try:
+        if event.raw_gei is not None:
+            from app.utils.gei import get_gei_label, get_gei_emoji
+            import json
 
-        sport_key = event.sport.key if event.sport else None
-        raw_gei = float(event.raw_gei)
+            sport_key = event.sport.key if event.sport else None
+            raw_gei = float(event.raw_gei)
 
-        # Calculate percentiles from thresholds if provided
-        percentile_global = _calculate_percentile(raw_gei, gei_percentiles, 'global') if gei_percentiles else None
-        percentile_sport = _calculate_percentile(raw_gei, gei_percentiles, sport_key) if gei_percentiles and sport_key else None
+            # Calculate percentiles from thresholds if provided
+            percentile_global = _calculate_percentile(raw_gei, gei_percentiles, 'global') if gei_percentiles else None
+            percentile_sport = _calculate_percentile(raw_gei, gei_percentiles, sport_key) if gei_percentiles and sport_key else None
 
-        # Parse components if stored
-        components = None
-        if event.gei_components:
-            try:
-                components = json.loads(event.gei_components)
-            except json.JSONDecodeError:
-                pass
+            # Parse components if stored
+            components = None
+            if event.gei_components:
+                try:
+                    components = json.loads(event.gei_components)
+                except json.JSONDecodeError:
+                    pass
 
-        response["excitement"] = {
-            "raw_gei": raw_gei,
-            "percentile_global": percentile_global,
-            "percentile_sport": percentile_sport,
-            "label": get_gei_label(percentile_global or 50),
-            "emoji": get_gei_emoji(percentile_global or 50),
-            "components": components,
-        }
+            response["excitement"] = {
+                "raw_gei": raw_gei,
+                "percentile_global": percentile_global,
+                "percentile_sport": percentile_sport,
+                "label": get_gei_label(percentile_global or 50),
+                "emoji": get_gei_emoji(percentile_global or 50),
+                "components": components,
+            }
+    except Exception:
+        # GEI columns may not exist yet - skip excitement data
+        pass
 
     return response
 

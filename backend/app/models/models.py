@@ -93,6 +93,11 @@ class Event(Base):
     opening_over_under: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
     opening_favorite: Mapped[Optional[str]] = mapped_column(String(10))  # 'home', 'away', 'even'
 
+    # Game Excitement Index (GEI) - computed after game completion
+    raw_gei: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
+    gei_components: Mapped[Optional[str]] = mapped_column(Text)  # JSON of component scores
+    gei_computed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
