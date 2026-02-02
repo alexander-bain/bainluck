@@ -73,6 +73,23 @@ export interface ExcitementData {
   components?: GEIComponents;
 }
 
+export interface PulseComponents {
+  heart_rate: number;
+  amplitude: number;
+  arrhythmia: number;
+  vitals: number;
+  time_weight: number;
+  lead_changes: number;
+}
+
+export interface PulseData {
+  score: number;           // 1-100
+  status: string;          // 'racing' | 'strong' | 'steady' | 'weak' | 'flatline'
+  label: string;           // 'Must-Watch', 'Exciting', etc.
+  emoji: string;           // 🫀 💓 💗 🩺 📉
+  components?: PulseComponents;
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -88,6 +105,7 @@ export interface Event {
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
   excitement?: ExcitementData;
+  pulse?: PulseData;
 }
 
 export interface EventsResponse {
@@ -112,6 +130,7 @@ export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
   excitement?: ExcitementData;
+  pulse?: PulseData;
 }
 
 export interface OddsHistoryPoint {
