@@ -114,8 +114,12 @@ async def get_highlights(
 
         formatted = _format_event(event, gei_percentiles)
 
-        # Check percentile threshold
-        if formatted.get("excitement", {}).get("percentile_global", 0) >= min_percentile:
+        # Check percentile threshold (handle None percentile)
+        percentile = formatted.get("excitement", {}).get("percentile_global")
+        if percentile is not None and percentile >= min_percentile:
+            highlights.append(formatted)
+        elif min_percentile == 0 and formatted.get("excitement"):
+            # With min_percentile=0, include all events with excitement data
             highlights.append(formatted)
 
         if len(highlights) >= limit:
