@@ -281,11 +281,24 @@ export interface FuturesMoversResponse {
 }
 
 // Search types
-export interface SearchResponse {
-  events: Event[];
-  total: number;
+export interface SearchPagination {
+  total_results: number;
   page: number;
   per_page: number;
   total_pages: number;
+  has_prev: boolean;
+  has_next: boolean;
+}
+
+export interface SearchSportFacet {
+  key: string;
+  name: string;
+  count: number;
+}
+
+export interface SearchResponse {
+  results: Event[];
+  pagination: SearchPagination;
+  sports: SearchSportFacet[];
   query: string;
 }
