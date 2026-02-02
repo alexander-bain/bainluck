@@ -179,3 +179,84 @@ export interface LiveOddsResponse {
   events: LiveOddsEvent[];
   count: number;
 }
+
+// Futures/Outrights types
+export interface FuturesOutcome {
+  id: number;
+  name: string;
+  probability: number | null;
+  american_odds: number | null;
+  rank: number | null;
+  rank_change_24h: number | null;
+  probability_change_24h: number | null;
+  movement: number | null; // alias for probability_change_24h in list view
+  opening_probability: number | null;
+  opening_american_odds: number | null;
+  is_winner: boolean | null;
+  last_updated: string | null;
+}
+
+export interface FuturesMarket {
+  id: number;
+  name: string;
+  description: string | null;
+  sport: string | null;
+  sport_name: string | null;
+  category: string | null;
+  status: "open" | "resolved" | "closed";
+  source: string | null;
+  external_id: string | null;
+  mutually_exclusive: boolean;
+  resolution_date: string | null;
+  top_outcomes?: FuturesOutcome[];
+  outcomes?: FuturesOutcome[];
+  outcome_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface FuturesMarketsResponse {
+  markets: FuturesMarket[];
+  count: number;
+}
+
+export interface FuturesMarketDetailResponse extends FuturesMarket {
+  outcomes: FuturesOutcome[];
+}
+
+export interface FuturesHistoryPoint {
+  timestamp: string;
+  probability: number | null;
+  american_odds: number | null;
+  bookmaker: string;
+}
+
+export interface FuturesOutcomeHistory {
+  outcome_id: number;
+  name: string;
+  history: FuturesHistoryPoint[];
+}
+
+export interface FuturesHistoryResponse {
+  market_id: number;
+  market_name: string;
+  hours: number;
+  outcomes: FuturesOutcomeHistory[];
+}
+
+export interface FuturesMover {
+  outcome_id: number;
+  name: string;
+  market_id: number;
+  market_name: string | null;
+  current_probability: number | null;
+  probability_change_24h: number | null;
+  current_american_odds: number | null;
+  rank: number | null;
+  rank_change_24h: number | null;
+}
+
+export interface FuturesMoversResponse {
+  movers: FuturesMover[];
+  timeframe_hours: number;
+}
