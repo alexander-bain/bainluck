@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, not_, func
+from sqlalchemy import select, and_, or_, not_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -189,7 +189,7 @@ async def search_events(
 
     # Custom ordering: live first, then upcoming (soonest), then completed (most recent)
     # Using CASE statement for status priority
-    status_order = func.case(
+    status_order = case(
         (Event.status == "live", 0),
         (Event.status == "scheduled", 1),
         else_=2
@@ -201,11 +201,11 @@ async def search_events(
         status_order,
         # For live/scheduled, sort ascending; for completed, we want descending
         # Using a compound sort: status priority, then time
-        func.case(
+        case(
             (Event.status.in_(["live", "scheduled"]), Event.commence_time),
             else_=None
         ).asc().nulls_last(),
-        func.case(
+        case(
             (Event.status.in_(["completed", "closed"]), Event.commence_time),
             else_=None
         ).desc().nulls_last(),
