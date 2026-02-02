@@ -553,14 +553,14 @@ export default function EventPage({ params }: EventPageProps) {
               )}
               {isLive && event.excitement.raw_gei !== undefined && (
                 <span className="px-3 py-1 rounded-full text-sm font-bold bg-emerald-200 text-emerald-800">
-                  {Math.round(event.excitement.raw_gei * 100)} / 100
+                  {Math.min(100, Math.max(1, Math.round(event.excitement.raw_gei * 100)))} / 100
                 </span>
               )}
             </div>
 
             <div className="text-center mb-4">
               <div className={`text-2xl font-bold ${isLive ? "text-emerald-700" : "text-amber-700"}`}>
-                {isLive ? `Score: ${Math.round(event.excitement.raw_gei * 100)}` : event.excitement.label}
+                {isLive ? `Score: ${Math.min(100, Math.max(1, Math.round(event.excitement.raw_gei * 100)))}` : event.excitement.label}
               </div>
               {isLive ? (
                 <div className="text-sm text-emerald-600 mt-1">
