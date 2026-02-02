@@ -8,9 +8,10 @@ from sqlalchemy import select, and_, or_, not_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot
+from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile
 from app.services import get_db, OddsAPIService, fetch_current_odds
 from app.utils import moneyline_to_probability, project_scores, calculate_gei, aggregate_bookmaker_odds
+from app.utils.gei import get_gei_label, get_gei_emoji, calculate_expected_excitement
 
 router = APIRouter()
 
@@ -35,6 +36,85 @@ def is_excluded_sport(sport_key: str) -> bool:
         if keyword in sport_key_lower:
             return True
     return False
+
+
+async def _load_gei_percentiles(db: AsyncSession) -> dict:
+    """Load GEI percentile thresholds from database."""
+    result = await db.execute(
+        select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
+    )
+    rows = result.all()
+
+    percentiles = {}
+    for scope, percentile, threshold in rows:
+        if scope not in percentiles:
+            percentiles[scope] = {}
+        percentiles[scope][percentile] = float(threshold) if threshold else 0
+
+    return percentiles
+
+
+@router.get("/highlights")
+async def get_highlights(
+    sport: Optional[str] = Query(None, description="Filter by sport key"),
+    days: int = Query(7, description="Days of history to include"),
+    limit: int = Query(20, description="Maximum number of events"),
+    min_percentile: int = Query(75, description="Minimum GEI percentile"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the most exciting completed events.
+
+    Returns events with highest GEI scores, useful for highlights/replay discovery.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
+    # Build query for completed events with GEI
+    query = (
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            Event.status == "completed",
+            Event.raw_gei.isnot(None),
+            Event.commence_time >= cutoff,
+        )
+        .order_by(Event.raw_gei.desc())
+        .limit(limit * 2)  # Fetch extra to filter by percentile
+    )
+
+    if sport:
+        query = query.join(Sport).where(Sport.key == sport)
+
+    result = await db.execute(query)
+    events = result.scalars().all()
+
+    # Filter out excluded sports and apply percentile filter
+    highlights = []
+    for event in events:
+        if event.sport and is_excluded_sport(event.sport.key):
+            continue
+
+        formatted = _format_event(event, gei_percentiles)
+
+        # Check percentile threshold
+        if formatted.get("excitement", {}).get("percentile_global", 0) >= min_percentile:
+            highlights.append(formatted)
+
+        if len(highlights) >= limit:
+            break
+
+    return {
+        "highlights": highlights,
+        "filters": {
+            "sport": sport,
+            "days": days,
+            "min_percentile": min_percentile,
+        },
+        "count": len(highlights),
+    }
 
 
 @router.get("/debug/sport-keys")
@@ -299,10 +379,13 @@ async def list_events(
                 "captured_at": latest_time,
             }
 
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
     # Format response with aggregated odds
     return {
         "events": [
-            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id))
+            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id), gei_percentiles)
             for e in events
         ],
         "count": len(events),
@@ -314,13 +397,17 @@ async def list_live_events(db: AsyncSession = Depends(get_db)):
     """List currently live events."""
     result = await db.execute(
         select(Event)
+        .options(selectinload(Event.sport))
         .where(Event.status == "live")
         .order_by(Event.commence_time)
     )
     events = result.scalars().all()
-    
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
     return {
-        "events": [_format_event(e) for e in events],
+        "events": [_format_event(e, gei_percentiles) for e in events],
         "count": len(events),
     }
 
@@ -424,7 +511,10 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if event.sport and is_excluded_sport(event.sport.key):
         raise HTTPException(status_code=404, detail="Event not found")
 
-    response = _format_event(event)
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
+    response = _format_event(event, gei_percentiles)
 
     if event.odds_snapshots:
         # Get the most recent snapshot for each bookmaker
@@ -737,9 +827,9 @@ async def debug_event_snapshots(
     }
 
 
-def _format_event(event: Event) -> dict:
+def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
     """Format event for API response."""
-    return {
+    response = {
         "id": event.id,
         "external_id": event.external_id,
         "sport": event.sport.key if event.sport else None,
@@ -750,6 +840,49 @@ def _format_event(event: Event) -> dict:
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+    # Add GEI data if available (for completed events)
+    if event.raw_gei is not None:
+        from app.utils.gei import get_gei_label, get_gei_emoji
+        import json
+
+        sport_key = event.sport.key if event.sport else None
+        raw_gei = float(event.raw_gei)
+
+        # Calculate percentiles from thresholds if provided
+        percentile_global = _calculate_percentile(raw_gei, gei_percentiles, 'global') if gei_percentiles else None
+        percentile_sport = _calculate_percentile(raw_gei, gei_percentiles, sport_key) if gei_percentiles and sport_key else None
+
+        # Parse components if stored
+        components = None
+        if event.gei_components:
+            try:
+                components = json.loads(event.gei_components)
+            except json.JSONDecodeError:
+                pass
+
+        response["excitement"] = {
+            "raw_gei": raw_gei,
+            "percentile_global": percentile_global,
+            "percentile_sport": percentile_sport,
+            "label": get_gei_label(percentile_global or 50),
+            "emoji": get_gei_emoji(percentile_global or 50),
+            "components": components,
+        }
+
+    return response
+
+
+def _calculate_percentile(raw_gei: float, percentiles: dict, scope: str) -> int:
+    """Calculate percentile from raw GEI using stored thresholds."""
+    if not percentiles or scope not in percentiles:
+        return None
+
+    thresholds = percentiles[scope]
+    for p in range(100, 0, -1):
+        if p in thresholds and raw_gei >= thresholds[p]:
+            return p
+    return 1
 
 
 def _format_event_with_odds(event: Event) -> dict:
@@ -811,9 +944,9 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict]) -> dict:
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None) -> dict:
     """Format event for API response with aggregated odds from multiple bookmakers."""
-    response = _format_event(event)
+    response = _format_event(event, gei_percentiles)
 
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]

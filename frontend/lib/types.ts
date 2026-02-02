@@ -27,6 +27,23 @@ export interface CurrentOdds {
   };
 }
 
+export interface GEIComponents {
+  win_probability_volatility: number;
+  late_game_uncertainty: number;
+  expectation_deviation: number;
+  comeback_factor: number;
+  overtime_bonus: number;
+}
+
+export interface ExcitementData {
+  raw_gei: number;
+  percentile_global: number | null;
+  percentile_sport: number | null;
+  label: string;
+  emoji: string;
+  components?: GEIComponents;
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -39,6 +56,7 @@ export interface Event {
   away_score: number | null;
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
+  excitement?: ExcitementData;
 }
 
 export interface EventsResponse {

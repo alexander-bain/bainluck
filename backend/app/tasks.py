@@ -88,6 +88,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.discover_events",
         "schedule": crontab(minute="*/15"),  # Every 15 minutes - discover events for all sports
     },
+    "compute-gei-batch": {
+        "task": "app.tasks.compute_gei_batch",
+        "schedule": crontab(minute="*/10"),  # Every 10 minutes - compute GEI for newly completed events
+        "kwargs": {"limit": 50},
+    },
+    "compute-gei-percentiles-daily": {
+        "task": "app.tasks.compute_gei_percentiles",
+        "schedule": crontab(hour=4, minute=0),  # Daily at 4 AM UTC
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -1127,3 +1136,276 @@ async def _poll_sport_odds(sport_key: str):
         }
     finally:
         await service.close()
+
+
+# =============================================================================
+# Game Excitement Index (GEI) Tasks
+# =============================================================================
+
+@celery_app.task(bind=True)
+def compute_gei_for_event(self, event_id: int):
+    """
+    Compute GEI for a single completed event.
+
+    Called after an event is marked as completed.
+    """
+    return run_async(_compute_gei_for_event(event_id))
+
+
+async def _compute_gei_for_event(event_id: int):
+    """Async implementation of compute_gei_for_event."""
+    from app.utils.gei import calculate_gei, OddsDataPoint
+
+    async with async_session_maker() as session:
+        # Get the event with its sport
+        result = await session.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.id == event_id)
+        )
+        event = result.scalar_one_or_none()
+
+        if not event:
+            return {"error": f"Event {event_id} not found"}
+
+        if event.status != "completed":
+            return {"error": f"Event {event_id} is not completed (status: {event.status})"}
+
+        if event.raw_gei is not None:
+            return {"skipped": True, "reason": "GEI already computed"}
+
+        # Get all snapshots for this event
+        result = await session.execute(
+            select(OddsSnapshot)
+            .where(OddsSnapshot.event_id == event_id)
+            .order_by(OddsSnapshot.captured_at)
+        )
+        snapshots = result.scalars().all()
+
+        if len(snapshots) < 3:
+            return {"error": f"Insufficient snapshots ({len(snapshots)}) for GEI calculation"}
+
+        # Convert to OddsDataPoint objects
+        data_points = [
+            OddsDataPoint(
+                captured_at=s.captured_at,
+                home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
+                home_spread=float(s.home_spread) if s.home_spread else None,
+                over_under=float(s.over_under) if s.over_under else None,
+                bookmaker=s.bookmaker,
+            )
+            for s in snapshots
+        ]
+
+        # Determine market close time (last snapshot)
+        market_close = max(s.captured_at for s in snapshots)
+
+        # Calculate GEI
+        sport_key = event.sport.key if event.sport else "unknown"
+        gei_result = calculate_gei(
+            snapshots=data_points,
+            game_start=event.commence_time,
+            market_close=market_close,
+            sport_key=sport_key,
+        )
+
+        if gei_result is None:
+            return {"error": "GEI calculation failed"}
+
+        # Update event with GEI
+        event.raw_gei = gei_result.raw_gei
+        event.gei_components = gei_result.components.to_json()
+        event.gei_computed_at = datetime.now(timezone.utc)
+
+        await session.commit()
+
+        return {
+            "event_id": event_id,
+            "raw_gei": gei_result.raw_gei,
+            "data_quality": gei_result.data_quality,
+            "snapshot_count": gei_result.snapshot_count,
+        }
+
+
+@celery_app.task(bind=True)
+def compute_gei_batch(self, limit: int = 100):
+    """
+    Compute GEI for a batch of completed events that don't have GEI yet.
+
+    Useful for backfilling historical events.
+    """
+    return run_async(_compute_gei_batch(limit))
+
+
+async def _compute_gei_batch(limit: int):
+    """Async implementation of compute_gei_batch."""
+    from app.utils.gei import calculate_gei, OddsDataPoint
+
+    async with async_session_maker() as session:
+        # Find completed events without GEI
+        result = await session.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.status == "completed",
+                Event.raw_gei.is_(None),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )
+        events = result.scalars().all()
+
+        if not events:
+            return {"processed": 0, "message": "No events to process"}
+
+        processed = 0
+        errors = 0
+
+        for event in events:
+            # Get snapshots for this event
+            result = await session.execute(
+                select(OddsSnapshot)
+                .where(OddsSnapshot.event_id == event.id)
+                .order_by(OddsSnapshot.captured_at)
+            )
+            snapshots = result.scalars().all()
+
+            if len(snapshots) < 3:
+                continue
+
+            # Convert to OddsDataPoint objects
+            data_points = [
+                OddsDataPoint(
+                    captured_at=s.captured_at,
+                    home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
+                    home_spread=float(s.home_spread) if s.home_spread else None,
+                    over_under=float(s.over_under) if s.over_under else None,
+                    bookmaker=s.bookmaker,
+                )
+                for s in snapshots
+            ]
+
+            market_close = max(s.captured_at for s in snapshots)
+            sport_key = event.sport.key if event.sport else "unknown"
+
+            try:
+                gei_result = calculate_gei(
+                    snapshots=data_points,
+                    game_start=event.commence_time,
+                    market_close=market_close,
+                    sport_key=sport_key,
+                )
+
+                if gei_result:
+                    event.raw_gei = gei_result.raw_gei
+                    event.gei_components = gei_result.components.to_json()
+                    event.gei_computed_at = datetime.now(timezone.utc)
+                    processed += 1
+            except Exception as e:
+                print(f"Error computing GEI for event {event.id}: {e}")
+                errors += 1
+
+        await session.commit()
+
+        return {
+            "processed": processed,
+            "errors": errors,
+            "remaining": len(events) - processed - errors,
+        }
+
+
+@celery_app.task(bind=True)
+def compute_gei_percentiles(self):
+    """
+    Recompute GEI percentile thresholds for all scopes.
+
+    Should be run daily (or after significant new data).
+    """
+    return run_async(_compute_gei_percentiles())
+
+
+async def _compute_gei_percentiles():
+    """Async implementation of compute_gei_percentiles."""
+    from collections import defaultdict
+    from app.models import GEIPercentile
+
+    async with async_session_maker() as session:
+        # Get all completed events with raw GEI
+        result = await session.execute(
+            select(Event.raw_gei, Sport.key)
+            .join(Sport)
+            .where(
+                Event.status == "completed",
+                Event.raw_gei.isnot(None),
+            )
+        )
+        events = result.all()
+
+        if not events:
+            return {"error": "No events with GEI found"}
+
+        # Group by sport
+        by_sport = defaultdict(list)
+        all_geis = []
+
+        for raw_gei, sport_key in events:
+            gei_value = float(raw_gei)
+            by_sport[sport_key].append(gei_value)
+            all_geis.append(gei_value)
+
+        # Compute global percentiles
+        await _store_percentiles(session, 'global', all_geis)
+        scopes_computed = ['global']
+
+        # Compute per-sport percentiles (minimum 30 samples)
+        for sport_key, geis in by_sport.items():
+            if len(geis) >= 30:
+                await _store_percentiles(session, sport_key, geis)
+                scopes_computed.append(sport_key)
+
+        await session.commit()
+
+        return {
+            "total_events": len(all_geis),
+            "scopes_computed": scopes_computed,
+            "sports_with_data": list(by_sport.keys()),
+        }
+
+
+async def _store_percentiles(session, scope: str, values: list[float]):
+    """Store percentile thresholds for a scope."""
+    from app.models import GEIPercentile
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    if not values:
+        return
+
+    values = sorted(values)
+    sample_size = len(values)
+
+    for p in range(1, 101):
+        # Calculate percentile value
+        idx = (p / 100) * (len(values) - 1)
+        lower_idx = int(idx)
+        upper_idx = min(lower_idx + 1, len(values) - 1)
+        fraction = idx - lower_idx
+
+        if lower_idx == upper_idx:
+            threshold = values[lower_idx]
+        else:
+            threshold = values[lower_idx] * (1 - fraction) + values[upper_idx] * fraction
+
+        stmt = pg_insert(GEIPercentile).values(
+            scope=scope,
+            percentile=p,
+            raw_gei_threshold=threshold,
+            sample_size=sample_size,
+        ).on_conflict_do_update(
+            index_elements=['scope', 'percentile'],
+            set_={
+                'raw_gei_threshold': threshold,
+                'sample_size': sample_size,
+                'computed_at': func.now(),
+            }
+        )
+        await session.execute(stmt)
