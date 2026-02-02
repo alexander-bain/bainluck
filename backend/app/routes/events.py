@@ -46,19 +46,27 @@ def is_excluded_sport(sport_key: str) -> bool:
 
 
 async def _load_gei_percentiles(db: AsyncSession) -> dict:
-    """Load GEI percentile thresholds from database."""
-    result = await db.execute(
-        select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
-    )
-    rows = result.all()
+    """Load GEI percentile thresholds from database.
 
-    percentiles = {}
-    for scope, percentile, threshold in rows:
-        if scope not in percentiles:
-            percentiles[scope] = {}
-        percentiles[scope][percentile] = float(threshold) if threshold else 0
+    Returns empty dict if table doesn't exist or query fails,
+    allowing the API to function without GEI data.
+    """
+    try:
+        result = await db.execute(
+            select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
+        )
+        rows = result.all()
 
-    return percentiles
+        percentiles = {}
+        for scope, percentile, threshold in rows:
+            if scope not in percentiles:
+                percentiles[scope] = {}
+            percentiles[scope][percentile] = float(threshold) if threshold else 0
+
+        return percentiles
+    except Exception:
+        # Table may not exist yet - return empty dict
+        return {}
 
 
 @router.get("/highlights")
