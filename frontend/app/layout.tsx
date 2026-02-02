@@ -30,6 +30,23 @@ export default function RootLayout({
                       OddsTracker
                     </span>
                   </Link>
+
+                  {/* Navigation */}
+                  <nav className="flex items-center gap-1">
+                    <Link
+                      href="/"
+                      className="px-3 py-1.5 text-sm font-medium text-slate hover:text-graphite hover:bg-slate/5 rounded-full transition-colors"
+                    >
+                      Games
+                    </Link>
+                    <Link
+                      href="/futures"
+                      className="px-3 py-1.5 text-sm font-medium text-slate hover:text-graphite hover:bg-slate/5 rounded-full transition-colors"
+                    >
+                      Futures
+                    </Link>
+                  </nav>
+
                   <SearchBox />
                 </div>
               </div>
@@ -44,7 +61,27 @@ export default function RootLayout({
 
             {/* Footer */}
             <footer className="bg-white border-t border-mist mt-auto">
-              <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
+              <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-6">
+                {/* Navigation Links */}
+                <nav className="flex items-center justify-center gap-6 mb-4">
+                  <Link
+                    href="/pulse"
+                    className="flex items-center gap-1.5 text-slate hover:text-graphite transition-colors"
+                  >
+                    <span>💓</span>
+                    <span className="font-medium">What is Pulse?</span>
+                  </Link>
+                  <span className="text-mist">|</span>
+                  <Link
+                    href="/about"
+                    className="flex items-center gap-1.5 text-slate hover:text-graphite transition-colors"
+                  >
+                    <span>🎯</span>
+                    <span className="font-medium">About</span>
+                  </Link>
+                </nav>
+
+                {/* Tagline */}
                 <p className="text-center text-caption text-slate">
                   📊 Win probabilities updated in real-time
                 </p>
@@ -59,4 +96,3 @@ export default function RootLayout({
     </html>
   );
 }
-
