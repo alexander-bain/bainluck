@@ -523,6 +523,18 @@ async def _discover_events():
                         if snapshot_check.scalar() == 0:
                             total_new_events += 1
 
+                        # Also save odds snapshots for this event
+                        # This ensures events discovered have odds data immediately
+                        for bookmaker in event_data.get("bookmakers", []):
+                            snapshot, is_new = await _create_or_update_snapshot(
+                                session,
+                                event_id,
+                                bookmaker,
+                                event_data
+                            )
+                            if is_new:
+                                session.add(snapshot)
+
                 except Exception as e:
                     # Log but continue with other sports
                     print(f"Error discovering events for {sport_key}: {e}")
