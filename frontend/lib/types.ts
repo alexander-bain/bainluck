@@ -179,3 +179,30 @@ export interface LiveOddsResponse {
   events: LiveOddsEvent[];
   count: number;
 }
+
+export interface SearchPagination {
+  page: number;
+  per_page: number;
+  total_results: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
+
+export interface SearchSportInfo {
+  key: string;
+  name: string;
+  count: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: Event[];
+  pagination: SearchPagination;
+  sports: SearchSportInfo[];
+  filters: {
+    sport: string | null;
+    days_back: number;
+    include_upcoming: boolean;
+  };
+}
