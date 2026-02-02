@@ -21,7 +21,19 @@ async function apiFetch<T>(endpoint: string): Promise<T> {
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-    throw new Error(error.detail || `API error: ${res.status}`);
+    // Handle FastAPI validation errors (detail can be an array of objects)
+    let message: string;
+    if (typeof error.detail === "string") {
+      message = error.detail;
+    } else if (Array.isArray(error.detail)) {
+      // FastAPI validation error format: [{loc: [...], msg: "...", type: "..."}]
+      message = error.detail.map((e: { msg?: string }) => e.msg).join(", ");
+    } else if (error.detail?.msg) {
+      message = error.detail.msg;
+    } else {
+      message = `API error: ${res.status}`;
+    }
+    throw new Error(message);
   }
 
   return res.json();
