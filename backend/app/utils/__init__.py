@@ -19,6 +19,15 @@ from app.utils.highlights import (
     HighlightResult,
     get_league_tier,
 )
+from app.utils.pulse import (
+    calculate_pulse,
+    get_pulse_status,
+    get_pulse_emoji,
+    get_pulse_label,
+    PulseDataPoint,
+    PulseComponents,
+    PulseResult,
+)
 
 __all__ = [
     "american_to_probability",
@@ -37,4 +46,11 @@ __all__ = [
     "EventFlags",
     "HighlightResult",
     "get_league_tier",
+    "calculate_pulse",
+    "get_pulse_status",
+    "get_pulse_emoji",
+    "get_pulse_label",
+    "PulseDataPoint",
+    "PulseComponents",
+    "PulseResult",
 ]

@@ -522,92 +522,89 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         )}
 
-        {/* Game Excitement Index for live and completed events */}
-        {(isFinished || isLive) && event.excitement && (
+        {/* Pulse - Game Excitement Metric */}
+        {(isFinished || isLive) && event.pulse && (
           <div className={`mb-6 py-4 px-5 rounded-lg border ${
-            isLive
-              ? "bg-gradient-to-r from-emerald-50 to-amber-50 border-emerald-200"
-              : "bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200"
+            event.pulse.score >= 81
+              ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-200"
+              : event.pulse.score >= 61
+              ? "bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200"
+              : event.pulse.score >= 41
+              ? "bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200"
+              : "bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200"
           }`}>
             <div className="flex items-center justify-between mb-3">
               <h3 className={`text-sm font-semibold flex items-center gap-2 ${
-                isLive ? "text-emerald-800" : "text-amber-800"
+                event.pulse.score >= 81
+                  ? "text-red-800"
+                  : event.pulse.score >= 61
+                  ? "text-orange-800"
+                  : event.pulse.score >= 41
+                  ? "text-amber-800"
+                  : "text-slate-700"
               }`}>
-                {event.excitement.emoji || "⚡"} {isLive ? "Live Excitement" : "Game Excitement Index"}
+                {event.pulse.emoji} {isLive ? "Live Pulse" : "Game Pulse"}
                 {isLive && (
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 )}
               </h3>
-              {event.excitement.percentile_global && !isLive && (
-                <span className={`px-3 py-1 rounded-full text-sm font-bold ${
-                  event.excitement.percentile_global >= 95
-                    ? "bg-orange-200 text-orange-800"
-                    : event.excitement.percentile_global >= 90
-                    ? "bg-amber-200 text-amber-800"
-                    : event.excitement.percentile_global >= 75
-                    ? "bg-yellow-200 text-yellow-800"
-                    : "bg-slate-200 text-slate-700"
-                }`}>
-                  {event.excitement.percentile_global}th Percentile
-                </span>
-              )}
-              {isLive && event.excitement.raw_gei !== undefined && (
-                <span className="px-3 py-1 rounded-full text-sm font-bold bg-emerald-200 text-emerald-800">
-                  {Math.min(100, Math.max(1, Math.round(event.excitement.raw_gei * 100)))} / 100
-                </span>
-              )}
+              <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                event.pulse.score >= 81
+                  ? "bg-red-200 text-red-800"
+                  : event.pulse.score >= 61
+                  ? "bg-orange-200 text-orange-800"
+                  : event.pulse.score >= 41
+                  ? "bg-amber-200 text-amber-800"
+                  : "bg-slate-200 text-slate-700"
+              }`}>
+                {event.pulse.score} / 100
+              </span>
             </div>
 
             <div className="text-center mb-4">
-              <div className={`text-2xl font-bold ${isLive ? "text-emerald-700" : "text-amber-700"}`}>
-                {isLive ? `Score: ${Math.min(100, Math.max(1, Math.round(event.excitement.raw_gei * 100)))}` : event.excitement.label}
+              <div className={`text-2xl font-bold ${
+                event.pulse.score >= 81
+                  ? "text-red-700"
+                  : event.pulse.score >= 61
+                  ? "text-orange-700"
+                  : event.pulse.score >= 41
+                  ? "text-amber-700"
+                  : "text-slate-600"
+              }`}>
+                {event.pulse.label}
               </div>
-              {isLive ? (
-                <div className="text-sm text-emerald-600 mt-1">
-                  Excitement level so far this game
-                </div>
-              ) : event.excitement.percentile_global ? (
-                <div className="text-sm text-amber-600 mt-1">
-                  More exciting than {event.excitement.percentile_global}% of games
-                </div>
-              ) : event.excitement.raw_gei ? (
-                <div className="text-sm text-amber-600 mt-1">
-                  Excitement Score: {Math.min(100, Math.max(1, Math.round(event.excitement.raw_gei * 100)))} / 100
-                </div>
-              ) : null}
+              <div className={`text-sm mt-1 ${
+                event.pulse.score >= 61 ? "text-orange-600" : "text-slate-500"
+              }`}>
+                {isLive ? "Pulse strength so far" : `Status: ${event.pulse.status}`}
+              </div>
             </div>
 
-            {/* GEI Components Breakdown */}
-            {event.excitement.components && (
-              <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-amber-200">
+            {/* Pulse Components Breakdown */}
+            {event.pulse.components && (
+              <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-200">
                 <div className="text-center">
-                  <div className="text-xs text-amber-600 uppercase tracking-wide">Win Prob Swings</div>
-                  <div className="text-lg font-mono font-semibold text-amber-800">
-                    {Math.round(event.excitement.components.win_probability_volatility * 100)}%
+                  <div className="text-xs text-slate-500 uppercase tracking-wide">Heart Rate</div>
+                  <div className="text-lg font-mono font-semibold text-slate-700">
+                    {Math.round(event.pulse.components.heart_rate * 100)}%
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xs text-amber-600 uppercase tracking-wide">Late Drama</div>
-                  <div className="text-lg font-mono font-semibold text-amber-800">
-                    {Math.round(event.excitement.components.late_game_uncertainty * 100)}%
+                  <div className="text-xs text-slate-500 uppercase tracking-wide">Amplitude</div>
+                  <div className="text-lg font-mono font-semibold text-slate-700">
+                    {Math.round(event.pulse.components.amplitude * 100)}%
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xs text-amber-600 uppercase tracking-wide">Upset Factor</div>
-                  <div className="text-lg font-mono font-semibold text-amber-800">
-                    {Math.round(event.excitement.components.expectation_deviation * 100)}%
+                  <div className="text-xs text-slate-500 uppercase tracking-wide">Vitals</div>
+                  <div className="text-lg font-mono font-semibold text-slate-700">
+                    {Math.round(event.pulse.components.vitals * 100)}%
                   </div>
                 </div>
-                <div className="text-center">
-                  <div className="text-xs text-amber-600 uppercase tracking-wide">Comeback</div>
-                  <div className="text-lg font-mono font-semibold text-amber-800">
-                    {Math.round(event.excitement.components.comeback_factor * 100)}%
-                  </div>
-                </div>
-                {event.excitement.components.overtime_bonus > 0 && (
-                  <div className="col-span-2 text-center pt-2 border-t border-amber-200">
+                {event.pulse.components.lead_changes > 0 && (
+                  <div className="col-span-3 text-center pt-2 border-t border-slate-200">
                     <span className="inline-flex items-center gap-1 text-sm text-orange-700 bg-orange-100 px-2 py-0.5 rounded">
-                      ⏱️ Overtime Bonus: +{Math.round(event.excitement.components.overtime_bonus * 100)}%
+                      🔄 {event.pulse.components.lead_changes} Lead Change{event.pulse.components.lead_changes > 1 ? 's' : ''}
                     </span>
                   </div>
                 )}

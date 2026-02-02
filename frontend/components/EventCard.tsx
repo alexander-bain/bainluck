@@ -123,13 +123,21 @@ export default function EventCard({
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   {highlightLabel || "LIVE"}
                 </span>
-                {/* Show live GEI score (1-100 scale) */}
-                {event.excitement && event.excitement.raw_gei !== undefined && (
+                {/* Show live Pulse score */}
+                {event.pulse && (
                   <span
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700"
-                    title={`Excitement so far: ${event.excitement.raw_gei.toFixed(2)}`}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      event.pulse.score >= 81
+                        ? "bg-red-100 text-red-700"
+                        : event.pulse.score >= 61
+                        ? "bg-orange-100 text-orange-700"
+                        : event.pulse.score >= 41
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-slate-100 text-slate-600"
+                    }`}
+                    title={`Pulse: ${event.pulse.score} - ${event.pulse.label}`}
                   >
-                    {event.excitement.emoji || "⚡"} {Math.min(100, Math.max(1, Math.round(event.excitement.raw_gei * 100)))}
+                    {event.pulse.emoji} {event.pulse.score}
                   </span>
                 )}
               </>
@@ -139,31 +147,19 @@ export default function EventCard({
                 <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
                   ✅ Final
                 </span>
-                {/* Show GEI badge for exciting completed games */}
-                {event.excitement && (
-                  // Show badge if percentile >= 75, or if no percentile but raw_gei indicates excitement
-                  (event.excitement.percentile_global && event.excitement.percentile_global >= 75) ||
-                  (!event.excitement.percentile_global && event.excitement.raw_gei && event.excitement.raw_gei >= 0.5)
-                ) && (
+                {/* Show Pulse badge for games with strong pulse */}
+                {event.pulse && event.pulse.score >= 50 && (
                   <span
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      event.excitement.percentile_global
-                        ? event.excitement.percentile_global >= 95
-                          ? "bg-orange-100 text-orange-700"
-                          : event.excitement.percentile_global >= 90
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-yellow-100 text-yellow-700"
+                      event.pulse.score >= 81
+                        ? "bg-red-100 text-red-700"
+                        : event.pulse.score >= 61
+                        ? "bg-orange-100 text-orange-700"
                         : "bg-amber-100 text-amber-700"
                     }`}
-                    title={event.excitement.percentile_global
-                      ? `${event.excitement.label} - Top ${100 - event.excitement.percentile_global}% most exciting games`
-                      : `${event.excitement.label} - Exciting game!`
-                    }
+                    title={`Pulse: ${event.pulse.score} - ${event.pulse.label}`}
                   >
-                    {event.excitement.emoji || "⚡"} {event.excitement.percentile_global
-                      ? `${event.excitement.percentile_global}%`
-                      : event.excitement.label || "Exciting"
-                    }
+                    {event.pulse.emoji} {event.pulse.score}
                   </span>
                 )}
               </>

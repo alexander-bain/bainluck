@@ -1231,18 +1231,19 @@ async def _poll_sport_odds(sport_key: str):
 
 
 # =============================================================================
-# Game Excitement Index (GEI) Tasks
+# Pulse - Live Game Excitement Metric
 # =============================================================================
 
 
-async def update_live_gei(session) -> int:
+async def update_live_pulse(session) -> int:
     """
-    Compute and update GEI for all currently live events.
+    Compute and update Pulse for all currently live events.
 
+    Pulse measures how "alive" a game is based on probability movement.
     Called during each poll cycle to provide real-time excitement scores.
     Returns the number of events updated.
     """
-    from app.utils.gei import calculate_gei, OddsDataPoint
+    from app.utils.pulse import calculate_pulse, PulseDataPoint
 
     # Get all live events
     result = await session.execute(
@@ -1271,38 +1272,44 @@ async def update_live_gei(session) -> int:
             if len(snapshots) < 3:
                 continue
 
-            # Convert to OddsDataPoint objects
+            # Convert to PulseDataPoint objects
             data_points = [
-                OddsDataPoint(
+                PulseDataPoint(
                     captured_at=s.captured_at,
                     home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
-                    home_spread=float(s.home_spread) if s.home_spread else None,
-                    over_under=float(s.over_under) if s.over_under else None,
                     bookmaker=s.bookmaker,
                 )
                 for s in snapshots
             ]
 
-            # Use current time as "market_close" since game is still live
+            # Calculate Pulse
             sport_key = event.sport.key if event.sport else "unknown"
-            gei_result = calculate_gei(
+            pulse_result = calculate_pulse(
                 snapshots=data_points,
                 game_start=event.commence_time,
-                market_close=now,
+                current_time=now,
                 sport_key=sport_key,
             )
 
-            if gei_result:
-                event.raw_gei = gei_result.raw_gei
-                event.gei_components = gei_result.components.to_json()
+            if pulse_result:
+                # Store Pulse score (1-100) in raw_gei field
+                # We divide by 100 to fit the existing decimal field format
+                event.raw_gei = pulse_result.score / 100.0
+                event.gei_components = pulse_result.components.to_json()
                 event.gei_computed_at = now
                 updated += 1
 
         except Exception as e:
-            print(f"Error computing live GEI for event {event.id}: {e}")
+            print(f"Error computing Pulse for event {event.id}: {e}")
             continue
 
     return updated
+
+
+# Legacy alias for backwards compatibility
+async def update_live_gei(session) -> int:
+    """Legacy alias - now uses Pulse."""
+    return await update_live_pulse(session)
 
 
 @celery_app.task(bind=True)
@@ -1315,9 +1322,9 @@ def compute_gei_for_event(self, event_id: int):
     return run_async(_compute_gei_for_event(event_id))
 
 
-async def _compute_gei_for_event(event_id: int):
-    """Async implementation of compute_gei_for_event."""
-    from app.utils.gei import calculate_gei, OddsDataPoint
+async def _compute_pulse_for_event(event_id: int):
+    """Compute Pulse for a single completed event."""
+    from app.utils.pulse import calculate_pulse, PulseDataPoint
 
     async with async_session_maker() as session:
         # Get the event with its sport
@@ -1335,7 +1342,7 @@ async def _compute_gei_for_event(event_id: int):
             return {"error": f"Event {event_id} is not completed (status: {event.status})"}
 
         if event.raw_gei is not None:
-            return {"skipped": True, "reason": "GEI already computed"}
+            return {"skipped": True, "reason": "Pulse already computed"}
 
         # Get all snapshots for this event
         result = await session.execute(
@@ -1346,66 +1353,71 @@ async def _compute_gei_for_event(event_id: int):
         snapshots = result.scalars().all()
 
         if len(snapshots) < 3:
-            return {"error": f"Insufficient snapshots ({len(snapshots)}) for GEI calculation"}
+            return {"error": f"Insufficient snapshots ({len(snapshots)}) for Pulse calculation"}
 
-        # Convert to OddsDataPoint objects
+        # Convert to PulseDataPoint objects
         data_points = [
-            OddsDataPoint(
+            PulseDataPoint(
                 captured_at=s.captured_at,
                 home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
-                home_spread=float(s.home_spread) if s.home_spread else None,
-                over_under=float(s.over_under) if s.over_under else None,
                 bookmaker=s.bookmaker,
             )
             for s in snapshots
         ]
 
-        # Determine market close time (last snapshot)
-        market_close = max(s.captured_at for s in snapshots)
+        # Determine game end time (last snapshot)
+        game_end = max(s.captured_at for s in snapshots)
 
-        # Calculate GEI
+        # Calculate Pulse
         sport_key = event.sport.key if event.sport else "unknown"
-        gei_result = calculate_gei(
+        pulse_result = calculate_pulse(
             snapshots=data_points,
             game_start=event.commence_time,
-            market_close=market_close,
+            current_time=game_end,
             sport_key=sport_key,
         )
 
-        if gei_result is None:
-            return {"error": "GEI calculation failed"}
+        if pulse_result is None:
+            return {"error": "Pulse calculation failed"}
 
-        # Update event with GEI
-        event.raw_gei = gei_result.raw_gei
-        event.gei_components = gei_result.components.to_json()
+        # Update event with Pulse (store score/100 to fit existing field)
+        event.raw_gei = pulse_result.score / 100.0
+        event.gei_components = pulse_result.components.to_json()
         event.gei_computed_at = datetime.now(timezone.utc)
 
         await session.commit()
 
         return {
             "event_id": event_id,
-            "raw_gei": gei_result.raw_gei,
-            "data_quality": gei_result.data_quality,
-            "snapshot_count": gei_result.snapshot_count,
+            "pulse_score": pulse_result.score,
+            "status": pulse_result.status,
+            "data_quality": pulse_result.data_quality,
+            "snapshot_count": pulse_result.snapshot_count,
         }
+
+
+# Legacy alias
+async def _compute_gei_for_event(event_id: int):
+    """Legacy alias - now uses Pulse."""
+    return await _compute_pulse_for_event(event_id)
 
 
 @celery_app.task(bind=True)
 def compute_gei_batch(self, limit: int = 100):
     """
-    Compute GEI for a batch of completed events that don't have GEI yet.
+    Compute Pulse for a batch of completed events.
 
     Useful for backfilling historical events.
     """
-    return run_async(_compute_gei_batch(limit))
+    return run_async(_compute_pulse_batch(limit))
 
 
-async def _compute_gei_batch(limit: int):
-    """Async implementation of compute_gei_batch."""
-    from app.utils.gei import calculate_gei, OddsDataPoint
+async def _compute_pulse_batch(limit: int):
+    """Compute Pulse for a batch of completed events."""
+    from app.utils.pulse import calculate_pulse, PulseDataPoint
 
     async with async_session_maker() as session:
-        # Find completed events without GEI
+        # Find completed events without Pulse
         result = await session.execute(
             select(Event)
             .options(selectinload(Event.sport))
@@ -1436,32 +1448,30 @@ async def _compute_gei_batch(limit: int):
             if len(snapshots) < 3:
                 continue
 
-            # Convert to OddsDataPoint objects
+            # Convert to PulseDataPoint objects
             data_points = [
-                OddsDataPoint(
+                PulseDataPoint(
                     captured_at=s.captured_at,
                     home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
-                    home_spread=float(s.home_spread) if s.home_spread else None,
-                    over_under=float(s.over_under) if s.over_under else None,
                     bookmaker=s.bookmaker,
                 )
                 for s in snapshots
             ]
 
-            market_close = max(s.captured_at for s in snapshots)
+            game_end = max(s.captured_at for s in snapshots)
             sport_key = event.sport.key if event.sport else "unknown"
 
             try:
-                gei_result = calculate_gei(
+                pulse_result = calculate_pulse(
                     snapshots=data_points,
                     game_start=event.commence_time,
-                    market_close=market_close,
+                    current_time=game_end,
                     sport_key=sport_key,
                 )
 
-                if gei_result:
-                    event.raw_gei = gei_result.raw_gei
-                    event.gei_components = gei_result.components.to_json()
+                if pulse_result:
+                    event.raw_gei = pulse_result.score / 100.0
+                    event.gei_components = pulse_result.components.to_json()
                     event.gei_computed_at = datetime.now(timezone.utc)
                     processed += 1
             except Exception as e:
