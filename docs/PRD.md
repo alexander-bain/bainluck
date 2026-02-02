@@ -504,6 +504,177 @@ POST /api/admin/discover-events     # Trigger event discovery for all sports
 
 ---
 
+## Search
+
+### Philosophy
+
+Search is a core discovery mechanism that lets users find games, teams, and historical data quickly. The search experience should feel **instant, forgiving, and intelligent**—users shouldn't need to know exact team names or league structures.
+
+### Current Implementation (v1) ✅
+
+**Endpoint:** `GET /api/events/search?q=celtics`
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `q` | required | Search query (min 2 chars) |
+| `sport` | none | Filter by sport key |
+| `page` | 1 | Page number |
+| `per_page` | 25 | Results per page (max 100) |
+| `days_back` | 30 | How far back to search |
+| `include_upcoming` | true | Include scheduled games |
+
+**Features:**
+- Case-insensitive partial matching ("celt" finds "Boston Celtics")
+- Searches both home and away team names
+- Results ordered: Live → Upcoming → Completed
+- Sport disambiguation (shows which leagues matched)
+- Paginated results with Previous/Next navigation
+- Trigram indexes for fast ILIKE queries
+
+**UI Components:**
+- Header search box with debounced dropdown (300ms)
+- Full search results page at `/search?q=...`
+- Sport filter pills when multiple leagues match
+
+### Search Roadmap
+
+#### Phase 1: Enhanced Filtering (Q2 2026)
+Extend search with structured filters:
+
+```
+GET /api/events/search?q=celtics&sport=basketball_nba&season=2025-26&status=completed
+```
+
+| Filter | Examples |
+|--------|----------|
+| `sport` | `basketball_nba`, `americanfootball_nfl` |
+| `league` | Alias for sport (user-friendly) |
+| `season` | `2025-26`, `2024-25` |
+| `status` | `live`, `scheduled`, `completed` |
+| `date_from` | `2025-01-01` |
+| `date_to` | `2025-12-31` |
+| `team` | Exact team filter (after disambiguation) |
+
+**UI: Filter chips**
+```
+[🏀 NBA ✕] [2025-26 Season ✕] [Completed only ✕]
+
+Showing 47 results for "Celtics"
+```
+
+#### Phase 2: Smart Query Parsing (Q3 2026)
+Parse natural-language-like queries into structured filters:
+
+| User Types | Parsed As |
+|------------|-----------|
+| "celtics nba" | team=celtics, sport=basketball_nba |
+| "celtics 2024" | team=celtics, season=2024-25 |
+| "celtics vs lakers" | team1=celtics, team2=lakers |
+| "nfl week 10" | sport=nfl, week=10 |
+| "march madness" | sport=basketball_ncaab, date=march |
+
+**Implementation:**
+- Regex patterns for common formats
+- Sport/league aliases ("nba" → "basketball_nba")
+- Date parsing ("last week", "yesterday", "march")
+- Team abbreviation mapping ("LAL" → "Los Angeles Lakers")
+
+#### Phase 3: Suggested Searches (Q3 2026)
+Surface interesting queries users might want:
+
+**Contextual Suggestions:**
+```
+🔥 Trending
+• "Super Bowl" (1.2M searches today)
+• "Chiefs vs Eagles" (Live now)
+
+⭐ Based on your favorites
+• "Celtics recent games"
+• "Patriots upcoming"
+
+📊 Discover
+• "Biggest upsets this week"
+• "Closest games today"
+• "Top 10 exciting NBA games"
+```
+
+**Pre-built Queries:**
+- "Most exciting [sport] games this week"
+- "Biggest probability swings today"
+- "Close games right now"
+- "Upsets in the last 7 days"
+
+#### Phase 4: Natural Language Search (Q4 2026)
+LLM-powered query understanding for complex requests:
+
+| User Query | System Interprets |
+|------------|-------------------|
+| "top 5 most exciting celtics games from 2 years ago" | team=celtics, sort=gei desc, limit=5, date_range=2024 |
+| "games where the underdog won last month" | status=completed, upset=true, days_back=30 |
+| "close NBA games this weekend" | sport=nba, closeness>0.9, date=this_weekend |
+| "when do the lakers play next" | team=lakers, status=scheduled, limit=1 |
+| "patriots biggest comeback this season" | team=patriots, sort=comeback_margin, season=current |
+
+**Architecture:**
+```
+User Query → LLM (Claude) → Structured Filters → Database Query → Results
+                ↓
+         "I interpreted your search as:
+          Celtics games, sorted by excitement,
+          from 2024 season, top 5"
+```
+
+**Implementation Notes:**
+- Use Claude API to parse ambiguous queries
+- Cache common query interpretations
+- Show "interpreted as" explanation for transparency
+- Fallback to basic search if LLM parsing fails
+- Rate limit LLM calls (maybe only for logged-in users)
+
+#### Phase 5: Saved Searches & Alerts (2027)
+For authenticated users:
+
+- Save frequent searches
+- Get notified when new results match
+- "Alert me when Celtics play a close game"
+- Weekly digest of saved search results
+
+### Search Quality Metrics
+
+| Metric | Target |
+|--------|--------|
+| Zero-result rate | < 5% |
+| Click-through rate | > 40% |
+| Time to first click | < 3 seconds |
+| Search refinement rate | < 20% (lower = better initial results) |
+
+### Database Optimization
+
+**Current indexes:**
+```sql
+-- Trigram indexes for fast ILIKE
+CREATE INDEX ix_events_home_team_name_trgm ON events USING gin (home_team_name gin_trgm_ops);
+CREATE INDEX ix_events_away_team_name_trgm ON events USING gin (away_team_name gin_trgm_ops);
+
+-- Composite index for filtering
+CREATE INDEX ix_events_commence_status ON events (commence_time, status);
+```
+
+**Future considerations:**
+- Full-text search with `tsvector` for multi-field search
+- Materialized view for "searchable events" with denormalized sport names
+- Elasticsearch if query complexity grows significantly
+
+### Search UX Principles
+
+1. **Instant feedback** — Show results as user types (debounced)
+2. **Forgive mistakes** — Fuzzy matching, typo tolerance
+3. **Disambiguate clearly** — When "Celtics" matches multiple leagues, show all with clear labels
+4. **Remember context** — Recent searches, personalized suggestions
+5. **Fail gracefully** — No results? Suggest alternatives, don't dead-end
+
+---
+
 ## Feature Phases & Roadmap
 
 ### Phase 1: MVP ✅ Complete
