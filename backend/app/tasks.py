@@ -93,9 +93,9 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),  # Every 10 minutes - compute GEI for newly completed events
         "kwargs": {"limit": 50},
     },
-    "compute-gei-percentiles-daily": {
+    "compute-gei-percentiles-hourly": {
         "task": "app.tasks.compute_gei_percentiles",
-        "schedule": crontab(hour=4, minute=0),  # Daily at 4 AM UTC
+        "schedule": crontab(minute=5),  # Every hour at :05 (after GEI batch at :00/:10/etc)
     },
 }
 
