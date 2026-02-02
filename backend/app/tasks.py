@@ -97,6 +97,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.compute_gei_percentiles",
         "schedule": crontab(hour=4, minute=0),  # Daily at 4 AM UTC
     },
+    "poll-futures-hourly": {
+        "task": "app.tasks.poll_futures_odds",
+        "schedule": crontab(minute=30),  # Every hour at :30 (offset from other tasks)
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -1491,3 +1495,275 @@ async def _store_percentiles(session, scope: str, values: list[float]):
             }
         )
         await session.execute(stmt)
+
+
+# =============================================================================
+# Futures Polling
+# =============================================================================
+
+# Futures poll less frequently since they change slowly
+FUTURES_POLL_INTERVAL = 3600  # 1 hour default
+
+
+@celery_app.task(bind=True)
+def poll_futures_odds(self):
+    """
+    Poll futures/outrights odds from The Odds API.
+
+    Futures markets change slowly, so we poll hourly by default.
+    Updates existing markets/outcomes or creates new ones.
+    """
+    return run_async(_poll_futures_odds())
+
+
+async def _poll_futures_odds():
+    """Async implementation of futures polling."""
+    from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+    from app.utils.odds_math import american_to_probability, probability_to_american
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from datetime import timedelta
+
+    service = OddsAPIService()
+    stats = {
+        "markets_processed": 0,
+        "outcomes_updated": 0,
+        "snapshots_created": 0,
+        "errors": [],
+    }
+
+    try:
+        # Discover sports with outrights
+        outright_sports = await service.get_sports_with_outrights()
+        sport_keys = [s["key"] for s in outright_sports]
+
+        async with async_session_maker() as session:
+            # Get or create sport records for linking
+            sport_result = await session.execute(
+                select(Sport.id, Sport.key)
+            )
+            sport_map = {row.key: row.id for row in sport_result.all()}
+
+            for sport_key in sport_keys:
+                try:
+                    api_response = await service.get_futures_odds(sport_key)
+                    markets_data = service._parse_futures(api_response, sport_key)
+
+                    if not markets_data:
+                        continue
+
+                    # Get market name from first result
+                    market_name = markets_data[0].market_name if markets_data else sport_key
+
+                    # Find or infer the base sport for linking
+                    # e.g., "basketball_nba_championship" -> "basketball_nba"
+                    base_sport_key = _infer_base_sport(sport_key)
+                    sport_id = sport_map.get(base_sport_key)
+
+                    # Upsert the market
+                    market_stmt = pg_insert(FuturesMarket).values(
+                        source="odds_api",
+                        external_id=sport_key,
+                        sport_id=sport_id,
+                        name=market_name,
+                        category=_infer_category(sport_key),
+                        mutually_exclusive=True,
+                        status="open",
+                    ).on_conflict_do_update(
+                        index_elements=["source", "external_id"],
+                        set_={
+                            "name": market_name,
+                            "updated_at": func.now(),
+                        }
+                    ).returning(FuturesMarket.id)
+
+                    result = await session.execute(market_stmt)
+                    market_id = result.scalar_one()
+                    stats["markets_processed"] += 1
+
+                    # Aggregate outcomes across bookmakers
+                    outcome_odds = _aggregate_futures_outcomes(markets_data)
+
+                    # Get existing outcomes for this market
+                    existing_result = await session.execute(
+                        select(FuturesOutcome)
+                        .where(FuturesOutcome.market_id == market_id)
+                    )
+                    existing_outcomes = {o.external_id: o for o in existing_result.scalars().all()}
+
+                    # Compute ranks (1 = highest probability)
+                    ranked_outcomes = sorted(
+                        outcome_odds.items(),
+                        key=lambda x: x[1]["probability"],
+                        reverse=True
+                    )
+
+                    now = datetime.now(timezone.utc)
+                    yesterday = now - timedelta(hours=24)
+
+                    for rank, (outcome_name, odds_data) in enumerate(ranked_outcomes, 1):
+                        prob = odds_data["probability"]
+                        american = probability_to_american(prob)
+
+                        # Check if outcome exists
+                        existing = existing_outcomes.get(outcome_name)
+
+                        if existing:
+                            # Calculate 24h change
+                            old_prob = float(existing.current_probability) if existing.current_probability else None
+                            prob_change = prob - old_prob if old_prob else None
+
+                            old_rank = existing.rank
+                            rank_change = old_rank - rank if old_rank else None
+
+                            # Update existing outcome
+                            existing.current_probability = prob
+                            existing.current_american_odds = american
+                            existing.probability_change_24h = prob_change
+                            existing.rank = rank
+                            existing.rank_change_24h = rank_change
+                            existing.last_updated = now
+
+                            # Set opening odds if not set
+                            if existing.opening_probability is None:
+                                existing.opening_probability = prob
+                                existing.opening_american_odds = american
+                                existing.opening_captured_at = now
+
+                            outcome_id = existing.id
+                        else:
+                            # Create new outcome
+                            outcome_stmt = pg_insert(FuturesOutcome).values(
+                                market_id=market_id,
+                                external_id=outcome_name,
+                                name=outcome_name,
+                                current_probability=prob,
+                                current_american_odds=american,
+                                opening_probability=prob,
+                                opening_american_odds=american,
+                                opening_captured_at=now,
+                                rank=rank,
+                            ).on_conflict_do_update(
+                                index_elements=["market_id", "external_id"],
+                                set_={
+                                    "current_probability": prob,
+                                    "current_american_odds": american,
+                                    "rank": rank,
+                                    "last_updated": func.now(),
+                                }
+                            ).returning(FuturesOutcome.id)
+
+                            result = await session.execute(outcome_stmt)
+                            outcome_id = result.scalar_one()
+
+                        stats["outcomes_updated"] += 1
+
+                        # Create snapshots for each bookmaker
+                        for bookmaker, bm_odds in odds_data["bookmakers"].items():
+                            snapshot_stmt = pg_insert(FuturesOddsSnapshot).values(
+                                outcome_id=outcome_id,
+                                bookmaker=bookmaker,
+                                probability=bm_odds["probability"],
+                                american_odds=bm_odds["american_odds"],
+                                captured_at=now,
+                            )
+                            await session.execute(snapshot_stmt)
+                            stats["snapshots_created"] += 1
+
+                except Exception as e:
+                    stats["errors"].append(f"{sport_key}: {str(e)}")
+                    continue
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(f"Top-level error: {str(e)}")
+
+    finally:
+        await service.close()
+
+    return stats
+
+
+def _infer_base_sport(sport_key: str) -> str:
+    """Infer the base sport key from a futures sport key.
+
+    Examples:
+        basketball_nba_championship -> basketball_nba
+        americanfootball_nfl_super_bowl_winner -> americanfootball_nfl
+    """
+    # Common futures suffixes to strip
+    suffixes = [
+        "_championship", "_winner", "_super_bowl_winner", "_world_series_winner",
+        "_stanley_cup_winner", "_mvp", "_division_winner", "_conference_winner",
+    ]
+
+    result = sport_key
+    for suffix in suffixes:
+        if result.endswith(suffix):
+            result = result[:-len(suffix)]
+            break
+
+    return result
+
+
+def _infer_category(sport_key: str) -> str:
+    """Infer the market category from the sport key."""
+    key_lower = sport_key.lower()
+
+    if "championship" in key_lower or "winner" in key_lower:
+        return "championship"
+    elif "mvp" in key_lower:
+        return "mvp"
+    elif "division" in key_lower:
+        return "division"
+    elif "conference" in key_lower:
+        return "conference"
+    else:
+        return "other"
+
+
+def _aggregate_futures_outcomes(markets_data) -> dict:
+    """Aggregate outcome odds across multiple bookmakers.
+
+    Returns a dict mapping outcome names to aggregated data:
+    {
+        "Lakers": {
+            "probability": 0.15,  # Average across books
+            "bookmakers": {
+                "draftkings": {"probability": 0.14, "american_odds": 600},
+                "fanduel": {"probability": 0.16, "american_odds": 525},
+            }
+        }
+    }
+    """
+    from statistics import mean
+
+    outcomes = {}
+
+    for market in markets_data:
+        bookmaker = market.bookmaker
+
+        for outcome in market.outcomes:
+            name = outcome.name
+
+            if name not in outcomes:
+                outcomes[name] = {
+                    "probabilities": [],
+                    "bookmakers": {},
+                }
+
+            outcomes[name]["probabilities"].append(outcome.probability)
+            outcomes[name]["bookmakers"][bookmaker] = {
+                "probability": outcome.probability,
+                "american_odds": outcome.american_odds,
+            }
+
+    # Calculate average probability for each outcome
+    result = {}
+    for name, data in outcomes.items():
+        result[name] = {
+            "probability": mean(data["probabilities"]),
+            "bookmakers": data["bookmakers"],
+        }
+
+    return result
