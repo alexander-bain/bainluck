@@ -548,11 +548,15 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="text-2xl font-bold text-amber-700">
                 {event.excitement.label}
               </div>
-              {event.excitement.percentile_global && (
+              {event.excitement.percentile_global ? (
                 <div className="text-sm text-amber-600 mt-1">
                   More exciting than {event.excitement.percentile_global}% of games
                 </div>
-              )}
+              ) : event.excitement.raw_gei ? (
+                <div className="text-sm text-amber-600 mt-1">
+                  Excitement Score: {event.excitement.raw_gei.toFixed(2)}
+                </div>
+              ) : null}
             </div>
 
             {/* GEI Components Breakdown */}

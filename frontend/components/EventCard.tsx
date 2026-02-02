@@ -129,18 +129,30 @@ export default function EventCard({
                   ✅ Final
                 </span>
                 {/* Show GEI badge for exciting completed games */}
-                {event.excitement && event.excitement.percentile_global && event.excitement.percentile_global >= 75 && (
+                {event.excitement && (
+                  // Show badge if percentile >= 75, or if no percentile but raw_gei indicates excitement
+                  (event.excitement.percentile_global && event.excitement.percentile_global >= 75) ||
+                  (!event.excitement.percentile_global && event.excitement.raw_gei && event.excitement.raw_gei >= 0.5)
+                ) && (
                   <span
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      event.excitement.percentile_global >= 95
-                        ? "bg-orange-100 text-orange-700"
-                        : event.excitement.percentile_global >= 90
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-yellow-100 text-yellow-700"
+                      event.excitement.percentile_global
+                        ? event.excitement.percentile_global >= 95
+                          ? "bg-orange-100 text-orange-700"
+                          : event.excitement.percentile_global >= 90
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-yellow-100 text-yellow-700"
+                        : "bg-amber-100 text-amber-700"
                     }`}
-                    title={`${event.excitement.label} - Top ${100 - event.excitement.percentile_global}% most exciting games`}
+                    title={event.excitement.percentile_global
+                      ? `${event.excitement.label} - Top ${100 - event.excitement.percentile_global}% most exciting games`
+                      : `${event.excitement.label} - Exciting game!`
+                    }
                   >
-                    {event.excitement.emoji || "⚡"} {event.excitement.percentile_global}%
+                    {event.excitement.emoji || "⚡"} {event.excitement.percentile_global
+                      ? `${event.excitement.percentile_global}%`
+                      : event.excitement.label || "Exciting"
+                    }
                   </span>
                 )}
               </>
