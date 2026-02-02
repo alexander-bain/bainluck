@@ -5,6 +5,7 @@ import type { Event } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
+import PulseBadge from "./PulseBadge";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results';
 
@@ -123,22 +124,9 @@ export default function EventCard({
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   {highlightLabel || "LIVE"}
                 </span>
-                {/* Show live Pulse score */}
+                {/* Show live Pulse score with tooltip */}
                 {event.pulse && (
-                  <span
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      event.pulse.score >= 81
-                        ? "bg-red-100 text-red-700"
-                        : event.pulse.score >= 61
-                        ? "bg-orange-100 text-orange-700"
-                        : event.pulse.score >= 41
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-slate-100 text-slate-600"
-                    }`}
-                    title={`Pulse: ${event.pulse.score} - ${event.pulse.label}`}
-                  >
-                    {event.pulse.emoji} {event.pulse.score}
-                  </span>
+                  <PulseBadge pulse={event.pulse} size="sm" />
                 )}
               </>
             )}
@@ -149,18 +137,7 @@ export default function EventCard({
                 </span>
                 {/* Show Pulse badge for games with strong pulse */}
                 {event.pulse && event.pulse.score >= 50 && (
-                  <span
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      event.pulse.score >= 81
-                        ? "bg-red-100 text-red-700"
-                        : event.pulse.score >= 61
-                        ? "bg-orange-100 text-orange-700"
-                        : "bg-amber-100 text-amber-700"
-                    }`}
-                    title={`Pulse: ${event.pulse.score} - ${event.pulse.label}`}
-                  >
-                    {event.pulse.emoji} {event.pulse.score}
-                  </span>
+                  <PulseBadge pulse={event.pulse} size="sm" />
                 )}
               </>
             )}
