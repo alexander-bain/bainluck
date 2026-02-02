@@ -572,7 +572,7 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               ) : event.excitement.raw_gei ? (
                 <div className="text-sm text-amber-600 mt-1">
-                  Excitement Score: {event.excitement.raw_gei.toFixed(2)}
+                  Excitement Score: {Math.min(100, Math.max(1, Math.round(event.excitement.raw_gei * 100)))} / 100
                 </div>
               ) : null}
             </div>
