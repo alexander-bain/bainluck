@@ -11,6 +11,9 @@ from app.models.models import (
     TournamentOdds,
     ScoreSnapshot,
     GEIPercentile,
+    FuturesMarket,
+    FuturesOutcome,
+    FuturesOddsSnapshot,
 )
 
 __all__ = [
@@ -25,4 +28,7 @@ __all__ = [
     "TournamentOdds",
     "ScoreSnapshot",
     "GEIPercentile",
+    "FuturesMarket",
+    "FuturesOutcome",
+    "FuturesOddsSnapshot",
 ]
