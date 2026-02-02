@@ -1,7 +1,7 @@
 """Add Game Excitement Index fields and percentiles table
 
 Revision ID: add_gei_fields
-Revises: add_score_snapshots
+Revises: add_opening_odds
 Create Date: 2026-02-02
 
 Adds GEI (Game Excitement Index) fields to events table and creates
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'add_gei_fields'
-down_revision = 'add_score_snapshots'
+down_revision = 'add_opening_odds'
 branch_labels = None
 depends_on = None
 
