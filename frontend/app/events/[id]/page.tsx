@@ -522,14 +522,23 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         )}
 
-        {/* Game Excitement Index for completed events */}
-        {isFinished && event.excitement && (
-          <div className="mb-6 py-4 px-5 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border border-amber-200">
+        {/* Game Excitement Index for live and completed events */}
+        {(isFinished || isLive) && event.excitement && (
+          <div className={`mb-6 py-4 px-5 rounded-lg border ${
+            isLive
+              ? "bg-gradient-to-r from-emerald-50 to-amber-50 border-emerald-200"
+              : "bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200"
+          }`}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-amber-800 flex items-center gap-2">
-                {event.excitement.emoji || "⚡"} Game Excitement Index
+              <h3 className={`text-sm font-semibold flex items-center gap-2 ${
+                isLive ? "text-emerald-800" : "text-amber-800"
+              }`}>
+                {event.excitement.emoji || "⚡"} {isLive ? "Live Excitement" : "Game Excitement Index"}
+                {isLive && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                )}
               </h3>
-              {event.excitement.percentile_global && (
+              {event.excitement.percentile_global && !isLive && (
                 <span className={`px-3 py-1 rounded-full text-sm font-bold ${
                   event.excitement.percentile_global >= 95
                     ? "bg-orange-200 text-orange-800"
@@ -542,13 +551,22 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.excitement.percentile_global}th Percentile
                 </span>
               )}
+              {isLive && event.excitement.raw_gei !== undefined && (
+                <span className="px-3 py-1 rounded-full text-sm font-bold bg-emerald-200 text-emerald-800">
+                  {Math.round(event.excitement.raw_gei * 100)} / 100
+                </span>
+              )}
             </div>
 
             <div className="text-center mb-4">
-              <div className="text-2xl font-bold text-amber-700">
-                {event.excitement.label}
+              <div className={`text-2xl font-bold ${isLive ? "text-emerald-700" : "text-amber-700"}`}>
+                {isLive ? `Score: ${Math.round(event.excitement.raw_gei * 100)}` : event.excitement.label}
               </div>
-              {event.excitement.percentile_global ? (
+              {isLive ? (
+                <div className="text-sm text-emerald-600 mt-1">
+                  Excitement level so far this game
+                </div>
+              ) : event.excitement.percentile_global ? (
                 <div className="text-sm text-amber-600 mt-1">
                   More exciting than {event.excitement.percentile_global}% of games
                 </div>

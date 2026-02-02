@@ -93,9 +93,9 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),  # Every 10 minutes - compute GEI for newly completed events
         "kwargs": {"limit": 50},
     },
-    "compute-gei-percentiles-daily": {
+    "compute-gei-percentiles-hourly": {
         "task": "app.tasks.compute_gei_percentiles",
-        "schedule": crontab(hour=4, minute=0),  # Daily at 4 AM UTC
+        "schedule": crontab(minute=5),  # Every hour at :05 (after GEI batch at :00/:10/etc)
     },
 }
 
@@ -902,6 +902,11 @@ async def _poll_all_odds():
             # This catches matches that the Scores API didn't report as completed
             events_closed = await detect_and_close_stale_events(session)
 
+            # Update GEI for all live events (real-time excitement scores)
+            live_gei_updated = 0
+            if has_live_games:
+                live_gei_updated = await update_live_gei(session)
+
             await session.commit()
 
         # Compute hash and check for changes
@@ -927,6 +932,7 @@ async def _poll_all_odds():
             "sports_skipped": sports_skipped,
             "scores_updated": scores_updated,
             "events_closed": events_closed,
+            "live_gei_updated": live_gei_updated,
             "data_changed": data_changed,
             "has_live_games": has_live_games,
         }
@@ -1223,6 +1229,77 @@ async def _poll_sport_odds(sport_key: str):
 # =============================================================================
 # Game Excitement Index (GEI) Tasks
 # =============================================================================
+
+
+async def update_live_gei(session) -> int:
+    """
+    Compute and update GEI for all currently live events.
+
+    Called during each poll cycle to provide real-time excitement scores.
+    Returns the number of events updated.
+    """
+    from app.utils.gei import calculate_gei, OddsDataPoint
+
+    # Get all live events
+    result = await session.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.status == "live")
+    )
+    live_events = result.scalars().all()
+
+    if not live_events:
+        return 0
+
+    updated = 0
+    now = datetime.now(timezone.utc)
+
+    for event in live_events:
+        try:
+            # Get all snapshots for this event
+            result = await session.execute(
+                select(OddsSnapshot)
+                .where(OddsSnapshot.event_id == event.id)
+                .order_by(OddsSnapshot.captured_at)
+            )
+            snapshots = result.scalars().all()
+
+            if len(snapshots) < 3:
+                continue
+
+            # Convert to OddsDataPoint objects
+            data_points = [
+                OddsDataPoint(
+                    captured_at=s.captured_at,
+                    home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
+                    home_spread=float(s.home_spread) if s.home_spread else None,
+                    over_under=float(s.over_under) if s.over_under else None,
+                    bookmaker=s.bookmaker,
+                )
+                for s in snapshots
+            ]
+
+            # Use current time as "market_close" since game is still live
+            sport_key = event.sport.key if event.sport else "unknown"
+            gei_result = calculate_gei(
+                snapshots=data_points,
+                game_start=event.commence_time,
+                market_close=now,
+                sport_key=sport_key,
+            )
+
+            if gei_result:
+                event.raw_gei = gei_result.raw_gei
+                event.gei_components = gei_result.components.to_json()
+                event.gei_computed_at = now
+                updated += 1
+
+        except Exception as e:
+            print(f"Error computing live GEI for event {event.id}: {e}")
+            continue
+
+    return updated
+
 
 @celery_app.task(bind=True)
 def compute_gei_for_event(self, event_id: int):
