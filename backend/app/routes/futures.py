@@ -232,7 +232,6 @@ async def list_futures_markets(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
     status: str = Query("open", description="Filter by status (open, resolved, all)"),
     source: Optional[str] = Query(None, description="Filter by source (odds_api, kalshi)"),
-    limit: int = Query(200, description="Maximum number of markets to return"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -262,19 +261,10 @@ async def list_futures_markets(
     if conditions:
         query = query.where(and_(*conditions))
 
-    query = query.order_by(FuturesMarket.updated_at.desc()).limit(limit)
+    query = query.order_by(FuturesMarket.updated_at.desc())
 
     result = await db.execute(query)
     markets = result.scalars().unique().all()
-
-    # Get total count without limit for pagination info
-    count_query = select(func.count(FuturesMarket.id))
-    if status != "all":
-        count_query = count_query.where(FuturesMarket.status == status)
-    if source:
-        count_query = count_query.where(FuturesMarket.source == source)
-    total_result = await db.execute(count_query)
-    total_count = total_result.scalar()
 
     return {
         "markets": [
@@ -282,7 +272,6 @@ async def list_futures_markets(
             for market in markets
         ],
         "count": len(markets),
-        "total": total_count,
     }
 
 
