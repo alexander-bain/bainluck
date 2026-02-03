@@ -18,6 +18,64 @@ router = APIRouter()
 # NOTE: Specific routes MUST come before /{market_id} to avoid being matched as IDs
 
 
+@router.get("/debug/sport-mapping")
+async def debug_sport_mapping(db: AsyncSession = Depends(get_db)):
+    """Debug endpoint to see how futures markets are linked to sports."""
+    # Get all sports
+    sports_result = await db.execute(
+        select(Sport.id, Sport.key, Sport.name).order_by(Sport.key)
+    )
+    sports = [{"id": r.id, "key": r.key, "name": r.name} for r in sports_result.all()]
+    sport_map = {s["key"]: s["id"] for s in sports}
+
+    # Get all futures markets with their sport links
+    markets_result = await db.execute(
+        select(
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.external_id,
+            FuturesMarket.sport_id,
+            Sport.key.label("sport_key"),
+            Sport.name.label("sport_name"),
+        )
+        .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+        .order_by(FuturesMarket.external_id)
+    )
+    # Import here to avoid circular import issues
+    from app.tasks import _infer_base_sport
+
+    markets = []
+    for r in markets_result.all():
+        # Compute what _infer_base_sport would return
+        inferred_key = _infer_base_sport(r.external_id) if r.external_id else None
+        markets.append({
+            "id": r.id,
+            "name": r.name,
+            "external_id": r.external_id,
+            "sport_id": r.sport_id,
+            "linked_sport_key": r.sport_key,
+            "linked_sport_name": r.sport_name,
+            "inferred_base_sport": inferred_key,
+            "inferred_sport_id": sport_map.get(inferred_key) if inferred_key else None,
+            "linking_works": r.sport_id is not None and r.sport_id == sport_map.get(inferred_key),
+        })
+
+    # Summary: count linked vs unlinked
+    linked = sum(1 for m in markets if m["sport_id"])
+    unlinked = sum(1 for m in markets if not m["sport_id"])
+
+    return {
+        "summary": {
+            "total_sports": len(sports),
+            "total_futures_markets": len(markets),
+            "linked_markets": linked,
+            "unlinked_markets": unlinked,
+        },
+        "sports": sports,
+        "markets": markets,
+    }
+
+
 @router.get("/available")
 async def get_available_futures():
     """

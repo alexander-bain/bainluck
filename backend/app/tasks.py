@@ -516,12 +516,6 @@ async def _discover_events():
             for sport in sports:
                 sport_key = sport.key
 
-                # Skip excluded sports
-                if any(sport_key.startswith(prefix) for prefix in OddsAPIService.EXCLUDED_PREFIXES):
-                    continue
-                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
-                    continue
-
                 try:
                     # Fetch odds for this sport
                     events_data = await service.get_odds(sport_key)
@@ -1690,6 +1684,7 @@ async def _poll_futures_odds():
                         index_elements=["source", "external_id"],
                         set_={
                             "name": market_name,
+                            "sport_id": sport_id,  # Update sport link on every sync
                             "updated_at": func.now(),
                         }
                     ).returning(FuturesMarket.id)
@@ -1806,20 +1801,38 @@ def _infer_base_sport(sport_key: str) -> str:
     """Infer the base sport key from a futures sport key.
 
     Examples:
-        basketball_nba_championship -> basketball_nba
+        basketball_nba_championship_winner -> basketball_nba
         americanfootball_nfl_super_bowl_winner -> americanfootball_nfl
+        baseball_mlb_world_series_winner -> baseball_mlb
+        icehockey_nhl_championship_winner -> icehockey_nhl
+        soccer_epl_winner -> soccer_epl
     """
-    # Common futures suffixes to strip
+    # Common futures suffixes to strip (order matters - longer/compound first)
     suffixes = [
-        "_championship", "_winner", "_super_bowl_winner", "_world_series_winner",
-        "_stanley_cup_winner", "_mvp", "_division_winner", "_conference_winner",
+        # Compound suffixes (must come first)
+        "_championship_winner",
+        "_super_bowl_winner",
+        "_world_series_winner",
+        "_stanley_cup_winner",
+        "_division_winner",
+        "_conference_winner",
+        # Simple suffixes
+        "_championship",
+        "_winner",
+        "_mvp",
     ]
 
     result = sport_key
-    for suffix in suffixes:
-        if result.endswith(suffix):
-            result = result[:-len(suffix)]
-            break
+
+    # Keep stripping suffixes until no more match
+    changed = True
+    while changed:
+        changed = False
+        for suffix in suffixes:
+            if result.endswith(suffix):
+                result = result[:-len(suffix)]
+                changed = True
+                break  # Restart from beginning after each strip
 
     return result
 
