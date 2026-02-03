@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile
 from app.services import get_db, OddsAPIService, fetch_current_odds
@@ -21,6 +22,200 @@ from app.utils import (
 )
 
 router = APIRouter()
+
+
+@router.post("/discover")
+async def discover_all_events(
+    categories: Optional[str] = Query(
+        None,
+        description="Comma-separated category prefixes to discover (e.g., 'rugby,cricket,aussierules'). If not specified, discovers ALL sports."
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Discover and create events for all sports from The Odds API.
+
+    This fetches events from the API and upserts them into the database,
+    along with their odds snapshots. Use this to populate events for
+    sports that were previously excluded.
+
+    Call POST /api/sports/sync first to ensure sports exist in DB.
+    """
+    service = OddsAPIService()
+
+    try:
+        # Get all active sports from DB
+        query = select(Sport).where(Sport.active == True)
+        result = await db.execute(query)
+        sports = result.scalars().all()
+
+        if not sports:
+            raise HTTPException(
+                status_code=400,
+                detail="No sports in database. Call POST /api/sports/sync first."
+            )
+
+        # Filter by categories if specified
+        if categories:
+            prefixes = [c.strip().lower() for c in categories.split(",")]
+            sports = [s for s in sports if any(s.key.lower().startswith(p) for p in prefixes)]
+
+        if not sports:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No sports found matching categories: {categories}"
+            )
+
+        total_events = 0
+        total_snapshots = 0
+        sports_processed = 0
+        sports_with_events = {}
+        errors = []
+
+        for sport in sports:
+            try:
+                # Fetch events with odds from the API
+                events_data = await service.get_odds(sport.key)
+
+                if not events_data:
+                    continue
+
+                sport_events = 0
+                sport_snapshots = 0
+
+                for event_data in events_data:
+                    # Parse commence time
+                    commence_time = datetime.fromisoformat(
+                        event_data["commence_time"].replace("Z", "+00:00")
+                    )
+
+                    # Determine status
+                    now = datetime.now(timezone.utc)
+                    if commence_time <= now:
+                        event_status = "live"
+                    else:
+                        event_status = "scheduled"
+
+                    # Upsert event
+                    event_stmt = insert(Event).values(
+                        external_id=event_data["id"],
+                        sport_id=sport.id,
+                        home_team_name=event_data["home_team"],
+                        away_team_name=event_data["away_team"],
+                        commence_time=commence_time,
+                        status=event_status,
+                    ).on_conflict_do_update(
+                        index_elements=["external_id"],
+                        set_={
+                            "home_team_name": event_data["home_team"],
+                            "away_team_name": event_data["away_team"],
+                            "commence_time": commence_time,
+                            "status": case(
+                                (Event.status == "scheduled", event_status),
+                                else_=Event.status
+                            ),
+                        }
+                    ).returning(Event.id)
+
+                    event_result = await db.execute(event_stmt)
+                    event_id = event_result.scalar_one()
+                    sport_events += 1
+
+                    # Create odds snapshots for each bookmaker
+                    for bookmaker in event_data.get("bookmakers", []):
+                        bookmaker_key = bookmaker["key"]
+
+                        # Find h2h market
+                        for market in bookmaker.get("markets", []):
+                            if market["key"] != "h2h":
+                                continue
+
+                            outcomes = market.get("outcomes", [])
+                            if len(outcomes) < 2:
+                                continue
+
+                            # Get home and away odds
+                            home_odds = None
+                            away_odds = None
+                            for outcome in outcomes:
+                                if outcome["name"] == event_data["home_team"]:
+                                    home_odds = outcome["price"]
+                                elif outcome["name"] == event_data["away_team"]:
+                                    away_odds = outcome["price"]
+
+                            if home_odds and away_odds:
+                                # Convert to probabilities
+                                home_prob = moneyline_to_probability(home_odds)
+                                away_prob = moneyline_to_probability(away_odds)
+
+                                # Upsert snapshot
+                                snapshot_stmt = insert(OddsSnapshot).values(
+                                    event_id=event_id,
+                                    bookmaker=bookmaker_key,
+                                    home_moneyline=home_odds,
+                                    away_moneyline=away_odds,
+                                    home_probability=home_prob,
+                                    away_probability=away_prob,
+                                    captured_at=now,
+                                ).on_conflict_do_update(
+                                    index_elements=["event_id", "bookmaker", "captured_at"],
+                                    set_={
+                                        "home_moneyline": home_odds,
+                                        "away_moneyline": away_odds,
+                                        "home_probability": home_prob,
+                                        "away_probability": away_prob,
+                                    }
+                                )
+                                await db.execute(snapshot_stmt)
+                                sport_snapshots += 1
+
+                total_events += sport_events
+                total_snapshots += sport_snapshots
+                sports_processed += 1
+
+                if sport_events > 0:
+                    # Categorize sport
+                    if sport.key.startswith("rugby"):
+                        cat = "rugby"
+                    elif sport.key.startswith("cricket"):
+                        cat = "cricket"
+                    elif sport.key.startswith("aussierules"):
+                        cat = "afl"
+                    elif sport.key.startswith("soccer"):
+                        cat = "soccer"
+                    else:
+                        cat = sport.key.split("_")[0]
+
+                    if cat not in sports_with_events:
+                        sports_with_events[cat] = {"sports": [], "events": 0, "snapshots": 0}
+                    sports_with_events[cat]["sports"].append(sport.key)
+                    sports_with_events[cat]["events"] += sport_events
+                    sports_with_events[cat]["snapshots"] += sport_snapshots
+
+            except Exception as e:
+                errors.append(f"{sport.key}: {str(e)}")
+                continue
+
+        await db.commit()
+
+        return {
+            "success": True,
+            "sports_processed": sports_processed,
+            "total_events": total_events,
+            "total_snapshots": total_snapshots,
+            "by_category": sports_with_events,
+            "errors": errors if errors else None,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error discovering events: {str(e)}"
+        )
+    finally:
+        await service.close()
 
 
 async def _load_gei_percentiles(db: AsyncSession) -> dict:
