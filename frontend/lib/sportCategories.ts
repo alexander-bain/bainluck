@@ -395,6 +395,8 @@ export function getCategoryForFutures(
   if (searchText.includes("us_open") || searchText.includes("open")) {
     if (outcomeNames && outcomeNames.length > 0) {
       const normalizedOutcomes = outcomeNames.map((n) => n.toLowerCase());
+      const golfersList = Array.from(KNOWN_GOLFERS);
+      const tennisPlayersList = Array.from(KNOWN_TENNIS_PLAYERS);
 
       // Check for golfers (by full name or last name)
       for (const outcome of normalizedOutcomes) {
@@ -402,7 +404,7 @@ export function getCategoryForFutures(
           return SPORT_CATEGORIES.find((cat) => cat.key === "golf");
         }
         // Also check last names
-        for (const golfer of KNOWN_GOLFERS) {
+        for (const golfer of golfersList) {
           const lastName = golfer.split(" ").pop();
           if (lastName && outcome.includes(lastName)) {
             return SPORT_CATEGORIES.find((cat) => cat.key === "golf");
@@ -415,7 +417,7 @@ export function getCategoryForFutures(
         if (KNOWN_TENNIS_PLAYERS.has(outcome)) {
           return SPORT_CATEGORIES.find((cat) => cat.key === "tennis");
         }
-        for (const player of KNOWN_TENNIS_PLAYERS) {
+        for (const player of tennisPlayersList) {
           const lastName = player.split(" ").pop();
           if (lastName && outcome.includes(lastName)) {
             return SPORT_CATEGORIES.find((cat) => cat.key === "tennis");
