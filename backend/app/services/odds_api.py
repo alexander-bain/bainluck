@@ -56,15 +56,9 @@ class OddsAPIService:
     """Service for interacting with The Odds API."""
 
     BASE_URL = "https://api.the-odds-api.com/v4"
-    
-    # Blacklisted sport prefixes - these sports are excluded from API calls
-    # All other sports from the API are included
-    EXCLUDED_PREFIXES = [
-        "rugbyleague_",   # Rugby League
-        "rugbyunion_",    # Rugby Union
-    ]
 
-    # Additional keywords to exclude (matched anywhere in sport key)
+    # No sports are excluded - all sports from the API are included
+    EXCLUDED_PREFIXES: list[str] = []
     EXCLUDED_KEYWORDS: list[str] = []
     
     def __init__(self, api_key: Optional[str] = None):

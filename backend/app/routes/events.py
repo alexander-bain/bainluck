@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, not_, func, case
+from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,21 +21,6 @@ from app.utils import (
 )
 
 router = APIRouter()
-
-def is_excluded_sport(sport_key: str) -> bool:
-    """Check if a sport key matches any exclusion pattern."""
-    if not sport_key:
-        return False
-    sport_key_lower = sport_key.lower()
-    # Check prefixes
-    for prefix in EXCLUDED_SPORT_PREFIXES:
-        if sport_key_lower.startswith(prefix):
-            return True
-    # Check keywords
-    for keyword in EXCLUDED_SPORT_KEYWORDS:
-        if keyword in sport_key_lower:
-            return True
-    return False
 
 
 async def _load_gei_percentiles(db: AsyncSession) -> dict:
@@ -99,12 +84,9 @@ async def get_highlights(
     result = await db.execute(query)
     events = result.scalars().all()
 
-    # Filter out excluded sports and apply percentile filter
+    # Apply percentile filter
     highlights = []
     for event in events:
-        if event.sport and is_excluded_sport(event.sport.key):
-            continue
-
         formatted = _format_event(event, gei_percentiles)
 
         # Check Pulse score threshold
@@ -176,12 +158,6 @@ async def search_events(
     if sport:
         query = query.where(Sport.key == sport)
 
-    # Exclude rugby and other unwanted sports
-    for prefix in EXCLUDED_SPORT_PREFIXES:
-        query = query.where(not_(Sport.key.ilike(f"{prefix}%")))
-    for keyword in EXCLUDED_SPORT_KEYWORDS:
-        query = query.where(not_(Sport.key.ilike(f"%{keyword}%")))
-
     # Custom ordering: live first, then upcoming (soonest), then completed (most recent)
     # Using CASE statement for status priority
     status_order = case(
@@ -218,9 +194,6 @@ async def search_events(
     # Execute
     result = await db.execute(query)
     events = result.scalars().all()
-
-    # Double-check exclusion in Python (failsafe)
-    events = [e for e in events if not (e.sport and is_excluded_sport(e.sport.key))]
 
     # Get latest aggregated odds for each event
     event_ids = [e.id for e in events]
@@ -690,10 +663,6 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # Filter out excluded sports (cricket, rugby, AFL, etc.)
-    if event.sport and is_excluded_sport(event.sport.key):
-        raise HTTPException(status_code=404, detail="Event not found")
-
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
 
@@ -774,10 +743,6 @@ async def get_event_odds_history(
     event = event_result.scalar_one_or_none()
 
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    # Filter out excluded sports (cricket, rugby, AFL, etc.)
-    if event.sport and is_excluded_sport(event.sport.key):
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Get snapshots within time range
@@ -953,10 +918,6 @@ async def debug_event_snapshots(
     event = event_result.scalar_one_or_none()
 
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    # Filter out excluded sports (cricket, rugby, AFL, etc.)
-    if event.sport and is_excluded_sport(event.sport.key):
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Get recent snapshots
