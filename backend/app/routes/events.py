@@ -155,16 +155,16 @@ async def discover_all_events(
                                     bookmaker=bookmaker_key,
                                     home_moneyline=home_odds,
                                     away_moneyline=away_odds,
-                                    home_probability=home_prob,
-                                    away_probability=away_prob,
+                                    home_win_probability=home_prob,
+                                    away_win_probability=away_prob,
                                     captured_at=now,
                                 ).on_conflict_do_update(
                                     index_elements=["event_id", "bookmaker", "captured_at"],
                                     set_={
                                         "home_moneyline": home_odds,
                                         "away_moneyline": away_odds,
-                                        "home_probability": home_prob,
-                                        "away_probability": away_prob,
+                                        "home_win_probability": home_prob,
+                                        "away_win_probability": away_prob,
                                     }
                                 )
                                 await db.execute(snapshot_stmt)
