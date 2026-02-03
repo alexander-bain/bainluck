@@ -10,9 +10,6 @@ from app.services import get_db, OddsAPIService
 
 router = APIRouter()
 
-# Excluded sport prefixes (soccer, cricket, rugby, AFL)
-EXCLUDED_SPORT_PREFIXES = ["soccer_", "cricket_", "rugbyleague_", "rugbyunion_", "aussierules_"]
-
 
 @router.get("")
 async def list_sports(db: AsyncSession = Depends(get_db)):
@@ -22,11 +19,6 @@ async def list_sports(db: AsyncSession = Depends(get_db)):
     Returns sports we're actively tracking with their metadata.
     """
     query = select(Sport).where(Sport.active == True)
-
-    # Exclude soccer, cricket, rugby, AFL using SQL LIKE
-    exclusion_conditions = [Sport.key.like(f"{prefix}%") for prefix in EXCLUDED_SPORT_PREFIXES]
-    if exclusion_conditions:
-        query = query.where(not_(or_(*exclusion_conditions)))
 
     result = await db.execute(query.order_by(Sport.name))
     sports = result.scalars().all()
