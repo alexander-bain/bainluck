@@ -12,6 +12,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import {
   SPORT_CATEGORIES,
   getCategoryForLeague,
+  getCategoryForFutures,
   getLeagueDisplay,
   getLeagueTier,
   isFeaturedEvent,
@@ -175,15 +176,15 @@ export default function HomePage() {
 
     // Filter by sport category if selected
     if (selectedCategory && !selectedSport) {
-      const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
-      if (category) {
-        markets = markets.filter((m) =>
-          m.sport && category.prefixes.some((prefix) => m.sport!.startsWith(prefix))
-        );
-      } else if (selectedCategory === "other") {
-        markets = markets.filter((m) =>
-          m.sport && !getCategoryForLeague(m.sport)
-        );
+      if (selectedCategory === "other") {
+        // "Other" category: futures that don't match any known category
+        markets = markets.filter((m) => !getCategoryForFutures(m.sport, m.name));
+      } else {
+        // Match futures to selected category using smart categorization
+        markets = markets.filter((m) => {
+          const category = getCategoryForFutures(m.sport, m.name);
+          return category?.key === selectedCategory;
+        });
       }
     }
 
@@ -251,11 +252,26 @@ export default function HomePage() {
       leagueGroup.events.push(event);
     }
 
-    // Add futures to groups
+    // Add futures to groups using smart categorization
     for (const market of filteredFutures) {
-      if (!market.sport) continue;
+      // Use getCategoryForFutures which matches by sport key AND market name
+      const category = getCategoryForFutures(market.sport, market.name);
+      const categoryKey = category?.key ?? "other";
 
-      const sportGroup = getOrCreateGroup(market.sport);
+      if (!groups.has(categoryKey)) {
+        groups.set(categoryKey, {
+          categoryKey,
+          categoryName: category?.name ?? "Other",
+          emoji: category?.emoji ?? "🏆",
+          tier: category?.tier ?? 3,
+          leagues: [],
+          futures: [],
+          totalEvents: 0,
+          totalFutures: 0,
+        });
+      }
+
+      const sportGroup = groups.get(categoryKey)!;
       sportGroup.futures.push(market);
       sportGroup.totalFutures++;
     }

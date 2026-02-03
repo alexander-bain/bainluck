@@ -277,6 +277,98 @@ export function getCategoryForLeague(leagueKey: string): SportCategory | undefin
 }
 
 /**
+ * Keywords to match futures/outrights to sport categories.
+ * These are used when the sport key doesn't match standard prefixes.
+ */
+const FUTURES_KEYWORD_MAP: Record<string, string> = {
+  // Basketball
+  nba: "basketball",
+  ncaab: "basketball",
+  wnba: "basketball",
+  march_madness: "basketball",
+  // Football
+  nfl: "football",
+  ncaaf: "football",
+  super_bowl: "football",
+  // Baseball
+  mlb: "baseball",
+  world_series: "baseball",
+  // Hockey
+  nhl: "hockey",
+  stanley_cup: "hockey",
+  // Golf
+  pga: "golf",
+  masters: "golf",
+  us_open_golf: "golf",
+  the_open: "golf",
+  british_open: "golf",
+  ryder_cup: "golf",
+  // Tennis
+  wimbledon: "tennis",
+  french_open: "tennis",
+  australian_open: "tennis",
+  us_open_tennis: "tennis",
+  atp: "tennis",
+  wta: "tennis",
+  // MMA
+  ufc: "mma",
+  // Motorsport
+  f1: "motorsport",
+  formula_1: "motorsport",
+  nascar: "motorsport",
+  indycar: "motorsport",
+  // Soccer
+  epl: "soccer",
+  premier_league: "soccer",
+  champions_league: "soccer",
+  world_cup: "soccer",
+  mls: "soccer",
+  la_liga: "soccer",
+  bundesliga: "soccer",
+  serie_a: "soccer",
+  // Politics
+  election: "politics",
+  president: "politics",
+  // Esports
+  lol: "esports",
+  csgo: "esports",
+  dota: "esports",
+  valorant: "esports",
+};
+
+/**
+ * Get category for a futures market based on sport key and market name.
+ * Uses prefix matching first, then falls back to keyword matching.
+ * This handles futures that may have non-standard sport keys.
+ */
+export function getCategoryForFutures(
+  sportKey: string | null,
+  marketName?: string | null
+): SportCategory | undefined {
+  // First try standard prefix matching
+  if (sportKey) {
+    const category = getCategoryForLeague(sportKey);
+    if (category) return category;
+  }
+
+  // Build a searchable string from sport key and market name
+  const searchText = [sportKey, marketName]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "_");
+
+  // Try keyword matching
+  for (const [keyword, categoryKey] of Object.entries(FUTURES_KEYWORD_MAP)) {
+    if (searchText.includes(keyword)) {
+      return SPORT_CATEGORIES.find((cat) => cat.key === categoryKey);
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Get display name for a league.
  * Falls back to generating a readable name from the key.
  */
