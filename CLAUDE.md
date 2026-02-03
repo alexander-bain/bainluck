@@ -198,10 +198,18 @@ sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Ho
 - Limited to 10 pages max per poll
 - If you see 429 errors, wait a minute and try again
 
-**Admin Endpoint:**
+**Admin Endpoints:**
 ```bash
+# Trigger a poll (queues background task, returns task_id)
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/poll?secret=any"
+# Response: {"status": "queued", "task_id": "abc123...", "message": "..."}
+
+# Check task status (use task_id from above)
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/task/abc123?secret=any"
+# Response: {"task_id": "abc123", "state": "SUCCESS", "result": {...}}
 ```
+
+**Note:** Polling runs as a background Celery task to avoid Heroku's 30-second HTTP timeout.
 
 **Data Model:**
 - Kalshi events → `futures_markets` table (source="kalshi")

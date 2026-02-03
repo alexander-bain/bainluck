@@ -206,7 +206,8 @@ async def trigger_kalshi_poll(
     """
     Manually trigger Kalshi market polling.
 
-    Useful for testing the integration or refreshing data immediately.
+    Queues the polling task to run in the background via Celery.
+    Returns immediately with task ID - check Celery logs for results.
     Requires KALSHI_API_KEY to be configured.
     """
     if not _check_admin_secret(secret):
@@ -219,15 +220,45 @@ async def trigger_kalshi_poll(
             detail="KALSHI_API_KEY not configured. Add it to your environment variables."
         )
 
-    # Import and run the polling task synchronously for immediate feedback
-    from app.tasks import _poll_kalshi_markets
-    import asyncio
+    # Queue the task to run in background (avoids Heroku's 30s timeout)
+    from app.tasks import poll_kalshi_markets
 
     try:
-        result = await _poll_kalshi_markets()
+        task = poll_kalshi_markets.delay()
         return {
-            "status": "success",
-            "result": result,
+            "status": "queued",
+            "task_id": task.id,
+            "message": "Kalshi polling task queued. Check Celery worker logs for results.",
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Polling failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/kalshi/task/{task_id}")
+async def get_kalshi_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Check the status of a Kalshi polling task.
+
+    Returns the task state and result (if complete).
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
