@@ -24,6 +24,7 @@
 
 **Key External Services:**
 - **The Odds API** (the-odds-api.com) - Sports odds data
+- **Kalshi** (kalshi.com) - Prediction market data (futures with timing info)
 - **Google Analytics 4** - User analytics
 - **Firebase Auth** - Planned for user accounts
 
@@ -44,6 +45,7 @@ odds-tracker/
 │   │   │   └── futures.py       # Championship odds
 │   │   ├── services/
 │   │   │   ├── odds_api.py      # The Odds API client
+│   │   │   ├── kalshi_api.py    # Kalshi prediction market client
 │   │   │   └── database.py      # DB connection
 │   │   ├── tasks.py             # Celery tasks (polling, Pulse calc)
 │   │   └── utils/
@@ -127,6 +129,7 @@ celery -A app.tasks beat --loglevel=info
 ### Backend (.env)
 ```
 ODDS_API_KEY=xxx          # From the-odds-api.com
+KALSHI_API_KEY=xxx        # From kalshi.com (optional - enables Kalshi polling)
 DATABASE_URL=xxx          # PostgreSQL connection string
 REDIS_URL=xxx             # Redis for Celery
 ADMIN_SECRET=xxx          # Optional: protect admin endpoints
@@ -170,6 +173,41 @@ Proprietary 1-100 score measuring how exciting a game is based on probability sw
 - Trigram indexes for fast ILIKE matching on `events.home_team_name`, `events.away_team_name`, and `futures_markets.name`
 - Events ordered: Live → Upcoming → Completed
 - Returns `results` (events) and `futures` (markets) arrays
+
+### Kalshi Integration
+Kalshi is a prediction market that provides structured event data including timing (when events start/end).
+
+**Why Kalshi?** The Odds API doesn't provide `commence_time` for futures markets. Kalshi does, so futures from Kalshi will have proper start dates displayed.
+
+**Files:**
+- `backend/app/services/kalshi_api.py` - API client
+- `backend/app/tasks.py` - `poll_kalshi_markets` task (runs hourly at :45)
+
+**Category Filter (IMPORTANT):**
+Kalshi has thousands of markets (politics, economics, etc.) but we only want sports.
+To stay within rate limits, we filter to specific categories.
+
+**To change which categories are fetched**, edit this line in `backend/app/tasks.py` around line 1948:
+```python
+sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis"]
+```
+
+**Rate Limiting:**
+- Kalshi has strict rate limits (~10 req/sec)
+- We add 0.5s delay between paginated requests
+- Limited to 10 pages max per poll
+- If you see 429 errors, wait a minute and try again
+
+**Admin Endpoint:**
+```bash
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/poll?secret=any"
+```
+
+**Data Model:**
+- Kalshi events → `futures_markets` table (source="kalshi")
+- Kalshi markets → `futures_outcomes` table
+- Stores bid/ask spreads: `yes_bid`, `yes_ask`, `last_price`
+- Populates `commence_time` (event start) and `resolution_date` (market close)
 
 ---
 
