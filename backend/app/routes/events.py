@@ -1,18 +1,316 @@
 """Events API endpoints."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, not_, func
+from sqlalchemy import select, and_, or_, not_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Event, OddsSnapshot, Sport
+from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile
 from app.services import get_db, OddsAPIService, fetch_current_odds
-from app.utils import moneyline_to_probability, project_scores, calculate_gei, aggregate_bookmaker_odds
+from app.utils import (
+    moneyline_to_probability,
+    project_scores,
+    calculate_gei,
+    aggregate_bookmaker_odds,
+    compute_highlight,
+    get_highlight_label,
+    should_highlight,
+)
 
 router = APIRouter()
+
+def is_excluded_sport(sport_key: str) -> bool:
+    """Check if a sport key matches any exclusion pattern."""
+    if not sport_key:
+        return False
+    sport_key_lower = sport_key.lower()
+    # Check prefixes
+    for prefix in EXCLUDED_SPORT_PREFIXES:
+        if sport_key_lower.startswith(prefix):
+            return True
+    # Check keywords
+    for keyword in EXCLUDED_SPORT_KEYWORDS:
+        if keyword in sport_key_lower:
+            return True
+    return False
+
+
+async def _load_gei_percentiles(db: AsyncSession) -> dict:
+    """Load GEI percentile thresholds from database.
+
+    Returns empty dict if table doesn't exist or query fails,
+    allowing the API to function without GEI data.
+    """
+    try:
+        result = await db.execute(
+            select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
+        )
+        rows = result.all()
+
+        percentiles = {}
+        for scope, percentile, threshold in rows:
+            if scope not in percentiles:
+                percentiles[scope] = {}
+            percentiles[scope][percentile] = float(threshold) if threshold else 0
+
+        return percentiles
+    except Exception:
+        # Table may not exist yet - return empty dict
+        return {}
+
+
+@router.get("/highlights")
+async def get_highlights(
+    sport: Optional[str] = Query(None, description="Filter by sport key"),
+    days: int = Query(7, description="Days of history to include"),
+    limit: int = Query(20, description="Maximum number of events"),
+    min_percentile: int = Query(75, description="Minimum GEI percentile"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the most exciting completed events.
+
+    Returns events with highest GEI scores, useful for highlights/replay discovery.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
+    # Build query for completed events with GEI
+    query = (
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            Event.status == "completed",
+            Event.raw_gei.isnot(None),
+            Event.commence_time >= cutoff,
+        )
+        .order_by(Event.raw_gei.desc())
+        .limit(limit * 2)  # Fetch extra to filter by percentile
+    )
+
+    if sport:
+        query = query.join(Sport).where(Sport.key == sport)
+
+    result = await db.execute(query)
+    events = result.scalars().all()
+
+    # Filter out excluded sports and apply percentile filter
+    highlights = []
+    for event in events:
+        if event.sport and is_excluded_sport(event.sport.key):
+            continue
+
+        formatted = _format_event(event, gei_percentiles)
+
+        # Check Pulse score threshold
+        pulse = formatted.get("pulse", {})
+        pulse_score = pulse.get("score", 0)
+        if pulse_score >= min_percentile:
+            highlights.append(formatted)
+
+        if len(highlights) >= limit:
+            break
+
+    return {
+        "highlights": highlights,
+        "filters": {
+            "sport": sport,
+            "days": days,
+            "min_percentile": min_percentile,
+        },
+        "count": len(highlights),
+    }
+
+
+@router.get("/search")
+async def search_events(
+    q: str = Query(..., min_length=2, description="Search query (team name, city, etc.)"),
+    sport: Optional[str] = Query(None, description="Filter by sport key (e.g., basketball_nba)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(25, ge=1, le=100, description="Results per page"),
+    days_back: int = Query(30, ge=1, le=365, description="How many days back to search"),
+    include_upcoming: bool = Query(True, description="Include scheduled games"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Search for events by team name, city, or other keywords.
+
+    Returns paginated results grouped by sport/league for disambiguation
+    when multiple teams share the same name (e.g., "Celtics" in NBA vs other leagues).
+
+    Results are ordered:
+    1. Live games (currently in progress)
+    2. Upcoming scheduled games (soonest first)
+    3. Completed games (most recent first)
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days_back)
+    search_pattern = f"%{q}%"
+
+    # Build base query - search both home and away team names
+    query = (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(selectinload(Event.sport))
+        .where(
+            or_(
+                Event.home_team_name.ilike(search_pattern),
+                Event.away_team_name.ilike(search_pattern),
+            ),
+            Event.commence_time >= cutoff,
+        )
+    )
+
+    # Filter by status based on include_upcoming
+    if include_upcoming:
+        query = query.where(Event.status.in_(["scheduled", "live", "completed", "closed"]))
+    else:
+        query = query.where(Event.status.in_(["live", "completed", "closed"]))
+
+    # Filter by sport if specified
+    if sport:
+        query = query.where(Sport.key == sport)
+
+    # Exclude rugby and other unwanted sports
+    for prefix in EXCLUDED_SPORT_PREFIXES:
+        query = query.where(not_(Sport.key.ilike(f"{prefix}%")))
+    for keyword in EXCLUDED_SPORT_KEYWORDS:
+        query = query.where(not_(Sport.key.ilike(f"%{keyword}%")))
+
+    # Custom ordering: live first, then upcoming (soonest), then completed (most recent)
+    # Using CASE statement for status priority
+    status_order = case(
+        (Event.status == "live", 0),
+        (Event.status == "scheduled", 1),
+        else_=2
+    )
+    # For scheduled: order by commence_time ASC (soonest first)
+    # For completed: order by commence_time DESC (most recent first)
+    # We handle this by using different sort keys based on status
+    query = query.order_by(
+        status_order,
+        # For live/scheduled, sort ascending; for completed, we want descending
+        # Using a compound sort: status priority, then time
+        case(
+            (Event.status.in_(["live", "scheduled"]), Event.commence_time),
+            else_=None
+        ).asc().nulls_last(),
+        case(
+            (Event.status.in_(["completed", "closed"]), Event.commence_time),
+            else_=None
+        ).desc().nulls_last(),
+    )
+
+    # Get total count (before pagination)
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total_count = total_result.scalar()
+
+    # Apply pagination
+    offset = (page - 1) * per_page
+    query = query.offset(offset).limit(per_page)
+
+    # Execute
+    result = await db.execute(query)
+    events = result.scalars().all()
+
+    # Double-check exclusion in Python (failsafe)
+    events = [e for e in events if not (e.sport and is_excluded_sport(e.sport.key))]
+
+    # Get latest aggregated odds for each event
+    event_ids = [e.id for e in events]
+    aggregated_odds_map = {}
+
+    if event_ids:
+        # Get the most recent snapshot per bookmaker per event
+        ranked_subq = (
+            select(
+                OddsSnapshot.id,
+                OddsSnapshot.event_id,
+                func.row_number().over(
+                    partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                    order_by=OddsSnapshot.captured_at.desc()
+                ).label("rn")
+            )
+            .where(OddsSnapshot.event_id.in_(event_ids))
+            .subquery()
+        )
+
+        latest_odds_query = (
+            select(OddsSnapshot)
+            .join(ranked_subq, and_(
+                OddsSnapshot.id == ranked_subq.c.id,
+                ranked_subq.c.rn == 1
+            ))
+        )
+
+        latest_odds_result = await db.execute(latest_odds_query)
+        all_snapshots = latest_odds_result.scalars().all()
+
+        # Group snapshots by event and aggregate
+        from collections import defaultdict
+        snapshots_by_event = defaultdict(list)
+        for snap in all_snapshots:
+            snapshots_by_event[snap.event_id].append(snap)
+
+        for event_id, snaps in snapshots_by_event.items():
+            latest_time = max(s.captured_at for s in snaps) if snaps else None
+            aggregated_odds_map[event_id] = {
+                "snapshots": snaps,
+                "aggregated": aggregate_bookmaker_odds(snaps),
+                "captured_at": latest_time,
+            }
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
+    # Format results and group by sport
+    formatted_results = []
+    sports_found = {}
+
+    for event in events:
+        formatted = _format_event_with_aggregated_odds(
+            event, aggregated_odds_map.get(event.id), gei_percentiles
+        )
+        formatted_results.append(formatted)
+
+        # Track sports for disambiguation info
+        sport_key = event.sport.key if event.sport else "unknown"
+        sport_name = event.sport.name if event.sport else "Unknown"
+        if sport_key not in sports_found:
+            sports_found[sport_key] = {
+                "key": sport_key,
+                "name": sport_name,
+                "count": 0,
+            }
+        sports_found[sport_key]["count"] += 1
+
+    # Calculate pagination metadata
+    total_pages = (total_count + per_page - 1) // per_page
+
+    return {
+        "query": q,
+        "results": formatted_results,
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total_results": total_count,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1,
+        },
+        "sports": list(sports_found.values()),
+        "filters": {
+            "sport": sport,
+            "days_back": days_back,
+            "include_upcoming": include_upcoming,
+        },
+    }
 
 
 @router.get("/debug/sport-keys")
@@ -36,6 +334,118 @@ async def debug_sport_keys(db: AsyncSession = Depends(get_db)):
             }
             for s in sports
         ]
+    }
+
+
+@router.get("/debug/api-bookmakers/{sport_key}")
+async def debug_api_bookmakers(sport_key: str):
+    """
+    Debug endpoint to check what bookmakers the API is returning.
+
+    This makes a direct call to the-odds-api.com to see all available
+    bookmakers for a sport. Useful for diagnosing why only one bookmaker
+    appears in the data.
+    """
+    service = OddsAPIService()
+    try:
+        events_data = await service.get_odds(sport_key)
+
+        # Collect all unique bookmakers across all events
+        all_bookmakers = set()
+        events_summary = []
+
+        for event in events_data:
+            event_bookmakers = [b["key"] for b in event.get("bookmakers", [])]
+            all_bookmakers.update(event_bookmakers)
+            events_summary.append({
+                "id": event["id"],
+                "home_team": event["home_team"],
+                "away_team": event["away_team"],
+                "bookmaker_count": len(event_bookmakers),
+                "bookmakers": event_bookmakers,
+            })
+
+        # Check API quota
+        quota = await service.check_quota()
+
+        return {
+            "sport_key": sport_key,
+            "total_events": len(events_data),
+            "unique_bookmakers": sorted(list(all_bookmakers)),
+            "bookmaker_count": len(all_bookmakers),
+            "api_quota": quota,
+            "events": events_summary[:5],  # First 5 events for brevity
+            "note": "If only 1 bookmaker appears, your API subscription tier may limit available bookmakers."
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "sport_key": sport_key,
+        }
+    finally:
+        await service.close()
+
+
+@router.get("/debug/db-bookmakers")
+async def debug_db_bookmakers(db: AsyncSession = Depends(get_db)):
+    """
+    Debug endpoint to check what bookmakers are stored in the database.
+
+    Shows events that have odds from multiple bookmakers, proving
+    the system CAN store multi-bookmaker data.
+    """
+    # Find events with multiple bookmakers
+    result = await db.execute(
+        select(
+            Event.id,
+            Event.home_team_name,
+            Event.away_team_name,
+            func.count(func.distinct(OddsSnapshot.bookmaker)).label("bookmaker_count"),
+            func.array_agg(func.distinct(OddsSnapshot.bookmaker)).label("bookmakers")
+        )
+        .join(OddsSnapshot, Event.id == OddsSnapshot.event_id)
+        .group_by(Event.id, Event.home_team_name, Event.away_team_name)
+        .having(func.count(func.distinct(OddsSnapshot.bookmaker)) > 1)
+        .order_by(func.count(func.distinct(OddsSnapshot.bookmaker)).desc())
+        .limit(10)
+    )
+    multi_bookmaker_events = result.all()
+
+    # Get overall stats
+    total_result = await db.execute(
+        select(
+            func.count(func.distinct(OddsSnapshot.bookmaker)).label("total_bookmakers"),
+            func.count(func.distinct(OddsSnapshot.event_id)).label("total_events_with_odds")
+        )
+    )
+    totals = total_result.one()
+
+    # Get all unique bookmakers in the database
+    bookmakers_result = await db.execute(
+        select(func.distinct(OddsSnapshot.bookmaker))
+    )
+    all_bookmakers = [row[0] for row in bookmakers_result.all()]
+
+    return {
+        "summary": {
+            "total_unique_bookmakers_in_db": totals[0],
+            "total_events_with_odds": totals[1],
+            "events_with_multiple_bookmakers": len(multi_bookmaker_events),
+            "all_bookmakers": sorted(all_bookmakers),
+        },
+        "events_with_multiple_bookmakers": [
+            {
+                "event_id": row[0],
+                "home_team": row[1],
+                "away_team": row[2],
+                "bookmaker_count": row[3],
+                "bookmakers": row[4],
+            }
+            for row in multi_bookmaker_events
+        ],
+        "diagnosis": "If events_with_multiple_bookmakers is empty but total_unique_bookmakers > 1, "
+                     "then bookmakers are not overlapping on the same events. "
+                     "If total_unique_bookmakers = 1, the API is only returning one bookmaker."
     }
 
 
@@ -72,7 +482,7 @@ async def list_events(
         conditions.append(Event.status.in_(["scheduled", "live", "completed", "closed"]))
 
     # Date range - but always include live games regardless of start time
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     end_date = now + timedelta(days=days)
     # Include completed events from yesterday and today
     yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -109,28 +519,30 @@ async def list_events(
     aggregated_odds_map = {}
 
     if event_ids:
-        # Subquery to get the max captured_at per event
-        latest_time_subq = (
+        # Get the most recent snapshot per bookmaker per event
+        # (deduplication means different bookmakers may have different latest times)
+
+        # Subquery: rank snapshots by recency within each event+bookmaker group
+        ranked_subq = (
             select(
+                OddsSnapshot.id,
                 OddsSnapshot.event_id,
-                func.max(OddsSnapshot.captured_at).label("max_time")
+                func.row_number().over(
+                    partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                    order_by=OddsSnapshot.captured_at.desc()
+                ).label("rn")
             )
             .where(OddsSnapshot.event_id.in_(event_ids))
-            .group_by(OddsSnapshot.event_id)
             .subquery()
         )
 
-        # Get all snapshots from the latest poll time for each event
-        # (multiple bookmakers captured at the same time)
+        # Get only the most recent snapshot per bookmaker per event (rn=1)
         latest_odds_query = (
             select(OddsSnapshot)
-            .join(
-                latest_time_subq,
-                and_(
-                    OddsSnapshot.event_id == latest_time_subq.c.event_id,
-                    OddsSnapshot.captured_at == latest_time_subq.c.max_time
-                )
-            )
+            .join(ranked_subq, and_(
+                OddsSnapshot.id == ranked_subq.c.id,
+                ranked_subq.c.rn == 1
+            ))
         )
 
         latest_odds_result = await db.execute(latest_odds_query)
@@ -143,16 +555,20 @@ async def list_events(
             snapshots_by_event[snap.event_id].append(snap)
 
         for event_id, snaps in snapshots_by_event.items():
+            latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
                 "snapshots": snaps,
                 "aggregated": aggregate_bookmaker_odds(snaps),
-                "captured_at": snaps[0].captured_at if snaps else None,
+                "captured_at": latest_time,
             }
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
 
     # Format response with aggregated odds
     return {
         "events": [
-            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id))
+            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id), gei_percentiles)
             for e in events
         ],
         "count": len(events),
@@ -164,13 +580,17 @@ async def list_live_events(db: AsyncSession = Depends(get_db)):
     """List currently live events."""
     result = await db.execute(
         select(Event)
+        .options(selectinload(Event.sport))
         .where(Event.status == "live")
         .order_by(Event.commence_time)
     )
     events = result.scalars().all()
-    
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
     return {
-        "events": [_format_event(e) for e in events],
+        "events": [_format_event(e, gei_percentiles) for e in events],
         "count": len(events),
     }
 
@@ -270,17 +690,25 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    response = _format_event(event)
+    # Filter out excluded sports (cricket, rugby, AFL, etc.)
+    if event.sport and is_excluded_sport(event.sport.key):
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
+    response = _format_event(event, gei_percentiles)
 
     if event.odds_snapshots:
-        # Get the latest capture time
-        latest_time = max(s.captured_at for s in event.odds_snapshots)
+        # Get the most recent snapshot for each bookmaker
+        # (deduplication means different bookmakers may have different latest times)
+        latest_by_bookmaker = {}
+        for s in event.odds_snapshots:
+            if s.bookmaker not in latest_by_bookmaker or s.captured_at > latest_by_bookmaker[s.bookmaker].captured_at:
+                latest_by_bookmaker[s.bookmaker] = s
 
-        # Get all snapshots from that time (multiple bookmakers)
-        latest_snapshots = [
-            s for s in event.odds_snapshots
-            if s.captured_at == latest_time
-        ]
+        latest_snapshots = list(latest_by_bookmaker.values())
+        latest_time = max(s.captured_at for s in latest_snapshots)
 
         # Aggregate across bookmakers
         aggregated = aggregate_bookmaker_odds(latest_snapshots)
@@ -301,6 +729,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         }
 
         # Also include individual bookmaker odds for transparency
+        # Include captured_at so users can see when each book last updated
         response["bookmaker_odds"] = [
             {
                 "bookmaker": s.bookmaker,
@@ -310,6 +739,13 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                     if s.home_win_probability else None,
                 "away_probability": float(s.away_win_probability)
                     if s.away_win_probability else None,
+                "captured_at": s.captured_at.isoformat(),
+                "spread": float(s.home_spread) if s.home_spread else None,
+                "over_under": float(s.over_under) if s.over_under else None,
+                "projected_home_score": float(s.projected_home_score)
+                    if s.projected_home_score else None,
+                "projected_away_score": float(s.projected_away_score)
+                    if s.projected_away_score else None,
             }
             for s in latest_snapshots
         ]
@@ -340,13 +776,17 @@ async def get_event_odds_history(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    # Filter out excluded sports (cricket, rugby, AFL, etc.)
+    if event.sport and is_excluded_sport(event.sport.key):
+        raise HTTPException(status_code=404, detail="Event not found")
+
     # Get snapshots within time range
     # Include snapshots where:
     # 1. captured_at >= cutoff (created within the window), OR
     # 2. captured_at < cutoff AND valid_until >= cutoff (created before but still valid during window)
     # This ensures we show trend lines even when odds haven't changed for a while
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=hours)
 
     result = await db.execute(
         select(OddsSnapshot)
@@ -433,6 +873,8 @@ async def get_event_odds_history(
                 "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
                 "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
                 "valid_until": snap.valid_until.replace(second=0, microsecond=0).isoformat() if snap.valid_until else None,
+                "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
+                "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
 
             if snap.captured_at >= cutoff:
@@ -455,12 +897,36 @@ async def get_event_odds_history(
         bm_points_sorted = sorted(bm_points, key=lambda p: p["timestamp"])
         bookmaker_history[bookmaker] = bm_points_sorted
 
+    # Build score history from ScoreSnapshots
+    # Wrap in try/except in case the table doesn't exist yet (migration not run)
+    score_history = []
+    try:
+        score_result = await db.execute(
+            select(ScoreSnapshot)
+            .where(ScoreSnapshot.event_id == event_id)
+            .order_by(ScoreSnapshot.captured_at)
+        )
+        score_snapshots = score_result.scalars().all()
+
+        score_history = [
+            {
+                "timestamp": snap.captured_at.isoformat(),
+                "home_score": snap.home_score,
+                "away_score": snap.away_score,
+            }
+            for snap in score_snapshots
+        ]
+    except Exception:
+        # Table may not exist yet - return empty history
+        pass
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "history": history,
         "bookmaker_history": bookmaker_history,
+        "score_history": score_history,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),
@@ -487,6 +953,10 @@ async def debug_event_snapshots(
     event = event_result.scalar_one_or_none()
 
     if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    # Filter out excluded sports (cricket, rugby, AFL, etc.)
+    if event.sport and is_excluded_sport(event.sport.key):
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Get recent snapshots
@@ -540,9 +1010,9 @@ async def debug_event_snapshots(
     }
 
 
-def _format_event(event: Event) -> dict:
+def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
     """Format event for API response."""
-    return {
+    response = {
         "id": event.id,
         "external_id": event.external_id,
         "sport": event.sport.key if event.sport else None,
@@ -553,6 +1023,49 @@ def _format_event(event: Event) -> dict:
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+    # Add Pulse data if available (for live and completed events)
+    # Wrap in try/except in case columns don't exist yet (migration not applied)
+    try:
+        if event.raw_gei is not None:
+            from app.utils.pulse import get_pulse_label, get_pulse_emoji, get_pulse_status
+            import json
+
+            # raw_gei stores score/100 (e.g., 0.75 = score 75)
+            pulse_score = max(1, min(100, round(float(event.raw_gei) * 100)))
+
+            # Parse components if stored
+            components = None
+            if event.gei_components:
+                try:
+                    components = json.loads(event.gei_components)
+                except json.JSONDecodeError:
+                    pass
+
+            response["pulse"] = {
+                "score": pulse_score,
+                "status": get_pulse_status(pulse_score),
+                "label": get_pulse_label(pulse_score),
+                "emoji": get_pulse_emoji(pulse_score),
+                "components": components,
+            }
+    except Exception:
+        # Pulse columns may not exist yet - skip pulse data
+        pass
+
+    return response
+
+
+def _calculate_percentile(raw_gei: float, percentiles: dict, scope: str) -> int:
+    """Calculate percentile from raw GEI using stored thresholds."""
+    if not percentiles or scope not in percentiles:
+        return None
+
+    thresholds = percentiles[scope]
+    for p in range(100, 0, -1):
+        if p in thresholds and raw_gei >= thresholds[p]:
+            return p
+    return 1
 
 
 def _format_event_with_odds(event: Event) -> dict:
@@ -614,13 +1127,24 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict]) -> dict:
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None) -> dict:
     """Format event for API response with aggregated odds from multiple bookmakers."""
-    response = _format_event(event)
+    response = _format_event(event, gei_percentiles)
+
+    current_home_prob = None
+    current_away_prob = None
+    current_spread = None
+    current_ou = None
 
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]
         captured_at = odds_data.get("captured_at")
+        snapshots = odds_data.get("snapshots", [])
+
+        current_home_prob = aggregated["home_probability"]
+        current_away_prob = aggregated["away_probability"]
+        current_spread = aggregated["home_spread"]
+        current_ou = aggregated["over_under"]
 
         response["current_odds"] = {
             "captured_at": captured_at.isoformat() if captured_at else None,
@@ -635,6 +1159,73 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict]) 
                 "min": aggregated["min_home_probability"],
                 "max": aggregated["max_home_probability"],
             },
+        }
+
+        # Include individual bookmaker odds for transparency
+        if snapshots:
+            response["bookmaker_odds"] = [
+                {
+                    "bookmaker": s.bookmaker,
+                    "home_moneyline": s.home_moneyline,
+                    "away_moneyline": s.away_moneyline,
+                    "home_probability": float(s.home_win_probability)
+                        if s.home_win_probability else None,
+                    "away_probability": float(s.away_win_probability)
+                        if s.away_win_probability else None,
+                    "captured_at": s.captured_at.isoformat(),
+                    "spread": float(s.home_spread) if s.home_spread else None,
+                    "over_under": float(s.over_under) if s.over_under else None,
+                    "projected_home_score": float(s.projected_home_score)
+                        if s.projected_home_score else None,
+                    "projected_away_score": float(s.projected_away_score)
+                        if s.projected_away_score else None,
+                }
+                for s in snapshots
+            ]
+
+    # Compute highlight data
+    highlight_result = compute_highlight(
+        status=event.status,
+        commence_time=event.commence_time,
+        sport_key=event.sport.key if event.sport else None,
+        current_home_prob=current_home_prob,
+        current_away_prob=current_away_prob,
+        current_home_spread=current_spread,
+        current_over_under=current_ou,
+        opening_home_prob=float(event.opening_home_probability) if event.opening_home_probability else None,
+        opening_away_prob=float(event.opening_away_probability) if event.opening_away_probability else None,
+        opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
+        opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
+        opening_favorite=event.opening_favorite,
+    )
+
+    response["highlight"] = {
+        "score": highlight_result.score,
+        "reasons": highlight_result.reasons,
+        "label": get_highlight_label(highlight_result),
+        "should_feature": should_highlight(highlight_result),
+        "flags": {
+            "is_live": highlight_result.flags.is_live,
+            "is_close_matchup": highlight_result.flags.is_close_matchup,
+            "is_blowout": highlight_result.flags.is_blowout,
+            "favorite_switched": highlight_result.flags.favorite_switched,
+            "probability_swing": highlight_result.flags.probability_swing,
+            "score_swing": highlight_result.flags.score_swing,
+            "is_starting_soon": highlight_result.flags.is_starting_soon,
+            "is_recently_finished": highlight_result.flags.is_recently_finished,
+            "is_upset": highlight_result.flags.is_upset,
+            "league_tier": highlight_result.flags.league_tier,
+        },
+    }
+
+    # Include opening odds for transparency
+    if event.opening_home_probability:
+        response["opening_odds"] = {
+            "home_probability": float(event.opening_home_probability),
+            "away_probability": float(event.opening_away_probability) if event.opening_away_probability else None,
+            "spread": float(event.opening_home_spread) if event.opening_home_spread else None,
+            "over_under": float(event.opening_over_under) if event.opening_over_under else None,
+            "favorite": event.opening_favorite,
         }
 
     return response

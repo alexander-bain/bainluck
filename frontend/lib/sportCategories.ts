@@ -82,6 +82,28 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["tennis_"],
     tier: 2,
   },
+  // Tier 2: International sports
+  {
+    key: "soccer",
+    name: "Soccer",
+    emoji: "⚽",
+    prefixes: ["soccer_"],
+    tier: 2,
+  },
+  {
+    key: "cricket",
+    name: "Cricket",
+    emoji: "🏏",
+    prefixes: ["cricket_"],
+    tier: 2,
+  },
+  {
+    key: "aussierules",
+    name: "Aussie Rules",
+    emoji: "🏉",
+    prefixes: ["aussierules_"],
+    tier: 2,
+  },
   // Tier 3: Tertiary sports (niche audience)
   {
     key: "politics",
@@ -409,9 +431,95 @@ export function calculateExcitementScore(
   return Math.min(100, score);
 }
 
+// Staleness thresholds for featured events
+const STALE_ODDS_MINUTES = 30; // Odds not updated in 30 minutes = stale
+const MAX_LIVE_HOURS = 4; // If "live" for more than 4 hours, needs review
+
+/**
+ * Check if a live event has stale data.
+ * Returns true if data is stale or event needs review.
+ */
+function isEventStaleOrNeedsReview(
+  event: {
+    status: "scheduled" | "live" | "completed" | "closed";
+    commence_time: string;
+    current_odds?: {
+      home_probability: number | null;
+      captured_at?: string;
+    };
+  }
+): boolean {
+  if (event.status !== "live") return false;
+
+  const now = new Date();
+  const commenceTime = new Date(event.commence_time);
+  const hoursSinceStart = (now.getTime() - commenceTime.getTime()) / (1000 * 60 * 60);
+
+  // Check if event has been "live" for too long (>4 hours without completion)
+  if (hoursSinceStart > MAX_LIVE_HOURS) {
+    return true;
+  }
+
+  // Check if odds data is stale (not updated in 30+ minutes)
+  if (event.current_odds?.captured_at) {
+    const lastUpdate = new Date(event.current_odds.captured_at);
+    const minutesSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
+    if (minutesSinceUpdate > STALE_ODDS_MINUTES) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Feature reason explains why an event appears in the featured section
+ */
+export type FeatureReason = "live" | "starting_soon" | "close_game" | null;
+
+/**
+ * Get the reason an event is featured, or null if not featured.
+ * Returns: "live" | "starting_soon" | "close_game" | null
+ */
+export function getFeatureReason(
+  event: {
+    status: "scheduled" | "live" | "completed" | "closed";
+    commence_time: string;
+    current_odds?: {
+      home_probability: number | null;
+      captured_at?: string;
+    };
+  }
+): FeatureReason {
+  // Live games are featured ONLY if not stale/needs review
+  if (event.status === "live") {
+    return !isEventStaleOrNeedsReview(event) ? "live" : null;
+  }
+
+  const now = new Date();
+  const gameTime = new Date(event.commence_time);
+  const hoursUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+  // Close games starting soon are featured
+  const homeProb = event.current_odds?.home_probability ?? 0.5;
+  const isClose = Math.abs(homeProb - 0.5) <= 0.1; // Within 10% of 50/50
+  const startingSoon = hoursUntil > 0 && hoursUntil <= 3;
+
+  if (isClose && startingSoon) {
+    return "close_game";
+  }
+
+  // Games starting very soon (within 1 hour) are also featured
+  if (hoursUntil > 0 && hoursUntil <= 1) {
+    return "starting_soon";
+  }
+
+  return null;
+}
+
 /**
  * Determine if an event is "featured" (exciting enough to highlight)
- * Featured = Live OR (close game AND starting within 3 hours)
+ * Featured = Live (and not stale) OR (close game AND starting within 3 hours) OR starting within 1 hour
  */
 export function isFeaturedEvent(
   event: {
@@ -419,24 +527,29 @@ export function isFeaturedEvent(
     commence_time: string;
     current_odds?: {
       home_probability: number | null;
+      captured_at?: string;
     };
   }
 ): boolean {
-  // Live games are always featured
-  if (event.status === "live") {
-    return true;
-  }
+  return getFeatureReason(event) !== null;
+}
 
-  // Close games starting soon are featured
-  const homeProb = event.current_odds?.home_probability ?? 0.5;
-  const isClose = Math.abs(homeProb - 0.5) <= 0.1; // Within 10% of 50/50
-
+/**
+ * Format time until event starts in a human-friendly way
+ */
+export function formatTimeUntil(commenceTime: string): string {
   const now = new Date();
-  const gameTime = new Date(event.commence_time);
-  const hoursUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-  const startingSoon = hoursUntil > 0 && hoursUntil <= 3;
+  const gameTime = new Date(commenceTime);
+  const minutesUntil = (gameTime.getTime() - now.getTime()) / (1000 * 60);
 
-  return isClose && startingSoon;
+  if (minutesUntil <= 0) return "Started";
+  if (minutesUntil < 60) return `${Math.round(minutesUntil)}m`;
+  if (minutesUntil < 180) {
+    const hours = Math.floor(minutesUntil / 60);
+    const mins = Math.round(minutesUntil % 60);
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }
+  return `${Math.round(minutesUntil / 60)}h`;
 }
 
 // Force rebuild Wed Jan 28 2026 - tiered polling update

@@ -21,9 +21,18 @@ interface OddsChartProps {
   commenceTime?: string;
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
+  /** Event ID for analytics tracking */
+  eventId?: number;
+  /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
+  eventStatus?: string;
 }
 
-type TimeRange = "all" | "24h" | "12h" | "6h" | "3h" | "1h" | "live";
+type TimeRange = "all" | "live";
+
+const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "live", label: "Since Start" },
+];
 
 interface ChartDataPoint {
   timestamp: string;
@@ -32,16 +41,6 @@ interface ChartDataPoint {
   awayProb: number | null;
   [key: string]: string | number | null; // For dynamic bookmaker keys
 }
-
-const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "24h", label: "24h" },
-  { value: "12h", label: "12h" },
-  { value: "6h", label: "6h" },
-  { value: "3h", label: "3h" },
-  { value: "1h", label: "1h" },
-  { value: "live", label: "Live" },
-];
 
 /**
  * Line chart showing probability changes over time.
@@ -54,40 +53,34 @@ export default function OddsChart({
   commenceTime,
   isLive = false,
   bookmakerHistory,
+  eventStatus,
 }: OddsChartProps) {
-  const [timeRange, setTimeRange] = useState<TimeRange>(isLive ? "live" : "24h");
+  // Determine default time range based on event status:
+  // - Closed/completed/live events: default to "Since Start" IF there's post-start data
+  // - Open/scheduled events: default to "All"
+  const isClosed = eventStatus === "closed" || eventStatus === "completed";
+
+  // Check if there's any data after commence time for "Since Start" filter
+  const hasPostStartData = useMemo(() => {
+    if (!history || history.length === 0 || !commenceTime) return false;
+    const cutoffTime = parseISO(commenceTime);
+    return history.some((point) => parseISO(point.timestamp) >= cutoffTime);
+  }, [history, commenceTime]);
+
+  // Only default to "Since Start" if there's actually post-start data
+  const defaultTimeRange: TimeRange = (isClosed || isLive) && hasPostStartData ? "live" : "all";
+
+  const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
 
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
 
-    const now = new Date();
-    let cutoffTime: Date;
+    // "all" mode: show full history
+    if (timeRange === "all") return history;
 
-    switch (timeRange) {
-      case "live":
-        // Show from game start time
-        cutoffTime = commenceTime ? parseISO(commenceTime) : now;
-        break;
-      case "1h":
-        cutoffTime = new Date(now.getTime() - 1 * 60 * 60 * 1000);
-        break;
-      case "3h":
-        cutoffTime = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-        break;
-      case "6h":
-        cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-        break;
-      case "12h":
-        cutoffTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
-        break;
-      case "24h":
-        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      default:
-        return history;
-    }
-
+    // "live" mode: show from game start time
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     return history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
   }, [history, timeRange, commenceTime]);
 
@@ -95,44 +88,17 @@ export default function OddsChart({
   const filteredBookmakerHistory = useMemo(() => {
     if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0) return {};
 
-    const now = new Date();
-    let cutoffTime: Date;
+    // "all" mode: show full history
+    if (timeRange === "all") return bookmakerHistory;
 
-    switch (timeRange) {
-      case "live":
-        cutoffTime = commenceTime ? parseISO(commenceTime) : now;
-        break;
-      case "1h":
-        cutoffTime = new Date(now.getTime() - 1 * 60 * 60 * 1000);
-        break;
-      case "3h":
-        cutoffTime = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-        break;
-      case "6h":
-        cutoffTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-        break;
-      case "12h":
-        cutoffTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
-        break;
-      case "24h":
-        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      default:
-        return bookmakerHistory;
-    }
+    // "live" mode: show from game start time only
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
 
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
       filtered[bookmaker] = points.filter((point) => {
         const pointTime = parseISO(point.timestamp);
-        // Include if point starts after cutoff
-        if (pointTime >= cutoffTime) return true;
-        // Also include if point has valid_until that extends into the range
-        if (point.valid_until) {
-          const validUntil = parseISO(point.valid_until);
-          if (validUntil >= cutoffTime) return true;
-        }
-        return false;
+        return pointTime >= cutoffTime;
       });
     }
     return filtered;
@@ -229,6 +195,21 @@ export default function OddsChart({
       }
     }
 
+    // Third pass: ensure all bookmaker keys exist on all data points (as null if missing)
+    // This is required for connectNulls to work - undefined values don't connect
+    const allBookmakers = Object.keys(filteredBookmakerHistory);
+    const allPoints = Array.from(dataMap.values());
+    for (const point of allPoints) {
+      for (const bookmaker of allBookmakers) {
+        if (point[`${bookmaker}_home`] === undefined) {
+          point[`${bookmaker}_home`] = null;
+        }
+        if (point[`${bookmaker}_away`] === undefined) {
+          point[`${bookmaker}_away`] = null;
+        }
+      }
+    }
+
     // Sort by timestamp and return as array
     return Array.from(dataMap.values()).sort(
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
@@ -252,7 +233,7 @@ export default function OddsChart({
   const minProb = probValues.length > 0 ? Math.floor(Math.min(...probValues) / 5) * 5 : 0;
   const maxProb = probValues.length > 0 ? Math.ceil(Math.max(...probValues) / 5) * 5 : 100;
 
-  // Custom tooltip
+  // Custom tooltip with bookmaker grouping
   const CustomTooltip = ({
     active,
     payload,
@@ -263,10 +244,35 @@ export default function OddsChart({
     label?: string;
   }) => {
     if (active && payload && payload.length) {
+      // Separate aggregate lines from bookmaker lines
+      const aggregateEntries = payload.filter(
+        (e) => e.dataKey === "homeProb" || e.dataKey === "awayProb"
+      );
+      const bookmakerEntries = payload.filter(
+        (e) => e.dataKey !== "homeProb" && e.dataKey !== "awayProb" && e.value !== null
+      );
+
+      // Group bookmaker entries by bookmaker name
+      const bookmakerGroups: Record<string, { home?: number; away?: number }> = {};
+      for (const entry of bookmakerEntries) {
+        const parts = entry.dataKey.split("_");
+        const type = parts.pop(); // 'home' or 'away'
+        const bookmaker = parts.join("_");
+        if (!bookmakerGroups[bookmaker]) {
+          bookmakerGroups[bookmaker] = {};
+        }
+        if (type === "home") {
+          bookmakerGroups[bookmaker].home = entry.value;
+        } else {
+          bookmakerGroups[bookmaker].away = entry.value;
+        }
+      }
+
       return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
+        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
-          {payload.map((entry, index) => (
+          {/* Aggregate probabilities */}
+          {aggregateEntries.map((entry, index) => (
             <p
               key={index}
               className="text-sm font-semibold"
@@ -275,6 +281,17 @@ export default function OddsChart({
               {entry.name}: {entry.value?.toFixed(1)}%
             </p>
           ))}
+          {/* Bookmaker breakdown */}
+          {Object.keys(bookmakerGroups).length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <p className="text-xs text-gray-400 mb-1">By sportsbook:</p>
+              {Object.entries(bookmakerGroups).map(([bookmaker, probs]) => (
+                <p key={bookmaker} className="text-xs text-gray-500">
+                  {bookmaker}: {probs.home?.toFixed(0)}% / {probs.away?.toFixed(0)}%
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       );
     }
@@ -283,7 +300,7 @@ export default function OddsChart({
 
   return (
     <div className="space-y-4">
-      {/* Time range selector */}
+      {/* Time range selector - only All and Since Start */}
       <div className="flex flex-wrap items-center gap-1">
         {TIME_RANGE_OPTIONS.map((option) => (
           <button
@@ -321,8 +338,15 @@ export default function OddsChart({
               tickFormatter={(value) => `${value}%`}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: "12px" }} iconType="circle" />
-            {/* Individual bookmaker lines - grey, rendered first so they appear behind aggregate */}
+            <Legend
+              wrapperStyle={{ fontSize: "12px" }}
+              iconType="circle"
+              payload={[
+                { value: homeTeam, type: 'circle', color: '#22c55e' },
+                { value: awayTeam, type: 'circle', color: '#3b82f6' },
+              ]}
+            />
+            {/* Individual bookmaker lines - thin grey, rendered first so they appear behind aggregate */}
             {bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_home`}
@@ -331,7 +355,7 @@ export default function OddsChart({
                 stroke="rgba(156, 163, 175, 0.5)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={false}
+                activeDot={{ r: 3, fill: "#9ca3af" }}
                 connectNulls
                 legendType="none"
               />
@@ -344,20 +368,21 @@ export default function OddsChart({
                 stroke="rgba(156, 163, 175, 0.5)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={false}
+                activeDot={{ r: 3, fill: "#9ca3af" }}
                 connectNulls
                 legendType="none"
               />
             ))}
-            {/* Aggregate lines - thick, colorful, rendered last so they appear on top */}
+            {/* Aggregate lines - bold, rendered last so they appear on top */}
             <Line
               type="monotone"
               dataKey="homeProb"
               name={homeTeam}
               stroke="#22c55e"
-              strokeWidth={2}
+              strokeWidth={3}
+              strokeOpacity={1}
               dot={false}
-              activeDot={{ r: 4 }}
+              activeDot={{ r: 5 }}
               connectNulls
             />
             <Line
@@ -365,26 +390,21 @@ export default function OddsChart({
               dataKey="awayProb"
               name={awayTeam}
               stroke="#3b82f6"
-              strokeWidth={2}
+              strokeWidth={3}
+              strokeOpacity={1}
               dot={false}
-              activeDot={{ r: 4 }}
+              activeDot={{ r: 5 }}
               connectNulls
             />
           </LineChart>
         </ResponsiveContainer>
       </div>
 
-      {/* No data message for filtered range */}
-      {filteredHistory.length === 0 && history.length > 0 && (
-        <div className="text-center py-4 text-sm text-gray-500">
-          No data available for the selected time range.
-          <button
-            onClick={() => setTimeRange("all")}
-            className="ml-2 text-blue-600 hover:underline"
-          >
-            Show all data
-          </button>
-        </div>
+      {/* Info about gray lines */}
+      {bookmakers.length > 0 && (
+        <p className="text-xs text-gray-400 text-center">
+          Gray lines show individual sportsbooks • Tap/hover for details
+        </p>
       )}
     </div>
   );

@@ -27,6 +27,69 @@ export interface CurrentOdds {
   };
 }
 
+export interface HighlightFlags {
+  is_live: boolean;
+  is_close_matchup: boolean;
+  is_blowout: boolean;
+  favorite_switched: boolean;
+  probability_swing: "major" | "minor" | "stable";
+  score_swing: "major" | "minor" | "stable";
+  is_starting_soon: boolean;
+  is_recently_finished: boolean;
+  is_upset: boolean;
+  league_tier: number;
+}
+
+export interface Highlight {
+  score: number;
+  reasons: string[];
+  label: string | null;
+  should_feature: boolean;
+  flags: HighlightFlags;
+}
+
+export interface OpeningOdds {
+  home_probability: number;
+  away_probability: number | null;
+  spread: number | null;
+  over_under: number | null;
+  favorite: "home" | "away" | "even" | null;
+}
+
+export interface GEIComponents {
+  win_probability_volatility: number;
+  late_game_uncertainty: number;
+  expectation_deviation: number;
+  comeback_factor: number;
+  overtime_bonus: number;
+}
+
+export interface ExcitementData {
+  raw_gei: number;
+  percentile_global: number | null;
+  percentile_sport: number | null;
+  label: string;
+  emoji: string;
+  components?: GEIComponents;
+}
+
+export interface PulseComponents {
+  heart_rate: number;
+  amplitude: number;
+  arrhythmia: number;
+  vitals: number;
+  time_weight: number;
+  lead_changes: number;
+}
+
+export interface PulseData {
+  score: number;           // 1-100
+  status: string;          // 'racing' | 'strong' | 'steady' | 'weak' | 'flatline'
+  label: string;           // 'Must-Watch', 'Exciting', etc.
+  emoji: string;           // 🫀 💓 💗 🩺 📉
+  components?: PulseComponents;
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -38,6 +101,11 @@ export interface Event {
   home_score: number | null;
   away_score: number | null;
   current_odds?: CurrentOdds;
+  bookmaker_odds?: BookmakerOddsDetail[];
+  highlight?: Highlight;
+  opening_odds?: OpeningOdds;
+  excitement?: ExcitementData;
+  pulse?: PulseData;
 }
 
 export interface EventsResponse {
@@ -51,11 +119,18 @@ export interface BookmakerOddsDetail {
   away_moneyline: number | null;
   home_probability: number | null;
   away_probability: number | null;
+  captured_at: string; // When this bookmaker last updated their odds
+  spread?: number | null;
+  over_under?: number | null;
+  projected_home_score?: number | null;
+  projected_away_score?: number | null;
 }
 
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
+  excitement?: ExcitementData;
+  pulse?: PulseData;
 }
 
 export interface OddsHistoryPoint {
@@ -76,6 +151,14 @@ export interface BookmakerHistoryPoint {
   home_probability: number | null;
   away_probability: number | null;
   valid_until?: string; // If set, value was constant from timestamp to valid_until
+  projected_home_score?: number | null;
+  projected_away_score?: number | null;
+}
+
+export interface ScoreHistoryPoint {
+  timestamp: string;
+  home_score: number;
+  away_score: number;
 }
 
 export interface EventHistoryResponse {
@@ -84,6 +167,7 @@ export interface EventHistoryResponse {
   away_team: string;
   history: OddsHistoryPoint[];
   bookmaker_history?: Record<string, BookmakerHistoryPoint[]>;
+  score_history?: ScoreHistoryPoint[];
   points: number;
 }
 
@@ -113,4 +197,108 @@ export interface LiveOddsResponse {
   sport: string;
   events: LiveOddsEvent[];
   count: number;
+}
+
+// Futures/Outrights types
+export interface FuturesOutcome {
+  id: number;
+  name: string;
+  probability: number | null;
+  american_odds: number | null;
+  rank: number | null;
+  rank_change_24h: number | null;
+  probability_change_24h: number | null;
+  movement: number | null; // alias for probability_change_24h in list view
+  opening_probability: number | null;
+  opening_american_odds: number | null;
+  is_winner: boolean | null;
+  last_updated: string | null;
+}
+
+export interface FuturesMarket {
+  id: number;
+  name: string;
+  description: string | null;
+  sport: string | null;
+  sport_name: string | null;
+  category: string | null;
+  status: "open" | "resolved" | "closed";
+  source: string | null;
+  external_id: string | null;
+  mutually_exclusive: boolean;
+  resolution_date: string | null;
+  top_outcomes?: FuturesOutcome[];
+  outcomes?: FuturesOutcome[];
+  outcome_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface FuturesMarketsResponse {
+  markets: FuturesMarket[];
+  count: number;
+}
+
+export interface FuturesMarketDetailResponse extends FuturesMarket {
+  outcomes: FuturesOutcome[];
+}
+
+export interface FuturesHistoryPoint {
+  timestamp: string;
+  probability: number | null;
+  american_odds: number | null;
+  bookmaker: string;
+}
+
+export interface FuturesOutcomeHistory {
+  outcome_id: number;
+  name: string;
+  history: FuturesHistoryPoint[];
+}
+
+export interface FuturesHistoryResponse {
+  market_id: number;
+  market_name: string;
+  hours: number;
+  outcomes: FuturesOutcomeHistory[];
+}
+
+export interface FuturesMover {
+  outcome_id: number;
+  name: string;
+  market_id: number;
+  market_name: string | null;
+  current_probability: number | null;
+  probability_change_24h: number | null;
+  current_american_odds: number | null;
+  rank: number | null;
+  rank_change_24h: number | null;
+}
+
+export interface FuturesMoversResponse {
+  movers: FuturesMover[];
+  timeframe_hours: number;
+}
+
+// Search types
+export interface SearchPagination {
+  total_results: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+  has_prev: boolean;
+  has_next: boolean;
+}
+
+export interface SearchSportFacet {
+  key: string;
+  name: string;
+  count: number;
+}
+
+export interface SearchResponse {
+  results: Event[];
+  pagination: SearchPagination;
+  sports: SearchSportFacet[];
+  query: string;
 }

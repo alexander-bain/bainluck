@@ -96,7 +96,7 @@ async def cleanup_excluded_sports(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Remove all excluded sports (soccer, cricket, rugby, AFL), events, and odds snapshots.
+    Remove all excluded sports (rugby), events, and odds snapshots.
 
     This is an admin-only endpoint protected by a secret token.
     """

@@ -27,15 +27,18 @@ import time
 from datetime import datetime, timezone
 
 import redis
+from contextlib import asynccontextmanager
+
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, or_, and_
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
-from app.services.database import async_session_maker
+from app.services.database import DATABASE_URL
 from app.services.odds_api import OddsAPIService
-from app.models import Sport, Event, OddsSnapshot
+from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.utils.odds_math import moneyline_to_probability, project_scores
 
 # Redis URL from environment
@@ -83,6 +86,23 @@ celery_app.conf.beat_schedule = {
     "sync-sports-hourly": {
         "task": "app.tasks.sync_sports",
         "schedule": crontab(minute=0),  # Every hour
+    },
+    "discover-new-events": {
+        "task": "app.tasks.discover_events",
+        "schedule": crontab(minute="*/15"),  # Every 15 minutes - discover events for all sports
+    },
+    "compute-gei-batch": {
+        "task": "app.tasks.compute_gei_batch",
+        "schedule": crontab(minute="*/10"),  # Every 10 minutes - compute GEI for newly completed events
+        "kwargs": {"limit": 50},
+    },
+    "compute-gei-percentiles-hourly": {
+        "task": "app.tasks.compute_gei_percentiles",
+        "schedule": crontab(minute=5),  # Every hour at :05 (after GEI batch at :00/:10/etc)
+    },
+    "poll-futures-hourly": {
+        "task": "app.tasks.poll_futures_odds",
+        "schedule": crontab(minute=30),  # Every hour at :30 (offset from other tasks)
     },
 }
 
@@ -268,7 +288,6 @@ async def detect_and_close_stale_events(session) -> int:
     3. Either:
        a. It has no odds snapshots at all (bookmakers stopped offering odds), OR
        b. The latest odds snapshot is older than ODDS_STALE_MINUTES
-    4. AND the match has been live longer than the sport's typical max duration
 
     Returns the number of events marked as closed.
     """
@@ -294,40 +313,48 @@ async def detect_and_close_stale_events(session) -> int:
     for event in live_events:
         try:
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
-            sport_key = event.sport.key if event.sport else "default"
-            max_duration = get_max_duration_for_sport(sport_key)
 
-            # Only consider staleness if match has exceeded typical duration
-            if hours_since_start < max_duration:
-                continue
+            # Check if ANY bookmaker has provided odds recently
+            # We need to find the most recently updated snapshot across all bookmakers
+            # valid_until is updated when we see the same odds again; captured_at is when odds changed
+            stale_threshold = now - timedelta(minutes=ODDS_STALE_MINUTES)
 
-            # Get the latest odds snapshot for this event
-            latest_snapshot_result = await session.execute(
-                select(OddsSnapshot)
-                .where(OddsSnapshot.event_id == event.id)
-                .order_by(OddsSnapshot.captured_at.desc())
-                .limit(1)
+            # Count snapshots that have been updated recently
+            recent_snapshot_count = await session.execute(
+                select(func.count())
+                .select_from(OddsSnapshot)
+                .where(
+                    OddsSnapshot.event_id == event.id,
+                    or_(
+                        OddsSnapshot.valid_until >= stale_threshold,
+                        and_(
+                            OddsSnapshot.valid_until == None,
+                            OddsSnapshot.captured_at >= stale_threshold
+                        )
+                    )
+                )
             )
-            latest_snapshot = latest_snapshot_result.scalar_one_or_none()
+            recent_count = recent_snapshot_count.scalar()
 
             should_close = False
             close_reason = ""
 
-            if latest_snapshot is None:
-                # No odds at all - bookmakers never offered odds or stopped entirely
-                # Only close if match has been live a while
-                if hours_since_start > max_duration:
+            if recent_count == 0:
+                # No bookmaker has updated odds recently - check if we ever had odds
+                any_snapshot = await session.execute(
+                    select(func.count())
+                    .select_from(OddsSnapshot)
+                    .where(OddsSnapshot.event_id == event.id)
+                )
+                total_snapshots = any_snapshot.scalar()
+
+                if total_snapshots == 0:
                     should_close = True
                     close_reason = "no_odds_data"
-            else:
-                # Check if odds are stale
-                # Use valid_until if available (more accurate), otherwise captured_at
-                last_odds_time = latest_snapshot.valid_until or latest_snapshot.captured_at
-                minutes_since_odds = (now - last_odds_time).total_seconds() / 60
-
-                if minutes_since_odds >= ODDS_STALE_MINUTES:
+                else:
+                    # Had odds but all bookmakers stopped updating
                     should_close = True
-                    close_reason = f"stale_odds_{int(minutes_since_odds)}min"
+                    close_reason = "all_bookmakers_stale"
 
             if should_close:
                 await session.execute(
@@ -346,13 +373,57 @@ async def detect_and_close_stale_events(session) -> int:
     return closed_count
 
 
+def _get_task_engine():
+    """Create a fresh async engine for Celery task execution.
+
+    This creates a new engine that's bound to the current event loop,
+    avoiding the 'attached to a different loop' errors when reusing
+    the module-level engine across Celery task invocations.
+    """
+    connect_args = {}
+    if "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL:
+        connect_args["ssl"] = "require"
+
+    return create_async_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
+
+
+@asynccontextmanager
+async def get_task_session():
+    """Create a fresh async session for Celery task execution.
+
+    This creates a new engine and session maker bound to the current
+    event loop, avoiding conflicts between Celery's forked processes
+    and asyncio event loops.
+    """
+    engine = _get_task_engine()
+    session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False
+    )
+    async with session_maker() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+    await engine.dispose()
+
+
 def run_async(coro):
-    """Helper to run async code in sync context."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    """Helper to run async code in sync context.
+
+    Uses asyncio.run() which properly manages the event loop lifecycle,
+    ensuring clean startup and shutdown of the loop and any pending tasks.
+    """
+    return asyncio.run(coro)
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -376,7 +447,7 @@ async def _sync_sports():
     try:
         sports_data = await service.get_sports()
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             synced = 0
             for sport in sports_data:
                 if not sport.get("active", False):
@@ -402,6 +473,130 @@ async def _sync_sports():
             await session.commit()
 
         return {"synced": synced}
+    finally:
+        await service.close()
+
+
+@celery_app.task(bind=True, max_retries=3)
+def discover_events(self):
+    """
+    Discover events for ALL active sports, including those with no events yet.
+
+    This solves the chicken-and-egg problem where sports without events
+    never get polled. Runs every 15 minutes to pick up new games.
+    """
+    try:
+        return run_async(_discover_events())
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=120)
+
+
+async def _discover_events():
+    """
+    Async implementation of discover_events.
+
+    Polls ALL active sports (not just those with upcoming events) to discover
+    new games. This ensures NCAA basketball, etc. get picked up even if they
+    currently have no events in the database.
+    """
+    service = OddsAPIService()
+
+    try:
+        total_events = 0
+        total_new_events = 0
+        sports_polled = 0
+
+        async with get_task_session() as session:
+            # Get ALL active sports (not filtering by existing events)
+            result = await session.execute(
+                select(Sport).where(Sport.active == True)
+            )
+            sports = result.scalars().all()
+
+            for sport in sports:
+                sport_key = sport.key
+
+                # Skip excluded sports
+                if any(sport_key.startswith(prefix) for prefix in OddsAPIService.EXCLUDED_PREFIXES):
+                    continue
+                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
+                    continue
+
+                try:
+                    # Fetch odds for this sport
+                    events_data = await service.get_odds(sport_key)
+                    sports_polled += 1
+
+                    for event_data in events_data:
+                        commence_time = datetime.fromisoformat(
+                            event_data["commence_time"].replace("Z", "+00:00")
+                        )
+
+                        # Determine event status
+                        now = datetime.now(timezone.utc)
+                        if commence_time <= now:
+                            event_status = "live"
+                        else:
+                            event_status = "scheduled"
+
+                        # Upsert event
+                        stmt = insert(Event).values(
+                            external_id=event_data["id"],
+                            sport_id=sport.id,
+                            home_team_name=event_data["home_team"],
+                            away_team_name=event_data["away_team"],
+                            commence_time=commence_time,
+                            status=event_status,
+                        ).on_conflict_do_update(
+                            index_elements=["external_id"],
+                            set_={
+                                "home_team_name": event_data["home_team"],
+                                "away_team_name": event_data["away_team"],
+                                "commence_time": commence_time,
+                                "status": case(
+                                    (Event.status == "scheduled", event_status),
+                                    else_=Event.status
+                                ),
+                            }
+                        ).returning(Event.id)
+
+                        result = await session.execute(stmt)
+                        event_id = result.scalar_one()
+                        total_events += 1
+
+                        # Check if this was a new event (simple heuristic)
+                        # If the event has no snapshots, it's likely new
+                        snapshot_check = await session.execute(
+                            select(func.count(OddsSnapshot.id))
+                            .where(OddsSnapshot.event_id == event_id)
+                        )
+                        if snapshot_check.scalar() == 0:
+                            total_new_events += 1
+
+                        # Also save odds snapshots for this event
+                        # This ensures events discovered have odds data immediately
+                        for bookmaker in event_data.get("bookmakers", []):
+                            snapshot, is_new = await _create_or_update_snapshot(
+                                session,
+                                event_id,
+                                bookmaker,
+                                event_data
+                            )
+                            if is_new:
+                                session.add(snapshot)
+
+                except Exception as e:
+                    # Log but continue with other sports
+                    print(f"Error discovering events for {sport_key}: {e}")
+                    continue
+
+            await session.commit()
+
+        return {
+            "sports_polled": sports_polled,
+            "events_found": total_events,
+            "new_events": total_new_events,
+        }
     finally:
         await service.close()
 
@@ -459,7 +654,7 @@ async def _poll_all_odds():
         except Exception:
             r = None
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             from datetime import timedelta
             now = datetime.now(timezone.utc)
 
@@ -484,12 +679,18 @@ async def _poll_all_odds():
             )
             sport_data = result.all()
 
+            # Even if no sports need odds polling, we should still check for stale events
+            # and update scores for recently started games
             if not sport_data:
+                # Still run staleness detection for any live events that may have ended
+                events_closed = await detect_and_close_stale_events(session)
+                await session.commit()
                 return {
                     "events": 0,
                     "snapshots": 0,
                     "sports": 0,
                     "sports_skipped": 0,
+                    "events_closed": events_closed,
                     "message": "No sports with games in the next 6 hours.",
                     "skipped": True,
                 }
@@ -598,6 +799,12 @@ async def _poll_all_odds():
                         total_events += 1
 
                         # Create odds snapshots (with deduplication)
+                        # Track values for setting opening odds
+                        first_home_prob = None
+                        first_away_prob = None
+                        first_spread = None
+                        first_ou = None
+
                         for bookmaker in event_data.get("bookmakers", []):
                             snapshot, is_new = await _create_or_update_snapshot(
                                 session,
@@ -607,7 +814,21 @@ async def _poll_all_odds():
                             )
                             if is_new:
                                 session.add(snapshot)
+                                # Capture first valid odds for opening odds
+                                if first_home_prob is None and snapshot.home_win_probability:
+                                    first_home_prob = float(snapshot.home_win_probability)
+                                    first_away_prob = float(snapshot.away_win_probability) if snapshot.away_win_probability else None
+                                    first_spread = float(snapshot.home_spread) if snapshot.home_spread else None
+                                    first_ou = float(snapshot.over_under) if snapshot.over_under else None
                             total_snapshots += 1
+
+                        # Set opening odds if this is the first time we have odds
+                        if first_home_prob is not None:
+                            await _maybe_set_opening_odds(
+                                session, event_id,
+                                first_home_prob, first_away_prob,
+                                first_spread, first_ou
+                            )
 
                 except Exception as e:
                     print(f"Error polling {sport_key}: {e}")
@@ -616,6 +837,8 @@ async def _poll_all_odds():
             # Fetch scores for sports with events that have started
             # Use a 3-day window to capture longer events like tennis matches
             # that may start one day and finish the next
+            # Include "scheduled" events that have started - the scores API will
+            # update their status to "live" or "completed" as appropriate
             sports_needing_scores = await session.execute(
                 select(Sport.key)
                 .join(Event)
@@ -623,7 +846,7 @@ async def _poll_all_odds():
                     Sport.active == True,
                     Event.commence_time <= now,  # Event has started
                     Event.commence_time >= now - timedelta(days=3),  # Within last 3 days
-                    Event.status.in_(["live", "completed"]),  # Only live or completed
+                    Event.status.in_(["scheduled", "live", "completed"]),  # Include scheduled events that started
                 )
                 .distinct()
             )
@@ -648,18 +871,23 @@ async def _poll_all_odds():
                             home_score = None
                             away_score = None
 
-                            if event_scores is not None:
+                            if event_scores is not None and len(event_scores) > 0:
                                 for team_score in event_scores:
                                     score_str = team_score.get("score")
                                     # Safely parse score - handles empty strings, None, non-numeric
+                                    # Note: score of 0 is valid and should be stored
                                     try:
-                                        score_val = int(score_str) if score_str else None
+                                        if score_str is not None and score_str != "":
+                                            score_val = int(score_str)
+                                        else:
+                                            score_val = None
                                     except (ValueError, TypeError):
                                         score_val = None
 
-                                    if team_score.get("name") == home_team:
+                                    team_name = team_score.get("name")
+                                    if team_name == home_team:
                                         home_score = score_val
-                                    elif team_score.get("name") == away_team:
+                                    elif team_name == away_team:
                                         away_score = score_val
 
                             # Always update status, and update scores if available
@@ -670,6 +898,25 @@ async def _poll_all_odds():
                                 update_values["home_score"] = home_score
                             if away_score is not None:
                                 update_values["away_score"] = away_score
+
+                            # Get current event to check if score changed
+                            event_result = await session.execute(
+                                select(Event).where(Event.external_id == external_id)
+                            )
+                            event_obj = event_result.scalar_one_or_none()
+
+                            # Record score snapshot if scores changed
+                            if event_obj and home_score is not None and away_score is not None:
+                                old_home = event_obj.home_score
+                                old_away = event_obj.away_score
+                                if old_home != home_score or old_away != away_score:
+                                    # Score changed - record a snapshot
+                                    score_snap = ScoreSnapshot(
+                                        event_id=event_obj.id,
+                                        home_score=home_score,
+                                        away_score=away_score,
+                                    )
+                                    session.add(score_snap)
 
                             await session.execute(
                                 Event.__table__.update()
@@ -689,6 +936,11 @@ async def _poll_all_odds():
             # Detect and mark stale events as "closed"
             # This catches matches that the Scores API didn't report as completed
             events_closed = await detect_and_close_stale_events(session)
+
+            # Update GEI for all live events (real-time excitement scores)
+            live_gei_updated = 0
+            if has_live_games:
+                live_gei_updated = await update_live_gei(session)
 
             await session.commit()
 
@@ -715,6 +967,7 @@ async def _poll_all_odds():
             "sports_skipped": sports_skipped,
             "scores_updated": scores_updated,
             "events_closed": events_closed,
+            "live_gei_updated": live_gei_updated,
             "data_changed": data_changed,
             "has_live_games": has_live_games,
         }
@@ -807,6 +1060,56 @@ def _parse_snapshot_values(bookmaker: dict, event_data: dict) -> dict:
     return values
 
 
+async def _maybe_set_opening_odds(
+    session,
+    event_id: int,
+    home_prob: float | None,
+    away_prob: float | None,
+    home_spread: float | None,
+    over_under: float | None,
+):
+    """
+    Set opening odds on an event if they haven't been set yet.
+
+    Opening odds are only set once (first time we receive odds for an event).
+    They're used to detect favorite switches, line movement, etc.
+    """
+    if home_prob is None:
+        return
+
+    # Check if opening odds already set
+    result = await session.execute(
+        select(Event.opening_home_probability)
+        .where(Event.id == event_id)
+    )
+    current_opening = result.scalar_one_or_none()
+
+    if current_opening is not None:
+        # Already set, don't update
+        return
+
+    # Determine opening favorite
+    if home_prob > 0.52:
+        opening_favorite = "home"
+    elif home_prob < 0.48:
+        opening_favorite = "away"
+    else:
+        opening_favorite = "even"
+
+    # Set opening odds
+    await session.execute(
+        Event.__table__.update()
+        .where(Event.id == event_id)
+        .values(
+            opening_home_probability=home_prob,
+            opening_away_probability=away_prob,
+            opening_home_spread=home_spread,
+            opening_over_under=over_under,
+            opening_favorite=opening_favorite,
+        )
+    )
+
+
 async def _create_or_update_snapshot(
     session,
     event_id: int,
@@ -894,7 +1197,7 @@ async def _poll_sport_odds(sport_key: str):
     try:
         events_data = await service.get_odds(sport_key)
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             # Get or create sport
             result = await session.execute(
                 select(Sport).where(Sport.key == sport_key)
@@ -956,3 +1259,629 @@ async def _poll_sport_odds(sport_key: str):
         }
     finally:
         await service.close()
+
+
+# =============================================================================
+# Pulse - Live Game Excitement Metric
+# =============================================================================
+
+
+async def update_live_pulse(session) -> int:
+    """
+    Compute and update Pulse for all currently live events.
+
+    Pulse measures how "alive" a game is based on probability movement.
+    Called during each poll cycle to provide real-time excitement scores.
+    Returns the number of events updated.
+    """
+    from app.utils.pulse import calculate_pulse, PulseDataPoint
+
+    # Get all live events
+    result = await session.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.status == "live")
+    )
+    live_events = result.scalars().all()
+
+    if not live_events:
+        return 0
+
+    updated = 0
+    now = datetime.now(timezone.utc)
+
+    for event in live_events:
+        try:
+            # Get all snapshots for this event
+            result = await session.execute(
+                select(OddsSnapshot)
+                .where(OddsSnapshot.event_id == event.id)
+                .order_by(OddsSnapshot.captured_at)
+            )
+            snapshots = result.scalars().all()
+
+            if len(snapshots) < 3:
+                continue
+
+            # Convert to PulseDataPoint objects
+            data_points = [
+                PulseDataPoint(
+                    captured_at=s.captured_at,
+                    home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
+                    bookmaker=s.bookmaker,
+                )
+                for s in snapshots
+            ]
+
+            # Calculate Pulse
+            sport_key = event.sport.key if event.sport else "unknown"
+            pulse_result = calculate_pulse(
+                snapshots=data_points,
+                game_start=event.commence_time,
+                current_time=now,
+                sport_key=sport_key,
+            )
+
+            if pulse_result:
+                # Store Pulse score (1-100) in raw_gei field
+                # We divide by 100 to fit the existing decimal field format
+                event.raw_gei = pulse_result.score / 100.0
+                event.gei_components = pulse_result.components.to_json()
+                event.gei_computed_at = now
+                updated += 1
+
+        except Exception as e:
+            print(f"Error computing Pulse for event {event.id}: {e}")
+            continue
+
+    return updated
+
+
+# Legacy alias for backwards compatibility
+async def update_live_gei(session) -> int:
+    """Legacy alias - now uses Pulse."""
+    return await update_live_pulse(session)
+
+
+@celery_app.task(bind=True)
+def compute_gei_for_event(self, event_id: int):
+    """
+    Compute GEI for a single completed event.
+
+    Called after an event is marked as completed.
+    """
+    return run_async(_compute_gei_for_event(event_id))
+
+
+async def _compute_pulse_for_event(event_id: int):
+    """Compute Pulse for a single completed event."""
+    from app.utils.pulse import calculate_pulse, PulseDataPoint
+
+    async with get_task_session() as session:
+        # Get the event with its sport
+        result = await session.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.id == event_id)
+        )
+        event = result.scalar_one_or_none()
+
+        if not event:
+            return {"error": f"Event {event_id} not found"}
+
+        if event.status != "completed":
+            return {"error": f"Event {event_id} is not completed (status: {event.status})"}
+
+        if event.raw_gei is not None:
+            return {"skipped": True, "reason": "Pulse already computed"}
+
+        # Get all snapshots for this event
+        result = await session.execute(
+            select(OddsSnapshot)
+            .where(OddsSnapshot.event_id == event_id)
+            .order_by(OddsSnapshot.captured_at)
+        )
+        snapshots = result.scalars().all()
+
+        if len(snapshots) < 3:
+            return {"error": f"Insufficient snapshots ({len(snapshots)}) for Pulse calculation"}
+
+        # Convert to PulseDataPoint objects
+        data_points = [
+            PulseDataPoint(
+                captured_at=s.captured_at,
+                home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
+                bookmaker=s.bookmaker,
+            )
+            for s in snapshots
+        ]
+
+        # Determine game end time (last snapshot)
+        game_end = max(s.captured_at for s in snapshots)
+
+        # Calculate Pulse
+        sport_key = event.sport.key if event.sport else "unknown"
+        pulse_result = calculate_pulse(
+            snapshots=data_points,
+            game_start=event.commence_time,
+            current_time=game_end,
+            sport_key=sport_key,
+        )
+
+        if pulse_result is None:
+            return {"error": "Pulse calculation failed"}
+
+        # Update event with Pulse (store score/100 to fit existing field)
+        event.raw_gei = pulse_result.score / 100.0
+        event.gei_components = pulse_result.components.to_json()
+        event.gei_computed_at = datetime.now(timezone.utc)
+
+        await session.commit()
+
+        return {
+            "event_id": event_id,
+            "pulse_score": pulse_result.score,
+            "status": pulse_result.status,
+            "data_quality": pulse_result.data_quality,
+            "snapshot_count": pulse_result.snapshot_count,
+        }
+
+
+# Legacy alias
+async def _compute_gei_for_event(event_id: int):
+    """Legacy alias - now uses Pulse."""
+    return await _compute_pulse_for_event(event_id)
+
+
+@celery_app.task(bind=True)
+def compute_gei_batch(self, limit: int = 100):
+    """
+    Compute Pulse for a batch of completed events.
+
+    Useful for backfilling historical events.
+    """
+    return run_async(_compute_pulse_batch(limit))
+
+
+async def _compute_pulse_batch(limit: int):
+    """Compute Pulse for a batch of completed events."""
+    from app.utils.pulse import calculate_pulse, PulseDataPoint
+
+    async with get_task_session() as session:
+        # Find completed events without Pulse
+        result = await session.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.status == "completed",
+                Event.raw_gei.is_(None),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )
+        events = result.scalars().all()
+
+        if not events:
+            return {"processed": 0, "message": "No events to process"}
+
+        processed = 0
+        errors = 0
+
+        for event in events:
+            # Get snapshots for this event
+            result = await session.execute(
+                select(OddsSnapshot)
+                .where(OddsSnapshot.event_id == event.id)
+                .order_by(OddsSnapshot.captured_at)
+            )
+            snapshots = result.scalars().all()
+
+            if len(snapshots) < 3:
+                continue
+
+            # Convert to PulseDataPoint objects
+            data_points = [
+                PulseDataPoint(
+                    captured_at=s.captured_at,
+                    home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
+                    bookmaker=s.bookmaker,
+                )
+                for s in snapshots
+            ]
+
+            game_end = max(s.captured_at for s in snapshots)
+            sport_key = event.sport.key if event.sport else "unknown"
+
+            try:
+                pulse_result = calculate_pulse(
+                    snapshots=data_points,
+                    game_start=event.commence_time,
+                    current_time=game_end,
+                    sport_key=sport_key,
+                )
+
+                if pulse_result:
+                    event.raw_gei = pulse_result.score / 100.0
+                    event.gei_components = pulse_result.components.to_json()
+                    event.gei_computed_at = datetime.now(timezone.utc)
+                    processed += 1
+            except Exception as e:
+                print(f"Error computing GEI for event {event.id}: {e}")
+                errors += 1
+
+        await session.commit()
+
+        return {
+            "processed": processed,
+            "errors": errors,
+            "remaining": len(events) - processed - errors,
+        }
+
+
+@celery_app.task(bind=True)
+def compute_gei_percentiles(self):
+    """
+    Recompute GEI percentile thresholds for all scopes.
+
+    Should be run daily (or after significant new data).
+    """
+    return run_async(_compute_gei_percentiles())
+
+
+async def _compute_gei_percentiles():
+    """Async implementation of compute_gei_percentiles."""
+    from collections import defaultdict
+    from app.models import GEIPercentile
+
+    async with get_task_session() as session:
+        # Get all completed events with raw GEI
+        result = await session.execute(
+            select(Event.raw_gei, Sport.key)
+            .join(Sport)
+            .where(
+                Event.status == "completed",
+                Event.raw_gei.isnot(None),
+            )
+        )
+        events = result.all()
+
+        if not events:
+            return {"error": "No events with GEI found"}
+
+        # Group by sport
+        by_sport = defaultdict(list)
+        all_geis = []
+
+        for raw_gei, sport_key in events:
+            gei_value = float(raw_gei)
+            by_sport[sport_key].append(gei_value)
+            all_geis.append(gei_value)
+
+        # Compute global percentiles
+        await _store_percentiles(session, 'global', all_geis)
+        scopes_computed = ['global']
+
+        # Compute per-sport percentiles (minimum 30 samples)
+        for sport_key, geis in by_sport.items():
+            if len(geis) >= 30:
+                await _store_percentiles(session, sport_key, geis)
+                scopes_computed.append(sport_key)
+
+        await session.commit()
+
+        return {
+            "total_events": len(all_geis),
+            "scopes_computed": scopes_computed,
+            "sports_with_data": list(by_sport.keys()),
+        }
+
+
+async def _store_percentiles(session, scope: str, values: list[float]):
+    """Store percentile thresholds for a scope."""
+    from app.models import GEIPercentile
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    if not values:
+        return
+
+    values = sorted(values)
+    sample_size = len(values)
+
+    for p in range(1, 101):
+        # Calculate percentile value
+        idx = (p / 100) * (len(values) - 1)
+        lower_idx = int(idx)
+        upper_idx = min(lower_idx + 1, len(values) - 1)
+        fraction = idx - lower_idx
+
+        if lower_idx == upper_idx:
+            threshold = values[lower_idx]
+        else:
+            threshold = values[lower_idx] * (1 - fraction) + values[upper_idx] * fraction
+
+        stmt = pg_insert(GEIPercentile).values(
+            scope=scope,
+            percentile=p,
+            raw_gei_threshold=threshold,
+            sample_size=sample_size,
+        ).on_conflict_do_update(
+            index_elements=['scope', 'percentile'],
+            set_={
+                'raw_gei_threshold': threshold,
+                'sample_size': sample_size,
+                'computed_at': func.now(),
+            }
+        )
+        await session.execute(stmt)
+
+
+# =============================================================================
+# Futures Polling
+# =============================================================================
+
+# Futures poll less frequently since they change slowly
+FUTURES_POLL_INTERVAL = 3600  # 1 hour default
+
+
+@celery_app.task(bind=True)
+def poll_futures_odds(self):
+    """
+    Poll futures/outrights odds from The Odds API.
+
+    Futures markets change slowly, so we poll hourly by default.
+    Updates existing markets/outcomes or creates new ones.
+    """
+    return run_async(_poll_futures_odds())
+
+
+async def _poll_futures_odds():
+    """Async implementation of futures polling."""
+    from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+    from app.utils.odds_math import american_to_probability, probability_to_american
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from datetime import timedelta
+
+    service = OddsAPIService()
+    stats = {
+        "markets_processed": 0,
+        "outcomes_updated": 0,
+        "snapshots_created": 0,
+        "errors": [],
+    }
+
+    try:
+        # Discover sports with outrights
+        outright_sports = await service.get_sports_with_outrights()
+        sport_keys = [s["key"] for s in outright_sports]
+
+        async with get_task_session() as session:
+            # Get or create sport records for linking
+            sport_result = await session.execute(
+                select(Sport.id, Sport.key)
+            )
+            sport_map = {row.key: row.id for row in sport_result.all()}
+
+            for sport_key in sport_keys:
+                try:
+                    api_response = await service.get_futures_odds(sport_key)
+                    markets_data = service._parse_futures(api_response, sport_key)
+
+                    if not markets_data:
+                        continue
+
+                    # Get market name from first result
+                    market_name = markets_data[0].market_name if markets_data else sport_key
+
+                    # Find or infer the base sport for linking
+                    # e.g., "basketball_nba_championship" -> "basketball_nba"
+                    base_sport_key = _infer_base_sport(sport_key)
+                    sport_id = sport_map.get(base_sport_key)
+
+                    # Upsert the market
+                    market_stmt = pg_insert(FuturesMarket).values(
+                        source="odds_api",
+                        external_id=sport_key,
+                        sport_id=sport_id,
+                        name=market_name,
+                        category=_infer_category(sport_key),
+                        mutually_exclusive=True,
+                        status="open",
+                    ).on_conflict_do_update(
+                        index_elements=["source", "external_id"],
+                        set_={
+                            "name": market_name,
+                            "updated_at": func.now(),
+                        }
+                    ).returning(FuturesMarket.id)
+
+                    result = await session.execute(market_stmt)
+                    market_id = result.scalar_one()
+                    stats["markets_processed"] += 1
+
+                    # Aggregate outcomes across bookmakers
+                    outcome_odds = _aggregate_futures_outcomes(markets_data)
+
+                    # Get existing outcomes for this market
+                    existing_result = await session.execute(
+                        select(FuturesOutcome)
+                        .where(FuturesOutcome.market_id == market_id)
+                    )
+                    existing_outcomes = {o.external_id: o for o in existing_result.scalars().all()}
+
+                    # Compute ranks (1 = highest probability)
+                    ranked_outcomes = sorted(
+                        outcome_odds.items(),
+                        key=lambda x: x[1]["probability"],
+                        reverse=True
+                    )
+
+                    now = datetime.now(timezone.utc)
+                    yesterday = now - timedelta(hours=24)
+
+                    for rank, (outcome_name, odds_data) in enumerate(ranked_outcomes, 1):
+                        prob = odds_data["probability"]
+                        american = probability_to_american(prob)
+
+                        # Check if outcome exists
+                        existing = existing_outcomes.get(outcome_name)
+
+                        if existing:
+                            # Calculate 24h change
+                            old_prob = float(existing.current_probability) if existing.current_probability else None
+                            prob_change = prob - old_prob if old_prob else None
+
+                            old_rank = existing.rank
+                            rank_change = old_rank - rank if old_rank else None
+
+                            # Update existing outcome
+                            existing.current_probability = prob
+                            existing.current_american_odds = american
+                            existing.probability_change_24h = prob_change
+                            existing.rank = rank
+                            existing.rank_change_24h = rank_change
+                            existing.last_updated = now
+
+                            # Set opening odds if not set
+                            if existing.opening_probability is None:
+                                existing.opening_probability = prob
+                                existing.opening_american_odds = american
+                                existing.opening_captured_at = now
+
+                            outcome_id = existing.id
+                        else:
+                            # Create new outcome
+                            outcome_stmt = pg_insert(FuturesOutcome).values(
+                                market_id=market_id,
+                                external_id=outcome_name,
+                                name=outcome_name,
+                                current_probability=prob,
+                                current_american_odds=american,
+                                opening_probability=prob,
+                                opening_american_odds=american,
+                                opening_captured_at=now,
+                                rank=rank,
+                            ).on_conflict_do_update(
+                                index_elements=["market_id", "external_id"],
+                                set_={
+                                    "current_probability": prob,
+                                    "current_american_odds": american,
+                                    "rank": rank,
+                                    "last_updated": func.now(),
+                                }
+                            ).returning(FuturesOutcome.id)
+
+                            result = await session.execute(outcome_stmt)
+                            outcome_id = result.scalar_one()
+
+                        stats["outcomes_updated"] += 1
+
+                        # Create snapshots for each bookmaker
+                        for bookmaker, bm_odds in odds_data["bookmakers"].items():
+                            snapshot_stmt = pg_insert(FuturesOddsSnapshot).values(
+                                outcome_id=outcome_id,
+                                bookmaker=bookmaker,
+                                probability=bm_odds["probability"],
+                                american_odds=bm_odds["american_odds"],
+                                captured_at=now,
+                            )
+                            await session.execute(snapshot_stmt)
+                            stats["snapshots_created"] += 1
+
+                except Exception as e:
+                    stats["errors"].append(f"{sport_key}: {str(e)}")
+                    continue
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(f"Top-level error: {str(e)}")
+
+    finally:
+        await service.close()
+
+    return stats
+
+
+def _infer_base_sport(sport_key: str) -> str:
+    """Infer the base sport key from a futures sport key.
+
+    Examples:
+        basketball_nba_championship -> basketball_nba
+        americanfootball_nfl_super_bowl_winner -> americanfootball_nfl
+    """
+    # Common futures suffixes to strip
+    suffixes = [
+        "_championship", "_winner", "_super_bowl_winner", "_world_series_winner",
+        "_stanley_cup_winner", "_mvp", "_division_winner", "_conference_winner",
+    ]
+
+    result = sport_key
+    for suffix in suffixes:
+        if result.endswith(suffix):
+            result = result[:-len(suffix)]
+            break
+
+    return result
+
+
+def _infer_category(sport_key: str) -> str:
+    """Infer the market category from the sport key."""
+    key_lower = sport_key.lower()
+
+    if "championship" in key_lower or "winner" in key_lower:
+        return "championship"
+    elif "mvp" in key_lower:
+        return "mvp"
+    elif "division" in key_lower:
+        return "division"
+    elif "conference" in key_lower:
+        return "conference"
+    else:
+        return "other"
+
+
+def _aggregate_futures_outcomes(markets_data) -> dict:
+    """Aggregate outcome odds across multiple bookmakers.
+
+    Returns a dict mapping outcome names to aggregated data:
+    {
+        "Lakers": {
+            "probability": 0.15,  # Average across books
+            "bookmakers": {
+                "draftkings": {"probability": 0.14, "american_odds": 600},
+                "fanduel": {"probability": 0.16, "american_odds": 525},
+            }
+        }
+    }
+    """
+    from statistics import mean
+
+    outcomes = {}
+
+    for market in markets_data:
+        bookmaker = market.bookmaker
+
+        for outcome in market.outcomes:
+            name = outcome.name
+
+            if name not in outcomes:
+                outcomes[name] = {
+                    "probabilities": [],
+                    "bookmakers": {},
+                }
+
+            outcomes[name]["probabilities"].append(outcome.probability)
+            outcomes[name]["bookmakers"][bookmaker] = {
+                "probability": outcome.probability,
+                "american_odds": outcome.american_odds,
+            }
+
+    # Calculate average probability for each outcome
+    result = {}
+    for name, data in outcomes.items():
+        result[name] = {
+            "probability": mean(data["probabilities"]),
+            "bookmakers": data["bookmakers"],
+        }
+
+    return result
