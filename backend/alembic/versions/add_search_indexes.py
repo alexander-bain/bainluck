@@ -1,13 +1,11 @@
 """Add trigram indexes for team name search
 
 Revision ID: add_search_indexes
-Revises: add_gei_fields, add_opening_odds
+Revises: add_futures_tables
 Create Date: 2026-02-02
 
 Adds pg_trgm extension and trigram indexes on home_team_name and
 away_team_name columns to optimize ILIKE searches.
-
-This migration also merges two parallel heads (add_gei_fields and add_opening_odds).
 """
 from alembic import op
 import sqlalchemy as sa
@@ -15,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'add_search_indexes'
-down_revision = ('add_gei_fields', 'add_opening_odds')
+down_revision = 'add_futures_tables'
 branch_labels = None
 depends_on = None
 
