@@ -149,8 +149,8 @@ async def discover_all_events(
                                 # Convert to probabilities (returns tuple)
                                 home_prob, away_prob = moneyline_to_probability(home_odds, away_odds)
 
-                                # Upsert snapshot
-                                snapshot_stmt = insert(OddsSnapshot).values(
+                                # Insert snapshot (no upsert - just create new records)
+                                snapshot = OddsSnapshot(
                                     event_id=event_id,
                                     bookmaker=bookmaker_key,
                                     home_moneyline=home_odds,
@@ -158,21 +158,16 @@ async def discover_all_events(
                                     home_win_probability=home_prob,
                                     away_win_probability=away_prob,
                                     captured_at=now,
-                                ).on_conflict_do_update(
-                                    index_elements=["event_id", "bookmaker", "captured_at"],
-                                    set_={
-                                        "home_moneyline": home_odds,
-                                        "away_moneyline": away_odds,
-                                        "home_win_probability": home_prob,
-                                        "away_win_probability": away_prob,
-                                    }
                                 )
-                                await db.execute(snapshot_stmt)
+                                db.add(snapshot)
                                 sport_snapshots += 1
 
                 total_events += sport_events
                 total_snapshots += sport_snapshots
                 sports_processed += 1
+
+                # Commit after each sport to isolate failures
+                await db.commit()
 
                 if sport_events > 0:
                     # Categorize sport
@@ -194,10 +189,10 @@ async def discover_all_events(
                     sports_with_events[cat]["snapshots"] += sport_snapshots
 
             except Exception as e:
+                # Rollback failed transaction so subsequent sports can proceed
+                await db.rollback()
                 errors.append(f"{sport.key}: {str(e)}")
                 continue
-
-        await db.commit()
 
         return {
             "success": True,
