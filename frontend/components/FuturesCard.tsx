@@ -42,8 +42,8 @@ function formatSportName(sportKey: string | null, sportName: string | null): str
 /**
  * Movement indicator component
  */
-function MovementIndicator({ change }: { change: number | null }) {
-  if (change === null || change === 0) return null;
+function MovementIndicator({ change }: { change: number | null | undefined }) {
+  if (change === null || change === undefined || change === 0 || !Number.isFinite(change)) return null;
 
   const isPositive = change > 0;
   const absChange = Math.abs(change * 100);
