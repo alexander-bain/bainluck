@@ -57,17 +57,36 @@ export default function PulseBadge({
       </p>
 
       {pulse.components && (
-        <div className="space-y-1 pt-1 border-t border-white/20">
-          <div className="text-xs text-white/70 font-medium">Components:</div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
-            <span className="text-white/80">Heart Rate:</span>
-            <span className="text-white font-mono">{Math.round(pulse.components.heart_rate)}</span>
-            <span className="text-white/80">Amplitude:</span>
-            <span className="text-white font-mono">{Math.round(pulse.components.amplitude)}</span>
-            <span className="text-white/80">Vitals:</span>
-            <span className="text-white font-mono">{Math.round(pulse.components.vitals)}</span>
-            <span className="text-white/80">Lead Changes:</span>
-            <span className="text-white font-mono">{Math.round(pulse.components.lead_changes)}</span>
+        <div className="space-y-2 pt-2 border-t border-white/20">
+          <div className="text-xs text-white/70 font-medium">What makes this exciting:</div>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex justify-between items-center">
+              <span className="text-white/80">Momentum Swings</span>
+              <span className="text-white font-mono">{Math.round((pulse.components.heart_rate || 0) * 100)}%</span>
+            </div>
+            <div className="text-white/60 text-[10px] -mt-1">How often the odds shifted</div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-white/80">Drama Level</span>
+              <span className="text-white font-mono">{Math.round((pulse.components.amplitude || 0) * 100)}%</span>
+            </div>
+            <div className="text-white/60 text-[10px] -mt-1">Size of probability swings</div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-white/80">Competitiveness</span>
+              <span className="text-white font-mono">{Math.round((pulse.components.vitals || 0) * 100)}%</span>
+            </div>
+            <div className="text-white/60 text-[10px] -mt-1">How close the matchup is</div>
+
+            {pulse.components.lead_changes > 0 && (
+              <>
+                <div className="flex justify-between items-center">
+                  <span className="text-white/80">Lead Changes</span>
+                  <span className="text-white font-mono">{pulse.components.lead_changes}x</span>
+                </div>
+                <div className="text-white/60 text-[10px] -mt-1">Times the favorite flipped</div>
+              </>
+            )}
           </div>
         </div>
       )}
