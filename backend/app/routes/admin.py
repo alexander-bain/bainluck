@@ -197,3 +197,37 @@ async def pulse_status(
         "by_status": status_counts,
         "completion_pct": round(total_with / (total_with + total_without) * 100, 1) if (total_with + total_without) > 0 else 0,
     }
+
+
+@router.post("/kalshi/poll")
+async def trigger_kalshi_poll(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Manually trigger Kalshi market polling.
+
+    Useful for testing the integration or refreshing data immediately.
+    Requires KALSHI_API_KEY to be configured.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    kalshi_key = os.getenv("KALSHI_API_KEY")
+    if not kalshi_key:
+        raise HTTPException(
+            status_code=400,
+            detail="KALSHI_API_KEY not configured. Add it to your environment variables."
+        )
+
+    # Import and run the polling task synchronously for immediate feedback
+    from app.tasks import _poll_kalshi_markets
+    import asyncio
+
+    try:
+        result = await _poll_kalshi_markets()
+        return {
+            "status": "success",
+            "result": result,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Polling failed: {str(e)}")
