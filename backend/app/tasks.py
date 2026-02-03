@@ -516,12 +516,6 @@ async def _discover_events():
             for sport in sports:
                 sport_key = sport.key
 
-                # Skip excluded sports
-                if any(sport_key.startswith(prefix) for prefix in OddsAPIService.EXCLUDED_PREFIXES):
-                    continue
-                if any(keyword in sport_key for keyword in OddsAPIService.EXCLUDED_KEYWORDS):
-                    continue
-
                 try:
                     # Fetch odds for this sport
                     events_data = await service.get_odds(sport_key)
