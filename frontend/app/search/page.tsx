@@ -6,6 +6,7 @@ import Link from "next/link";
 import { searchEvents } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import EventCard from "@/components/EventCard";
+import FuturesCard from "@/components/FuturesCard";
 import type { SearchResponse } from "@/lib/types";
 
 function SearchLoading() {
@@ -102,13 +103,16 @@ function SearchContent() {
     );
   }
 
-  if (!results || results.results.length === 0) {
+  const hasFutures = results?.futures && results.futures.length > 0;
+  const hasEvents = results?.results && results.results.length > 0;
+
+  if (!results || (!hasEvents && !hasFutures)) {
     return (
       <div className="text-center py-12">
         <div className="text-4xl mb-4">🤷</div>
         <h1 className="text-title-2 text-graphite mb-2">No Results</h1>
         <p className="text-slate">
-          No games found for &quot;{query}&quot;
+          No games or futures found for &quot;{query}&quot;
           {sportFilter && ` in ${getLeagueDisplay(sportFilter)}`}
         </p>
         {sportFilter && (
@@ -137,7 +141,8 @@ function SearchContent() {
           Search results for &quot;{query}&quot;
         </h1>
         <p className="text-slate mt-1">
-          {results.pagination.total_results} games found
+          {results.pagination.total_results} game{results.pagination.total_results !== 1 ? "s" : ""}
+          {hasFutures && ` and ${results.futures.length} futures market${results.futures.length !== 1 ? "s" : ""}`} found
         </p>
       </div>
 
@@ -172,18 +177,51 @@ function SearchContent() {
         </div>
       )}
 
-      {/* Results grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {results.results.map((event, index) => (
-          <EventCard
-            key={event.id}
-            event={event}
-            showSport={!sportFilter}
-            sourceSection="search_results"
-            positionIndex={index}
-          />
-        ))}
-      </div>
+      {/* Futures results */}
+      {hasFutures && (
+        <div className="mb-8">
+          <h2 className="text-title-3 text-graphite mb-4 flex items-center gap-2">
+            <span>Futures & Championships</span>
+            <span className="text-sm font-normal text-slate">
+              ({results.futures.length})
+            </span>
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {results.futures.map((market) => (
+              <FuturesCard
+                key={market.id}
+                market={market}
+                showSport={!sportFilter}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Events results grid */}
+      {hasEvents && (
+        <>
+          {hasFutures && (
+            <h2 className="text-title-3 text-graphite mb-4 flex items-center gap-2">
+              <span>Games</span>
+              <span className="text-sm font-normal text-slate">
+                ({results.pagination.total_results})
+              </span>
+            </h2>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {results.results.map((event, index) => (
+              <EventCard
+                key={event.id}
+                event={event}
+                showSport={!sportFilter}
+                sourceSection="search_results"
+                positionIndex={index}
+              />
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Pagination */}
       {results.pagination.total_pages > 1 && (
