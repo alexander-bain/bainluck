@@ -54,7 +54,7 @@ class FuturesMarketData(BaseModel):
 
 class OddsAPIService:
     """Service for interacting with The Odds API."""
-    
+
     BASE_URL = "https://api.the-odds-api.com/v4"
     
     # Blacklisted sport prefixes - these sports are excluded from API calls
