@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile
+from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile, FuturesMarket, FuturesOutcome
 from app.services import get_db, OddsAPIService, fetch_current_odds
 from app.utils import (
     moneyline_to_probability,
@@ -457,9 +457,38 @@ async def search_events(
     # Calculate pagination metadata
     total_pages = (total_count + per_page - 1) // per_page
 
+    # Also search futures markets by name
+    futures_query = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.sport))
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.name.ilike(search_pattern),
+            FuturesMarket.status == "open",
+        )
+        .order_by(FuturesMarket.updated_at.desc())
+        .limit(10)  # Limit futures results
+    )
+
+    # Apply sport filter to futures if specified
+    if sport:
+        futures_query = futures_query.join(Sport, FuturesMarket.sport_id == Sport.id).where(
+            Sport.key == sport
+        )
+
+    futures_result = await db.execute(futures_query)
+    futures_markets = futures_result.scalars().unique().all()
+
+    # Format futures results
+    formatted_futures = [
+        _format_futures_for_search(market)
+        for market in futures_markets
+    ]
+
     return {
         "query": q,
         "results": formatted_results,
+        "futures": formatted_futures,
         "pagination": {
             "page": page,
             "per_page": per_page,
@@ -1556,3 +1585,39 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         }
 
     return response
+
+
+def _format_futures_for_search(market: FuturesMarket) -> dict:
+    """Format a futures market for search results."""
+    # Sort outcomes by probability to get top outcomes
+    sorted_outcomes = sorted(
+        market.outcomes,
+        key=lambda o: o.current_probability or 0,
+        reverse=True
+    )
+
+    top_outcomes = [
+        {
+            "id": o.id,
+            "name": o.name,
+            "probability": float(o.current_probability) if o.current_probability else None,
+            "american_odds": o.current_american_odds,
+            "rank": o.rank,
+            "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+        }
+        for o in sorted_outcomes[:5]
+    ]
+
+    return {
+        "id": market.id,
+        "name": market.name,
+        "sport": market.sport.key if market.sport else None,
+        "sport_name": market.sport.name if market.sport else None,
+        "category": market.category,
+        "status": market.status,
+        "source": market.source,
+        "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+        "top_outcomes": top_outcomes,
+        "outcome_count": len(market.outcomes),
+        "updated_at": market.updated_at.isoformat() if market.updated_at else None,
+    }

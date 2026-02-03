@@ -298,6 +298,7 @@ export interface SearchSportFacet {
 
 export interface SearchResponse {
   results: Event[];
+  futures: FuturesMarket[];
   pagination: SearchPagination;
   sports: SearchSportFacet[];
   query: string;
