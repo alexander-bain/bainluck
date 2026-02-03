@@ -220,10 +220,18 @@ class KalshiAPIService:
         Returns:
             List of KalshiEvent objects
         """
+        import asyncio
+
         all_events = []
         cursor = None
+        page_count = 0
+        max_pages = 10  # Limit to avoid rate limits
 
-        while True:
+        while page_count < max_pages:
+            # Add delay between requests to avoid rate limiting
+            if page_count > 0:
+                await asyncio.sleep(0.5)
+
             events, cursor = await self.get_events(
                 status="open",
                 with_nested_markets=True,
@@ -240,6 +248,8 @@ class KalshiAPIService:
                 parsed_event = self._parse_event(event_data)
                 if parsed_event:
                     all_events.append(parsed_event)
+
+            page_count += 1
 
             if not cursor:
                 break
