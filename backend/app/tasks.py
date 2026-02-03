@@ -104,6 +104,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.poll_futures_odds",
         "schedule": crontab(minute=30),  # Every hour at :30 (offset from other tasks)
     },
+    "poll-kalshi-hourly": {
+        "task": "app.tasks.poll_kalshi_markets",
+        "schedule": crontab(minute=45),  # Every hour at :45 (offset from futures polling)
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -1898,3 +1902,202 @@ def _aggregate_futures_outcomes(markets_data) -> dict:
         }
 
     return result
+
+
+# =============================================================================
+# Kalshi Polling
+# =============================================================================
+
+
+@celery_app.task(bind=True)
+def poll_kalshi_markets(self):
+    """
+    Poll prediction markets from Kalshi.
+
+    Kalshi provides structured event data including timing information
+    and bid/ask spreads for prediction markets.
+    """
+    return run_async(_poll_kalshi_markets())
+
+
+async def _poll_kalshi_markets():
+    """Async implementation of Kalshi polling."""
+    from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+    from app.services.kalshi_api import KalshiAPIService
+    from app.utils.odds_math import probability_to_american
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    import os
+
+    # Check if Kalshi API key is configured
+    if not os.getenv("KALSHI_API_KEY"):
+        return {"status": "skipped", "reason": "KALSHI_API_KEY not configured"}
+
+    service = KalshiAPIService()
+    stats = {
+        "events_processed": 0,
+        "markets_processed": 0,
+        "outcomes_updated": 0,
+        "snapshots_created": 0,
+        "errors": [],
+    }
+
+    try:
+        # Fetch all open events (sports and other categories)
+        events = await service.get_all_events()
+
+        async with AsyncSessionLocal() as session:
+            now = datetime.now(timezone.utc)
+
+            for event in events:
+                try:
+                    # Each Kalshi event can have multiple markets
+                    # For multivariate events, we create one FuturesMarket per event
+                    # with outcomes for each market within
+
+                    if not event.markets:
+                        continue
+
+                    # Determine category based on Kalshi's category
+                    category = _kalshi_category_to_internal(event.category)
+
+                    # For events with multiple markets (multivariate), create one FuturesMarket
+                    # For single-market events, use the market directly
+                    if len(event.markets) == 1:
+                        market = event.markets[0]
+                        market_name = event.title
+                        commence_time = market.close_time  # When trading ends
+                        expiration_time = market.expiration_time
+                    else:
+                        market_name = event.title
+                        # Use earliest close time from all markets
+                        close_times = [m.close_time for m in event.markets if m.close_time]
+                        commence_time = min(close_times) if close_times else None
+                        expiration_times = [m.expiration_time for m in event.markets if m.expiration_time]
+                        expiration_time = max(expiration_times) if expiration_times else None
+
+                    # Upsert the FuturesMarket
+                    market_stmt = pg_insert(FuturesMarket).values(
+                        source="kalshi",
+                        external_id=event.event_ticker,
+                        name=market_name,
+                        category=category,
+                        mutually_exclusive=event.mutually_exclusive,
+                        commence_time=commence_time,
+                        resolution_date=expiration_time,
+                        status="open",
+                    ).on_conflict_do_update(
+                        index_elements=["source", "external_id"],
+                        set_={
+                            "name": market_name,
+                            "commence_time": commence_time,
+                            "resolution_date": expiration_time,
+                            "updated_at": func.now(),
+                        }
+                    ).returning(FuturesMarket.id)
+
+                    result = await session.execute(market_stmt)
+                    futures_market_id = result.scalar_one()
+                    stats["events_processed"] += 1
+
+                    # Process each market as an outcome
+                    for idx, market in enumerate(event.markets, 1):
+                        stats["markets_processed"] += 1
+
+                        # Calculate probability from bid/ask midpoint or last price
+                        if market.yes_bid is not None and market.yes_ask is not None:
+                            prob = (market.yes_bid + market.yes_ask) / 2
+                        elif market.last_price is not None:
+                            prob = market.last_price
+                        else:
+                            continue  # Skip markets without pricing
+
+                        american = probability_to_american(prob) if prob and prob > 0 else None
+
+                        # For single-market events, use "Yes" as outcome name
+                        # For multi-market events, use market title
+                        if len(event.markets) == 1:
+                            outcome_name = "Yes"
+                        else:
+                            outcome_name = market.title or market.ticker
+
+                        # Upsert outcome
+                        outcome_stmt = pg_insert(FuturesOutcome).values(
+                            market_id=futures_market_id,
+                            external_id=market.ticker,
+                            name=outcome_name,
+                            current_probability=prob,
+                            current_american_odds=american,
+                            current_yes_bid=market.yes_bid,
+                            current_yes_ask=market.yes_ask,
+                            opening_probability=prob,
+                            opening_american_odds=american,
+                            opening_captured_at=now,
+                            rank=idx,
+                        ).on_conflict_do_update(
+                            index_elements=["market_id", "external_id"],
+                            set_={
+                                "name": outcome_name,
+                                "current_probability": prob,
+                                "current_american_odds": american,
+                                "current_yes_bid": market.yes_bid,
+                                "current_yes_ask": market.yes_ask,
+                                "rank": idx,
+                                "last_updated": func.now(),
+                            }
+                        ).returning(FuturesOutcome.id)
+
+                        result = await session.execute(outcome_stmt)
+                        outcome_id = result.scalar_one()
+                        stats["outcomes_updated"] += 1
+
+                        # Create snapshot with Kalshi-specific data
+                        snapshot_stmt = pg_insert(FuturesOddsSnapshot).values(
+                            outcome_id=outcome_id,
+                            bookmaker="kalshi",
+                            probability=prob,
+                            american_odds=american,
+                            yes_bid=market.yes_bid,
+                            yes_ask=market.yes_ask,
+                            last_price=market.last_price,
+                            captured_at=now,
+                        )
+                        await session.execute(snapshot_stmt)
+                        stats["snapshots_created"] += 1
+
+                except Exception as e:
+                    stats["errors"].append(f"{event.event_ticker}: {str(e)}")
+                    continue
+
+            await session.commit()
+
+    except Exception as e:
+        stats["errors"].append(f"Top-level error: {str(e)}")
+
+    finally:
+        await service.close()
+
+    return stats
+
+
+def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
+    """Map Kalshi category to internal category."""
+    if not kalshi_category:
+        return "other"
+
+    category_lower = kalshi_category.lower()
+
+    # Sports categories
+    if any(s in category_lower for s in ["sports", "golf", "football", "basketball", "baseball", "hockey", "soccer"]):
+        return "championship"
+
+    # Other categories
+    if "politic" in category_lower or "election" in category_lower:
+        return "politics"
+    if "econom" in category_lower or "fed" in category_lower or "inflation" in category_lower:
+        return "economics"
+    if "entertainment" in category_lower or "movie" in category_lower or "award" in category_lower:
+        return "entertainment"
+    if "tech" in category_lower or "crypto" in category_lower:
+        return "tech"
+
+    return "other"
