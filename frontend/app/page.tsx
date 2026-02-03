@@ -627,6 +627,12 @@ export default function HomePage() {
               {filteredFutures.length > 0 && (
                 <>{filteredFutures.length} futures market{filteredFutures.length !== 1 ? "s" : ""}</>
               )}
+              {/* Debug: show futures by source */}
+              {filteredFutures.length > 0 && (
+                <span className="ml-2 text-xs">
+                  ({filteredFutures.filter(f => f.source === "odds_api").length} odds_api, {filteredFutures.filter(f => f.source === "kalshi").length} kalshi)
+                </span>
+              )}
             </p>
           )}
         </>
