@@ -340,6 +340,92 @@ async def debug_sport_keys(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/debug/all-events")
+async def debug_all_events(
+    category: Optional[str] = Query(None, description="Filter by category prefix (rugby, cricket, aussierules, soccer)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Debug endpoint to see ALL events regardless of date/odds filters.
+
+    Shows events that may be hidden due to:
+    - Missing odds data
+    - Being too far in the future
+    - Being old completed events
+    """
+    query = (
+        select(
+            Event.id,
+            Event.external_id,
+            Event.home_team_name,
+            Event.away_team_name,
+            Event.status,
+            Event.commence_time,
+            Sport.key.label("sport_key"),
+            Sport.name.label("sport_name"),
+            func.count(OddsSnapshot.id).label("snapshot_count"),
+        )
+        .join(Sport, Event.sport_id == Sport.id)
+        .outerjoin(OddsSnapshot, Event.id == OddsSnapshot.event_id)
+        .group_by(Event.id, Sport.key, Sport.name)
+        .order_by(Event.commence_time.desc())
+    )
+
+    if category:
+        query = query.where(Sport.key.ilike(f"{category}%"))
+
+    result = await db.execute(query.limit(200))
+    events = result.all()
+
+    # Categorize events
+    by_status = {}
+    by_sport = {}
+    events_without_odds = []
+
+    for e in events:
+        status = e.status
+        sport = e.sport_key
+
+        if status not in by_status:
+            by_status[status] = 0
+        by_status[status] += 1
+
+        if sport not in by_sport:
+            by_sport[sport] = {"total": 0, "with_odds": 0, "without_odds": 0}
+        by_sport[sport]["total"] += 1
+
+        if e.snapshot_count > 0:
+            by_sport[sport]["with_odds"] += 1
+        else:
+            by_sport[sport]["without_odds"] += 1
+            events_without_odds.append({
+                "id": e.id,
+                "sport": e.sport_key,
+                "teams": f"{e.home_team_name} vs {e.away_team_name}",
+                "status": e.status,
+                "commence_time": e.commence_time.isoformat() if e.commence_time else None,
+            })
+
+    return {
+        "total_events": len(events),
+        "by_status": by_status,
+        "by_sport": by_sport,
+        "events_without_odds": events_without_odds[:50],  # First 50
+        "events": [
+            {
+                "id": e.id,
+                "sport": e.sport_key,
+                "teams": f"{e.home_team_name} vs {e.away_team_name}",
+                "status": e.status,
+                "commence_time": e.commence_time.isoformat() if e.commence_time else None,
+                "has_odds": e.snapshot_count > 0,
+                "snapshot_count": e.snapshot_count,
+            }
+            for e in events[:100]  # First 100
+        ],
+    }
+
+
 @router.get("/debug/api-bookmakers/{sport_key}")
 async def debug_api_bookmakers(sport_key: str):
     """
