@@ -76,6 +76,8 @@ odds-tracker/
 | Vercel Dashboard | Vercel (auto-deploys from master) |
 | Heroku Dashboard | Heroku (auto-deploys from master) |
 
+**Heroku App Name:** `what-are-the-odds` (for CLI commands like `heroku logs -a what-are-the-odds`)
+
 ---
 
 ## Critical Files
