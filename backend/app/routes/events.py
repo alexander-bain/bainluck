@@ -146,9 +146,8 @@ async def discover_all_events(
                                     away_odds = outcome["price"]
 
                             if home_odds and away_odds:
-                                # Convert to probabilities
-                                home_prob = moneyline_to_probability(home_odds)
-                                away_prob = moneyline_to_probability(away_odds)
+                                # Convert to probabilities (returns tuple)
+                                home_prob, away_prob = moneyline_to_probability(home_odds, away_odds)
 
                                 # Upsert snapshot
                                 snapshot_stmt = insert(OddsSnapshot).values(

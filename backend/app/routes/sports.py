@@ -70,26 +70,6 @@ async def list_available_sports():
         )
 
 
-@router.get("/{sport_key}")
-async def get_sport(sport_key: str, db: AsyncSession = Depends(get_db)):
-    """Get details for a specific sport."""
-    result = await db.execute(
-        select(Sport).where(Sport.key == sport_key)
-    )
-    sport = result.scalar_one_or_none()
-
-    if not sport:
-        raise HTTPException(status_code=404, detail="Sport not found")
-
-    return {
-        "id": sport.id,
-        "key": sport.key,
-        "name": sport.name,
-        "group": sport.group,
-        "active": sport.active,
-    }
-
-
 @router.post("/sync")
 @router.get("/sync")
 async def sync_sports_from_api(db: AsyncSession = Depends(get_db)):
@@ -168,3 +148,23 @@ async def sync_sports_from_api(db: AsyncSession = Depends(get_db)):
             status_code=503,
             detail=f"Unable to sync sports from API: {str(e)}"
         )
+
+
+@router.get("/{sport_key}")
+async def get_sport(sport_key: str, db: AsyncSession = Depends(get_db)):
+    """Get details for a specific sport."""
+    result = await db.execute(
+        select(Sport).where(Sport.key == sport_key)
+    )
+    sport = result.scalar_one_or_none()
+
+    if not sport:
+        raise HTTPException(status_code=404, detail="Sport not found")
+
+    return {
+        "id": sport.id,
+        "key": sport.key,
+        "name": sport.name,
+        "group": sport.group,
+        "active": sport.active,
+    }
