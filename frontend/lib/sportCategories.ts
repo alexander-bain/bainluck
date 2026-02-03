@@ -279,6 +279,7 @@ export function getCategoryForLeague(leagueKey: string): SportCategory | undefin
 /**
  * Keywords to match futures/outrights to sport categories.
  * These are used when the sport key doesn't match standard prefixes.
+ * Note: "US Open" is ambiguous (golf vs tennis) and handled separately via athlete detection.
  */
 const FUTURES_KEYWORD_MAP: Record<string, string> = {
   // Basketball
@@ -296,18 +297,16 @@ const FUTURES_KEYWORD_MAP: Record<string, string> = {
   // Hockey
   nhl: "hockey",
   stanley_cup: "hockey",
-  // Golf
+  // Golf (us_open is ambiguous, handled separately)
   pga: "golf",
   masters: "golf",
-  us_open_golf: "golf",
   the_open: "golf",
   british_open: "golf",
   ryder_cup: "golf",
-  // Tennis
+  // Tennis (us_open is ambiguous, handled separately)
   wimbledon: "tennis",
   french_open: "tennis",
   australian_open: "tennis",
-  us_open_tennis: "tennis",
   atp: "tennis",
   wta: "tennis",
   // MMA
@@ -337,13 +336,40 @@ const FUTURES_KEYWORD_MAP: Record<string, string> = {
 };
 
 /**
+ * Known athletes by sport for disambiguation.
+ * When a market name is ambiguous (e.g., "US Open"), we check outcomes
+ * for known athlete names to determine the sport.
+ */
+const KNOWN_GOLFERS = new Set([
+  "scottie scheffler", "rory mcilroy", "bryson dechambeau", "jon rahm",
+  "xander schauffele", "collin morikawa", "viktor hovland", "patrick cantlay",
+  "jordan spieth", "justin thomas", "brooks koepka", "dustin johnson",
+  "tiger woods", "phil mickelson", "hideki matsuyama", "cameron smith",
+  "tony finau", "max homa", "wyndham clark", "brian harman", "matt fitzpatrick",
+  "tommy fleetwood", "shane lowry", "adam scott", "rickie fowler", "sahith theegala",
+  "ludvig aberg", "tom kim", "sungjae im", "cameron young", "keegan bradley",
+  "russell henley", "sam burns", "corey conners", "tyrrell hatton", "min woo lee",
+]);
+
+const KNOWN_TENNIS_PLAYERS = new Set([
+  "novak djokovic", "carlos alcaraz", "jannik sinner", "daniil medvedev",
+  "alexander zverev", "andrey rublev", "stefanos tsitsipas", "holger rune",
+  "taylor fritz", "tommy paul", "hubert hurkacz", "casper ruud", "grigor dimitrov",
+  "felix auger-aliassime", "ben shelton", "alex de minaur", "frances tiafoe",
+  "iga swiatek", "aryna sabalenka", "coco gauff", "jessica pegula", "elena rybakina",
+  "ons jabeur", "maria sakkari", "qinwen zheng", "emma raducanu", "naomi osaka",
+  "rafael nadal", "roger federer", "serena williams", "venus williams",
+]);
+
+/**
  * Get category for a futures market based on sport key and market name.
  * Uses prefix matching first, then falls back to keyword matching.
- * This handles futures that may have non-standard sport keys.
+ * For ambiguous markets (like "US Open"), checks outcome names for known athletes.
  */
 export function getCategoryForFutures(
   sportKey: string | null,
-  marketName?: string | null
+  marketName?: string | null,
+  outcomeNames?: string[]
 ): SportCategory | undefined {
   // First try standard prefix matching
   if (sportKey) {
@@ -362,6 +388,42 @@ export function getCategoryForFutures(
   for (const [keyword, categoryKey] of Object.entries(FUTURES_KEYWORD_MAP)) {
     if (searchText.includes(keyword)) {
       return SPORT_CATEGORIES.find((cat) => cat.key === categoryKey);
+    }
+  }
+
+  // Handle ambiguous cases like "US Open" by checking outcome names
+  if (searchText.includes("us_open") || searchText.includes("open")) {
+    if (outcomeNames && outcomeNames.length > 0) {
+      const normalizedOutcomes = outcomeNames.map((n) => n.toLowerCase());
+      const golfersList = Array.from(KNOWN_GOLFERS);
+      const tennisPlayersList = Array.from(KNOWN_TENNIS_PLAYERS);
+
+      // Check for golfers (by full name or last name)
+      for (const outcome of normalizedOutcomes) {
+        if (KNOWN_GOLFERS.has(outcome)) {
+          return SPORT_CATEGORIES.find((cat) => cat.key === "golf");
+        }
+        // Also check last names
+        for (const golfer of golfersList) {
+          const lastName = golfer.split(" ").pop();
+          if (lastName && outcome.includes(lastName)) {
+            return SPORT_CATEGORIES.find((cat) => cat.key === "golf");
+          }
+        }
+      }
+
+      // Check for tennis players
+      for (const outcome of normalizedOutcomes) {
+        if (KNOWN_TENNIS_PLAYERS.has(outcome)) {
+          return SPORT_CATEGORIES.find((cat) => cat.key === "tennis");
+        }
+        for (const player of tennisPlayersList) {
+          const lastName = player.split(" ").pop();
+          if (lastName && outcome.includes(lastName)) {
+            return SPORT_CATEGORIES.find((cat) => cat.key === "tennis");
+          }
+        }
+      }
     }
   }
 
