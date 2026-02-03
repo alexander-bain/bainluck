@@ -18,6 +18,48 @@ router = APIRouter()
 # NOTE: Specific routes MUST come before /{market_id} to avoid being matched as IDs
 
 
+@router.get("/debug/sources")
+async def debug_futures_sources(db: AsyncSession = Depends(get_db)):
+    """Debug endpoint to see futures counts by source and status."""
+    # Count by source and status
+    query = select(
+        FuturesMarket.source,
+        FuturesMarket.status,
+        func.count(FuturesMarket.id).label("count")
+    ).group_by(FuturesMarket.source, FuturesMarket.status)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    breakdown = {}
+    for row in rows:
+        source = row.source or "unknown"
+        if source not in breakdown:
+            breakdown[source] = {"total": 0, "by_status": {}}
+        breakdown[source]["by_status"][row.status] = row.count
+        breakdown[source]["total"] += row.count
+
+    # Get sample markets from each source
+    samples = {}
+    for source in breakdown.keys():
+        sample_query = (
+            select(FuturesMarket.id, FuturesMarket.name, FuturesMarket.status, FuturesMarket.updated_at)
+            .where(FuturesMarket.source == source)
+            .order_by(FuturesMarket.updated_at.desc())
+            .limit(3)
+        )
+        sample_result = await db.execute(sample_query)
+        samples[source] = [
+            {"id": r.id, "name": r.name, "status": r.status, "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+            for r in sample_result.all()
+        ]
+
+    return {
+        "breakdown": breakdown,
+        "samples": samples,
+    }
+
+
 @router.get("/debug/sport-mapping")
 async def debug_sport_mapping(db: AsyncSession = Depends(get_db)):
     """Debug endpoint to see how futures markets are linked to sports."""
