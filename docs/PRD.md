@@ -372,42 +372,35 @@ def project_scores(home_prob: float, over_under: float) -> tuple[float, float]:
     return round(home_score, 1), round(away_score, 1)
 ```
 
-### Game Excitement Index (GEI)
+### Pulse (Game Excitement Metric)
 
-Based on Luke Benz's methodology:
+OddsTracker's proprietary excitement metric measuring how "alive" a game is based on probability movement patterns.
 
-```python
-def calculate_gei(home_prob: float, over_under: float, sport: str) -> float:
-    """
-    Calculate Game Excitement Index.
+**Components (weighted):**
+- **Heart Rate (25%)**: Frequency of significant probability moves (≥2% threshold)
+- **Amplitude (30%)**: Magnitude of probability swings (RMS calculation)
+- **Arrhythmia (15%)**: Unpredictability/variance of changes
+- **Vitals (30%)**: Current game competitiveness (closeness to 50/50)
+- **Lead Changes Bonus (0-20%)**: Each time probability crosses 50%
 
-    Higher when:
-    - Game is close (probabilities near 50/50)
-    - Expected to be high-scoring
+**Time Weight Enhancement:**
+Late-game drama counts more. Uses exponential curve: `0.6 + 0.4 × (progress^1.5)`
 
-    Reference: https://lukebenz.com/post/gei/
+**Score Scale (1-100):**
+| Score | Status | Label | Emoji |
+|-------|--------|-------|-------|
+| 81-100 | Racing | Must-Watch / Incredible | 🫀 |
+| 61-80 | Strong | Exciting / Engaging | 💓 |
+| 41-60 | Steady | Competitive / Steady | 💗 |
+| 21-40 | Weak | One-Sided / Slow | 🩺 |
+| 1-20 | Flatline | Skip It | 📉 |
 
-    Note: Experimental feature. Used as a sorting/discovery signal,
-    not core to product identity.
-    """
-    # Closeness factor: peaks at 0.5, drops toward 0 or 1
-    closeness = 1 - abs(home_prob - 0.5) * 2
+**Implementation:** `backend/app/utils/pulse.py`
 
-    # Normalize over/under by sport average
-    sport_avg_totals = {
-        'basketball_nba': 220,
-        'football_nfl': 45,
-        'baseball_mlb': 8.5,
-        'hockey_nhl': 6,
-    }
-    avg_total = sport_avg_totals.get(sport, 100)
-    scoring_factor = over_under / avg_total
-
-    # GEI formula (simplified)
-    gei = closeness * 0.6 + scoring_factor * 0.4
-
-    return round(gei * 100, 1)  # Scale to 0-100
-```
+**Requirements:**
+- Minimum 3 odds snapshots to calculate
+- Sport-specific expected durations for time weighting
+- Updates in real-time for live games, batch-processed for completed games
 
 ### Highlights Ranking Algorithm (Planned)
 
@@ -711,16 +704,19 @@ CREATE INDEX ix_events_commence_status ON events (commence_time, status);
 - [ ] Improved error handling and retry logic
 - [ ] Monitoring dashboard for poll health
 
-### Phase 4: Game Excitement Index & Highlights
-**Intelligent surfacing of interesting games.**
+### Phase 4: Pulse (Game Excitement Metric) ✅ Complete
+**Proprietary excitement scoring for all games.**
 
-Target: Q1 2026
+Completed: February 2026
 
-- [ ] Implement GEI calculation in backend
-- [ ] Create "Highlights" section on homepage
-- [ ] Sophisticated ranking algorithm (closeness, timing, popularity, movement)
-- [ ] A/B test different ranking weights
-- [ ] Surface "Most Exciting Games Right Now" for live events
+- [x] Implement Pulse calculation algorithm in backend (`backend/app/utils/pulse.py`)
+- [x] Real-time Pulse updates for live games (every poll cycle)
+- [x] Batch Pulse calculation for completed games (every 10 minutes)
+- [x] PulseBadge component with tooltip showing component breakdown
+- [x] Pulse displayed on all live, completed, and closed games
+- [x] Explainer page at `/pulse` with full methodology
+- [x] Admin endpoints for Pulse management (`/api/admin/pulse/status`, `/api/admin/pulse/recalculate`)
+- [x] Debug endpoint for Pulse diagnostics (`/api/events/debug/pulse`)
 
 ### Phase 5: Authentication & Personalization
 **User accounts for cross-device experience.**
@@ -831,6 +827,15 @@ Target: 2027
 
 ## Recent Improvements (February 2026)
 
+### Pulse - Game Excitement Metric ✅ NEW
+- **Proprietary algorithm**: Measures game excitement based on probability movement patterns using a "vital signs" metaphor
+- **Real-time updates**: Pulse calculated every poll cycle for live games
+- **Component breakdown**: Momentum Swings, Drama Level, Competitiveness, Lead Changes
+- **Visual badges**: Color-coded badges (🫀💓💗🩺📉) displayed on all games
+- **Tooltip explanations**: Human-friendly descriptions of what makes each game exciting
+- **Explainer page**: Full methodology at `/pulse`
+- **Admin tools**: Status check and batch recalculation endpoints
+
 ### Analytics Implementation
 - **Comprehensive GA4 tracking**: Full event taxonomy with clear hierarchy
 - **Cross-platform ready**: User-ID support for future iOS app
@@ -840,11 +845,13 @@ Target: 2027
 ### Backend Improvements
 - **Event discovery task**: New `discover_events` Celery task that polls ALL active sports every 15 minutes, solving the chicken-and-egg problem where sports without existing events were never polled
 - **Per-sport polling**: Intelligent polling intervals based on game proximity
+- **Admin router**: New `/api/admin` endpoints for Pulse management and diagnostics
 
 ### UI/UX Polish
 - **Removed user-facing staleness warnings**: "Needs Review" and "Stale" indicators now tracked internally for analytics but not shown to users
 - **Improved error handling**: History loading errors now show actual error message with retry button
 - **Cleaner live experience**: All live events show as LIVE without conditional warnings
+- **Pulse badges everywhere**: All completed/closed games now show their Pulse score
 
 ---
 
