@@ -135,16 +135,22 @@ export default function EventCard({
                 <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
                   ✅ Final
                 </span>
-                {/* Show Pulse badge for games with strong pulse */}
-                {event.pulse && event.pulse.score >= 50 && (
+                {/* Show Pulse badge for all completed games */}
+                {event.pulse && (
                   <PulseBadge pulse={event.pulse} size="sm" />
                 )}
               </>
             )}
             {isClosed && (
-              <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
-                🔒 Closed
-              </span>
+              <>
+                <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
+                  🔒 Closed
+                </span>
+                {/* Show Pulse badge for closed games too */}
+                {event.pulse && (
+                  <PulseBadge pulse={event.pulse} size="sm" />
+                )}
+              </>
             )}
           </div>
         </div>
