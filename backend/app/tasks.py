@@ -1943,8 +1943,10 @@ async def _poll_kalshi_markets():
     }
 
     try:
-        # Fetch all open events (sports and other categories)
-        events = await service.get_all_events()
+        # Only fetch sports-related categories to stay within rate limits
+        # Kalshi has thousands of politics/economics markets we don't need
+        sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis"]
+        events = await service.get_all_events(categories=sports_categories)
 
         async with AsyncSessionLocal() as session:
             now = datetime.now(timezone.utc)
