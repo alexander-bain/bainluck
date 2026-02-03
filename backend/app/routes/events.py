@@ -733,6 +733,64 @@ async def debug_db_bookmakers(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/debug/pulse")
+async def debug_pulse_status(db: AsyncSession = Depends(get_db)):
+    """
+    Debug endpoint to check Pulse calculation status.
+
+    Shows how many events have Pulse scores calculated.
+    """
+    # Count events by Pulse status
+    result = await db.execute(
+        select(
+            Event.status,
+            func.count().filter(Event.raw_gei.isnot(None)).label("with_pulse"),
+            func.count().filter(Event.raw_gei.is_(None)).label("without_pulse"),
+        )
+        .group_by(Event.status)
+    )
+    rows = result.all()
+
+    status_counts = {}
+    total_with = 0
+    total_without = 0
+
+    for status, with_pulse, without_pulse in rows:
+        status_counts[status] = {
+            "with_pulse": with_pulse,
+            "without_pulse": without_pulse,
+        }
+        total_with += with_pulse
+        total_without += without_pulse
+
+    # Get a sample of events with Pulse to verify it's working
+    sample_result = await db.execute(
+        select(Event.id, Event.home_team_name, Event.away_team_name, Event.raw_gei, Event.status)
+        .where(Event.raw_gei.isnot(None))
+        .order_by(Event.raw_gei.desc())
+        .limit(5)
+    )
+    sample_events = [
+        {
+            "id": row[0],
+            "matchup": f"{row[1]} vs {row[2]}",
+            "pulse_score": round(float(row[3]) * 100) if row[3] else None,
+            "status": row[4],
+        }
+        for row in sample_result.all()
+    ]
+
+    return {
+        "total": {
+            "with_pulse": total_with,
+            "without_pulse": total_without,
+        },
+        "by_status": status_counts,
+        "completion_pct": round(total_with / (total_with + total_without) * 100, 1) if (total_with + total_without) > 0 else 0,
+        "sample_events_with_pulse": sample_events,
+    }
+
+
 @router.get("")
 async def list_events(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
