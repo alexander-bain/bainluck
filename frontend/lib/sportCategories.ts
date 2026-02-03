@@ -98,9 +98,16 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     tier: 2,
   },
   {
-    key: "aussierules",
-    name: "Aussie Rules",
+    key: "rugby",
+    name: "Rugby",
     emoji: "🏉",
+    prefixes: ["rugbyleague_", "rugbyunion_"],
+    tier: 2,
+  },
+  {
+    key: "aussierules",
+    name: "AFL",
+    emoji: "🏈",
     prefixes: ["aussierules_"],
     tier: 2,
   },
@@ -254,6 +261,17 @@ export const LEAGUE_DISPLAY: Record<string, string> = {
   tennis_atp_french_open: "French Open",
   tennis_atp_french_open_singles: "French Open (ATP)",
   tennis_wta_french_open_singles: "French Open (WTA)",
+  // Rugby
+  rugbyleague_nrl: "NRL",
+  rugbyleague_nrl_state_of_origin: "State of Origin",
+  rugbyunion_six_nations: "Six Nations",
+  rugbyunion_rugby_world_cup: "Rugby World Cup",
+  // AFL
+  aussierules_afl: "AFL",
+  // Cricket
+  cricket_international_t20: "International T20",
+  cricket_ipl: "IPL",
+  cricket_big_bash: "Big Bash",
   // Lacrosse
   lacrosse_ncaa: "NCAA Lacrosse",
   lacrosse_pll: "PLL",
