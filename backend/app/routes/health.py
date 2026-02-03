@@ -41,6 +41,18 @@ async def health_check():
         "status": "healthy",
         "version": "0.1.0",
         "commit": GIT_COMMIT,
+        "features": ["sync_sports", "discover_events", "get_support"],
+    }
+
+
+@router.get("/api/health")
+async def api_health_check():
+    """Health check at /api/health path for convenience."""
+    return {
+        "status": "healthy",
+        "version": "0.1.0",
+        "commit": GIT_COMMIT,
+        "features": ["sync_sports", "discover_events", "get_support"],
     }
 
 
