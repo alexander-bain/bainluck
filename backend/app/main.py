@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import events, sports, health, futures
+from app.routes import events, sports, health, futures, admin
 from app.services.database import init_db
 
 
@@ -62,6 +62,7 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(sports.router, prefix="/api/sports", tags=["Sports"])
 app.include_router(events.router, prefix="/api/events", tags=["Events"])
 app.include_router(futures.router, prefix="/api/futures", tags=["Futures"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 
 
 @app.get("/")

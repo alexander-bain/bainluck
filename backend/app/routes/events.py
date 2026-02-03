@@ -1321,9 +1321,10 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
                 "emoji": get_pulse_emoji(pulse_score),
                 "components": components,
             }
-    except Exception:
-        # Pulse columns may not exist yet - skip pulse data
-        pass
+    except Exception as e:
+        # Pulse columns may not exist yet or other error - log for debugging
+        import logging
+        logging.warning(f"Error adding Pulse data for event {event.id}: {e}")
 
     return response
 
