@@ -324,7 +324,7 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(nhl|stanley.cup)\b/i, category: "hockey" },
 
   // Golf
-  { pattern: /\b(pga|masters.tournament|british.open|the.open|ryder.cup)\b/i, category: "golf" },
+  { pattern: /\b(pga|masters|british.open|the.open|ryder.cup)\b/i, category: "golf" },
 
   // Tennis
   { pattern: /\b(wimbledon|french.open|australian.open|atp|wta)\b/i, category: "tennis" },
