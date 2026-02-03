@@ -25,11 +25,11 @@ import {
   useEngagementTime,
 } from "@/hooks";
 
-type DateFilter = "today" | "yesterday" | "upcoming";
+type DateFilter = "today" | "recent" | "upcoming";
 
 const DATE_FILTER_OPTIONS: { value: DateFilter; label: string }[] = [
   { value: "today", label: "Today" },
-  { value: "yesterday", label: "Yesterday" },
+  { value: "recent", label: "Recent" },
   { value: "upcoming", label: "Upcoming" },
 ];
 
@@ -92,39 +92,42 @@ export default function HomePage() {
     { refreshInterval: 30000 }
   );
 
-  // Fetch futures markets (open only, to show alongside events)
+  // Fetch futures markets
+  // - "today" and "upcoming": show open futures
+  // - "recent": show resolved futures (recently completed)
+  const futuresStatus = dateFilter === "recent" ? "resolved" : "open";
   const {
     data: futuresData,
     error: futuresError,
     isLoading: futuresLoading,
   } = useSWR(
-    ["futures", selectedSport],
-    () => fetchFuturesMarkets({ sport: selectedSport ?? undefined, status: "open" }),
+    ["futures", selectedSport, futuresStatus],
+    () => fetchFuturesMarkets({ sport: selectedSport ?? undefined, status: futuresStatus }),
     { refreshInterval: 60000 }
   );
 
-  // Helper to check if a date is today, yesterday, or upcoming
-  const getEventDateCategory = (commenceTime: string): "today" | "yesterday" | "upcoming" | "past" => {
+  // Helper to check if a date is today, recent (last 7 days), or upcoming
+  const getEventDateCategory = (commenceTime: string): "today" | "recent" | "upcoming" => {
     const eventDate = new Date(commenceTime);
     const now = new Date();
 
     // Get start of today (midnight)
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    // Get start of yesterday
-    const yesterdayStart = new Date(todayStart);
-    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+    // Get start of 7 days ago (for "recent" window)
+    const recentStart = new Date(todayStart);
+    recentStart.setDate(recentStart.getDate() - 7);
     // Get start of tomorrow
     const tomorrowStart = new Date(todayStart);
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
 
     if (eventDate >= todayStart && eventDate < tomorrowStart) {
       return "today";
-    } else if (eventDate >= yesterdayStart && eventDate < todayStart) {
-      return "yesterday";
+    } else if (eventDate >= recentStart && eventDate < todayStart) {
+      return "recent";
     } else if (eventDate >= tomorrowStart) {
       return "upcoming";
     } else {
-      return "past"; // Older than yesterday
+      return "recent"; // Anything older also goes to recent (API limits how far back we fetch)
     }
   };
 
@@ -156,8 +159,8 @@ export default function HomePage() {
       const dateCategory = getEventDateCategory(e.commence_time);
       if (dateFilter === "today") {
         return dateCategory === "today";
-      } else if (dateFilter === "yesterday") {
-        return dateCategory === "yesterday";
+      } else if (dateFilter === "recent") {
+        return dateCategory === "recent";
       } else {
         // "upcoming" - future events (tomorrow and beyond)
         return dateCategory === "upcoming";
@@ -165,6 +168,13 @@ export default function HomePage() {
     });
 
     // Sort by commence time
+    // Recent events: most recent first (descending)
+    // Today/upcoming: earliest first (ascending)
+    if (dateFilter === "recent") {
+      return events.sort((a, b) =>
+        new Date(b.commence_time).getTime() - new Date(a.commence_time).getTime()
+      );
+    }
     return events.sort((a, b) =>
       new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime()
     );
@@ -409,7 +419,7 @@ export default function HomePage() {
           {filteredEvents.length === 0 && filteredFutures.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-body text-slate mb-2">
-                No events for {dateFilter === "today" ? "today" : dateFilter === "yesterday" ? "yesterday" : "upcoming dates"}
+                No events for {dateFilter === "today" ? "today" : dateFilter === "recent" ? "recent days" : "upcoming dates"}
               </p>
               <p className="text-caption text-silver">
                 {selectedSport || selectedCategory
