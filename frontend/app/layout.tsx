@@ -39,12 +39,6 @@ export default function RootLayout({
                     >
                       Games
                     </Link>
-                    <Link
-                      href="/futures"
-                      className="px-3 py-1.5 text-sm font-medium text-slate hover:text-graphite hover:bg-slate/5 rounded-full transition-colors"
-                    >
-                      Futures
-                    </Link>
                   </nav>
 
                   <SearchBox />
