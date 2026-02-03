@@ -166,8 +166,10 @@ Proprietary 1-100 score measuring how exciting a game is based on probability sw
 
 ### Search
 - Endpoint: `GET /api/events/search?q=celtics`
-- Trigram indexes for fast ILIKE matching
-- Results ordered: Live → Upcoming → Completed
+- Searches both events (by team name) and futures markets (by market name)
+- Trigram indexes for fast ILIKE matching on `events.home_team_name`, `events.away_team_name`, and `futures_markets.name`
+- Events ordered: Live → Upcoming → Completed
+- Returns `results` (events) and `futures` (markets) arrays
 
 ---
 
