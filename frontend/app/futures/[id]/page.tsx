@@ -106,9 +106,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           comparison = (b.probability ?? 0) - (a.probability ?? 0);
           break;
         case "change":
+          // Sort by actual change value, not absolute value
+          // Descending shows biggest gainers first, ascending shows biggest losers first
           const aChange = a.probability_change_24h ?? 0;
           const bChange = b.probability_change_24h ?? 0;
-          comparison = Math.abs(bChange) - Math.abs(aChange);
+          comparison = bChange - aChange;
           break;
         case "name":
           comparison = a.name.localeCompare(b.name);
@@ -120,6 +122,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
     return sorted;
   }, [market?.outcomes, sortField, sortDirection]);
+
+  // The leader is always the outcome with highest probability (independent of sort)
+  const leader = useMemo(() => {
+    if (!market?.outcomes || market.outcomes.length === 0) return null;
+    return [...market.outcomes].sort(
+      (a, b) => (b.probability ?? 0) - (a.probability ?? 0)
+    )[0];
+  }, [market?.outcomes]);
 
   // Limit displayed outcomes unless "show all" is enabled
   const displayedOutcomes = showAllOutcomes
@@ -167,9 +177,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
   const sportEmoji = getSportEmoji(market.sport);
   const isResolved = market.status === "resolved";
-
-  // Find the leader for highlighting
-  const leader = sortedOutcomes[0];
 
   return (
     <div className="space-y-6">
