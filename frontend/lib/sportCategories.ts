@@ -295,9 +295,60 @@ export function getCategoryForLeague(leagueKey: string): SportCategory | undefin
 }
 
 /**
- * Keywords to match futures/outrights to sport categories.
- * These are used when the sport key doesn't match standard prefixes.
- * Note: "US Open" is ambiguous (golf vs tennis) and handled separately via athlete detection.
+ * Pattern-based sport detection.
+ * Uses regex patterns for more robust matching that doesn't require exact keyword lists.
+ * Order matters - more specific patterns should come first.
+ */
+const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
+  // Baseball - Match AL/NL awards, MVP, Cy Young, etc.
+  { pattern: /\b(mlb|world.series)\b/i, category: "baseball" },
+  { pattern: /\b(al|nl)\s+(mvp|cy.young|rookie|reliever|hank.aaron)\b/i, category: "baseball" },
+  { pattern: /\bamerican.league\b/i, category: "baseball" },
+  { pattern: /\bnational.league\b/i, category: "baseball" },
+
+  // Football - Match college football, NFL, Super Bowl, Heisman, etc.
+  { pattern: /\b(nfl|super.bowl)\b/i, category: "football" },
+  { pattern: /\bcollege.football\b/i, category: "football" },
+  { pattern: /\bncaaf\b/i, category: "football" },
+  { pattern: /\bheisman\b/i, category: "football" },
+  { pattern: /\b(afc|nfc)\s+(championship|winner|east|west|north|south)\b/i, category: "football" },
+  { pattern: /\bpro.football\b/i, category: "football" },
+  { pattern: /\b(acc|sec|big.ten|big.12|pac.12)\s+(championship|football)\b/i, category: "football" },
+
+  // Basketball
+  { pattern: /\b(nba|ncaab|wnba)\b/i, category: "basketball" },
+  { pattern: /\bmarch.madness\b/i, category: "basketball" },
+  { pattern: /\b(eastern|western).conference\b/i, category: "basketball" },
+
+  // Hockey
+  { pattern: /\b(nhl|stanley.cup)\b/i, category: "hockey" },
+
+  // Golf
+  { pattern: /\b(pga|masters.tournament|british.open|the.open|ryder.cup)\b/i, category: "golf" },
+
+  // Tennis
+  { pattern: /\b(wimbledon|french.open|australian.open|atp|wta)\b/i, category: "tennis" },
+
+  // Soccer - Match Ballon d'Or, PFA, Premier League, etc.
+  { pattern: /\b(ballon.d.or|pfa.player|epl|premier.league|champions.league|mls|la.liga|bundesliga|serie.a)\b/i, category: "soccer" },
+  { pattern: /\bworld.cup\b(?!.*college)/i, category: "soccer" }, // World Cup but not "College Football"
+
+  // MMA
+  { pattern: /\b(ufc|mma)\b/i, category: "mma" },
+
+  // Motorsport
+  { pattern: /\b(formula.1|f1|nascar|indycar|racing)\b/i, category: "motorsport" },
+
+  // Politics
+  { pattern: /\b(election|president|congress|senate|governor)\b/i, category: "politics" },
+
+  // Esports
+  { pattern: /\b(lol|league.of.legends|csgo|cs.go|dota|valorant|esports)\b/i, category: "esports" },
+];
+
+/**
+ * Legacy keyword map for backwards compatibility.
+ * Note: SPORT_PATTERNS above is now the primary matching mechanism.
  */
 const FUTURES_KEYWORD_MAP: Record<string, string> = {
   // Basketball
@@ -381,36 +432,43 @@ const KNOWN_TENNIS_PLAYERS = new Set([
 
 /**
  * Get category for a futures market based on sport key and market name.
- * Uses prefix matching first, then falls back to keyword matching.
- * For ambiguous markets (like "US Open"), checks outcome names for known athletes.
+ * Uses a multi-stage approach:
+ * 1. Standard prefix matching on sport key
+ * 2. Regex pattern matching on market name (handles "College Football", "AL MVP", etc.)
+ * 3. Legacy keyword matching as fallback
+ * 4. Athlete name detection for ambiguous cases (e.g., "US Open")
  */
 export function getCategoryForFutures(
   sportKey: string | null,
   marketName?: string | null,
   outcomeNames?: string[]
 ): SportCategory | undefined {
-  // First try standard prefix matching
+  // First try standard prefix matching on sport key
   if (sportKey) {
     const category = getCategoryForLeague(sportKey);
     if (category) return category;
   }
 
-  // Build a searchable string from sport key and market name
-  const searchText = [sportKey, marketName]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "_");
+  // Build searchable text from sport key and market name
+  const searchText = [sportKey, marketName].filter(Boolean).join(" ");
 
-  // Try keyword matching
+  // Try regex pattern matching (most reliable for complex names)
+  for (const { pattern, category: categoryKey } of SPORT_PATTERNS) {
+    if (pattern.test(searchText)) {
+      return SPORT_CATEGORIES.find((cat) => cat.key === categoryKey);
+    }
+  }
+
+  // Legacy keyword matching as fallback
+  const normalizedText = searchText.toLowerCase().replace(/[^a-z0-9]/g, "_");
   for (const [keyword, categoryKey] of Object.entries(FUTURES_KEYWORD_MAP)) {
-    if (searchText.includes(keyword)) {
+    if (normalizedText.includes(keyword)) {
       return SPORT_CATEGORIES.find((cat) => cat.key === categoryKey);
     }
   }
 
   // Handle ambiguous cases like "US Open" by checking outcome names
-  if (searchText.includes("us_open") || searchText.includes("open")) {
+  if (normalizedText.includes("us_open") || normalizedText.includes("open")) {
     if (outcomeNames && outcomeNames.length > 0) {
       const normalizedOutcomes = outcomeNames.map((n) => n.toLowerCase());
       const golfersList = Array.from(KNOWN_GOLFERS);

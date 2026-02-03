@@ -262,3 +262,86 @@ async def get_kalshi_task_status(
             response["error"] = str(result.result)
 
     return response
+
+
+@router.post("/futures/poll")
+async def trigger_futures_poll(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Manually trigger futures/outrights polling from The Odds API.
+
+    Queues the polling task to run in the background via Celery.
+    Returns immediately with task ID - use /futures/task/{id} to check status.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import poll_futures_odds
+
+    try:
+        task = poll_futures_odds.delay()
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": "Futures polling task queued. Check Celery worker logs for results.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/futures/task/{task_id}")
+async def get_futures_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Check the status of a futures polling task.
+
+    Returns the task state and result (if complete).
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
+
+
+@router.get("/futures/sports")
+async def get_sports_with_outrights(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Debug endpoint: Get list of sports that have outrights/futures available.
+
+    This calls The Odds API to see which sports have has_outrights=True.
+    Useful for debugging why certain futures aren't appearing.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.odds_api import OddsAPIService
+
+    try:
+        service = OddsAPIService()
+        outright_sports = await service.get_sports_with_outrights()
+        return {
+            "status": "success",
+            "count": len(outright_sports),
+            "sports": outright_sports,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch sports: {str(e)}")
