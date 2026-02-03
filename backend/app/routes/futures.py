@@ -251,7 +251,19 @@ async def get_futures_market(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
-    return _format_market_detail(market)
+    # Get distinct bookmakers that have contributed odds for this market
+    outcome_ids = [o.id for o in market.outcomes]
+    bookmakers = []
+    if outcome_ids:
+        bookmakers_result = await db.execute(
+            select(FuturesOddsSnapshot.bookmaker)
+            .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
+            .distinct()
+            .order_by(FuturesOddsSnapshot.bookmaker)
+        )
+        bookmakers = [row[0] for row in bookmakers_result.all()]
+
+    return _format_market_detail(market, bookmakers)
 
 
 @router.get("/{market_id}/history")
@@ -367,7 +379,7 @@ def _format_market_summary(market: FuturesMarket) -> dict:
     }
 
 
-def _format_market_detail(market: FuturesMarket) -> dict:
+def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -> dict:
     """Format a market for detail view with all outcomes."""
     sorted_outcomes = sorted(
         market.outcomes,
@@ -403,9 +415,11 @@ def _format_market_detail(market: FuturesMarket) -> dict:
         "source": market.source,
         "external_id": market.external_id,
         "mutually_exclusive": market.mutually_exclusive,
+        "commence_time": market.commence_time.isoformat() if hasattr(market, 'commence_time') and market.commence_time else None,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "outcomes": outcomes,
         "outcome_count": len(outcomes),
+        "bookmakers": bookmakers or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }
