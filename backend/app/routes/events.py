@@ -25,6 +25,7 @@ router = APIRouter()
 
 
 @router.post("/discover")
+@router.get("/discover")
 async def discover_all_events(
     categories: Optional[str] = Query(
         None,
@@ -39,7 +40,8 @@ async def discover_all_events(
     along with their odds snapshots. Use this to populate events for
     sports that were previously excluded.
 
-    Call POST /api/sports/sync first to ensure sports exist in DB.
+    Supports both GET and POST for compatibility.
+    Call /api/sports/sync first to ensure sports exist in DB.
     """
     service = OddsAPIService()
 

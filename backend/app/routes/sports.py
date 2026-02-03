@@ -91,12 +91,15 @@ async def get_sport(sport_key: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/sync")
+@router.get("/sync")
 async def sync_sports_from_api(db: AsyncSession = Depends(get_db)):
     """
     Sync all sports from The Odds API to the database.
 
     This fetches all available sports and upserts them.
     Call this to ensure rugby, cricket, AFL etc. are in the database.
+
+    Supports both GET and POST for compatibility.
     """
     try:
         service = OddsAPIService()
