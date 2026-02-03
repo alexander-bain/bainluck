@@ -27,13 +27,16 @@ import time
 from datetime import datetime, timezone
 
 import redis
+from contextlib import asynccontextmanager
+
 from celery import Celery
 from celery.schedules import crontab
 from sqlalchemy import select, func, case, or_, and_
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
-from app.services.database import async_session_maker
+from app.services.database import DATABASE_URL
 from app.services.odds_api import OddsAPIService
 from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.utils.odds_math import moneyline_to_probability, project_scores
@@ -370,13 +373,57 @@ async def detect_and_close_stale_events(session) -> int:
     return closed_count
 
 
+def _get_task_engine():
+    """Create a fresh async engine for Celery task execution.
+
+    This creates a new engine that's bound to the current event loop,
+    avoiding the 'attached to a different loop' errors when reusing
+    the module-level engine across Celery task invocations.
+    """
+    connect_args = {}
+    if "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL:
+        connect_args["ssl"] = "require"
+
+    return create_async_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
+
+
+@asynccontextmanager
+async def get_task_session():
+    """Create a fresh async session for Celery task execution.
+
+    This creates a new engine and session maker bound to the current
+    event loop, avoiding conflicts between Celery's forked processes
+    and asyncio event loops.
+    """
+    engine = _get_task_engine()
+    session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False
+    )
+    async with session_maker() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+    await engine.dispose()
+
+
 def run_async(coro):
-    """Helper to run async code in sync context."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    """Helper to run async code in sync context.
+
+    Uses asyncio.run() which properly manages the event loop lifecycle,
+    ensuring clean startup and shutdown of the loop and any pending tasks.
+    """
+    return asyncio.run(coro)
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -403,7 +450,7 @@ async def _sync_sports():
     try:
         sports_data = await service.get_sports()
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             synced = 0
             for sport in sports_data:
                 if not sport.get("active", False):
@@ -469,7 +516,7 @@ async def _discover_events():
         total_new_events = 0
         sports_polled = 0
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             # Get ALL active sports (not filtering by existing events)
             result = await session.execute(
                 select(Sport).where(Sport.active == True)
@@ -617,7 +664,7 @@ async def _poll_all_odds():
         except Exception:
             r = None
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             from datetime import timedelta
             now = datetime.now(timezone.utc)
 
@@ -1166,7 +1213,7 @@ async def _poll_sport_odds(sport_key: str):
     try:
         events_data = await service.get_odds(sport_key)
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             # Get or create sport
             result = await session.execute(
                 select(Sport).where(Sport.key == sport_key)
@@ -1326,7 +1373,7 @@ async def _compute_pulse_for_event(event_id: int):
     """Compute Pulse for a single completed event."""
     from app.utils.pulse import calculate_pulse, PulseDataPoint
 
-    async with async_session_maker() as session:
+    async with get_task_session() as session:
         # Get the event with its sport
         result = await session.execute(
             select(Event)
@@ -1416,7 +1463,7 @@ async def _compute_pulse_batch(limit: int):
     """Compute Pulse for a batch of completed events."""
     from app.utils.pulse import calculate_pulse, PulseDataPoint
 
-    async with async_session_maker() as session:
+    async with get_task_session() as session:
         # Find completed events without Pulse
         result = await session.execute(
             select(Event)
@@ -1502,7 +1549,7 @@ async def _compute_gei_percentiles():
     from collections import defaultdict
     from app.models import GEIPercentile
 
-    async with async_session_maker() as session:
+    async with get_task_session() as session:
         # Get all completed events with raw GEI
         result = await session.execute(
             select(Event.raw_gei, Sport.key)
@@ -1623,7 +1670,7 @@ async def _poll_futures_odds():
         outright_sports = await service.get_sports_with_outrights()
         sport_keys = [s["key"] for s in outright_sports]
 
-        async with async_session_maker() as session:
+        async with get_task_session() as session:
             # Get or create sport records for linking
             sport_result = await session.execute(
                 select(Sport.id, Sport.key)
