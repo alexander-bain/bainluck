@@ -319,6 +319,9 @@ class FuturesMarket(Base):
     # For multi-outcome markets, whether exactly one outcome can win
     mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # When the event/tournament begins (e.g., when the Masters starts)
+    commence_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # When the market resolves (e.g., when the champion is crowned)
     resolution_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default="open")  # open, suspended, resolved
 

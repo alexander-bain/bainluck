@@ -226,10 +226,12 @@ export interface FuturesMarket {
   source: string | null;
   external_id: string | null;
   mutually_exclusive: boolean;
+  commence_time: string | null;
   resolution_date: string | null;
   top_outcomes?: FuturesOutcome[];
   outcomes?: FuturesOutcome[];
   outcome_count: number;
+  bookmakers?: string[];
   created_at: string | null;
   updated_at: string | null;
 }

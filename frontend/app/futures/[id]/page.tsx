@@ -18,6 +18,32 @@ interface FuturesDetailPageProps {
 }
 
 /**
+ * Format bookmaker key to display name
+ */
+function formatBookmakerName(key: string): string {
+  const names: Record<string, string> = {
+    draftkings: "DraftKings",
+    fanduel: "FanDuel",
+    betmgm: "BetMGM",
+    caesars: "Caesars",
+    pointsbet: "PointsBet",
+    betrivers: "BetRivers",
+    unibet: "Unibet",
+    williamhill_us: "Caesars",
+    bovada: "Bovada",
+    betonlineag: "BetOnline",
+    mybookieag: "MyBookie",
+    pinnacle: "Pinnacle",
+    superbook: "SuperBook",
+    espnbet: "ESPN BET",
+    fliff: "Fliff",
+    hardrockbet: "Hard Rock",
+    betus: "BetUS",
+  };
+  return names[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
  * Get emoji for sport category
  */
 function getSportEmoji(sportKey: string | null): string {
@@ -209,7 +235,16 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           <span>
             {market.outcome_count} outcome{market.outcome_count !== 1 ? "s" : ""}
           </span>
-          {market.source && <span>Source: {market.source}</span>}
+          {market.commence_time && (
+            <span>
+              Starts:{" "}
+              {new Date(market.commence_time).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </span>
+          )}
           {market.resolution_date && (
             <span>
               Resolves:{" "}
@@ -235,6 +270,25 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             </span>
           )}
         </div>
+
+        {/* Sportsbooks */}
+        {market.bookmakers && market.bookmakers.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-mist">
+            <div className="text-sm text-slate mb-2">
+              Odds from {market.bookmakers.length} sportsbook{market.bookmakers.length !== 1 ? "s" : ""}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {market.bookmakers.map((bookmaker) => (
+                <span
+                  key={bookmaker}
+                  className="text-xs bg-slate/10 px-2 py-1 rounded-full text-slate capitalize"
+                >
+                  {formatBookmakerName(bookmaker)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Current Leader */}
         {leader && (
