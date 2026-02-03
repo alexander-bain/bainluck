@@ -289,24 +289,54 @@ async def search_events(
 @router.get("/debug/sport-keys")
 async def debug_sport_keys(db: AsyncSession = Depends(get_db)):
     """Debug endpoint to see all sport keys in the database."""
+    # Get sports with event counts
     result = await db.execute(
-        select(Sport.key, Sport.name, func.count(Event.id).label("event_count"))
-        .join(Event, Sport.id == Event.sport_id)
-        .where(Event.status.in_(["scheduled", "live"]))
-        .group_by(Sport.key, Sport.name)
+        select(
+            Sport.key,
+            Sport.name,
+            Sport.active,
+            func.count(Event.id).label("event_count")
+        )
+        .outerjoin(Event, and_(Sport.id == Event.sport_id, Event.status.in_(["scheduled", "live"])))
+        .group_by(Sport.key, Sport.name, Sport.active)
         .order_by(Sport.key)
     )
     sports = result.all()
+
+    # Summary by category
+    categories = {}
+    for s in sports:
+        # Determine category from key prefix
+        key = s[0]
+        if key.startswith("rugby"):
+            cat = "rugby"
+        elif key.startswith("cricket"):
+            cat = "cricket"
+        elif key.startswith("aussierules"):
+            cat = "aussierules"
+        elif key.startswith("soccer"):
+            cat = "soccer"
+        else:
+            cat = key.split("_")[0] if "_" in key else key
+
+        if cat not in categories:
+            categories[cat] = {"sports": 0, "events": 0}
+        categories[cat]["sports"] += 1
+        categories[cat]["events"] += s[3]
 
     return {
         "sports": [
             {
                 "key": s[0],
                 "name": s[1],
-                "event_count": s[2],
+                "active": s[2],
+                "event_count": s[3],
             }
             for s in sports
-        ]
+        ],
+        "categories": categories,
+        "total_sports": len(sports),
+        "total_events": sum(s[3] for s in sports),
     }
 
 
