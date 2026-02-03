@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Sport
 from app.services import get_db, OddsAPIService
@@ -87,3 +88,80 @@ async def get_sport(sport_key: str, db: AsyncSession = Depends(get_db)):
         "group": sport.group,
         "active": sport.active,
     }
+
+
+@router.post("/sync")
+async def sync_sports_from_api(db: AsyncSession = Depends(get_db)):
+    """
+    Sync all sports from The Odds API to the database.
+
+    This fetches all available sports and upserts them.
+    Call this to ensure rugby, cricket, AFL etc. are in the database.
+    """
+    try:
+        service = OddsAPIService()
+        sports_data = await service.get_sports()
+        await service.close()
+
+        synced = 0
+        skipped = 0
+
+        for sport in sports_data:
+            if not sport.get("active", False):
+                skipped += 1
+                continue
+
+            # Upsert sport
+            stmt = insert(Sport).values(
+                key=sport["key"],
+                name=sport["title"],
+                group=sport.get("group"),
+                active=True,
+            ).on_conflict_do_update(
+                index_elements=["key"],
+                set_={
+                    "name": sport["title"],
+                    "group": sport.get("group"),
+                    "active": True,
+                }
+            )
+            await db.execute(stmt)
+            synced += 1
+
+        await db.commit()
+
+        # Return summary with rugby/cricket/AFL status
+        result = await db.execute(
+            select(Sport.key, Sport.name)
+            .where(Sport.active == True)
+            .order_by(Sport.key)
+        )
+        all_sports = result.all()
+
+        # Check for specific categories
+        rugby_sports = [s for s in all_sports if s[0].startswith("rugby")]
+        cricket_sports = [s for s in all_sports if s[0].startswith("cricket")]
+        afl_sports = [s for s in all_sports if s[0].startswith("aussierules")]
+
+        return {
+            "synced": synced,
+            "skipped_inactive": skipped,
+            "total_in_db": len(all_sports),
+            "rugby": {
+                "count": len(rugby_sports),
+                "sports": [{"key": s[0], "name": s[1]} for s in rugby_sports],
+            },
+            "cricket": {
+                "count": len(cricket_sports),
+                "sports": [{"key": s[0], "name": s[1]} for s in cricket_sports],
+            },
+            "afl": {
+                "count": len(afl_sports),
+                "sports": [{"key": s[0], "name": s[1]} for s in afl_sports],
+            },
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to sync sports from API: {str(e)}"
+        )
