@@ -1948,7 +1948,7 @@ async def _poll_kalshi_markets():
         sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis"]
         events = await service.get_all_events(categories=sports_categories)
 
-        async with AsyncSessionLocal() as session:
+        async with get_task_session() as session:
             now = datetime.now(timezone.utc)
 
             for event in events:
