@@ -25,6 +25,8 @@
 **Key External Services:**
 - **The Odds API** (the-odds-api.com) - Sports odds data
 - **Kalshi** (kalshi.com) - Prediction market data (futures with timing info)
+- **ESPN** (undocumented API) - Team colors, logos, live game data, win probability
+- **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification
 - **Google Analytics 4** - User analytics
 - **Firebase Auth** - Planned for user accounts
 
@@ -90,6 +92,7 @@ odds-tracker/
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
+| `backend/app/services/espn_api.py` | ESPN API client for team/event enrichment |
 | `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM categorization |
 | `frontend/components/EventCard.tsx` | Event display component (includes pin button) |
 | `frontend/components/FuturesCard.tsx` | Futures market display component (includes pin button) |

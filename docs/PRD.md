@@ -780,8 +780,8 @@ Target: Q2 2026
 - Auth unlocks: Favorites sync, notifications, cross-device, pinned items sync
 - Auth is **pull-based, not forced**
 
-### Phase 7: LLM Integration 🔄 In Progress
-**OpenAI-powered smart features.**
+### Phase 7: LLM Integration & Metadata Enrichment ✅ Complete
+**OpenAI-powered smart features and ESPN data integration.**
 
 Infrastructure complete: February 2026
 
@@ -790,10 +790,40 @@ Infrastructure complete: February 2026
 - [x] Hybrid futures categorization (rules + LLM fallback)
 - [x] LLM results cached in database (`llm_sport_category` column)
 - [x] Admin endpoints for triggering categorization
-- [ ] Detect significant probability swings (>10% change)
-- [ ] Generate brief explanations for odds movements
-- [ ] Cache explanations to avoid redundant API calls
-- [ ] Show explanations on event detail page and in highlights
+- [x] **LLM Metadata Enrichment**: Gender, level, league, importance classification
+- [x] **ESPN API Integration**: Team colors, logos, live game data, win probability
+- [x] **Entity Resolution**: LLM-powered team name matching across data sources
+- [x] **Venue Data**: Arena/stadium information from ESPN
+
+**LLM Metadata Classifications:**
+| Field | Values | Example |
+|-------|--------|---------|
+| `llm_gender` | men, women, mixed, unknown | WNBA → "women" |
+| `llm_level` | professional, college, amateur, youth | NCAA → "college" |
+| `llm_league` | NFL, NCAAF, NBA, WNBA, etc. | More granular than sport |
+| `llm_importance` | championship, playoff, regular_season, exhibition | Super Bowl → "championship" |
+
+**ESPN Integration:**
+- Team enrichment: colors, logos, abbreviations, alternate names
+- Event enrichment: game clock, period, broadcast info, venue
+- Win probability: ESPN's statistical model (separate from betting odds)
+- Entity resolution: LLM-assisted matching between our teams and ESPN teams
+
+**Admin Endpoints:**
+```bash
+# LLM metadata enrichment
+POST /api/admin/events/enrich-metadata?secret=xxx&limit=50
+GET  /api/admin/events/metadata-status
+POST /api/admin/futures/enrich-metadata?secret=xxx&limit=50
+GET  /api/admin/futures/metadata-status
+
+# ESPN integration
+POST /api/admin/espn/sync-teams?secret=xxx&sport_key=basketball_nba
+GET  /api/admin/espn/teams-status
+POST /api/admin/espn/sync-live-events?secret=xxx&sport_key=basketball_nba
+GET  /api/admin/espn/events-status
+POST /api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba
+```
 
 **LLM Service Capabilities:**
 ```python
@@ -804,18 +834,21 @@ result = llm.classify("Some text", ["option1", "option2", "option3"])
 
 # Futures categorization (with caching)
 category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
-```
 
-**Future LLM Use Cases:**
-- Plain English explanations for odds movements
-- Team name normalization across sources
-- Smart search query understanding
-- Market description generation
+# Metadata enrichment
+metadata = llm.enrich_event_metadata("Lakers", "Celtics", "basketball_nba")
+# Returns: {"gender": "men", "level": "professional", "league": "NBA", "importance": "regular_season"}
+
+# Team name matching (for entity resolution)
+confidence = llm.match_team_names_cached("LA Lakers", "Los Angeles Lakers", "basketball")
+# Returns: 0.95 (high confidence they're the same team)
+```
 
 **Principles:**
 - Brief, factual, non-predictive
 - Only surface for meaningful events
 - No gambling advice or encouragement
+- Hybrid approach: rules first, LLM fallback for edge cases
 
 ### Phase 8: iOS App
 **Native second-screen experience.**
@@ -883,6 +916,159 @@ Target: 2027
 - [ ] International sportsbooks for broader odds coverage
 - [ ] Alternative odds sources for redundancy
 - [ ] Real-time sports data (play-by-play) for richer context
+
+### Phase 11: Advanced LLM Features
+**Intelligent explanations, search, and context generation.**
+
+Target: 2027
+
+#### 11.1: Odds Movement Explanations
+Generate brief, factual explanations for significant probability swings.
+
+**Implementation:**
+```python
+def explain_odds_movement(event: Event, recent_snapshots: list) -> str:
+    """
+    Generate explanation for why odds moved.
+
+    Example output:
+    "Warriors win probability jumped from 55% to 72% in the last 10 minutes.
+    This 17-point swing typically indicates a significant scoring run or
+    key momentum shift."
+    """
+```
+
+**Features:**
+- Detect significant swings (>10% change in probability)
+- Generate human-readable explanations
+- Cache explanations to avoid redundant API calls
+- Show on event detail page and in highlights
+- Optional: correlate with score changes when available
+
+**UI Integration:**
+- Tooltip on probability swing indicators
+- "What happened?" section on event detail page
+- Highlight explanations in the Pulse card
+
+#### 11.2: Smart Search Query Understanding
+Parse natural language queries into structured filters using LLM.
+
+**Examples:**
+| User Query | Parsed As |
+|------------|-----------|
+| "celtics games last month" | team=celtics, days_back=30 |
+| "close nba games today" | sport=nba, closeness>0.9, date=today |
+| "biggest upsets this week" | upset=true, days_back=7, sort=upset_margin |
+| "warriors vs lakers upcoming" | team1=warriors, team2=lakers, status=scheduled |
+
+**Implementation:**
+- Use Claude API (GPT-4o-mini) to parse ambiguous queries
+- Show "interpreted as" explanation for transparency
+- Cache common query interpretations
+- Fallback to basic search if LLM parsing fails
+- Rate limit LLM calls (maybe only for logged-in users)
+
+#### 11.3: Excitement Summaries
+Generate narrative summaries for high-Pulse games.
+
+**Example Output:**
+> "This game saw 4 lead changes in the final 10 minutes, with win probabilities
+> swinging between 35% and 65%. The home team mounted a late comeback from a
+> 12-point deficit, making this one of the most exciting regular season games
+> of the week."
+
+**Features:**
+- Feed LLM the odds snapshots and score snapshots
+- Generate human-readable narrative
+- Include with disclaimer ("AI-generated summary")
+- Show on completed game detail pages
+- Feature in "Exciting Games This Week" section
+
+#### 11.4: Multi-Source Probability Integration
+Aggregate win probabilities from multiple statistical models.
+
+**Potential Sources:**
+| Source | Type | Data |
+|--------|------|------|
+| ESPN | API | In-game win probability model |
+| FiveThirtyEight | Historical data | Pre-game Elo predictions |
+| TeamRankings | API (paid) | Statistical models |
+| kenpom.com | Scrape | College basketball advanced stats |
+| Sports Reference | Pages | Historical win probability |
+
+**Display:**
+```
+Win Probability Sources:
+├── Betting Markets:  65% (consensus of 8 sportsbooks)
+├── ESPN Model:       62% (statistical model)
+├── FiveThirtyEight:  68% (Elo-based prediction)
+└── Average:          65%
+```
+
+**Benefits:**
+- Show divergence between "market" and "model" probabilities
+- More robust probability estimates
+- Interesting comparison ("The market says X, but ESPN's model says Y")
+
+**Legal Considerations:**
+- Undocumented APIs are legal to use (not hacking)
+- ToS violations are civil matters, not criminal
+- Worst case: they block IP, we stop using that source
+- Always have fallbacks; never break if one source is unavailable
+
+#### 11.5: Historical Events Database
+Build comprehensive database of past games with their probability histories.
+
+**Scope:**
+- All events tracked since OddsTracker launch (January 2026)
+- Historical data from other sources where available
+- Indexed for fast search and analysis
+
+**Data Model:**
+```sql
+-- Enhanced historical storage
+CREATE TABLE historical_events (
+    id SERIAL PRIMARY KEY,
+    external_id VARCHAR(100),
+    sport_key VARCHAR(50),
+    season VARCHAR(20),
+
+    home_team VARCHAR(200),
+    away_team VARCHAR(200),
+    home_score INTEGER,
+    away_score INTEGER,
+
+    -- Probability history (compressed)
+    probability_history JSONB,  -- [{time, home_prob, away_prob}, ...]
+
+    -- Computed metrics
+    pulse_score INTEGER,
+    was_upset BOOLEAN,
+    largest_swing DECIMAL(5,4),
+    lead_changes INTEGER,
+
+    -- Search indexes
+    teams_search TSVECTOR,
+
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_historical_events_sport_season ON historical_events(sport_key, season);
+CREATE INDEX idx_historical_events_pulse ON historical_events(pulse_score DESC);
+CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_search);
+```
+
+**Use Cases:**
+- "Most exciting Lakers games ever"
+- "Biggest upsets in NBA history"
+- "Games similar to this one" (by probability pattern)
+- Historical Pulse leaderboards by sport/season
+- Training data for future ML models
+
+**Data Sources:**
+- Our own tracked events (primary, authoritative)
+- ESPN historical games (supplementary)
+- Sports Reference (research/validation)
 
 ---
 

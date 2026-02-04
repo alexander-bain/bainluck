@@ -1445,6 +1445,39 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
         "away_score": event.away_score,
     }
 
+    # Add LLM metadata if available
+    try:
+        if event.llm_gender or event.llm_level or event.llm_league or event.llm_importance:
+            response["metadata"] = {
+                "gender": event.llm_gender,
+                "level": event.llm_level,
+                "league": event.llm_league,
+                "importance": event.llm_importance,
+            }
+    except AttributeError:
+        pass  # Columns may not exist yet
+
+    # Add ESPN enrichment if available
+    try:
+        espn_data = {}
+        if event.espn_id:
+            espn_data["espn_id"] = event.espn_id
+        if event.game_clock:
+            espn_data["game_clock"] = event.game_clock
+        if event.period:
+            espn_data["period"] = event.period
+        if event.broadcast_info:
+            espn_data["broadcast"] = event.broadcast_info
+        if event.espn_win_prob_home is not None:
+            espn_data["espn_win_probability"] = float(event.espn_win_prob_home)
+        if event.win_probability_sources:
+            espn_data["probability_sources"] = event.win_probability_sources
+
+        if espn_data:
+            response["espn"] = espn_data
+    except AttributeError:
+        pass  # Columns may not exist yet
+
     # Add Pulse data if available (for live and completed events)
     # Wrap in try/except in case columns don't exist yet (migration not applied)
     try:

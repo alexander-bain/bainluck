@@ -475,3 +475,766 @@ async def futures_categorization_status(
             (row.with_sport_id + row.with_llm_category) / row.total * 100, 1
         ) if row.total > 0 else 100,
     }
+
+
+# ============================================================================
+# LLM Metadata Enrichment Endpoints
+# ============================================================================
+
+
+@router.post("/events/enrich-metadata")
+async def enrich_events_metadata(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(50, description="Max events to process per batch"),
+    dry_run: bool = Query(False, description="Preview enrichment without saving"),
+    force: bool = Query(False, description="Re-enrich events that already have metadata (for team normalization)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Enrich events with LLM-generated metadata (gender, level, league, importance).
+
+    Finds events without metadata and uses LLM + heuristics to classify them.
+    Results are cached in the database to avoid repeat API calls.
+
+    Set force=true to re-enrich events that have metadata but need team name normalization.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services import llm
+    from sqlalchemy.orm import selectinload
+
+    # Find events to enrich
+    if force:
+        # Re-enrich events without normalized team names
+        result = await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.home_team_normalized.is_(None),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )
+    else:
+        # Find events without metadata (prioritize recent events)
+        result = await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.llm_gender.is_(None),
+                Event.llm_level.is_(None),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )
+    events = result.scalars().all()
+
+    if not events:
+        return {
+            "status": "complete",
+            "message": "No events need metadata enrichment",
+            "processed": 0,
+        }
+
+    enriched = []
+    errors = []
+
+    for event in events:
+        try:
+            sport_key = event.sport.key if event.sport else None
+            text = f"{event.away_team_name} at {event.home_team_name}"
+
+            metadata = {
+                "gender": llm.classify_gender_cached(text, sport_key),
+                "level": llm.classify_level_cached(text, sport_key),
+                "league": llm.classify_league_cached(text, sport_key),
+                "importance": llm.classify_importance_cached(text, sport_key),
+            }
+
+            # Normalize team names for better matching
+            home_norm, home_vars = llm.normalize_team_name_cached(event.home_team_name, sport_key)
+            away_norm, away_vars = llm.normalize_team_name_cached(event.away_team_name, sport_key)
+
+            enriched.append({
+                "id": event.id,
+                "teams": f"{event.away_team_name} @ {event.home_team_name}",
+                "sport_key": sport_key,
+                "home_normalized": home_norm,
+                "away_normalized": away_norm,
+                **metadata,
+            })
+
+            if not dry_run:
+                event.llm_gender = metadata["gender"]
+                event.llm_level = metadata["level"]
+                event.llm_league = metadata["league"]
+                event.llm_importance = metadata["importance"]
+                event.home_team_normalized = home_norm
+                event.away_team_normalized = away_norm
+                event.home_team_alt_names = list(home_vars)
+                event.away_team_alt_names = list(away_vars)
+
+        except Exception as e:
+            if len(errors) < 5:
+                errors.append(f"Event {event.id}: {str(e)}")
+
+    if not dry_run:
+        await db.commit()
+
+    # Count remaining
+    remaining_result = await db.execute(
+        select(Event.id).where(
+            Event.llm_gender.is_(None),
+            Event.llm_level.is_(None),
+        )
+    )
+    remaining = len(remaining_result.all())
+
+    return {
+        "status": "success",
+        "dry_run": dry_run,
+        "processed": len(events),
+        "enriched": len(enriched),
+        "errors": len(errors),
+        "remaining": remaining,
+        "llm_available": llm.is_available(),
+        "results": enriched[:10],  # Preview first 10
+        "error_details": errors if errors else None,
+        "message": f"Enriched {len(enriched)}/{len(events)} events." +
+                   (f" {remaining} remaining." if remaining > 0 else " All done!"),
+    }
+
+
+@router.get("/events/metadata-status")
+async def events_metadata_status(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the current status of event metadata enrichment.
+
+    Returns counts of enriched vs un-enriched events.
+    """
+    from sqlalchemy import func
+    from app.services import llm
+
+    result = await db.execute(
+        select(
+            func.count().label("total"),
+            func.count().filter(Event.llm_gender.isnot(None)).label("with_gender"),
+            func.count().filter(Event.llm_level.isnot(None)).label("with_level"),
+            func.count().filter(Event.llm_league.isnot(None)).label("with_league"),
+            func.count().filter(Event.llm_importance.isnot(None)).label("with_importance"),
+            func.count().filter(
+                Event.llm_gender.is_(None),
+                Event.llm_level.is_(None),
+            ).label("un_enriched"),
+        )
+    )
+    row = result.one()
+
+    return {
+        "total": row.total,
+        "with_gender": row.with_gender,
+        "with_level": row.with_level,
+        "with_league": row.with_league,
+        "with_importance": row.with_importance,
+        "un_enriched": row.un_enriched,
+        "llm_available": llm.is_available(),
+        "completion_pct": round(
+            (row.total - row.un_enriched) / row.total * 100, 1
+        ) if row.total > 0 else 100,
+    }
+
+
+@router.post("/futures/enrich-metadata")
+async def enrich_futures_metadata(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(50, description="Max markets to process per batch"),
+    dry_run: bool = Query(False, description="Preview enrichment without saving"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Enrich futures markets with LLM-generated metadata (gender, level, league).
+
+    Works alongside the existing categorize endpoint but adds more detailed metadata.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import FuturesMarket
+    from app.services import llm
+
+    # Find markets without metadata
+    result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.llm_gender.is_(None),
+            FuturesMarket.llm_level.is_(None),
+        )
+        .limit(limit)
+    )
+    markets = result.scalars().all()
+
+    if not markets:
+        return {
+            "status": "complete",
+            "message": "No markets need metadata enrichment",
+            "processed": 0,
+        }
+
+    enriched = []
+    errors = []
+
+    for market in markets:
+        try:
+            metadata = llm.enrich_market_metadata(market.name)
+
+            enriched.append({
+                "id": market.id,
+                "name": market.name,
+                **metadata,
+            })
+
+            if not dry_run:
+                market.llm_gender = metadata["gender"]
+                market.llm_level = metadata["level"]
+                market.llm_league = metadata["league"]
+
+        except Exception as e:
+            if len(errors) < 5:
+                errors.append(f"Market {market.id}: {str(e)}")
+
+    if not dry_run:
+        await db.commit()
+
+    # Count remaining
+    remaining_result = await db.execute(
+        select(FuturesMarket.id).where(
+            FuturesMarket.llm_gender.is_(None),
+            FuturesMarket.llm_level.is_(None),
+        )
+    )
+    remaining = len(remaining_result.all())
+
+    return {
+        "status": "success",
+        "dry_run": dry_run,
+        "processed": len(markets),
+        "enriched": len(enriched),
+        "errors": len(errors),
+        "remaining": remaining,
+        "llm_available": llm.is_available(),
+        "results": enriched[:10],
+        "error_details": errors if errors else None,
+        "message": f"Enriched {len(enriched)}/{len(markets)} markets." +
+                   (f" {remaining} remaining." if remaining > 0 else " All done!"),
+    }
+
+
+@router.get("/futures/metadata-status")
+async def futures_metadata_status(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the current status of futures metadata enrichment.
+
+    Returns counts of enriched vs un-enriched markets.
+    """
+    from sqlalchemy import func
+    from app.models import FuturesMarket
+    from app.services import llm
+
+    result = await db.execute(
+        select(
+            func.count().label("total"),
+            func.count().filter(FuturesMarket.llm_gender.isnot(None)).label("with_gender"),
+            func.count().filter(FuturesMarket.llm_level.isnot(None)).label("with_level"),
+            func.count().filter(FuturesMarket.llm_league.isnot(None)).label("with_league"),
+            func.count().filter(
+                FuturesMarket.llm_gender.is_(None),
+                FuturesMarket.llm_level.is_(None),
+            ).label("un_enriched"),
+        )
+    )
+    row = result.one()
+
+    return {
+        "total": row.total,
+        "with_gender": row.with_gender,
+        "with_level": row.with_level,
+        "with_league": row.with_league,
+        "un_enriched": row.un_enriched,
+        "llm_available": llm.is_available(),
+        "completion_pct": round(
+            (row.total - row.un_enriched) / row.total * 100, 1
+        ) if row.total > 0 else 100,
+    }
+
+
+# ============================================================================
+# ESPN Integration Endpoints
+# ============================================================================
+
+
+@router.post("/espn/sync-teams")
+async def sync_espn_teams(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(..., description="Sport key to sync (e.g., basketball_nba)"),
+    dry_run: bool = Query(False, description="Preview sync without saving"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Sync team data from ESPN (colors, logos, abbreviations).
+
+    Fetches teams from ESPN API and updates matching teams in our database.
+    Uses LLM for fuzzy name matching when direct match fails.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services import get_espn_service, llm
+    from app.models import Team, Sport
+
+    espn = get_espn_service()
+
+    # Get our teams for this sport
+    sport_result = await db.execute(
+        select(Sport).where(Sport.key == sport_key)
+    )
+    sport = sport_result.scalar_one_or_none()
+    if not sport:
+        raise HTTPException(status_code=404, detail=f"Sport not found: {sport_key}")
+
+    teams_result = await db.execute(
+        select(Team).where(Team.sport_id == sport.id)
+    )
+    our_teams = teams_result.scalars().all()
+
+    if not our_teams:
+        return {"status": "no_teams", "message": f"No teams found for {sport_key}"}
+
+    # Fetch ESPN teams
+    espn_teams = await espn.get_teams(sport_key)
+    if not espn_teams:
+        return {"status": "espn_error", "message": "Could not fetch teams from ESPN"}
+
+    # Build lookup by name variations
+    espn_lookup = {}
+    for et in espn_teams:
+        for name in [et.name, et.display_name, et.short_name, et.nickname, et.abbreviation]:
+            if name:
+                espn_lookup[name.lower()] = et
+
+    matched = []
+    unmatched = []
+    updated = []
+
+    for team in our_teams:
+        espn_team = None
+        match_type = None
+
+        # Try exact match first
+        name_lower = team.name.lower()
+        if name_lower in espn_lookup:
+            espn_team = espn_lookup[name_lower]
+            match_type = "exact"
+        else:
+            # Try partial matching
+            for key, et in espn_lookup.items():
+                if key in name_lower or name_lower in key:
+                    espn_team = et
+                    match_type = "partial"
+                    break
+
+        # If still no match, try LLM
+        if not espn_team and llm.is_available():
+            best_score = 0
+            for et in espn_teams:
+                score = llm.match_team_names_cached(team.name, et.display_name or et.name, sport_key)
+                if score > best_score and score >= 0.8:
+                    best_score = score
+                    espn_team = et
+                    match_type = f"llm_{score:.2f}"
+
+        if espn_team:
+            matched.append({
+                "our_team": team.name,
+                "espn_team": espn_team.display_name or espn_team.name,
+                "espn_id": espn_team.espn_id,
+                "match_type": match_type,
+                "primary_color": espn_team.primary_color,
+                "secondary_color": espn_team.secondary_color,
+                "logo": espn_team.logo_url,
+            })
+
+            if not dry_run:
+                # Update team with ESPN data
+                changed = False
+                if espn_team.espn_id and team.espn_id != espn_team.espn_id:
+                    team.espn_id = espn_team.espn_id
+                    changed = True
+                if espn_team.primary_color and team.primary_color != espn_team.primary_color:
+                    team.primary_color = espn_team.primary_color
+                    changed = True
+                if espn_team.secondary_color and team.secondary_color != espn_team.secondary_color:
+                    team.secondary_color = espn_team.secondary_color
+                    changed = True
+                if espn_team.logo_url and team.logo_url_small != espn_team.logo_url:
+                    team.logo_url_small = espn_team.logo_url
+                    team.logo_url_large = espn_team.logo_url
+                    changed = True
+                if espn_team.abbreviation and team.abbreviation != espn_team.abbreviation:
+                    team.abbreviation = espn_team.abbreviation
+                    changed = True
+                if espn_team.record and team.current_record != espn_team.record:
+                    team.current_record = espn_team.record
+                    changed = True
+
+                # Build alternate names
+                alt_names = [espn_team.name, espn_team.display_name, espn_team.short_name, espn_team.nickname]
+                alt_names = [n for n in alt_names if n and n != team.name]
+                if alt_names:
+                    team.alternate_names = alt_names
+                    changed = True
+
+                if changed:
+                    updated.append(team.name)
+        else:
+            unmatched.append(team.name)
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "status": "success",
+        "dry_run": dry_run,
+        "sport_key": sport_key,
+        "our_teams": len(our_teams),
+        "espn_teams": len(espn_teams),
+        "matched": len(matched),
+        "unmatched": len(unmatched),
+        "updated": len(updated) if not dry_run else 0,
+        "matches": matched[:20],  # Preview first 20
+        "unmatched_teams": unmatched[:10] if unmatched else None,
+    }
+
+
+@router.get("/espn/teams-status")
+async def espn_teams_status(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status of ESPN team enrichment.
+
+    Shows how many teams have ESPN data (colors, logos).
+    """
+    from sqlalchemy import func
+    from app.models import Team
+
+    result = await db.execute(
+        select(
+            func.count().label("total"),
+            func.count().filter(Team.espn_id.isnot(None)).label("with_espn_id"),
+            func.count().filter(Team.primary_color.isnot(None)).label("with_color"),
+            func.count().filter(Team.logo_url_small.isnot(None)).label("with_logo"),
+            func.count().filter(Team.alternate_names.isnot(None)).label("with_alt_names"),
+        )
+    )
+    row = result.one()
+
+    return {
+        "total": row.total,
+        "with_espn_id": row.with_espn_id,
+        "with_color": row.with_color,
+        "with_logo": row.with_logo,
+        "with_alt_names": row.with_alt_names,
+        "enrichment_pct": round(row.with_espn_id / row.total * 100, 1) if row.total > 0 else 0,
+    }
+
+
+@router.post("/espn/sync-live-events")
+async def sync_espn_live_events(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(..., description="Sport key to sync"),
+    dry_run: bool = Query(False, description="Preview sync without saving"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Sync live event data from ESPN (scores, clock, period, venue, broadcast).
+
+    Matches ESPN events to our events and updates game state.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services import get_espn_service, llm
+    from app.models import Venue
+    from sqlalchemy.orm import selectinload
+
+    espn = get_espn_service()
+
+    # Get ESPN scoreboard
+    espn_events = await espn.get_scoreboard(sport_key)
+    if not espn_events:
+        return {"status": "no_events", "message": "No events from ESPN scoreboard"}
+
+    # Get our live/upcoming events for this sport
+    events_result = await db.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            Event.sport.has(key=sport_key),
+            Event.status.in_(["scheduled", "live"]),
+        )
+    )
+    our_events = events_result.scalars().all()
+
+    matched = []
+    updated = []
+    llm_matched = []
+
+    def names_match(our_names: list, espn_name: str) -> bool:
+        """Check if any of our name variations match the ESPN name."""
+        espn_lower = (espn_name or "").lower()
+        for name in our_names:
+            name_lower = name.lower()
+            if name_lower in espn_lower or espn_lower in name_lower:
+                return True
+        return False
+
+    for event in our_events:
+        # Build list of name variations for matching
+        home_names = [event.home_team_name]
+        away_names = [event.away_team_name]
+
+        # Add normalized name if available
+        if event.home_team_normalized:
+            home_names.append(event.home_team_normalized)
+        if event.away_team_normalized:
+            away_names.append(event.away_team_normalized)
+
+        # Add alternate names if available
+        if event.home_team_alt_names:
+            home_names.extend(event.home_team_alt_names)
+        if event.away_team_alt_names:
+            away_names.extend(event.away_team_alt_names)
+
+        # Try to match by team names
+        espn_event = None
+        match_method = None
+
+        for ee in espn_events:
+            if not ee.home_team or not ee.away_team:
+                continue
+
+            espn_home = ee.home_team.display_name or ee.home_team.name or ""
+            espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+            # Check if team names match using all variations
+            home_match = names_match(home_names, espn_home)
+            away_match = names_match(away_names, espn_away)
+
+            if home_match and away_match:
+                espn_event = ee
+                match_method = "name_match"
+                break
+
+        # LLM fallback for unmatched events
+        if not espn_event and llm.is_available():
+            for ee in espn_events:
+                if not ee.home_team or not ee.away_team:
+                    continue
+
+                espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+                # Use LLM to compare team names
+                home_conf = llm.match_team_names_cached(event.home_team_name, espn_home, sport_key)
+                away_conf = llm.match_team_names_cached(event.away_team_name, espn_away, sport_key)
+
+                if home_conf >= 0.8 and away_conf >= 0.8:
+                    espn_event = ee
+                    match_method = "llm"
+                    llm_matched.append({
+                        "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                        "espn_event": f"{espn_away} @ {espn_home}",
+                        "home_confidence": home_conf,
+                        "away_confidence": away_conf,
+                    })
+                    break
+
+        if espn_event:
+            matched.append({
+                "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                "espn_event": espn_event.short_name,
+                "espn_id": espn_event.espn_id,
+                "status": espn_event.status,
+                "clock": espn_event.clock,
+                "period": espn_event.status_detail,
+                "home_score": espn_event.home_score,
+                "away_score": espn_event.away_score,
+                "broadcasts": espn_event.broadcasts,
+                "win_prob": espn_event.home_win_probability,
+            })
+
+            if not dry_run:
+                changed = False
+
+                # Update ESPN ID
+                if espn_event.espn_id and event.espn_id != espn_event.espn_id:
+                    event.espn_id = espn_event.espn_id
+                    changed = True
+
+                # Update game clock
+                if espn_event.clock and event.game_clock != espn_event.clock:
+                    event.game_clock = espn_event.clock
+                    changed = True
+
+                # Update period
+                if espn_event.status_detail and event.period != espn_event.status_detail:
+                    event.period = espn_event.status_detail
+                    changed = True
+
+                # Update broadcast info
+                if espn_event.broadcasts:
+                    broadcast_str = ", ".join(espn_event.broadcasts[:3])
+                    if event.broadcast_info != broadcast_str:
+                        event.broadcast_info = broadcast_str
+                        changed = True
+
+                # Update ESPN win probability
+                if espn_event.home_win_probability is not None:
+                    event.espn_win_prob_home = espn_event.home_win_probability
+                    # Also update win_probability_sources
+                    sources = event.win_probability_sources or {}
+                    sources["espn"] = espn_event.home_win_probability
+                    event.win_probability_sources = sources
+                    changed = True
+
+                # Handle venue
+                if espn_event.venue and not event.venue_id:
+                    # Check if venue exists
+                    venue_result = await db.execute(
+                        select(Venue).where(Venue.espn_id == espn_event.venue.espn_id)
+                    )
+                    venue = venue_result.scalar_one_or_none()
+
+                    if not venue:
+                        # Create new venue
+                        venue = Venue(
+                            name=espn_event.venue.name,
+                            city=espn_event.venue.city,
+                            state=espn_event.venue.state,
+                            country=espn_event.venue.country,
+                            capacity=espn_event.venue.capacity,
+                            espn_id=espn_event.venue.espn_id,
+                        )
+                        db.add(venue)
+                        await db.flush()
+
+                    event.venue_id = venue.id
+                    changed = True
+
+                if changed:
+                    updated.append(event.id)
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "status": "success",
+        "dry_run": dry_run,
+        "sport_key": sport_key,
+        "espn_events": len(espn_events),
+        "our_events": len(our_events),
+        "matched": len(matched),
+        "llm_matched_count": len(llm_matched),
+        "updated": len(updated) if not dry_run else 0,
+        "matches": matched[:15],
+        "llm_matches": llm_matched[:10] if llm_matched else [],
+    }
+
+
+@router.get("/espn/events-status")
+async def espn_events_status(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the status of ESPN event enrichment.
+
+    Shows how many events have ESPN data (clock, period, venue, win prob).
+    """
+    from sqlalchemy import func
+
+    result = await db.execute(
+        select(
+            func.count().label("total"),
+            func.count().filter(Event.espn_id.isnot(None)).label("with_espn_id"),
+            func.count().filter(Event.game_clock.isnot(None)).label("with_clock"),
+            func.count().filter(Event.period.isnot(None)).label("with_period"),
+            func.count().filter(Event.venue_id.isnot(None)).label("with_venue"),
+            func.count().filter(Event.broadcast_info.isnot(None)).label("with_broadcast"),
+            func.count().filter(Event.espn_win_prob_home.isnot(None)).label("with_win_prob"),
+        )
+    )
+    row = result.one()
+
+    return {
+        "total": row.total,
+        "with_espn_id": row.with_espn_id,
+        "with_clock": row.with_clock,
+        "with_period": row.with_period,
+        "with_venue": row.with_venue,
+        "with_broadcast": row.with_broadcast,
+        "with_win_prob": row.with_win_prob,
+    }
+
+
+@router.post("/espn/match-teams")
+async def match_espn_teams(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    our_team_name: str = Query(..., description="Our team name"),
+    sport_key: str = Query(..., description="Sport key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Debug endpoint: Try to match a team name using ESPN + LLM.
+
+    Useful for testing entity resolution before bulk sync.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services import get_espn_service, llm
+
+    espn = get_espn_service()
+    espn_teams = await espn.get_teams(sport_key)
+
+    if not espn_teams:
+        return {"status": "error", "message": "Could not fetch ESPN teams"}
+
+    results = []
+    for et in espn_teams:
+        espn_name = et.display_name or et.name
+        score = llm.match_team_names_cached(our_team_name, espn_name, sport_key) if llm.is_available() else 0.0
+
+        if score >= 0.5:  # Only show likely matches
+            results.append({
+                "espn_name": espn_name,
+                "espn_id": et.espn_id,
+                "abbreviation": et.abbreviation,
+                "confidence": score,
+                "primary_color": et.primary_color,
+            })
+
+    # Sort by confidence
+    results.sort(key=lambda x: x["confidence"], reverse=True)
+
+    return {
+        "query": our_team_name,
+        "sport_key": sport_key,
+        "espn_teams_searched": len(espn_teams),
+        "llm_available": llm.is_available(),
+        "matches": results[:10],
+    }

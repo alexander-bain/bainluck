@@ -73,10 +73,22 @@ SPORT_PATTERNS = [
 
     # Entertainment
     (re.compile(r"\b(oscar|emmy|grammy|golden.globe|academy.award|entertainer|box.office|movie|film|music|spotify|album)\b", re.I), "entertainment"),
-    (re.compile(r"\b(tv.show|television|reality|bachelor|bachelorette)\b", re.I), "entertainment"),
+    (re.compile(r"\b(tv.show|television|reality|bachelor|bachelorette|portnoy|youtube)\b", re.I), "entertainment"),
 
     # Olympics
     (re.compile(r"\b(olympic|olympics)\b", re.I), "olympics"),
+
+    # Lacrosse
+    (re.compile(r"\b(lacrosse|tewaaraton)\b", re.I), "lacrosse"),
+
+    # Chess
+    (re.compile(r"\bchess\b", re.I), "chess"),
+
+    # Poker
+    (re.compile(r"\b(wsop|poker|world.series.of.poker)\b", re.I), "poker"),
+
+    # Known athletes for ambiguous markets
+    (re.compile(r"\bbryson.dechambeau\b", re.I), "golf"),
 ]
 
 
