@@ -234,9 +234,13 @@ Futures markets are categorized using a hybrid approach: pattern matching rules 
 1. Check `llm_sport_category` from database (cached LLM result)
 2. Try prefix matching on sport key (e.g., `golf_masters` → Golf)
 3. Try regex patterns on market name (e.g., "College Football Playoff" → Football)
-4. Handle baseball awards like "AL MVP", "NL Cy Young" → Baseball
+4. Handle sport-specific awards (AL MVP → Baseball, Hart Trophy → Hockey, etc.)
 5. Use athlete name detection for ambiguous markets like "US Open"
 6. Fall back to LLM (GPT-4o-mini) for uncategorized markets
+7. LLM always returns a category (never NULL) — defaults to "other"
+
+**Supported categories (22):**
+football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, other
 
 **Files:**
 - Frontend patterns: `frontend/lib/sportCategories.ts`
@@ -253,6 +257,10 @@ SPORT_PATTERNS = [
 ]
 ```
 
+**Important:** Pattern order matters — more specific patterns (e.g., `defensive.player.of.the.year` → football) should come before broader ones (e.g., `defensive.player` → basketball). The LLM handles everything patterns miss, so only add patterns for high-volume categories to save API costs.
+
+**Known limitation:** Some Kalshi markets have ambiguous names like "MVP Winner?" without any sport context. These correctly categorize as "other" since there's no way to determine the sport. Improving Kalshi category pass-through would help here.
+
 **Admin endpoints:**
 ```bash
 # Check categorization status
@@ -263,6 +271,12 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/fut
 
 # Dry run (preview without saving)
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorize?secret=xxx&dry_run=true"
+
+# View uncategorized markets (diagnostic)
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/uncategorized"
+
+# Force-categorize all remaining via LLM
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/force-categorize?secret=xxx&limit=100"
 ```
 
 **Debug endpoints:**
@@ -422,14 +436,14 @@ Both backend and frontend auto-deploy from `master` branch.
 4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
 5. ✅ Pulse Hall of Fame page
 6. ✅ Pinned Events & Futures (localStorage-based tracking)
-7. 🔄 Monitoring and reliability improvements
-8. 📋 Next: Firebase Auth for user accounts
-9. 📋 Next: Migrate pinned items to database (after auth)
-10. 📋 Next: LLM-powered odds movement explanations
+7. ✅ Futures categorization hardened (0 uncategorized markets)
+8. 🔄 Monitoring and reliability improvements
+9. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+10. 📋 Next: Firebase Auth for user accounts
+11. 📋 Next: Migrate pinned items to database (after auth)
+12. 📋 Next: LLM-powered odds movement explanations
 
-**LLM is now available** for new features! See `backend/app/services/llm.py`
-
-**Pinned Events ready** - Users can now pin events and futures to track important games like the Super Bowl.
+**LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
 
 See `docs/PRD.md` for full roadmap.
 

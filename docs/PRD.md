@@ -829,11 +829,12 @@ POST /api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=baske
 ```python
 from app.services import llm
 
-# General classification
-result = llm.classify("Some text", ["option1", "option2", "option3"])
+# General classification (always returns a result when fallback is set)
+result = llm.classify("Some text", ["option1", "option2", "option3"], fallback="option1")
 
-# Futures categorization (with caching)
-category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
+# Futures categorization (always returns a category, never None)
+category = llm.classify_futures_market("2026 Masters Tournament Winner")
+# Returns: "golf" — LLM response normalization handles variants like "horse racing" → "horse_racing"
 
 # Metadata enrichment
 metadata = llm.enrich_event_metadata("Lakers", "Celtics", "basketball_nba")
@@ -1103,15 +1104,17 @@ CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_s
 
 ### LLM Infrastructure ✅ NEW
 - **OpenAI GPT-4o-mini integration**: Generic LLM service for classification tasks
-- **Hybrid futures categorization**: Pattern matching rules + LLM fallback for edge cases
+- **Hybrid futures categorization**: 90+ regex patterns + LLM fallback for edge cases
+- **22 sport categories**: football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, other
+- **Zero uncategorized markets**: `classify()` always returns a category (never NULL), with LLM response normalization handling variant outputs like "horse racing" → horse_racing
 - **Database caching**: LLM results stored in `llm_sport_category` column to avoid repeat API calls
-- **Admin endpoints**: `/api/admin/futures/categorize` to trigger batch categorization
+- **Admin endpoints**: `/api/admin/futures/categorize`, `/uncategorized`, `/force-categorize`
 - **Cost-effective**: ~$0.001 per classification, results cached permanently
 
 ### Futures & Kalshi Integration ✅ NEW
 - **Futures markets**: Championship odds, MVP races, division winners from The Odds API
 - **Kalshi prediction markets**: Sports-related prediction markets with timing info
-- **Smart categorization**: 170+ markets auto-categorized using hybrid rules + LLM
+- **Smart categorization**: All markets auto-categorized using hybrid rules (90+ patterns) + LLM fallback
 - **Unified display**: Both sources appear together, grouped by sport category
 - **Search integration**: Futures markets included in search results
 
@@ -1392,8 +1395,10 @@ These are product experiments, not blockers.
 - ✅ Kalshi prediction market integration
 - ✅ LLM infrastructure (OpenAI GPT-4o-mini)
 - ✅ Pinned events and futures (localStorage-based)
+- ✅ Futures categorization hardened: 90+ regex patterns, 22 sport categories, LLM fallback always returns a result, 0 uncategorized markets
 
 ### Immediate (February-March 2026)
+- Pass Kalshi event category through as sport_key to improve disambiguation of ambiguous market names (e.g., "MVP Winner?" currently lands in "other")
 - Deploy analytics and observe user behavior
 - Monitor polling health across all sports
 - Gather feedback on pinned events feature
