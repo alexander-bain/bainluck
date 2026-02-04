@@ -127,8 +127,10 @@ def compute_highlight(
     hours_until = time_until_start / 3600
     hours_since = time_since_start / 3600
 
-    # Live status
-    flags.is_live = status == "live"
+    # Live status - require both status="live" AND commence_time has passed.
+    # The Odds API sometimes reports events as "live" before their commence_time,
+    # which causes false "Upset brewing" labels from pre-game line noise.
+    flags.is_live = status == "live" and commence_time <= now
     if flags.is_live:
         result.score += WEIGHTS["live"]
         result.reasons.append("live")
