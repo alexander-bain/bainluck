@@ -487,6 +487,7 @@ async def enrich_events_metadata(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(50, description="Max events to process per batch"),
     dry_run: bool = Query(False, description="Preview enrichment without saving"),
+    force: bool = Query(False, description="Re-enrich events that already have metadata (for team normalization)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -494,6 +495,8 @@ async def enrich_events_metadata(
 
     Finds events without metadata and uses LLM + heuristics to classify them.
     Results are cached in the database to avoid repeat API calls.
+
+    Set force=true to re-enrich events that have metadata but need team name normalization.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -501,17 +504,30 @@ async def enrich_events_metadata(
     from app.services import llm
     from sqlalchemy.orm import selectinload
 
-    # Find events without metadata (prioritize recent events)
-    result = await db.execute(
-        select(Event)
-        .options(selectinload(Event.sport))
-        .where(
-            Event.llm_gender.is_(None),
-            Event.llm_level.is_(None),
+    # Find events to enrich
+    if force:
+        # Re-enrich events without normalized team names
+        result = await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.home_team_normalized.is_(None),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
         )
-        .order_by(Event.commence_time.desc())
-        .limit(limit)
-    )
+    else:
+        # Find events without metadata (prioritize recent events)
+        result = await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.llm_gender.is_(None),
+                Event.llm_level.is_(None),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )
     events = result.scalars().all()
 
     if not events:
