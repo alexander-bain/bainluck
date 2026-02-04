@@ -89,6 +89,7 @@ odds-tracker/
 | File | Purpose |
 |------|---------|
 | `backend/app/tasks.py` | Celery tasks: odds polling, Pulse calculation, event discovery |
+| `backend/app/utils/highlights.py` | Highlight scoring, flags, and labels |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
@@ -169,6 +170,15 @@ Proprietary 1-100 score measuring how exciting a game is based on probability sw
 **Admin Endpoints:**
 - `GET /api/admin/pulse/status` - Check calculation status
 - `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc
+
+### Highlights (Event Ranking)
+Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points.
+
+**Key design rule:** Pre-game closeness (e.g., 51/49) doesn't award points unless there's trend evidence — the line moved ≥5% from opening, tightened from lopsided to close, or the game is starting soon. This prevents aggregation noise from surfacing uninteresting events.
+
+**Labels:** "Upset brewing" and "Close game" are live-only. "Line moving" requires ≥15% swing from opening. "Close matchup" requires starting soon.
+
+**Files:** `backend/app/utils/highlights.py`, `frontend/app/page.tsx` (Highlights section rendering)
 
 ### Odds Polling
 - Live games: Every 30 seconds

@@ -426,54 +426,44 @@ Adapt the Pulse concept to measure the drama of championship races over weeks/mo
 - **Display**: Single score like events, or a richer "race status" display?
 - **Threshold**: What's "exciting" for futures? Probably need different calibration than events.
 
-### Highlights Ranking Algorithm (Planned)
+### Highlights Ranking Algorithm ✅ Implemented
 
-```python
-def calculate_highlight_score(event: Event, context: dict) -> float:
-    """
-    Calculate a composite score for surfacing events in highlights.
+Events are scored 0–100 by `backend/app/utils/highlights.py` using additive weights:
 
-    Factors (weighted):
-    - Closeness (40%): How close is the matchup?
-    - Timing (25%): Is the game about to start or live?
-    - Popularity (15%): Is this a major sport/league?
-    - Movement (10%): Have odds moved significantly recently?
-    - User relevance (10%): Does user follow these teams?
+| Factor | Points | Notes |
+|--------|--------|-------|
+| Live | +30 | Requires `status="live"` AND `commence_time` passed |
+| Close matchup (40–60%) | +25 | Pre-game: requires trend evidence (see below) |
+| Very close (45–55%) | +10 | Bonus on top of close matchup |
+| Favorite switched | +20 | Live/completed only |
+| Major prob swing (≥15%) | +15 | From opening line |
+| Major score swing (≥20%) | +10 | Projected total change from opening |
+| Starting in <3h | +15 | |
+| Starting in <1h | +10 | Bonus on top of 3h |
+| Tier 1 league | +10 | NBA, NFL, MLB, NHL |
+| Tier 2 league | +5 | NCAAB, NCAAF, MLS |
+| Recent upset | +20 | Finished + favorite switched |
+| Recently finished | +5 | Within 24h |
 
-    Returns score 0-100 for ranking.
-    """
-    closeness = 1 - abs(event.home_prob - 0.5) * 2  # 0-1
+Events with score ≥30 appear in the Highlights section. Live close games and recent upsets always qualify regardless of score.
 
-    # Timing: live games > starting soon > later
-    if event.status == 'live':
-        timing = 1.0
-    elif event.minutes_to_start < 60:
-        timing = 0.8
-    elif event.minutes_to_start < 180:
-        timing = 0.5
-    else:
-        timing = 0.2
+**Key design rule — pre-game trend evidence:**
+Pre-game closeness (e.g., 51/49 across 13 books) could be aggregation noise, not a real story. Close-matchup points are only awarded for pre-game events when:
+- The line **moved ≥5%** from opening (market is repricing)
+- The opening was **not** close but the current odds are (line tightened)
+- The game is **starting soon** (closeness becomes action-relevant)
 
-    # Popularity by league tier
-    tier = context.get('sport_tier', 3)  # 1=major, 2=secondary, 3=other
-    popularity = {1: 1.0, 2: 0.6, 3: 0.3}.get(tier, 0.3)
-
-    # Recent odds movement (large swings are interesting)
-    movement = min(context.get('prob_change_1h', 0) * 5, 1.0)
-
-    # User relevance (if they follow these teams)
-    user_relevance = 1.0 if context.get('user_favorite') else 0.3
-
-    score = (
-        closeness * 0.40 +
-        timing * 0.25 +
-        popularity * 0.15 +
-        movement * 0.10 +
-        user_relevance * 0.10
-    )
-
-    return round(score * 100, 1)
-```
+**Labels** (shown on cards in the Highlights section):
+| Label | Condition |
+|-------|-----------|
+| Recent upset | Finished + favorite switched |
+| Upset brewing | Live + favorite switched |
+| Coin flip | Live + very close (45–55%) |
+| Close game | Live + close (40–60%) |
+| Momentum shift | Live + major prob swing |
+| Close matchup | Starting soon + close |
+| Live | Live (no other flags) |
+| Line moving | Pre-game + major prob swing (≥15%) |
 
 ---
 
