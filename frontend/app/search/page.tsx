@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { searchEvents } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
-import { usePinnedEvents } from "@/hooks";
+import { usePinnedEvents, usePinnedFutures } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import type { SearchResponse } from "@/lib/types";
@@ -33,6 +33,13 @@ function SearchContent() {
 
   // Pinned events
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
+
+  // Pinned futures
+  const {
+    isPinned: isFuturesPinned,
+    togglePin: toggleFuturesPin,
+    isMaxReached: isFuturesMaxReached
+  } = usePinnedFutures();
 
   useEffect(() => {
     if (!query || query.length < 2) {
@@ -196,6 +203,9 @@ function SearchContent() {
                 key={market.id}
                 market={market}
                 showSport={!sportFilter}
+                isPinned={isFuturesPinned(market.id)}
+                onPinToggle={toggleFuturesPin}
+                pinDisabled={isFuturesMaxReached}
               />
             ))}
           </div>
