@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchPulseRankings } from "@/lib/api";
 import type { RankedEvent } from "@/lib/types";
-import { PulseBadge } from "@/components/PulseBadge";
+import PulseBadge from "@/components/PulseBadge";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 
 /**
