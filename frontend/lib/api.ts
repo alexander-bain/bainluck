@@ -201,6 +201,20 @@ export async function fetchFuturesMarket(id: number): Promise<FuturesMarketDetai
 }
 
 /**
+ * Fetch multiple futures markets by IDs
+ * Returns markets in the same order as the input IDs, filtering out any that fail to load
+ */
+export async function fetchFuturesByIds(ids: number[]): Promise<FuturesMarketDetailResponse[]> {
+  if (ids.length === 0) return [];
+
+  const results = await Promise.allSettled(ids.map(id => fetchFuturesMarket(id)));
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<FuturesMarketDetailResponse> => r.status === 'fulfilled')
+    .map(r => r.value);
+}
+
+/**
  * Fetch odds history for a futures market
  */
 export async function fetchFuturesHistory(
