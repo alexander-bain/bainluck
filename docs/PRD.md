@@ -845,6 +845,29 @@ confidence = llm.match_team_names_cached("LA Lakers", "Los Angeles Lakers", "bas
 # Returns: 0.95 (high confidence they're the same team)
 ```
 
+**LLM Service Capabilities:**
+```python
+from app.services import llm
+
+# General classification
+result = llm.classify("Some text", ["option1", "option2", "option3"])
+
+# Futures categorization (with caching)
+category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
+```
+
+**Categorization Status (as of Feb 2026):**
+- ~170 futures markets processed through hybrid categorization
+- Pattern matching handles ~85% of markets (baseball awards, pro sports, leagues, etc.)
+- LLM handles remaining edge cases (athlete names, ambiguous markets)
+- ~67 markets may still need improved LLM prompt (unmerged PR with better prompt)
+
+**Future LLM Use Cases:**
+- Plain English explanations for odds movements
+- Team name normalization across sources
+- Smart search query understanding
+- Market description generation
+
 **Principles:**
 - Brief, factual, non-predictive
 - Only surface for meaningful events

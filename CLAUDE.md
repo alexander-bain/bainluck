@@ -469,6 +469,7 @@ See `docs/PRD.md` for full roadmap.
 |------|-------|
 | API docs | `/docs` on backend URL |
 | Pulse explainer | https://odds.alexbain.com/pulse |
+| Pulse Hall of Fame | https://odds.alexbain.com/pulse/hall-of-fame |
 | Search | https://odds.alexbain.com/search?q=celtics |
 | PRD | `docs/PRD.md` |
 | Debug endpoints | `/api/events/debug/*` |
