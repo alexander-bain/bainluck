@@ -287,7 +287,7 @@ export default function EventCard({
 
         {/* Footer: Projected Score for future games, bookmaker count */}
         <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center">
-          {/* Left side: Projected Score (only for future games with odds) */}
+          {/* Left side: Projected Score or broadcast info */}
           <div className="flex items-center gap-1.5 text-sm">
             {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
               <>
@@ -301,6 +301,12 @@ export default function EventCard({
                 {effectivelyLive ? "🔄 Live updates" : `Played ${timeStr}`}
               </span>
             ) : null}
+            {/* Broadcast info from ESPN */}
+            {event.espn?.broadcast && (
+              <span className="text-xs text-silver ml-1" title={event.espn.broadcast}>
+                📺 {event.espn.broadcast.split(",")[0].trim()}
+              </span>
+            )}
           </div>
 
           {/* Right side: Bookmaker count and Close game indicator */}

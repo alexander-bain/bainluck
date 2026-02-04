@@ -488,6 +488,28 @@ export default function EventPage({ params }: EventPageProps) {
           )}
         </div>
 
+        {/* ESPN info: broadcast, game clock */}
+        {event.espn && (
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-4 text-sm">
+            {event.espn.broadcast && (
+              <span className="flex items-center gap-1.5 bg-slate/5 px-3 py-1 rounded-full text-slate">
+                📺 {event.espn.broadcast}
+              </span>
+            )}
+            {effectivelyLive && event.espn.game_clock && event.espn.period && (
+              <span className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1 rounded-full text-emerald-700 font-medium">
+                {event.espn.period} &middot; {event.espn.game_clock}
+              </span>
+            )}
+            {effectivelyLive && event.espn.win_probability != null && (
+              <span className="flex items-center gap-1.5 bg-orange-50 px-3 py-1 rounded-full text-orange-700 text-xs font-medium"
+                    title="ESPN predictive model win probability">
+                ESPN: {(event.espn.win_probability * 100).toFixed(0)}% {event.home_team.split(" ").pop()}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Score display for live/finished games */}
         {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
           <div className="mb-6 py-4 bg-white/50 rounded-lg">
@@ -795,6 +817,7 @@ export default function EventPage({ params }: EventPageProps) {
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
+            espnHistory={historyData?.espn_history}
             eventStatus={event.status}
           />
         )}

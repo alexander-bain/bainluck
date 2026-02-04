@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { format, parseISO } from "date-fns";
-import type { OddsHistoryPoint, BookmakerHistoryPoint } from "@/lib/types";
+import type { OddsHistoryPoint, BookmakerHistoryPoint, ESPNHistoryPoint } from "@/lib/types";
 
 interface OddsChartProps {
   history: OddsHistoryPoint[];
@@ -21,6 +21,8 @@ interface OddsChartProps {
   commenceTime?: string;
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
+  /** ESPN win probability history */
+  espnHistory?: ESPNHistoryPoint[];
   /** Event ID for analytics tracking */
   eventId?: number;
   /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
@@ -39,7 +41,9 @@ interface ChartDataPoint {
   time: string;
   homeProb: number | null;
   awayProb: number | null;
-  [key: string]: string | number | null; // For dynamic bookmaker keys
+  espnHomeProb?: number | null;
+  espnAwayProb?: number | null;
+  [key: string]: string | number | null | undefined; // For dynamic bookmaker keys
 }
 
 /**
@@ -53,6 +57,7 @@ export default function OddsChart({
   commenceTime,
   isLive = false,
   bookmakerHistory,
+  espnHistory,
   eventStatus,
 }: OddsChartProps) {
   // Determine default time range based on event status:
@@ -103,6 +108,18 @@ export default function OddsChart({
     }
     return filtered;
   }, [bookmakerHistory, timeRange, commenceTime]);
+
+  // Filter ESPN history based on time range
+  const filteredEspnHistory = useMemo(() => {
+    if (!espnHistory || espnHistory.length === 0) return [];
+
+    if (timeRange === "all") return espnHistory;
+
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
+    return espnHistory.filter((point) => parseISO(point.timestamp) >= cutoffTime);
+  }, [espnHistory, timeRange, commenceTime]);
+
+  const hasEspnData = filteredEspnHistory.length > 0;
 
   // Get list of bookmakers for rendering individual lines
   const bookmakers = useMemo(() => {
@@ -210,11 +227,38 @@ export default function OddsChart({
       }
     }
 
+    // Fourth pass: add ESPN win probability data
+    for (const point of filteredEspnHistory) {
+      const espnHome = point.home_probability !== null ? point.home_probability * 100 : null;
+      const espnAway = point.away_probability !== null ? point.away_probability * 100 : null;
+
+      const existing = dataMap.get(point.timestamp);
+      if (existing) {
+        existing.espnHomeProb = espnHome;
+        existing.espnAwayProb = espnAway;
+      } else {
+        const newPoint: ChartDataPoint = {
+          timestamp: point.timestamp,
+          time: format(parseISO(point.timestamp), "h:mm a"),
+          homeProb: null,
+          awayProb: null,
+          espnHomeProb: espnHome,
+          espnAwayProb: espnAway,
+        };
+        // Ensure bookmaker keys exist
+        for (const bookmaker of allBookmakers) {
+          newPoint[`${bookmaker}_home`] = null;
+          newPoint[`${bookmaker}_away`] = null;
+        }
+        dataMap.set(point.timestamp, newPoint);
+      }
+    }
+
     // Sort by timestamp and return as array
     return Array.from(dataMap.values()).sort(
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredEspnHistory]);
 
   // Early return for empty history - must be after all hooks
   if (!history || history.length === 0) {
@@ -227,8 +271,8 @@ export default function OddsChart({
 
   // Calculate Y-axis domain for probability (with some padding around actual values)
   const probValues = chartData
-    .flatMap((d) => [d.homeProb, d.awayProb])
-    .filter((v): v is number => v !== null);
+    .flatMap((d) => [d.homeProb, d.awayProb, d.espnHomeProb, d.espnAwayProb])
+    .filter((v): v is number => v !== null && v !== undefined);
 
   const minProb = probValues.length > 0 ? Math.floor(Math.min(...probValues) / 5) * 5 : 0;
   const maxProb = probValues.length > 0 ? Math.ceil(Math.max(...probValues) / 5) * 5 : 100;
@@ -244,12 +288,17 @@ export default function OddsChart({
     label?: string;
   }) => {
     if (active && payload && payload.length) {
-      // Separate aggregate lines from bookmaker lines
+      // Separate aggregate lines from bookmaker and ESPN lines
       const aggregateEntries = payload.filter(
         (e) => e.dataKey === "homeProb" || e.dataKey === "awayProb"
       );
+      const espnEntries = payload.filter(
+        (e) => (e.dataKey === "espnHomeProb" || e.dataKey === "espnAwayProb") && e.value !== null
+      );
       const bookmakerEntries = payload.filter(
-        (e) => e.dataKey !== "homeProb" && e.dataKey !== "awayProb" && e.value !== null
+        (e) => e.dataKey !== "homeProb" && e.dataKey !== "awayProb"
+          && e.dataKey !== "espnHomeProb" && e.dataKey !== "espnAwayProb"
+          && e.value !== null
       );
 
       // Group bookmaker entries by bookmaker name
@@ -281,6 +330,21 @@ export default function OddsChart({
               {entry.name}: {entry.value?.toFixed(1)}%
             </p>
           ))}
+          {/* ESPN model probability */}
+          {espnEntries.length > 0 && (
+            <div className="mt-1 pt-1 border-t border-gray-100">
+              <p className="text-xs text-gray-400 mb-0.5">ESPN model:</p>
+              {espnEntries.map((entry, index) => (
+                <p
+                  key={index}
+                  className="text-xs font-medium"
+                  style={{ color: entry.color }}
+                >
+                  {entry.name}: {entry.value?.toFixed(1)}%
+                </p>
+              ))}
+            </div>
+          )}
           {/* Bookmaker breakdown */}
           {Object.keys(bookmakerGroups).length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100">
@@ -344,6 +408,9 @@ export default function OddsChart({
               payload={[
                 { value: homeTeam, type: 'circle', color: '#22c55e' },
                 { value: awayTeam, type: 'circle', color: '#3b82f6' },
+                ...(hasEspnData ? [
+                  { value: 'ESPN Model', type: 'circle' as const, color: '#f97316' },
+                ] : []),
               ]}
             />
             {/* Individual bookmaker lines - thin grey, rendered first so they appear behind aggregate */}
@@ -373,6 +440,34 @@ export default function OddsChart({
                 legendType="none"
               />
             ))}
+            {/* ESPN model lines - bold orange, dashed to distinguish from sportsbook aggregate */}
+            {hasEspnData && (
+              <>
+                <Line
+                  type="monotone"
+                  dataKey="espnHomeProb"
+                  name={`ESPN ${homeTeam}`}
+                  stroke="#f97316"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 3"
+                  dot={false}
+                  activeDot={{ r: 4, fill: "#f97316" }}
+                  connectNulls
+                />
+                <Line
+                  type="monotone"
+                  dataKey="espnAwayProb"
+                  name={`ESPN ${awayTeam}`}
+                  stroke="#f97316"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 3"
+                  strokeOpacity={0.5}
+                  dot={false}
+                  activeDot={{ r: 4, fill: "#f97316" }}
+                  connectNulls
+                />
+              </>
+            )}
             {/* Aggregate lines - bold, rendered last so they appear on top */}
             <Line
               type="monotone"
@@ -400,10 +495,13 @@ export default function OddsChart({
         </ResponsiveContainer>
       </div>
 
-      {/* Info about gray lines */}
-      {bookmakers.length > 0 && (
+      {/* Info about gray lines and ESPN */}
+      {(bookmakers.length > 0 || hasEspnData) && (
         <p className="text-xs text-gray-400 text-center">
-          Gray lines show individual sportsbooks • Tap/hover for details
+          {bookmakers.length > 0 && "Gray lines show individual sportsbooks"}
+          {bookmakers.length > 0 && hasEspnData && " • "}
+          {hasEspnData && "Orange dashed line shows ESPN predictive model"}
+          {" • Tap/hover for details"}
         </p>
       )}
     </div>
