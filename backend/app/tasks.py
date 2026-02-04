@@ -2026,11 +2026,18 @@ async def _poll_kalshi_markets():
                         american = probability_to_american(prob) if prob and prob > 0 else None
 
                         # For single-market events, use "Yes" as outcome name
-                        # For multi-market events, use market title
+                        # For multi-market events, prefer subtitle (specific outcome name),
+                        # then title only if it differs from event title, then parsed ticker
                         if len(event.markets) == 1:
                             outcome_name = "Yes"
                         else:
-                            outcome_name = market.title or market.ticker
+                            if market.subtitle:
+                                outcome_name = market.subtitle
+                            elif market.title and market.title != event.title:
+                                outcome_name = market.title
+                            else:
+                                # Extract name from ticker (e.g. "COTY-24-BELICHICK" -> "Belichick")
+                                outcome_name = _parse_kalshi_ticker_name(market.ticker)
 
                         # Upsert outcome
                         outcome_stmt = pg_insert(FuturesOutcome).values(
@@ -2089,6 +2096,23 @@ async def _poll_kalshi_markets():
         await service.close()
 
     return stats
+
+
+def _parse_kalshi_ticker_name(ticker: str) -> str:
+    """Extract a human-readable name from a Kalshi market ticker.
+
+    Kalshi tickers look like 'KXCOTY-24-BELICHICK' or 'NBACHAMP-BOS'.
+    We take the last segment that isn't purely numeric and title-case it.
+    """
+    if not ticker:
+        return "Unknown"
+    parts = ticker.split("-")
+    # Walk backwards to find the last non-numeric segment
+    for part in reversed(parts):
+        if part and not part.isdigit():
+            # Title-case and return (e.g. "BELICHICK" -> "Belichick")
+            return part.title()
+    return ticker
 
 
 def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
