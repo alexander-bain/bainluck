@@ -593,3 +593,95 @@ Just respond with the number, nothing else."""
 def match_team_names_cached(name1: str, name2: str, sport: Optional[str] = None) -> float:
     """Cached version of match_team_names."""
     return match_team_names(name1, name2, sport)
+
+
+def normalize_team_name(
+    team_name: str,
+    sport_key: Optional[str] = None,
+) -> dict:
+    """
+    Normalize a team name to its canonical form and generate common variations.
+
+    This helps with matching across different data sources (ESPN, The Odds API, etc.)
+    that may use different name formats.
+
+    Args:
+        team_name: The team name to normalize (e.g., "Lakers", "LA Lakers")
+        sport_key: Sport key for context (e.g., "basketball_nba")
+
+    Returns:
+        Dict with:
+        - normalized: Full canonical name (e.g., "Los Angeles Lakers")
+        - variations: List of common name variations
+    """
+    client = _get_client()
+    if not client:
+        # Return original name if LLM not available
+        return {"normalized": team_name, "variations": [team_name]}
+
+    sport_context = f"Sport: {sport_key}" if sport_key else ""
+
+    prompt = f"""Given this sports team name, provide:
+1. The full official/canonical team name
+2. Common name variations (abbreviations, nicknames, city variations)
+
+Team name: {team_name}
+{sport_context}
+
+Respond in this exact JSON format (no markdown, just JSON):
+{{"normalized": "Full Team Name", "variations": ["variation1", "variation2", "variation3"]}}
+
+Examples:
+- "Lakers" → {{"normalized": "Los Angeles Lakers", "variations": ["Lakers", "LA Lakers", "L.A. Lakers"]}}
+- "Man United" → {{"normalized": "Manchester United", "variations": ["Man United", "Man Utd", "MUFC"]}}
+- "Celtics" → {{"normalized": "Boston Celtics", "variations": ["Celtics", "Boston"]}}
+
+Keep variations to 3-5 most common. Include the original input as a variation."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200,
+            temperature=0,
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Parse JSON response
+        import json
+        # Handle potential markdown code blocks
+        if result.startswith("```"):
+            result = result.split("```")[1]
+            if result.startswith("json"):
+                result = result[4:]
+        result = result.strip()
+
+        data = json.loads(result)
+
+        # Ensure original name is in variations
+        variations = data.get("variations", [])
+        if team_name not in variations:
+            variations.append(team_name)
+
+        return {
+            "normalized": data.get("normalized", team_name),
+            "variations": variations,
+        }
+
+    except Exception as e:
+        logger.error(f"Team normalization error for '{team_name}': {e}")
+        return {"normalized": team_name, "variations": [team_name]}
+
+
+@lru_cache(maxsize=2000)
+def normalize_team_name_cached(team_name: str, sport_key: Optional[str] = None) -> tuple:
+    """
+    Cached version of normalize_team_name.
+
+    Returns tuple (normalized, variations_tuple) for hashability.
+    """
+    result = normalize_team_name(team_name, sport_key)
+    return (result["normalized"], tuple(result["variations"]))

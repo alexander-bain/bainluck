@@ -114,6 +114,12 @@ class Event(Base):
     llm_league: Mapped[Optional[str]] = mapped_column(String(50))  # NFL/NCAAF/NBA/etc
     llm_importance: Mapped[Optional[str]] = mapped_column(String(30))  # playoff/championship/regular_season
 
+    # Normalized team names for better matching (ESPN, search, etc.)
+    home_team_normalized: Mapped[Optional[str]] = mapped_column(String(200))  # Full canonical name
+    away_team_normalized: Mapped[Optional[str]] = mapped_column(String(200))
+    home_team_alt_names: Mapped[Optional[list]] = mapped_column(JSONB)  # ["Lakers", "LA Lakers", etc.]
+    away_team_alt_names: Mapped[Optional[list]] = mapped_column(JSONB)
+
     # ESPN enrichment
     espn_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
     venue_id: Mapped[Optional[int]] = mapped_column(ForeignKey("venues.id"))
