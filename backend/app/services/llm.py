@@ -7,7 +7,6 @@ Uses OpenAI's GPT-4o-mini for cost-effective classification and extraction.
 import os
 import logging
 from typing import Optional
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +60,16 @@ def classify(
 
     categories_str = ", ".join(categories)
 
-    system_prompt = f"""You are a classification assistant. Your task is to classify text into exactly one of these categories: {categories_str}
+    system_prompt = f"""You are a sports classification assistant. Classify the given text into exactly one of these categories: {categories_str}
 
 Rules:
-- Respond with ONLY the category name, nothing else
-- Choose the single best matching category
-- If uncertain, choose the closest match
+- Respond with ONLY the category name, nothing else (e.g., "football" or "basketball")
+- If it mentions an athlete, classify by their sport (e.g., "Kyler Murray" → football, "LeBron James" → basketball)
+- If it mentions a team, classify by their sport (e.g., "Manchester United" → soccer, "Boston Celtics" → basketball)
+- "american football" and "NFL" → football
+- If it's about celebrities, TV, movies, YouTube, or non-sport entertainment → entertainment
+- If truly ambiguous or unrelated to any sport, use "other"
+- You MUST choose one of the provided categories
 {f"Context: {context}" if context else ""}"""
 
     try:
@@ -92,6 +95,23 @@ Rules:
         for i, cat in enumerate(categories_lower):
             if cat in result or result in cat:
                 return categories[i]
+
+        # Common mappings the LLM might return
+        mappings = {
+            "american football": "football",
+            "nfl": "football",
+            "nba": "basketball",
+            "mlb": "baseball",
+            "nhl": "hockey",
+            "pga": "golf",
+            "ufc": "mma",
+            "soccer/football": "soccer",
+            "football/soccer": "soccer",
+        }
+        if result in mappings:
+            mapped = mappings[result]
+            if mapped in categories_lower:
+                return categories[categories_lower.index(mapped)]
 
         logger.warning(f"LLM returned unexpected category '{result}' for text '{text[:50]}...'")
         return None
@@ -184,13 +204,15 @@ def classify_futures_market(market_name: str) -> Optional[str]:
     )
 
 
-# Simple in-memory cache for repeated classifications
-@lru_cache(maxsize=1000)
+# Simple in-memory cache for repeated classifications (doesn't cache None)
+_classification_cache: dict[str, str] = {}
+
+
 def classify_futures_market_cached(market_name: str) -> Optional[str]:
     """
     Cached version of classify_futures_market.
 
-    Uses LRU cache to avoid repeated API calls for the same market names.
+    Only caches successful classifications - failures can be retried.
     """
     return classify_futures_market(market_name)
 
