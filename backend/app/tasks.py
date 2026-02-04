@@ -109,6 +109,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.poll_kalshi_markets",
         "schedule": crontab(minute=45),  # Every hour at :45 (offset from futures polling)
     },
+    "enrich-events-hourly": {
+        "task": "app.tasks.enrich_events_metadata",
+        "schedule": crontab(minute=20),  # Every hour at :20 (enrich new events with LLM metadata)
+        "kwargs": {"limit": 50},
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -2104,3 +2109,108 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
         return "tech"
 
     return "other"
+
+
+# ============================================================================
+# LLM Metadata Enrichment Task
+# ============================================================================
+
+
+@celery_app.task(bind=True)
+def enrich_events_metadata(self, limit: int = 50):
+    """
+    Enrich events with LLM-generated metadata (gender, level, league, importance).
+
+    This task runs periodically to classify new events that don't have metadata yet.
+    Uses heuristics first, falling back to LLM for ambiguous cases.
+
+    Args:
+        limit: Maximum number of events to process per run
+
+    Returns:
+        Dict with enrichment statistics
+    """
+    from app.services import llm
+    from app.services.database import SessionLocal
+    from app.models.models import Event
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    stats = {
+        "processed": 0,
+        "enriched": 0,
+        "errors": 0,
+        "remaining": 0,
+        "llm_available": llm.is_available(),
+    }
+
+    try:
+        with SessionLocal() as session:
+            # Find events without metadata (prioritize recent events)
+            result = session.execute(
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(
+                    Event.llm_gender.is_(None),
+                    Event.llm_level.is_(None),
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(limit)
+            )
+            events = result.scalars().all()
+
+            if not events:
+                # Count remaining
+                remaining_result = session.execute(
+                    select(Event.id).where(
+                        Event.llm_gender.is_(None),
+                        Event.llm_level.is_(None),
+                    )
+                )
+                stats["remaining"] = len(remaining_result.all())
+                return stats
+
+            for event in events:
+                try:
+                    sport_key = event.sport.key if event.sport else None
+                    text = f"{event.away_team_name} at {event.home_team_name}"
+
+                    # Classify using heuristics + LLM fallback
+                    event.llm_gender = llm.classify_gender_cached(text, sport_key)
+                    event.llm_level = llm.classify_level_cached(text, sport_key)
+                    event.llm_league = llm.classify_league_cached(text, sport_key)
+                    event.llm_importance = llm.classify_importance_cached(text, sport_key)
+
+                    # Normalize team names for ESPN/search matching
+                    home_norm, home_vars = llm.normalize_team_name_cached(event.home_team_name, sport_key)
+                    away_norm, away_vars = llm.normalize_team_name_cached(event.away_team_name, sport_key)
+                    event.home_team_normalized = home_norm
+                    event.away_team_normalized = away_norm
+                    event.home_team_alt_names = list(home_vars)
+                    event.away_team_alt_names = list(away_vars)
+
+                    stats["enriched"] += 1
+
+                except Exception as e:
+                    stats["errors"] += 1
+                    if stats["errors"] <= 5:
+                        print(f"Error enriching event {event.id}: {e}")
+
+                stats["processed"] += 1
+
+            session.commit()
+
+            # Count remaining
+            remaining_result = session.execute(
+                select(Event.id).where(
+                    Event.llm_gender.is_(None),
+                    Event.llm_level.is_(None),
+                )
+            )
+            stats["remaining"] = len(remaining_result.all())
+
+    except Exception as e:
+        print(f"Enrichment task error: {e}")
+        stats["errors"] += 1
+
+    return stats

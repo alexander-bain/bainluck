@@ -536,10 +536,16 @@ async def enrich_events_metadata(
                 "importance": llm.classify_importance_cached(text, sport_key),
             }
 
+            # Normalize team names for better matching
+            home_norm, home_vars = llm.normalize_team_name_cached(event.home_team_name, sport_key)
+            away_norm, away_vars = llm.normalize_team_name_cached(event.away_team_name, sport_key)
+
             enriched.append({
                 "id": event.id,
                 "teams": f"{event.away_team_name} @ {event.home_team_name}",
                 "sport_key": sport_key,
+                "home_normalized": home_norm,
+                "away_normalized": away_norm,
                 **metadata,
             })
 
@@ -548,6 +554,10 @@ async def enrich_events_metadata(
                 event.llm_level = metadata["level"]
                 event.llm_league = metadata["league"]
                 event.llm_importance = metadata["importance"]
+                event.home_team_normalized = home_norm
+                event.away_team_normalized = away_norm
+                event.home_team_alt_names = list(home_vars)
+                event.away_team_alt_names = list(away_vars)
 
         except Exception as e:
             if len(errors) < 5:
@@ -966,27 +976,77 @@ async def sync_espn_live_events(
 
     matched = []
     updated = []
+    llm_matched = []
+
+    def names_match(our_names: list, espn_name: str) -> bool:
+        """Check if any of our name variations match the ESPN name."""
+        espn_lower = (espn_name or "").lower()
+        for name in our_names:
+            name_lower = name.lower()
+            if name_lower in espn_lower or espn_lower in name_lower:
+                return True
+        return False
 
     for event in our_events:
+        # Build list of name variations for matching
+        home_names = [event.home_team_name]
+        away_names = [event.away_team_name]
+
+        # Add normalized name if available
+        if event.home_team_normalized:
+            home_names.append(event.home_team_normalized)
+        if event.away_team_normalized:
+            away_names.append(event.away_team_normalized)
+
+        # Add alternate names if available
+        if event.home_team_alt_names:
+            home_names.extend(event.home_team_alt_names)
+        if event.away_team_alt_names:
+            away_names.extend(event.away_team_alt_names)
+
         # Try to match by team names
         espn_event = None
+        match_method = None
+
         for ee in espn_events:
             if not ee.home_team or not ee.away_team:
                 continue
 
-            # Check if team names match
-            home_match = (
-                event.home_team_name.lower() in (ee.home_team.display_name or "").lower() or
-                (ee.home_team.display_name or "").lower() in event.home_team_name.lower()
-            )
-            away_match = (
-                event.away_team_name.lower() in (ee.away_team.display_name or "").lower() or
-                (ee.away_team.display_name or "").lower() in event.away_team_name.lower()
-            )
+            espn_home = ee.home_team.display_name or ee.home_team.name or ""
+            espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+            # Check if team names match using all variations
+            home_match = names_match(home_names, espn_home)
+            away_match = names_match(away_names, espn_away)
 
             if home_match and away_match:
                 espn_event = ee
+                match_method = "name_match"
                 break
+
+        # LLM fallback for unmatched events
+        if not espn_event and llm.is_available():
+            for ee in espn_events:
+                if not ee.home_team or not ee.away_team:
+                    continue
+
+                espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+                # Use LLM to compare team names
+                home_conf = llm.match_team_names_cached(event.home_team_name, espn_home, sport_key)
+                away_conf = llm.match_team_names_cached(event.away_team_name, espn_away, sport_key)
+
+                if home_conf >= 0.8 and away_conf >= 0.8:
+                    espn_event = ee
+                    match_method = "llm"
+                    llm_matched.append({
+                        "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                        "espn_event": f"{espn_away} @ {espn_home}",
+                        "home_confidence": home_conf,
+                        "away_confidence": away_conf,
+                    })
+                    break
 
         if espn_event:
             matched.append({
@@ -1073,8 +1133,10 @@ async def sync_espn_live_events(
         "espn_events": len(espn_events),
         "our_events": len(our_events),
         "matched": len(matched),
+        "llm_matched_count": len(llm_matched),
         "updated": len(updated) if not dry_run else 0,
         "matches": matched[:15],
+        "llm_matches": llm_matched[:10] if llm_matched else [],
     }
 
 
