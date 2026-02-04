@@ -115,7 +115,7 @@ export interface EventCardClickParams {
   /** Is this game currently live? */
   is_live: boolean;
   /** Where on the page was this card? */
-  source_section: 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results';
+  source_section: 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned';
   /** Position in the list (0-indexed) */
   position_index: number;
   /** Time until game starts (minutes, negative if started) */
@@ -125,7 +125,7 @@ export interface EventCardClickParams {
 export interface EventCardImpressionParams {
   /** Batch of event IDs that were viewed */
   event_ids: number[];
-  source_section: 'featured' | 'sport_category' | 'recently_finished' | 'archived';
+  source_section: 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'pinned';
   /** Viewport info */
   viewport_position: 'above_fold' | 'below_fold';
 }
