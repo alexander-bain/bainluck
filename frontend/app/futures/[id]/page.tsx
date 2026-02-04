@@ -684,7 +684,7 @@ function FuturesChart({
 
   const chartWidth = 800;
   const chartHeight = 200;
-  const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+  const padding = { top: 20, right: 20, bottom: 40, left: 50 };
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = chartHeight - padding.top - padding.bottom;
 
@@ -703,7 +703,7 @@ function FuturesChart({
           className="w-full min-w-[600px]"
           style={{ maxHeight: "250px" }}
         >
-          {/* Grid lines */}
+          {/* Y-axis grid lines */}
           {[0, 0.25, 0.5, 0.75, 1].map((pct) => (
             <g key={pct}>
               <line
@@ -725,6 +725,54 @@ function FuturesChart({
               </text>
             </g>
           ))}
+
+          {/* X-axis time labels */}
+          {(() => {
+            const timeRange = maxTime - minTime;
+            // Choose appropriate tick count based on chart width
+            const tickCount = Math.min(5, Math.max(2, Math.floor(innerWidth / 150)));
+            const ticks: number[] = [];
+            for (let i = 0; i <= tickCount; i++) {
+              ticks.push(minTime + (timeRange * i) / tickCount);
+            }
+
+            // Format based on range
+            const formatTime = (ts: number) => {
+              const d = new Date(ts);
+              if (timeRange < 24 * 60 * 60 * 1000) {
+                // Less than 1 day: show time
+                return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+              } else if (timeRange < 7 * 24 * 60 * 60 * 1000) {
+                // Less than 7 days: show day + time
+                return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+                  " " + d.toLocaleTimeString("en-US", { hour: "numeric" });
+              } else {
+                // 7+ days: show date
+                return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+              }
+            };
+
+            return ticks.map((t, i) => (
+              <g key={`x-${i}`}>
+                <line
+                  x1={xScale(t)}
+                  y1={padding.top + innerHeight}
+                  x2={xScale(t)}
+                  y2={padding.top + innerHeight + 4}
+                  stroke="#94a3b8"
+                />
+                <text
+                  x={xScale(t)}
+                  y={padding.top + innerHeight + 16}
+                  textAnchor="middle"
+                  className="text-xs fill-slate"
+                  style={{ fontSize: "9px" }}
+                >
+                  {formatTime(t)}
+                </text>
+              </g>
+            ));
+          })()}
 
           {/* Lines */}
           {displayedOutcomes.map((outcome, idx) => {
