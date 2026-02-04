@@ -437,7 +437,7 @@ export default function HomePage() {
                   e.highlight?.flags?.is_live || e.status === "live"
                 );
                 const upsetEvents = featuredEvents.filter((e) =>
-                  e.highlight?.flags?.favorite_switched && !e.highlight?.flags?.is_live
+                  e.highlight?.flags?.is_upset
                 );
                 const closeEvents = featuredEvents.filter((e) =>
                   e.highlight?.flags?.is_close_matchup && !e.highlight?.flags?.is_live

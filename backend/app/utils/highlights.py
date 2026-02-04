@@ -189,8 +189,9 @@ def compute_highlight(
             elif prob_change >= 0.08:  # 8% change
                 flags.probability_swing = "minor"
 
-        # Favorite switched
-        if opening_favorite:
+        # Favorite switched - only meaningful for live/completed games
+        # Pre-game line movement is just market noise, not an "upset brewing"
+        if opening_favorite and (flags.is_live or status in ("completed", "closed")):
             current_favorite = "home" if current_home_prob > 0.5 else "away" if current_home_prob < 0.5 else "even"
             if opening_favorite != current_favorite and opening_favorite != "even" and current_favorite != "even":
                 flags.favorite_switched = True

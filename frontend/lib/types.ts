@@ -282,6 +282,20 @@ export interface FuturesMoversResponse {
   timeframe_hours: number;
 }
 
+// Pulse rankings types
+export interface RankedEvent extends Event {
+  rank: number;
+}
+
+export interface PulseRankingsResponse {
+  highest: RankedEvent[];
+  lowest: RankedEvent[];
+  filters: {
+    sport: string | null;
+    limit: number;
+  };
+}
+
 // Search types
 export interface SearchPagination {
   total_results: number;

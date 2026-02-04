@@ -300,6 +300,72 @@ async def get_highlights(
     }
 
 
+@router.get("/pulse-rankings")
+async def get_pulse_rankings(
+    limit: int = Query(25, ge=1, le=100, description="Number of events per list"),
+    sport: Optional[str] = Query(None, description="Filter by sport key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the all-time highest and lowest Pulse events.
+
+    Returns two lists: the most exciting games ever tracked (highest Pulse)
+    and the most boring/one-sided games (lowest Pulse).
+    """
+    # Load GEI percentiles for formatting
+    gei_percentiles = await _load_gei_percentiles(db)
+
+    # Base query for completed events with GEI
+    base_query = (
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            Event.status.in_(["completed", "closed"]),
+            Event.raw_gei.isnot(None),
+        )
+    )
+
+    if sport:
+        base_query = base_query.join(Sport).where(Sport.key == sport)
+
+    # Highest Pulse (most exciting)
+    highest_query = base_query.order_by(Event.raw_gei.desc()).limit(limit)
+    highest_result = await db.execute(highest_query)
+    highest_events = highest_result.scalars().all()
+
+    # Lowest Pulse (least exciting) - must have some activity (raw_gei > 0)
+    lowest_query = (
+        base_query
+        .where(Event.raw_gei > 0)
+        .order_by(Event.raw_gei.asc())
+        .limit(limit)
+    )
+    lowest_result = await db.execute(lowest_query)
+    lowest_events = lowest_result.scalars().all()
+
+    # Format events with rank
+    highest_formatted = []
+    for i, event in enumerate(highest_events, 1):
+        formatted = _format_event(event, gei_percentiles)
+        formatted["rank"] = i
+        highest_formatted.append(formatted)
+
+    lowest_formatted = []
+    for i, event in enumerate(lowest_events, 1):
+        formatted = _format_event(event, gei_percentiles)
+        formatted["rank"] = i
+        lowest_formatted.append(formatted)
+
+    return {
+        "highest": highest_formatted,
+        "lowest": lowest_formatted,
+        "filters": {
+            "sport": sport,
+            "limit": limit,
+        },
+    }
+
+
 @router.get("/search")
 async def search_events(
     q: str = Query(..., min_length=2, description="Search query (team name, city, etc.)"),

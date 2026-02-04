@@ -13,6 +13,7 @@ import type {
   FuturesHistoryResponse,
   FuturesMoversResponse,
   SearchResponse,
+  PulseRankingsResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -98,6 +99,22 @@ export async function searchEvents(params: {
   if (params.per_page) searchParams.set("per_page", params.per_page.toString());
 
   return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`);
+}
+
+/**
+ * Fetch all-time highest and lowest Pulse events
+ */
+export async function fetchPulseRankings(params?: {
+  sport?: string;
+  limit?: number;
+}): Promise<PulseRankingsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params?.sport) searchParams.set("sport", params.sport);
+  if (params?.limit) searchParams.set("limit", params.limit.toString());
+
+  const query = searchParams.toString();
+  return apiFetch<PulseRankingsResponse>(`/api/events/pulse-rankings${query ? `?${query}` : ""}`);
 }
 
 /**
