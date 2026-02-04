@@ -958,12 +958,14 @@ async def sync_espn_live_events(
     secret: str = Query(..., description="Admin secret for authorization"),
     sport_key: str = Query(..., description="Sport key to sync"),
     dry_run: bool = Query(False, description="Preview sync without saving"),
+    skip_llm: bool = Query(False, description="Skip LLM matching (faster, avoids timeout)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Sync live event data from ESPN (scores, clock, period, venue, broadcast).
 
     Matches ESPN events to our events and updates game state.
+    Use skip_llm=true to avoid timeouts when LLM matching is slow.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -1040,8 +1042,8 @@ async def sync_espn_live_events(
                 match_method = "name_match"
                 break
 
-        # LLM fallback for unmatched events
-        if not espn_event and llm.is_available():
+        # LLM fallback for unmatched events (skip if skip_llm=true to avoid timeout)
+        if not espn_event and not skip_llm and llm.is_available():
             for ee in espn_events:
                 if not ee.home_team or not ee.away_team:
                     continue
