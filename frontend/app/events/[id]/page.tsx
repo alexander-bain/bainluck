@@ -17,6 +17,7 @@ import {
   usePageTracking,
   useScrollDepth,
   useEngagementTime,
+  usePinnedEvents,
 } from "@/hooks";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 
@@ -168,6 +169,10 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Analytics
   const { track, trackNavigationClick, recordEvent } = useAnalytics();
+
+  // Pinned events
+  const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
+  const eventIsPinned = isPinned(eventId);
 
   const {
     data: event,
@@ -410,14 +415,35 @@ export default function EventPage({ params }: EventPageProps) {
       }`}>
         {/* Sport badge with emoji */}
         <div className="flex items-center justify-between mb-4">
-          {event.sport && (
-            <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
-              <span className="text-lg">{sportEmoji}</span>
-              <span className="text-slate font-medium">
-                {getLeagueDisplay(event.sport)}
+          <div className="flex items-center gap-2">
+            {/* Pin button */}
+            <button
+              onClick={() => togglePin(eventId)}
+              disabled={isMaxReached && !eventIsPinned}
+              className={`
+                p-1.5 rounded-full transition-all
+                ${eventIsPinned
+                  ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
+                  : 'text-slate/40 hover:text-slate hover:bg-slate/10'
+                }
+                ${isMaxReached && !eventIsPinned ? 'cursor-not-allowed opacity-30' : ''}
+                focus:outline-none focus:ring-2 focus:ring-amber-300
+              `}
+              title={eventIsPinned ? 'Unpin event' : isMaxReached ? 'Maximum 6 pins' : 'Pin event'}
+              aria-label={eventIsPinned ? 'Unpin event' : 'Pin event'}
+            >
+              <PinIcon filled={eventIsPinned} className="w-5 h-5" />
+            </button>
+
+            {event.sport && (
+              <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
+                <span className="text-lg">{sportEmoji}</span>
+                <span className="text-slate font-medium">
+                  {getLeagueDisplay(event.sport)}
+                </span>
               </span>
-            </span>
-          )}
+            )}
+          </div>
 
           {/* Status badge */}
           {isCompleted && (
@@ -814,5 +840,29 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Pin icon - pushpin style
+ */
+function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
+  if (filled) {
+    // Filled pushpin
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M16 4c0-.55-.22-1.05-.58-1.41-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-6.01 6.01C5.22 9.95 4 11.59 4 13.5c0 1.1.45 2.1 1.17 2.83L2 19.5l1.41 1.41 3.17-3.17c.73.72 1.73 1.17 2.83 1.17 1.91 0 3.55-1.22 4.91-2.58l6.01-6.01c.36-.36.58-.86.58-1.41s-.22-1.05-.58-1.41c-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-4.95 4.95-2.12-2.12L16 4z"/>
+      </svg>
+    );
+  }
+
+  // Outline pushpin
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v1H5V5z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 11v6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 17h6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 6h14l-2 5H7L5 6z" />
+    </svg>
   );
 }
