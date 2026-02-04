@@ -1345,6 +1345,36 @@ async def get_event_odds_history(
         # Table may not exist yet - return empty history
         pass
 
+    # Build ESPN win probability history
+    espn_history = []
+    try:
+        from app.models import ESPNSnapshot
+        espn_result = await db.execute(
+            select(ESPNSnapshot)
+            .where(
+                ESPNSnapshot.event_id == event_id,
+                ESPNSnapshot.captured_at >= cutoff,
+            )
+            .order_by(ESPNSnapshot.captured_at)
+        )
+        espn_snapshots = espn_result.scalars().all()
+
+        espn_history = [
+            {
+                "timestamp": snap.captured_at.isoformat(),
+                "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
+                "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
+                "home_score": snap.home_score,
+                "away_score": snap.away_score,
+                "game_clock": snap.game_clock,
+                "period": snap.period,
+            }
+            for snap in espn_snapshots
+        ]
+    except Exception:
+        # Table may not exist yet - return empty history
+        pass
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -1352,9 +1382,11 @@ async def get_event_odds_history(
         "history": history,
         "bookmaker_history": bookmaker_history,
         "score_history": score_history,
+        "espn_history": espn_history,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),
+        "espn_snapshot_count": len(espn_history),
     }
 
 

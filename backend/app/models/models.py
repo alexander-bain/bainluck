@@ -147,6 +147,10 @@ class Event(Base):
     odds_snapshots: Mapped[list["OddsSnapshot"]] = relationship(
         back_populates="event"
     )
+    espn_snapshots: Mapped[list["ESPNSnapshot"]] = relationship(
+        back_populates="event",
+        cascade="all, delete-orphan"
+    )
 
 
 class OddsSnapshot(Base):
@@ -217,6 +221,33 @@ class OddsAggregated(Base):
     __table_args__ = (
         UniqueConstraint("event_id", "period_start", name="uq_event_period"),
     )
+
+
+class ESPNSnapshot(Base):
+    """ESPN win probability history (captured every 60 seconds during live games)."""
+
+    __tablename__ = "espn_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True
+    )
+
+    # Win probability from ESPN's model
+    home_win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    away_win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+
+    # Game state at capture time
+    home_score: Mapped[Optional[int]] = mapped_column(Integer)
+    away_score: Mapped[Optional[int]] = mapped_column(Integer)
+    game_clock: Mapped[Optional[str]] = mapped_column(String(20))
+    period: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Relationships
+    event: Mapped["Event"] = relationship(back_populates="espn_snapshots")
 
 
 class User(Base):

@@ -2358,13 +2358,27 @@ def sync_espn_live_events(self):
                                     event.away_score = ee.away_score
                                     changed = True
 
-                                # Update ESPN win probability
+                                # Update ESPN win probability and save snapshot
                                 if ee.home_win_probability is not None:
                                     event.espn_win_prob_home = ee.home_win_probability
                                     sources = event.win_probability_sources or {}
                                     sources["espn"] = ee.home_win_probability
                                     event.win_probability_sources = sources
                                     changed = True
+
+                                    # Save ESPN snapshot for history/charting
+                                    from app.models.models import ESPNSnapshot
+                                    snapshot = ESPNSnapshot(
+                                        event_id=event.id,
+                                        home_win_probability=ee.home_win_probability,
+                                        away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
+                                        home_score=ee.home_score,
+                                        away_score=ee.away_score,
+                                        game_clock=ee.clock,
+                                        period=ee.status_detail,
+                                    )
+                                    session.add(snapshot)
+                                    stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
 
                                 if changed:
                                     stats["events_updated"] += 1
