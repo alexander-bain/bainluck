@@ -337,6 +337,27 @@ export default function PulseExplainerPage() {
         </div>
       </section>
 
+      {/* Hall of Fame Link */}
+      <section className="space-y-4">
+        <h2 className="text-title-2 text-graphite flex items-center gap-2">
+          <span>🏆</span> Pulse Hall of Fame
+        </h2>
+        <div className="bg-white rounded-xl p-6 border border-mist shadow-sm">
+          <p className="text-slate mb-4">
+            Curious which games had the highest (and lowest) Pulse scores ever?
+            Check out our all-time rankings to discover legendary thrillers and
+            forgettable blowouts.
+          </p>
+          <Link
+            href="/pulse/hall-of-fame"
+            className="inline-flex items-center gap-2 bg-amber-100 text-amber-800 px-4 py-2 rounded-full font-semibold hover:bg-amber-200 transition-colors"
+          >
+            <span>🏆</span>
+            View Hall of Fame
+          </Link>
+        </div>
+      </section>
+
       {/* CTA */}
       <div className="text-center pt-4 pb-8">
         <Link
