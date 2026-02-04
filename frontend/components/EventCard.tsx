@@ -112,7 +112,7 @@ export default function EventCard({
         {/* Header: Sport, League, Status */}
         <div className="flex justify-between items-start mb-3">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Pin button - shows on hover or when pinned */}
+            {/* Pin button - always visible but subtle, more prominent on hover */}
             {onPinToggle && (
               <button
                 onClick={handlePinClick}
@@ -121,9 +121,9 @@ export default function EventCard({
                   p-1 rounded-full transition-all
                   ${isPinned
                     ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
-                    : 'text-slate/40 hover:text-slate hover:bg-slate/10 opacity-0 group-hover/card:opacity-100'
+                    : 'text-slate/30 hover:text-slate hover:bg-slate/10 group-hover/card:text-slate/50'
                   }
-                  ${pinDisabled && !isPinned ? 'cursor-not-allowed' : ''}
+                  ${pinDisabled && !isPinned ? 'cursor-not-allowed opacity-30' : ''}
                   focus:outline-none focus:ring-2 focus:ring-amber-300
                 `}
                 title={isPinned ? 'Unpin event' : pinDisabled ? 'Maximum 6 pins' : 'Pin event'}
