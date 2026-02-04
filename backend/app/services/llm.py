@@ -111,14 +111,31 @@ Rules:
             "ufc": "mma",
             "soccer/football": "soccer",
             "football/soccer": "soccer",
+            "horse racing": "horse_racing",
+            "horse_racing": "horse_racing",
+            "auto racing": "motorsports",
+            "motor sports": "motorsports",
+            "motorsport": "motorsports",
+            "australian rules": "aussierules",
+            "australian rules football": "aussierules",
+            "aussie rules": "aussierules",
+            "table tennis": "tennis",
+            "mixed martial arts": "mma",
+            "e-sports": "esports",
+            "video games": "esports",
+            "tv": "entertainment",
+            "movies": "entertainment",
+            "film": "entertainment",
+            "music": "entertainment",
+            "awards": "entertainment",
         }
         if result in mappings:
             mapped = mappings[result]
             if mapped in categories_lower:
                 return categories[categories_lower.index(mapped)]
 
-        logger.warning(f"LLM returned unexpected category '{result}' for text '{text[:50]}...'")
-        return None
+        logger.warning(f"LLM returned unexpected category '{result}' for text '{text[:50]}...', using fallback: {fallback}")
+        return fallback
 
     except Exception as e:
         logger.error(f"LLM classification error: {e}, using fallback: {fallback}")
