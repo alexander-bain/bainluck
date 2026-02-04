@@ -742,24 +742,46 @@ Completed: February 2026
 - [x] Admin endpoints for Pulse management (`/api/admin/pulse/status`, `/api/admin/pulse/recalculate`)
 - [x] Debug endpoint for Pulse diagnostics (`/api/events/debug/pulse`)
 
-### Phase 5: Authentication & Personalization
+### Phase 5: Pinned Events & Futures ✅ Complete
+**Track important events without requiring authentication.**
+
+Completed: February 2026
+
+- [x] Pin/unpin events from cards and detail pages
+- [x] Pin/unpin futures markets from cards and detail pages
+- [x] Pinned sections on homepage (above Highlights)
+- [x] Maximum 6 events + 6 futures pinned simultaneously
+- [x] Works for events outside 7-day window (e.g., Super Bowl)
+- [x] Cross-tab sync via localStorage
+- [x] Search results support pinning
+
+**Implementation:**
+- localStorage-based (no auth required)
+- `usePinnedEvents` and `usePinnedFutures` hooks
+- `fetchEventsByIds` and `fetchFuturesByIds` for loading pinned items
+- Subtle pin icon on cards (visible on hover, amber when pinned)
+
+**Future Enhancement:** Migrate to database storage when Firebase Auth is implemented for cross-device sync.
+
+### Phase 6: Authentication & Personalization
 **User accounts for cross-device experience.**
 
 Target: Q2 2026
 
 - [ ] Firebase Auth integration (Google, Apple sign-in)
 - [ ] Favorite teams (persisted to database)
+- [ ] Migrate pinned items to database
 - [ ] Personalized highlights based on favorites
 - [ ] Cross-device sync of preferences
 - [ ] Optional: Email notifications for favorite teams
 
 **Auth Philosophy:**
 - No required sign-in — logged-out experience must feel complete
-- Auth unlocks: Favorites sync, notifications, cross-device
+- Auth unlocks: Favorites sync, notifications, cross-device, pinned items sync
 - Auth is **pull-based, not forced**
 
-### Phase 6: LLM Integration 🔄 In Progress
-**OpenAI-powered smart features.**
+### Phase 7: LLM Integration & Metadata Enrichment ✅ Complete
+**OpenAI-powered smart features and ESPN data integration.**
 
 Infrastructure complete: February 2026
 
@@ -767,14 +789,61 @@ Infrastructure complete: February 2026
 - [x] Generic `classify()` utility for text classification
 - [x] Hybrid futures categorization (rules + LLM fallback)
 - [x] LLM results cached in database (`llm_sport_category` column)
-- [x] In-memory cache that skips `None` results (allows retries on failures)
 - [x] Admin endpoints for triggering categorization
-- [x] Expanded sport categories: lacrosse, chess, poker added
-- [x] Improved LLM prompt with athlete/team examples and common response mappings
-- [ ] Detect significant probability swings (>10% change)
-- [ ] Generate brief explanations for odds movements
-- [ ] Cache explanations to avoid redundant API calls
-- [ ] Show explanations on event detail page and in highlights
+- [x] **LLM Metadata Enrichment**: Gender, level, league, importance classification
+- [x] **ESPN API Integration**: Team colors, logos, live game data, win probability
+- [x] **Entity Resolution**: LLM-powered team name matching across data sources
+- [x] **Venue Data**: Arena/stadium information from ESPN
+
+**LLM Metadata Classifications:**
+| Field | Values | Example |
+|-------|--------|---------|
+| `llm_gender` | men, women, mixed, unknown | WNBA → "women" |
+| `llm_level` | professional, college, amateur, youth | NCAA → "college" |
+| `llm_league` | NFL, NCAAF, NBA, WNBA, etc. | More granular than sport |
+| `llm_importance` | championship, playoff, regular_season, exhibition | Super Bowl → "championship" |
+
+**ESPN Integration:**
+- Team enrichment: colors, logos, abbreviations, alternate names
+- Event enrichment: game clock, period, broadcast info, venue
+- Win probability: ESPN's statistical model (separate from betting odds)
+- Entity resolution: LLM-assisted matching between our teams and ESPN teams
+
+**Admin Endpoints:**
+```bash
+# LLM metadata enrichment
+POST /api/admin/events/enrich-metadata?secret=xxx&limit=50
+GET  /api/admin/events/metadata-status
+POST /api/admin/futures/enrich-metadata?secret=xxx&limit=50
+GET  /api/admin/futures/metadata-status
+
+# ESPN integration
+POST /api/admin/espn/sync-teams?secret=xxx&sport_key=basketball_nba
+GET  /api/admin/espn/teams-status
+POST /api/admin/espn/sync-live-events?secret=xxx&sport_key=basketball_nba
+GET  /api/admin/espn/events-status
+POST /api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba
+```
+
+**LLM Service Capabilities:**
+```python
+from app.services import llm
+
+# General classification (always returns a result when fallback is set)
+result = llm.classify("Some text", ["option1", "option2", "option3"], fallback="option1")
+
+# Futures categorization (always returns a category, never None)
+category = llm.classify_futures_market("2026 Masters Tournament Winner")
+# Returns: "golf" — LLM response normalization handles variants like "horse racing" → "horse_racing"
+
+# Metadata enrichment
+metadata = llm.enrich_event_metadata("Lakers", "Celtics", "basketball_nba")
+# Returns: {"gender": "men", "level": "professional", "league": "NBA", "importance": "regular_season"}
+
+# Team name matching (for entity resolution)
+confidence = llm.match_team_names_cached("LA Lakers", "Los Angeles Lakers", "basketball")
+# Returns: 0.95 (high confidence they're the same team)
+```
 
 **LLM Service Capabilities:**
 ```python
@@ -803,8 +872,9 @@ category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
 - Brief, factual, non-predictive
 - Only surface for meaningful events
 - No gambling advice or encouragement
+- Hybrid approach: rules first, LLM fallback for edge cases
 
-### Phase 7: iOS App
+### Phase 8: iOS App
 **Native second-screen experience.**
 
 Target: Q3 2026
@@ -820,7 +890,7 @@ Target: Q3 2026
   - Upcoming games for favorite teams
   - "Most Exciting Game Right Now"
 
-### Phase 8: Futures Markets ✅ Complete
+### Phase 9: Futures Markets ✅ Complete
 **Championship odds, MVP races, and outrights.**
 
 Completed: February 2026
@@ -841,7 +911,7 @@ Completed: February 2026
 - Full outcome list on detail page
 - 24h probability change indicators
 
-### Phase 9: Prediction Markets (Kalshi Integration) ✅ Complete
+### Phase 10: Prediction Markets (Kalshi Integration) ✅ Complete
 **Politics, entertainment, and event-based markets.**
 
 Completed: February 2026
@@ -860,7 +930,7 @@ Completed: February 2026
 
 **To add more categories** (e.g., Entertainment), edit `sports_categories` in `tasks.py`
 
-### Phase 10: Additional Data Sources
+### Phase 11: Additional Data Sources
 **Expanding coverage and depth.**
 
 Target: 2027
@@ -870,6 +940,345 @@ Target: 2027
 - [ ] International sportsbooks for broader odds coverage
 - [ ] Alternative odds sources for redundancy
 - [ ] Real-time sports data (play-by-play) for richer context
+
+### Phase 12: Probability Comparisons ("Comparable Odds")
+**Make win probabilities viscerally relatable by comparing them to real-world likelihoods.**
+
+Target: TBD (Exploratory)
+
+A user sees their team has a 15% chance of winning. Instead of just a number, a "Comparable Odds" box on the event detail page tells them: *"About as likely as rain on a summer day in Atlanta"* or *"About as likely as your neighbor owning a dog in Germany."*
+
+**Why this works:**
+- Probabilities are abstract; real-world analogies make them intuitive
+- Fits the product's mission of making odds *understandable* to non-bettors
+- Creates a delightful, shareable moment ("Did you know your team's odds are the same as...")
+- Reinforces the second-screen experience with conversation starters
+
+**Requirements:**
+- **Massive comparison database**: Minimum 1,000 entries to avoid repetition, ideally growing over time
+- **Bucketed by probability range**: Group comparisons into bands (0-5%, 5-10%, 10-15%, ..., 95-100%) for easy lookup
+- **Diverse categories**: Weather, animals, geography, pop culture, science, food, daily life, sports trivia, etc.
+- **Sourced and factual**: Each comparison should be based on real statistics with a citation
+- **Tone**: Fun, surprising, educational — never condescending or gambling-adjacent
+
+**Data Model:**
+```sql
+CREATE TABLE probability_comparisons (
+    id SERIAL PRIMARY KEY,
+    probability_min DECIMAL(5,4) NOT NULL,  -- Lower bound (e.g., 0.10)
+    probability_max DECIMAL(5,4) NOT NULL,  -- Upper bound (e.g., 0.15)
+    comparison_text TEXT NOT NULL,           -- "Rain on a summer day in Atlanta"
+    category VARCHAR(50),                   -- weather, animals, geography, science, etc.
+    source TEXT,                             -- Citation/source for the statistic
+    fun_factor INTEGER DEFAULT 5,           -- 1-10, for ranking/selection
+    created_at TIMESTAMP DEFAULT NOW(),
+    active BOOLEAN DEFAULT true
+);
+
+CREATE INDEX idx_prob_comparisons_range ON probability_comparisons(probability_min, probability_max);
+CREATE INDEX idx_prob_comparisons_category ON probability_comparisons(category);
+```
+
+**Population strategy:**
+- Seed with LLM-generated comparisons (GPT-4o or Claude), then manually verify sources
+- Crowdsource additions over time (user submissions after auth)
+- Periodic LLM batch jobs to generate new comparisons for underrepresented ranges
+- Target distribution: ~50+ comparisons per 5% bucket to ensure variety
+
+**Display (Event Detail Page):**
+```
+Comparable Odds
+───────────────
+Lakers have a 15% chance of winning.
+
+🎲 That's about as likely as...
+   "A coin landing heads 3 times in a row"
+
+   [Show another] [📋 Share]
+```
+
+**Implementation considerations:**
+- Random selection within the matching bucket (with optional category rotation)
+- "Show another" button to cycle through comparisons without page reload
+- Share button to generate a social card with the comparison
+- API endpoint: `GET /api/comparisons?probability=0.15` returns a random match
+- Cache aggressively — comparisons don't change often
+
+**Open questions:**
+- Should comparisons be localized (US-centric vs international)?
+- Should users be able to submit their own comparisons?
+- Should we show one comparison or a few? (One feels cleaner, aligns with product principles)
+- How to handle the 45-55% range where most comparisons are boring? ("About as likely as a coin flip" gets old)
+
+### Phase 13: Event Similarity Scores
+**Find historical events that followed the most similar probability pattern — the "Baseball Reference" approach for odds.**
+
+Target: TBD (Exploratory)
+
+Inspired by [Baseball Reference's similarity scores](https://www.baseball-reference.com/about/similarity.shtml), this feature would show users which past games followed probability arcs most similar to the current or completed game. During a live game: *"This game is tracking most similarly to Lakers vs Celtics, March 2026 (Pulse: 87)."* After a game: *"Most similar games in our database."*
+
+**Why this works:**
+- Adds historical depth and context to every game
+- Creates a "rabbit hole" effect — users explore past games they'd never have found
+- Makes the growing historical database a visible, valuable asset
+- Works especially well for high-drama games ("This is shaping up like THAT game")
+- Bridges the second-screen experience with storytelling
+
+**Similarity algorithm (proposed):**
+```python
+def calculate_similarity(event_a_history, event_b_history) -> float:
+    """
+    Compare two events' probability histories using multiple dimensions.
+
+    Components (weighted):
+    - Probability curve shape (40%): DTW or resampled point-by-point comparison
+    - Final margin (15%): How close the final probabilities were
+    - Volatility pattern (20%): Similar number/size of swings
+    - Lead changes (15%): Similar number of favorite flips
+    - Sport match (10%): Same sport gets a bonus
+
+    Returns similarity score 0-100 (100 = identical pattern).
+    """
+```
+
+**Key technical challenges:**
+- **Time normalization**: Games have different lengths. Need to resample probability histories to a common timeline (e.g., 100 points representing 0-100% game progress)
+- **Efficient comparison**: Comparing every pair is O(n²). Need smart indexing:
+  - Pre-compute feature vectors (volatility, lead changes, max swing, final margin)
+  - Use approximate nearest neighbor search on feature vectors
+  - Only do expensive curve comparison on top candidates
+- **Live matching**: During a game, compare the partial curve against completed games' equivalent partial curves
+
+**Data requirements:**
+- Minimum ~500 completed events with full probability histories to be useful
+- More historical data = better matches
+- Need to store normalized probability curves for fast comparison
+
+**Data Model:**
+```sql
+-- Pre-computed similarity features for fast lookup
+CREATE TABLE event_similarity_features (
+    event_id INTEGER PRIMARY KEY REFERENCES events(id),
+    sport_key VARCHAR(50),
+    -- Normalized feature vector for approximate matching
+    total_volatility DECIMAL(8,4),
+    max_swing DECIMAL(5,4),
+    lead_changes INTEGER,
+    final_margin DECIMAL(5,4),
+    pulse_score INTEGER,
+    -- Resampled probability curve (100 points, 0-100% game progress)
+    normalized_curve JSONB,  -- [0.55, 0.53, 0.58, ..., 0.72]
+    computed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_similarity_sport ON event_similarity_features(sport_key);
+CREATE INDEX idx_similarity_volatility ON event_similarity_features(total_volatility);
+CREATE INDEX idx_similarity_pulse ON event_similarity_features(pulse_score);
+
+-- Cached similarity results (top N similar for each event)
+CREATE TABLE event_similarities (
+    event_id INTEGER REFERENCES events(id),
+    similar_event_id INTEGER REFERENCES events(id),
+    similarity_score DECIMAL(5,2),  -- 0-100
+    rank INTEGER,                   -- 1 = most similar
+    computed_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (event_id, similar_event_id)
+);
+```
+
+**Display (Event Detail Page):**
+```
+Similar Games
+─────────────
+This game's probability pattern most closely resembles:
+
+1. 🏀 Lakers vs Celtics — Mar 12, 2026 (92% similar)
+   Pulse: 87 | Final: 112-108 | 3 lead changes
+   [View game →]
+
+2. 🏀 Warriors vs Nuggets — Feb 28, 2026 (85% similar)
+   Pulse: 74 | Final: 105-101 | 2 lead changes
+   [View game →]
+
+3. 🏈 Chiefs vs Bills — Jan 19, 2026 (78% similar)
+   Pulse: 91 | Final: 28-24 | 4 lead changes
+   [View game →]
+```
+
+**Live game display:**
+```
+Tracking Similar To...
+──────────────────────
+Through 3 quarters, this game is tracking most like:
+🏀 Heat vs Bucks — Jan 15, 2026 (Pulse: 82)
+That game ended with a 4-point margin after a late comeback.
+```
+
+**Phases:**
+1. **v1**: Post-game similarity only (batch computed after game ends)
+2. **v2**: Live similarity matching (compare partial curves during games)
+3. **v3**: Cross-sport similarity ("This NFL game feels like THAT NBA game")
+4. **v4**: User-facing "Find games like this" search feature
+
+**Open questions:**
+- Should similarity be computed only within the same sport, or cross-sport?
+- How far back should the historical window go? (All-time vs last 2 seasons)
+- Should we weight recent games higher in similarity results?
+- What's the minimum number of odds snapshots needed for meaningful comparison?
+- How to present similarity during live games without spoiling the referenced game's outcome?
+
+### Phase 14: Advanced LLM Features
+**Intelligent explanations, search, and context generation.**
+
+Target: 2027
+
+#### 11.1: Odds Movement Explanations
+Generate brief, factual explanations for significant probability swings.
+
+**Implementation:**
+```python
+def explain_odds_movement(event: Event, recent_snapshots: list) -> str:
+    """
+    Generate explanation for why odds moved.
+
+    Example output:
+    "Warriors win probability jumped from 55% to 72% in the last 10 minutes.
+    This 17-point swing typically indicates a significant scoring run or
+    key momentum shift."
+    """
+```
+
+**Features:**
+- Detect significant swings (>10% change in probability)
+- Generate human-readable explanations
+- Cache explanations to avoid redundant API calls
+- Show on event detail page and in highlights
+- Optional: correlate with score changes when available
+
+**UI Integration:**
+- Tooltip on probability swing indicators
+- "What happened?" section on event detail page
+- Highlight explanations in the Pulse card
+
+#### 11.2: Smart Search Query Understanding
+Parse natural language queries into structured filters using LLM.
+
+**Examples:**
+| User Query | Parsed As |
+|------------|-----------|
+| "celtics games last month" | team=celtics, days_back=30 |
+| "close nba games today" | sport=nba, closeness>0.9, date=today |
+| "biggest upsets this week" | upset=true, days_back=7, sort=upset_margin |
+| "warriors vs lakers upcoming" | team1=warriors, team2=lakers, status=scheduled |
+
+**Implementation:**
+- Use Claude API (GPT-4o-mini) to parse ambiguous queries
+- Show "interpreted as" explanation for transparency
+- Cache common query interpretations
+- Fallback to basic search if LLM parsing fails
+- Rate limit LLM calls (maybe only for logged-in users)
+
+#### 11.3: Excitement Summaries
+Generate narrative summaries for high-Pulse games.
+
+**Example Output:**
+> "This game saw 4 lead changes in the final 10 minutes, with win probabilities
+> swinging between 35% and 65%. The home team mounted a late comeback from a
+> 12-point deficit, making this one of the most exciting regular season games
+> of the week."
+
+**Features:**
+- Feed LLM the odds snapshots and score snapshots
+- Generate human-readable narrative
+- Include with disclaimer ("AI-generated summary")
+- Show on completed game detail pages
+- Feature in "Exciting Games This Week" section
+
+#### 11.4: Multi-Source Probability Integration
+Aggregate win probabilities from multiple statistical models.
+
+**Potential Sources:**
+| Source | Type | Data |
+|--------|------|------|
+| ESPN | API | In-game win probability model |
+| FiveThirtyEight | Historical data | Pre-game Elo predictions |
+| TeamRankings | API (paid) | Statistical models |
+| kenpom.com | Scrape | College basketball advanced stats |
+| Sports Reference | Pages | Historical win probability |
+
+**Display:**
+```
+Win Probability Sources:
+├── Betting Markets:  65% (consensus of 8 sportsbooks)
+├── ESPN Model:       62% (statistical model)
+├── FiveThirtyEight:  68% (Elo-based prediction)
+└── Average:          65%
+```
+
+**Benefits:**
+- Show divergence between "market" and "model" probabilities
+- More robust probability estimates
+- Interesting comparison ("The market says X, but ESPN's model says Y")
+
+**Legal Considerations:**
+- Undocumented APIs are legal to use (not hacking)
+- ToS violations are civil matters, not criminal
+- Worst case: they block IP, we stop using that source
+- Always have fallbacks; never break if one source is unavailable
+
+#### 11.5: Historical Events Database
+Build comprehensive database of past games with their probability histories.
+
+**Scope:**
+- All events tracked since OddsTracker launch (January 2026)
+- Historical data from other sources where available
+- Indexed for fast search and analysis
+
+**Data Model:**
+```sql
+-- Enhanced historical storage
+CREATE TABLE historical_events (
+    id SERIAL PRIMARY KEY,
+    external_id VARCHAR(100),
+    sport_key VARCHAR(50),
+    season VARCHAR(20),
+
+    home_team VARCHAR(200),
+    away_team VARCHAR(200),
+    home_score INTEGER,
+    away_score INTEGER,
+
+    -- Probability history (compressed)
+    probability_history JSONB,  -- [{time, home_prob, away_prob}, ...]
+
+    -- Computed metrics
+    pulse_score INTEGER,
+    was_upset BOOLEAN,
+    largest_swing DECIMAL(5,4),
+    lead_changes INTEGER,
+
+    -- Search indexes
+    teams_search TSVECTOR,
+
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_historical_events_sport_season ON historical_events(sport_key, season);
+CREATE INDEX idx_historical_events_pulse ON historical_events(pulse_score DESC);
+CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_search);
+```
+
+**Use Cases:**
+- "Most exciting Lakers games ever"
+- "Biggest upsets in NBA history"
+- "Games similar to this one" (by probability pattern)
+- Historical Pulse leaderboards by sport/season
+- Training data for future ML models
+
+**Data Sources:**
+- Our own tracked events (primary, authoritative)
+- ESPN historical games (supplementary)
+- Sports Reference (research/validation)
 
 ---
 
@@ -904,27 +1313,32 @@ Target: 2027
 
 ### LLM Infrastructure ✅ NEW
 - **OpenAI GPT-4o-mini integration**: Generic LLM service for classification tasks
-- **Hybrid futures categorization**: Pattern matching rules (regex) + LLM fallback for edge cases
-- **Improved LLM prompt**: Sports-aware prompt with athlete/team examples and common response mappings
+- **Hybrid futures categorization**: 90+ regex patterns + LLM fallback for edge cases
+- **22 sport categories**: football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, other
+- **Zero uncategorized markets**: `classify()` always returns a category (never NULL), with LLM response normalization handling variant outputs like "horse racing" → horse_racing
 - **Database caching**: LLM results stored in `llm_sport_category` column to avoid repeat API calls
-- **In-memory cache**: Skips caching `None` results so failed classifications can be retried
-- **Admin endpoints**: `/api/admin/futures/categorize` to trigger batch categorization with dry-run support
+- **Admin endpoints**: `/api/admin/futures/categorize`, `/uncategorized`, `/force-categorize`
 - **Cost-effective**: ~$0.001 per classification, results cached permanently
-- **Expanded categories**: Lacrosse, chess, poker added to classification options
 
 ### Futures & Kalshi Integration ✅ NEW
 - **Futures markets**: Championship odds, MVP races, division winners from The Odds API
 - **Kalshi prediction markets**: Sports-related prediction markets with timing info
-- **Smart categorization**: 170+ markets auto-categorized using hybrid rules + LLM
-- **Pattern improvements**: Baseball awards (Manager, Comeback Player), pro sports, NWSL, Manchester United, Tewaaraton, WSOP, and more
+- **Smart categorization**: All markets auto-categorized using hybrid rules (90+ patterns) + LLM fallback
 - **Unified display**: Both sources appear together, grouped by sport category
 - **Search integration**: Futures markets included in search results
 
+### Pinned Events & Futures ✅ NEW
+- **Track important events**: Pin events like the Super Bowl to track them closely
+- **Pin futures markets**: Also pin championship races, MVP odds, etc.
+- **Homepage sections**: "📌 Pinned" and "📌 Pinned Futures" appear above Highlights
+- **Works anywhere**: Pin from cards, search results, or detail pages
+- **No auth required**: localStorage-based, syncs across browser tabs
+- **Smart fetching**: Pinned events outside the 7-day window are fetched separately
+- **Limits**: Max 6 events + 6 futures to prevent UI clutter
+
 ### Bug Fixes
-- **Upset Brewing fix**: Pre-game line movement no longer triggers "Upset Brewing" label for scheduled events
-- **Favorite switched logic**: `favorite_switched` flag only set for live/completed games, not scheduled
-- **Frontend upset filter**: Updated to use `is_upset` flag instead of raw `favorite_switched`
-- **PulseBadge import**: Fixed default export import in Hall of Fame page
+- **Upset Brewing fix**: Pre-game line movement no longer triggers "Upset brewing" label for scheduled events
+- **Favorite switched logic**: Only set for live/completed games, not scheduled
 
 ---
 
@@ -1183,34 +1597,39 @@ These are product experiments, not blockers.
 
 ## Development Priorities (Next 6 Months)
 
-### Immediate (February 2026)
-- ✅ Fix event discovery for NCAA basketball
-- ✅ Pulse feature complete and deployed
-- ✅ Kalshi prediction market integration
-- ✅ Futures UI with hybrid categorization
-- ✅ LLM infrastructure (OpenAI GPT-4o-mini)
+### Completed (February 2026)
+- ✅ Pulse (Game Excitement Metric) - live and completed
 - ✅ Pulse Hall of Fame page
-- ✅ Upset Brewing bug fix
-- 🔄 Merge remaining categorization PRs (improved patterns, LLM prompt, expanded categories)
-- 🔄 Re-run categorize endpoint after merging to resolve remaining ~67 "other" markets
+- ✅ Futures markets with smart categorization
+- ✅ Kalshi prediction market integration
+- ✅ LLM infrastructure (OpenAI GPT-4o-mini)
+- ✅ Pinned events and futures (localStorage-based)
+- ✅ Futures categorization hardened: 90+ regex patterns, 22 sport categories, LLM fallback always returns a result, 0 uncategorized markets
+
+### Immediate (February-March 2026)
+- Pass Kalshi event category through as sport_key to improve disambiguation of ambiguous market names (e.g., "MVP Winner?" currently lands in "other")
 - Deploy analytics and observe user behavior
 - Monitor polling health across all sports
+- Gather feedback on pinned events feature
 
 ### Near-term (March-April 2026)
-- Register `sport`, `league`, `league_tier` as custom dimensions in GA4 Admin
-- Add `"Entertainment"` to Kalshi sports_categories (2-line change in `tasks.py`)
-- LLM-powered explanations for odds movements
-- Begin Firebase Auth integration
+- Firebase Auth integration
+- Migrate pinned items to database for cross-device sync
+- Favorite teams with cloud sync
 
 ### Mid-term (May-June 2026)
-- Futures Pulse implementation (proposal documented in PRD, open questions to resolve)
-- Favorites with cloud sync
+- LLM-powered explanations for odds movements
+- Personalized highlights based on favorites
 - Begin iOS app development
 
 ### Later (Q3-Q4 2026)
-- iOS app launch
-- Smart search with LLM query understanding
-- Natural language search
+- iOS app launch with full feature parity
+- Widgets (Lock Screen, Home Screen)
+- Advanced notification preferences
+
+### Exploring (No Timeline)
+- **Probability Comparisons ("Comparable Odds")**: Massive database of real-world probability analogies (1,000+ entries) displayed on event detail pages to make win probabilities viscerally relatable — "Your team's 15% chance is about as likely as rain on a summer day in Atlanta" (Phase 12)
+- **Event Similarity Scores**: Baseball Reference-style similarity matching that finds historical games with the most similar probability arcs — works during and after games, creates a "rabbit hole" into the historical database (Phase 13)
 
 ---
 

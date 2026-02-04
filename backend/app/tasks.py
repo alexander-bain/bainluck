@@ -109,6 +109,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.poll_kalshi_markets",
         "schedule": crontab(minute=45),  # Every hour at :45 (offset from futures polling)
     },
+    "enrich-events-hourly": {
+        "task": "app.tasks.enrich_events_metadata",
+        "schedule": crontab(minute=20),  # Every hour at :20 (offset from other tasks)
+        "kwargs": {"limit": 50},  # Process 50 events per run
+    },
+    "sync-espn-live": {
+        "task": "app.tasks.sync_espn_live_events",
+        "schedule": 60.0,  # Every 60 seconds for live game data (scores, clock, win prob)
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -2017,11 +2026,18 @@ async def _poll_kalshi_markets():
                         american = probability_to_american(prob) if prob and prob > 0 else None
 
                         # For single-market events, use "Yes" as outcome name
-                        # For multi-market events, use market title
+                        # For multi-market events, prefer subtitle (specific outcome name),
+                        # then title only if it differs from event title, then parsed ticker
                         if len(event.markets) == 1:
                             outcome_name = "Yes"
                         else:
-                            outcome_name = market.title or market.ticker
+                            if market.subtitle:
+                                outcome_name = market.subtitle
+                            elif market.title and market.title != event.title:
+                                outcome_name = market.title
+                            else:
+                                # Extract name from ticker (e.g. "COTY-24-BELICHICK" -> "Belichick")
+                                outcome_name = _parse_kalshi_ticker_name(market.ticker)
 
                         # Upsert outcome
                         outcome_stmt = pg_insert(FuturesOutcome).values(
@@ -2082,6 +2098,23 @@ async def _poll_kalshi_markets():
     return stats
 
 
+def _parse_kalshi_ticker_name(ticker: str) -> str:
+    """Extract a human-readable name from a Kalshi market ticker.
+
+    Kalshi tickers look like 'KXCOTY-24-BELICHICK' or 'NBACHAMP-BOS'.
+    We take the last segment that isn't purely numeric and title-case it.
+    """
+    if not ticker:
+        return "Unknown"
+    parts = ticker.split("-")
+    # Walk backwards to find the last non-numeric segment
+    for part in reversed(parts):
+        if part and not part.isdigit():
+            # Title-case and return (e.g. "BELICHICK" -> "Belichick")
+            return part.title()
+    return ticker
+
+
 def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     """Map Kalshi category to internal category."""
     if not kalshi_category:
@@ -2104,3 +2137,284 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
         return "tech"
 
     return "other"
+
+
+# ============================================================================
+# LLM Metadata Enrichment Task
+# ============================================================================
+
+
+@celery_app.task(bind=True)
+def enrich_events_metadata(self, limit: int = 50):
+    """
+    Enrich events with LLM-generated metadata (gender, level, league, importance).
+
+    This task runs periodically to classify new events that don't have metadata yet.
+    Uses heuristics first, falling back to LLM for ambiguous cases.
+
+    Args:
+        limit: Maximum number of events to process per run
+
+    Returns:
+        Dict with enrichment statistics
+    """
+    from app.services import llm
+    from app.services.database import SessionLocal
+    from app.models.models import Event
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    stats = {
+        "processed": 0,
+        "enriched": 0,
+        "errors": 0,
+        "remaining": 0,
+        "llm_available": llm.is_available(),
+    }
+
+    try:
+        with SessionLocal() as session:
+            # Find events without metadata (prioritize recent events)
+            result = session.execute(
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(
+                    Event.llm_gender.is_(None),
+                    Event.llm_level.is_(None),
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(limit)
+            )
+            events = result.scalars().all()
+
+            if not events:
+                # Count remaining
+                remaining_result = session.execute(
+                    select(Event.id).where(
+                        Event.llm_gender.is_(None),
+                        Event.llm_level.is_(None),
+                    )
+                )
+                stats["remaining"] = len(remaining_result.all())
+                return stats
+
+            for event in events:
+                try:
+                    sport_key = event.sport.key if event.sport else None
+                    text = f"{event.away_team_name} at {event.home_team_name}"
+
+                    # Classify using heuristics + LLM fallback
+                    event.llm_gender = llm.classify_gender_cached(text, sport_key)
+                    event.llm_level = llm.classify_level_cached(text, sport_key)
+                    event.llm_league = llm.classify_league_cached(text, sport_key)
+                    event.llm_importance = llm.classify_importance_cached(text, sport_key)
+
+                    stats["enriched"] += 1
+
+                except Exception as e:
+                    stats["errors"] += 1
+                    if stats["errors"] <= 5:
+                        print(f"Error enriching event {event.id}: {e}")
+
+                stats["processed"] += 1
+
+            session.commit()
+
+            # Count remaining
+            remaining_result = session.execute(
+                select(Event.id).where(
+                    Event.llm_gender.is_(None),
+                    Event.llm_level.is_(None),
+                )
+            )
+            stats["remaining"] = len(remaining_result.all())
+
+    except Exception as e:
+        print(f"Enrichment task error: {e}")
+        stats["errors"] += 1
+
+    return stats
+
+
+# ============================================================================
+# ESPN Live Sync Task
+# ============================================================================
+
+
+# ESPN sport key mapping (our sport_key -> ESPN sport identifier)
+ESPN_SPORT_MAPPING = {
+    "basketball_nba": "basketball/nba",
+    "basketball_ncaab": "basketball/mens-college-basketball",
+    "basketball_wncaab": "basketball/womens-college-basketball",
+    "americanfootball_nfl": "football/nfl",
+    "americanfootball_ncaaf": "football/college-football",
+    "icehockey_nhl": "hockey/nhl",
+    "baseball_mlb": "baseball/mlb",
+    "soccer_usa_mls": "soccer/usa.1",
+    "soccer_epl": "soccer/eng.1",
+}
+
+
+@celery_app.task(bind=True)
+def sync_espn_live_events(self):
+    """
+    Sync live event data from ESPN for all sports with active games.
+
+    This task runs every 60 seconds to keep scores, clock, period,
+    and win probability updated for live games.
+
+    Returns:
+        Dict with sync statistics
+    """
+    from app.services.database import SessionLocal
+    from app.services.espn_api import ESPNService
+    from app.models.models import Event, Sport
+    from sqlalchemy import select, distinct
+    from sqlalchemy.orm import selectinload
+
+    stats = {
+        "sports_checked": 0,
+        "sports_with_live": 0,
+        "events_synced": 0,
+        "events_updated": 0,
+        "errors": [],
+    }
+
+    try:
+        with SessionLocal() as session:
+            # Find sports with live games
+            live_sports_result = session.execute(
+                select(distinct(Sport.key))
+                .join(Event)
+                .where(Event.status == "live")
+            )
+            live_sport_keys = [row[0] for row in live_sports_result.all()]
+
+            if not live_sport_keys:
+                return {"status": "no_live_games", **stats}
+
+            stats["sports_with_live"] = len(live_sport_keys)
+
+            espn = ESPNService()
+
+            for sport_key in live_sport_keys:
+                stats["sports_checked"] += 1
+
+                # Skip sports we don't have ESPN mapping for
+                if sport_key not in ESPN_SPORT_MAPPING:
+                    continue
+
+                try:
+                    # Get ESPN scoreboard
+                    import asyncio
+                    espn_events = asyncio.get_event_loop().run_until_complete(
+                        espn.get_scoreboard(sport_key)
+                    )
+
+                    if not espn_events:
+                        continue
+
+                    # Get our live events for this sport
+                    events_result = session.execute(
+                        select(Event)
+                        .options(selectinload(Event.sport))
+                        .where(
+                            Event.sport.has(key=sport_key),
+                            Event.status == "live",
+                        )
+                    )
+                    our_events = events_result.scalars().all()
+
+                    # Simple name matching (no LLM to avoid slowdown)
+                    def names_match(our_names: list, espn_name: str) -> bool:
+                        espn_lower = (espn_name or "").lower()
+                        for name in our_names:
+                            name_lower = name.lower()
+                            if name_lower in espn_lower or espn_lower in name_lower:
+                                return True
+                        return False
+
+                    for event in our_events:
+                        # Build name variations
+                        home_names = [event.home_team_name]
+                        away_names = [event.away_team_name]
+                        if event.home_team_normalized:
+                            home_names.append(event.home_team_normalized)
+                        if event.away_team_normalized:
+                            away_names.append(event.away_team_normalized)
+                        if event.home_team_alt_names:
+                            home_names.extend(event.home_team_alt_names)
+                        if event.away_team_alt_names:
+                            away_names.extend(event.away_team_alt_names)
+
+                        # Find matching ESPN event
+                        for ee in espn_events:
+                            if not ee.home_team or not ee.away_team:
+                                continue
+
+                            espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                            espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+                            if names_match(home_names, espn_home) and names_match(away_names, espn_away):
+                                stats["events_synced"] += 1
+                                changed = False
+
+                                # Update ESPN ID
+                                if ee.espn_id and event.espn_id != ee.espn_id:
+                                    event.espn_id = ee.espn_id
+                                    changed = True
+
+                                # Update game clock
+                                if ee.clock and event.game_clock != ee.clock:
+                                    event.game_clock = ee.clock
+                                    changed = True
+
+                                # Update period
+                                if ee.status_detail and event.period != ee.status_detail:
+                                    event.period = ee.status_detail
+                                    changed = True
+
+                                # Update scores
+                                if ee.home_score is not None and event.home_score != ee.home_score:
+                                    event.home_score = ee.home_score
+                                    changed = True
+                                if ee.away_score is not None and event.away_score != ee.away_score:
+                                    event.away_score = ee.away_score
+                                    changed = True
+
+                                # Update ESPN win probability and save snapshot
+                                if ee.home_win_probability is not None:
+                                    event.espn_win_prob_home = ee.home_win_probability
+                                    sources = event.win_probability_sources or {}
+                                    sources["espn"] = ee.home_win_probability
+                                    event.win_probability_sources = sources
+                                    changed = True
+
+                                    # Save ESPN snapshot for history/charting
+                                    from app.models.models import ESPNSnapshot
+                                    snapshot = ESPNSnapshot(
+                                        event_id=event.id,
+                                        home_win_probability=ee.home_win_probability,
+                                        away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
+                                        home_score=ee.home_score,
+                                        away_score=ee.away_score,
+                                        game_clock=ee.clock,
+                                        period=ee.status_detail,
+                                    )
+                                    session.add(snapshot)
+                                    stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
+
+                                if changed:
+                                    stats["events_updated"] += 1
+
+                                break  # Found match, move to next event
+
+                except Exception as e:
+                    stats["errors"].append(f"{sport_key}: {str(e)}")
+
+            session.commit()
+
+    except Exception as e:
+        stats["errors"].append(f"Task error: {str(e)}")
+
+    return stats

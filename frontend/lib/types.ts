@@ -90,6 +90,14 @@ export interface PulseData {
   components?: PulseComponents;
 }
 
+export interface ESPNData {
+  espn_id?: string;
+  game_clock?: string;
+  period?: string;
+  broadcast?: string;
+  win_probability?: number;  // 0.0-1.0, home team
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -106,6 +114,7 @@ export interface Event {
   opening_odds?: OpeningOdds;
   excitement?: ExcitementData;
   pulse?: PulseData;
+  espn?: ESPNData;
 }
 
 export interface EventsResponse {
@@ -161,6 +170,16 @@ export interface ScoreHistoryPoint {
   away_score: number;
 }
 
+export interface ESPNHistoryPoint {
+  timestamp: string;
+  home_probability: number | null;
+  away_probability: number | null;
+  home_score: number | null;
+  away_score: number | null;
+  game_clock: string | null;
+  period: string | null;
+}
+
 export interface EventHistoryResponse {
   event_id: number;
   home_team: string;
@@ -168,7 +187,9 @@ export interface EventHistoryResponse {
   history: OddsHistoryPoint[];
   bookmaker_history?: Record<string, BookmakerHistoryPoint[]>;
   score_history?: ScoreHistoryPoint[];
+  espn_history?: ESPNHistoryPoint[];
   points: number;
+  espn_snapshot_count?: number;
 }
 
 export interface SportsResponse {

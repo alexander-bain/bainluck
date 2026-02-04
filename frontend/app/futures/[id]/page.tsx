@@ -12,6 +12,7 @@ import {
 import type { FuturesOutcome, FuturesOutcomeHistory } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
+import { usePinnedFutures } from "@/hooks";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -70,6 +71,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [selectedOutcomes, setSelectedOutcomes] = useState<Set<number>>(new Set());
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
+
+  // Pinned futures
+  const { isPinned, togglePin, isMaxReached } = usePinnedFutures();
+  const marketIsPinned = isPinned(marketId);
 
   const {
     data: market,
@@ -213,14 +218,35 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       >
         {/* Sport badge */}
         <div className="flex items-center justify-between mb-4">
-          {market.sport && (
-            <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
-              <span className="text-lg">{sportEmoji}</span>
-              <span className="text-slate font-medium">
-                {market.sport_name || market.sport}
+          <div className="flex items-center gap-2">
+            {/* Pin button */}
+            <button
+              onClick={() => togglePin(marketId)}
+              disabled={isMaxReached && !marketIsPinned}
+              className={`
+                p-1.5 rounded-full transition-all
+                ${marketIsPinned
+                  ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
+                  : 'text-slate/40 hover:text-slate hover:bg-slate/10'
+                }
+                ${isMaxReached && !marketIsPinned ? 'cursor-not-allowed opacity-30' : ''}
+                focus:outline-none focus:ring-2 focus:ring-amber-300
+              `}
+              title={marketIsPinned ? 'Unpin market' : isMaxReached ? 'Maximum 6 pins' : 'Pin market'}
+              aria-label={marketIsPinned ? 'Unpin market' : 'Pin market'}
+            >
+              <PinIcon filled={marketIsPinned} className="w-5 h-5" />
+            </button>
+
+            {market.sport && (
+              <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
+                <span className="text-lg">{sportEmoji}</span>
+                <span className="text-slate font-medium">
+                  {market.sport_name || market.sport}
+                </span>
               </span>
-            </span>
-          )}
+            )}
+          </div>
 
           {/* Status badge */}
           {isResolved && (
@@ -658,7 +684,7 @@ function FuturesChart({
 
   const chartWidth = 800;
   const chartHeight = 200;
-  const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+  const padding = { top: 20, right: 20, bottom: 40, left: 50 };
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = chartHeight - padding.top - padding.bottom;
 
@@ -677,7 +703,7 @@ function FuturesChart({
           className="w-full min-w-[600px]"
           style={{ maxHeight: "250px" }}
         >
-          {/* Grid lines */}
+          {/* Y-axis grid lines */}
           {[0, 0.25, 0.5, 0.75, 1].map((pct) => (
             <g key={pct}>
               <line
@@ -699,6 +725,54 @@ function FuturesChart({
               </text>
             </g>
           ))}
+
+          {/* X-axis time labels */}
+          {(() => {
+            const timeRange = maxTime - minTime;
+            // Choose appropriate tick count based on chart width
+            const tickCount = Math.min(5, Math.max(2, Math.floor(innerWidth / 150)));
+            const ticks: number[] = [];
+            for (let i = 0; i <= tickCount; i++) {
+              ticks.push(minTime + (timeRange * i) / tickCount);
+            }
+
+            // Format based on range
+            const formatTime = (ts: number) => {
+              const d = new Date(ts);
+              if (timeRange < 24 * 60 * 60 * 1000) {
+                // Less than 1 day: show time
+                return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+              } else if (timeRange < 7 * 24 * 60 * 60 * 1000) {
+                // Less than 7 days: show day + time
+                return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+                  " " + d.toLocaleTimeString("en-US", { hour: "numeric" });
+              } else {
+                // 7+ days: show date
+                return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+              }
+            };
+
+            return ticks.map((t, i) => (
+              <g key={`x-${i}`}>
+                <line
+                  x1={xScale(t)}
+                  y1={padding.top + innerHeight}
+                  x2={xScale(t)}
+                  y2={padding.top + innerHeight + 4}
+                  stroke="#94a3b8"
+                />
+                <text
+                  x={xScale(t)}
+                  y={padding.top + innerHeight + 16}
+                  textAnchor="middle"
+                  className="text-xs fill-slate"
+                  style={{ fontSize: "9px" }}
+                >
+                  {formatTime(t)}
+                </text>
+              </g>
+            ));
+          })()}
 
           {/* Lines */}
           {displayedOutcomes.map((outcome, idx) => {
@@ -753,5 +827,29 @@ function FuturesChart({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Pin icon - pushpin style
+ */
+function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
+  if (filled) {
+    // Filled pushpin
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M16 4c0-.55-.22-1.05-.58-1.41-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-6.01 6.01C5.22 9.95 4 11.59 4 13.5c0 1.1.45 2.1 1.17 2.83L2 19.5l1.41 1.41 3.17-3.17c.73.72 1.73 1.17 2.83 1.17 1.91 0 3.55-1.22 4.91-2.58l6.01-6.01c.36-.36.58-.86.58-1.41s-.22-1.05-.58-1.41c-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-4.95 4.95-2.12-2.12L16 4z"/>
+      </svg>
+    );
+  }
+
+  // Outline pushpin
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v1H5V5z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 11v6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 17h6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 6h14l-2 5H7L5 6z" />
+    </svg>
   );
 }

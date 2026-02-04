@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import useSWR from "swr";
-import { fetchEvents, fetchSports, fetchFuturesMarkets } from "@/lib/api";
+import { fetchEvents, fetchSports, fetchFuturesMarkets, fetchEventsByIds, fetchFuturesByIds } from "@/lib/api";
 import type { Event, FuturesMarket } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -23,6 +23,8 @@ import {
   usePageTracking,
   useScrollDepth,
   useEngagementTime,
+  usePinnedEvents,
+  usePinnedFutures,
 } from "@/hooks";
 
 type DateFilter = "today" | "recent" | "upcoming";
@@ -62,6 +64,17 @@ export default function HomePage() {
 
   // Analytics
   const { trackSectionToggle } = useAnalytics();
+
+  // Pinned events
+  const { pinnedIds, isPinned, togglePin, isMaxReached } = usePinnedEvents();
+
+  // Pinned futures
+  const {
+    pinnedIds: pinnedFuturesIds,
+    isPinned: isFuturesPinned,
+    togglePin: toggleFuturesPin,
+    isMaxReached: isFuturesMaxReached
+  } = usePinnedFutures();
 
   // Track page view
   usePageTracking({
@@ -222,6 +235,52 @@ export default function HomePage() {
       })
       .slice(0, 6); // Max 6 featured events
   }, [filteredEvents]);
+
+  // Find which pinned event IDs are missing from the main events list
+  const missingPinnedIds = useMemo(() => {
+    const loadedIds = new Set((eventsData?.events ?? []).map(e => e.id));
+    return pinnedIds.filter(id => !loadedIds.has(id));
+  }, [eventsData?.events, pinnedIds]);
+
+  // Fetch pinned events that aren't in the main list (e.g., events > 7 days away)
+  const { data: fetchedPinnedEvents } = useSWR(
+    missingPinnedIds.length > 0 ? ["pinned-events", ...missingPinnedIds] : null,
+    () => fetchEventsByIds(missingPinnedIds),
+    { revalidateOnFocus: false }
+  );
+
+  // Combine pinned events from main list + separately fetched
+  const pinnedEvents = useMemo(() => {
+    const allEvents = eventsData?.events ?? [];
+    const fetchedMap = new Map((fetchedPinnedEvents ?? []).map(e => [e.id, e]));
+
+    return pinnedIds
+      .map(id => allEvents.find(e => e.id === id) ?? fetchedMap.get(id))
+      .filter((e): e is Event => e !== undefined);
+  }, [eventsData?.events, fetchedPinnedEvents, pinnedIds]);
+
+  // Find which pinned futures IDs are missing from the loaded futures list
+  const missingPinnedFuturesIds = useMemo(() => {
+    const loadedIds = new Set((futuresData?.markets ?? []).map(f => f.id));
+    return pinnedFuturesIds.filter(id => !loadedIds.has(id));
+  }, [futuresData?.markets, pinnedFuturesIds]);
+
+  // Fetch pinned futures that aren't in the main list
+  const { data: fetchedPinnedFutures } = useSWR(
+    missingPinnedFuturesIds.length > 0 ? ["pinned-futures", ...missingPinnedFuturesIds] : null,
+    () => fetchFuturesByIds(missingPinnedFuturesIds),
+    { revalidateOnFocus: false }
+  );
+
+  // Combine pinned futures from main list + separately fetched
+  const pinnedFutures = useMemo(() => {
+    const allFutures = futuresData?.markets ?? [];
+    const fetchedMap = new Map((fetchedPinnedFutures ?? []).map(f => [f.id, f]));
+
+    return pinnedFuturesIds
+      .map(id => allFutures.find(f => f.id === id) ?? fetchedMap.get(id))
+      .filter((f): f is FuturesMarket => f !== undefined);
+  }, [futuresData?.markets, fetchedPinnedFutures, pinnedFuturesIds]);
 
   // Group events and futures by sport category, then by league
   const sportGroups = useMemo((): SportGroup[] => {
@@ -428,8 +487,69 @@ export default function HomePage() {
               </p>
             </div>
           ) : (
-            /* Smart View: Featured + Sport Groups */
+            /* Smart View: Pinned + Featured + Sport Groups */
             <div className="space-y-8">
+              {/* Pinned Events Section */}
+              {pinnedEvents.length > 0 && (
+                <section>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📌</span>
+                      <h2 className="text-title-3 font-semibold text-graphite">
+                        Pinned
+                      </h2>
+                    </div>
+                    <span className="text-caption text-slate">
+                      {pinnedEvents.length} event{pinnedEvents.length !== 1 ? "s" : ""} you&apos;re tracking
+                    </span>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
+                    {pinnedEvents.map((event, index) => (
+                      <EventCard
+                        key={`pinned-${event.id}`}
+                        event={event}
+                        showSport={true}
+                        sourceSection="pinned"
+                        positionIndex={index}
+                        highlightLabel={event.highlight?.label}
+                        isPinned={true}
+                        onPinToggle={togglePin}
+                        pinDisabled={isMaxReached}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Pinned Futures Section */}
+              {pinnedFutures.length > 0 && (
+                <section>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📌</span>
+                      <h2 className="text-title-3 font-semibold text-graphite">
+                        Pinned Futures
+                      </h2>
+                    </div>
+                    <span className="text-caption text-slate">
+                      {pinnedFutures.length} market{pinnedFutures.length !== 1 ? "s" : ""} you&apos;re tracking
+                    </span>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
+                    {pinnedFutures.map((market) => (
+                      <FuturesCard
+                        key={`pinned-futures-${market.id}`}
+                        market={market}
+                        showSport={true}
+                        isPinned={true}
+                        onPinToggle={toggleFuturesPin}
+                        pinDisabled={isFuturesMaxReached}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {/* Highlights Section */}
               {featuredEvents.length > 0 && (() => {
                 // Categorize featured events using backend highlight data
@@ -475,6 +595,9 @@ export default function HomePage() {
                           sourceSection="featured"
                           positionIndex={index}
                           highlightLabel={event.highlight?.label}
+                          isPinned={isPinned(event.id)}
+                          onPinToggle={togglePin}
+                          pinDisabled={isMaxReached}
                         />
                       ))}
                     </div>
@@ -561,6 +684,9 @@ export default function HomePage() {
                                       showSport={false}
                                       sourceSection="sport_category"
                                       positionIndex={index}
+                                      isPinned={isPinned(event.id)}
+                                      onPinToggle={togglePin}
+                                      pinDisabled={isMaxReached}
                                     />
                                   ))}
                                 </div>
@@ -603,6 +729,9 @@ export default function HomePage() {
                                     key={`futures-${market.id}`}
                                     market={market}
                                     showSport={false}
+                                    isPinned={isFuturesPinned(market.id)}
+                                    onPinToggle={toggleFuturesPin}
+                                    pinDisabled={isFuturesMaxReached}
                                   />
                                 ))}
                               </div>

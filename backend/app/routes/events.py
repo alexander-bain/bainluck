@@ -523,13 +523,16 @@ async def search_events(
     # Calculate pagination metadata
     total_pages = (total_count + per_page - 1) // per_page
 
-    # Also search futures markets by name
+    # Also search futures markets by name or outcome (label) name
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            FuturesMarket.name.ilike(search_pattern),
+            or_(
+                FuturesMarket.name.ilike(search_pattern),
+                FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(search_pattern)),
+            ),
             FuturesMarket.status == "open",
         )
         .order_by(FuturesMarket.updated_at.desc())
@@ -1345,6 +1348,36 @@ async def get_event_odds_history(
         # Table may not exist yet - return empty history
         pass
 
+    # Build ESPN win probability history
+    espn_history = []
+    try:
+        from app.models import ESPNSnapshot
+        espn_result = await db.execute(
+            select(ESPNSnapshot)
+            .where(
+                ESPNSnapshot.event_id == event_id,
+                ESPNSnapshot.captured_at >= cutoff,
+            )
+            .order_by(ESPNSnapshot.captured_at)
+        )
+        espn_snapshots = espn_result.scalars().all()
+
+        espn_history = [
+            {
+                "timestamp": snap.captured_at.isoformat(),
+                "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
+                "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
+                "home_score": snap.home_score,
+                "away_score": snap.away_score,
+                "game_clock": snap.game_clock,
+                "period": snap.period,
+            }
+            for snap in espn_snapshots
+        ]
+    except Exception:
+        # Table may not exist yet - return empty history
+        pass
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -1352,9 +1385,11 @@ async def get_event_odds_history(
         "history": history,
         "bookmaker_history": bookmaker_history,
         "score_history": score_history,
+        "espn_history": espn_history,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),
+        "espn_snapshot_count": len(espn_history),
     }
 
 
@@ -1444,6 +1479,39 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+    # Add LLM metadata if available
+    try:
+        if event.llm_gender or event.llm_level or event.llm_league or event.llm_importance:
+            response["metadata"] = {
+                "gender": event.llm_gender,
+                "level": event.llm_level,
+                "league": event.llm_league,
+                "importance": event.llm_importance,
+            }
+    except AttributeError:
+        pass  # Columns may not exist yet
+
+    # Add ESPN enrichment if available
+    try:
+        espn_data = {}
+        if event.espn_id:
+            espn_data["espn_id"] = event.espn_id
+        if event.game_clock:
+            espn_data["game_clock"] = event.game_clock
+        if event.period:
+            espn_data["period"] = event.period
+        if event.broadcast_info:
+            espn_data["broadcast"] = event.broadcast_info
+        if event.espn_win_prob_home is not None:
+            espn_data["espn_win_probability"] = float(event.espn_win_prob_home)
+        if event.win_probability_sources:
+            espn_data["probability_sources"] = event.win_probability_sources
+
+        if espn_data:
+            response["espn"] = espn_data
+    except AttributeError:
+        pass  # Columns may not exist yet
 
     # Add Pulse data if available (for live and completed events)
     # Wrap in try/except in case columns don't exist yet (migration not applied)
@@ -1649,6 +1717,24 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "over_under": float(event.opening_over_under) if event.opening_over_under else None,
             "favorite": event.opening_favorite,
         }
+
+    # Include ESPN data if available (live scores, clock, win probability)
+    try:
+        espn_data = {}
+        if hasattr(event, 'espn_id') and event.espn_id:
+            espn_data["espn_id"] = event.espn_id
+        if hasattr(event, 'game_clock') and event.game_clock:
+            espn_data["game_clock"] = event.game_clock
+        if hasattr(event, 'period') and event.period:
+            espn_data["period"] = event.period
+        if hasattr(event, 'broadcast_info') and event.broadcast_info:
+            espn_data["broadcast"] = event.broadcast_info
+        if hasattr(event, 'espn_win_prob_home') and event.espn_win_prob_home is not None:
+            espn_data["win_probability"] = float(event.espn_win_prob_home)
+        if espn_data:
+            response["espn"] = espn_data
+    except AttributeError:
+        pass  # ESPN columns may not exist yet
 
     return response
 

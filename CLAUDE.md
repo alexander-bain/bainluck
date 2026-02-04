@@ -25,6 +25,8 @@
 **Key External Services:**
 - **The Odds API** (the-odds-api.com) - Sports odds data
 - **Kalshi** (kalshi.com) - Prediction market data (futures with timing info)
+- **ESPN** (undocumented API) - Team colors, logos, live game data, win probability
+- **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification
 - **Google Analytics 4** - User analytics
 - **Firebase Auth** - Planned for user accounts
 
@@ -90,9 +92,13 @@ odds-tracker/
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
-| `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM futures categorization |
-| `frontend/components/EventCard.tsx` | Event display component |
+| `backend/app/services/espn_api.py` | ESPN API client for team/event enrichment |
+| `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM categorization |
+| `frontend/components/EventCard.tsx` | Event display component (includes pin button) |
+| `frontend/components/FuturesCard.tsx` | Futures market display component (includes pin button) |
 | `frontend/components/PulseBadge.tsx` | Pulse score badge with tooltip |
+| `frontend/hooks/usePinnedEvents.ts` | Hook for managing pinned events (localStorage) |
+| `frontend/hooks/usePinnedFutures.ts` | Hook for managing pinned futures (localStorage) |
 | `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
@@ -228,9 +234,13 @@ Futures markets are categorized using a hybrid approach: pattern matching rules 
 1. Check `llm_sport_category` from database (cached LLM result)
 2. Try prefix matching on sport key (e.g., `golf_masters` → Golf)
 3. Try regex patterns on market name (e.g., "College Football Playoff" → Football)
-4. Handle baseball awards like "AL MVP", "NL Cy Young" → Baseball
+4. Handle sport-specific awards (AL MVP → Baseball, Hart Trophy → Hockey, etc.)
 5. Use athlete name detection for ambiguous markets like "US Open"
 6. Fall back to LLM (GPT-4o-mini) for uncategorized markets
+7. LLM always returns a category (never NULL) — defaults to "other"
+
+**Supported categories (22):**
+football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, other
 
 **Files:**
 - Frontend patterns: `frontend/lib/sportCategories.ts`
@@ -247,6 +257,10 @@ SPORT_PATTERNS = [
 ]
 ```
 
+**Important:** Pattern order matters — more specific patterns (e.g., `defensive.player.of.the.year` → football) should come before broader ones (e.g., `defensive.player` → basketball). The LLM handles everything patterns miss, so only add patterns for high-volume categories to save API costs.
+
+**Known limitation:** Some Kalshi markets have ambiguous names like "MVP Winner?" without any sport context. These correctly categorize as "other" since there's no way to determine the sport. Improving Kalshi category pass-through would help here.
+
 **Admin endpoints:**
 ```bash
 # Check categorization status
@@ -257,6 +271,12 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/fut
 
 # Dry run (preview without saving)
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorize?secret=xxx&dry_run=true"
+
+# View uncategorized markets (diagnostic)
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/uncategorized"
+
+# Force-categorize all remaining via LLM
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/force-categorize?secret=xxx&limit=100"
 ```
 
 **Debug endpoints:**
@@ -266,6 +286,52 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sou
 
 # See sport linking for futures
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sport-mapping"
+```
+
+### Pinned Events & Futures
+Users can pin events and futures markets they want to track closely. Pinned items appear in dedicated sections at the top of the homepage.
+
+**Features:**
+- Pin/unpin events and futures from any card or detail page
+- Pinned sections appear above Highlights on homepage
+- Maximum 6 pinned events + 6 pinned futures
+- Works for events outside the 7-day window (e.g., Super Bowl weeks away)
+- Cross-tab sync via localStorage storage events
+- Separate limits for events vs futures
+
+**Storage:**
+Currently uses localStorage (no auth required). When Firebase Auth is added, this can be upgraded to database-backed storage for cross-device sync.
+
+```javascript
+// localStorage keys
+oddsTracker_pinnedEvents    // Array of event IDs
+oddsTracker_pinnedFutures   // Array of futures market IDs
+```
+
+**Files:**
+- `frontend/hooks/usePinnedEvents.ts` - Event pinning hook
+- `frontend/hooks/usePinnedFutures.ts` - Futures pinning hook
+- `frontend/lib/api.ts` - `fetchEventsByIds()`, `fetchFuturesByIds()` for loading pinned items
+
+**UI Locations:**
+- Pin button on EventCard (top-left, visible on hover)
+- Pin button on FuturesCard (top-left, visible on hover)
+- Pin button on event detail page (hero section)
+- Pin button on futures detail page (hero section)
+- "📌 Pinned" section on homepage (above Highlights)
+- "📌 Pinned Futures" section on homepage (below Pinned events)
+
+**Future Enhancement:**
+When Firebase Auth is implemented, migrate to database storage:
+```sql
+CREATE TABLE pinned_items (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    item_type VARCHAR(20) NOT NULL,  -- 'event' or 'futures'
+    item_id INTEGER NOT NULL,
+    pinned_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(user_id, item_type, item_id)
+);
 ```
 
 ---
@@ -368,26 +434,16 @@ Both backend and frontend auto-deploy from `master` branch.
 2. ✅ Kalshi prediction market integration
 3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
 4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
-5. ✅ Pulse Hall of Fame page (`/pulse/hall-of-fame`)
-6. ✅ Upset Brewing bug fix (pre-game line movement no longer triggers upset label)
-7. 🔄 Merge remaining categorization PRs (improved patterns, LLM prompt, expanded categories)
-8. 🔄 Re-run `/api/admin/futures/categorize` to resolve remaining ~67 "other" markets
-9. 📋 Next: Register GA4 custom dimensions (`sport`, `league`, `league_tier`)
-10. 📋 Next: Add `"Entertainment"` to Kalshi sports_categories in `tasks.py`
-11. 📋 Next: Firebase Auth for user accounts
-12. 📋 Next: Favorites and personalization
-13. 📋 Next: LLM-powered odds movement explanations
+5. ✅ Pulse Hall of Fame page
+6. ✅ Pinned Events & Futures (localStorage-based tracking)
+7. ✅ Futures categorization hardened (0 uncategorized markets)
+8. 🔄 Monitoring and reliability improvements
+9. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+10. 📋 Next: Firebase Auth for user accounts
+11. 📋 Next: Migrate pinned items to database (after auth)
+12. 📋 Next: LLM-powered odds movement explanations
 
-**LLM is now available** for new features! See `backend/app/services/llm.py`
-
-### Unmerged PRs (as of Feb 2026)
-These PRs contain improvements that should be merged in order:
-1. `claude/improve-categorization-patterns-6edm6` - Baseball/basketball/soccer pattern improvements
-2. `claude/expand-categorization-6edm6` - Lacrosse, chess, poker categories + patterns
-3. `claude/improve-llm-classification-6edm6` - Improved LLM prompt, common response mappings, no-cache-None fix
-4. `claude/update-docs-llm-progress-6edm6` - Documentation updates (superseded by this commit)
-
-After merging, re-run: `curl -X POST ".../api/admin/futures/categorize?secret=any&limit=100"`
+**LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
 
 See `docs/PRD.md` for full roadmap.
 

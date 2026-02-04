@@ -7,7 +7,7 @@ import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import PulseBadge from "./PulseBadge";
 
-type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results';
+type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned';
 
 interface EventCardProps {
   event: Event;
@@ -18,6 +18,12 @@ interface EventCardProps {
   positionIndex?: number;
   /** Optional highlight label from backend */
   highlightLabel?: string | null;
+  /** Whether the event is pinned */
+  isPinned?: boolean;
+  /** Callback when pin is toggled */
+  onPinToggle?: (eventId: number) => void;
+  /** Whether max pins has been reached (disable pin button) */
+  pinDisabled?: boolean;
 }
 
 /**
@@ -33,8 +39,20 @@ export default function EventCard({
   sourceSection = 'sport_category',
   positionIndex = 0,
   highlightLabel,
+  isPinned = false,
+  onPinToggle,
+  pinDisabled = false,
 }: EventCardProps) {
   const { trackEventCardClick } = useAnalytics();
+
+  // Handle pin button click (prevent navigation)
+  const handlePinClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onPinToggle) {
+      onPinToggle(event.id);
+    }
+  };
   const odds = event.current_odds;
   const homeProb = odds?.home_probability;
   const awayProb = odds?.away_probability;
@@ -89,11 +107,31 @@ export default function EventCard({
   return (
     <Link href={`/events/${event.id}`} className="h-full" onClick={handleCardClick}>
       <div
-        className={`h-full flex flex-col rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer ${cardClasses}`}
+        className={`h-full flex flex-col rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer group/card ${cardClasses}`}
       >
         {/* Header: Sport, League, Status */}
         <div className="flex justify-between items-start mb-3">
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Pin button - always visible but subtle, more prominent on hover */}
+            {onPinToggle && (
+              <button
+                onClick={handlePinClick}
+                disabled={pinDisabled && !isPinned}
+                className={`
+                  p-1 rounded-full transition-all
+                  ${isPinned
+                    ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
+                    : 'text-slate/30 hover:text-slate hover:bg-slate/10 group-hover/card:text-slate/50'
+                  }
+                  ${pinDisabled && !isPinned ? 'cursor-not-allowed opacity-30' : ''}
+                  focus:outline-none focus:ring-2 focus:ring-amber-300
+                `}
+                title={isPinned ? 'Unpin event' : pinDisabled ? 'Maximum 6 pins' : 'Pin event'}
+                aria-label={isPinned ? 'Unpin event' : 'Pin event'}
+              >
+                <PinIcon filled={isPinned} className="w-4 h-4" />
+              </button>
+            )}
             {showSport && event.sport && (
               <span className="text-sm bg-slate/10 px-2 py-0.5 rounded-full flex items-center gap-1">
                 <span>{sportEmoji}</span>
@@ -249,7 +287,7 @@ export default function EventCard({
 
         {/* Footer: Projected Score for future games, bookmaker count */}
         <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center">
-          {/* Left side: Projected Score (only for future games with odds) */}
+          {/* Left side: Projected Score or broadcast info */}
           <div className="flex items-center gap-1.5 text-sm">
             {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
               <>
@@ -263,6 +301,12 @@ export default function EventCard({
                 {effectivelyLive ? "🔄 Live updates" : `Played ${timeStr}`}
               </span>
             ) : null}
+            {/* Broadcast info from ESPN */}
+            {event.espn?.broadcast && (
+              <span className="text-xs text-silver ml-1" title={event.espn.broadcast}>
+                📺 {event.espn.broadcast.split(",")[0].trim()}
+              </span>
+            )}
           </div>
 
           {/* Right side: Bookmaker count and Close game indicator */}
@@ -286,5 +330,29 @@ export default function EventCard({
         </div>
       </div>
     </Link>
+  );
+}
+
+/**
+ * Pin icon - pushpin style
+ */
+function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
+  if (filled) {
+    // Filled pushpin
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M16 4c0-.55-.22-1.05-.58-1.41-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-6.01 6.01C5.22 9.95 4 11.59 4 13.5c0 1.1.45 2.1 1.17 2.83L2 19.5l1.41 1.41 3.17-3.17c.73.72 1.73 1.17 2.83 1.17 1.91 0 3.55-1.22 4.91-2.58l6.01-6.01c.36-.36.58-.86.58-1.41s-.22-1.05-.58-1.41c-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-4.95 4.95-2.12-2.12L16 4z"/>
+      </svg>
+    );
+  }
+
+  // Outline pushpin
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v1H5V5z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 11v6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 17h6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 6h14l-2 5H7L5 6z" />
+    </svg>
   );
 }
