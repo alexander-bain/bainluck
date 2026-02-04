@@ -402,6 +402,30 @@ Late-game drama counts more. Uses exponential curve: `0.6 + 0.4 × (progress^1.5
 - Sport-specific expected durations for time weighting
 - Updates in real-time for live games, batch-processed for completed games
 
+### Futures Pulse (Planned)
+
+Adapt the Pulse concept to measure the drama of championship races over weeks/months.
+
+**Proposed Components (weighted):**
+- **Volatility (30%)**: Standard deviation of probability changes across all outcomes over time
+- **Compression (25%)**: How close the top N contenders are (tight race = exciting)
+- **Lead Changes (25%)**: Number of times the #1 favorite has changed
+- **Momentum (20%)**: Recent rate of change for top contenders (surging teams)
+
+**Key Differences from Event Pulse:**
+| Event Pulse | Futures Pulse |
+|-------------|---------------|
+| Measures a single game (2-4 hours) | Measures a season (weeks/months) |
+| Binary outcome (home vs away) | Multiple outcomes (10-30+ contenders) |
+| Focuses on live swings | Focuses on trajectory over time |
+| Time-weighted for late-game drama | Could weight for late-season/playoff drama |
+
+**Questions to Resolve:**
+- **Time window**: Should we measure all-time volatility or recent (30 days)?
+- **Weighting**: Should recent changes count more than early-season changes?
+- **Display**: Single score like events, or a richer "race status" display?
+- **Threshold**: What's "exciting" for futures? Probably need different calibration than events.
+
 ### Highlights Ranking Algorithm (Planned)
 
 ```python
