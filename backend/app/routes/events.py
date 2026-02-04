@@ -523,13 +523,16 @@ async def search_events(
     # Calculate pagination metadata
     total_pages = (total_count + per_page - 1) // per_page
 
-    # Also search futures markets by name
+    # Also search futures markets by name or outcome (label) name
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            FuturesMarket.name.ilike(search_pattern),
+            or_(
+                FuturesMarket.name.ilike(search_pattern),
+                FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(search_pattern)),
+            ),
             FuturesMarket.status == "open",
         )
         .order_by(FuturesMarket.updated_at.desc())
