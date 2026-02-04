@@ -88,9 +88,12 @@ odds-tracker/
 |------|---------|
 | `backend/app/tasks.py` | Celery tasks: odds polling, Pulse calculation, event discovery |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
-| `backend/app/routes/events.py` | Main API - events, search, history |
+| `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
+| `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
+| `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM categorization |
 | `frontend/components/EventCard.tsx` | Event display component |
 | `frontend/components/PulseBadge.tsx` | Pulse score badge with tooltip |
+| `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
 ---
@@ -364,9 +367,14 @@ Both backend and frontend auto-deploy from `master` branch.
 1. ✅ Pulse feature complete and deployed
 2. ✅ Kalshi prediction market integration
 3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
-4. 🔄 Monitoring and reliability improvements
-5. 📋 Next: Firebase Auth for user accounts
-6. 📋 Next: Favorites and personalization
+4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
+5. ✅ Pulse Hall of Fame page
+6. 🔄 Monitoring and reliability improvements
+7. 📋 Next: Firebase Auth for user accounts
+8. 📋 Next: Favorites and personalization
+9. 📋 Next: LLM-powered odds movement explanations
+
+**LLM is now available** for new features! See `backend/app/services/llm.py`
 
 See `docs/PRD.md` for full roadmap.
 
