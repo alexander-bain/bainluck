@@ -111,8 +111,8 @@ celery_app.conf.beat_schedule = {
     },
     "enrich-events-hourly": {
         "task": "app.tasks.enrich_events_metadata",
-        "schedule": crontab(minute=20),  # Every hour at :20 (enrich new events with LLM metadata)
-        "kwargs": {"limit": 50},
+        "schedule": crontab(minute=20),  # Every hour at :20 (offset from other tasks)
+        "kwargs": {"limit": 50},  # Process 50 events per run
     },
 }
 
@@ -2180,14 +2180,6 @@ def enrich_events_metadata(self, limit: int = 50):
                     event.llm_level = llm.classify_level_cached(text, sport_key)
                     event.llm_league = llm.classify_league_cached(text, sport_key)
                     event.llm_importance = llm.classify_importance_cached(text, sport_key)
-
-                    # Normalize team names for ESPN/search matching
-                    home_norm, home_vars = llm.normalize_team_name_cached(event.home_team_name, sport_key)
-                    away_norm, away_vars = llm.normalize_team_name_cached(event.away_team_name, sport_key)
-                    event.home_team_normalized = home_norm
-                    event.away_team_normalized = away_norm
-                    event.home_team_alt_names = list(home_vars)
-                    event.away_team_alt_names = list(away_vars)
 
                     stats["enriched"] += 1
 
