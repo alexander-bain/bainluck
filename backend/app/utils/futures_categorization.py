@@ -193,13 +193,14 @@ def categorize_market(
     market_name: str,
     sport_key: Optional[str] = None,
     use_llm: bool = True,
-) -> Optional[str]:
+) -> str:
     """
     Categorize a futures market into a sport category.
 
     Uses hybrid approach:
     1. Try pattern matching rules (fast, free)
     2. Fall back to LLM if rules don't match (smart, cached)
+    3. Return "other" if all else fails
 
     Args:
         market_name: The name of the futures market
@@ -207,7 +208,7 @@ def categorize_market(
         use_llm: Whether to use LLM as fallback (default True)
 
     Returns:
-        Sport category string, or None if categorization failed
+        Sport category string (never None - defaults to "other")
     """
     # Try rules first
     category = categorize_by_rules(market_name, sport_key)
@@ -217,10 +218,13 @@ def categorize_market(
 
     # Fall back to LLM if enabled
     if use_llm and llm.is_available():
-        category = llm.classify_futures_market_cached(market_name)
-        if category:
+        category = llm.classify_futures_market(market_name)
+        if category and category != "other":
             logger.info(f"Categorized '{market_name}' as '{category}' via LLM")
             return category
+        elif category == "other":
+            logger.debug(f"LLM categorized '{market_name}' as 'other'")
+            return "other"
 
-    logger.debug(f"Could not categorize '{market_name}'")
-    return None
+    logger.debug(f"Could not categorize '{market_name}', defaulting to 'other'")
+    return "other"
