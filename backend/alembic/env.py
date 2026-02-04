@@ -1,13 +1,10 @@
 """Alembic migration environment."""
 
-import asyncio
 import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import create_engine, pool
 
 from app.services.database import Base
 from app.models import *  # noqa: Import all models
@@ -25,14 +22,16 @@ target_metadata = Base.metadata
 # Get database URL from environment
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/odds_tracker"
+    "postgresql://postgres:postgres@localhost:5432/odds_tracker"
 )
 
-# Ensure asyncpg driver
+# Normalize Heroku's postgres:// to postgresql:// (psycopg2 format)
+# Alembic migrations use synchronous psycopg2, not asyncpg
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
-elif DATABASE_URL.startswith("postgresql://") and "asyncpg" not in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Strip asyncpg driver if present (use psycopg2 for migrations)
+if "+asyncpg" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("+asyncpg", "", 1)
 
 
 def run_migrations_offline() -> None:
@@ -48,40 +47,25 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
-    """Run migrations with a connection."""
-    context.configure(connection=connection, target_metadata=target_metadata)
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    """Run migrations in async mode."""
-    configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = DATABASE_URL
-
-    # Add SSL for Heroku Postgres
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode using synchronous psycopg2."""
     connect_args = {}
     if "localhost" not in DATABASE_URL and "127.0.0.1" not in DATABASE_URL:
-        connect_args["ssl"] = "require"
+        connect_args["sslmode"] = "require"
 
-    connectable = async_engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
+    connectable = create_engine(
+        DATABASE_URL,
         poolclass=pool.NullPool,
         connect_args=connect_args,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
 
-    await connectable.dispose()
+        with context.begin_transaction():
+            context.run_migrations()
 
-
-def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    asyncio.run(run_async_migrations())
+    connectable.dispose()
 
 
 if context.is_offline_mode():
