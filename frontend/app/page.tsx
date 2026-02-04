@@ -23,6 +23,7 @@ import {
   usePageTracking,
   useScrollDepth,
   useEngagementTime,
+  usePinnedEvents,
 } from "@/hooks";
 
 type DateFilter = "today" | "recent" | "upcoming";
@@ -62,6 +63,9 @@ export default function HomePage() {
 
   // Analytics
   const { trackSectionToggle } = useAnalytics();
+
+  // Pinned events
+  const { pinnedIds, isPinned, togglePin, isMaxReached } = usePinnedEvents();
 
   // Track page view
   usePageTracking({
@@ -222,6 +226,14 @@ export default function HomePage() {
       })
       .slice(0, 6); // Max 6 featured events
   }, [filteredEvents]);
+
+  // Get pinned events (from all events, not just filtered)
+  const pinnedEvents = useMemo(() => {
+    const allEvents = eventsData?.events ?? [];
+    return pinnedIds
+      .map(id => allEvents.find(e => e.id === id))
+      .filter((e): e is Event => e !== undefined);
+  }, [eventsData?.events, pinnedIds]);
 
   // Group events and futures by sport category, then by league
   const sportGroups = useMemo((): SportGroup[] => {
@@ -428,8 +440,40 @@ export default function HomePage() {
               </p>
             </div>
           ) : (
-            /* Smart View: Featured + Sport Groups */
+            /* Smart View: Pinned + Featured + Sport Groups */
             <div className="space-y-8">
+              {/* Pinned Events Section */}
+              {pinnedEvents.length > 0 && (
+                <section>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📌</span>
+                      <h2 className="text-title-3 font-semibold text-graphite">
+                        Pinned
+                      </h2>
+                    </div>
+                    <span className="text-caption text-slate">
+                      {pinnedEvents.length} event{pinnedEvents.length !== 1 ? "s" : ""} you&apos;re tracking
+                    </span>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
+                    {pinnedEvents.map((event, index) => (
+                      <EventCard
+                        key={`pinned-${event.id}`}
+                        event={event}
+                        showSport={true}
+                        sourceSection="pinned"
+                        positionIndex={index}
+                        highlightLabel={event.highlight?.label}
+                        isPinned={true}
+                        onPinToggle={togglePin}
+                        pinDisabled={isMaxReached}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {/* Highlights Section */}
               {featuredEvents.length > 0 && (() => {
                 // Categorize featured events using backend highlight data
@@ -475,6 +519,9 @@ export default function HomePage() {
                           sourceSection="featured"
                           positionIndex={index}
                           highlightLabel={event.highlight?.label}
+                          isPinned={isPinned(event.id)}
+                          onPinToggle={togglePin}
+                          pinDisabled={isMaxReached}
                         />
                       ))}
                     </div>
@@ -561,6 +608,9 @@ export default function HomePage() {
                                       showSport={false}
                                       sourceSection="sport_category"
                                       positionIndex={index}
+                                      isPinned={isPinned(event.id)}
+                                      onPinToggle={togglePin}
+                                      pinDisabled={isMaxReached}
                                     />
                                   ))}
                                 </div>
