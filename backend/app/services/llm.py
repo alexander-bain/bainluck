@@ -119,6 +119,9 @@ SPORT_CATEGORIES = [
     "esports",
     "entertainment",
     "politics",
+    "lacrosse",
+    "chess",
+    "poker",
     "other",
 ]
 
