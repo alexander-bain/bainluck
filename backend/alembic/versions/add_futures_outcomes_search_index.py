@@ -1,6 +1,6 @@
 """Add trigram index for futures outcome name search
 
-Revision ID: add_futures_outcomes_search_index
+Revision ID: add_outcome_name_search_idx
 Revises: add_espn_snapshots
 Create Date: 2026-02-04
 
@@ -12,7 +12,7 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision = 'add_futures_outcomes_search_index'
+revision = 'add_outcome_name_search_idx'
 down_revision = 'add_espn_snapshots'
 branch_labels = None
 depends_on = None
