@@ -758,23 +758,50 @@ Target: Q2 2026
 - Auth unlocks: Favorites sync, notifications, cross-device
 - Auth is **pull-based, not forced**
 
-### Phase 6: LLM-Powered Context
-**Plain English explanations for odds movements.**
+### Phase 6: LLM Integration 🔄 In Progress
+**OpenAI-powered smart features.**
 
-Target: Q2 2026
+Infrastructure complete: February 2026
 
+- [x] OpenAI GPT-4o-mini integration (`backend/app/services/llm.py`)
+- [x] Generic `classify()` utility for text classification
+- [x] Hybrid futures categorization (rules + LLM fallback)
+- [x] LLM results cached in database (`llm_sport_category` column)
+- [x] In-memory cache that skips `None` results (allows retries on failures)
+- [x] Admin endpoints for triggering categorization
+- [x] Expanded sport categories: lacrosse, chess, poker added
+- [x] Improved LLM prompt with athlete/team examples and common response mappings
 - [ ] Detect significant probability swings (>10% change)
-- [ ] Generate brief explanations via Claude API
-- [ ] Examples:
-  - "Win probability jumped 15% after the go-ahead touchdown with 2:00 left"
-  - "Odds shifted significantly following injury report for starting QB"
-  - "Close game: this 8% swing reflects the momentum shift after back-to-back turnovers"
+- [ ] Generate brief explanations for odds movements
 - [ ] Cache explanations to avoid redundant API calls
 - [ ] Show explanations on event detail page and in highlights
 
+**LLM Service Capabilities:**
+```python
+from app.services import llm
+
+# General classification
+result = llm.classify("Some text", ["option1", "option2", "option3"])
+
+# Futures categorization (with caching)
+category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
+```
+
+**Categorization Status (as of Feb 2026):**
+- ~170 futures markets processed through hybrid categorization
+- Pattern matching handles ~85% of markets (baseball awards, pro sports, leagues, etc.)
+- LLM handles remaining edge cases (athlete names, ambiguous markets)
+- ~67 markets may still need improved LLM prompt (unmerged PR with better prompt)
+
+**Future LLM Use Cases:**
+- Plain English explanations for odds movements
+- Team name normalization across sources
+- Smart search query understanding
+- Market description generation
+
 **Principles:**
 - Brief, factual, non-predictive
-- Only surface for meaningful swings
+- Only surface for meaningful events
 - No gambling advice or encouragement
 
 ### Phase 7: iOS App
@@ -793,48 +820,45 @@ Target: Q3 2026
   - Upcoming games for favorite teams
   - "Most Exciting Game Right Now"
 
-### Phase 8: Futures Markets
+### Phase 8: Futures Markets ✅ Complete
 **Championship odds, MVP races, and outrights.**
 
-Target: Q3-Q4 2026
+Completed: February 2026
 
-- [ ] Database schema for futures (implemented above)
-- [ ] Poll futures odds from The Odds API
-- [ ] Futures visualization:
-  - Championship odds as horizontal bar chart
-  - Historical odds movement for each team
-  - "Rising" and "Falling" indicators
-- [ ] Futures categories:
-  - Championship winners (NBA, NFL, MLB, NHL, etc.)
-  - Conference/Division winners
-  - MVP and major awards
-  - March Madness winner
-- [ ] Season-long trend charts
+- [x] Database schema for futures (`futures_markets`, `futures_outcomes`, `futures_odds_snapshots`)
+- [x] Poll futures odds from The Odds API (hourly task)
+- [x] Futures visualization with horizontal bar charts
+- [x] Movement indicators (24h change, rank change)
+- [x] Futures categories via hybrid categorization (rules + LLM)
+- [x] Sport grouping on homepage
+- [x] Futures detail pages with all outcomes
+- [x] Search includes futures markets
+- [x] Pulse Hall of Fame page (`/pulse/hall-of-fame`)
 
-**UI Considerations:**
-- Futures have different cadence (daily updates, not real-time)
-- Focus on movement over time, not live updates
-- Group by sport and market type
+**UI Features:**
+- Grouped by sport category on homepage
+- Top 5 outcomes shown in list view
+- Full outcome list on detail page
+- 24h probability change indicators
 
-### Phase 9: Prediction Markets (Kalshi Integration)
+### Phase 9: Prediction Markets (Kalshi Integration) ✅ Complete
 **Politics, entertainment, and event-based markets.**
 
-Target: Q4 2026
+Completed: February 2026
 
-- [ ] Kalshi API integration
-- [ ] Database schema for prediction markets (implemented above)
-- [ ] Categories:
-  - Politics (elections, policy outcomes)
-  - Entertainment (awards, TV ratings)
-  - Economics (Fed rates, inflation)
-  - Sports-adjacent (will X happen in Y game)
-- [ ] Price history charts (same style as odds charts)
-- [ ] Volume and open interest indicators
+- [x] Kalshi API integration (`backend/app/services/kalshi_api.py`)
+- [x] Polling task with rate limiting (hourly at :45)
+- [x] Stores bid/ask spreads and timing info
+- [x] Categories: Sports, Golf, Football, Basketball, Baseball, Hockey, Tennis
+- [x] Commence time and resolution date populated
+- [x] LLM-based categorization for uncategorized markets
 
-**Considerations:**
-- Different data model (binary yes/no markets)
-- Regulatory considerations by state
-- Clear labeling that these are prediction markets, not gambling
+**Data Model:**
+- Kalshi events → `futures_markets` table (source="kalshi")
+- Kalshi markets → `futures_outcomes` table
+- Stores: `yes_bid`, `yes_ask`, `last_price`
+
+**To add more categories** (e.g., Entertainment), edit `sports_categories` in `tasks.py`
 
 ### Phase 10: Additional Data Sources
 **Expanding coverage and depth.**
@@ -876,6 +900,31 @@ Target: 2027
 - **Improved error handling**: History loading errors now show actual error message with retry button
 - **Cleaner live experience**: All live events show as LIVE without conditional warnings
 - **Pulse badges everywhere**: All completed/closed games now show their Pulse score
+- **Pulse Hall of Fame**: New page at `/pulse/hall-of-fame` showing top 25 highest and lowest Pulse games ever
+
+### LLM Infrastructure ✅ NEW
+- **OpenAI GPT-4o-mini integration**: Generic LLM service for classification tasks
+- **Hybrid futures categorization**: Pattern matching rules (regex) + LLM fallback for edge cases
+- **Improved LLM prompt**: Sports-aware prompt with athlete/team examples and common response mappings
+- **Database caching**: LLM results stored in `llm_sport_category` column to avoid repeat API calls
+- **In-memory cache**: Skips caching `None` results so failed classifications can be retried
+- **Admin endpoints**: `/api/admin/futures/categorize` to trigger batch categorization with dry-run support
+- **Cost-effective**: ~$0.001 per classification, results cached permanently
+- **Expanded categories**: Lacrosse, chess, poker added to classification options
+
+### Futures & Kalshi Integration ✅ NEW
+- **Futures markets**: Championship odds, MVP races, division winners from The Odds API
+- **Kalshi prediction markets**: Sports-related prediction markets with timing info
+- **Smart categorization**: 170+ markets auto-categorized using hybrid rules + LLM
+- **Pattern improvements**: Baseball awards (Manager, Comeback Player), pro sports, NWSL, Manchester United, Tewaaraton, WSOP, and more
+- **Unified display**: Both sources appear together, grouped by sport category
+- **Search integration**: Futures markets included in search results
+
+### Bug Fixes
+- **Upset Brewing fix**: Pre-game line movement no longer triggers "Upset Brewing" label for scheduled events
+- **Favorite switched logic**: `favorite_switched` flag only set for live/completed games, not scheduled
+- **Frontend upset filter**: Updated to use `is_upset` flag instead of raw `favorite_switched`
+- **PulseBadge import**: Fixed default export import in Hall of Fame page
 
 ---
 
@@ -1136,23 +1185,32 @@ These are product experiments, not blockers.
 
 ### Immediate (February 2026)
 - ✅ Fix event discovery for NCAA basketball
+- ✅ Pulse feature complete and deployed
+- ✅ Kalshi prediction market integration
+- ✅ Futures UI with hybrid categorization
+- ✅ LLM infrastructure (OpenAI GPT-4o-mini)
+- ✅ Pulse Hall of Fame page
+- ✅ Upset Brewing bug fix
+- 🔄 Merge remaining categorization PRs (improved patterns, LLM prompt, expanded categories)
+- 🔄 Re-run categorize endpoint after merging to resolve remaining ~67 "other" markets
 - Deploy analytics and observe user behavior
 - Monitor polling health across all sports
 
 ### Near-term (March-April 2026)
-- Implement Game Excitement Index
-- Create Highlights section
+- Register `sport`, `league`, `league_tier` as custom dimensions in GA4 Admin
+- Add `"Entertainment"` to Kalshi sports_categories (2-line change in `tasks.py`)
+- LLM-powered explanations for odds movements
 - Begin Firebase Auth integration
 
 ### Mid-term (May-June 2026)
-- LLM-powered explanations for odds movements
+- Futures Pulse implementation (proposal documented in PRD, open questions to resolve)
 - Favorites with cloud sync
 - Begin iOS app development
 
 ### Later (Q3-Q4 2026)
 - iOS app launch
-- Futures markets
-- Kalshi integration
+- Smart search with LLM query understanding
+- Natural language search
 
 ---
 

@@ -88,9 +88,12 @@ odds-tracker/
 |------|---------|
 | `backend/app/tasks.py` | Celery tasks: odds polling, Pulse calculation, event discovery |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
-| `backend/app/routes/events.py` | Main API - events, search, history |
+| `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
+| `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
+| `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM futures categorization |
 | `frontend/components/EventCard.tsx` | Event display component |
 | `frontend/components/PulseBadge.tsx` | Pulse score badge with tooltip |
+| `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
 ---
@@ -364,9 +367,27 @@ Both backend and frontend auto-deploy from `master` branch.
 1. ✅ Pulse feature complete and deployed
 2. ✅ Kalshi prediction market integration
 3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
-4. 🔄 Monitoring and reliability improvements
-5. 📋 Next: Firebase Auth for user accounts
-6. 📋 Next: Favorites and personalization
+4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
+5. ✅ Pulse Hall of Fame page (`/pulse/hall-of-fame`)
+6. ✅ Upset Brewing bug fix (pre-game line movement no longer triggers upset label)
+7. 🔄 Merge remaining categorization PRs (improved patterns, LLM prompt, expanded categories)
+8. 🔄 Re-run `/api/admin/futures/categorize` to resolve remaining ~67 "other" markets
+9. 📋 Next: Register GA4 custom dimensions (`sport`, `league`, `league_tier`)
+10. 📋 Next: Add `"Entertainment"` to Kalshi sports_categories in `tasks.py`
+11. 📋 Next: Firebase Auth for user accounts
+12. 📋 Next: Favorites and personalization
+13. 📋 Next: LLM-powered odds movement explanations
+
+**LLM is now available** for new features! See `backend/app/services/llm.py`
+
+### Unmerged PRs (as of Feb 2026)
+These PRs contain improvements that should be merged in order:
+1. `claude/improve-categorization-patterns-6edm6` - Baseball/basketball/soccer pattern improvements
+2. `claude/expand-categorization-6edm6` - Lacrosse, chess, poker categories + patterns
+3. `claude/improve-llm-classification-6edm6` - Improved LLM prompt, common response mappings, no-cache-None fix
+4. `claude/update-docs-llm-progress-6edm6` - Documentation updates (superseded by this commit)
+
+After merging, re-run: `curl -X POST ".../api/admin/futures/categorize?secret=any&limit=100"`
 
 See `docs/PRD.md` for full roadmap.
 
@@ -392,6 +413,7 @@ See `docs/PRD.md` for full roadmap.
 |------|-------|
 | API docs | `/docs` on backend URL |
 | Pulse explainer | https://odds.alexbain.com/pulse |
+| Pulse Hall of Fame | https://odds.alexbain.com/pulse/hall-of-fame |
 | Search | https://odds.alexbain.com/search?q=celtics |
 | PRD | `docs/PRD.md` |
 | Debug endpoints | `/api/events/debug/*` |
