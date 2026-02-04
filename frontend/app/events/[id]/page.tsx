@@ -11,6 +11,7 @@ import ActualScoreChart from "@/components/ActualScoreChart";
 import BookmakerTable from "@/components/BookmakerTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
+import Tooltip from "@/components/Tooltip";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import {
   useAnalytics,
@@ -632,19 +633,25 @@ export default function EventPage({ params }: EventPageProps) {
             {event.pulse.components && (
               <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-200">
                 <div className="text-center">
-                  <div className="text-xs text-slate-500 uppercase tracking-wide">Heart Rate</div>
+                  <Tooltip content="How often odds shifted significantly during the game" position="top">
+                    <div className="text-xs text-slate-500 uppercase tracking-wide cursor-help">Heart Rate</div>
+                  </Tooltip>
                   <div className="text-lg font-mono font-semibold text-slate-700">
                     {Math.round(event.pulse.components.heart_rate * 100)}%
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xs text-slate-500 uppercase tracking-wide">Amplitude</div>
+                  <Tooltip content="How large the probability swings were" position="top">
+                    <div className="text-xs text-slate-500 uppercase tracking-wide cursor-help">Amplitude</div>
+                  </Tooltip>
                   <div className="text-lg font-mono font-semibold text-slate-700">
                     {Math.round(event.pulse.components.amplitude * 100)}%
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xs text-slate-500 uppercase tracking-wide">Vitals</div>
+                  <Tooltip content="How close the matchup was — 100% means a coin flip" position="top">
+                    <div className="text-xs text-slate-500 uppercase tracking-wide cursor-help">Vitals</div>
+                  </Tooltip>
                   <div className="text-lg font-mono font-semibold text-slate-700">
                     {Math.round(event.pulse.components.vitals * 100)}%
                   </div>

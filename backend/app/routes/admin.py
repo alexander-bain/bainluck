@@ -908,6 +908,158 @@ async def futures_metadata_status(
 # ============================================================================
 
 
+@router.get("/pulse/distributions")
+async def pulse_distributions(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Analyze the distribution of Pulse scores and components across all scored events.
+
+    Returns histograms and statistics for the overall score and each component
+    (heart_rate, amplitude, arrhythmia, vitals), plus saturation analysis.
+    No auth required - diagnostic/read-only.
+    """
+    import json
+    from sqlalchemy import func
+
+    # Fetch all events with Pulse data
+    result = await db.execute(
+        select(
+            Event.id,
+            Event.raw_gei,
+            Event.gei_components,
+            Event.status,
+        )
+        .where(Event.raw_gei.isnot(None))
+        .order_by(Event.raw_gei.desc())
+    )
+    rows = result.all()
+
+    if not rows:
+        return {"status": "no_data", "message": "No events with Pulse scores found"}
+
+    scores = []
+    components = {
+        "heart_rate": [],
+        "amplitude": [],
+        "arrhythmia": [],
+        "vitals": [],
+        "time_weight": [],
+    }
+    lead_changes_list = []
+    by_status = {}
+
+    for event_id, raw_gei, gei_components_str, status in rows:
+        score = max(1, min(100, round(float(raw_gei) * 100)))
+        scores.append(score)
+
+        # Count by event status
+        by_status[status] = by_status.get(status, 0) + 1
+
+        if gei_components_str:
+            try:
+                comp = json.loads(gei_components_str) if isinstance(gei_components_str, str) else gei_components_str
+                for key in components:
+                    if key in comp:
+                        components[key].append(float(comp[key]))
+                if "lead_changes" in comp:
+                    lead_changes_list.append(int(comp["lead_changes"]))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+    def compute_stats(values: list) -> dict:
+        if not values:
+            return {}
+        sorted_vals = sorted(values)
+        n = len(sorted_vals)
+        return {
+            "count": n,
+            "mean": round(sum(sorted_vals) / n, 2),
+            "median": round(sorted_vals[n // 2], 2),
+            "min": round(sorted_vals[0], 2),
+            "max": round(sorted_vals[-1], 2),
+            "p10": round(sorted_vals[int(n * 0.1)], 2),
+            "p25": round(sorted_vals[int(n * 0.25)], 2),
+            "p75": round(sorted_vals[int(n * 0.75)], 2),
+            "p90": round(sorted_vals[int(n * 0.9)], 2),
+        }
+
+    def compute_histogram(values: list, buckets: list[tuple]) -> list[dict]:
+        hist = []
+        for label, lo, hi in buckets:
+            count = sum(1 for v in values if lo <= v < hi)
+            pct = round(count / len(values) * 100, 1) if values else 0
+            hist.append({"range": label, "count": count, "pct": pct})
+        return hist
+
+    # Score histogram (10-point buckets)
+    score_buckets = [
+        ("1-10", 1, 11), ("11-20", 11, 21), ("21-30", 21, 31),
+        ("31-40", 31, 41), ("41-50", 41, 51), ("51-60", 51, 61),
+        ("61-70", 61, 71), ("71-80", 71, 81), ("81-90", 81, 91),
+        ("91-100", 91, 101),
+    ]
+
+    # Component histogram (0-1 in 10% buckets, displayed as percentages)
+    comp_buckets = [
+        ("0-10%", 0.0, 0.1), ("10-20%", 0.1, 0.2), ("20-30%", 0.2, 0.3),
+        ("30-40%", 0.3, 0.4), ("40-50%", 0.4, 0.5), ("50-60%", 0.5, 0.6),
+        ("60-70%", 0.6, 0.7), ("70-80%", 0.7, 0.8), ("80-90%", 0.8, 0.9),
+        ("90-100%", 0.9, 1.01),  # 1.01 to include exactly 1.0
+    ]
+
+    # Saturation analysis: how many are at 100% (>=0.99)
+    saturation = {}
+    for key, vals in components.items():
+        if vals:
+            at_max = sum(1 for v in vals if v >= 0.99)
+            saturation[key] = {
+                "at_100_pct": at_max,
+                "at_100_pct_ratio": round(at_max / len(vals) * 100, 1),
+            }
+
+    # Pulse status distribution
+    status_labels = {
+        "flatline": (1, 20),
+        "weak": (21, 40),
+        "steady": (41, 60),
+        "strong": (61, 80),
+        "racing": (81, 100),
+    }
+    pulse_status_dist = {}
+    for label, (lo, hi) in status_labels.items():
+        count = sum(1 for s in scores if lo <= s <= hi)
+        pulse_status_dist[label] = {
+            "count": count,
+            "pct": round(count / len(scores) * 100, 1),
+        }
+
+    return {
+        "total_events": len(scores),
+        "by_event_status": by_status,
+        "score": {
+            "stats": compute_stats(scores),
+            "histogram": compute_histogram(scores, score_buckets),
+            "status_distribution": pulse_status_dist,
+        },
+        "components": {
+            key: {
+                "stats": compute_stats(vals),
+                "histogram": compute_histogram(vals, comp_buckets),
+            }
+            for key, vals in components.items()
+        },
+        "saturation": saturation,
+        "lead_changes": {
+            "stats": compute_stats(lead_changes_list),
+            "distribution": {
+                str(i): sum(1 for lc in lead_changes_list if lc == i)
+                for i in range(max(lead_changes_list) + 1)
+            } if lead_changes_list else {},
+        },
+    }
+
+
 @router.post("/espn/sync-teams")
 async def sync_espn_teams(
     secret: str = Query(..., description="Admin secret for authorization"),
