@@ -114,6 +114,10 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=20),  # Every hour at :20 (offset from other tasks)
         "kwargs": {"limit": 50},  # Process 50 events per run
     },
+    "sync-espn-live": {
+        "task": "app.tasks.sync_espn_live_events",
+        "schedule": 60.0,  # Every 60 seconds for live game data (scores, clock, win prob)
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -2204,5 +2208,175 @@ def enrich_events_metadata(self, limit: int = 50):
     except Exception as e:
         print(f"Enrichment task error: {e}")
         stats["errors"] += 1
+
+    return stats
+
+
+# ============================================================================
+# ESPN Live Sync Task
+# ============================================================================
+
+
+# ESPN sport key mapping (our sport_key -> ESPN sport identifier)
+ESPN_SPORT_MAPPING = {
+    "basketball_nba": "basketball/nba",
+    "basketball_ncaab": "basketball/mens-college-basketball",
+    "basketball_wncaab": "basketball/womens-college-basketball",
+    "americanfootball_nfl": "football/nfl",
+    "americanfootball_ncaaf": "football/college-football",
+    "icehockey_nhl": "hockey/nhl",
+    "baseball_mlb": "baseball/mlb",
+    "soccer_usa_mls": "soccer/usa.1",
+    "soccer_epl": "soccer/eng.1",
+}
+
+
+@celery_app.task(bind=True)
+def sync_espn_live_events(self):
+    """
+    Sync live event data from ESPN for all sports with active games.
+
+    This task runs every 60 seconds to keep scores, clock, period,
+    and win probability updated for live games.
+
+    Returns:
+        Dict with sync statistics
+    """
+    from app.services.database import SessionLocal
+    from app.services.espn_api import ESPNService
+    from app.models.models import Event, Sport
+    from sqlalchemy import select, distinct
+    from sqlalchemy.orm import selectinload
+
+    stats = {
+        "sports_checked": 0,
+        "sports_with_live": 0,
+        "events_synced": 0,
+        "events_updated": 0,
+        "errors": [],
+    }
+
+    try:
+        with SessionLocal() as session:
+            # Find sports with live games
+            live_sports_result = session.execute(
+                select(distinct(Sport.key))
+                .join(Event)
+                .where(Event.status == "live")
+            )
+            live_sport_keys = [row[0] for row in live_sports_result.all()]
+
+            if not live_sport_keys:
+                return {"status": "no_live_games", **stats}
+
+            stats["sports_with_live"] = len(live_sport_keys)
+
+            espn = ESPNService()
+
+            for sport_key in live_sport_keys:
+                stats["sports_checked"] += 1
+
+                # Skip sports we don't have ESPN mapping for
+                if sport_key not in ESPN_SPORT_MAPPING:
+                    continue
+
+                try:
+                    # Get ESPN scoreboard
+                    import asyncio
+                    espn_events = asyncio.get_event_loop().run_until_complete(
+                        espn.get_scoreboard(sport_key)
+                    )
+
+                    if not espn_events:
+                        continue
+
+                    # Get our live events for this sport
+                    events_result = session.execute(
+                        select(Event)
+                        .options(selectinload(Event.sport))
+                        .where(
+                            Event.sport.has(key=sport_key),
+                            Event.status == "live",
+                        )
+                    )
+                    our_events = events_result.scalars().all()
+
+                    # Simple name matching (no LLM to avoid slowdown)
+                    def names_match(our_names: list, espn_name: str) -> bool:
+                        espn_lower = (espn_name or "").lower()
+                        for name in our_names:
+                            name_lower = name.lower()
+                            if name_lower in espn_lower or espn_lower in name_lower:
+                                return True
+                        return False
+
+                    for event in our_events:
+                        # Build name variations
+                        home_names = [event.home_team_name]
+                        away_names = [event.away_team_name]
+                        if event.home_team_normalized:
+                            home_names.append(event.home_team_normalized)
+                        if event.away_team_normalized:
+                            away_names.append(event.away_team_normalized)
+                        if event.home_team_alt_names:
+                            home_names.extend(event.home_team_alt_names)
+                        if event.away_team_alt_names:
+                            away_names.extend(event.away_team_alt_names)
+
+                        # Find matching ESPN event
+                        for ee in espn_events:
+                            if not ee.home_team or not ee.away_team:
+                                continue
+
+                            espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                            espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+                            if names_match(home_names, espn_home) and names_match(away_names, espn_away):
+                                stats["events_synced"] += 1
+                                changed = False
+
+                                # Update ESPN ID
+                                if ee.espn_id and event.espn_id != ee.espn_id:
+                                    event.espn_id = ee.espn_id
+                                    changed = True
+
+                                # Update game clock
+                                if ee.clock and event.game_clock != ee.clock:
+                                    event.game_clock = ee.clock
+                                    changed = True
+
+                                # Update period
+                                if ee.status_detail and event.period != ee.status_detail:
+                                    event.period = ee.status_detail
+                                    changed = True
+
+                                # Update scores
+                                if ee.home_score is not None and event.home_score != ee.home_score:
+                                    event.home_score = ee.home_score
+                                    changed = True
+                                if ee.away_score is not None and event.away_score != ee.away_score:
+                                    event.away_score = ee.away_score
+                                    changed = True
+
+                                # Update ESPN win probability
+                                if ee.home_win_probability is not None:
+                                    event.espn_win_prob_home = ee.home_win_probability
+                                    sources = event.win_probability_sources or {}
+                                    sources["espn"] = ee.home_win_probability
+                                    event.win_probability_sources = sources
+                                    changed = True
+
+                                if changed:
+                                    stats["events_updated"] += 1
+
+                                break  # Found match, move to next event
+
+                except Exception as e:
+                    stats["errors"].append(f"{sport_key}: {str(e)}")
+
+            session.commit()
+
+    except Exception as e:
+        stats["errors"].append(f"Task error: {str(e)}")
 
     return stats

@@ -1683,6 +1683,24 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "favorite": event.opening_favorite,
         }
 
+    # Include ESPN data if available (live scores, clock, win probability)
+    try:
+        espn_data = {}
+        if hasattr(event, 'espn_id') and event.espn_id:
+            espn_data["espn_id"] = event.espn_id
+        if hasattr(event, 'game_clock') and event.game_clock:
+            espn_data["game_clock"] = event.game_clock
+        if hasattr(event, 'period') and event.period:
+            espn_data["period"] = event.period
+        if hasattr(event, 'broadcast_info') and event.broadcast_info:
+            espn_data["broadcast"] = event.broadcast_info
+        if hasattr(event, 'espn_win_prob_home') and event.espn_win_prob_home is not None:
+            espn_data["win_probability"] = float(event.espn_win_prob_home)
+        if espn_data:
+            response["espn"] = espn_data
+    except AttributeError:
+        pass  # ESPN columns may not exist yet
+
     return response
 
 
