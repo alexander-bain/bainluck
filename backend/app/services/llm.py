@@ -41,6 +41,7 @@ def classify(
     categories: list[str],
     context: str = "",
     model: str = "gpt-4o-mini",
+    fallback: Optional[str] = None,
 ) -> Optional[str]:
     """
     Classify text into one of the provided categories.
@@ -50,13 +51,15 @@ def classify(
         categories: List of valid category options
         context: Optional context to help with classification
         model: OpenAI model to use (default: gpt-4o-mini)
+        fallback: Value to return if classification fails (default: None)
 
     Returns:
-        The selected category, or None if classification failed
+        The selected category, or fallback if classification failed
     """
     client = _get_client()
     if not client:
-        return None
+        logger.debug(f"LLM client not available, using fallback: {fallback}")
+        return fallback
 
     categories_str = ", ".join(categories)
 
@@ -117,8 +120,8 @@ Rules:
         return None
 
     except Exception as e:
-        logger.error(f"LLM classification error: {e}")
-        return None
+        logger.error(f"LLM classification error: {e}, using fallback: {fallback}")
+        return fallback
 
 
 # Sport categories for futures classification
@@ -240,7 +243,18 @@ def classify_gender(text: str, sport_key: Optional[str] = None) -> Optional[str]
     if any(m in text_lower for m in ["mixed doubles", "mixed relay", "coed"]):
         return "mixed"
 
-    # For ambiguous cases, use LLM
+    # Combat sports (MMA, boxing) are typically men's unless specified
+    if any(cs in sport_lower for cs in ["mma", "ufc", "boxing"]):
+        # Check for women's combat sports
+        if any(w in text_lower for w in ["women", "female", "wmma"]):
+            return "women"
+        return "men"
+
+    # Major US sports leagues are men's by default
+    if any(league in sport_lower for league in ["_nfl", "_nba", "_mlb", "_nhl", "_ncaaf", "_ncaab"]):
+        return "men"
+
+    # For ambiguous cases, use LLM with "unknown" fallback
     context = f"Sport key: {sport_key}" if sport_key else ""
     context += " Determine if this is a men's, women's, or mixed (co-ed) sporting event or market."
 
@@ -248,6 +262,7 @@ def classify_gender(text: str, sport_key: Optional[str] = None) -> Optional[str]
         text=text,
         categories=GENDER_CATEGORIES,
         context=context,
+        fallback="unknown",
     )
 
 
@@ -275,10 +290,16 @@ def classify_level(text: str, sport_key: Optional[str] = None) -> Optional[str]:
     if any(c in text_lower or c in sport_lower for c in ["ncaa", "college", "university", "ncaab", "ncaaf"]):
         return "college"
 
-    if any(p in sport_lower for p in ["nfl", "nba", "mlb", "nhl", "pga", "atp", "wta", "ufc"]):
+    # Professional leagues and sports (including combat sports)
+    pro_indicators = [
+        "nfl", "nba", "mlb", "nhl", "pga", "atp", "wta", "ufc",
+        "mma", "boxing", "epl", "la_liga", "bundesliga", "serie_a",
+        "champions_league", "euroleague", "lpga",
+    ]
+    if any(p in sport_lower for p in pro_indicators):
         return "professional"
 
-    # For ambiguous cases, use LLM
+    # For ambiguous cases, use LLM with "unknown" fallback
     context = f"Sport key: {sport_key}" if sport_key else ""
     context += " Determine the competition level of this sporting event."
 
@@ -286,6 +307,7 @@ def classify_level(text: str, sport_key: Optional[str] = None) -> Optional[str]:
         text=text,
         categories=LEVEL_CATEGORIES,
         context=context,
+        fallback="unknown",
     )
 
 
@@ -327,6 +349,8 @@ def classify_league(text: str, sport_key: Optional[str] = None) -> Optional[str]
         "tennis_atp": "ATP",
         "tennis_wta": "WTA",
         "mma_ufc": "UFC",
+        "mma_mixed_martial_arts": "UFC",  # General MMA defaults to UFC
+        "boxing_boxing": "Boxing",
         "soccer_epl": "EPL",
         "soccer_spain_la_liga": "La_Liga",
         "soccer_germany_bundesliga": "Bundesliga",
@@ -339,7 +363,7 @@ def classify_league(text: str, sport_key: Optional[str] = None) -> Optional[str]
     if sport_lower in league_mapping:
         return league_mapping[sport_lower]
 
-    # For ambiguous cases, use LLM
+    # For ambiguous cases, use LLM with "Other" fallback
     context = f"Sport key: {sport_key}" if sport_key else ""
     context += " Identify the specific league or competition this event belongs to."
 
@@ -347,6 +371,7 @@ def classify_league(text: str, sport_key: Optional[str] = None) -> Optional[str]
         text=text,
         categories=LEAGUE_OPTIONS,
         context=context,
+        fallback="Other",
     )
 
 
@@ -368,9 +393,10 @@ def classify_importance(text: str, sport_key: Optional[str] = None) -> Optional[
         One of: "championship", "playoff", "regular_season", "exhibition", "qualifier", "unknown"
     """
     text_lower = text.lower()
+    sport_lower = (sport_key or "").lower()
 
     # Quick heuristic checks
-    championship_terms = ["super bowl", "world series", "stanley cup", "nba finals", "championship", "final"]
+    championship_terms = ["super bowl", "world series", "stanley cup", "nba finals", "championship", "final", "title fight", "title bout"]
     if any(term in text_lower for term in championship_terms):
         return "championship"
 
@@ -386,7 +412,13 @@ def classify_importance(text: str, sport_key: Optional[str] = None) -> Optional[
     if any(term in text_lower for term in qualifier_terms):
         return "qualifier"
 
-    # For ambiguous cases, use LLM
+    # Combat sports (MMA/boxing) individual fights default to regular_season equivalent
+    # Most tracked MMA/boxing fights are significant matchups
+    if any(cs in sport_lower for cs in ["mma", "ufc", "boxing"]):
+        return "regular_season"
+
+    # For ambiguous cases, use LLM with "regular_season" as default
+    # Most events are regular season games
     context = f"Sport key: {sport_key}" if sport_key else ""
     context += " Classify the importance or stage of this sporting event."
 
@@ -394,6 +426,7 @@ def classify_importance(text: str, sport_key: Optional[str] = None) -> Optional[
         text=text,
         categories=IMPORTANCE_CATEGORIES,
         context=context,
+        fallback="regular_season",
     )
 
 
