@@ -1,6 +1,8 @@
 """Futures/Outrights API endpoints."""
 
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from statistics import mean
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -361,24 +363,41 @@ async def get_futures_history(
     result = await db.execute(snapshot_query)
     snapshots = result.scalars().all()
 
-    # Group by outcome
-    outcome_history = {}
+    # Group snapshots by outcome, then aggregate per-bookmaker snapshots
+    # at the same timestamp into a single consensus value.
+    # This prevents chart jaggedness caused by plotting each bookmaker's
+    # slightly different probability as a separate data point.
     outcome_names = {o.id: o.name for o in market.outcomes}
 
+    # Group: outcome_id -> captured_at -> [probabilities from different bookmakers]
+    outcome_time_groups: dict[int, dict[datetime, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
     for snapshot in snapshots:
-        oid = snapshot.outcome_id
-        if oid not in outcome_history:
-            outcome_history[oid] = {
-                "outcome_id": oid,
-                "name": outcome_names.get(oid, "Unknown"),
-                "history": [],
-            }
-        outcome_history[oid]["history"].append({
-            "timestamp": snapshot.captured_at.isoformat(),
-            "probability": float(snapshot.probability) if snapshot.probability else None,
-            "american_odds": snapshot.american_odds,
-            "bookmaker": snapshot.bookmaker,
-        })
+        if snapshot.probability is not None:
+            outcome_time_groups[snapshot.outcome_id][snapshot.captured_at].append(
+                float(snapshot.probability)
+            )
+
+    # Build aggregated history: one data point per timestamp per outcome
+    outcome_history = {}
+    for oid, time_groups in outcome_time_groups.items():
+        history = []
+        for captured_at in sorted(time_groups.keys()):
+            probs = time_groups[captured_at]
+            avg_prob = mean(probs)
+            history.append({
+                "timestamp": captured_at.isoformat(),
+                "probability": avg_prob,
+                "american_odds": probability_to_american(avg_prob) if avg_prob > 0 else None,
+                "bookmaker": "consensus",
+            })
+        outcome_history[oid] = {
+            "outcome_id": oid,
+            "name": outcome_names.get(oid, "Unknown"),
+            "history": history,
+        }
 
     return {
         "market_id": market_id,
