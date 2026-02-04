@@ -140,6 +140,41 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["motorsport_", "racing_"],
     tier: 3,
   },
+  {
+    key: "horse_racing",
+    name: "Horse Racing",
+    emoji: "🏇",
+    prefixes: ["horseracing_"],
+    tier: 3,
+  },
+  {
+    key: "olympics",
+    name: "Olympics",
+    emoji: "🏅",
+    prefixes: ["olympics_"],
+    tier: 3,
+  },
+  {
+    key: "entertainment",
+    name: "Entertainment",
+    emoji: "🎬",
+    prefixes: ["entertainment_"],
+    tier: 3,
+  },
+  {
+    key: "chess",
+    name: "Chess",
+    emoji: "♟️",
+    prefixes: ["chess_"],
+    tier: 3,
+  },
+  {
+    key: "poker",
+    name: "Poker",
+    emoji: "🃏",
+    prefixes: ["poker_"],
+    tier: 3,
+  },
   // Other category is a catch-all (handled in code, not here)
 ];
 
@@ -302,9 +337,13 @@ export function getCategoryForLeague(leagueKey: string): SportCategory | undefin
 const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   // Baseball - Match AL/NL awards, MVP, Cy Young, etc.
   { pattern: /\b(mlb|world.series)\b/i, category: "baseball" },
-  { pattern: /\b(al|nl)\s+(mvp|cy.young|rookie|reliever|hank.aaron)\b/i, category: "baseball" },
+  { pattern: /\b(al|nl)\s+(mvp|cy.young|rookie|reliever|hank.aaron|manager|comeback|batting|home.run|era)\b/i, category: "baseball" },
+  { pattern: /\bcy.young\s+(award|winner)\b/i, category: "baseball" },
   { pattern: /\bamerican.league\b/i, category: "baseball" },
   { pattern: /\bnational.league\b/i, category: "baseball" },
+  { pattern: /\bpro.baseball\b/i, category: "baseball" },
+  { pattern: /\bhome.run.derby\b/i, category: "baseball" },
+  { pattern: /\bbaseball\b/i, category: "baseball" },
 
   // Football - Match college football, NFL, Super Bowl, Heisman, etc.
   { pattern: /\b(nfl|super.bowl)\b/i, category: "football" },
@@ -313,37 +352,102 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\bheisman\b/i, category: "football" },
   { pattern: /\b(afc|nfc)\s+(championship|winner|east|west|north|south)\b/i, category: "football" },
   { pattern: /\bpro.football\b/i, category: "football" },
-  { pattern: /\b(acc|sec|big.ten|big.12|pac.12)\s+(championship|football)\b/i, category: "football" },
+  // College conferences
+  { pattern: /\b(acc|sec|big.ten|big.12|big.east|pac.12|pac.10|mountain.west|sun.belt|mac|aac|c.usa)\s+(championship|football|winner)\b/i, category: "football" },
+  // College bowl games
+  { pattern: /\b(rose|sugar|orange|cotton|peach|fiesta|citrus|alamo|holiday|liberty|independence|armed.forces|sun|gator|outback|music.city).bowl\b/i, category: "football" },
+  // College Football Playoff
+  { pattern: /\bcfp\b/i, category: "football" },
+  { pattern: /\bpro.bowl\b/i, category: "football" },
+  // NFL awards
+  { pattern: /\b(offensive|defensive).player.of.the.year\b/i, category: "football" },
+  { pattern: /\bnfl.mvp\b/i, category: "football" },
 
-  // Basketball
+  // Basketball - Must come after football patterns to avoid false matches
   { pattern: /\b(nba|ncaab|wnba)\b/i, category: "basketball" },
   { pattern: /\bmarch.madness\b/i, category: "basketball" },
   { pattern: /\b(eastern|western).conference\b/i, category: "basketball" },
+  { pattern: /\bpro.basketball\b/i, category: "basketball" },
+  { pattern: /\b(final.four|sweet.sixteen|sweet.16|elite.eight|elite.8)\b/i, category: "basketball" },
+  { pattern: /\bncaa.tournament\b/i, category: "basketball" },
+  // NBA awards
+  { pattern: /\b(nba.mvp|finals.mvp|nba.finals)\b/i, category: "basketball" },
+  { pattern: /\b(defensive.player|sixth.man|most.improved|rookie.of.the.year)\b/i, category: "basketball" },
+  { pattern: /\b(slam.dunk|dunk.contest|three.point.contest)\b/i, category: "basketball" },
+  // College basketball conferences
+  { pattern: /\b(big.east|big.12|acc|sec|big.ten|pac.12).basketball\b/i, category: "basketball" },
+  { pattern: /\bbasketball\b/i, category: "basketball" },
 
-  // Hockey
+  // Hockey - NHL and awards
   { pattern: /\b(nhl|stanley.cup)\b/i, category: "hockey" },
+  { pattern: /\b(hart.trophy|vezina|calder|conn.smythe|norris.trophy|selke|lady.byng|rocket.richard)\b/i, category: "hockey" },
+  { pattern: /\bhockey\b/i, category: "hockey" },
 
-  // Golf
+  // Golf - Major championships and tours
   { pattern: /\b(pga|masters|british.open|the.open|ryder.cup)\b/i, category: "golf" },
+  { pattern: /\b(lpga|liv.golf|dp.world)\b/i, category: "golf" },
+  { pattern: /\bus.women.?s?.open\b/i, category: "golf" },  // US Women's Open (golf)
+  { pattern: /\bgolf\b/i, category: "golf" },
 
-  // Tennis
+  // Tennis - Majors and tournaments
   { pattern: /\b(wimbledon|french.open|australian.open|atp|wta)\b/i, category: "tennis" },
+  { pattern: /\b(davis.cup|billie.jean.king.cup|fed.cup|laver.cup)\b/i, category: "tennis" },
+  { pattern: /\btennis\b/i, category: "tennis" },
 
   // Soccer - Match Ballon d'Or, PFA, Premier League, etc.
-  { pattern: /\b(ballon.d.or|pfa.player|epl|premier.league|champions.league|mls|la.liga|bundesliga|serie.a)\b/i, category: "soccer" },
+  { pattern: /\b(ballon.d.or|pfa.player|epl|premier.league|champions.league|mls|la.liga|bundesliga|serie.a|nwsl)\b/i, category: "soccer" },
+  { pattern: /\b(major.league.soccer|europa.league|fa.cup|carabao.cup|league.cup|community.shield)\b/i, category: "soccer" },
+  { pattern: /\b(golden.boot|golden.ball|golden.glove)\b/i, category: "soccer" },  // Soccer awards
   { pattern: /\bworld.cup\b(?!.*college)/i, category: "soccer" }, // World Cup but not "College Football"
+  { pattern: /\bworld.cup.qualifier\b/i, category: "soccer" },
+  { pattern: /\b(copa.america|euro.20\d\d|euros|uefa.euro|concacaf|nations.league)\b/i, category: "soccer" },
+  { pattern: /\bsoccer\b/i, category: "soccer" },
+
+  // Cricket
+  { pattern: /\b(ipl|cricket|t20|test.match|ashes|bbl|big.bash)\b/i, category: "cricket" },
+
+  // Rugby
+  { pattern: /\b(rugby|six.nations|tri.nations|super.rugby|nrl)\b/i, category: "rugby" },
+
+  // Australian Rules
+  { pattern: /\b(afl|australian.football|aussie.rules)\b/i, category: "aussierules" },
+
+  // Horse Racing - Must be before motorsport to avoid "racing" false match
+  { pattern: /\b(kentucky.derby|preakness|belmont.stakes|breeders.cup|triple.crown)\b/i, category: "horse_racing" },
+  { pattern: /\b(horse.racing|thoroughbred|jockey)\b/i, category: "horse_racing" },
 
   // MMA
-  { pattern: /\b(ufc|mma)\b/i, category: "mma" },
+  { pattern: /\b(ufc|mma|bellator|pfl|one.championship)\b/i, category: "mma" },
+
+  // Boxing
+  { pattern: /\bboxing\b/i, category: "boxing" },
 
   // Motorsport
-  { pattern: /\b(formula.1|f1|nascar|indycar|racing)\b/i, category: "motorsport" },
+  { pattern: /\b(formula.1|f1|nascar|indycar|motogp|wrc)\b/i, category: "motorsport" },
+  { pattern: /\b(daytona.500|indy.500|le.mans|monaco.grand.prix)\b/i, category: "motorsport" },
+  { pattern: /\b(racing|motorsport)\b/i, category: "motorsport" },
 
   // Politics
-  { pattern: /\b(election|president|congress|senate|governor)\b/i, category: "politics" },
+  { pattern: /\b(election|president|congress|senate|governor|presidential|democrat|republican|trump|biden)\b/i, category: "politics" },
 
   // Esports
-  { pattern: /\b(lol|league.of.legends|csgo|cs.go|dota|valorant|esports)\b/i, category: "esports" },
+  { pattern: /\b(lol|league.of.legends|csgo|cs2|cs.go|dota|valorant|esports|overwatch.league)\b/i, category: "esports" },
+
+  // Entertainment
+  { pattern: /\b(oscar|emmy|grammy|golden.globe|academy.award|entertainer|box.office|movie|film|music|spotify|album)\b/i, category: "entertainment" },
+  { pattern: /\b(tv.show|television|reality|bachelor|bachelorette|portnoy|youtube|tiktok|influencer)\b/i, category: "entertainment" },
+
+  // Olympics
+  { pattern: /\b(olympic|olympics|paralympic)\b/i, category: "olympics" },
+
+  // Lacrosse
+  { pattern: /\b(lacrosse|tewaaraton|pll|premier.lacrosse)\b/i, category: "lacrosse" },
+
+  // Chess
+  { pattern: /\bchess\b/i, category: "chess" },
+
+  // Poker
+  { pattern: /\b(wsop|poker|world.series.of.poker)\b/i, category: "poker" },
 ];
 
 /**
@@ -410,6 +514,7 @@ const FUTURES_KEYWORD_MAP: Record<string, string> = {
  * for known athlete names to determine the sport.
  */
 const KNOWN_GOLFERS = new Set([
+  // Top current male golfers
   "scottie scheffler", "rory mcilroy", "bryson dechambeau", "jon rahm",
   "xander schauffele", "collin morikawa", "viktor hovland", "patrick cantlay",
   "jordan spieth", "justin thomas", "brooks koepka", "dustin johnson",
@@ -418,16 +523,32 @@ const KNOWN_GOLFERS = new Set([
   "tommy fleetwood", "shane lowry", "adam scott", "rickie fowler", "sahith theegala",
   "ludvig aberg", "tom kim", "sungjae im", "cameron young", "keegan bradley",
   "russell henley", "sam burns", "corey conners", "tyrrell hatton", "min woo lee",
+  // LIV golfers
+  "dustin johnson", "cameron smith", "brooks koepka", "phil mickelson",
+  "sergio garcia", "patrick reed", "talor gooch", "joaquin niemann",
+  // Top female golfers (LPGA)
+  "nelly korda", "lydia ko", "jin young ko", "minjee lee", "lexi thompson",
+  "danielle kang", "brooke henderson", "atthaya thitikul", "rose zhang",
+  "charley hull", "lilia vu", "hannah green", "celine boutier",
 ]);
 
 const KNOWN_TENNIS_PLAYERS = new Set([
+  // Top ATP players
   "novak djokovic", "carlos alcaraz", "jannik sinner", "daniil medvedev",
   "alexander zverev", "andrey rublev", "stefanos tsitsipas", "holger rune",
   "taylor fritz", "tommy paul", "hubert hurkacz", "casper ruud", "grigor dimitrov",
   "felix auger-aliassime", "ben shelton", "alex de minaur", "frances tiafoe",
+  "ugo humbert", "karen khachanov", "sebastian korda", "arthur fils",
+  "lorenzo musetti", "matteo berrettini", "denis shapovalov", "nick kyrgios",
+  // Top WTA players
   "iga swiatek", "aryna sabalenka", "coco gauff", "jessica pegula", "elena rybakina",
   "ons jabeur", "maria sakkari", "qinwen zheng", "emma raducanu", "naomi osaka",
+  "caroline garcia", "madison keys", "daria kasatkina", "petra kvitova",
+  "jelena ostapenko", "veronika kudermetova", "donna vekic", "liudmila samsonova",
+  "beatriz haddad maia", "danielle collins", "marketa vondrousova",
+  // Legends (still relevant for markets)
   "rafael nadal", "roger federer", "serena williams", "venus williams",
+  "andy murray",
 ]);
 
 /**
