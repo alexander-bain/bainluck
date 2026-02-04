@@ -477,6 +477,137 @@ async def futures_categorization_status(
     }
 
 
+@router.get("/futures/uncategorized")
+async def list_uncategorized_futures(
+    limit: int = Query(100, description="Max markets to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List uncategorized futures markets.
+
+    Shows market names to help identify patterns that should be added.
+    No auth required - this is diagnostic info only.
+    """
+    from app.models import FuturesMarket
+    from app.utils.futures_categorization import categorize_by_rules
+
+    result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+        .order_by(FuturesMarket.name)
+        .limit(limit)
+    )
+    markets = result.scalars().all()
+
+    # For each market, show what rules would categorize it as (to debug)
+    uncategorized = []
+    for m in markets:
+        rule_result = categorize_by_rules(m.name, m.external_id)
+        uncategorized.append({
+            "id": m.id,
+            "name": m.name,
+            "sport_key": m.external_id,
+            "source": m.source,
+            "rule_would_return": rule_result,  # What pattern matching returns
+        })
+
+    return {
+        "count": len(uncategorized),
+        "markets": uncategorized,
+        "hint": "Markets with rule_would_return=null need LLM or new patterns",
+    }
+
+
+@router.post("/futures/force-categorize")
+async def force_categorize_futures(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(100, description="Max markets to categorize"),
+    dry_run: bool = Query(False, description="Preview without saving"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Force-categorize ALL uncategorized futures using LLM.
+
+    Unlike /categorize which only runs LLM on pattern-miss, this endpoint
+    runs LLM on EVERY uncategorized market and saves the result (even "other").
+
+    This ensures no market is left with llm_sport_category=NULL.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import FuturesMarket
+    from app.services import llm
+
+    if not llm.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM service not available (OPENAI_API_KEY not set?)"
+        )
+
+    # Find uncategorized markets
+    result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+        .limit(limit)
+    )
+    markets = result.scalars().all()
+
+    if not markets:
+        return {
+            "status": "complete",
+            "message": "No uncategorized markets found",
+            "processed": 0,
+        }
+
+    results = []
+    by_category = {}
+
+    for market in markets:
+        # Always use LLM (which now always returns a category)
+        category = llm.classify_futures_market(market.name)
+
+        results.append({
+            "id": market.id,
+            "name": market.name,
+            "category": category,
+        })
+
+        by_category[category] = by_category.get(category, 0) + 1
+
+        if not dry_run:
+            market.llm_sport_category = category
+
+    if not dry_run:
+        await db.commit()
+
+    # Count remaining
+    remaining_result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+    )
+    remaining = len(remaining_result.scalars().all())
+
+    return {
+        "status": "success",
+        "dry_run": dry_run,
+        "processed": len(markets),
+        "remaining": remaining,
+        "by_category": by_category,
+        "sample_results": results[:20],
+        "message": f"Categorized {len(markets)} markets. {remaining} remaining.",
+    }
+
+
 # ============================================================================
 # LLM Metadata Enrichment Endpoints
 # ============================================================================
