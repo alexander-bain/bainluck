@@ -125,7 +125,7 @@ class Event(Base):
     venue_id: Mapped[Optional[int]] = mapped_column(ForeignKey("venues.id"))
     broadcast_info: Mapped[Optional[str]] = mapped_column(String(255))  # "ESPN, ESPN+"
     game_clock: Mapped[Optional[str]] = mapped_column(String(20))  # "4:32"
-    period: Mapped[Optional[str]] = mapped_column(String(20))  # "Q4", "2nd Half", "OT"
+    period: Mapped[Optional[str]] = mapped_column(String(100))  # "Q4", "2nd Half", "OT", or schedule info
     espn_win_prob_home: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # ESPN's model
     win_probability_sources: Mapped[Optional[dict]] = mapped_column(JSONB)  # {"espn": 0.65, "betting": 0.60}
 
