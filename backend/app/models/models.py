@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.services.database import Base
@@ -39,16 +40,25 @@ class Sport(Base):
 
 class Team(Base):
     """Teams or players."""
-    
+
     __tablename__ = "teams"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"))
     external_id: Mapped[Optional[str]] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     abbreviation: Mapped[Optional[str]] = mapped_column(String(10))
     logo_url: Mapped[Optional[str]] = mapped_column(Text)
-    
+
+    # ESPN enrichment fields
+    espn_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    primary_color: Mapped[Optional[str]] = mapped_column(String(7))  # Hex color e.g. #552583
+    secondary_color: Mapped[Optional[str]] = mapped_column(String(7))
+    logo_url_small: Mapped[Optional[str]] = mapped_column(String(512))
+    logo_url_large: Mapped[Optional[str]] = mapped_column(String(512))
+    alternate_names: Mapped[Optional[dict]] = mapped_column(JSONB)  # ["Lakers", "LA Lakers"]
+    current_record: Mapped[Optional[str]] = mapped_column(String(20))  # "34-18"
+
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="teams")
     home_events: Mapped[list["Event"]] = relationship(
@@ -98,6 +108,21 @@ class Event(Base):
     gei_components: Mapped[Optional[str]] = mapped_column(Text)  # JSON of component scores
     gei_computed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+    # LLM metadata enrichment
+    llm_gender: Mapped[Optional[str]] = mapped_column(String(20))  # men/women/mixed/unknown
+    llm_level: Mapped[Optional[str]] = mapped_column(String(20))  # professional/college/amateur/youth
+    llm_league: Mapped[Optional[str]] = mapped_column(String(50))  # NFL/NCAAF/NBA/etc
+    llm_importance: Mapped[Optional[str]] = mapped_column(String(30))  # playoff/championship/regular_season
+
+    # ESPN enrichment
+    espn_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    venue_id: Mapped[Optional[int]] = mapped_column(ForeignKey("venues.id"))
+    broadcast_info: Mapped[Optional[str]] = mapped_column(String(255))  # "ESPN, ESPN+"
+    game_clock: Mapped[Optional[str]] = mapped_column(String(20))  # "4:32"
+    period: Mapped[Optional[str]] = mapped_column(String(20))  # "Q4", "2nd Half", "OT"
+    espn_win_prob_home: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # ESPN's model
+    win_probability_sources: Mapped[Optional[dict]] = mapped_column(JSONB)  # {"espn": 0.65, "betting": 0.60}
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -112,6 +137,7 @@ class Event(Base):
         back_populates="away_events",
         foreign_keys=[away_team_id]
     )
+    venue: Mapped[Optional["Venue"]] = relationship(back_populates="events")
     odds_snapshots: Mapped[list["OddsSnapshot"]] = relationship(
         back_populates="event"
     )
@@ -302,6 +328,26 @@ class GEIPercentile(Base):
     )
 
 
+class Venue(Base):
+    """Venue/arena information from ESPN."""
+
+    __tablename__ = "venues"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    city: Mapped[Optional[str]] = mapped_column(String(100))
+    state: Mapped[Optional[str]] = mapped_column(String(50))
+    country: Mapped[Optional[str]] = mapped_column(String(50))
+    capacity: Mapped[Optional[int]] = mapped_column(Integer)
+    espn_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    events: Mapped[list["Event"]] = relationship(back_populates="venue")
+
+
 class FuturesMarket(Base):
     """A futures market (e.g., 'NBA Championship 2025-26', 'Super Bowl Winner')."""
 
@@ -316,6 +362,11 @@ class FuturesMarket(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(50), default="championship")  # championship, mvp, division, prop
     llm_sport_category: Mapped[Optional[str]] = mapped_column(String(50))  # LLM-assigned sport category
+
+    # LLM metadata enrichment
+    llm_gender: Mapped[Optional[str]] = mapped_column(String(20))  # men/women/mixed/unknown
+    llm_level: Mapped[Optional[str]] = mapped_column(String(20))  # professional/college/amateur/youth
+    llm_league: Mapped[Optional[str]] = mapped_column(String(50))  # NFL/NBA/EPL/etc
 
     # For multi-outcome markets, whether exactly one outcome can win
     mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)
