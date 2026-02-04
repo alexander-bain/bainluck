@@ -255,6 +255,10 @@ def classify_gender(text: str, sport_key: Optional[str] = None) -> Optional[str]
     if any(league in sport_lower for league in ["_nfl", "_nba", "_mlb", "_nhl", "_ncaaf", "_ncaab"]):
         return "men"
 
+    # Soccer leagues are men's by default (women's soccer has explicit indicators like "nwsl", "women")
+    if "soccer" in sport_lower:
+        return "men"
+
     # For ambiguous cases, use LLM with "unknown" fallback
     context = f"Sport key: {sport_key}" if sport_key else ""
     context += " Determine if this is a men's, women's, or mixed (co-ed) sporting event or market."
@@ -291,11 +295,11 @@ def classify_level(text: str, sport_key: Optional[str] = None) -> Optional[str]:
     if any(c in text_lower or c in sport_lower for c in ["ncaa", "college", "university", "ncaab", "ncaaf"]):
         return "college"
 
-    # Professional leagues and sports (including combat sports)
+    # Professional leagues and sports (including combat sports and soccer)
     pro_indicators = [
         "nfl", "nba", "mlb", "nhl", "pga", "atp", "wta", "ufc",
         "mma", "boxing", "epl", "la_liga", "bundesliga", "serie_a",
-        "champions_league", "euroleague", "lpga",
+        "champions_league", "euroleague", "lpga", "soccer",
     ]
     if any(p in sport_lower for p in pro_indicators):
         return "professional"
@@ -333,25 +337,33 @@ def classify_league(text: str, sport_key: Optional[str] = None) -> Optional[str]
 
     # Quick extraction from sport key
     league_mapping = {
+        # American Football
         "americanfootball_nfl": "NFL",
         "americanfootball_ncaaf": "NCAAF",
         "americanfootball_cfl": "CFL",
         "americanfootball_xfl": "XFL",
+        # Basketball
         "basketball_nba": "NBA",
         "basketball_wnba": "WNBA",
         "basketball_ncaab": "NCAAB",
         "basketball_wncaab": "WNCAAB",
         "basketball_euroleague": "EuroLeague",
+        # Baseball
         "baseball_mlb": "MLB",
+        # Hockey
         "icehockey_nhl": "NHL",
+        # Golf
         "golf_pga": "PGA",
         "golf_lpga": "LPGA",
-        "golf_masters": "PGA",  # Masters is a PGA major
+        "golf_masters": "PGA",
+        # Tennis
         "tennis_atp": "ATP",
         "tennis_wta": "WTA",
+        # Combat sports
         "mma_ufc": "UFC",
-        "mma_mixed_martial_arts": "UFC",  # General MMA defaults to UFC
+        "mma_mixed_martial_arts": "UFC",
         "boxing_boxing": "Boxing",
+        # Soccer - Top leagues
         "soccer_epl": "EPL",
         "soccer_spain_la_liga": "La_Liga",
         "soccer_germany_bundesliga": "Bundesliga",
@@ -359,7 +371,37 @@ def classify_league(text: str, sport_key: Optional[str] = None) -> Optional[str]
         "soccer_france_ligue_one": "Ligue_1",
         "soccer_usa_mls": "MLS",
         "soccer_uefa_champs_league": "Champions_League",
+        # Soccer - England lower divisions
+        "soccer_efl_champ": "EFL_Championship",
+        "soccer_england_league1": "EFL_League_One",
+        "soccer_england_league2": "EFL_League_Two",
+        "soccer_england_efl_cup": "EFL_Cup",
+        # Soccer - Other European
+        "soccer_france_ligue_two": "Ligue_2",
+        "soccer_germany_liga3": "3_Liga",
+        "soccer_italy_serie_b": "Serie_B",
+        "soccer_spain_segunda": "La_Liga_2",
+        "soccer_netherlands_eredivisie": "Eredivisie",
+        "soccer_portugal_primeira_liga": "Primeira_Liga",
+        "soccer_turkey_super_league": "Super_Lig",
+        "soccer_belgium_first_div": "Belgian_First_Division",
+        # Soccer - Americas
+        "soccer_brazil_serie_a": "Brasileirao",
+        "soccer_mexico_ligamx": "Liga_MX",
+        "soccer_argentina_primera": "Argentina_Primera",
+        # Soccer - Other regions
+        "soccer_australia_aleague": "A_League",
+        "soccer_japan_j_league": "J_League",
+        # Soccer - International
+        "soccer_uefa_europa_league": "Europa_League",
+        "soccer_fifa_world_cup": "World_Cup",
     }
+
+    # Also check for partial matches in sport_key for soccer
+    if sport_lower.startswith("soccer_") and sport_lower not in league_mapping:
+        # Extract league name from sport_key as fallback
+        league_part = sport_lower.replace("soccer_", "").replace("_", " ").title()
+        return league_part
 
     if sport_lower in league_mapping:
         return league_mapping[sport_lower]
@@ -416,6 +458,15 @@ def classify_importance(text: str, sport_key: Optional[str] = None) -> Optional[
     # Combat sports (MMA/boxing) individual fights default to regular_season equivalent
     # Most tracked MMA/boxing fights are significant matchups
     if any(cs in sport_lower for cs in ["mma", "ufc", "boxing"]):
+        return "regular_season"
+
+    # Soccer league games are regular season unless explicitly a cup/final
+    # Note: "efl_champ" is the Championship league name, not a championship game
+    if "soccer" in sport_lower:
+        # Cup competitions
+        if any(cup in sport_lower for cup in ["cup", "copa", "coupe"]):
+            return "playoff"  # Cup games are knockout/playoff format
+        # Regular league games
         return "regular_season"
 
     # For ambiguous cases, use LLM with "regular_season" as default
