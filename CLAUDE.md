@@ -215,6 +215,33 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/task
 - Stores bid/ask spreads: `yes_bid`, `yes_ask`, `last_price`
 - Populates `commence_time` (event start) and `resolution_date` (market close)
 
+### Sport Categorization (Futures)
+Futures markets are categorized using pattern matching in `frontend/lib/sportCategories.ts`.
+
+**How it works:**
+1. First tries prefix matching on sport key (e.g., `golf_masters` → Golf)
+2. Falls back to regex patterns on market name (e.g., "College Football Playoff" → Football)
+3. Handles baseball awards like "AL MVP", "NL Cy Young" → Baseball
+4. Uses athlete name detection for ambiguous markets like "US Open"
+
+**To add new patterns**, edit `SPORT_PATTERNS` in `sportCategories.ts`:
+```typescript
+const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
+  { pattern: /\b(al|nl)\s+(mvp|cy.young|rookie)\b/i, category: "baseball" },
+  { pattern: /\bcollege.football\b/i, category: "football" },
+  // Add new patterns here...
+];
+```
+
+**Debug endpoints:**
+```bash
+# See futures count by source (odds_api vs kalshi)
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sources"
+
+# See sport linking for futures
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sport-mapping"
+```
+
 ---
 
 ## API Patterns
@@ -312,9 +339,11 @@ Both backend and frontend auto-deploy from `master` branch.
 ## Current Priorities (February 2026)
 
 1. ✅ Pulse feature complete and deployed
-2. 🔄 Monitoring and reliability improvements
-3. 📋 Next: Firebase Auth for user accounts
-4. 📋 Next: Favorites and personalization
+2. ✅ Kalshi prediction market integration
+3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
+4. 🔄 Monitoring and reliability improvements
+5. 📋 Next: Firebase Auth for user accounts
+6. 📋 Next: Favorites and personalization
 
 See `docs/PRD.md` for full roadmap.
 
