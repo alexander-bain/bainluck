@@ -742,23 +742,45 @@ Completed: February 2026
 - [x] Admin endpoints for Pulse management (`/api/admin/pulse/status`, `/api/admin/pulse/recalculate`)
 - [x] Debug endpoint for Pulse diagnostics (`/api/events/debug/pulse`)
 
-### Phase 5: Authentication & Personalization
+### Phase 5: Pinned Events & Futures ✅ Complete
+**Track important events without requiring authentication.**
+
+Completed: February 2026
+
+- [x] Pin/unpin events from cards and detail pages
+- [x] Pin/unpin futures markets from cards and detail pages
+- [x] Pinned sections on homepage (above Highlights)
+- [x] Maximum 6 events + 6 futures pinned simultaneously
+- [x] Works for events outside 7-day window (e.g., Super Bowl)
+- [x] Cross-tab sync via localStorage
+- [x] Search results support pinning
+
+**Implementation:**
+- localStorage-based (no auth required)
+- `usePinnedEvents` and `usePinnedFutures` hooks
+- `fetchEventsByIds` and `fetchFuturesByIds` for loading pinned items
+- Subtle pin icon on cards (visible on hover, amber when pinned)
+
+**Future Enhancement:** Migrate to database storage when Firebase Auth is implemented for cross-device sync.
+
+### Phase 6: Authentication & Personalization
 **User accounts for cross-device experience.**
 
 Target: Q2 2026
 
 - [ ] Firebase Auth integration (Google, Apple sign-in)
 - [ ] Favorite teams (persisted to database)
+- [ ] Migrate pinned items to database
 - [ ] Personalized highlights based on favorites
 - [ ] Cross-device sync of preferences
 - [ ] Optional: Email notifications for favorite teams
 
 **Auth Philosophy:**
 - No required sign-in — logged-out experience must feel complete
-- Auth unlocks: Favorites sync, notifications, cross-device
+- Auth unlocks: Favorites sync, notifications, cross-device, pinned items sync
 - Auth is **pull-based, not forced**
 
-### Phase 6: LLM Integration 🔄 In Progress
+### Phase 7: LLM Integration 🔄 In Progress
 **OpenAI-powered smart features.**
 
 Infrastructure complete: February 2026
@@ -795,7 +817,7 @@ category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
 - Only surface for meaningful events
 - No gambling advice or encouragement
 
-### Phase 7: iOS App
+### Phase 8: iOS App
 **Native second-screen experience.**
 
 Target: Q3 2026
@@ -811,7 +833,7 @@ Target: Q3 2026
   - Upcoming games for favorite teams
   - "Most Exciting Game Right Now"
 
-### Phase 8: Futures Markets ✅ Complete
+### Phase 9: Futures Markets ✅ Complete
 **Championship odds, MVP races, and outrights.**
 
 Completed: February 2026
@@ -832,7 +854,7 @@ Completed: February 2026
 - Full outcome list on detail page
 - 24h probability change indicators
 
-### Phase 9: Prediction Markets (Kalshi Integration) ✅ Complete
+### Phase 10: Prediction Markets (Kalshi Integration) ✅ Complete
 **Politics, entertainment, and event-based markets.**
 
 Completed: February 2026
@@ -851,7 +873,7 @@ Completed: February 2026
 
 **To add more categories** (e.g., Entertainment), edit `sports_categories` in `tasks.py`
 
-### Phase 10: Additional Data Sources
+### Phase 11: Additional Data Sources
 **Expanding coverage and depth.**
 
 Target: 2027
@@ -906,6 +928,15 @@ Target: 2027
 - **Smart categorization**: 170+ markets auto-categorized using hybrid rules + LLM
 - **Unified display**: Both sources appear together, grouped by sport category
 - **Search integration**: Futures markets included in search results
+
+### Pinned Events & Futures ✅ NEW
+- **Track important events**: Pin events like the Super Bowl to track them closely
+- **Pin futures markets**: Also pin championship races, MVP odds, etc.
+- **Homepage sections**: "📌 Pinned" and "📌 Pinned Futures" appear above Highlights
+- **Works anywhere**: Pin from cards, search results, or detail pages
+- **No auth required**: localStorage-based, syncs across browser tabs
+- **Smart fetching**: Pinned events outside the 7-day window are fetched separately
+- **Limits**: Max 6 events + 6 futures to prevent UI clutter
 
 ### Bug Fixes
 - **Upset Brewing fix**: Pre-game line movement no longer triggers "Upset brewing" label for scheduled events
@@ -1168,25 +1199,33 @@ These are product experiments, not blockers.
 
 ## Development Priorities (Next 6 Months)
 
-### Immediate (February 2026)
-- ✅ Fix event discovery for NCAA basketball
+### Completed (February 2026)
+- ✅ Pulse (Game Excitement Metric) - live and completed
+- ✅ Pulse Hall of Fame page
+- ✅ Futures markets with smart categorization
+- ✅ Kalshi prediction market integration
+- ✅ LLM infrastructure (OpenAI GPT-4o-mini)
+- ✅ Pinned events and futures (localStorage-based)
+
+### Immediate (February-March 2026)
 - Deploy analytics and observe user behavior
 - Monitor polling health across all sports
+- Gather feedback on pinned events feature
 
 ### Near-term (March-April 2026)
-- Implement Game Excitement Index
-- Create Highlights section
-- Begin Firebase Auth integration
+- Firebase Auth integration
+- Migrate pinned items to database for cross-device sync
+- Favorite teams with cloud sync
 
 ### Mid-term (May-June 2026)
 - LLM-powered explanations for odds movements
-- Favorites with cloud sync
+- Personalized highlights based on favorites
 - Begin iOS app development
 
 ### Later (Q3-Q4 2026)
-- iOS app launch
-- Futures markets
-- Kalshi integration
+- iOS app launch with full feature parity
+- Widgets (Lock Screen, Home Screen)
+- Advanced notification preferences
 
 ---
 

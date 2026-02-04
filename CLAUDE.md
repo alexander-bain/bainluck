@@ -91,8 +91,11 @@ odds-tracker/
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
 | `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM categorization |
-| `frontend/components/EventCard.tsx` | Event display component |
+| `frontend/components/EventCard.tsx` | Event display component (includes pin button) |
+| `frontend/components/FuturesCard.tsx` | Futures market display component (includes pin button) |
 | `frontend/components/PulseBadge.tsx` | Pulse score badge with tooltip |
+| `frontend/hooks/usePinnedEvents.ts` | Hook for managing pinned events (localStorage) |
+| `frontend/hooks/usePinnedFutures.ts` | Hook for managing pinned futures (localStorage) |
 | `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
@@ -268,6 +271,52 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sou
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sport-mapping"
 ```
 
+### Pinned Events & Futures
+Users can pin events and futures markets they want to track closely. Pinned items appear in dedicated sections at the top of the homepage.
+
+**Features:**
+- Pin/unpin events and futures from any card or detail page
+- Pinned sections appear above Highlights on homepage
+- Maximum 6 pinned events + 6 pinned futures
+- Works for events outside the 7-day window (e.g., Super Bowl weeks away)
+- Cross-tab sync via localStorage storage events
+- Separate limits for events vs futures
+
+**Storage:**
+Currently uses localStorage (no auth required). When Firebase Auth is added, this can be upgraded to database-backed storage for cross-device sync.
+
+```javascript
+// localStorage keys
+oddsTracker_pinnedEvents    // Array of event IDs
+oddsTracker_pinnedFutures   // Array of futures market IDs
+```
+
+**Files:**
+- `frontend/hooks/usePinnedEvents.ts` - Event pinning hook
+- `frontend/hooks/usePinnedFutures.ts` - Futures pinning hook
+- `frontend/lib/api.ts` - `fetchEventsByIds()`, `fetchFuturesByIds()` for loading pinned items
+
+**UI Locations:**
+- Pin button on EventCard (top-left, visible on hover)
+- Pin button on FuturesCard (top-left, visible on hover)
+- Pin button on event detail page (hero section)
+- Pin button on futures detail page (hero section)
+- "📌 Pinned" section on homepage (above Highlights)
+- "📌 Pinned Futures" section on homepage (below Pinned events)
+
+**Future Enhancement:**
+When Firebase Auth is implemented, migrate to database storage:
+```sql
+CREATE TABLE pinned_items (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    item_type VARCHAR(20) NOT NULL,  -- 'event' or 'futures'
+    item_id INTEGER NOT NULL,
+    pinned_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(user_id, item_type, item_id)
+);
+```
+
 ---
 
 ## API Patterns
@@ -369,12 +418,15 @@ Both backend and frontend auto-deploy from `master` branch.
 3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
 4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
 5. ✅ Pulse Hall of Fame page
-6. 🔄 Monitoring and reliability improvements
-7. 📋 Next: Firebase Auth for user accounts
-8. 📋 Next: Favorites and personalization
-9. 📋 Next: LLM-powered odds movement explanations
+6. ✅ Pinned Events & Futures (localStorage-based tracking)
+7. 🔄 Monitoring and reliability improvements
+8. 📋 Next: Firebase Auth for user accounts
+9. 📋 Next: Migrate pinned items to database (after auth)
+10. 📋 Next: LLM-powered odds movement explanations
 
 **LLM is now available** for new features! See `backend/app/services/llm.py`
+
+**Pinned Events ready** - Users can now pin events and futures to track important games like the Super Bowl.
 
 See `docs/PRD.md` for full roadmap.
 
