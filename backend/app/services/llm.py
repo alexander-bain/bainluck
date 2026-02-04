@@ -139,6 +139,8 @@ SPORT_CATEGORIES = [
     "boxing",
     "cricket",
     "rugby",
+    "aussierules",
+    "horse_racing",
     "olympics",
     "esports",
     "entertainment",
