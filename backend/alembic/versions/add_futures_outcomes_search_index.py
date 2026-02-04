@@ -1,7 +1,7 @@
 """Add trigram index for futures outcome name search
 
 Revision ID: add_futures_outcomes_search_index
-Revises: add_llm_metadata_fields
+Revises: add_espn_snapshots
 Create Date: 2026-02-04
 
 Adds trigram index on futures_outcomes.name to enable fast ILIKE searches
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = 'add_futures_outcomes_search_index'
-down_revision = 'add_llm_metadata_fields'
+down_revision = 'add_espn_snapshots'
 branch_labels = None
 depends_on = None
 
