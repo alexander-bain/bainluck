@@ -58,6 +58,20 @@ export async function fetchEvent(id: number): Promise<EventDetailResponse> {
 }
 
 /**
+ * Fetch multiple events by IDs
+ * Returns events in the same order as the input IDs, filtering out any that fail to load
+ */
+export async function fetchEventsByIds(ids: number[]): Promise<EventDetailResponse[]> {
+  if (ids.length === 0) return [];
+
+  const results = await Promise.allSettled(ids.map(id => fetchEvent(id)));
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<EventDetailResponse> => r.status === 'fulfilled')
+    .map(r => r.value);
+}
+
+/**
  * Fetch odds history for an event
  */
 export async function fetchEventHistory(

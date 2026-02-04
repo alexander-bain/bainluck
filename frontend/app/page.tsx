@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import useSWR from "swr";
-import { fetchEvents, fetchSports, fetchFuturesMarkets } from "@/lib/api";
+import { fetchEvents, fetchSports, fetchFuturesMarkets, fetchEventsByIds } from "@/lib/api";
 import type { Event, FuturesMarket } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -227,13 +227,28 @@ export default function HomePage() {
       .slice(0, 6); // Max 6 featured events
   }, [filteredEvents]);
 
-  // Get pinned events (from all events, not just filtered)
+  // Find which pinned event IDs are missing from the main events list
+  const missingPinnedIds = useMemo(() => {
+    const loadedIds = new Set((eventsData?.events ?? []).map(e => e.id));
+    return pinnedIds.filter(id => !loadedIds.has(id));
+  }, [eventsData?.events, pinnedIds]);
+
+  // Fetch pinned events that aren't in the main list (e.g., events > 7 days away)
+  const { data: fetchedPinnedEvents } = useSWR(
+    missingPinnedIds.length > 0 ? ["pinned-events", ...missingPinnedIds] : null,
+    () => fetchEventsByIds(missingPinnedIds),
+    { revalidateOnFocus: false }
+  );
+
+  // Combine pinned events from main list + separately fetched
   const pinnedEvents = useMemo(() => {
     const allEvents = eventsData?.events ?? [];
+    const fetchedMap = new Map((fetchedPinnedEvents ?? []).map(e => [e.id, e]));
+
     return pinnedIds
-      .map(id => allEvents.find(e => e.id === id))
+      .map(id => allEvents.find(e => e.id === id) ?? fetchedMap.get(id))
       .filter((e): e is Event => e !== undefined);
-  }, [eventsData?.events, pinnedIds]);
+  }, [eventsData?.events, fetchedPinnedEvents, pinnedIds]);
 
   // Group events and futures by sport category, then by league
   const sportGroups = useMemo((): SportGroup[] => {
