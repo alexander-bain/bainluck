@@ -466,13 +466,17 @@ See `docs/PRD.md` for full roadmap.
 
 1. **Alembic multiple heads**: If you see this error, check `down_revision` in migration files - they should form a single chain.
 
-2. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
+2. **Alembic revision IDs must be ≤32 characters**: The `alembic_version.version_num` column is `VARCHAR(32)`. Longer revision IDs will cause `StringDataRightTruncation` errors during Heroku release. Use short descriptive names (e.g., `add_outcome_search_idx` not `add_futures_outcomes_search_index`).
 
-3. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated.
+3. **Alembic migrations use psycopg2, not asyncpg**: The `alembic/env.py` uses synchronous psycopg2 for migrations even though the app uses asyncpg at runtime. This is intentional — async engines don't work reliably in Heroku's release phase.
 
-4. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-5. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+5. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated.
+
+6. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+
+7. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
 
 ---
 
