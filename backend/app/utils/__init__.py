@@ -28,6 +28,10 @@ from app.utils.pulse import (
     PulseComponents,
     PulseResult,
 )
+from app.utils.futures_categorization import (
+    categorize_market,
+    categorize_by_rules,
+)
 
 __all__ = [
     "american_to_probability",
@@ -53,4 +57,6 @@ __all__ = [
     "PulseDataPoint",
     "PulseComponents",
     "PulseResult",
+    "categorize_market",
+    "categorize_by_rules",
 ]

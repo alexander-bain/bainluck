@@ -433,16 +433,23 @@ const KNOWN_TENNIS_PLAYERS = new Set([
 /**
  * Get category for a futures market based on sport key and market name.
  * Uses a multi-stage approach:
- * 1. Standard prefix matching on sport key
- * 2. Regex pattern matching on market name (handles "College Football", "AL MVP", etc.)
- * 3. Legacy keyword matching as fallback
- * 4. Athlete name detection for ambiguous cases (e.g., "US Open")
+ * 1. Backend LLM category (if available, already computed)
+ * 2. Standard prefix matching on sport key
+ * 3. Regex pattern matching on market name (handles "College Football", "AL MVP", etc.)
+ * 4. Legacy keyword matching as fallback
+ * 5. Athlete name detection for ambiguous cases (e.g., "US Open")
  */
 export function getCategoryForFutures(
   sportKey: string | null,
   marketName?: string | null,
-  outcomeNames?: string[]
+  outcomeNames?: string[],
+  llmSportCategory?: string | null
 ): SportCategory | undefined {
+  // First check if backend already categorized via LLM
+  if (llmSportCategory) {
+    const llmCategory = SPORT_CATEGORIES.find((cat) => cat.key === llmSportCategory);
+    if (llmCategory) return llmCategory;
+  }
   // First try standard prefix matching on sport key
   if (sportKey) {
     const category = getCategoryForLeague(sportKey);

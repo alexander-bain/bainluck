@@ -222,6 +222,7 @@ export interface FuturesMarket {
   sport: string | null;
   sport_name: string | null;
   category: string | null;
+  llm_sport_category: string | null;
   status: "open" | "resolved" | "closed";
   source: string | null;
   external_id: string | null;

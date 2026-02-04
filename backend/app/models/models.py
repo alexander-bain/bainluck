@@ -315,6 +315,7 @@ class FuturesMarket(Base):
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(50), default="championship")  # championship, mvp, division, prop
+    llm_sport_category: Mapped[Optional[str]] = mapped_column(String(50))  # LLM-assigned sport category
 
     # For multi-outcome markets, whether exactly one outcome can win
     mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)

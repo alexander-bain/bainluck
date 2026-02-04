@@ -130,6 +130,7 @@ celery -A app.tasks beat --loglevel=info
 ```
 ODDS_API_KEY=xxx          # From the-odds-api.com
 KALSHI_API_KEY=xxx        # From kalshi.com (optional - enables Kalshi polling)
+OPENAI_API_KEY=xxx        # From platform.openai.com (optional - enables LLM categorization)
 DATABASE_URL=xxx          # PostgreSQL connection string
 REDIS_URL=xxx             # Redis for Celery
 ADMIN_SECRET=xxx          # Optional: protect admin endpoints
@@ -218,21 +219,41 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/task
 - Populates `commence_time` (event start) and `resolution_date` (market close)
 
 ### Sport Categorization (Futures)
-Futures markets are categorized using pattern matching in `frontend/lib/sportCategories.ts`.
+Futures markets are categorized using a hybrid approach: pattern matching rules + LLM fallback.
 
 **How it works:**
-1. First tries prefix matching on sport key (e.g., `golf_masters` → Golf)
-2. Falls back to regex patterns on market name (e.g., "College Football Playoff" → Football)
-3. Handles baseball awards like "AL MVP", "NL Cy Young" → Baseball
-4. Uses athlete name detection for ambiguous markets like "US Open"
+1. Check `llm_sport_category` from database (cached LLM result)
+2. Try prefix matching on sport key (e.g., `golf_masters` → Golf)
+3. Try regex patterns on market name (e.g., "College Football Playoff" → Football)
+4. Handle baseball awards like "AL MVP", "NL Cy Young" → Baseball
+5. Use athlete name detection for ambiguous markets like "US Open"
+6. Fall back to LLM (GPT-4o-mini) for uncategorized markets
 
-**To add new patterns**, edit `SPORT_PATTERNS` in `sportCategories.ts`:
-```typescript
-const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /\b(al|nl)\s+(mvp|cy.young|rookie)\b/i, category: "baseball" },
-  { pattern: /\bcollege.football\b/i, category: "football" },
-  // Add new patterns here...
-];
+**Files:**
+- Frontend patterns: `frontend/lib/sportCategories.ts`
+- Backend patterns: `backend/app/utils/futures_categorization.py`
+- LLM service: `backend/app/services/llm.py`
+
+**To add new patterns**, edit `SPORT_PATTERNS` in `sportCategories.ts` or `futures_categorization.py`:
+```python
+# Backend
+SPORT_PATTERNS = [
+    (re.compile(r"\b(mlb|world.series)\b", re.I), "baseball"),
+    (re.compile(r"\bcollege.football\b", re.I), "football"),
+    # Add new patterns here...
+]
+```
+
+**Admin endpoints:**
+```bash
+# Check categorization status
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorization-status"
+
+# Trigger LLM categorization (requires OPENAI_API_KEY)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorize?secret=xxx&limit=50"
+
+# Dry run (preview without saving)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorize?secret=xxx&dry_run=true"
 ```
 
 **Debug endpoints:**

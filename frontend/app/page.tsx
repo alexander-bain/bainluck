@@ -195,12 +195,12 @@ export default function HomePage() {
       if (selectedCategory === "other") {
         // "Other" category: futures that don't match any known category
         markets = markets.filter(
-          (m) => !getCategoryForFutures(m.sport, m.name, getOutcomeNames(m))
+          (m) => !getCategoryForFutures(m.sport, m.name, getOutcomeNames(m), m.llm_sport_category)
         );
       } else {
         // Match futures to selected category using smart categorization
         markets = markets.filter((m) => {
-          const category = getCategoryForFutures(m.sport, m.name, getOutcomeNames(m));
+          const category = getCategoryForFutures(m.sport, m.name, getOutcomeNames(m), m.llm_sport_category);
           return category?.key === selectedCategory;
         });
       }
@@ -272,8 +272,8 @@ export default function HomePage() {
 
     // Add futures to groups using smart categorization
     for (const market of filteredFutures) {
-      // Use getCategoryForFutures which matches by sport key, market name, AND outcome names
-      const category = getCategoryForFutures(market.sport, market.name, getOutcomeNames(market));
+      // Use getCategoryForFutures which matches by sport key, market name, outcome names, AND LLM category
+      const category = getCategoryForFutures(market.sport, market.name, getOutcomeNames(market), market.llm_sport_category);
       const categoryKey = category?.key ?? "other";
 
       if (!groups.has(categoryKey)) {
