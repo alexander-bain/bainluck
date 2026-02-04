@@ -25,6 +25,8 @@
 **Key External Services:**
 - **The Odds API** (the-odds-api.com) - Sports odds data
 - **Kalshi** (kalshi.com) - Prediction market data (futures with timing info)
+- **ESPN** (undocumented API) - Team colors, logos, live game data, win probability
+- **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification
 - **Google Analytics 4** - User analytics
 - **Firebase Auth** - Planned for user accounts
 
@@ -90,6 +92,7 @@ odds-tracker/
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
+| `backend/app/services/espn_api.py` | ESPN API client for team/event enrichment |
 | `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM categorization |
 | `frontend/components/EventCard.tsx` | Event display component |
 | `frontend/components/PulseBadge.tsx` | Pulse score badge with tooltip |
@@ -267,6 +270,69 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sou
 # See sport linking for futures
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sport-mapping"
 ```
+
+### LLM Metadata Enrichment
+Events and futures markets are enriched with LLM-generated metadata for filtering and categorization.
+
+**Metadata Fields:**
+| Field | Values | Purpose |
+|-------|--------|---------|
+| `llm_gender` | men, women, mixed, unknown | Filter by gender |
+| `llm_level` | professional, college, amateur, youth | Competition level |
+| `llm_league` | NFL, NCAAF, NBA, etc. | More granular than sport |
+| `llm_importance` | championship, playoff, regular_season, exhibition | Game significance |
+
+**Files:**
+- LLM service: `backend/app/services/llm.py`
+- Model columns: `llm_gender`, `llm_level`, `llm_league`, `llm_importance` on events and futures_markets
+
+**Admin endpoints:**
+```bash
+# Enrich events with metadata
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/events/enrich-metadata?secret=xxx&limit=50"
+
+# Check enrichment status
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/events/metadata-status"
+
+# Enrich futures
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/enrich-metadata?secret=xxx&limit=50"
+```
+
+### ESPN Integration
+ESPN's undocumented API provides team data (colors, logos) and live game info (clock, period, win probability).
+
+**Data Enrichment:**
+- **Teams**: ESPN ID, primary/secondary colors, logos (small/large), alternate names, current record
+- **Events**: ESPN ID, venue, broadcast info, game clock, period, ESPN win probability
+- **Venues**: Name, city, state, country, capacity
+
+**Files:**
+- ESPN client: `backend/app/services/espn_api.py`
+- Model columns on teams: `espn_id`, `primary_color`, `secondary_color`, `logo_url_small`, `logo_url_large`, `alternate_names`, `current_record`
+- Model columns on events: `espn_id`, `venue_id`, `broadcast_info`, `game_clock`, `period`, `espn_win_prob_home`, `win_probability_sources`
+
+**Admin endpoints:**
+```bash
+# Sync team data from ESPN (colors, logos)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/sync-teams?secret=xxx&sport_key=basketball_nba"
+
+# Check team sync status
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/teams-status"
+
+# Sync live event data (clock, period, win prob)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/sync-live-events?secret=xxx&sport_key=basketball_nba"
+
+# Test team name matching
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
+```
+
+**Entity Resolution:**
+ESPN team names may differ from The Odds API names. The system uses:
+1. Exact name matching
+2. Partial string matching
+3. LLM-powered fuzzy matching (confidence score 0.0-1.0)
+
+Teams are linked by storing `espn_id` and `alternate_names` for future lookups.
 
 ---
 
