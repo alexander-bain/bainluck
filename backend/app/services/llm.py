@@ -7,6 +7,7 @@ Uses OpenAI's GPT-4o-mini for cost-effective classification and extraction.
 import os
 import logging
 from typing import Optional
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
