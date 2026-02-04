@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 SPORT_PATTERNS = [
     # Baseball - Match AL/NL awards, MVP, Cy Young, etc.
     (re.compile(r"\b(mlb|world.series)\b", re.I), "baseball"),
-    (re.compile(r"\b(al|nl)\s+(mvp|cy.young|rookie|reliever|hank.aaron)\b", re.I), "baseball"),
+    (re.compile(r"\b(al|nl)\s+(mvp|cy.young|rookie|reliever|hank.aaron|manager|comeback)\b", re.I), "baseball"),
     (re.compile(r"\bamerican.league\b", re.I), "baseball"),
     (re.compile(r"\bnational.league\b", re.I), "baseball"),
+    (re.compile(r"\bpro.baseball\b", re.I), "baseball"),
 
     # Football - Match college football, NFL, Super Bowl, Heisman, etc.
     (re.compile(r"\b(nfl|super.bowl)\b", re.I), "football"),
@@ -37,6 +38,8 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(nba|ncaab|wnba)\b", re.I), "basketball"),
     (re.compile(r"\bmarch.madness\b", re.I), "basketball"),
     (re.compile(r"\b(eastern|western).conference\b", re.I), "basketball"),
+    (re.compile(r"\bpro.basketball\b", re.I), "basketball"),
+    (re.compile(r"\brookie.of.the.year\b", re.I), "basketball"),  # Usually basketball context
 
     # Hockey
     (re.compile(r"\b(nhl|stanley.cup)\b", re.I), "hockey"),
@@ -49,8 +52,9 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(wimbledon|french.open|australian.open|atp|wta)\b", re.I), "tennis"),
 
     # Soccer - Match Ballon d'Or, PFA, Premier League, etc.
-    (re.compile(r"\b(ballon.d.or|pfa.player|epl|premier.league|champions.league|mls|la.liga|bundesliga|serie.a)\b", re.I), "soccer"),
+    (re.compile(r"\b(ballon.d.or|pfa.player|epl|premier.league|champions.league|mls|la.liga|bundesliga|serie.a|nwsl)\b", re.I), "soccer"),
     (re.compile(r"\bworld.cup\b(?!.*college)", re.I), "soccer"),
+    (re.compile(r"\bbarcelona\b", re.I), "soccer"),
 
     # MMA
     (re.compile(r"\b(ufc|mma)\b", re.I), "mma"),
