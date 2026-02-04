@@ -48,6 +48,7 @@ VERY_CLOSE_MAX = 0.55
 BLOWOUT_THRESHOLD = 0.85
 MAJOR_PROB_SWING = 0.15  # 15% change
 MAJOR_SCORE_SWING = 0.20  # 20% change
+MIN_PREGAME_MOVEMENT = 0.05  # 5% change needed for pre-game closeness to be a trend
 
 
 @dataclass
@@ -162,17 +163,42 @@ def compute_highlight(
         result.reasons.append("tier_2")
 
     # === Probability-based flags ===
+    is_pre_game = not flags.is_live and status not in ("completed", "closed")
+
     if current_home_prob is not None:
         # Closeness
         if CLOSE_MATCHUP_MIN <= current_home_prob <= CLOSE_MATCHUP_MAX:
             flags.is_close_matchup = True
-            result.score += WEIGHTS["close_matchup"]
-            result.reasons.append("close_matchup")
+
+            # For pre-game events, closeness from a single snapshot could be noise
+            # (e.g., 51/49 across 13 books). Only award score points if there's
+            # evidence of a trend: the line moved toward close from opening, or
+            # the game is starting soon (making closeness action-relevant).
+            opening_was_close = (
+                opening_home_prob is not None
+                and CLOSE_MATCHUP_MIN <= opening_home_prob <= CLOSE_MATCHUP_MAX
+            )
+            has_movement = (
+                opening_home_prob is not None
+                and abs(current_home_prob - opening_home_prob) >= MIN_PREGAME_MOVEMENT
+            )
+            closeness_is_interesting = (
+                not is_pre_game  # Live/finished: closeness always matters
+                or flags.is_starting_soon  # Starting soon: closeness is action-relevant
+                or not opening_was_close  # Line tightened from lopsided to close
+                or has_movement  # Significant movement even if both close
+                or opening_home_prob is None  # No opening data, give benefit of doubt
+            )
+
+            if closeness_is_interesting:
+                result.score += WEIGHTS["close_matchup"]
+                result.reasons.append("close_matchup")
 
             if VERY_CLOSE_MIN <= current_home_prob <= VERY_CLOSE_MAX:
                 flags.is_very_close = True
-                result.score += WEIGHTS["very_close"]
-                result.reasons.append("very_close")
+                if closeness_is_interesting:
+                    result.score += WEIGHTS["very_close"]
+                    result.reasons.append("very_close")
 
         # Blowout
         if current_home_prob >= BLOWOUT_THRESHOLD or current_home_prob <= (1 - BLOWOUT_THRESHOLD):
@@ -266,6 +292,10 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
         return "Close matchup"
     if flags.is_live:
         return "Live"
+
+    # Pre-game: significant line movement is a real trend worth labeling
+    if flags.probability_swing == "major":
+        return "Line moving"
 
     return None
 

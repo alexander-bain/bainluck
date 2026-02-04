@@ -426,54 +426,103 @@ Adapt the Pulse concept to measure the drama of championship races over weeks/mo
 - **Display**: Single score like events, or a richer "race status" display?
 - **Threshold**: What's "exciting" for futures? Probably need different calibration than events.
 
-### Highlights Ranking Algorithm (Planned)
+### Highlights Ranking Algorithm ✅ Implemented
 
-```python
-def calculate_highlight_score(event: Event, context: dict) -> float:
-    """
-    Calculate a composite score for surfacing events in highlights.
+Events are scored 0–100 by `backend/app/utils/highlights.py` using additive weights:
 
-    Factors (weighted):
-    - Closeness (40%): How close is the matchup?
-    - Timing (25%): Is the game about to start or live?
-    - Popularity (15%): Is this a major sport/league?
-    - Movement (10%): Have odds moved significantly recently?
-    - User relevance (10%): Does user follow these teams?
+| Factor | Points | Notes |
+|--------|--------|-------|
+| Live | +30 | Requires `status="live"` AND `commence_time` passed |
+| Close matchup (40–60%) | +25 | Pre-game: requires trend evidence (see below) |
+| Very close (45–55%) | +10 | Bonus on top of close matchup |
+| Favorite switched | +20 | Live/completed only |
+| Major prob swing (≥15%) | +15 | From opening line |
+| Major score swing (≥20%) | +10 | Projected total change from opening |
+| Starting in <3h | +15 | |
+| Starting in <1h | +10 | Bonus on top of 3h |
+| Tier 1 league | +10 | NBA, NFL, MLB, NHL |
+| Tier 2 league | +5 | NCAAB, NCAAF, MLS |
+| Recent upset | +20 | Finished + favorite switched |
+| Recently finished | +5 | Within 24h |
 
-    Returns score 0-100 for ranking.
-    """
-    closeness = 1 - abs(event.home_prob - 0.5) * 2  # 0-1
+Events with score ≥30 appear in the Highlights section. Live close games and recent upsets always qualify regardless of score.
 
-    # Timing: live games > starting soon > later
-    if event.status == 'live':
-        timing = 1.0
-    elif event.minutes_to_start < 60:
-        timing = 0.8
-    elif event.minutes_to_start < 180:
-        timing = 0.5
-    else:
-        timing = 0.2
+**Key design rule — pre-game trend evidence:**
+Pre-game closeness (e.g., 51/49 across 13 books) could be aggregation noise, not a real story. Close-matchup points are only awarded for pre-game events when:
+- The line **moved ≥5%** from opening (market is repricing)
+- The opening was **not** close but the current odds are (line tightened)
+- The game is **starting soon** (closeness becomes action-relevant)
 
-    # Popularity by league tier
-    tier = context.get('sport_tier', 3)  # 1=major, 2=secondary, 3=other
-    popularity = {1: 1.0, 2: 0.6, 3: 0.3}.get(tier, 0.3)
+**Labels** (shown on cards in the Highlights section):
+| Label | Condition |
+|-------|-----------|
+| Recent upset | Finished + favorite switched |
+| Upset brewing | Live + favorite switched |
+| Coin flip | Live + very close (45–55%) |
+| Close game | Live + close (40–60%) |
+| Momentum shift | Live + major prob swing |
+| Close matchup | Starting soon + close |
+| Live | Live (no other flags) |
+| Line moving | Pre-game + major prob swing (≥15%) |
 
-    # Recent odds movement (large swings are interesting)
-    movement = min(context.get('prob_change_1h', 0) * 5, 1.0)
+### Ranking & Feed Evolution
 
-    # User relevance (if they follow these teams)
-    user_relevance = 1.0 if context.get('user_favorite') else 0.3
+The highlight scoring system is **v1 of a ranking algorithm** that will eventually power:
+- **iOS feed tab**: A scrollable feed of the most interesting live and recently finished events
+- **Search result ranking**: Results ordered by relevance and excitement, not just status
+- **Widgets**: "Most Exciting Game Right Now" needs a single best answer
+- **Notifications**: Deciding what's worth interrupting a user about
 
-    score = (
-        closeness * 0.40 +
-        timing * 0.25 +
-        popularity * 0.15 +
-        movement * 0.10 +
-        user_relevance * 0.10
-    )
+This is a long-term workstream. Each level builds on the previous one and should be validated before moving to the next.
 
-    return round(score * 100, 1)
-```
+#### Level 1: Snapshot scoring (current) ✅
+`compute_highlight` compares current aggregated odds to opening odds. Simple additive weights. No access to odds history — just two points in time.
+
+**What works:** Catches live upsets, close games, big pre-game line moves.
+**What doesn't:** Can't distinguish noise from trends without the trend evidence heuristics. Can't detect momentum (accelerating movement vs one-time jump). All events of the same type score identically regardless of sport-specific context.
+
+#### Level 2: Time-series aware scoring
+Pass recent snapshot history into the ranking function. This enables:
+- **Trend detection**: Is the line moving consistently in one direction, or oscillating? Consistent movement is a story; oscillation is noise.
+- **Velocity/acceleration**: A line that moved 5% in the last 10 minutes is more interesting than one that moved 5% over 3 days.
+- **Volatility scoring**: High-variance odds histories (lots of movement) are inherently more interesting than flat lines, even if the current state looks unremarkable.
+- **Convergence/divergence**: Are bookmakers agreeing more or less over time? Divergence suggests genuine uncertainty.
+
+**Data available today:** `odds_snapshots` has per-bookmaker, per-poll readings. `odds_aggregated` has period-based min/max/avg. `espn_snapshots` captures ESPN's model during live games. The time-series data exists — `compute_highlight` just doesn't use it yet.
+
+**Data model work needed:** Consider pre-computing summary stats on the event row (e.g., `max_prob_swing_1h`, `snapshot_count_1h`, `odds_volatility`) to avoid querying snapshot tables on every ranking call. These could be updated by the polling tasks that already touch these events.
+
+#### Level 3: Sport-specific and contextual scoring
+Different sports have different baseline dynamics:
+- A 51/49 NBA game is common; a 51/49 MLB game is rare and notable
+- A 10-point swing in football means more in Q4 than Q1
+- College basketball upsets are more frequent and exciting than NBA upsets
+
+Also: game context from ESPN (quarter/period, time remaining, score margin) should influence ranking. A 52/48 game in the 4th quarter with 2 minutes left is wildly more interesting than 52/48 in the 1st quarter.
+
+**Data available today:** `espn_snapshots` has `period`, `clock`, `home_score`, `away_score`. Events have `llm_importance` (playoff/regular_season). Sport tiers exist in highlights.py.
+
+**Data model work needed:** Sport-specific baseline distributions (what's a "normal" amount of volatility for NFL vs NBA vs MLB). Could be a config table or derived from historical data. Game-phase weighting functions per sport.
+
+#### Level 4: Personalized ranking
+User favorites boost events featuring their teams. Recent viewing history could influence ranking (don't re-surface events they've already seen; boost sports they engage with).
+
+**Data model planned:** `user_favorites` table is designed in the PRD schema. `pinned_items` migration is planned post-auth.
+
+**Data model work needed:** A `user_event_interactions` table (or analytics-derived) to know what a user has already seen/engaged with. The ranking function needs a user context parameter, which means the API endpoint signatures change.
+
+**Important constraint:** Logged-out experience must remain high quality. Personalization is additive, not required. The universal ranking must work well on its own.
+
+#### Level 5: Learned ranking
+Use engagement signals (from GA4 or a lightweight event log) as a feedback loop: did users click through to events the algorithm ranked highly? Did they spend time on event detail pages? Over time, this data can calibrate weights — or replace the hand-tuned additive model entirely.
+
+This is the longest-term step and only makes sense once the product has meaningful traffic and the iOS app is live. Don't invest here prematurely.
+
+#### Design principles across all levels
+- **Transparency**: Users should always understand *why* something is highlighted (via labels). A black-box feed that surfaces events for opaque reasons undermines trust.
+- **Stability**: Rankings shouldn't flicker. An event shouldn't jump in and out of the feed rapidly. Consider hysteresis (higher threshold to enter, lower to exit).
+- **Graceful degradation**: If snapshot history is unavailable, fall back to snapshot scoring. If no user context, use universal ranking. Each level is an enhancement, not a dependency.
+- **Shared infrastructure**: The iOS feed, web highlights, search ranking, and widget "best game" should all use the same underlying scoring function with different thresholds and filters — not separate implementations.
 
 ---
 
@@ -1616,16 +1665,18 @@ These are product experiments, not blockers.
 - Firebase Auth integration
 - Migrate pinned items to database for cross-device sync
 - Favorite teams with cloud sync
+- Ranking Level 2: time-series aware scoring (pre-compute summary stats from odds_snapshots, pass to `compute_highlight`)
 
 ### Mid-term (May-June 2026)
 - LLM-powered explanations for odds movements
-- Personalized highlights based on favorites
-- Begin iOS app development
+- Ranking Level 3: sport-specific context and game-phase weighting
+- Personalized highlights based on favorites (Ranking Level 4)
+- Begin iOS app development (feed tab uses ranking infrastructure)
 
 ### Later (Q3-Q4 2026)
-- iOS app launch with full feature parity
-- Widgets (Lock Screen, Home Screen)
-- Advanced notification preferences
+- iOS app launch with feed tab, search, and widgets — all powered by shared ranking function
+- Widgets (Lock Screen, Home Screen) — "Most Exciting Game Right Now"
+- Advanced notification preferences (ranking determines what's worth an interrupt)
 
 ### Exploring (No Timeline)
 - **Probability Comparisons ("Comparable Odds")**: Massive database of real-world probability analogies (1,000+ entries) displayed on event detail pages to make win probabilities viscerally relatable — "Your team's 15% chance is about as likely as rain on a summer day in Atlanta" (Phase 12)

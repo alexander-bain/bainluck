@@ -89,6 +89,7 @@ odds-tracker/
 | File | Purpose |
 |------|---------|
 | `backend/app/tasks.py` | Celery tasks: odds polling, Pulse calculation, event discovery |
+| `backend/app/utils/highlights.py` | Highlight scoring, flags, and labels |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
@@ -169,6 +170,17 @@ Proprietary 1-100 score measuring how exciting a game is based on probability sw
 **Admin Endpoints:**
 - `GET /api/admin/pulse/status` - Check calculation status
 - `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc
+
+### Highlights (Event Ranking)
+Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points. This is **Level 1 (snapshot scoring)** of a multi-level ranking system — see "Ranking & Feed Evolution" in `docs/PRD.md` for the full roadmap toward the iOS feed tab.
+
+**Key design rule:** Pre-game closeness (e.g., 51/49) doesn't award points unless there's trend evidence — the line moved ≥5% from opening, tightened from lopsided to close, or the game is starting soon. This prevents aggregation noise from surfacing uninteresting events.
+
+**Labels:** "Upset brewing" and "Close game" are live-only. "Line moving" requires ≥15% swing from opening. "Close matchup" requires starting soon.
+
+**Current limitation:** `compute_highlight` only sees current odds vs opening odds (two points in time). It doesn't query `odds_snapshots` or `odds_aggregated` for time-series data. Level 2 will add this — the snapshot data already exists in the DB.
+
+**Files:** `backend/app/utils/highlights.py`, `frontend/app/page.tsx` (Highlights section rendering)
 
 ### Odds Polling
 - Live games: Every 30 seconds
@@ -439,9 +451,10 @@ Both backend and frontend auto-deploy from `master` branch.
 7. ✅ Futures categorization hardened (0 uncategorized markets)
 8. 🔄 Monitoring and reliability improvements
 9. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
-10. 📋 Next: Firebase Auth for user accounts
-11. 📋 Next: Migrate pinned items to database (after auth)
-12. 📋 Next: LLM-powered odds movement explanations
+10. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
+11. 📋 Next: Firebase Auth for user accounts
+12. 📋 Next: Migrate pinned items to database (after auth)
+13. 📋 Next: LLM-powered odds movement explanations
 
 **LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
 
