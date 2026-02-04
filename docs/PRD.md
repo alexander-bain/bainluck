@@ -918,7 +918,193 @@ Target: 2027
 - [ ] Alternative odds sources for redundancy
 - [ ] Real-time sports data (play-by-play) for richer context
 
-### Phase 11: Advanced LLM Features
+### Phase 12: Probability Comparisons ("Comparable Odds")
+**Make win probabilities viscerally relatable by comparing them to real-world likelihoods.**
+
+Target: TBD (Exploratory)
+
+A user sees their team has a 15% chance of winning. Instead of just a number, a "Comparable Odds" box on the event detail page tells them: *"About as likely as rain on a summer day in Atlanta"* or *"About as likely as your neighbor owning a dog in Germany."*
+
+**Why this works:**
+- Probabilities are abstract; real-world analogies make them intuitive
+- Fits the product's mission of making odds *understandable* to non-bettors
+- Creates a delightful, shareable moment ("Did you know your team's odds are the same as...")
+- Reinforces the second-screen experience with conversation starters
+
+**Requirements:**
+- **Massive comparison database**: Minimum 1,000 entries to avoid repetition, ideally growing over time
+- **Bucketed by probability range**: Group comparisons into bands (0-5%, 5-10%, 10-15%, ..., 95-100%) for easy lookup
+- **Diverse categories**: Weather, animals, geography, pop culture, science, food, daily life, sports trivia, etc.
+- **Sourced and factual**: Each comparison should be based on real statistics with a citation
+- **Tone**: Fun, surprising, educational — never condescending or gambling-adjacent
+
+**Data Model:**
+```sql
+CREATE TABLE probability_comparisons (
+    id SERIAL PRIMARY KEY,
+    probability_min DECIMAL(5,4) NOT NULL,  -- Lower bound (e.g., 0.10)
+    probability_max DECIMAL(5,4) NOT NULL,  -- Upper bound (e.g., 0.15)
+    comparison_text TEXT NOT NULL,           -- "Rain on a summer day in Atlanta"
+    category VARCHAR(50),                   -- weather, animals, geography, science, etc.
+    source TEXT,                             -- Citation/source for the statistic
+    fun_factor INTEGER DEFAULT 5,           -- 1-10, for ranking/selection
+    created_at TIMESTAMP DEFAULT NOW(),
+    active BOOLEAN DEFAULT true
+);
+
+CREATE INDEX idx_prob_comparisons_range ON probability_comparisons(probability_min, probability_max);
+CREATE INDEX idx_prob_comparisons_category ON probability_comparisons(category);
+```
+
+**Population strategy:**
+- Seed with LLM-generated comparisons (GPT-4o or Claude), then manually verify sources
+- Crowdsource additions over time (user submissions after auth)
+- Periodic LLM batch jobs to generate new comparisons for underrepresented ranges
+- Target distribution: ~50+ comparisons per 5% bucket to ensure variety
+
+**Display (Event Detail Page):**
+```
+Comparable Odds
+───────────────
+Lakers have a 15% chance of winning.
+
+🎲 That's about as likely as...
+   "A coin landing heads 3 times in a row"
+
+   [Show another] [📋 Share]
+```
+
+**Implementation considerations:**
+- Random selection within the matching bucket (with optional category rotation)
+- "Show another" button to cycle through comparisons without page reload
+- Share button to generate a social card with the comparison
+- API endpoint: `GET /api/comparisons?probability=0.15` returns a random match
+- Cache aggressively — comparisons don't change often
+
+**Open questions:**
+- Should comparisons be localized (US-centric vs international)?
+- Should users be able to submit their own comparisons?
+- Should we show one comparison or a few? (One feels cleaner, aligns with product principles)
+- How to handle the 45-55% range where most comparisons are boring? ("About as likely as a coin flip" gets old)
+
+### Phase 13: Event Similarity Scores
+**Find historical events that followed the most similar probability pattern — the "Baseball Reference" approach for odds.**
+
+Target: TBD (Exploratory)
+
+Inspired by [Baseball Reference's similarity scores](https://www.baseball-reference.com/about/similarity.shtml), this feature would show users which past games followed probability arcs most similar to the current or completed game. During a live game: *"This game is tracking most similarly to Lakers vs Celtics, March 2026 (Pulse: 87)."* After a game: *"Most similar games in our database."*
+
+**Why this works:**
+- Adds historical depth and context to every game
+- Creates a "rabbit hole" effect — users explore past games they'd never have found
+- Makes the growing historical database a visible, valuable asset
+- Works especially well for high-drama games ("This is shaping up like THAT game")
+- Bridges the second-screen experience with storytelling
+
+**Similarity algorithm (proposed):**
+```python
+def calculate_similarity(event_a_history, event_b_history) -> float:
+    """
+    Compare two events' probability histories using multiple dimensions.
+
+    Components (weighted):
+    - Probability curve shape (40%): DTW or resampled point-by-point comparison
+    - Final margin (15%): How close the final probabilities were
+    - Volatility pattern (20%): Similar number/size of swings
+    - Lead changes (15%): Similar number of favorite flips
+    - Sport match (10%): Same sport gets a bonus
+
+    Returns similarity score 0-100 (100 = identical pattern).
+    """
+```
+
+**Key technical challenges:**
+- **Time normalization**: Games have different lengths. Need to resample probability histories to a common timeline (e.g., 100 points representing 0-100% game progress)
+- **Efficient comparison**: Comparing every pair is O(n²). Need smart indexing:
+  - Pre-compute feature vectors (volatility, lead changes, max swing, final margin)
+  - Use approximate nearest neighbor search on feature vectors
+  - Only do expensive curve comparison on top candidates
+- **Live matching**: During a game, compare the partial curve against completed games' equivalent partial curves
+
+**Data requirements:**
+- Minimum ~500 completed events with full probability histories to be useful
+- More historical data = better matches
+- Need to store normalized probability curves for fast comparison
+
+**Data Model:**
+```sql
+-- Pre-computed similarity features for fast lookup
+CREATE TABLE event_similarity_features (
+    event_id INTEGER PRIMARY KEY REFERENCES events(id),
+    sport_key VARCHAR(50),
+    -- Normalized feature vector for approximate matching
+    total_volatility DECIMAL(8,4),
+    max_swing DECIMAL(5,4),
+    lead_changes INTEGER,
+    final_margin DECIMAL(5,4),
+    pulse_score INTEGER,
+    -- Resampled probability curve (100 points, 0-100% game progress)
+    normalized_curve JSONB,  -- [0.55, 0.53, 0.58, ..., 0.72]
+    computed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_similarity_sport ON event_similarity_features(sport_key);
+CREATE INDEX idx_similarity_volatility ON event_similarity_features(total_volatility);
+CREATE INDEX idx_similarity_pulse ON event_similarity_features(pulse_score);
+
+-- Cached similarity results (top N similar for each event)
+CREATE TABLE event_similarities (
+    event_id INTEGER REFERENCES events(id),
+    similar_event_id INTEGER REFERENCES events(id),
+    similarity_score DECIMAL(5,2),  -- 0-100
+    rank INTEGER,                   -- 1 = most similar
+    computed_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (event_id, similar_event_id)
+);
+```
+
+**Display (Event Detail Page):**
+```
+Similar Games
+─────────────
+This game's probability pattern most closely resembles:
+
+1. 🏀 Lakers vs Celtics — Mar 12, 2026 (92% similar)
+   Pulse: 87 | Final: 112-108 | 3 lead changes
+   [View game →]
+
+2. 🏀 Warriors vs Nuggets — Feb 28, 2026 (85% similar)
+   Pulse: 74 | Final: 105-101 | 2 lead changes
+   [View game →]
+
+3. 🏈 Chiefs vs Bills — Jan 19, 2026 (78% similar)
+   Pulse: 91 | Final: 28-24 | 4 lead changes
+   [View game →]
+```
+
+**Live game display:**
+```
+Tracking Similar To...
+──────────────────────
+Through 3 quarters, this game is tracking most like:
+🏀 Heat vs Bucks — Jan 15, 2026 (Pulse: 82)
+That game ended with a 4-point margin after a late comeback.
+```
+
+**Phases:**
+1. **v1**: Post-game similarity only (batch computed after game ends)
+2. **v2**: Live similarity matching (compare partial curves during games)
+3. **v3**: Cross-sport similarity ("This NFL game feels like THAT NBA game")
+4. **v4**: User-facing "Find games like this" search feature
+
+**Open questions:**
+- Should similarity be computed only within the same sport, or cross-sport?
+- How far back should the historical window go? (All-time vs last 2 seasons)
+- Should we weight recent games higher in similarity results?
+- What's the minimum number of odds snapshots needed for meaningful comparison?
+- How to present similarity during live games without spoiling the referenced game's outcome?
+
+### Phase 14: Advanced LLM Features
 **Intelligent explanations, search, and context generation.**
 
 Target: 2027
@@ -1417,6 +1603,10 @@ These are product experiments, not blockers.
 - iOS app launch with full feature parity
 - Widgets (Lock Screen, Home Screen)
 - Advanced notification preferences
+
+### Exploring (No Timeline)
+- **Probability Comparisons ("Comparable Odds")**: Massive database of real-world probability analogies (1,000+ entries) displayed on event detail pages to make win probabilities viscerally relatable — "Your team's 15% chance is about as likely as rain on a summer day in Atlanta" (Phase 12)
+- **Event Similarity Scores**: Baseball Reference-style similarity matching that finds historical games with the most similar probability arcs — works during and after games, creates a "rabbit hole" into the historical database (Phase 13)
 
 ---
 
