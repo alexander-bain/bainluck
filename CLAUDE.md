@@ -165,11 +165,16 @@ Proprietary 1-100 score measuring how exciting a game is based on probability sw
 - Vitals (30%): How close the matchup is
 - Lead Changes: Bonus for favorite flipping
 
+**Multi-bookmaker aggregation:** Raw odds snapshots come from multiple bookmakers (5-11 per event). Before Pulse calculation, snapshots are aggregated into 60-second time buckets using median probability (`_aggregate_snapshots` in `pulse.py`). This prevents bookmaker disagreements from being counted as odds movements. Without aggregation, even an unremarkable game can score 100 due to phantom lead changes and inflated movement metrics.
+
+**Scaling:** Raw Pulse score is divided by 1.0 and mapped to 1-100. The theoretical max raw score is ~1.2 (all components maxed + lead change bonus), which clamps to 100. A typical close game scores 60-75; scoring 100 requires exceptional movement across all dimensions.
+
 **Files:** `backend/app/utils/pulse.py`, `frontend/components/PulseBadge.tsx`
 
 **Admin Endpoints:**
 - `GET /api/admin/pulse/status` - Check calculation status
 - `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc
+- `POST /api/admin/pulse/recalculate?secret=xxx&force=true&limit=500` - Clear and recompute all (use after algorithm changes)
 
 ### Highlights (Event Ranking)
 Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points. This is **Level 1 (snapshot scoring)** of a multi-level ranking system — see "Ranking & Feed Evolution" in `docs/PRD.md` for the full roadmap toward the iOS feed tab.
@@ -472,11 +477,13 @@ See `docs/PRD.md` for full roadmap.
 
 4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-5. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated.
+5. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated. After aggregation into 60-second buckets, this means 3+ distinct time buckets (not raw bookmaker rows).
 
-6. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+6. **Pulse `force=true` recalculation can loop**: `force=true` clears all Pulse scores, then recomputes up to `limit` events. If there are more events than `limit`, calling `force=true` again clears the ones just computed and reprocesses the same batch forever. After the first `force=true` call, use `force=false` for subsequent calls to process remaining events.
 
-7. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+7. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+
+8. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
 
 ---
 
