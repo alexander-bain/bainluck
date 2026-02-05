@@ -2134,8 +2134,12 @@ def enrich_events_metadata(self, limit: int = 50):
     Returns:
         Dict with enrichment statistics
     """
+    return run_async(_enrich_events_metadata(limit))
+
+
+async def _enrich_events_metadata(limit: int = 50):
+    """Async implementation of enrich_events_metadata."""
     from app.services import llm
-    from app.services.database import SessionLocal
     from app.models.models import Event
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -2149,9 +2153,9 @@ def enrich_events_metadata(self, limit: int = 50):
     }
 
     try:
-        with SessionLocal() as session:
+        async with get_task_session() as session:
             # Find events without metadata (prioritize recent events)
-            result = session.execute(
+            result = await session.execute(
                 select(Event)
                 .options(selectinload(Event.sport))
                 .where(
@@ -2164,8 +2168,7 @@ def enrich_events_metadata(self, limit: int = 50):
             events = result.scalars().all()
 
             if not events:
-                # Count remaining
-                remaining_result = session.execute(
+                remaining_result = await session.execute(
                     select(Event.id).where(
                         Event.llm_gender.is_(None),
                         Event.llm_level.is_(None),
@@ -2194,10 +2197,8 @@ def enrich_events_metadata(self, limit: int = 50):
 
                 stats["processed"] += 1
 
-            session.commit()
-
             # Count remaining
-            remaining_result = session.execute(
+            remaining_result = await session.execute(
                 select(Event.id).where(
                     Event.llm_gender.is_(None),
                     Event.llm_level.is_(None),
@@ -2242,8 +2243,11 @@ def sync_espn_live_events(self):
     Returns:
         Dict with sync statistics
     """
-    import asyncio
-    from app.services.database import SessionLocal
+    return run_async(_sync_espn_live_events())
+
+
+async def _sync_espn_live_events():
+    """Async implementation of sync_espn_live_events."""
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Sport, Team, ESPNSnapshot
     from sqlalchemy import select, distinct
@@ -2266,11 +2270,11 @@ def sync_espn_live_events(self):
                 return True
         return False
 
-    def upsert_team(session, team_name, espn_team, sport_id):
+    async def upsert_team(session, team_name, espn_team, sport_id):
         """Create or update a Team record with ESPN enrichment data."""
         if not espn_team:
             return
-        team_result = session.execute(
+        team_result = await session.execute(
             select(Team).where(
                 Team.name == team_name,
                 Team.sport_id == sport_id,
@@ -2331,9 +2335,9 @@ def sync_espn_live_events(self):
         return home_names, away_names
 
     try:
-        with SessionLocal() as session:
+        async with get_task_session() as session:
             # Find sports with live games
-            live_sports_result = session.execute(
+            live_sports_result = await session.execute(
                 select(distinct(Sport.key))
                 .join(Event)
                 .where(Event.status == "live")
@@ -2346,7 +2350,7 @@ def sync_espn_live_events(self):
             stats["sports_with_live"] = len(live_sport_keys)
 
             # Also find sports with scheduled games for team data pre-population
-            scheduled_sports_result = session.execute(
+            scheduled_sports_result = await session.execute(
                 select(distinct(Sport.key))
                 .join(Event)
                 .where(Event.status == "scheduled")
@@ -2365,24 +2369,19 @@ def sync_espn_live_events(self):
             if not all_fetch_keys:
                 return {"status": "no_espn_mapped_sports", **stats}
 
-            # Batch fetch all ESPN scoreboards in a single asyncio.run() call.
-            # This avoids event loop issues in Celery's forked worker processes.
-            async def fetch_all_scoreboards(sport_keys):
-                espn = ESPNAPIService()
-                results = {}
-                try:
-                    for key in sport_keys:
-                        try:
-                            events = await espn.get_scoreboard(key)
-                            results[key] = events or []
-                        except Exception as e:
-                            stats["errors"].append(f"espn_fetch_{key}: {str(e)}")
-                            results[key] = []
-                    return results
-                finally:
-                    await espn.close()
-
-            espn_data = asyncio.run(fetch_all_scoreboards(list(all_fetch_keys)))
+            # Fetch all ESPN scoreboards
+            espn = ESPNAPIService()
+            espn_data = {}
+            try:
+                for key in all_fetch_keys:
+                    try:
+                        events = await espn.get_scoreboard(key)
+                        espn_data[key] = events or []
+                    except Exception as e:
+                        stats["errors"].append(f"espn_fetch_{key}: {str(e)}")
+                        espn_data[key] = []
+            finally:
+                await espn.close()
 
             # Process live events
             for sport_key in live_sport_keys:
@@ -2396,7 +2395,7 @@ def sync_espn_live_events(self):
                     continue
 
                 try:
-                    events_result = session.execute(
+                    events_result = await session.execute(
                         select(Event)
                         .options(selectinload(Event.sport))
                         .where(
@@ -2421,8 +2420,8 @@ def sync_espn_live_events(self):
                                 changed = False
 
                                 # Upsert team records with ESPN data (colors, logos)
-                                upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
-                                upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                                await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
+                                await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
 
                                 # Update ESPN ID
                                 if ee.espn_id and event.espn_id != ee.espn_id:
@@ -2495,7 +2494,7 @@ def sync_espn_live_events(self):
                     continue
 
                 try:
-                    events_result = session.execute(
+                    events_result = await session.execute(
                         select(Event)
                         .options(selectinload(Event.sport))
                         .where(
@@ -2515,8 +2514,8 @@ def sync_espn_live_events(self):
                             espn_away = ee.away_team.display_name or ee.away_team.name or ""
 
                             if names_match(home_names, espn_home) and names_match(away_names, espn_away):
-                                upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
-                                upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                                await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
+                                await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
                                 if ee.broadcasts and not event.broadcast_info:
                                     event.broadcast_info = ", ".join(ee.broadcasts)
                                 if ee.espn_id and not event.espn_id:
@@ -2524,8 +2523,6 @@ def sync_espn_live_events(self):
                                 break
                 except Exception as e:
                     stats["errors"].append(f"scheduled_{sport_key}: {str(e)}")
-
-            session.commit()
 
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
