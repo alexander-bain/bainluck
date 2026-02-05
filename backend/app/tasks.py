@@ -2243,7 +2243,7 @@ def sync_espn_live_events(self):
         Dict with sync statistics
     """
     from app.services.database import SessionLocal
-    from app.services.espn_api import ESPNService
+    from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Sport, Team
     from sqlalchemy import select, distinct
     from sqlalchemy.orm import selectinload
@@ -2271,7 +2271,7 @@ def sync_espn_live_events(self):
 
             stats["sports_with_live"] = len(live_sport_keys)
 
-            espn = ESPNService()
+            espn = ESPNAPIService()
 
             for sport_key in live_sport_keys:
                 stats["sports_checked"] += 1
