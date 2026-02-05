@@ -306,10 +306,28 @@ ESPN's undocumented API provides team data (colors, logos) and live game info (c
 - **Events**: ESPN ID, venue, broadcast info, game clock, period, ESPN win probability
 - **Venues**: Name, city, state, country, capacity
 
+**Automatic Sync (Celery task `sync_espn_live_events`):**
+- Runs every 60 seconds
+- Auto-creates Team records with colors, logos, and alternate names from ESPN scoreboard data
+- Updates live events with game clock, period, broadcast info, and win probability
+- Also pre-populates team data for scheduled events (so colors/logos appear before games go live)
+- ESPN win probability is **only available during live games** — cannot be backfilled after a game ends
+- Team colors/logos persist in the `teams` table and apply to all events (past and present) via name lookup
+- Mapped sports: NBA, NCAAB, WNCAAB, NFL, NCAAF, NHL, MLB, MLS, EPL (see `ESPN_SPORT_MAPPING` in tasks.py)
+
 **Files:**
 - ESPN client: `backend/app/services/espn_api.py`
+- Celery sync task: `backend/app/tasks.py` (`sync_espn_live_events` / `_sync_espn_live_events`)
+- Team lookup in API: `backend/app/routes/events.py` (`_build_team_lookup`)
 - Model columns on teams: `espn_id`, `primary_color`, `secondary_color`, `logo_url_small`, `logo_url_large`, `alternate_names`, `current_record`
 - Model columns on events: `espn_id`, `venue_id`, `broadcast_info`, `game_clock`, `period`, `espn_win_prob_home`, `win_probability_sources`
+
+**Frontend display:**
+- Team logos and colors on EventCard and event detail page
+- Team-colored probability bar
+- Broadcast info badge
+- ESPN win probability badge (live games only)
+- ESPN trend line on OddsChart (orange dashed line)
 
 **Admin endpoints:**
 ```bash
@@ -435,10 +453,12 @@ Both backend and frontend auto-deploy from `master` branch.
 3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
 4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
 5. ✅ Pulse Hall of Fame page
-6. 🔄 Monitoring and reliability improvements
-7. 📋 Next: Firebase Auth for user accounts
-8. 📋 Next: Favorites and personalization
-9. 📋 Next: LLM-powered odds movement explanations
+6. ✅ ESPN integration (team colors, logos, broadcast info, win probability, auto-sync)
+7. ✅ LLM metadata enrichment (gender, level, league, importance on events)
+8. 🔄 Monitoring and reliability improvements
+9. 📋 Next: Firebase Auth for user accounts
+10. 📋 Next: Favorites and personalization
+11. 📋 Next: LLM-powered odds movement explanations
 
 **LLM is now available** for new features! See `backend/app/services/llm.py`
 
@@ -457,6 +477,20 @@ See `docs/PRD.md` for full roadmap.
 4. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
 5. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+
+6. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New Celery tasks must follow this pattern:
+   ```python
+   @celery_app.task(bind=True)
+   def my_task(self):
+       return run_async(_my_task_impl())
+
+   async def _my_task_impl():
+       async with get_task_session() as session:
+           result = await session.execute(...)
+   ```
+   Never use `SessionLocal` or synchronous `session.execute()` — it will raise `ImportError` silently in the worker.
+
+7. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
 ---
 
