@@ -204,9 +204,10 @@ def calculate_pulse(
     # =========================================================================
     significant_moves = sum(1 for d in deltas if d >= SIGNIFICANT_MOVE_THRESHOLD)
 
-    # Normalize: expect about 0.3 significant moves per minute in exciting game
+    # Normalize: with 30s polling, an exciting game produces ~1.5 significant
+    # moves/minute. Previous ceiling of 0.3 caused 26% of events to saturate.
     moves_per_minute = significant_moves / max(1, elapsed_minutes)
-    heart_rate = min(1.0, moves_per_minute / 0.3)
+    heart_rate = min(1.0, moves_per_minute / 1.5)
 
     # =========================================================================
     # 2. AMPLITUDE: Average magnitude of swings
@@ -214,8 +215,8 @@ def calculate_pulse(
     if deltas:
         # Use RMS (root mean square) to weight larger swings more
         rms_amplitude = math.sqrt(mean([d**2 for d in deltas]))
-        # Normalize: 8% average swing = max amplitude
-        amplitude = min(1.0, rms_amplitude / 0.08)
+        # Normalize: 15% RMS swing = max amplitude (was 8%, too easy to saturate)
+        amplitude = min(1.0, rms_amplitude / 0.15)
     else:
         amplitude = 0.0
 
@@ -226,21 +227,20 @@ def calculate_pulse(
         try:
             delta_stdev = stdev(deltas)
             # Normalize: high variance = unpredictable = exciting
-            arrhythmia = min(1.0, delta_stdev / 0.05)
+            arrhythmia = min(1.0, delta_stdev / 0.10)
         except:
             arrhythmia = 0.0
     else:
         arrhythmia = 0.0
 
     # =========================================================================
-    # 4. VITALS: Current competitiveness (closeness to 50%)
+    # 4. VITALS: Average competitiveness across the game
     # =========================================================================
-    current_prob = probs[-1]
-    # 1.0 at 50%, 0.0 at 0% or 100%
-    vitals = 1.0 - abs(current_prob - 0.5) * 2
-    # Boost vitals slightly for competitive games (40-60% range)
-    if 0.4 <= current_prob <= 0.6:
-        vitals = min(1.0, vitals * 1.1)
+    # Use average closeness to 50% across all snapshots, not just the final one.
+    # This rewards games that stayed competitive throughout, not just games that
+    # happened to end close. Each snapshot contributes: 1.0 at 50%, 0.0 at 0%/100%.
+    closeness_scores = [1.0 - abs(p - 0.5) * 2 for p in probs]
+    vitals = mean(closeness_scores)
 
     # =========================================================================
     # 5. TIME WEIGHT: Late game drama matters more

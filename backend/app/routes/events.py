@@ -1517,8 +1517,7 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
             from app.utils.pulse import get_pulse_label, get_pulse_emoji, get_pulse_status
             import json
 
-            # raw_gei stores score/100 (e.g., 0.75 = score 75)
-            pulse_score = max(1, min(100, round(float(event.raw_gei) * 100)))
+            raw_gei = float(event.raw_gei)
 
             # Parse components if stored
             components = None
@@ -1528,11 +1527,26 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
                 except json.JSONDecodeError:
                     pass
 
+            # Compute percentile score from the stored thresholds.
+            # Use sport-specific percentile if available, fall back to global.
+            sport_key = event.sport.key if event.sport else None
+            percentile_score = None
+            if gei_percentiles:
+                if sport_key:
+                    percentile_score = _calculate_percentile(raw_gei, gei_percentiles, sport_key)
+                if percentile_score is None:
+                    percentile_score = _calculate_percentile(raw_gei, gei_percentiles, 'global')
+
+            # Use percentile as the display score when available, raw conversion as fallback
+            raw_score = max(1, min(100, round(raw_gei * 100)))
+            display_score = percentile_score if percentile_score is not None else raw_score
+
             response["pulse"] = {
-                "score": pulse_score,
-                "status": get_pulse_status(pulse_score),
-                "label": get_pulse_label(pulse_score),
-                "emoji": get_pulse_emoji(pulse_score),
+                "score": display_score,
+                "raw_score": raw_score,
+                "status": get_pulse_status(display_score),
+                "label": get_pulse_label(display_score),
+                "emoji": get_pulse_emoji(display_score),
                 "components": components,
             }
     except Exception as e:

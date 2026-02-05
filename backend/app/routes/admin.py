@@ -53,7 +53,7 @@ async def recalculate_pulse(
         result = await db.execute(
             update(Event)
             .where(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.raw_gei.isnot(None),
             )
             .values(raw_gei=None, gei_components=None, gei_computed_at=None)
@@ -61,12 +61,12 @@ async def recalculate_pulse(
         cleared_count = result.rowcount
         await db.commit()
 
-    # Find completed events without Pulse
+    # Find finished events without Pulse
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
-            Event.status == "completed",
+            Event.status.in_(["completed", "closed"]),
             Event.raw_gei.is_(None),
         )
         .order_by(Event.commence_time.desc())
@@ -137,7 +137,7 @@ async def recalculate_pulse(
     remaining_result = await db.execute(
         select(Event.id)
         .where(
-            Event.status == "completed",
+            Event.status.in_(["completed", "closed"]),
             Event.raw_gei.is_(None),
         )
     )

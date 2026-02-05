@@ -1542,13 +1542,15 @@ async def _compute_gei_percentiles():
     from app.models import GEIPercentile
 
     async with get_task_session() as session:
-        # Get all completed events with raw GEI
+        # Get all finished events with raw GEI (completed + closed)
+        # Exclude events with raw_gei=0 (insufficient data / flatline placeholders)
         result = await session.execute(
             select(Event.raw_gei, Sport.key)
             .join(Sport)
             .where(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.raw_gei.isnot(None),
+                Event.raw_gei > 0,
             )
         )
         events = result.all()
