@@ -311,17 +311,34 @@ async def get_pulse_rankings(
 
     Returns two lists: the most exciting games ever tracked (highest Pulse)
     and the most boring/one-sided games (lowest Pulse).
+
+    Only includes events with sufficient odds data (10+ snapshots) to avoid
+    inflated scores from games with sparse data.
     """
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
 
-    # Base query for completed events with GEI
+    # Subquery: count odds snapshots per event
+    snapshot_count = (
+        select(
+            OddsSnapshot.event_id,
+            func.count().label("snap_count"),
+        )
+        .group_by(OddsSnapshot.event_id)
+        .subquery()
+    )
+
+    MIN_SNAPSHOTS_FOR_RANKING = 10
+
+    # Base query for completed events with GEI and enough data
     base_query = (
         select(Event)
         .options(selectinload(Event.sport))
+        .join(snapshot_count, Event.id == snapshot_count.c.event_id)
         .where(
             Event.status.in_(["completed", "closed"]),
             Event.raw_gei.isnot(None),
+            snapshot_count.c.snap_count >= MIN_SNAPSHOTS_FOR_RANKING,
         )
     )
 
