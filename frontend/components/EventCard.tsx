@@ -225,6 +225,13 @@ export default function EventCard({
           {/* Home Team Row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
+              {event.home_team_data?.logo_small && (
+                <img
+                  src={event.home_team_data.logo_small}
+                  alt=""
+                  className="w-5 h-5 object-contain flex-shrink-0"
+                />
+              )}
               <span
                 className={`text-base font-semibold truncate ${
                   homeFavorite ? "text-graphite" : "text-slate"
@@ -266,6 +273,13 @@ export default function EventCard({
           {/* Away Team Row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
+              {event.away_team_data?.logo_small && (
+                <img
+                  src={event.away_team_data.logo_small}
+                  alt=""
+                  className="w-5 h-5 object-contain flex-shrink-0"
+                />
+              )}
               <span
                 className={`text-base font-semibold truncate ${
                   !homeFavorite ? "text-graphite" : "text-slate"

@@ -1542,13 +1542,15 @@ async def _compute_gei_percentiles():
     from app.models import GEIPercentile
 
     async with get_task_session() as session:
-        # Get all completed events with raw GEI
+        # Get all finished events with raw GEI (completed + closed)
+        # Exclude events with raw_gei=0 (insufficient data / flatline placeholders)
         result = await session.execute(
             select(Event.raw_gei, Sport.key)
             .join(Sport)
             .where(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.raw_gei.isnot(None),
+                Event.raw_gei > 0,
             )
         )
         events = result.all()
@@ -2044,12 +2046,15 @@ async def _poll_kalshi_markets():
                         american = probability_to_american(prob) if prob and prob > 0 else None
 
                         # For single-market events, use "Yes" as outcome name
-                        # For multi-market events, prefer subtitle (specific outcome name),
-                        # then title only if it differs from event title, then parsed ticker
+                        # For multi-market events, prefer yes_sub_title (player/team name),
+                        # then subtitle, then title if it differs from event title,
+                        # then parsed ticker as last resort
                         if len(event.markets) == 1:
                             outcome_name = "Yes"
                         else:
-                            if market.subtitle:
+                            if market.yes_sub_title:
+                                outcome_name = market.yes_sub_title
+                            elif market.subtitle:
                                 outcome_name = market.subtitle
                             elif market.title and market.title != event.title:
                                 outcome_name = market.title
@@ -2303,8 +2308,8 @@ def sync_espn_live_events(self):
         Dict with sync statistics
     """
     from app.services.database import SessionLocal
-    from app.services.espn_api import ESPNService
-    from app.models.models import Event, Sport
+    from app.services.espn_api import ESPNAPIService
+    from app.models.models import Event, Sport, Team
     from sqlalchemy import select, distinct
     from sqlalchemy.orm import selectinload
 
@@ -2331,7 +2336,7 @@ def sync_espn_live_events(self):
 
             stats["sports_with_live"] = len(live_sport_keys)
 
-            espn = ESPNService()
+            espn = ESPNAPIService()
 
             for sport_key in live_sport_keys:
                 stats["sports_checked"] += 1
@@ -2370,6 +2375,58 @@ def sync_espn_live_events(self):
                                 return True
                         return False
 
+                    # Helper to upsert a Team record with ESPN data
+                    def upsert_team(team_name, espn_team, sport_id):
+                        """Create or update a Team record with ESPN enrichment data."""
+                        if not espn_team:
+                            return
+                        # Look up by name
+                        team_result = session.execute(
+                            select(Team).where(
+                                Team.name == team_name,
+                                Team.sport_id == sport_id,
+                            )
+                        )
+                        team = team_result.scalar_one_or_none()
+
+                        if not team:
+                            team = Team(
+                                name=team_name,
+                                sport_id=sport_id,
+                            )
+                            session.add(team)
+
+                        # Update ESPN fields
+                        team.espn_id = espn_team.espn_id
+                        if espn_team.abbreviation:
+                            team.abbreviation = espn_team.abbreviation
+                        if espn_team.primary_color:
+                            color = espn_team.primary_color
+                            if not color.startswith("#"):
+                                color = f"#{color}"
+                            team.primary_color = color
+                        if espn_team.secondary_color:
+                            color = espn_team.secondary_color
+                            if not color.startswith("#"):
+                                color = f"#{color}"
+                            team.secondary_color = color
+                        if espn_team.logo_url:
+                            team.logo_url_small = espn_team.logo_url
+                            team.logo_url_large = espn_team.logo_url
+                        if espn_team.record:
+                            team.current_record = espn_team.record
+
+                        # Store alternate names for lookup
+                        alt_names = set()
+                        for n in [espn_team.display_name, espn_team.short_name, espn_team.nickname, espn_team.name]:
+                            if n and n != team_name:
+                                alt_names.add(n)
+                        if alt_names:
+                            existing = set(team.alternate_names or [])
+                            team.alternate_names = list(existing | alt_names)
+
+                        stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
+
                     for event in our_events:
                         # Build name variations
                         home_names = [event.home_team_name]
@@ -2394,6 +2451,11 @@ def sync_espn_live_events(self):
                             if names_match(home_names, espn_home) and names_match(away_names, espn_away):
                                 stats["events_synced"] += 1
                                 changed = False
+
+                                # Upsert team records with ESPN data (colors, logos)
+                                sport_id = event.sport_id
+                                upsert_team(event.home_team_name, ee.home_team, sport_id)
+                                upsert_team(event.away_team_name, ee.away_team, sport_id)
 
                                 # Update ESPN ID
                                 if ee.espn_id and event.espn_id != ee.espn_id:
@@ -2447,6 +2509,68 @@ def sync_espn_live_events(self):
 
                 except Exception as e:
                     stats["errors"].append(f"{sport_key}: {str(e)}")
+
+            # Second pass: also sync team data for scheduled events
+            # (so colors/logos appear before games go live)
+            scheduled_sports_result = session.execute(
+                select(distinct(Sport.key))
+                .join(Event)
+                .where(Event.status == "scheduled")
+            )
+            scheduled_sport_keys = [row[0] for row in scheduled_sports_result.all()]
+
+            for sport_key in scheduled_sport_keys:
+                if sport_key not in ESPN_SPORT_MAPPING:
+                    continue
+                if sport_key in live_sport_keys:
+                    continue  # Already processed above
+
+                try:
+                    espn_events = asyncio.get_event_loop().run_until_complete(
+                        espn.get_scoreboard(sport_key)
+                    )
+                    if not espn_events:
+                        continue
+
+                    events_result = session.execute(
+                        select(Event)
+                        .options(selectinload(Event.sport))
+                        .where(
+                            Event.sport.has(key=sport_key),
+                            Event.status == "scheduled",
+                        )
+                    )
+                    scheduled_events = events_result.scalars().all()
+
+                    for event in scheduled_events:
+                        home_names = [event.home_team_name]
+                        away_names = [event.away_team_name]
+                        if event.home_team_normalized:
+                            home_names.append(event.home_team_normalized)
+                        if event.away_team_normalized:
+                            away_names.append(event.away_team_normalized)
+                        if event.home_team_alt_names:
+                            home_names.extend(event.home_team_alt_names)
+                        if event.away_team_alt_names:
+                            away_names.extend(event.away_team_alt_names)
+
+                        for ee in espn_events:
+                            if not ee.home_team or not ee.away_team:
+                                continue
+                            espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                            espn_away = ee.away_team.display_name or ee.away_team.name or ""
+
+                            if names_match(home_names, espn_home) and names_match(away_names, espn_away):
+                                upsert_team(event.home_team_name, ee.home_team, event.sport_id)
+                                upsert_team(event.away_team_name, ee.away_team, event.sport_id)
+                                # Also set broadcast info for upcoming games
+                                if ee.broadcasts and not event.broadcast_info:
+                                    event.broadcast_info = ", ".join(ee.broadcasts)
+                                if ee.espn_id and not event.espn_id:
+                                    event.espn_id = ee.espn_id
+                                break
+                except Exception as e:
+                    stats["errors"].append(f"scheduled_{sport_key}: {str(e)}")
 
             session.commit()
 

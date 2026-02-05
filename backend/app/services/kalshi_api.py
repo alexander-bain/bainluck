@@ -19,6 +19,8 @@ class KalshiMarket(BaseModel):
     event_ticker: str
     title: str
     subtitle: Optional[str] = None
+    yes_sub_title: Optional[str] = None
+    no_sub_title: Optional[str] = None
     status: str  # 'active', 'closed', 'settled'
 
     # Timing
@@ -300,6 +302,8 @@ class KalshiAPIService:
                 event_ticker=market_data.get("event_ticker", ""),
                 title=market_data.get("title", ""),
                 subtitle=market_data.get("subtitle"),
+                yes_sub_title=market_data.get("yes_sub_title"),
+                no_sub_title=market_data.get("no_sub_title"),
                 status=market_data.get("status", ""),
                 open_time=open_time,
                 close_time=close_time,

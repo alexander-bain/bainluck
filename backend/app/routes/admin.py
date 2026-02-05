@@ -9,8 +9,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Event
+from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
+from app.utils import probability_to_american
 
 router = APIRouter()
 
@@ -53,7 +54,7 @@ async def recalculate_pulse(
         result = await db.execute(
             update(Event)
             .where(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.raw_gei.isnot(None),
             )
             .values(raw_gei=None, gei_components=None, gei_computed_at=None)
@@ -61,12 +62,12 @@ async def recalculate_pulse(
         cleared_count = result.rowcount
         await db.commit()
 
-    # Find completed events without Pulse
+    # Find finished events without Pulse
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
-            Event.status == "completed",
+            Event.status.in_(["completed", "closed"]),
             Event.raw_gei.is_(None),
         )
         .order_by(Event.commence_time.desc())
@@ -137,7 +138,7 @@ async def recalculate_pulse(
     remaining_result = await db.execute(
         select(Event.id)
         .where(
-            Event.status == "completed",
+            Event.status.in_(["completed", "closed"]),
             Event.raw_gei.is_(None),
         )
     )
@@ -1522,4 +1523,152 @@ async def match_espn_teams(
         "espn_teams_searched": len(espn_teams),
         "llm_available": llm.is_available(),
         "matches": results[:10],
+    }
+
+
+@router.post("/futures/normalize-probabilities")
+async def normalize_futures_probabilities(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    dry_run: bool = Query(False, description="Preview changes without saving"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Normalize historical Odds API futures probabilities to remove vig/overround.
+
+    Raw implied probabilities from American odds sum to >100% per bookmaker
+    (typically 130-150% for markets with many outcomes). This endpoint:
+
+    1. Normalizes all futures_odds_snapshots for odds_api markets
+    2. Recalculates current_probability on futures_outcomes
+    3. Recalculates opening_probability on futures_outcomes
+    4. Recalculates American odds from normalized probabilities
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from collections import defaultdict
+    from statistics import mean
+
+    stats = {
+        "markets_processed": 0,
+        "snapshots_normalized": 0,
+        "outcomes_updated": 0,
+        "sample_changes": [],
+    }
+
+    # Get all Odds API futures markets with their outcomes
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.source == "odds_api")
+    )
+    markets = result.scalars().all()
+
+    for market in markets:
+        outcome_ids = [o.id for o in market.outcomes]
+        if not outcome_ids:
+            continue
+
+        # Fetch all snapshots for this market's outcomes
+        snap_result = await db.execute(
+            select(FuturesOddsSnapshot)
+            .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
+            .order_by(FuturesOddsSnapshot.captured_at)
+        )
+        snapshots = snap_result.scalars().all()
+
+        if not snapshots:
+            continue
+
+        stats["markets_processed"] += 1
+
+        # Group snapshots by (bookmaker, captured_at) to find normalization factor
+        # Key: (bookmaker, captured_at) -> list of (snapshot, probability)
+        groups: dict[tuple, list] = defaultdict(list)
+        for snap in snapshots:
+            if snap.probability is not None:
+                groups[(snap.bookmaker, snap.captured_at)].append(snap)
+
+        # Normalize each group
+        for (bookmaker, captured_at), group_snaps in groups.items():
+            total_prob = sum(float(s.probability) for s in group_snaps)
+            if total_prob <= 0 or abs(total_prob - 1.0) < 0.01:
+                # Already normalized or invalid, skip
+                continue
+
+            for snap in group_snaps:
+                old_prob = float(snap.probability)
+                new_prob = old_prob / total_prob
+                new_american = probability_to_american(new_prob) if new_prob > 0 else None
+
+                if not dry_run:
+                    snap.probability = new_prob
+                    snap.american_odds = new_american
+
+                stats["snapshots_normalized"] += 1
+
+                # Capture a few examples
+                if len(stats["sample_changes"]) < 10:
+                    outcome_name = next(
+                        (o.name for o in market.outcomes if o.id == snap.outcome_id),
+                        "?"
+                    )
+                    stats["sample_changes"].append({
+                        "market": market.name,
+                        "outcome": outcome_name,
+                        "bookmaker": bookmaker,
+                        "old_prob": round(old_prob, 6),
+                        "new_prob": round(new_prob, 6),
+                        "normalization_factor": round(total_prob, 4),
+                    })
+
+        # Now recalculate current_probability and opening_probability
+        # on each outcome using normalized snapshots
+        for outcome in market.outcomes:
+            outcome_snaps = [s for s in snapshots if s.outcome_id == outcome.id]
+            if not outcome_snaps:
+                continue
+
+            # Current probability: average of most recent snapshot per bookmaker
+            latest_by_bm: dict[str, FuturesOddsSnapshot] = {}
+            for snap in outcome_snaps:
+                bm = snap.bookmaker
+                if bm not in latest_by_bm or snap.captured_at > latest_by_bm[bm].captured_at:
+                    latest_by_bm[bm] = snap
+
+            if latest_by_bm:
+                avg_current = mean(
+                    float(s.probability) for s in latest_by_bm.values()
+                    if s.probability is not None
+                )
+                new_american = probability_to_american(avg_current) if avg_current > 0 else None
+                if not dry_run:
+                    outcome.current_probability = avg_current
+                    outcome.current_american_odds = new_american
+
+            # Opening probability: average of earliest snapshot per bookmaker
+            earliest_by_bm: dict[str, FuturesOddsSnapshot] = {}
+            for snap in outcome_snaps:
+                bm = snap.bookmaker
+                if bm not in earliest_by_bm or snap.captured_at < earliest_by_bm[bm].captured_at:
+                    earliest_by_bm[bm] = snap
+
+            if earliest_by_bm:
+                avg_opening = mean(
+                    float(s.probability) for s in earliest_by_bm.values()
+                    if s.probability is not None
+                )
+                opening_american = probability_to_american(avg_opening) if avg_opening > 0 else None
+                if not dry_run:
+                    outcome.opening_probability = avg_opening
+                    outcome.opening_american_odds = opening_american
+
+            stats["outcomes_updated"] += 1
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "status": "dry_run" if dry_run else "completed",
+        "stats": stats,
     }

@@ -377,14 +377,17 @@ def project_scores(home_prob: float, over_under: float) -> tuple[float, float]:
 OddsTracker's proprietary excitement metric measuring how "alive" a game is based on probability movement patterns.
 
 **Components (weighted):**
-- **Heart Rate (25%)**: Frequency of significant probability moves (≥2% threshold)
-- **Amplitude (30%)**: Magnitude of probability swings (RMS calculation)
-- **Arrhythmia (15%)**: Unpredictability/variance of changes
-- **Vitals (30%)**: Current game competitiveness (closeness to 50/50)
+- **Heart Rate (25%)**: Frequency of significant probability moves (≥2% threshold). Normalized: moves/min ÷ 0.6
+- **Amplitude (30%)**: Magnitude of probability swings (RMS calculation). Normalized: RMS ÷ 0.15
+- **Arrhythmia (15%)**: Unpredictability/variance of changes. Normalized: stdev ÷ 0.10
+- **Vitals (30%)**: Average closeness to 50% across all snapshots (rewards games that stayed competitive throughout, not just games that ended close)
 - **Lead Changes Bonus (0-20%)**: Each time probability crosses 50%
 
 **Time Weight Enhancement:**
 Late-game drama counts more. Uses exponential curve: `0.6 + 0.4 × (progress^1.5)`
+
+**Percentile Scoring Layer:**
+Raw scores are mapped to percentiles using completed/closed games as the reference set (`gei_percentiles` table). The percentile score is what users see. Falls back to raw score when percentiles are unavailable. Sport-specific percentiles are used when available, with global fallback.
 
 **Score Scale (1-100):**
 | Score | Status | Label | Emoji |
@@ -399,8 +402,10 @@ Late-game drama counts more. Uses exponential curve: `0.6 + 0.4 × (progress^1.5
 
 **Requirements:**
 - Minimum 3 odds snapshots to calculate
+- Minimum 10 odds snapshots to appear in Hall of Fame rankings (prevents low-data false positives)
 - Sport-specific expected durations for time weighting
 - Updates in real-time for live games, batch-processed for completed games
+- After algorithm changes, force-recalculate via admin endpoint (scores are cached in `raw_gei`)
 
 ### Futures Pulse (Planned)
 
@@ -1338,9 +1343,13 @@ CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_s
 - **Real-time updates**: Pulse calculated every poll cycle for live games
 - **Component breakdown**: Momentum Swings, Drama Level, Competitiveness, Lead Changes
 - **Visual badges**: Color-coded badges (🫀💓💗🩺📉) displayed on all games
-- **Tooltip explanations**: Human-friendly descriptions of what makes each game exciting
+- **Tooltip explanations**: Human-friendly descriptions of what makes each game exciting, including component-level tooltips on event detail pages
 - **Explainer page**: Full methodology at `/pulse`
-- **Admin tools**: Status check and batch recalculation endpoints
+- **Admin tools**: Status check, batch recalculation, and distribution analysis endpoints
+- **Percentile scoring**: Raw scores mapped to percentiles using completed games as reference set, giving users a relative ranking
+- **Distribution-tuned normalization**: Heart Rate (÷0.6), Amplitude (÷0.15), Arrhythmia (÷0.10) ceilings tuned from observed game data
+- **Vitals uses game average**: Closeness to 50% averaged across all snapshots, not just final state
+- **Hall of Fame quality filter**: Rankings require 10+ odds snapshots to prevent low-data false positives
 
 ### Analytics Implementation
 - **Comprehensive GA4 tracking**: Full event taxonomy with clear hierarchy

@@ -159,11 +159,20 @@ NEXT_PUBLIC_GA_MEASUREMENT_ID=xxx  # Google Analytics
 ### Pulse (Game Excitement Metric)
 Proprietary 1-100 score measuring how exciting a game is based on probability swings.
 
-**Components:**
-- Heart Rate (25%): Frequency of odds movements
-- Amplitude (30%): Size of probability swings
-- Vitals (30%): How close the matchup is
-- Lead Changes: Bonus for favorite flipping
+**Two-layer scoring:**
+1. **Raw score**: Deterministic calculation from odds movement data (stored as `raw_gei` on events)
+2. **Percentile score**: Raw score mapped to percentiles using completed/closed games as reference set. This is the score shown to users. Falls back to raw score if percentiles unavailable.
+
+**Components (weighted):**
+- Heart Rate (25%): Frequency of significant moves (≥2% threshold). Normalized: moves/min ÷ 0.6
+- Amplitude (30%): RMS magnitude of probability swings. Normalized: RMS ÷ 0.15
+- Arrhythmia (15%): Unpredictability (stdev of deltas). Normalized: stdev ÷ 0.10
+- Vitals (30%): Average closeness to 50% across all snapshots (rewards games that stayed competitive throughout, not just those that ended close)
+- Lead Changes: Bonus for 50% crossings (5 pts each, max 20 pts)
+- Time Weight: Late-game multiplier `0.6 + 0.4 × (progress^1.5)`
+
+**Normalization tuning history:**
+The normalization ceilings were tuned iteratively using `GET /api/admin/pulse/distributions` to analyze score distributions across completed games. Key issue was Heart Rate saturating at 100% for 26% of games (ceiling too low at 0.3), then compressing below 38% (ceiling too high at 1.5). Final ceiling of 0.6 was derived from observed max rate of ~0.57 moves/min.
 
 **Multi-bookmaker aggregation:** Raw odds snapshots come from multiple bookmakers (5-11 per event). Before Pulse calculation, snapshots are aggregated into 60-second time buckets using median probability (`_aggregate_snapshots` in `pulse.py`). This prevents bookmaker disagreements from being counted as odds movements. Without aggregation, even an unremarkable game can score 100 due to phantom lead changes and inflated movement metrics.
 
@@ -173,8 +182,17 @@ Proprietary 1-100 score measuring how exciting a game is based on probability sw
 
 **Admin Endpoints:**
 - `GET /api/admin/pulse/status` - Check calculation status
-- `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc
-- `POST /api/admin/pulse/recalculate?secret=xxx&force=true&limit=500` - Clear and recompute all (use after algorithm changes)
+- `GET /api/admin/pulse/distributions` - Score and component distribution analysis (histograms, saturation, statistics)
+- `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc (completed + closed events)
+
+**After algorithm changes:** You must force-recalculate stored scores since `raw_gei` values are computed once and cached:
+```bash
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/recalculate?secret=any&limit=500"
+# Then verify with distributions endpoint:
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/distributions"
+```
+
+**Hall of Fame filtering:** The `pulse-rankings` endpoint requires 10+ odds snapshots per event to prevent low-data games from appearing in rankings.
 
 ### Highlights (Event Ranking)
 Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points. This is **Level 1 (snapshot scoring)** of a multi-level ranking system — see "Ranking & Feed Evolution" in `docs/PRD.md` for the full roadmap toward the iOS feed tab.
@@ -363,8 +381,8 @@ CREATE TABLE pinned_items (
 # Timestamps in ISO 8601
 {"commence_time": "2026-02-03T19:00:00+00:00"}
 
-# Pulse included when available
-{"pulse": {"score": 75, "status": "strong", "emoji": "💓", "label": "Exciting"}}
+# Pulse included when available (score = percentile, raw_score = pre-percentile)
+{"pulse": {"score": 75, "raw_score": 68, "status": "strong", "emoji": "💓", "label": "Exciting"}}
 ```
 
 ### Event Statuses
@@ -454,12 +472,14 @@ Both backend and frontend auto-deploy from `master` branch.
 5. ✅ Pulse Hall of Fame page
 6. ✅ Pinned Events & Futures (localStorage-based tracking)
 7. ✅ Futures categorization hardened (0 uncategorized markets)
-8. 🔄 Monitoring and reliability improvements
-9. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
-10. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
-11. 📋 Next: Firebase Auth for user accounts
-12. 📋 Next: Migrate pinned items to database (after auth)
-13. 📋 Next: LLM-powered odds movement explanations
+8. ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
+9. 🔄 Monitoring and reliability improvements
+10. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+11. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
+12. 📋 Next: Firebase Auth for user accounts
+13. 📋 Next: Migrate pinned items to database (after auth)
+14. 📋 Next: LLM-powered odds movement explanations
+15. 📋 Next: Sport-specific Pulse normalization (different ceilings per sport)
 
 **LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
 
@@ -477,13 +497,15 @@ See `docs/PRD.md` for full roadmap.
 
 4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-5. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated. After aggregation into 60-second buckets, this means 3+ distinct time buckets (not raw bookmaker rows).
-
-6. **Pulse `force=true` recalculation can loop**: `force=true` clears all Pulse scores, then recomputes up to `limit` events. If there are more events than `limit`, calling `force=true` again clears the ones just computed and reprocesses the same batch forever. After the first `force=true` call, use `force=false` for subsequent calls to process remaining events.
+3. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated. Hall of Fame rankings require 10+ snapshots.
 
 7. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
 8. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+
+6. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
+
+7. **Pulse percentiles use completed games only**: The `gei_percentiles` table is computed from completed/closed events with `raw_gei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
 
 ---
 

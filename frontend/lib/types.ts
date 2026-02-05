@@ -83,7 +83,8 @@ export interface PulseComponents {
 }
 
 export interface PulseData {
-  score: number;           // 1-100
+  score: number;           // 1-100 (percentile when available, raw otherwise)
+  raw_score?: number;      // 1-100 raw score before percentile mapping
   status: string;          // 'racing' | 'strong' | 'steady' | 'weak' | 'flatline'
   label: string;           // 'Must-Watch', 'Exciting', etc.
   emoji: string;           // 🫀 💓 💗 🩺 📉
@@ -96,6 +97,14 @@ export interface ESPNData {
   period?: string;
   broadcast?: string;
   win_probability?: number;  // 0.0-1.0, home team
+}
+
+export interface TeamData {
+  primary_color: string | null;    // Hex e.g. "#552583"
+  secondary_color: string | null;
+  logo_small: string | null;       // Small logo URL
+  logo_large: string | null;       // Large logo URL
+  record: string | null;           // e.g. "34-18"
 }
 
 export interface Event {
@@ -115,6 +124,8 @@ export interface Event {
   excitement?: ExcitementData;
   pulse?: PulseData;
   espn?: ESPNData;
+  home_team_data?: TeamData;
+  away_team_data?: TeamData;
 }
 
 export interface EventsResponse {
