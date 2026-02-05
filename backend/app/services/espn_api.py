@@ -174,6 +174,8 @@ class ESPNAPIService:
             team = team_data.get("team", team_data)
 
             # Get logo URL
+            # The teams endpoint returns "logos" (array of objects with href/rel)
+            # The scoreboard endpoint returns "logo" (single URL string)
             logo_url = None
             logo_url_dark = None
             logos = team.get("logos", [])
@@ -184,6 +186,9 @@ class ESPNAPIService:
                     logo_url_dark = logo.get("href")
             if not logo_url and logos:
                 logo_url = logos[0].get("href")
+            # Fallback: scoreboard uses a single "logo" string
+            if not logo_url:
+                logo_url = team.get("logo")
 
             # Get record
             record = None
