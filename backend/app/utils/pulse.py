@@ -336,9 +336,12 @@ def calculate_pulse(
     ) * time_weight
 
     # Scale to 1-100
-    # The max theoretical raw_score is about 1.2 (1.0 * 1.0 time_weight + 0.2 bonus)
-    # Scale so that 0.8 raw = 100 (leaves room for exceptional games)
-    scaled_score = raw_score / 0.8 * 100
+    # The max theoretical raw_score is about 1.2 (all components 1.0 + 0.2 lead bonus)
+    # A divisor of 1.0 means only truly exceptional games reach 100:
+    # - All components maxed without lead changes = exactly 100
+    # - Lead changes can push past, but get clamped to 100
+    # - A typical close game scores 60-75 instead of hitting the ceiling
+    scaled_score = raw_score / 1.0 * 100
     final_score = max(1, min(100, round(scaled_score)))
 
     # Determine data quality
