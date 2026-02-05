@@ -2044,12 +2044,15 @@ async def _poll_kalshi_markets():
                         american = probability_to_american(prob) if prob and prob > 0 else None
 
                         # For single-market events, use "Yes" as outcome name
-                        # For multi-market events, prefer subtitle (specific outcome name),
-                        # then title only if it differs from event title, then parsed ticker
+                        # For multi-market events, prefer yes_sub_title (player/team name),
+                        # then subtitle, then title if it differs from event title,
+                        # then parsed ticker as last resort
                         if len(event.markets) == 1:
                             outcome_name = "Yes"
                         else:
-                            if market.subtitle:
+                            if market.yes_sub_title:
+                                outcome_name = market.yes_sub_title
+                            elif market.subtitle:
                                 outcome_name = market.subtitle
                             elif market.title and market.title != event.title:
                                 outcome_name = market.title
