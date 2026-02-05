@@ -204,10 +204,11 @@ def calculate_pulse(
     # =========================================================================
     significant_moves = sum(1 for d in deltas if d >= SIGNIFICANT_MOVE_THRESHOLD)
 
-    # Normalize: with 30s polling, an exciting game produces ~1.5 significant
-    # moves/minute. Previous ceiling of 0.3 caused 26% of events to saturate.
+    # Normalize: ceiling of 0.6 moves/min lets the most exciting observed games
+    # reach ~95% while spreading the middle. (0.3 caused 26% saturation, 1.5
+    # compressed everything below 38%.)
     moves_per_minute = significant_moves / max(1, elapsed_minutes)
-    heart_rate = min(1.0, moves_per_minute / 1.5)
+    heart_rate = min(1.0, moves_per_minute / 0.6)
 
     # =========================================================================
     # 2. AMPLITUDE: Average magnitude of swings
