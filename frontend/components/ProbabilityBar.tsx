@@ -8,6 +8,9 @@ interface ProbabilityBarProps {
   showLabels?: boolean;
   size?: "sm" | "md" | "lg";
   isLive?: boolean;
+  /** Optional team primary colors (hex) from ESPN */
+  homeColor?: string;
+  awayColor?: string;
 }
 
 /**
@@ -24,6 +27,8 @@ export default function ProbabilityBar({
   showLabels = true,
   size = "md",
   isLive = false,
+  homeColor,
+  awayColor,
 }: ProbabilityBarProps) {
   const homeProb = homeProbability ?? 0.5;
   const awayProb = awayProbability ?? 0.5;
@@ -51,7 +56,8 @@ export default function ProbabilityBar({
     );
   }
 
-  // Colors based on state
+  // Use team colors if available, otherwise fall back to defaults
+  const hasTeamColors = homeColor && awayColor;
   const favoriteColor = isLive ? "bg-emerald-500" : "bg-graphite";
   const underdogColor = "bg-slate/20";
 
@@ -69,17 +75,23 @@ export default function ProbabilityBar({
         {/* Home team side */}
         <div
           className={`transition-all duration-300 ${
-            homeFavored ? favoriteColor : underdogColor
+            hasTeamColors ? "" : homeFavored ? favoriteColor : underdogColor
           }`}
-          style={{ width: `${homePercent}%` }}
+          style={{
+            width: `${homePercent}%`,
+            ...(hasTeamColors ? { backgroundColor: homeColor } : {}),
+          }}
         />
 
         {/* Away team side */}
         <div
           className={`transition-all duration-300 ${
-            !homeFavored ? favoriteColor : underdogColor
+            hasTeamColors ? "" : !homeFavored ? favoriteColor : underdogColor
           }`}
-          style={{ width: `${awayPercent}%` }}
+          style={{
+            width: `${awayPercent}%`,
+            ...(hasTeamColors ? { backgroundColor: awayColor } : {}),
+          }}
         />
       </div>
     </div>

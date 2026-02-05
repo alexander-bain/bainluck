@@ -640,9 +640,21 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Home Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h2 className={`text-xl font-semibold ${homeFavorite ? "text-graphite" : "text-slate"}`}>
-                {event.home_team}
-              </h2>
+              {event.home_team_data?.logo_large && (
+                <img
+                  src={event.home_team_data.logo_large}
+                  alt=""
+                  className="w-8 h-8 object-contain"
+                />
+              )}
+              <div>
+                <h2 className={`text-xl font-semibold ${homeFavorite ? "text-graphite" : "text-slate"}`}>
+                  {event.home_team}
+                </h2>
+                {event.home_team_data?.record && (
+                  <span className="text-xs text-silver">{event.home_team_data.record}</span>
+                )}
+              </div>
               {homeFavorite && homeProb && homeProb > 0.5 && (
                 <span className="text-xs bg-graphite/10 text-graphite px-2 py-0.5 rounded">
                   Favorite
@@ -658,7 +670,7 @@ export default function EventPage({ params }: EventPageProps) {
             </span>
           </div>
 
-          {/* Probability Bar with color */}
+          {/* Probability Bar with team colors */}
           <ProbabilityBar
             homeProbability={homeProb}
             awayProbability={awayProb}
@@ -667,14 +679,28 @@ export default function EventPage({ params }: EventPageProps) {
             showLabels={false}
             size="lg"
             isLive={effectivelyLive}
+            homeColor={event.home_team_data?.primary_color || undefined}
+            awayColor={event.away_team_data?.primary_color || undefined}
           />
 
           {/* Away Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
-                {event.away_team}
-              </h2>
+              {event.away_team_data?.logo_large && (
+                <img
+                  src={event.away_team_data.logo_large}
+                  alt=""
+                  className="w-8 h-8 object-contain"
+                />
+              )}
+              <div>
+                <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
+                  {event.away_team}
+                </h2>
+                {event.away_team_data?.record && (
+                  <span className="text-xs text-silver">{event.away_team_data.record}</span>
+                )}
+              </div>
               {!homeFavorite && awayProb && awayProb > 0.5 && (
                 <span className="text-xs bg-graphite/10 text-graphite px-2 py-0.5 rounded">
                   Favorite
