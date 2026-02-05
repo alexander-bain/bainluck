@@ -99,6 +99,14 @@ export interface ESPNData {
   win_probability?: number;  // 0.0-1.0, home team
 }
 
+export interface TeamData {
+  primary_color: string | null;    // Hex e.g. "#552583"
+  secondary_color: string | null;
+  logo_small: string | null;       // Small logo URL
+  logo_large: string | null;       // Large logo URL
+  record: string | null;           // e.g. "34-18"
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -116,6 +124,8 @@ export interface Event {
   excitement?: ExcitementData;
   pulse?: PulseData;
   espn?: ESPNData;
+  home_team_data?: TeamData;
+  away_team_data?: TeamData;
 }
 
 export interface EventsResponse {

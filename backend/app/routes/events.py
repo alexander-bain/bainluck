@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile, FuturesMarket, FuturesOutcome
+from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile, FuturesMarket, FuturesOutcome, Team
 from app.services import get_db, OddsAPIService, fetch_current_odds
 from app.utils import (
     moneyline_to_probability,
@@ -1001,10 +1001,16 @@ async def list_events(
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
 
+    # Build team lookup for colors/logos (single batch query for all teams)
+    all_team_names = []
+    for e in events:
+        all_team_names.extend([e.home_team_name, e.away_team_name])
+    team_lookup = await _build_team_lookup(db, list(set(all_team_names)))
+
     # Format response with aggregated odds
     return {
         "events": [
-            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id), gei_percentiles)
+            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id), gei_percentiles, team_lookup=team_lookup)
             for e in events
         ],
         "count": len(events),
@@ -1129,7 +1135,12 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
 
-    response = _format_event(event, gei_percentiles)
+    # Build team lookup for colors/logos
+    team_lookup = await _build_team_lookup(
+        db, [event.home_team_name, event.away_team_name]
+    )
+
+    response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
 
     if event.odds_snapshots:
         # Get the most recent snapshot for each bookmaker
@@ -1466,8 +1477,58 @@ async def debug_event_snapshots(
     }
 
 
-def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
-    """Format event for API response."""
+async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
+    """Build a mapping of team names to Team objects for color/logo data.
+
+    Matches on exact name or alternate_names JSONB array.
+    Only returns teams that have ESPN enrichment (color or logo).
+    """
+    if not team_names:
+        return {}
+
+    # Query teams that match by name or alternate names, and have ESPN data
+    conditions = [Team.name.in_(team_names)]
+    for name in team_names:
+        conditions.append(Team.alternate_names.op('?')(name))
+
+    result = await db.execute(
+        select(Team).where(
+            and_(
+                or_(*conditions),
+                or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None)),
+            )
+        )
+    )
+    teams = result.scalars().all()
+
+    # Build lookup: map all known names to team objects
+    lookup = {}
+    for team in teams:
+        lookup[team.name] = team
+        if team.alternate_names:
+            for alt_name in team.alternate_names:
+                lookup[alt_name] = team
+
+    return lookup
+
+
+def _format_team_data(team: Team) -> dict:
+    """Format team data for API response."""
+    return {
+        "primary_color": team.primary_color,
+        "secondary_color": team.secondary_color,
+        "logo_small": team.logo_url_small,
+        "logo_large": team.logo_url_large,
+        "record": team.current_record,
+    }
+
+
+def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict = None) -> dict:
+    """Format event for API response.
+
+    Args:
+        team_lookup: Optional dict mapping team names to Team objects for color/logo data.
+    """
     response = {
         "id": event.id,
         "external_id": event.external_id,
@@ -1479,6 +1540,15 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+    # Add team data (colors, logos) from lookup
+    if team_lookup:
+        home_team = team_lookup.get(event.home_team_name)
+        away_team = team_lookup.get(event.away_team_name)
+        if home_team and (home_team.primary_color or home_team.logo_url_small):
+            response["home_team_data"] = _format_team_data(home_team)
+        if away_team and (away_team.primary_color or away_team.logo_url_small):
+            response["away_team_data"] = _format_team_data(away_team)
 
     # Add LLM metadata if available
     try:
@@ -1504,7 +1574,7 @@ def _format_event(event: Event, gei_percentiles: dict = None) -> dict:
         if event.broadcast_info:
             espn_data["broadcast"] = event.broadcast_info
         if event.espn_win_prob_home is not None:
-            espn_data["espn_win_probability"] = float(event.espn_win_prob_home)
+            espn_data["win_probability"] = float(event.espn_win_prob_home)
         if event.win_probability_sources:
             espn_data["probability_sources"] = event.win_probability_sources
 
@@ -1631,9 +1701,9 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None) -> dict:
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None) -> dict:
     """Format event for API response with aggregated odds from multiple bookmakers."""
-    response = _format_event(event, gei_percentiles)
+    response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
 
     current_home_prob = None
     current_away_prob = None
@@ -1731,24 +1801,6 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "over_under": float(event.opening_over_under) if event.opening_over_under else None,
             "favorite": event.opening_favorite,
         }
-
-    # Include ESPN data if available (live scores, clock, win probability)
-    try:
-        espn_data = {}
-        if hasattr(event, 'espn_id') and event.espn_id:
-            espn_data["espn_id"] = event.espn_id
-        if hasattr(event, 'game_clock') and event.game_clock:
-            espn_data["game_clock"] = event.game_clock
-        if hasattr(event, 'period') and event.period:
-            espn_data["period"] = event.period
-        if hasattr(event, 'broadcast_info') and event.broadcast_info:
-            espn_data["broadcast"] = event.broadcast_info
-        if hasattr(event, 'espn_win_prob_home') and event.espn_win_prob_home is not None:
-            espn_data["win_probability"] = float(event.espn_win_prob_home)
-        if espn_data:
-            response["espn"] = espn_data
-    except AttributeError:
-        pass  # ESPN columns may not exist yet
 
     return response
 
