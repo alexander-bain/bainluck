@@ -89,6 +89,7 @@ odds-tracker/
 | File | Purpose |
 |------|---------|
 | `backend/app/tasks.py` | Celery tasks: odds polling, Pulse calculation, event discovery |
+| `backend/app/utils/highlights.py` | Highlight scoring, flags, and labels |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
@@ -188,6 +189,17 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/distr
 ```
 
 **Hall of Fame filtering:** The `pulse-rankings` endpoint requires 10+ odds snapshots per event to prevent low-data games from appearing in rankings.
+
+### Highlights (Event Ranking)
+Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points. This is **Level 1 (snapshot scoring)** of a multi-level ranking system — see "Ranking & Feed Evolution" in `docs/PRD.md` for the full roadmap toward the iOS feed tab.
+
+**Key design rule:** Pre-game closeness (e.g., 51/49) doesn't award points unless there's trend evidence — the line moved ≥5% from opening, tightened from lopsided to close, or the game is starting soon. This prevents aggregation noise from surfacing uninteresting events.
+
+**Labels:** "Upset brewing" and "Close game" are live-only. "Line moving" requires ≥15% swing from opening. "Close matchup" requires starting soon.
+
+**Current limitation:** `compute_highlight` only sees current odds vs opening odds (two points in time). It doesn't query `odds_snapshots` or `odds_aggregated` for time-series data. Level 2 will add this — the snapshot data already exists in the DB.
+
+**Files:** `backend/app/utils/highlights.py`, `frontend/app/page.tsx` (Highlights section rendering)
 
 ### Odds Polling
 - Live games: Every 30 seconds
@@ -458,7 +470,9 @@ Both backend and frontend auto-deploy from `master` branch.
 7. ✅ Futures categorization hardened (0 uncategorized markets)
 8. ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
 9. 🔄 Monitoring and reliability improvements
-10. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+8. 🔄 Monitoring and reliability improvements
+9. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+10. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
 11. 📋 Next: Firebase Auth for user accounts
 12. 📋 Next: Migrate pinned items to database (after auth)
 13. 📋 Next: LLM-powered odds movement explanations
@@ -474,13 +488,17 @@ See `docs/PRD.md` for full roadmap.
 
 1. **Alembic multiple heads**: If you see this error, check `down_revision` in migration files - they should form a single chain.
 
-2. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
+2. **Alembic revision IDs must be ≤32 characters**: The `alembic_version.version_num` column is `VARCHAR(32)`. Longer revision IDs will cause `StringDataRightTruncation` errors during Heroku release. Use short descriptive names (e.g., `add_outcome_search_idx` not `add_futures_outcomes_search_index`).
+
+3. **Alembic migrations use psycopg2, not asyncpg**: The `alembic/env.py` uses synchronous psycopg2 for migrations even though the app uses asyncpg at runtime. This is intentional — async engines don't work reliably in Heroku's release phase.
+
+4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
 3. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated. Hall of Fame rankings require 10+ snapshots.
 
-4. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+6. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
-5. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+7. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
 
 6. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
 
@@ -494,6 +512,7 @@ See `docs/PRD.md` for full roadmap.
 |------|-------|
 | API docs | `/docs` on backend URL |
 | Pulse explainer | https://odds.alexbain.com/pulse |
+| Pulse Hall of Fame | https://odds.alexbain.com/pulse/hall-of-fame |
 | Search | https://odds.alexbain.com/search?q=celtics |
 | PRD | `docs/PRD.md` |
 | Debug endpoints | `/api/events/debug/*` |

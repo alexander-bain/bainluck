@@ -62,13 +62,13 @@ function getSportEmoji(sportKey: string | null): string {
   return "🏆";
 }
 
-type SortField = "rank" | "probability" | "change" | "name";
+type SortField = "probability" | "change" | "name";
 type SortDirection = "asc" | "desc";
 
 export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketId = parseInt(params.id, 10);
-  const [sortField, setSortField] = useState<SortField>("rank");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [sortField, setSortField] = useState<SortField>("probability");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [selectedOutcomes, setSelectedOutcomes] = useState<Set<number>>(new Set());
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
 
@@ -104,9 +104,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       let comparison = 0;
 
       switch (sortField) {
-        case "rank":
-          comparison = (a.rank ?? 999) - (b.rank ?? 999);
-          break;
         case "probability":
           comparison = (b.probability ?? 0) - (a.probability ?? 0);
           break;
@@ -390,13 +387,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
         {/* Sort controls */}
         <div className="flex gap-2 mb-4 flex-wrap">
-          <SortButton
-            label="Rank"
-            field="rank"
-            currentField={sortField}
-            direction={sortDirection}
-            onClick={() => toggleSort("rank")}
-          />
           <SortButton
             label="Probability"
             field="probability"
