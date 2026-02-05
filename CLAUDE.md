@@ -174,6 +174,10 @@ Proprietary 1-100 score measuring how exciting a game is based on probability sw
 **Normalization tuning history:**
 The normalization ceilings were tuned iteratively using `GET /api/admin/pulse/distributions` to analyze score distributions across completed games. Key issue was Heart Rate saturating at 100% for 26% of games (ceiling too low at 0.3), then compressing below 38% (ceiling too high at 1.5). Final ceiling of 0.6 was derived from observed max rate of ~0.57 moves/min.
 
+**Multi-bookmaker aggregation:** Raw odds snapshots come from multiple bookmakers (5-11 per event). Before Pulse calculation, snapshots are aggregated into 60-second time buckets using median probability (`_aggregate_snapshots` in `pulse.py`). This prevents bookmaker disagreements from being counted as odds movements. Without aggregation, even an unremarkable game can score 100 due to phantom lead changes and inflated movement metrics.
+
+**Scaling:** Raw Pulse score is divided by 1.0 and mapped to 1-100. The theoretical max raw score is ~1.2 (all components maxed + lead change bonus), which clamps to 100. A typical close game scores 60-75; scoring 100 requires exceptional movement across all dimensions.
+
 **Files:** `backend/app/utils/pulse.py`, `frontend/components/PulseBadge.tsx`
 
 **Admin Endpoints:**
@@ -470,13 +474,12 @@ Both backend and frontend auto-deploy from `master` branch.
 7. ✅ Futures categorization hardened (0 uncategorized markets)
 8. ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
 9. 🔄 Monitoring and reliability improvements
-8. 🔄 Monitoring and reliability improvements
-9. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
-10. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
-11. 📋 Next: Firebase Auth for user accounts
-12. 📋 Next: Migrate pinned items to database (after auth)
-13. 📋 Next: LLM-powered odds movement explanations
-14. 📋 Next: Sport-specific Pulse normalization (different ceilings per sport)
+10. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+11. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
+12. 📋 Next: Firebase Auth for user accounts
+13. 📋 Next: Migrate pinned items to database (after auth)
+14. 📋 Next: LLM-powered odds movement explanations
+15. 📋 Next: Sport-specific Pulse normalization (different ceilings per sport)
 
 **LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
 
@@ -496,9 +499,9 @@ See `docs/PRD.md` for full roadmap.
 
 3. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated. Hall of Fame rankings require 10+ snapshots.
 
-6. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+7. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
-7. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+8. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
 
 6. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
 
