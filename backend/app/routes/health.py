@@ -2,8 +2,11 @@
 
 import os
 import subprocess
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import get_db
 from app.services.odds_api import OddsAPIService
 
 router = APIRouter()
@@ -57,18 +60,37 @@ async def api_health_check():
 
 
 @router.get("/health/ready")
-async def readiness_check():
-    """
-    Readiness check for Kubernetes/container orchestration.
+async def readiness_check(db: AsyncSession = Depends(get_db)):
+    """Readiness check for Kubernetes/container orchestration."""
+    checks = {}
+    all_ok = True
 
-    TODO: Add database connectivity check.
-    """
-    return {
-        "status": "ready",
-        "checks": {
-            "database": "ok",  # TODO: Actually check DB
-            "odds_api": "ok",  # TODO: Check API quota
+    # Check database connectivity
+    try:
+        await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+        all_ok = False
+
+    # Check Odds API quota
+    try:
+        service = OddsAPIService()
+        quota = await service.check_quota()
+        await service.close()
+        remaining = quota.get("requests_remaining", "unknown")
+        checks["odds_api"] = {
+            "status": "ok",
+            "requests_remaining": remaining,
+            "requests_used": quota.get("requests_used", "unknown"),
         }
+    except Exception as e:
+        checks["odds_api"] = f"error: {e}"
+        all_ok = False
+
+    return {
+        "status": "ready" if all_ok else "degraded",
+        "checks": checks,
     }
 
 
