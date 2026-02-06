@@ -2,8 +2,8 @@
   "mcpServers": {
     "odds-tracker-api": {
       "type": "stdio",
-      "command": "python",
-      "args": ["tools/mcp-api-proxy/server.py"],
+      "command": "/Users/bain/odds-tracker/tools/mcp-api-proxy/venv/bin/python",
+      "args": ["/Users/bain/odds-tracker/tools/mcp-api-proxy/server.py"],
       "env": {}
     }
   }
