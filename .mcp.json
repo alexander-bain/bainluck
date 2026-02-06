@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "odds-tracker-api": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["tools/mcp-api-proxy/server.py"],
+      "env": {}
+    }
+  }
+}
