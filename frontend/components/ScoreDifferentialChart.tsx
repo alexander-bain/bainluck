@@ -9,6 +9,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
@@ -16,21 +17,19 @@ import { format, parseISO } from "date-fns";
 import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
-  ESPNHistoryPoint,
+  ScoreHistoryPoint,
 } from "@/lib/types";
 
-interface OddsChartProps {
+interface ScoreDifferentialChartProps {
   history: OddsHistoryPoint[];
   homeTeam: string;
   awayTeam: string;
   commenceTime?: string;
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
-  /** ESPN win probability history */
-  espnHistory?: ESPNHistoryPoint[];
-  /** Event ID for analytics tracking */
-  eventId?: number;
-  /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
+  scoreHistory?: ScoreHistoryPoint[];
+  currentHomeScore?: number | null;
+  currentAwayScore?: number | null;
   eventStatus?: string;
 }
 
@@ -44,28 +43,27 @@ const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
 interface ChartDataPoint {
   timestamp: string;
   time: string;
-  /** Home probability delta from 50% (range: -50 to +50) */
-  homeDelta: number | null;
-  /** ESPN home probability delta from 50% */
-  espnDelta: number | null;
+  projectedDiff: number | null;
+  actualDiff: number | null;
   [key: string]: string | number | null | undefined;
 }
 
 /**
- * ESPN-style win probability chart.
- * Single line showing home team win probability, with area fill between the line
- * and the 50% midpoint. Y-axis: 100% home at top, 100% away at bottom.
+ * Combined chart showing projected score differential (spread) and actual score difference.
+ * Y-axis centered at 0. Positive = home team leading, negative = away team leading.
  */
-export default function OddsChart({
+export default function ScoreDifferentialChart({
   history,
   homeTeam,
   awayTeam,
   commenceTime,
   isLive = false,
   bookmakerHistory,
-  espnHistory,
+  scoreHistory,
+  currentHomeScore,
+  currentAwayScore,
   eventStatus,
-}: OddsChartProps) {
+}: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
   const hasPostStartData = useMemo(() => {
@@ -78,7 +76,7 @@ export default function OddsChart({
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
   const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
 
-  // Filter history based on time range
+  // Filter projected history based on time range
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
     if (timeRange === "all") return history;
@@ -86,56 +84,86 @@ export default function OddsChart({
     return history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
   }, [history, timeRange, commenceTime]);
 
-  // Filter bookmaker history
+  // Filter bookmaker history based on time range
   const filteredBookmakerHistory = useMemo(() => {
     if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0)
       return {};
-    if (timeRange === "all") return bookmakerHistory;
+    const entries = Object.entries(bookmakerHistory);
+    if (timeRange === "all") {
+      const filtered: Record<string, BookmakerHistoryPoint[]> = {};
+      for (const [bookmaker, points] of entries) {
+        const withScores = points.filter(
+          (point) =>
+            point.projected_home_score !== null &&
+            point.projected_home_score !== undefined
+        );
+        if (withScores.length > 0) filtered[bookmaker] = withScores;
+      }
+      return filtered;
+    }
     const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
-    for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
-      filtered[bookmaker] = points.filter(
-        (point) => parseISO(point.timestamp) >= cutoffTime
-      );
+    for (const [bookmaker, points] of entries) {
+      const withScores = points.filter((point) => {
+        const hasScores =
+          point.projected_home_score !== null &&
+          point.projected_home_score !== undefined;
+        if (!hasScores) return false;
+        return parseISO(point.timestamp) >= cutoffTime;
+      });
+      if (withScores.length > 0) filtered[bookmaker] = withScores;
     }
     return filtered;
   }, [bookmakerHistory, timeRange, commenceTime]);
 
-  // Filter ESPN history
-  const filteredEspnHistory = useMemo(() => {
-    if (!espnHistory || espnHistory.length === 0) return [];
-    if (timeRange === "all") return espnHistory;
+  // Filter score history based on time range
+  const filteredScoreHistory = useMemo(() => {
+    if (!scoreHistory || scoreHistory.length === 0) return [];
+    if (timeRange === "all") return scoreHistory;
     const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
-    return espnHistory.filter(
+    return scoreHistory.filter(
       (point) => parseISO(point.timestamp) >= cutoffTime
     );
-  }, [espnHistory, timeRange, commenceTime]);
+  }, [scoreHistory, timeRange, commenceTime]);
 
-  const hasEspnData = filteredEspnHistory.length > 0;
   const bookmakers = useMemo(
     () => Object.keys(filteredBookmakerHistory),
     [filteredBookmakerHistory]
   );
 
-  // Transform data: convert probabilities to delta from 50%
+  const hasProjectedScoreData = useMemo(() => {
+    if (!history || history.length === 0) return false;
+    return history.some(
+      (point) =>
+        point.projected_home_score !== null &&
+        point.projected_away_score !== null
+    );
+  }, [history]);
+
+  const hasActualScoreData = filteredScoreHistory.length > 0;
+
+  // Build chart data by merging projected and actual score data on timeline
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
 
-    // Add aggregate data points
+    // Add projected score differentials from aggregate history
     for (const point of filteredHistory) {
-      const homeProb =
-        point.home_probability !== null ? point.home_probability * 100 : null;
-      const delta = homeProb !== null ? homeProb - 50 : null;
+      if (
+        point.projected_home_score === null ||
+        point.projected_away_score === null
+      )
+        continue;
 
+      const diff = point.projected_home_score - point.projected_away_score;
       const dp: ChartDataPoint = {
         timestamp: point.timestamp,
         time: format(parseISO(point.timestamp), "h:mm a"),
-        homeDelta: delta,
-        espnDelta: null,
+        projectedDiff: Math.round(diff * 10) / 10,
+        actualDiff: null,
       };
       dataMap.set(point.timestamp, dp);
 
-      // Expand valid_until
+      // Expand valid_until for flat-line rendering
       if (point.valid_until) {
         const endTime = parseISO(point.valid_until);
         const startTime = parseISO(point.timestamp);
@@ -144,35 +172,38 @@ export default function OddsChart({
             dataMap.set(point.valid_until, {
               timestamp: point.valid_until,
               time: format(endTime, "h:mm a"),
-              homeDelta: delta,
-              espnDelta: null,
+              projectedDiff: Math.round(diff * 10) / 10,
+              actualDiff: null,
             });
           }
         }
       }
     }
 
-    // Add bookmaker lines (single line per bookmaker - home prob delta)
+    // Add bookmaker differential lines
     for (const [bookmaker, points] of Object.entries(
       filteredBookmakerHistory
     )) {
       for (const point of points) {
-        const homeProb =
-          point.home_probability !== null
-            ? point.home_probability * 100
-            : null;
-        const delta = homeProb !== null ? homeProb - 50 : null;
+        if (
+          point.projected_home_score === null ||
+          point.projected_home_score === undefined
+        )
+          continue;
+        const awayScore = point.projected_away_score ?? 0;
+        const diff =
+          Math.round((point.projected_home_score - awayScore) * 10) / 10;
 
         const existing = dataMap.get(point.timestamp);
         if (existing) {
-          existing[`${bookmaker}_delta`] = delta;
+          existing[`${bookmaker}_diff`] = diff;
         } else {
           const newPoint: ChartDataPoint = {
             timestamp: point.timestamp,
             time: format(parseISO(point.timestamp), "h:mm a"),
-            homeDelta: null,
-            espnDelta: null,
-            [`${bookmaker}_delta`]: delta,
+            projectedDiff: null,
+            actualDiff: null,
+            [`${bookmaker}_diff`]: diff,
           };
           dataMap.set(point.timestamp, newPoint);
         }
@@ -184,14 +215,14 @@ export default function OddsChart({
           if (endTime.getTime() - startTime.getTime() > 60000) {
             const existingEnd = dataMap.get(point.valid_until);
             if (existingEnd) {
-              existingEnd[`${bookmaker}_delta`] = delta;
+              existingEnd[`${bookmaker}_diff`] = diff;
             } else {
               dataMap.set(point.valid_until, {
                 timestamp: point.valid_until,
                 time: format(endTime, "h:mm a"),
-                homeDelta: null,
-                espnDelta: null,
-                [`${bookmaker}_delta`]: delta,
+                projectedDiff: null,
+                actualDiff: null,
+                [`${bookmaker}_diff`]: diff,
               });
             }
           }
@@ -204,30 +235,27 @@ export default function OddsChart({
     const allPoints = Array.from(dataMap.values());
     for (const point of allPoints) {
       for (const bookmaker of allBookmakers) {
-        if (point[`${bookmaker}_delta`] === undefined) {
-          point[`${bookmaker}_delta`] = null;
+        if (point[`${bookmaker}_diff`] === undefined) {
+          point[`${bookmaker}_diff`] = null;
         }
       }
     }
 
-    // Add ESPN data
-    for (const point of filteredEspnHistory) {
-      const espnHome =
-        point.home_probability !== null ? point.home_probability * 100 : null;
-      const delta = espnHome !== null ? espnHome - 50 : null;
-
+    // Add actual score differences
+    for (const point of filteredScoreHistory) {
+      const diff = point.home_score - point.away_score;
       const existing = dataMap.get(point.timestamp);
       if (existing) {
-        existing.espnDelta = delta;
+        existing.actualDiff = diff;
       } else {
         const newPoint: ChartDataPoint = {
           timestamp: point.timestamp,
           time: format(parseISO(point.timestamp), "h:mm a"),
-          homeDelta: null,
-          espnDelta: delta,
+          projectedDiff: null,
+          actualDiff: diff,
         };
         for (const bookmaker of allBookmakers) {
-          newPoint[`${bookmaker}_delta`] = null;
+          newPoint[`${bookmaker}_diff`] = null;
         }
         dataMap.set(point.timestamp, newPoint);
       }
@@ -237,43 +265,41 @@ export default function OddsChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredEspnHistory]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory]);
 
-  // Early return for empty history
-  if (!history || history.length === 0) {
+  // Early returns
+  if (!history || history.length === 0) return null;
+  if (!hasProjectedScoreData && !hasActualScoreData) {
     return (
-      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
-        No history data available
+      <div className="text-center py-4 text-sm text-gray-500">
+        Score data is not available for this event.
       </div>
     );
   }
+  if (chartData.length === 0) return null;
 
-  // Compute gradient offset for area fill-by-value
-  // This determines where in the gradient the color switches (at the y=0 crossing)
-  const gradientOffset = (() => {
-    const deltas = chartData
-      .map((d) => d.homeDelta)
-      .filter((v): v is number => v !== null);
-    if (deltas.length === 0) return 0.5;
-    const dataMax = Math.max(...deltas);
-    const dataMin = Math.min(...deltas);
-    if (dataMax <= 0) return 0;
-    if (dataMin >= 0) return 1;
-    return dataMax / (dataMax - dataMin);
-  })();
+  // Calculate Y-axis domain symmetrically around 0
+  const allDiffValues = chartData
+    .flatMap((d) => {
+      const values: number[] = [];
+      if (d.projectedDiff !== null) values.push(d.projectedDiff);
+      if (d.actualDiff !== null) values.push(d.actualDiff);
+      return values;
+    })
+    .filter((v): v is number => v !== null);
 
-  // Short team names
+  const maxAbs =
+    allDiffValues.length > 0
+      ? Math.ceil(Math.max(...allDiffValues.map(Math.abs)) + 2)
+      : 10;
+  // Make symmetric around 0, rounding up to nearest 5
+  const domainMax = Math.ceil(maxAbs / 5) * 5;
+
+  // Short team names for axis labels
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
-  // Custom Y-axis tick formatter: shows probability for each team
-  // +50 = 100% home, 0 = 50%, -50 = 100% away
-  const formatYTick = (value: number): string => {
-    const prob = 50 + Math.abs(value);
-    return `${prob}%`;
-  };
-
-  // Custom tooltip showing actual probabilities
+  // Custom tooltip
   const CustomTooltip = ({
     active,
     payload,
@@ -289,52 +315,46 @@ export default function OddsChart({
     label?: string;
   }) => {
     if (active && payload && payload.length) {
-      const aggregateEntry = payload.find(
-        (e) => e.dataKey === "homeDelta" && e.value !== null
+      const projectedEntry = payload.find(
+        (e) => e.dataKey === "projectedDiff" && e.value !== null
       );
-      const espnEntry = payload.find(
-        (e) => e.dataKey === "espnDelta" && e.value !== null
+      const actualEntry = payload.find(
+        (e) => e.dataKey === "actualDiff" && e.value !== null
       );
       const bookmakerEntries = payload.filter(
         (e) =>
-          e.dataKey !== "homeDelta" &&
-          e.dataKey !== "espnDelta" &&
+          e.dataKey !== "projectedDiff" &&
+          e.dataKey !== "actualDiff" &&
           e.value !== null
       );
 
-      const formatProb = (delta: number) => {
-        const homeProb = delta + 50;
-        const awayProb = 100 - homeProb;
-        return `${homeTeam}: ${homeProb.toFixed(1)}% | ${awayTeam}: ${awayProb.toFixed(1)}%`;
+      const formatDiff = (val: number) => {
+        if (val === 0) return "Even";
+        const leader = val > 0 ? homeShort : awayShort;
+        return `${leader} +${Math.abs(val).toFixed(1)}`;
       };
 
       return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200 max-w-sm">
+        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
-          {aggregateEntry && (
-            <p className="text-sm font-semibold text-gray-800">
-              {formatProb(aggregateEntry.value)}
+          {projectedEntry && (
+            <p className="text-sm font-semibold text-emerald-600">
+              Projected: {formatDiff(projectedEntry.value)}
             </p>
           )}
-          {espnEntry && (
-            <div className="mt-1 pt-1 border-t border-gray-100">
-              <p className="text-xs text-gray-400 mb-0.5">ESPN model:</p>
-              <p className="text-xs font-medium text-orange-600">
-                {formatProb(espnEntry.value)}
-              </p>
-            </div>
+          {actualEntry && (
+            <p className="text-sm font-semibold text-orange-600">
+              Actual: {formatDiff(actualEntry.value)}
+            </p>
           )}
           {bookmakerEntries.length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100">
               <p className="text-xs text-gray-400 mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
-                const bookmaker = entry.dataKey.replace("_delta", "");
-                const homeProb = entry.value + 50;
-                const awayProb = 100 - homeProb;
+                const bookmaker = entry.dataKey.replace("_diff", "");
                 return (
                   <p key={bookmaker} className="text-xs text-gray-500">
-                    {bookmaker}: {homeProb.toFixed(0)}% /{" "}
-                    {awayProb.toFixed(0)}%
+                    {bookmaker}: {formatDiff(entry.value)}
                   </p>
                 );
               })}
@@ -347,7 +367,7 @@ export default function OddsChart({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1">
         {TIME_RANGE_OPTIONS.map((option) => (
@@ -365,72 +385,70 @@ export default function OddsChart({
         ))}
       </div>
 
-      {/* Team labels flanking the chart */}
-      <div className="flex items-center justify-between text-xs font-medium px-8">
-        <span className="text-green-600">{homeShort} favored ↑</span>
-        <span className="text-blue-600">{awayShort} favored ↓</span>
-      </div>
-
-      {/* Probability Chart */}
-      <div className="w-full h-80">
+      {/* Chart */}
+      <div className="w-full h-64">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
             margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
           >
-            <defs>
-              <linearGradient id="probFillGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset={gradientOffset}
-                  stopColor="#22c55e"
-                  stopOpacity={0.25}
-                />
-                <stop
-                  offset={gradientOffset}
-                  stopColor="#3b82f6"
-                  stopOpacity={0.25}
-                />
-              </linearGradient>
-            </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
               dataKey="time"
               tick={{ fontSize: 10, fill: "#6b7280" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
-              interval={
-                chartData.length <= 10 ? 0 : "preserveStartEnd"
-              }
+              interval="preserveStartEnd"
               minTickGap={50}
             />
             <YAxis
-              domain={[-50, 50]}
-              ticks={[-50, -25, 0, 25, 50]}
+              domain={[-domainMax, domainMax]}
               tick={{ fontSize: 10, fill: "#6b7280" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
-              tickFormatter={formatYTick}
+              tickFormatter={(value: number) => {
+                if (value === 0) return "0";
+                return value > 0 ? `+${value}` : `${value}`;
+              }}
             />
-            {/* 50% reference line */}
             <ReferenceLine
               y={0}
               stroke="#9ca3af"
               strokeWidth={1.5}
               strokeDasharray="4 4"
-              label={{
-                value: "50%",
-                position: "right",
-                style: { fontSize: 10, fill: "#9ca3af" },
-              }}
             />
             <Tooltip content={<CustomTooltip />} />
+            <Legend
+              wrapperStyle={{ fontSize: "12px" }}
+              iconType="circle"
+              payload={[
+                ...(hasProjectedScoreData
+                  ? [
+                      {
+                        value: "Projected Spread" as string,
+                        type: "circle" as const,
+                        color: "#10b981",
+                      },
+                    ]
+                  : []),
+                ...(hasActualScoreData
+                  ? [
+                      {
+                        value: "Actual Score Diff" as string,
+                        type: "circle" as const,
+                        color: "#f97316",
+                      },
+                    ]
+                  : []),
+              ]}
+            />
 
-            {/* Individual bookmaker lines - thin grey */}
+            {/* Individual bookmaker lines */}
             {bookmakers.map((bookmaker) => (
               <Line
-                key={`${bookmaker}_delta`}
+                key={`${bookmaker}_diff`}
                 type="monotone"
-                dataKey={`${bookmaker}_delta`}
+                dataKey={`${bookmaker}_diff`}
                 stroke="rgba(156, 163, 175, 0.4)"
                 strokeWidth={1}
                 dot={false}
@@ -440,55 +458,49 @@ export default function OddsChart({
               />
             ))}
 
-            {/* ESPN model line - orange dashed */}
-            {hasEspnData && (
+            {/* Projected score differential (spread) */}
+            {hasProjectedScoreData && (
               <Line
                 type="monotone"
-                dataKey="espnDelta"
-                name="ESPN Model"
-                stroke="#f97316"
+                dataKey="projectedDiff"
+                name="Projected Spread"
+                stroke="#10b981"
                 strokeWidth={2.5}
-                strokeDasharray="6 3"
                 dot={false}
-                activeDot={{ r: 4, fill: "#f97316" }}
+                activeDot={{ r: 5 }}
                 connectNulls
               />
             )}
 
-            {/* Area fill between probability line and 50% */}
-            <Area
-              type="monotone"
-              dataKey="homeDelta"
-              stroke="none"
-              fill="url(#probFillGradient)"
-              connectNulls
-              legendType="none"
-              isAnimationActive={false}
-            />
-
-            {/* Main probability line - rendered last to be on top */}
-            <Line
-              type="monotone"
-              dataKey="homeDelta"
-              name="Win Probability"
-              stroke="#374151"
-              strokeWidth={2.5}
-              dot={false}
-              activeDot={{ r: 5, fill: "#374151" }}
-              connectNulls
-            />
+            {/* Actual score difference */}
+            {hasActualScoreData && (
+              <Line
+                type="stepAfter"
+                dataKey="actualDiff"
+                name="Actual Score Diff"
+                stroke="#f97316"
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 5 }}
+                connectNulls
+              />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Info strip */}
-      <p className="text-xs text-gray-400 text-center">
-        {bookmakers.length > 0 && "Gray lines show individual sportsbooks"}
-        {bookmakers.length > 0 && hasEspnData && " · "}
-        {hasEspnData && "Orange dashed line shows ESPN predictive model"}
-        {(bookmakers.length > 0 || hasEspnData) && " · "}
-        Tap/hover for details
-      </p>
+      {/* Axis labels */}
+      <div className="flex justify-between text-xs text-gray-400 px-2">
+        <span>+ = {homeShort} leading</span>
+        <span>- = {awayShort} leading</span>
+      </div>
+
+      {/* Info about gray lines */}
+      {bookmakers.length > 0 && (
+        <p className="text-xs text-gray-400 text-center">
+          Gray lines show individual sportsbooks
+        </p>
+      )}
     </div>
   );
 }
