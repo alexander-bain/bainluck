@@ -32,6 +32,8 @@ interface OddsChartProps {
   eventId?: number;
   /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
   eventStatus?: string;
+  /** When true, chart fills its parent container height instead of using fixed h-80 */
+  fillContainer?: boolean;
 }
 
 type TimeRange = "all" | "live";
@@ -65,6 +67,7 @@ export default function OddsChart({
   bookmakerHistory,
   espnHistory,
   eventStatus,
+  fillContainer = false,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
@@ -347,9 +350,9 @@ export default function OddsChart({
   };
 
   return (
-    <div className="space-y-3">
+    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}>
       {/* Time range selector */}
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1 shrink-0">
         {TIME_RANGE_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -366,17 +369,17 @@ export default function OddsChart({
       </div>
 
       {/* Team labels flanking the chart */}
-      <div className="flex items-center justify-between text-xs font-medium px-8">
+      <div className="flex items-center justify-between text-xs font-medium px-8 shrink-0">
         <span className="text-green-600">{homeShort} favored ↑</span>
         <span className="text-blue-600">{awayShort} favored ↓</span>
       </div>
 
       {/* Probability Chart */}
-      <div className="w-full h-80">
+      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-80"}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
-            margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+            margin={{ top: 5, right: 10, left: fillContainer ? 5 : 0, bottom: 5 }}
           >
             <defs>
               <linearGradient id="probFillGradient" x1="0" y1="0" x2="0" y2="1">
@@ -482,7 +485,7 @@ export default function OddsChart({
       </div>
 
       {/* Info strip */}
-      <p className="text-xs text-gray-400 text-center">
+      <p className="text-xs text-gray-400 text-center shrink-0">
         {bookmakers.length > 0 && "Gray lines show individual sportsbooks"}
         {bookmakers.length > 0 && hasEspnData && " · "}
         {hasEspnData && "Orange dashed line shows ESPN predictive model"}
