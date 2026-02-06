@@ -330,6 +330,7 @@ export default function EventPage({ params }: EventPageProps) {
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
   const gameIsBlowout = isLive && isBlowout(homeProb);
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
+  const eitherTeamHasLogo = !!(event.home_team_data?.logo_large || event.away_team_data?.logo_large);
 
   // Analyze sources from history data
   const sourceAnalysis = analyzeSourcesFromHistory(historyData?.bookmaker_history);
@@ -672,13 +673,20 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Home Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {event.home_team_data?.logo_large && (
+              {event.home_team_data?.logo_large ? (
                 <img
                   src={event.home_team_data.logo_large}
                   alt=""
                   className="w-8 h-8 object-contain"
                 />
-              )}
+              ) : eitherTeamHasLogo ? (
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: event.home_team_data?.primary_color || '#94a3b8' }}
+                >
+                  <span className="text-sm font-bold text-white leading-none">{event.home_team[0]}</span>
+                </div>
+              ) : null}
               <div>
                 <h2 className={`text-xl font-semibold ${homeFavorite ? "text-graphite" : "text-slate"}`}>
                   {event.home_team}
@@ -718,13 +726,20 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Away Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {event.away_team_data?.logo_large && (
+              {event.away_team_data?.logo_large ? (
                 <img
                   src={event.away_team_data.logo_large}
                   alt=""
                   className="w-8 h-8 object-contain"
                 />
-              )}
+              ) : eitherTeamHasLogo ? (
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: event.away_team_data?.primary_color || '#94a3b8' }}
+                >
+                  <span className="text-sm font-bold text-white leading-none">{event.away_team[0]}</span>
+                </div>
+              ) : null}
               <div>
                 <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
                   {event.away_team}
