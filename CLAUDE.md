@@ -343,30 +343,50 @@ oddsTracker_pinnedEvents    // Array of event IDs
 oddsTracker_pinnedFutures   // Array of futures market IDs
 ```
 
+### ESPN Integration
+ESPN's undocumented API provides team data (colors, logos) and live game info (clock, period, win probability).
+
+**Data Enrichment:**
+- **Teams**: ESPN ID, primary/secondary colors, logos (small/large), alternate names, current record
+- **Events**: ESPN ID, venue, broadcast info, game clock, period, ESPN win probability
+- **Venues**: Name, city, state, country, capacity
+
+**Automatic Sync (Celery task `sync_espn_live_events`):**
+- Runs every 60 seconds
+- Auto-creates Team records with colors, logos, and alternate names from ESPN scoreboard data
+- Updates live events with game clock, period, broadcast info, and win probability
+- Also pre-populates team data for scheduled events (so colors/logos appear before games go live)
+- ESPN win probability is **only available during live games** — cannot be backfilled after a game ends
+- Team colors/logos persist in the `teams` table and apply to all events (past and present) via name lookup
+- Mapped sports: NBA, NCAAB, WNCAAB, NFL, NCAAF, NHL, MLB, MLS, EPL (see `ESPN_SPORT_MAPPING` in tasks.py)
+
 **Files:**
-- `frontend/hooks/usePinnedEvents.ts` - Event pinning hook
-- `frontend/hooks/usePinnedFutures.ts` - Futures pinning hook
-- `frontend/lib/api.ts` - `fetchEventsByIds()`, `fetchFuturesByIds()` for loading pinned items
+- ESPN client: `backend/app/services/espn_api.py`
+- Celery sync task: `backend/app/tasks.py` (`sync_espn_live_events` / `_sync_espn_live_events`)
+- Team lookup in API: `backend/app/routes/events.py` (`_build_team_lookup`)
+- Model columns on teams: `espn_id`, `primary_color`, `secondary_color`, `logo_url_small`, `logo_url_large`, `alternate_names`, `current_record`
+- Model columns on events: `espn_id`, `venue_id`, `broadcast_info`, `game_clock`, `period`, `espn_win_prob_home`, `win_probability_sources`
 
-**UI Locations:**
-- Pin button on EventCard (top-left, visible on hover)
-- Pin button on FuturesCard (top-left, visible on hover)
-- Pin button on event detail page (hero section)
-- Pin button on futures detail page (hero section)
-- "📌 Pinned" section on homepage (above Highlights)
-- "📌 Pinned Futures" section on homepage (below Pinned events)
+**Frontend display:**
+- Team logos and colors on EventCard and event detail page
+- Team-colored probability bar
+- Broadcast info badge
+- ESPN win probability badge (live games only)
+- ESPN trend line on OddsChart (orange dashed line)
 
-**Future Enhancement:**
-When Firebase Auth is implemented, migrate to database storage:
-```sql
-CREATE TABLE pinned_items (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id),
-    item_type VARCHAR(20) NOT NULL,  -- 'event' or 'futures'
-    item_id INTEGER NOT NULL,
-    pinned_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, item_type, item_id)
-);
+**Admin endpoints:**
+```bash
+# Sync team data from ESPN (colors, logos)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/sync-teams?secret=xxx&sport_key=basketball_nba"
+
+# Check team sync status
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/teams-status"
+
+# Sync live event data (clock, period, win prob)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/sync-live-events?secret=xxx&sport_key=basketball_nba"
+
+# Test team name matching
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
 ```
 
 ---
@@ -506,6 +526,20 @@ See `docs/PRD.md` for full roadmap.
 6. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
 
 7. **Pulse percentiles use completed games only**: The `gei_percentiles` table is computed from completed/closed events with `raw_gei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
+
+6. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New Celery tasks must follow this pattern:
+   ```python
+   @celery_app.task(bind=True)
+   def my_task(self):
+       return run_async(_my_task_impl())
+
+   async def _my_task_impl():
+       async with get_task_session() as session:
+           result = await session.execute(...)
+   ```
+   Never use `SessionLocal` or synchronous `session.execute()` — it will raise `ImportError` silently in the worker.
+
+7. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
 ---
 
