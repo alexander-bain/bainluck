@@ -831,7 +831,7 @@ Target: Q2 2026
 
 **Auth Philosophy:**
 - No required sign-in — logged-out experience must feel complete
-- Auth unlocks: Favorites sync, notifications, cross-device, pinned items sync
+- Auth unlocks: Favorites sync, notifications, cross-device, pinned items sync, Team Insights (Phase 15)
 - Auth is **pull-based, not forced**
 
 ### Phase 7: LLM Integration & Metadata Enrichment ✅ Complete
@@ -1334,6 +1334,193 @@ CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_s
 - ESPN historical games (supplementary)
 - Sports Reference (research/validation)
 
+### Phase 15: Team Insights (LLM-Powered Personalized Feed)
+**Personalized insights about your favorite teams, synthesized by LLM from structured DB queries.**
+
+Target: TBD (Exploratory — requires Firebase Auth for favorites persistence)
+
+#### Concept
+During onboarding (or anytime), users select their favorite teams. The system runs structured queries to gather recent data about those teams, then uses GPT-4o-mini to synthesize the ~10 most interesting insights. This creates a personalized "What you missed" or "What's coming up" experience.
+
+**Example Insights:**
+| Headline | Body | Type |
+|----------|------|------|
+| Lakers are live right now | LAL trailing Celtics 58-62 in Q3, 41% win probability | live |
+| Patriots upset the Bills | Won 24-21 as +280 underdogs yesterday — Pulse score of 89 | result |
+| Yankees' title odds surging | Championship probability jumped from 8% to 14% this week | futures |
+| Lakers-Warriors Friday night | Opening line: LAL -3.5 (62% implied). First meeting since playoff elimination | upcoming |
+
+#### Architecture
+
+**Key Design Decision:** Don't let the LLM query the DB. Instead, pre-query structured data per team, then let the LLM synthesize and narrate. This is cheaper, faster, more reliable, and auditable.
+
+```
+Onboarding → Store favorites → Query DB per team → Build data packet → LLM narrates → 10 insights
+```
+
+#### Data Gathering (per team)
+
+Five structured queries run for each favorite team:
+
+```python
+async def gather_team_data(team_id: int, db: AsyncSession) -> dict:
+    """Gather all insight-worthy data for a team."""
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+
+    # 1. Recent results (completed games, last 7 days)
+    recent_results = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.status.in_(["completed", "closed"]))
+        .where(Event.commence_time >= week_ago)
+        .order_by(Event.commence_time.desc())
+        .limit(10)
+    )
+
+    # 2. Upcoming games (next 7 days)
+    upcoming = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.status == "scheduled")
+        .where(Event.commence_time <= now + timedelta(days=7))
+        .order_by(Event.commence_time.asc())
+        .limit(5)
+    )
+
+    # 3. Live games right now
+    live = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.status == "live")
+    )
+
+    # 4. Championship/futures odds
+    futures = await db.execute(
+        select(FuturesMarket.name, FuturesOutcome.current_probability,
+               FuturesOutcome.probability_change_24h)
+        .join(FuturesOutcome, FuturesMarket.id == FuturesOutcome.market_id)
+        .where(FuturesOutcome.team_id == team_id)
+        .where(FuturesMarket.status == "open")
+        .order_by(FuturesOutcome.current_probability.desc())
+    )
+
+    # 5. Most exciting recent games (by Pulse)
+    pulse_games = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.raw_gei.isnot(None))
+        .where(Event.commence_time >= now - timedelta(days=14))
+        .order_by(Event.raw_gei.desc())
+        .limit(5)
+    )
+
+    return {
+        "team": team_name,
+        "recent_results": serialize_events(recent_results),
+        "upcoming": serialize_events(upcoming),
+        "live": serialize_events(live),
+        "futures": serialize_futures(futures),
+        "top_pulse_games": serialize_events(pulse_games),
+    }
+```
+
+#### LLM Prompt
+
+The data packet is fed to GPT-4o-mini with instructions to pick the most interesting items:
+
+```python
+prompt = """You are a sports analyst for a casual fan's second-screen experience.
+Given the following data about a user's favorite teams, pick the 10 most
+interesting, surprising, or actionable insights. Prioritize:
+
+1. Live games happening RIGHT NOW (always #1 if any exist)
+2. Upsets or close finishes in recent games (high Pulse scores)
+3. Big line movements or shifting championship odds
+4. Upcoming marquee matchups (rivalry, playoff implications)
+5. Streaks, trends, or notable records
+
+For each insight, return JSON:
+{
+  "insights": [
+    {
+      "headline": "Short punchy headline (≤10 words)",
+      "body": "1-2 sentence explanation for a casual fan",
+      "team": "Primary team this relates to",
+      "type": "live|result|upcoming|futures|trend",
+      "event_id": <id if applicable, null otherwise>,
+      "urgency": "high|medium|low"
+    }
+  ]
+}
+"""
+```
+
+#### Use Cases
+
+**1. Onboarding welcome screen:**
+After selecting favorites, show "Here's what's happening with your teams" — creates immediate value and hooks the user.
+
+**2. Event detail page enrichment:**
+On a Lakers game page, show "More about the Lakers" section with relevant insights (recent record, futures odds, upcoming schedule).
+
+**3. Notification triggers:**
+The `urgency: "high"` field could drive push notifications. "Lakers are live and it's close" is worth an interrupt; "Lakers play Friday" is not.
+
+**4. Daily digest email:**
+For authenticated users, a morning email with personalized insights about their teams.
+
+#### API Design
+
+```
+# Onboarding: pick teams
+POST /api/me/favorites
+Body: { "team_ids": [1, 5, 12] }
+
+# Generate insights (authenticated)
+GET /api/insights
+Response: {
+  "generated_at": "2026-02-06T12:00:00Z",
+  "insights": [...],
+  "teams": ["Lakers", "Patriots", "Yankees"]
+}
+
+# Team picker data
+GET /api/teams?sport=basketball_nba
+GET /api/teams/search?q=lakers
+```
+
+#### Cost & Performance
+
+| Component | Cost/Latency |
+|-----------|--------------|
+| DB queries | ~5 queries × N teams, all indexed — <500ms total |
+| LLM call | One GPT-4o-mini call, ~2-4K tokens — ~$0.001 |
+| Caching | Redis TTL of 5-10 min per user — most requests hit cache |
+| Total | 2-4 seconds first load, instant from cache |
+
+#### Prerequisites
+
+- **Firebase Auth**: Need user accounts to persist favorites
+- **Team table populated**: Already done via ESPN sync
+- **UserFavorite table**: Already exists in schema, ready to use
+- **LLM service**: Already integrated (GPT-4o-mini in `services/llm.py`)
+
+#### Implementation Phases
+
+1. **v1**: Team picker UI + insights endpoint (web only)
+2. **v2**: Event detail page integration ("More about this team")
+3. **v3**: Notification triggers based on urgency field
+4. **v4**: iOS integration with native insights feed
+5. **v5**: Daily digest emails
+
+#### Open Questions
+
+- Should insights be cached per-team (sharable across users) or per-user (more personalized)?
+- How many teams should users be able to follow? (Suggest 3-10)
+- Should we show insights for teams the user doesn't follow if they're playing against favorites?
+- How to handle the cold start problem for new users who haven't picked teams yet?
+
 ---
 
 ## Recent Improvements (February 2026)
@@ -1690,6 +1877,7 @@ These are product experiments, not blockers.
 ### Exploring (No Timeline)
 - **Probability Comparisons ("Comparable Odds")**: Massive database of real-world probability analogies (1,000+ entries) displayed on event detail pages to make win probabilities viscerally relatable — "Your team's 15% chance is about as likely as rain on a summer day in Atlanta" (Phase 12)
 - **Event Similarity Scores**: Baseball Reference-style similarity matching that finds historical games with the most similar probability arcs — works during and after games, creates a "rabbit hole" into the historical database (Phase 13)
+- **Team Insights (LLM-Powered Personalized Feed)**: Onboarding flow where users select favorite teams, then LLM synthesizes ~10 interesting insights from DB queries — recent results, upcoming games, championship odds shifts, high-Pulse games. Could power event detail page context and notification triggers (Phase 15)
 
 ---
 
