@@ -6,8 +6,7 @@ import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
-import ScoreChart from "@/components/ScoreChart";
-import ActualScoreChart from "@/components/ActualScoreChart";
+import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import BookmakerTable from "@/components/BookmakerTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -804,39 +803,22 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {/* Actual Score Chart - for live/finished games */}
-      {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
-        <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            🏆 Actual Score
-          </h3>
-          <ActualScoreChart
-            scoreHistory={historyData?.score_history}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            currentHomeScore={event.home_score}
-            currentAwayScore={event.away_score}
-            commenceTime={event.commence_time}
-            isLive={effectivelyLive}
-            lastScoreUpdate={odds?.captured_at}
-            eventId={event.id}
-          />
-        </div>
-      )}
-
-      {/* Projected Score Trend Chart - shown independently if there's history data */}
+      {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData?.history && historyData.history.length > 0 && (
         <div className="bg-white rounded-card shadow-card p-6">
           <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            📊 Projected Score Trend
+            📊 Score Differential
           </h3>
-          <ScoreChart
+          <ScoreDifferentialChart
             history={historyData.history}
             homeTeam={event.home_team}
             awayTeam={event.away_team}
             commenceTime={event.commence_time}
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
+            scoreHistory={historyData?.score_history}
+            currentHomeScore={event.home_score}
+            currentAwayScore={event.away_score}
             eventStatus={event.status}
           />
         </div>
@@ -845,7 +827,7 @@ export default function EventPage({ params }: EventPageProps) {
       {/* Trend Chart */}
       <div className="bg-white rounded-card shadow-card p-6">
         <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-          📉 Probability Trend
+          📉 Win Probability
         </h3>
         {historyLoading ? (
           <div className="h-48 flex items-center justify-center">
