@@ -1672,3 +1672,55 @@ async def normalize_futures_probabilities(
         "status": "dry_run" if dry_run else "completed",
         "stats": stats,
     }
+
+
+@router.post("/teams/backfill-logos")
+async def trigger_team_logo_backfill(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Manually trigger team logo backfill from ESPN's /teams endpoint.
+
+    Fetches all teams for supported leagues and fills in missing logos.
+    Queues as a background Celery task and returns immediately.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_team_logos
+
+    try:
+        task = backfill_team_logos.delay()
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": "Team logo backfill task queued. Check /api/admin/teams/task/{task_id} for results.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/teams/task/{task_id}")
+async def get_team_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of a team logo backfill task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
