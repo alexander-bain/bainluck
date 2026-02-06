@@ -121,7 +121,7 @@ async def recalculate_pulse(
                 sport_key=sport_key,
             )
 
-            if pulse_result:
+            if pulse_result and pulse_result.data_quality != "minimal":
                 event.raw_gei = pulse_result.score / 100.0
                 event.gei_components = pulse_result.components.to_json()
                 event.gei_computed_at = datetime.now(timezone.utc)

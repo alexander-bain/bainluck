@@ -1417,7 +1417,16 @@ async def _compute_pulse_for_event(event_id: int):
         )
 
         if pulse_result is None:
-            return {"error": "Pulse calculation failed"}
+            return {"error": "Pulse calculation returned None (insufficient data)"}
+
+        # Don't store unreliable scores for completed events
+        if pulse_result.data_quality == "minimal":
+            return {
+                "event_id": event_id,
+                "skipped": True,
+                "reason": f"Insufficient aggregated data ({pulse_result.snapshot_count} time buckets, need 10+)",
+                "data_quality": pulse_result.data_quality,
+            }
 
         # Update event with Pulse (store score/100 to fit existing field)
         event.raw_gei = pulse_result.score / 100.0
@@ -1508,7 +1517,7 @@ async def _compute_pulse_batch(limit: int):
                     sport_key=sport_key,
                 )
 
-                if pulse_result:
+                if pulse_result and pulse_result.data_quality != "minimal":
                     event.raw_gei = pulse_result.score / 100.0
                     event.gei_components = pulse_result.components.to_json()
                     event.gei_computed_at = datetime.now(timezone.utc)

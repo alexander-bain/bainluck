@@ -226,14 +226,8 @@ def calculate_pulse(
     ]
 
     if len(valid_snapshots) < MIN_SNAPSHOTS:
-        # Return minimal pulse for insufficient data
-        return PulseResult(
-            score=1,
-            components=PulseComponents(0, 0, 0, 0, 1.0, 0),
-            status='flatline',
-            data_quality='insufficient',
-            snapshot_count=len(valid_snapshots)
-        )
+        # Not enough data to compute a meaningful score
+        return None
 
     # Aggregate multi-bookmaker snapshots into one data point per time bucket.
     # This prevents bookmaker disagreements from being counted as movements.
@@ -241,13 +235,8 @@ def calculate_pulse(
     valid_snapshots = _aggregate_snapshots(valid_snapshots)
 
     if len(valid_snapshots) < MIN_SNAPSHOTS:
-        return PulseResult(
-            score=1,
-            components=PulseComponents(0, 0, 0, 0, 1.0, 0),
-            status='flatline',
-            data_quality='insufficient',
-            snapshot_count=raw_count
-        )
+        # Not enough distinct time buckets after aggregation
+        return None
 
     # Sort by time
     valid_snapshots.sort(key=lambda s: s.captured_at)
