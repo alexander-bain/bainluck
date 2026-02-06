@@ -29,36 +29,36 @@ function PropRow({ prop }: { prop: PropBet }) {
     const isOverFavored = overPct >= 50;
 
     return (
-      <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-white/5">
+      <div className="flex items-center justify-between py-[0.5vh] px-[0.6vw] rounded-lg bg-white/5">
         <div className="flex-1 min-w-0">
-          <span className="text-white font-medium text-sm truncate block">
+          <span className="text-white font-medium text-[1.5vh] truncate block">
             {prop.player}
           </span>
-          <span className="text-white/50 text-xs">
+          <span className="text-white/50 text-[1.2vh]">
             {prop.type} {prop.line != null ? `O/U ${prop.line}` : ""}
           </span>
         </div>
-        <div className="flex items-center gap-3 ml-3">
+        <div className="flex items-center gap-[0.8vw] ml-[0.6vw]">
           <div
             className={`text-right ${
               isOverFavored ? "text-emerald-400" : "text-white/60"
             }`}
           >
-            <div className="text-lg font-bold font-mono">{overPct}%</div>
-            <div className="text-[10px] uppercase tracking-wide opacity-60">
+            <div className="font-bold font-mono" style={{ fontSize: "2vh" }}>{overPct}%</div>
+            <div className="text-[1vh] uppercase tracking-wide opacity-60">
               Over
             </div>
           </div>
-          <div className="w-px h-8 bg-white/20" />
+          <div className="w-px bg-white/20" style={{ height: "3vh" }} />
           <div
             className={`text-right ${
               !isOverFavored ? "text-emerald-400" : "text-white/60"
             }`}
           >
-            <div className="text-lg font-bold font-mono">
+            <div className="font-bold font-mono" style={{ fontSize: "2vh" }}>
               {100 - overPct}%
             </div>
-            <div className="text-[10px] uppercase tracking-wide opacity-60">
+            <div className="text-[1vh] uppercase tracking-wide opacity-60">
               Under
             </div>
           </div>
@@ -71,14 +71,14 @@ function PropRow({ prop }: { prop: PropBet }) {
   if (prop.probability != null) {
     const pct = Math.round(prop.probability * 100);
     return (
-      <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-white/5">
+      <div className="flex items-center justify-between py-[0.5vh] px-[0.6vw] rounded-lg bg-white/5">
         <div className="flex-1 min-w-0">
-          <span className="text-white font-medium text-sm truncate block">
+          <span className="text-white font-medium text-[1.5vh] truncate block">
             {prop.player}
           </span>
-          <span className="text-white/50 text-xs">{prop.type}</span>
+          <span className="text-white/50 text-[1.2vh]">{prop.type}</span>
         </div>
-        <div className="text-emerald-400 text-lg font-bold font-mono ml-3">
+        <div className="text-emerald-400 font-bold font-mono ml-[0.6vw]" style={{ fontSize: "2vh" }}>
           {pct}%
         </div>
       </div>
@@ -101,12 +101,12 @@ function PropList({
     <>
       {categories.map((cat) => (
         <div key={`${keyPrefix}-${cat.category}`}>
-          <div className="text-white/70 text-xs font-semibold uppercase tracking-widest py-2 flex items-center gap-2">
+          <div className="text-white/70 text-[1.3vh] font-semibold uppercase tracking-widest py-[0.5vh] flex items-center gap-[0.4vw]">
             <span>{CATEGORY_ICONS[cat.category] || "\u26BD"}</span>
             {cat.category}
             <span className="text-white/30">({cat.props.length})</span>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-[0.3vh]">
             {cat.props.map((prop, i) => (
               <PropRow
                 key={`${keyPrefix}-${prop.player}-${prop.type}-${prop.line}-${i}`}
@@ -209,7 +209,7 @@ function ScrollingPanel({
   if (totalProps === 0) {
     return (
       <div className="flex-1 bg-[#111118] rounded-2xl border border-white/5 flex items-center justify-center">
-        <span className="text-white/20 text-sm">
+        <span className="text-white/20 text-[1.4vh]">
           No {title.toLowerCase()} available
         </span>
       </div>
@@ -223,12 +223,12 @@ function ScrollingPanel({
       onMouseLeave={handleMouseLeave}
     >
       {/* Panel header */}
-      <div className="px-4 pt-3 pb-2 border-b border-white/5 flex items-center justify-between shrink-0">
-        <h3 className="text-white font-semibold text-sm uppercase tracking-wider flex items-center gap-2">
-          <span className="text-lg">{icon}</span>
+      <div className="px-[0.8vw] pt-[0.6vh] pb-[0.4vh] border-b border-white/5 flex items-center justify-between shrink-0">
+        <h3 className="text-white font-semibold text-[1.5vh] uppercase tracking-wider flex items-center gap-[0.4vw]">
+          <span style={{ fontSize: "2vh" }}>{icon}</span>
           {title}
         </h3>
-        <span className="text-white/30 text-xs">{totalProps} props</span>
+        <span className="text-white/30 text-[1.2vh]">{totalProps} props</span>
       </div>
 
       {/* Scrolling viewport */}
@@ -246,13 +246,13 @@ function ScrollingPanel({
             : undefined
         }
       >
-        <div ref={scrollerRef} className="px-3">
+        <div ref={scrollerRef} className="px-[0.5vw]">
           {/* First copy (measured for scroll distance) */}
-          <div ref={singleCopyRef} className="space-y-1 py-3">
+          <div ref={singleCopyRef} className="space-y-[0.4vh] py-[0.6vh]">
             <PropList categories={categories} keyPrefix="a" />
           </div>
           {/* Duplicate for seamless infinite scroll */}
-          <div className="space-y-1 py-3">
+          <div className="space-y-[0.4vh] py-[0.6vh]">
             <PropList categories={categories} keyPrefix="b" />
           </div>
         </div>
@@ -272,7 +272,7 @@ export default function PropBets({ eventId }: PropBetsProps) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full text-white/40 text-sm">
+      <div className="flex items-center justify-center h-full text-white/40 text-[1.4vh]">
         Loading props...
       </div>
     );
@@ -280,7 +280,7 @@ export default function PropBets({ eventId }: PropBetsProps) {
 
   if (error || !data || data.total_props === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-white/30 text-sm">
+      <div className="flex items-center justify-center h-full text-white/30 text-[1.4vh]">
         {error ? "Props unavailable" : "No props available for this event"}
       </div>
     );

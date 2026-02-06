@@ -279,47 +279,45 @@ export default function TVPage({ params }: TVPageProps) {
         colors={confettiColors.length > 0 ? confettiColors : undefined}
       />
 
-      {/* === TOP BAR === */}
-      <header className="bg-gradient-to-r from-[#111118] to-[#16161f] border-b border-white/10 px-6 py-3">
-        <div className="max-w-[1800px] mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <span className="text-2xl">{sportEmoji}</span>
-            <span className="text-white/70 font-semibold text-lg tracking-wide uppercase">
+      {/* === TOP BAR (compact — ~4vh) === */}
+      <header className="shrink-0 bg-gradient-to-r from-[#111118] to-[#16161f] border-b border-white/10 px-[2vw] py-[0.6vh]">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-[1vw]">
+            <span className="text-[2.2vh]">{sportEmoji}</span>
+            <span className="text-white/70 font-semibold text-[1.8vh] tracking-wide uppercase">
               {leagueName}
             </span>
             {isLive && (
-              <span className="flex items-center gap-2 bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-sm font-bold">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+              <span className="flex items-center gap-[0.5vw] bg-red-500/20 text-red-400 px-[1vw] py-[0.3vh] rounded-full text-[1.5vh] font-bold">
+                <span className="w-[1.2vh] h-[1.2vh] rounded-full bg-red-500 animate-pulse" />
                 LIVE
               </span>
             )}
             {isFinished && (
-              <span className="text-white/40 text-sm px-3 py-1 rounded-full bg-white/5">
+              <span className="text-white/40 text-[1.5vh] px-[1vw] py-[0.3vh] rounded-full bg-white/5">
                 FINAL
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-6">
-            {/* ESPN info */}
+          <div className="flex items-center gap-[1.5vw]">
             {event.espn?.broadcast && (
-              <span className="text-white/40 text-sm">
+              <span className="text-white/40 text-[1.5vh]">
                 {event.espn.broadcast}
               </span>
             )}
             {isLive && event.espn?.game_clock && event.espn?.period && (
-              <span className="text-emerald-400 font-mono font-bold text-lg">
+              <span className="text-emerald-400 font-mono font-bold text-[2vh]">
                 {event.espn.period} &middot; {event.espn.game_clock}
               </span>
             )}
-            {/* Pulse badge */}
             {event.pulse && (
-              <div className="flex items-center gap-2">
-                <span className="text-white/40 text-xs uppercase tracking-wider">
+              <div className="flex items-center gap-[0.5vw]">
+                <span className="text-white/40 text-[1.3vh] uppercase tracking-wider">
                   Pulse
                 </span>
                 <span
-                  className="font-bold text-xl font-mono px-3 py-0.5 rounded-lg"
+                  className="font-bold text-[2vh] font-mono px-[0.8vw] py-[0.2vh] rounded-lg"
                   style={{
                     color: pulseColor,
                     backgroundColor: `${pulseColor}20`,
@@ -334,92 +332,109 @@ export default function TVPage({ params }: TVPageProps) {
       </header>
 
       {/* === MAIN CONTENT === */}
-      <div className="flex-1 min-h-0 flex flex-col max-w-[1800px] w-full mx-auto px-6 py-3">
-        {/* Score + Probability Hero */}
-        <div className="shrink-0 mb-3">
-          <div className="flex items-center justify-center gap-8 md:gap-16 mb-4">
+      <div className="flex-1 min-h-0 flex flex-col px-[2vw] py-[1vh] gap-[1vh]">
+        {/* Score + Probability Hero (compact — ~24vh) */}
+        <div className="shrink-0">
+          {/* Teams + Score row */}
+          <div className="flex items-center justify-center gap-[2vw] mb-[0.8vh]">
             {/* Home Team */}
-            <div className="flex flex-col items-center gap-2 flex-1">
+            <div className="flex items-center gap-[1.2vw] flex-1 justify-end">
+              <div className="text-right">
+                <span className="text-white/80 font-semibold text-[2.2vh] tracking-wide block">
+                  {event.home_team}
+                </span>
+                {event.home_team_data?.record && (
+                  <span className="text-white/30 text-[1.3vh]">
+                    {event.home_team_data.record}
+                  </span>
+                )}
+              </div>
               {event.home_team_data?.logo_large && (
                 <img
                   src={event.home_team_data.logo_large}
                   alt=""
-                  className="w-20 h-20 md:w-28 md:h-28 object-contain drop-shadow-2xl"
+                  className="object-contain drop-shadow-2xl"
+                  style={{ width: "9vh", height: "9vh" }}
                 />
-              )}
-              <span className="text-white/80 font-semibold text-lg md:text-2xl tracking-wide">
-                {event.home_team}
-              </span>
-              {event.home_team_data?.record && (
-                <span className="text-white/30 text-sm">
-                  {event.home_team_data.record}
-                </span>
               )}
             </div>
 
             {/* Score */}
-            <div className="text-center">
+            <div className="text-center shrink-0">
               {(isLive || isFinished) &&
               event.home_score != null &&
               event.away_score != null ? (
-                <div className="flex items-center gap-4 md:gap-8">
-                  <span className="text-6xl md:text-8xl font-bold font-mono text-white tabular-nums">
+                <div className="flex items-center gap-[1.5vw]">
+                  <span
+                    className="font-bold font-mono text-white tabular-nums"
+                    style={{ fontSize: "7.5vh", lineHeight: 1 }}
+                  >
                     {event.home_score}
                   </span>
-                  <span className="text-3xl md:text-5xl text-white/30">
+                  <span className="text-white/30" style={{ fontSize: "4vh" }}>
                     &mdash;
                   </span>
-                  <span className="text-6xl md:text-8xl font-bold font-mono text-white tabular-nums">
+                  <span
+                    className="font-bold font-mono text-white tabular-nums"
+                    style={{ fontSize: "7.5vh", lineHeight: 1 }}
+                  >
                     {event.away_score}
                   </span>
                 </div>
               ) : (
-                <div className="text-white/30 text-2xl">VS</div>
+                <div className="text-white/30" style={{ fontSize: "3vh" }}>VS</div>
               )}
             </div>
 
             {/* Away Team */}
-            <div className="flex flex-col items-center gap-2 flex-1">
+            <div className="flex items-center gap-[1.2vw] flex-1">
               {event.away_team_data?.logo_large && (
                 <img
                   src={event.away_team_data.logo_large}
                   alt=""
-                  className="w-20 h-20 md:w-28 md:h-28 object-contain drop-shadow-2xl"
+                  className="object-contain drop-shadow-2xl"
+                  style={{ width: "9vh", height: "9vh" }}
                 />
               )}
-              <span className="text-white/80 font-semibold text-lg md:text-2xl tracking-wide">
-                {event.away_team}
-              </span>
-              {event.away_team_data?.record && (
-                <span className="text-white/30 text-sm">
-                  {event.away_team_data.record}
+              <div>
+                <span className="text-white/80 font-semibold text-[2.2vh] tracking-wide block">
+                  {event.away_team}
                 </span>
-              )}
+                {event.away_team_data?.record && (
+                  <span className="text-white/30 text-[1.3vh]">
+                    {event.away_team_data.record}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Giant Probability Display */}
-          <div className="flex items-center justify-center gap-6 md:gap-12 mb-3">
+          {/* Probability Display */}
+          <div className="flex items-center justify-center gap-[2vw] mb-[0.5vh]">
             <span
-              className={`font-mono text-5xl md:text-7xl font-bold tabular-nums ${
+              className={`font-mono font-bold tabular-nums ${
                 homeFavorite ? "text-white" : "text-white/40"
               }`}
+              style={{ fontSize: "5.5vh", lineHeight: 1 }}
             >
               {formatProbability(homeProb)}
             </span>
-            <span className="text-white/20 text-2xl">WIN PROBABILITY</span>
+            <span className="text-white/20" style={{ fontSize: "1.5vh", letterSpacing: "0.15em" }}>
+              WIN PROBABILITY
+            </span>
             <span
-              className={`font-mono text-5xl md:text-7xl font-bold tabular-nums ${
+              className={`font-mono font-bold tabular-nums ${
                 !homeFavorite ? "text-white" : "text-white/40"
               }`}
+              style={{ fontSize: "5.5vh", lineHeight: 1 }}
             >
               {formatProbability(awayProb)}
             </span>
           </div>
 
-          {/* Probability Bar */}
-          <div className="max-w-4xl mx-auto mb-2">
-            <div className="h-5 w-full rounded-full overflow-hidden flex bg-white/10">
+          {/* Probability Bar (wider for TV impact) */}
+          <div className="max-w-[75%] mx-auto mb-[0.5vh]">
+            <div className="w-full rounded-full overflow-hidden flex bg-white/10" style={{ height: "2.2vh" }}>
               <div
                 className="transition-all duration-700 ease-out rounded-l-full"
                 style={{
@@ -442,13 +457,10 @@ export default function TVPage({ params }: TVPageProps) {
           {/* Momentum Indicator */}
           {momentum && (
             <div className="text-center">
-              <span className="inline-flex items-center gap-2 bg-white/5 px-4 py-1.5 rounded-full text-sm">
+              <span className="inline-flex items-center gap-[0.5vw] bg-white/5 px-[1.2vw] py-[0.4vh] rounded-full text-[1.4vh]">
                 <span
-                  className={`text-lg ${
-                    momentum.delta >= 0.05
-                      ? "animate-bounce"
-                      : ""
-                  }`}
+                  className={momentum.delta >= 0.05 ? "animate-bounce" : ""}
+                  style={{ fontSize: "2vh" }}
                 >
                   {momentum.direction === "up" ? "\u2197\uFE0F" : "\u2197\uFE0F"}
                 </span>
@@ -456,7 +468,7 @@ export default function TVPage({ params }: TVPageProps) {
                 <span className="text-white font-semibold">
                   {momentum.team}
                 </span>
-                <span className="text-emerald-400 font-mono text-xs">
+                <span className="text-emerald-400 font-mono">
                   +{Math.round(momentum.delta * 100)}% in 5 min
                 </span>
               </span>
@@ -464,15 +476,15 @@ export default function TVPage({ params }: TVPageProps) {
           )}
         </div>
 
-        {/* === CHART + KEY MOMENTS ROW === */}
-        <div className="shrink-0 grid grid-cols-1 lg:grid-cols-3 gap-3">
-          {/* Win Probability Chart - takes 2 columns */}
-          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-4 border border-white/5">
-            <h3 className="text-white/50 text-xs uppercase tracking-wider mb-2 font-semibold">
+        {/* === CHART + KEY MOMENTS ROW (~35% of remaining) === */}
+        <div className="flex-[2] min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-[0.8vw]">
+          {/* Win Probability Chart */}
+          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0">
+            <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider mb-[0.5vh] font-semibold shrink-0">
               Win Probability
             </h3>
             {historyData?.history && historyData.history.length > 0 ? (
-              <div className="[&_.recharts-cartesian-grid_line]:!stroke-white/10 [&_.recharts-xAxis_text]:!fill-white/40 [&_.recharts-yAxis_text]:!fill-white/40 [&_.recharts-reference-line_line]:!stroke-white/20">
+              <div className="flex-1 min-h-0 [&_.recharts-cartesian-grid_line]:!stroke-white/10 [&_.recharts-xAxis_text]:!fill-white/40 [&_.recharts-yAxis_text]:!fill-white/40 [&_.recharts-reference-line_line]:!stroke-white/20">
                 <OddsChart
                   history={historyData.history}
                   homeTeam={event.home_team}
@@ -485,78 +497,74 @@ export default function TVPage({ params }: TVPageProps) {
                 />
               </div>
             ) : (
-              <div className="h-64 flex items-center justify-center text-white/20">
+              <div className="flex-1 flex items-center justify-center text-white/20 text-[1.5vh]">
                 Waiting for data...
               </div>
             )}
 
             {/* Pulse ECG Animation */}
             {event.pulse && (
-              <div className="mt-2 border-t border-white/5 pt-2">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-white/30 text-xs uppercase tracking-wider">
+              <div className="shrink-0 mt-[0.5vh] border-t border-white/5 pt-[0.5vh]">
+                <div className="flex items-center justify-between mb-[0.3vh]">
+                  <span className="text-white/30 text-[1.2vh] uppercase tracking-wider">
                     {event.pulse.emoji} Pulse: {event.pulse.label}
                   </span>
                   <span
-                    className="font-mono text-sm font-bold"
+                    className="font-mono text-[1.3vh] font-bold"
                     style={{ color: pulseColor }}
                   >
                     {event.pulse.score}/100
                   </span>
                 </div>
-                <PulseECG score={event.pulse.score} color={pulseColor} height={50} />
+                <PulseECG score={event.pulse.score} color={pulseColor} height={40} />
               </div>
             )}
           </div>
 
-          {/* Sidebar: Key Moments */}
-          <div>
-            <div className="bg-[#111118] rounded-2xl p-4 border border-white/5 h-full overflow-hidden">
-              <h3 className="text-white/50 text-xs uppercase tracking-wider mb-3 font-semibold">
-                Key Moments
-              </h3>
-              {keyMoments.length > 0 ? (
-                <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
-                  {keyMoments.map((moment, i) => (
-                    <div
-                      key={`${moment.timestamp}-${i}`}
-                      className={`flex gap-3 py-1.5 ${
-                        i === 0
-                          ? "text-white"
-                          : "text-white/50"
-                      }`}
-                    >
-                      <span className="text-xs font-mono whitespace-nowrap opacity-60 pt-0.5">
-                        {moment.time}
-                      </span>
-                      <span className="text-sm leading-tight">
-                        {moment.description}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-white/20 text-sm text-center py-6">
-                  {isLive
-                    ? "Waiting for notable shifts..."
-                    : "Moments appear during live games"}
-                </div>
-              )}
-            </div>
+          {/* Key Moments */}
+          <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
+            <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider mb-[0.8vh] font-semibold shrink-0">
+              Key Moments
+            </h3>
+            {keyMoments.length > 0 ? (
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-[0.5vh] pr-1">
+                {keyMoments.map((moment, i) => (
+                  <div
+                    key={`${moment.timestamp}-${i}`}
+                    className={`flex gap-[0.8vw] py-[0.3vh] ${
+                      i === 0 ? "text-white" : "text-white/50"
+                    }`}
+                  >
+                    <span className="text-[1.2vh] font-mono whitespace-nowrap opacity-60 pt-[0.1vh]">
+                      {moment.time}
+                    </span>
+                    <span className="text-[1.3vh] leading-tight">
+                      {moment.description}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-white/20 text-[1.3vh]">
+                {isLive
+                  ? "Waiting for notable shifts..."
+                  : "Moments appear during live games"}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* === PLAYER PROPS — dual auto-scrolling panels === */}
-        <div className="flex-1 min-h-0 mt-3">
+        {/* === PLAYER PROPS — dual auto-scrolling panels (~55% of remaining) === */}
+        <div className="flex-[3] min-h-0">
           <PropBets eventId={eventId} />
         </div>
       </div>
 
       {/* Exit TV mode link */}
-      <div className="fixed bottom-4 left-4 z-50">
+      <div className="fixed bottom-[1vh] left-[1vw] z-50">
         <a
           href={`/events/${eventId}`}
-          className="text-white/20 hover:text-white/60 text-xs transition-colors bg-black/50 px-3 py-1.5 rounded-full backdrop-blur"
+          className="text-white/20 hover:text-white/60 text-[1.2vh] transition-colors bg-black/50 px-[1vw] py-[0.4vh] rounded-full backdrop-blur"
         >
           Exit TV Mode
         </a>
