@@ -1186,13 +1186,27 @@ async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
     }
 
     service = OddsAPIService()
+
+    # Try each market individually — The Odds API returns 422 if ANY requested
+    # market isn't available, so we fetch one at a time and skip failures.
+    all_bookmakers_data = []
+    available_markets = []
+    errors = []
+
     try:
-        markets_str = ",".join(PROP_MARKET_INFO.keys())
-        api_data = await service.get_event_odds(
-            sport_key=sport_key,
-            event_id=event.external_id,
-            markets=markets_str,
-        )
+        for market_key in PROP_MARKET_INFO.keys():
+            try:
+                api_data = await service.get_event_odds(
+                    sport_key=sport_key,
+                    event_id=event.external_id,
+                    markets=market_key,
+                )
+                for bookmaker in api_data.get("bookmakers", []):
+                    all_bookmakers_data.append(bookmaker)
+                available_markets.append(market_key)
+            except Exception:
+                errors.append(market_key)
+                continue
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -1201,12 +1215,23 @@ async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
     finally:
         await service.close()
 
+    if not all_bookmakers_data:
+        return {
+            "event_id": event_id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            "categories": [],
+            "total_props": 0,
+            "available_markets": available_markets,
+            "unavailable_markets": errors,
+        }
+
     # Parse and aggregate props across bookmakers
     # Key: (player, market_key, line) -> list of {over_odds, under_odds} or {yes_odds}
     from collections import defaultdict
     prop_aggregator = defaultdict(lambda: {"over_odds": [], "under_odds": [], "yes_odds": [], "no_odds": []})
 
-    for bookmaker in api_data.get("bookmakers", []):
+    for bookmaker in all_bookmakers_data:
         for market in bookmaker.get("markets", []):
             market_key = market["key"]
             if market_key not in PROP_MARKET_INFO:
@@ -1301,6 +1326,8 @@ async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
         "away_team": event.away_team_name,
         "categories": ordered_categories,
         "total_props": sum(len(c["props"]) for c in ordered_categories),
+        "available_markets": available_markets,
+        "unavailable_markets": errors,
     }
 
 
