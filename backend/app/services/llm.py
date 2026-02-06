@@ -111,14 +111,31 @@ Rules:
             "ufc": "mma",
             "soccer/football": "soccer",
             "football/soccer": "soccer",
+            "horse racing": "horse_racing",
+            "horse_racing": "horse_racing",
+            "auto racing": "motorsports",
+            "motor sports": "motorsports",
+            "motorsport": "motorsports",
+            "australian rules": "aussierules",
+            "australian rules football": "aussierules",
+            "aussie rules": "aussierules",
+            "table tennis": "tennis",
+            "mixed martial arts": "mma",
+            "e-sports": "esports",
+            "video games": "esports",
+            "tv": "entertainment",
+            "movies": "entertainment",
+            "film": "entertainment",
+            "music": "entertainment",
+            "awards": "entertainment",
         }
         if result in mappings:
             mapped = mappings[result]
             if mapped in categories_lower:
                 return categories[categories_lower.index(mapped)]
 
-        logger.warning(f"LLM returned unexpected category '{result}' for text '{text[:50]}...'")
-        return None
+        logger.warning(f"LLM returned unexpected category '{result}' for text '{text[:50]}...', using fallback: {fallback}")
+        return fallback
 
     except Exception as e:
         logger.error(f"LLM classification error: {e}, using fallback: {fallback}")
@@ -139,6 +156,8 @@ SPORT_CATEGORIES = [
     "boxing",
     "cricket",
     "rugby",
+    "aussierules",
+    "horse_racing",
     "olympics",
     "esports",
     "entertainment",
@@ -189,23 +208,27 @@ LEAGUE_OPTIONS = [
 ]
 
 
-def classify_futures_market(market_name: str) -> Optional[str]:
+def classify_futures_market(market_name: str) -> str:
     """
     Classify a futures market name into a sport category.
 
     This is a specialized wrapper around classify() for futures categorization.
+    ALWAYS returns a category - uses "other" as fallback if classification fails.
 
     Args:
         market_name: The name of the futures market (e.g., "2026 Masters Tournament Winner")
 
     Returns:
-        Sport category string, or None if classification failed
+        Sport category string (never None - defaults to "other")
     """
-    return classify(
+    result = classify(
         text=market_name,
         categories=SPORT_CATEGORIES,
         context="This is the name of a betting/prediction market. Classify it by the sport or topic it relates to.",
+        fallback="other",  # Always return a category
     )
+    # Extra safety: never return None
+    return result if result else "other"
 
 
 # Simple in-memory cache for repeated classifications (doesn't cache None)

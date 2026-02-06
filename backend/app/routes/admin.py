@@ -9,8 +9,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Event
+from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
+from app.utils import probability_to_american
 
 router = APIRouter()
 
@@ -53,7 +54,7 @@ async def recalculate_pulse(
         result = await db.execute(
             update(Event)
             .where(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.raw_gei.isnot(None),
             )
             .values(raw_gei=None, gei_components=None, gei_computed_at=None)
@@ -61,12 +62,12 @@ async def recalculate_pulse(
         cleared_count = result.rowcount
         await db.commit()
 
-    # Find completed events without Pulse
+    # Find finished events without Pulse
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
-            Event.status == "completed",
+            Event.status.in_(["completed", "closed"]),
             Event.raw_gei.is_(None),
         )
         .order_by(Event.commence_time.desc())
@@ -120,7 +121,7 @@ async def recalculate_pulse(
                 sport_key=sport_key,
             )
 
-            if pulse_result:
+            if pulse_result and pulse_result.data_quality != "minimal":
                 event.raw_gei = pulse_result.score / 100.0
                 event.gei_components = pulse_result.components.to_json()
                 event.gei_computed_at = datetime.now(timezone.utc)
@@ -137,7 +138,7 @@ async def recalculate_pulse(
     remaining_result = await db.execute(
         select(Event.id)
         .where(
-            Event.status == "completed",
+            Event.status.in_(["completed", "closed"]),
             Event.raw_gei.is_(None),
         )
     )
@@ -477,6 +478,137 @@ async def futures_categorization_status(
     }
 
 
+@router.get("/futures/uncategorized")
+async def list_uncategorized_futures(
+    limit: int = Query(100, description="Max markets to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List uncategorized futures markets.
+
+    Shows market names to help identify patterns that should be added.
+    No auth required - this is diagnostic info only.
+    """
+    from app.models import FuturesMarket
+    from app.utils.futures_categorization import categorize_by_rules
+
+    result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+        .order_by(FuturesMarket.name)
+        .limit(limit)
+    )
+    markets = result.scalars().all()
+
+    # For each market, show what rules would categorize it as (to debug)
+    uncategorized = []
+    for m in markets:
+        rule_result = categorize_by_rules(m.name, m.external_id)
+        uncategorized.append({
+            "id": m.id,
+            "name": m.name,
+            "sport_key": m.external_id,
+            "source": m.source,
+            "rule_would_return": rule_result,  # What pattern matching returns
+        })
+
+    return {
+        "count": len(uncategorized),
+        "markets": uncategorized,
+        "hint": "Markets with rule_would_return=null need LLM or new patterns",
+    }
+
+
+@router.post("/futures/force-categorize")
+async def force_categorize_futures(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(100, description="Max markets to categorize"),
+    dry_run: bool = Query(False, description="Preview without saving"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Force-categorize ALL uncategorized futures using LLM.
+
+    Unlike /categorize which only runs LLM on pattern-miss, this endpoint
+    runs LLM on EVERY uncategorized market and saves the result (even "other").
+
+    This ensures no market is left with llm_sport_category=NULL.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import FuturesMarket
+    from app.services import llm
+
+    if not llm.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM service not available (OPENAI_API_KEY not set?)"
+        )
+
+    # Find uncategorized markets
+    result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+        .limit(limit)
+    )
+    markets = result.scalars().all()
+
+    if not markets:
+        return {
+            "status": "complete",
+            "message": "No uncategorized markets found",
+            "processed": 0,
+        }
+
+    results = []
+    by_category = {}
+
+    for market in markets:
+        # Always use LLM (which now always returns a category)
+        category = llm.classify_futures_market(market.name)
+
+        results.append({
+            "id": market.id,
+            "name": market.name,
+            "category": category,
+        })
+
+        by_category[category] = by_category.get(category, 0) + 1
+
+        if not dry_run:
+            market.llm_sport_category = category
+
+    if not dry_run:
+        await db.commit()
+
+    # Count remaining
+    remaining_result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+    )
+    remaining = len(remaining_result.scalars().all())
+
+    return {
+        "status": "success",
+        "dry_run": dry_run,
+        "processed": len(markets),
+        "remaining": remaining,
+        "by_category": by_category,
+        "sample_results": results[:20],
+        "message": f"Categorized {len(markets)} markets. {remaining} remaining.",
+    }
+
+
 # ============================================================================
 # LLM Metadata Enrichment Endpoints
 # ============================================================================
@@ -775,6 +907,158 @@ async def futures_metadata_status(
 # ============================================================================
 # ESPN Integration Endpoints
 # ============================================================================
+
+
+@router.get("/pulse/distributions")
+async def pulse_distributions(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Analyze the distribution of Pulse scores and components across all scored events.
+
+    Returns histograms and statistics for the overall score and each component
+    (heart_rate, amplitude, arrhythmia, vitals), plus saturation analysis.
+    No auth required - diagnostic/read-only.
+    """
+    import json
+    from sqlalchemy import func
+
+    # Fetch all events with Pulse data
+    result = await db.execute(
+        select(
+            Event.id,
+            Event.raw_gei,
+            Event.gei_components,
+            Event.status,
+        )
+        .where(Event.raw_gei.isnot(None))
+        .order_by(Event.raw_gei.desc())
+    )
+    rows = result.all()
+
+    if not rows:
+        return {"status": "no_data", "message": "No events with Pulse scores found"}
+
+    scores = []
+    components = {
+        "heart_rate": [],
+        "amplitude": [],
+        "arrhythmia": [],
+        "vitals": [],
+        "time_weight": [],
+    }
+    lead_changes_list = []
+    by_status = {}
+
+    for event_id, raw_gei, gei_components_str, status in rows:
+        score = max(1, min(100, round(float(raw_gei) * 100)))
+        scores.append(score)
+
+        # Count by event status
+        by_status[status] = by_status.get(status, 0) + 1
+
+        if gei_components_str:
+            try:
+                comp = json.loads(gei_components_str) if isinstance(gei_components_str, str) else gei_components_str
+                for key in components:
+                    if key in comp:
+                        components[key].append(float(comp[key]))
+                if "lead_changes" in comp:
+                    lead_changes_list.append(int(comp["lead_changes"]))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+    def compute_stats(values: list) -> dict:
+        if not values:
+            return {}
+        sorted_vals = sorted(values)
+        n = len(sorted_vals)
+        return {
+            "count": n,
+            "mean": round(sum(sorted_vals) / n, 2),
+            "median": round(sorted_vals[n // 2], 2),
+            "min": round(sorted_vals[0], 2),
+            "max": round(sorted_vals[-1], 2),
+            "p10": round(sorted_vals[int(n * 0.1)], 2),
+            "p25": round(sorted_vals[int(n * 0.25)], 2),
+            "p75": round(sorted_vals[int(n * 0.75)], 2),
+            "p90": round(sorted_vals[int(n * 0.9)], 2),
+        }
+
+    def compute_histogram(values: list, buckets: list[tuple]) -> list[dict]:
+        hist = []
+        for label, lo, hi in buckets:
+            count = sum(1 for v in values if lo <= v < hi)
+            pct = round(count / len(values) * 100, 1) if values else 0
+            hist.append({"range": label, "count": count, "pct": pct})
+        return hist
+
+    # Score histogram (10-point buckets)
+    score_buckets = [
+        ("1-10", 1, 11), ("11-20", 11, 21), ("21-30", 21, 31),
+        ("31-40", 31, 41), ("41-50", 41, 51), ("51-60", 51, 61),
+        ("61-70", 61, 71), ("71-80", 71, 81), ("81-90", 81, 91),
+        ("91-100", 91, 101),
+    ]
+
+    # Component histogram (0-1 in 10% buckets, displayed as percentages)
+    comp_buckets = [
+        ("0-10%", 0.0, 0.1), ("10-20%", 0.1, 0.2), ("20-30%", 0.2, 0.3),
+        ("30-40%", 0.3, 0.4), ("40-50%", 0.4, 0.5), ("50-60%", 0.5, 0.6),
+        ("60-70%", 0.6, 0.7), ("70-80%", 0.7, 0.8), ("80-90%", 0.8, 0.9),
+        ("90-100%", 0.9, 1.01),  # 1.01 to include exactly 1.0
+    ]
+
+    # Saturation analysis: how many are at 100% (>=0.99)
+    saturation = {}
+    for key, vals in components.items():
+        if vals:
+            at_max = sum(1 for v in vals if v >= 0.99)
+            saturation[key] = {
+                "at_100_pct": at_max,
+                "at_100_pct_ratio": round(at_max / len(vals) * 100, 1),
+            }
+
+    # Pulse status distribution
+    status_labels = {
+        "flatline": (1, 20),
+        "weak": (21, 40),
+        "steady": (41, 60),
+        "strong": (61, 80),
+        "racing": (81, 100),
+    }
+    pulse_status_dist = {}
+    for label, (lo, hi) in status_labels.items():
+        count = sum(1 for s in scores if lo <= s <= hi)
+        pulse_status_dist[label] = {
+            "count": count,
+            "pct": round(count / len(scores) * 100, 1),
+        }
+
+    return {
+        "total_events": len(scores),
+        "by_event_status": by_status,
+        "score": {
+            "stats": compute_stats(scores),
+            "histogram": compute_histogram(scores, score_buckets),
+            "status_distribution": pulse_status_dist,
+        },
+        "components": {
+            key: {
+                "stats": compute_stats(vals),
+                "histogram": compute_histogram(vals, comp_buckets),
+            }
+            for key, vals in components.items()
+        },
+        "saturation": saturation,
+        "lead_changes": {
+            "stats": compute_stats(lead_changes_list),
+            "distribution": {
+                str(i): sum(1 for lc in lead_changes_list if lc == i)
+                for i in range(max(lead_changes_list) + 1)
+            } if lead_changes_list else {},
+        },
+    }
 
 
 @router.post("/espn/sync-teams")
@@ -1239,4 +1523,152 @@ async def match_espn_teams(
         "espn_teams_searched": len(espn_teams),
         "llm_available": llm.is_available(),
         "matches": results[:10],
+    }
+
+
+@router.post("/futures/normalize-probabilities")
+async def normalize_futures_probabilities(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    dry_run: bool = Query(False, description="Preview changes without saving"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Normalize historical Odds API futures probabilities to remove vig/overround.
+
+    Raw implied probabilities from American odds sum to >100% per bookmaker
+    (typically 130-150% for markets with many outcomes). This endpoint:
+
+    1. Normalizes all futures_odds_snapshots for odds_api markets
+    2. Recalculates current_probability on futures_outcomes
+    3. Recalculates opening_probability on futures_outcomes
+    4. Recalculates American odds from normalized probabilities
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from collections import defaultdict
+    from statistics import mean
+
+    stats = {
+        "markets_processed": 0,
+        "snapshots_normalized": 0,
+        "outcomes_updated": 0,
+        "sample_changes": [],
+    }
+
+    # Get all Odds API futures markets with their outcomes
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.source == "odds_api")
+    )
+    markets = result.scalars().all()
+
+    for market in markets:
+        outcome_ids = [o.id for o in market.outcomes]
+        if not outcome_ids:
+            continue
+
+        # Fetch all snapshots for this market's outcomes
+        snap_result = await db.execute(
+            select(FuturesOddsSnapshot)
+            .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
+            .order_by(FuturesOddsSnapshot.captured_at)
+        )
+        snapshots = snap_result.scalars().all()
+
+        if not snapshots:
+            continue
+
+        stats["markets_processed"] += 1
+
+        # Group snapshots by (bookmaker, captured_at) to find normalization factor
+        # Key: (bookmaker, captured_at) -> list of (snapshot, probability)
+        groups: dict[tuple, list] = defaultdict(list)
+        for snap in snapshots:
+            if snap.probability is not None:
+                groups[(snap.bookmaker, snap.captured_at)].append(snap)
+
+        # Normalize each group
+        for (bookmaker, captured_at), group_snaps in groups.items():
+            total_prob = sum(float(s.probability) for s in group_snaps)
+            if total_prob <= 0 or abs(total_prob - 1.0) < 0.01:
+                # Already normalized or invalid, skip
+                continue
+
+            for snap in group_snaps:
+                old_prob = float(snap.probability)
+                new_prob = old_prob / total_prob
+                new_american = probability_to_american(new_prob) if new_prob > 0 else None
+
+                if not dry_run:
+                    snap.probability = new_prob
+                    snap.american_odds = new_american
+
+                stats["snapshots_normalized"] += 1
+
+                # Capture a few examples
+                if len(stats["sample_changes"]) < 10:
+                    outcome_name = next(
+                        (o.name for o in market.outcomes if o.id == snap.outcome_id),
+                        "?"
+                    )
+                    stats["sample_changes"].append({
+                        "market": market.name,
+                        "outcome": outcome_name,
+                        "bookmaker": bookmaker,
+                        "old_prob": round(old_prob, 6),
+                        "new_prob": round(new_prob, 6),
+                        "normalization_factor": round(total_prob, 4),
+                    })
+
+        # Now recalculate current_probability and opening_probability
+        # on each outcome using normalized snapshots
+        for outcome in market.outcomes:
+            outcome_snaps = [s for s in snapshots if s.outcome_id == outcome.id]
+            if not outcome_snaps:
+                continue
+
+            # Current probability: average of most recent snapshot per bookmaker
+            latest_by_bm: dict[str, FuturesOddsSnapshot] = {}
+            for snap in outcome_snaps:
+                bm = snap.bookmaker
+                if bm not in latest_by_bm or snap.captured_at > latest_by_bm[bm].captured_at:
+                    latest_by_bm[bm] = snap
+
+            if latest_by_bm:
+                avg_current = mean(
+                    float(s.probability) for s in latest_by_bm.values()
+                    if s.probability is not None
+                )
+                new_american = probability_to_american(avg_current) if avg_current > 0 else None
+                if not dry_run:
+                    outcome.current_probability = avg_current
+                    outcome.current_american_odds = new_american
+
+            # Opening probability: average of earliest snapshot per bookmaker
+            earliest_by_bm: dict[str, FuturesOddsSnapshot] = {}
+            for snap in outcome_snaps:
+                bm = snap.bookmaker
+                if bm not in earliest_by_bm or snap.captured_at < earliest_by_bm[bm].captured_at:
+                    earliest_by_bm[bm] = snap
+
+            if earliest_by_bm:
+                avg_opening = mean(
+                    float(s.probability) for s in earliest_by_bm.values()
+                    if s.probability is not None
+                )
+                opening_american = probability_to_american(avg_opening) if avg_opening > 0 else None
+                if not dry_run:
+                    outcome.opening_probability = avg_opening
+                    outcome.opening_american_odds = opening_american
+
+            stats["outcomes_updated"] += 1
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "status": "dry_run" if dry_run else "completed",
+        "stats": stats,
     }

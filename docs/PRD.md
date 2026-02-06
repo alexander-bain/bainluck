@@ -377,14 +377,17 @@ def project_scores(home_prob: float, over_under: float) -> tuple[float, float]:
 OddsTracker's proprietary excitement metric measuring how "alive" a game is based on probability movement patterns.
 
 **Components (weighted):**
-- **Heart Rate (25%)**: Frequency of significant probability moves (≥2% threshold)
-- **Amplitude (30%)**: Magnitude of probability swings (RMS calculation)
-- **Arrhythmia (15%)**: Unpredictability/variance of changes
-- **Vitals (30%)**: Current game competitiveness (closeness to 50/50)
+- **Heart Rate (25%)**: Frequency of significant probability moves (≥2% threshold). Normalized: moves/min ÷ 0.6
+- **Amplitude (30%)**: Magnitude of probability swings (RMS calculation). Normalized: RMS ÷ 0.15
+- **Arrhythmia (15%)**: Unpredictability/variance of changes. Normalized: stdev ÷ 0.10
+- **Vitals (30%)**: Average closeness to 50% across all snapshots (rewards games that stayed competitive throughout, not just games that ended close)
 - **Lead Changes Bonus (0-20%)**: Each time probability crosses 50%
 
 **Time Weight Enhancement:**
 Late-game drama counts more. Uses exponential curve: `0.6 + 0.4 × (progress^1.5)`
+
+**Percentile Scoring Layer:**
+Raw scores are mapped to percentiles using completed/closed games as the reference set (`gei_percentiles` table). The percentile score is what users see. Falls back to raw score when percentiles are unavailable. Sport-specific percentiles are used when available, with global fallback.
 
 **Score Scale (1-100):**
 | Score | Status | Label | Emoji |
@@ -399,8 +402,10 @@ Late-game drama counts more. Uses exponential curve: `0.6 + 0.4 × (progress^1.5
 
 **Requirements:**
 - Minimum 3 odds snapshots to calculate
+- Minimum 10 odds snapshots to appear in Hall of Fame rankings (prevents low-data false positives)
 - Sport-specific expected durations for time weighting
 - Updates in real-time for live games, batch-processed for completed games
+- After algorithm changes, force-recalculate via admin endpoint (scores are cached in `raw_gei`)
 
 ### Futures Pulse (Planned)
 
@@ -426,54 +431,103 @@ Adapt the Pulse concept to measure the drama of championship races over weeks/mo
 - **Display**: Single score like events, or a richer "race status" display?
 - **Threshold**: What's "exciting" for futures? Probably need different calibration than events.
 
-### Highlights Ranking Algorithm (Planned)
+### Highlights Ranking Algorithm ✅ Implemented
 
-```python
-def calculate_highlight_score(event: Event, context: dict) -> float:
-    """
-    Calculate a composite score for surfacing events in highlights.
+Events are scored 0–100 by `backend/app/utils/highlights.py` using additive weights:
 
-    Factors (weighted):
-    - Closeness (40%): How close is the matchup?
-    - Timing (25%): Is the game about to start or live?
-    - Popularity (15%): Is this a major sport/league?
-    - Movement (10%): Have odds moved significantly recently?
-    - User relevance (10%): Does user follow these teams?
+| Factor | Points | Notes |
+|--------|--------|-------|
+| Live | +30 | Requires `status="live"` AND `commence_time` passed |
+| Close matchup (40–60%) | +25 | Pre-game: requires trend evidence (see below) |
+| Very close (45–55%) | +10 | Bonus on top of close matchup |
+| Favorite switched | +20 | Live/completed only |
+| Major prob swing (≥15%) | +15 | From opening line |
+| Major score swing (≥20%) | +10 | Projected total change from opening |
+| Starting in <3h | +15 | |
+| Starting in <1h | +10 | Bonus on top of 3h |
+| Tier 1 league | +10 | NBA, NFL, MLB, NHL |
+| Tier 2 league | +5 | NCAAB, NCAAF, MLS |
+| Recent upset | +20 | Finished + favorite switched |
+| Recently finished | +5 | Within 24h |
 
-    Returns score 0-100 for ranking.
-    """
-    closeness = 1 - abs(event.home_prob - 0.5) * 2  # 0-1
+Events with score ≥30 appear in the Highlights section. Live close games and recent upsets always qualify regardless of score.
 
-    # Timing: live games > starting soon > later
-    if event.status == 'live':
-        timing = 1.0
-    elif event.minutes_to_start < 60:
-        timing = 0.8
-    elif event.minutes_to_start < 180:
-        timing = 0.5
-    else:
-        timing = 0.2
+**Key design rule — pre-game trend evidence:**
+Pre-game closeness (e.g., 51/49 across 13 books) could be aggregation noise, not a real story. Close-matchup points are only awarded for pre-game events when:
+- The line **moved ≥5%** from opening (market is repricing)
+- The opening was **not** close but the current odds are (line tightened)
+- The game is **starting soon** (closeness becomes action-relevant)
 
-    # Popularity by league tier
-    tier = context.get('sport_tier', 3)  # 1=major, 2=secondary, 3=other
-    popularity = {1: 1.0, 2: 0.6, 3: 0.3}.get(tier, 0.3)
+**Labels** (shown on cards in the Highlights section):
+| Label | Condition |
+|-------|-----------|
+| Recent upset | Finished + favorite switched |
+| Upset brewing | Live + favorite switched |
+| Coin flip | Live + very close (45–55%) |
+| Close game | Live + close (40–60%) |
+| Momentum shift | Live + major prob swing |
+| Close matchup | Starting soon + close |
+| Live | Live (no other flags) |
+| Line moving | Pre-game + major prob swing (≥15%) |
 
-    # Recent odds movement (large swings are interesting)
-    movement = min(context.get('prob_change_1h', 0) * 5, 1.0)
+### Ranking & Feed Evolution
 
-    # User relevance (if they follow these teams)
-    user_relevance = 1.0 if context.get('user_favorite') else 0.3
+The highlight scoring system is **v1 of a ranking algorithm** that will eventually power:
+- **iOS feed tab**: A scrollable feed of the most interesting live and recently finished events
+- **Search result ranking**: Results ordered by relevance and excitement, not just status
+- **Widgets**: "Most Exciting Game Right Now" needs a single best answer
+- **Notifications**: Deciding what's worth interrupting a user about
 
-    score = (
-        closeness * 0.40 +
-        timing * 0.25 +
-        popularity * 0.15 +
-        movement * 0.10 +
-        user_relevance * 0.10
-    )
+This is a long-term workstream. Each level builds on the previous one and should be validated before moving to the next.
 
-    return round(score * 100, 1)
-```
+#### Level 1: Snapshot scoring (current) ✅
+`compute_highlight` compares current aggregated odds to opening odds. Simple additive weights. No access to odds history — just two points in time.
+
+**What works:** Catches live upsets, close games, big pre-game line moves.
+**What doesn't:** Can't distinguish noise from trends without the trend evidence heuristics. Can't detect momentum (accelerating movement vs one-time jump). All events of the same type score identically regardless of sport-specific context.
+
+#### Level 2: Time-series aware scoring
+Pass recent snapshot history into the ranking function. This enables:
+- **Trend detection**: Is the line moving consistently in one direction, or oscillating? Consistent movement is a story; oscillation is noise.
+- **Velocity/acceleration**: A line that moved 5% in the last 10 minutes is more interesting than one that moved 5% over 3 days.
+- **Volatility scoring**: High-variance odds histories (lots of movement) are inherently more interesting than flat lines, even if the current state looks unremarkable.
+- **Convergence/divergence**: Are bookmakers agreeing more or less over time? Divergence suggests genuine uncertainty.
+
+**Data available today:** `odds_snapshots` has per-bookmaker, per-poll readings. `odds_aggregated` has period-based min/max/avg. `espn_snapshots` captures ESPN's model during live games. The time-series data exists — `compute_highlight` just doesn't use it yet.
+
+**Data model work needed:** Consider pre-computing summary stats on the event row (e.g., `max_prob_swing_1h`, `snapshot_count_1h`, `odds_volatility`) to avoid querying snapshot tables on every ranking call. These could be updated by the polling tasks that already touch these events.
+
+#### Level 3: Sport-specific and contextual scoring
+Different sports have different baseline dynamics:
+- A 51/49 NBA game is common; a 51/49 MLB game is rare and notable
+- A 10-point swing in football means more in Q4 than Q1
+- College basketball upsets are more frequent and exciting than NBA upsets
+
+Also: game context from ESPN (quarter/period, time remaining, score margin) should influence ranking. A 52/48 game in the 4th quarter with 2 minutes left is wildly more interesting than 52/48 in the 1st quarter.
+
+**Data available today:** `espn_snapshots` has `period`, `clock`, `home_score`, `away_score`. Events have `llm_importance` (playoff/regular_season). Sport tiers exist in highlights.py.
+
+**Data model work needed:** Sport-specific baseline distributions (what's a "normal" amount of volatility for NFL vs NBA vs MLB). Could be a config table or derived from historical data. Game-phase weighting functions per sport.
+
+#### Level 4: Personalized ranking
+User favorites boost events featuring their teams. Recent viewing history could influence ranking (don't re-surface events they've already seen; boost sports they engage with).
+
+**Data model planned:** `user_favorites` table is designed in the PRD schema. `pinned_items` migration is planned post-auth.
+
+**Data model work needed:** A `user_event_interactions` table (or analytics-derived) to know what a user has already seen/engaged with. The ranking function needs a user context parameter, which means the API endpoint signatures change.
+
+**Important constraint:** Logged-out experience must remain high quality. Personalization is additive, not required. The universal ranking must work well on its own.
+
+#### Level 5: Learned ranking
+Use engagement signals (from GA4 or a lightweight event log) as a feedback loop: did users click through to events the algorithm ranked highly? Did they spend time on event detail pages? Over time, this data can calibrate weights — or replace the hand-tuned additive model entirely.
+
+This is the longest-term step and only makes sense once the product has meaningful traffic and the iOS app is live. Don't invest here prematurely.
+
+#### Design principles across all levels
+- **Transparency**: Users should always understand *why* something is highlighted (via labels). A black-box feed that surfaces events for opaque reasons undermines trust.
+- **Stability**: Rankings shouldn't flicker. An event shouldn't jump in and out of the feed rapidly. Consider hysteresis (higher threshold to enter, lower to exit).
+- **Graceful degradation**: If snapshot history is unavailable, fall back to snapshot scoring. If no user context, use universal ranking. Each level is an enhancement, not a dependency.
+- **Shared infrastructure**: The iOS feed, web highlights, search ranking, and widget "best game" should all use the same underlying scoring function with different thresholds and filters — not separate implementations.
 
 ---
 
@@ -742,23 +796,45 @@ Completed: February 2026
 - [x] Admin endpoints for Pulse management (`/api/admin/pulse/status`, `/api/admin/pulse/recalculate`)
 - [x] Debug endpoint for Pulse diagnostics (`/api/events/debug/pulse`)
 
-### Phase 5: Authentication & Personalization
+### Phase 5: Pinned Events & Futures ✅ Complete
+**Track important events without requiring authentication.**
+
+Completed: February 2026
+
+- [x] Pin/unpin events from cards and detail pages
+- [x] Pin/unpin futures markets from cards and detail pages
+- [x] Pinned sections on homepage (above Highlights)
+- [x] Maximum 6 events + 6 futures pinned simultaneously
+- [x] Works for events outside 7-day window (e.g., Super Bowl)
+- [x] Cross-tab sync via localStorage
+- [x] Search results support pinning
+
+**Implementation:**
+- localStorage-based (no auth required)
+- `usePinnedEvents` and `usePinnedFutures` hooks
+- `fetchEventsByIds` and `fetchFuturesByIds` for loading pinned items
+- Subtle pin icon on cards (visible on hover, amber when pinned)
+
+**Future Enhancement:** Migrate to database storage when Firebase Auth is implemented for cross-device sync.
+
+### Phase 6: Authentication & Personalization
 **User accounts for cross-device experience.**
 
 Target: Q2 2026
 
 - [ ] Firebase Auth integration (Google, Apple sign-in)
 - [ ] Favorite teams (persisted to database)
+- [ ] Migrate pinned items to database
 - [ ] Personalized highlights based on favorites
 - [ ] Cross-device sync of preferences
 - [ ] Optional: Email notifications for favorite teams
 
 **Auth Philosophy:**
 - No required sign-in — logged-out experience must feel complete
-- Auth unlocks: Favorites sync, notifications, cross-device
+- Auth unlocks: Favorites sync, notifications, cross-device, pinned items sync, Team Insights (Phase 15)
 - Auth is **pull-based, not forced**
 
-### Phase 6: LLM Integration & Metadata Enrichment ✅ Complete
+### Phase 7: LLM Integration & Metadata Enrichment ✅ Complete
 **OpenAI-powered smart features and ESPN data integration.**
 
 Infrastructure complete: February 2026
@@ -807,11 +883,12 @@ POST /api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=baske
 ```python
 from app.services import llm
 
-# General classification
-result = llm.classify("Some text", ["option1", "option2", "option3"])
+# General classification (always returns a result when fallback is set)
+result = llm.classify("Some text", ["option1", "option2", "option3"], fallback="option1")
 
-# Futures categorization (with caching)
-category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
+# Futures categorization (always returns a category, never None)
+category = llm.classify_futures_market("2026 Masters Tournament Winner")
+# Returns: "golf" — LLM response normalization handles variants like "horse racing" → "horse_racing"
 
 # Metadata enrichment
 metadata = llm.enrich_event_metadata("Lakers", "Celtics", "basketball_nba")
@@ -822,13 +899,36 @@ confidence = llm.match_team_names_cached("LA Lakers", "Los Angeles Lakers", "bas
 # Returns: 0.95 (high confidence they're the same team)
 ```
 
+**LLM Service Capabilities:**
+```python
+from app.services import llm
+
+# General classification
+result = llm.classify("Some text", ["option1", "option2", "option3"])
+
+# Futures categorization (with caching)
+category = llm.classify_futures_market_cached("2026 Masters Tournament Winner")
+```
+
+**Categorization Status (as of Feb 2026):**
+- ~170 futures markets processed through hybrid categorization
+- Pattern matching handles ~85% of markets (baseball awards, pro sports, leagues, etc.)
+- LLM handles remaining edge cases (athlete names, ambiguous markets)
+- ~67 markets may still need improved LLM prompt (unmerged PR with better prompt)
+
+**Future LLM Use Cases:**
+- Plain English explanations for odds movements
+- Team name normalization across sources
+- Smart search query understanding
+- Market description generation
+
 **Principles:**
 - Brief, factual, non-predictive
 - Only surface for meaningful events
 - No gambling advice or encouragement
 - Hybrid approach: rules first, LLM fallback for edge cases
 
-### Phase 7: iOS App
+### Phase 8: iOS App
 **Native second-screen experience.**
 
 Target: Q3 2026
@@ -844,7 +944,7 @@ Target: Q3 2026
   - Upcoming games for favorite teams
   - "Most Exciting Game Right Now"
 
-### Phase 8: Futures Markets ✅ Complete
+### Phase 9: Futures Markets ✅ Complete
 **Championship odds, MVP races, and outrights.**
 
 Completed: February 2026
@@ -865,7 +965,7 @@ Completed: February 2026
 - Full outcome list on detail page
 - 24h probability change indicators
 
-### Phase 9: Prediction Markets (Kalshi Integration) ✅ Complete
+### Phase 10: Prediction Markets (Kalshi Integration) ✅ Complete
 **Politics, entertainment, and event-based markets.**
 
 Completed: February 2026
@@ -884,7 +984,7 @@ Completed: February 2026
 
 **To add more categories** (e.g., Entertainment), edit `sports_categories` in `tasks.py`
 
-### Phase 10: Additional Data Sources
+### Phase 11: Additional Data Sources
 **Expanding coverage and depth.**
 
 Target: 2027
@@ -895,7 +995,193 @@ Target: 2027
 - [ ] Alternative odds sources for redundancy
 - [ ] Real-time sports data (play-by-play) for richer context
 
-### Phase 11: Advanced LLM Features
+### Phase 12: Probability Comparisons ("Comparable Odds")
+**Make win probabilities viscerally relatable by comparing them to real-world likelihoods.**
+
+Target: TBD (Exploratory)
+
+A user sees their team has a 15% chance of winning. Instead of just a number, a "Comparable Odds" box on the event detail page tells them: *"About as likely as rain on a summer day in Atlanta"* or *"About as likely as your neighbor owning a dog in Germany."*
+
+**Why this works:**
+- Probabilities are abstract; real-world analogies make them intuitive
+- Fits the product's mission of making odds *understandable* to non-bettors
+- Creates a delightful, shareable moment ("Did you know your team's odds are the same as...")
+- Reinforces the second-screen experience with conversation starters
+
+**Requirements:**
+- **Massive comparison database**: Minimum 1,000 entries to avoid repetition, ideally growing over time
+- **Bucketed by probability range**: Group comparisons into bands (0-5%, 5-10%, 10-15%, ..., 95-100%) for easy lookup
+- **Diverse categories**: Weather, animals, geography, pop culture, science, food, daily life, sports trivia, etc.
+- **Sourced and factual**: Each comparison should be based on real statistics with a citation
+- **Tone**: Fun, surprising, educational — never condescending or gambling-adjacent
+
+**Data Model:**
+```sql
+CREATE TABLE probability_comparisons (
+    id SERIAL PRIMARY KEY,
+    probability_min DECIMAL(5,4) NOT NULL,  -- Lower bound (e.g., 0.10)
+    probability_max DECIMAL(5,4) NOT NULL,  -- Upper bound (e.g., 0.15)
+    comparison_text TEXT NOT NULL,           -- "Rain on a summer day in Atlanta"
+    category VARCHAR(50),                   -- weather, animals, geography, science, etc.
+    source TEXT,                             -- Citation/source for the statistic
+    fun_factor INTEGER DEFAULT 5,           -- 1-10, for ranking/selection
+    created_at TIMESTAMP DEFAULT NOW(),
+    active BOOLEAN DEFAULT true
+);
+
+CREATE INDEX idx_prob_comparisons_range ON probability_comparisons(probability_min, probability_max);
+CREATE INDEX idx_prob_comparisons_category ON probability_comparisons(category);
+```
+
+**Population strategy:**
+- Seed with LLM-generated comparisons (GPT-4o or Claude), then manually verify sources
+- Crowdsource additions over time (user submissions after auth)
+- Periodic LLM batch jobs to generate new comparisons for underrepresented ranges
+- Target distribution: ~50+ comparisons per 5% bucket to ensure variety
+
+**Display (Event Detail Page):**
+```
+Comparable Odds
+───────────────
+Lakers have a 15% chance of winning.
+
+🎲 That's about as likely as...
+   "A coin landing heads 3 times in a row"
+
+   [Show another] [📋 Share]
+```
+
+**Implementation considerations:**
+- Random selection within the matching bucket (with optional category rotation)
+- "Show another" button to cycle through comparisons without page reload
+- Share button to generate a social card with the comparison
+- API endpoint: `GET /api/comparisons?probability=0.15` returns a random match
+- Cache aggressively — comparisons don't change often
+
+**Open questions:**
+- Should comparisons be localized (US-centric vs international)?
+- Should users be able to submit their own comparisons?
+- Should we show one comparison or a few? (One feels cleaner, aligns with product principles)
+- How to handle the 45-55% range where most comparisons are boring? ("About as likely as a coin flip" gets old)
+
+### Phase 13: Event Similarity Scores
+**Find historical events that followed the most similar probability pattern — the "Baseball Reference" approach for odds.**
+
+Target: TBD (Exploratory)
+
+Inspired by [Baseball Reference's similarity scores](https://www.baseball-reference.com/about/similarity.shtml), this feature would show users which past games followed probability arcs most similar to the current or completed game. During a live game: *"This game is tracking most similarly to Lakers vs Celtics, March 2026 (Pulse: 87)."* After a game: *"Most similar games in our database."*
+
+**Why this works:**
+- Adds historical depth and context to every game
+- Creates a "rabbit hole" effect — users explore past games they'd never have found
+- Makes the growing historical database a visible, valuable asset
+- Works especially well for high-drama games ("This is shaping up like THAT game")
+- Bridges the second-screen experience with storytelling
+
+**Similarity algorithm (proposed):**
+```python
+def calculate_similarity(event_a_history, event_b_history) -> float:
+    """
+    Compare two events' probability histories using multiple dimensions.
+
+    Components (weighted):
+    - Probability curve shape (40%): DTW or resampled point-by-point comparison
+    - Final margin (15%): How close the final probabilities were
+    - Volatility pattern (20%): Similar number/size of swings
+    - Lead changes (15%): Similar number of favorite flips
+    - Sport match (10%): Same sport gets a bonus
+
+    Returns similarity score 0-100 (100 = identical pattern).
+    """
+```
+
+**Key technical challenges:**
+- **Time normalization**: Games have different lengths. Need to resample probability histories to a common timeline (e.g., 100 points representing 0-100% game progress)
+- **Efficient comparison**: Comparing every pair is O(n²). Need smart indexing:
+  - Pre-compute feature vectors (volatility, lead changes, max swing, final margin)
+  - Use approximate nearest neighbor search on feature vectors
+  - Only do expensive curve comparison on top candidates
+- **Live matching**: During a game, compare the partial curve against completed games' equivalent partial curves
+
+**Data requirements:**
+- Minimum ~500 completed events with full probability histories to be useful
+- More historical data = better matches
+- Need to store normalized probability curves for fast comparison
+
+**Data Model:**
+```sql
+-- Pre-computed similarity features for fast lookup
+CREATE TABLE event_similarity_features (
+    event_id INTEGER PRIMARY KEY REFERENCES events(id),
+    sport_key VARCHAR(50),
+    -- Normalized feature vector for approximate matching
+    total_volatility DECIMAL(8,4),
+    max_swing DECIMAL(5,4),
+    lead_changes INTEGER,
+    final_margin DECIMAL(5,4),
+    pulse_score INTEGER,
+    -- Resampled probability curve (100 points, 0-100% game progress)
+    normalized_curve JSONB,  -- [0.55, 0.53, 0.58, ..., 0.72]
+    computed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_similarity_sport ON event_similarity_features(sport_key);
+CREATE INDEX idx_similarity_volatility ON event_similarity_features(total_volatility);
+CREATE INDEX idx_similarity_pulse ON event_similarity_features(pulse_score);
+
+-- Cached similarity results (top N similar for each event)
+CREATE TABLE event_similarities (
+    event_id INTEGER REFERENCES events(id),
+    similar_event_id INTEGER REFERENCES events(id),
+    similarity_score DECIMAL(5,2),  -- 0-100
+    rank INTEGER,                   -- 1 = most similar
+    computed_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (event_id, similar_event_id)
+);
+```
+
+**Display (Event Detail Page):**
+```
+Similar Games
+─────────────
+This game's probability pattern most closely resembles:
+
+1. 🏀 Lakers vs Celtics — Mar 12, 2026 (92% similar)
+   Pulse: 87 | Final: 112-108 | 3 lead changes
+   [View game →]
+
+2. 🏀 Warriors vs Nuggets — Feb 28, 2026 (85% similar)
+   Pulse: 74 | Final: 105-101 | 2 lead changes
+   [View game →]
+
+3. 🏈 Chiefs vs Bills — Jan 19, 2026 (78% similar)
+   Pulse: 91 | Final: 28-24 | 4 lead changes
+   [View game →]
+```
+
+**Live game display:**
+```
+Tracking Similar To...
+──────────────────────
+Through 3 quarters, this game is tracking most like:
+🏀 Heat vs Bucks — Jan 15, 2026 (Pulse: 82)
+That game ended with a 4-point margin after a late comeback.
+```
+
+**Phases:**
+1. **v1**: Post-game similarity only (batch computed after game ends)
+2. **v2**: Live similarity matching (compare partial curves during games)
+3. **v3**: Cross-sport similarity ("This NFL game feels like THAT NBA game")
+4. **v4**: User-facing "Find games like this" search feature
+
+**Open questions:**
+- Should similarity be computed only within the same sport, or cross-sport?
+- How far back should the historical window go? (All-time vs last 2 seasons)
+- Should we weight recent games higher in similarity results?
+- What's the minimum number of odds snapshots needed for meaningful comparison?
+- How to present similarity during live games without spoiling the referenced game's outcome?
+
+### Phase 14: Advanced LLM Features
 **Intelligent explanations, search, and context generation.**
 
 Target: 2027
@@ -1048,6 +1334,193 @@ CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_s
 - ESPN historical games (supplementary)
 - Sports Reference (research/validation)
 
+### Phase 15: Team Insights (LLM-Powered Personalized Feed)
+**Personalized insights about your favorite teams, synthesized by LLM from structured DB queries.**
+
+Target: TBD (Exploratory — requires Firebase Auth for favorites persistence)
+
+#### Concept
+During onboarding (or anytime), users select their favorite teams. The system runs structured queries to gather recent data about those teams, then uses GPT-4o-mini to synthesize the ~10 most interesting insights. This creates a personalized "What you missed" or "What's coming up" experience.
+
+**Example Insights:**
+| Headline | Body | Type |
+|----------|------|------|
+| Lakers are live right now | LAL trailing Celtics 58-62 in Q3, 41% win probability | live |
+| Patriots upset the Bills | Won 24-21 as +280 underdogs yesterday — Pulse score of 89 | result |
+| Yankees' title odds surging | Championship probability jumped from 8% to 14% this week | futures |
+| Lakers-Warriors Friday night | Opening line: LAL -3.5 (62% implied). First meeting since playoff elimination | upcoming |
+
+#### Architecture
+
+**Key Design Decision:** Don't let the LLM query the DB. Instead, pre-query structured data per team, then let the LLM synthesize and narrate. This is cheaper, faster, more reliable, and auditable.
+
+```
+Onboarding → Store favorites → Query DB per team → Build data packet → LLM narrates → 10 insights
+```
+
+#### Data Gathering (per team)
+
+Five structured queries run for each favorite team:
+
+```python
+async def gather_team_data(team_id: int, db: AsyncSession) -> dict:
+    """Gather all insight-worthy data for a team."""
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+
+    # 1. Recent results (completed games, last 7 days)
+    recent_results = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.status.in_(["completed", "closed"]))
+        .where(Event.commence_time >= week_ago)
+        .order_by(Event.commence_time.desc())
+        .limit(10)
+    )
+
+    # 2. Upcoming games (next 7 days)
+    upcoming = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.status == "scheduled")
+        .where(Event.commence_time <= now + timedelta(days=7))
+        .order_by(Event.commence_time.asc())
+        .limit(5)
+    )
+
+    # 3. Live games right now
+    live = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.status == "live")
+    )
+
+    # 4. Championship/futures odds
+    futures = await db.execute(
+        select(FuturesMarket.name, FuturesOutcome.current_probability,
+               FuturesOutcome.probability_change_24h)
+        .join(FuturesOutcome, FuturesMarket.id == FuturesOutcome.market_id)
+        .where(FuturesOutcome.team_id == team_id)
+        .where(FuturesMarket.status == "open")
+        .order_by(FuturesOutcome.current_probability.desc())
+    )
+
+    # 5. Most exciting recent games (by Pulse)
+    pulse_games = await db.execute(
+        select(Event)
+        .where(or_(Event.home_team_id == team_id, Event.away_team_id == team_id))
+        .where(Event.raw_gei.isnot(None))
+        .where(Event.commence_time >= now - timedelta(days=14))
+        .order_by(Event.raw_gei.desc())
+        .limit(5)
+    )
+
+    return {
+        "team": team_name,
+        "recent_results": serialize_events(recent_results),
+        "upcoming": serialize_events(upcoming),
+        "live": serialize_events(live),
+        "futures": serialize_futures(futures),
+        "top_pulse_games": serialize_events(pulse_games),
+    }
+```
+
+#### LLM Prompt
+
+The data packet is fed to GPT-4o-mini with instructions to pick the most interesting items:
+
+```python
+prompt = """You are a sports analyst for a casual fan's second-screen experience.
+Given the following data about a user's favorite teams, pick the 10 most
+interesting, surprising, or actionable insights. Prioritize:
+
+1. Live games happening RIGHT NOW (always #1 if any exist)
+2. Upsets or close finishes in recent games (high Pulse scores)
+3. Big line movements or shifting championship odds
+4. Upcoming marquee matchups (rivalry, playoff implications)
+5. Streaks, trends, or notable records
+
+For each insight, return JSON:
+{
+  "insights": [
+    {
+      "headline": "Short punchy headline (≤10 words)",
+      "body": "1-2 sentence explanation for a casual fan",
+      "team": "Primary team this relates to",
+      "type": "live|result|upcoming|futures|trend",
+      "event_id": <id if applicable, null otherwise>,
+      "urgency": "high|medium|low"
+    }
+  ]
+}
+"""
+```
+
+#### Use Cases
+
+**1. Onboarding welcome screen:**
+After selecting favorites, show "Here's what's happening with your teams" — creates immediate value and hooks the user.
+
+**2. Event detail page enrichment:**
+On a Lakers game page, show "More about the Lakers" section with relevant insights (recent record, futures odds, upcoming schedule).
+
+**3. Notification triggers:**
+The `urgency: "high"` field could drive push notifications. "Lakers are live and it's close" is worth an interrupt; "Lakers play Friday" is not.
+
+**4. Daily digest email:**
+For authenticated users, a morning email with personalized insights about their teams.
+
+#### API Design
+
+```
+# Onboarding: pick teams
+POST /api/me/favorites
+Body: { "team_ids": [1, 5, 12] }
+
+# Generate insights (authenticated)
+GET /api/insights
+Response: {
+  "generated_at": "2026-02-06T12:00:00Z",
+  "insights": [...],
+  "teams": ["Lakers", "Patriots", "Yankees"]
+}
+
+# Team picker data
+GET /api/teams?sport=basketball_nba
+GET /api/teams/search?q=lakers
+```
+
+#### Cost & Performance
+
+| Component | Cost/Latency |
+|-----------|--------------|
+| DB queries | ~5 queries × N teams, all indexed — <500ms total |
+| LLM call | One GPT-4o-mini call, ~2-4K tokens — ~$0.001 |
+| Caching | Redis TTL of 5-10 min per user — most requests hit cache |
+| Total | 2-4 seconds first load, instant from cache |
+
+#### Prerequisites
+
+- **Firebase Auth**: Need user accounts to persist favorites
+- **Team table populated**: Already done via ESPN sync
+- **UserFavorite table**: Already exists in schema, ready to use
+- **LLM service**: Already integrated (GPT-4o-mini in `services/llm.py`)
+
+#### Implementation Phases
+
+1. **v1**: Team picker UI + insights endpoint (web only)
+2. **v2**: Event detail page integration ("More about this team")
+3. **v3**: Notification triggers based on urgency field
+4. **v4**: iOS integration with native insights feed
+5. **v5**: Daily digest emails
+
+#### Open Questions
+
+- Should insights be cached per-team (sharable across users) or per-user (more personalized)?
+- How many teams should users be able to follow? (Suggest 3-10)
+- Should we show insights for teams the user doesn't follow if they're playing against favorites?
+- How to handle the cold start problem for new users who haven't picked teams yet?
+
 ---
 
 ## Recent Improvements (February 2026)
@@ -1057,9 +1530,13 @@ CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_s
 - **Real-time updates**: Pulse calculated every poll cycle for live games
 - **Component breakdown**: Momentum Swings, Drama Level, Competitiveness, Lead Changes
 - **Visual badges**: Color-coded badges (🫀💓💗🩺📉) displayed on all games
-- **Tooltip explanations**: Human-friendly descriptions of what makes each game exciting
+- **Tooltip explanations**: Human-friendly descriptions of what makes each game exciting, including component-level tooltips on event detail pages
 - **Explainer page**: Full methodology at `/pulse`
-- **Admin tools**: Status check and batch recalculation endpoints
+- **Admin tools**: Status check, batch recalculation, and distribution analysis endpoints
+- **Percentile scoring**: Raw scores mapped to percentiles using completed games as reference set, giving users a relative ranking
+- **Distribution-tuned normalization**: Heart Rate (÷0.6), Amplitude (÷0.15), Arrhythmia (÷0.10) ceilings tuned from observed game data
+- **Vitals uses game average**: Closeness to 50% averaged across all snapshots, not just final state
+- **Hall of Fame quality filter**: Rankings require 10+ odds snapshots to prevent low-data false positives
 
 ### Analytics Implementation
 - **Comprehensive GA4 tracking**: Full event taxonomy with clear hierarchy
@@ -1081,17 +1558,28 @@ CREATE INDEX idx_historical_events_search ON historical_events USING gin(teams_s
 
 ### LLM Infrastructure ✅ NEW
 - **OpenAI GPT-4o-mini integration**: Generic LLM service for classification tasks
-- **Hybrid futures categorization**: Pattern matching rules + LLM fallback for edge cases
+- **Hybrid futures categorization**: 90+ regex patterns + LLM fallback for edge cases
+- **22 sport categories**: football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, other
+- **Zero uncategorized markets**: `classify()` always returns a category (never NULL), with LLM response normalization handling variant outputs like "horse racing" → horse_racing
 - **Database caching**: LLM results stored in `llm_sport_category` column to avoid repeat API calls
-- **Admin endpoints**: `/api/admin/futures/categorize` to trigger batch categorization
+- **Admin endpoints**: `/api/admin/futures/categorize`, `/uncategorized`, `/force-categorize`
 - **Cost-effective**: ~$0.001 per classification, results cached permanently
 
 ### Futures & Kalshi Integration ✅ NEW
 - **Futures markets**: Championship odds, MVP races, division winners from The Odds API
 - **Kalshi prediction markets**: Sports-related prediction markets with timing info
-- **Smart categorization**: 170+ markets auto-categorized using hybrid rules + LLM
+- **Smart categorization**: All markets auto-categorized using hybrid rules (90+ patterns) + LLM fallback
 - **Unified display**: Both sources appear together, grouped by sport category
 - **Search integration**: Futures markets included in search results
+
+### Pinned Events & Futures ✅ NEW
+- **Track important events**: Pin events like the Super Bowl to track them closely
+- **Pin futures markets**: Also pin championship races, MVP odds, etc.
+- **Homepage sections**: "📌 Pinned" and "📌 Pinned Futures" appear above Highlights
+- **Works anywhere**: Pin from cards, search results, or detail pages
+- **No auth required**: localStorage-based, syncs across browser tabs
+- **Smart fetching**: Pinned events outside the 7-day window are fetched separately
+- **Limits**: Max 6 events + 6 futures to prevent UI clutter
 
 ### Bug Fixes
 - **Upset Brewing fix**: Pre-game line movement no longer triggers "Upset brewing" label for scheduled events
@@ -1354,25 +1842,42 @@ These are product experiments, not blockers.
 
 ## Development Priorities (Next 6 Months)
 
-### Immediate (February 2026)
-- ✅ Fix event discovery for NCAA basketball
+### Completed (February 2026)
+- ✅ Pulse (Game Excitement Metric) - live and completed
+- ✅ Pulse Hall of Fame page
+- ✅ Futures markets with smart categorization
+- ✅ Kalshi prediction market integration
+- ✅ LLM infrastructure (OpenAI GPT-4o-mini)
+- ✅ Pinned events and futures (localStorage-based)
+- ✅ Futures categorization hardened: 90+ regex patterns, 22 sport categories, LLM fallback always returns a result, 0 uncategorized markets
+
+### Immediate (February-March 2026)
+- Pass Kalshi event category through as sport_key to improve disambiguation of ambiguous market names (e.g., "MVP Winner?" currently lands in "other")
 - Deploy analytics and observe user behavior
 - Monitor polling health across all sports
+- Gather feedback on pinned events feature
 
 ### Near-term (March-April 2026)
-- Implement Game Excitement Index
-- Create Highlights section
-- Begin Firebase Auth integration
+- Firebase Auth integration
+- Migrate pinned items to database for cross-device sync
+- Favorite teams with cloud sync
+- Ranking Level 2: time-series aware scoring (pre-compute summary stats from odds_snapshots, pass to `compute_highlight`)
 
 ### Mid-term (May-June 2026)
 - LLM-powered explanations for odds movements
-- Favorites with cloud sync
-- Begin iOS app development
+- Ranking Level 3: sport-specific context and game-phase weighting
+- Personalized highlights based on favorites (Ranking Level 4)
+- Begin iOS app development (feed tab uses ranking infrastructure)
 
 ### Later (Q3-Q4 2026)
-- iOS app launch
-- Futures markets
-- Kalshi integration
+- iOS app launch with feed tab, search, and widgets — all powered by shared ranking function
+- Widgets (Lock Screen, Home Screen) — "Most Exciting Game Right Now"
+- Advanced notification preferences (ranking determines what's worth an interrupt)
+
+### Exploring (No Timeline)
+- **Probability Comparisons ("Comparable Odds")**: Massive database of real-world probability analogies (1,000+ entries) displayed on event detail pages to make win probabilities viscerally relatable — "Your team's 15% chance is about as likely as rain on a summer day in Atlanta" (Phase 12)
+- **Event Similarity Scores**: Baseball Reference-style similarity matching that finds historical games with the most similar probability arcs — works during and after games, creates a "rabbit hole" into the historical database (Phase 13)
+- **Team Insights (LLM-Powered Personalized Feed)**: Onboarding flow where users select favorite teams, then LLM synthesizes ~10 interesting insights from DB queries — recent results, upcoming games, championship odds shifts, high-Pulse games. Could power event detail page context and notification triggers (Phase 15)
 
 ---
 

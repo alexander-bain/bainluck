@@ -89,13 +89,17 @@ odds-tracker/
 | File | Purpose |
 |------|---------|
 | `backend/app/tasks.py` | Celery tasks: odds polling, Pulse calculation, event discovery |
+| `backend/app/utils/highlights.py` | Highlight scoring, flags, and labels |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
 | `backend/app/services/espn_api.py` | ESPN API client for team/event enrichment |
 | `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM categorization |
-| `frontend/components/EventCard.tsx` | Event display component |
+| `frontend/components/EventCard.tsx` | Event display component (includes pin button) |
+| `frontend/components/FuturesCard.tsx` | Futures market display component (includes pin button) |
 | `frontend/components/PulseBadge.tsx` | Pulse score badge with tooltip |
+| `frontend/hooks/usePinnedEvents.ts` | Hook for managing pinned events (localStorage) |
+| `frontend/hooks/usePinnedFutures.ts` | Hook for managing pinned futures (localStorage) |
 | `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
@@ -155,17 +159,51 @@ NEXT_PUBLIC_GA_MEASUREMENT_ID=xxx  # Google Analytics
 ### Pulse (Game Excitement Metric)
 Proprietary 1-100 score measuring how exciting a game is based on probability swings.
 
-**Components:**
-- Heart Rate (25%): Frequency of odds movements
-- Amplitude (30%): Size of probability swings
-- Vitals (30%): How close the matchup is
-- Lead Changes: Bonus for favorite flipping
+**Two-layer scoring:**
+1. **Raw score**: Deterministic calculation from odds movement data (stored as `raw_gei` on events)
+2. **Percentile score**: Raw score mapped to percentiles using completed/closed games as reference set. This is the score shown to users. Falls back to raw score if percentiles unavailable.
+
+**Components (weighted):**
+- Heart Rate (25%): Frequency of significant moves (≥2% threshold). Normalized: moves/min ÷ 0.6
+- Amplitude (30%): RMS magnitude of probability swings. Normalized: RMS ÷ 0.15
+- Arrhythmia (15%): Unpredictability (stdev of deltas). Normalized: stdev ÷ 0.10
+- Vitals (30%): Average closeness to 50% across all snapshots (rewards games that stayed competitive throughout, not just those that ended close)
+- Lead Changes: Bonus for 50% crossings (5 pts each, max 20 pts)
+- Time Weight: Late-game multiplier `0.6 + 0.4 × (progress^1.5)`
+
+**Normalization tuning history:**
+The normalization ceilings were tuned iteratively using `GET /api/admin/pulse/distributions` to analyze score distributions across completed games. Key issue was Heart Rate saturating at 100% for 26% of games (ceiling too low at 0.3), then compressing below 38% (ceiling too high at 1.5). Final ceiling of 0.6 was derived from observed max rate of ~0.57 moves/min.
+
+**Multi-bookmaker aggregation:** Raw odds snapshots come from multiple bookmakers (5-11 per event). Before Pulse calculation, snapshots are aggregated into 60-second time buckets using median probability (`_aggregate_snapshots` in `pulse.py`). This prevents bookmaker disagreements from being counted as odds movements. Without aggregation, even an unremarkable game can score 100 due to phantom lead changes and inflated movement metrics.
+
+**Scaling:** Raw Pulse score is divided by 1.0 and mapped to 1-100. The theoretical max raw score is ~1.2 (all components maxed + lead change bonus), which clamps to 100. A typical close game scores 60-75; scoring 100 requires exceptional movement across all dimensions.
 
 **Files:** `backend/app/utils/pulse.py`, `frontend/components/PulseBadge.tsx`
 
 **Admin Endpoints:**
 - `GET /api/admin/pulse/status` - Check calculation status
-- `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc
+- `GET /api/admin/pulse/distributions` - Score and component distribution analysis (histograms, saturation, statistics)
+- `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc (completed + closed events)
+
+**After algorithm changes:** You must force-recalculate stored scores since `raw_gei` values are computed once and cached:
+```bash
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/recalculate?secret=any&limit=500"
+# Then verify with distributions endpoint:
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/distributions"
+```
+
+**Hall of Fame filtering:** The `pulse-rankings` endpoint requires 10+ odds snapshots per event to prevent low-data games from appearing in rankings.
+
+### Highlights (Event Ranking)
+Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points. This is **Level 1 (snapshot scoring)** of a multi-level ranking system — see "Ranking & Feed Evolution" in `docs/PRD.md` for the full roadmap toward the iOS feed tab.
+
+**Key design rule:** Pre-game closeness (e.g., 51/49) doesn't award points unless there's trend evidence — the line moved ≥5% from opening, tightened from lopsided to close, or the game is starting soon. This prevents aggregation noise from surfacing uninteresting events.
+
+**Labels:** "Upset brewing" and "Close game" are live-only. "Line moving" requires ≥15% swing from opening. "Close matchup" requires starting soon.
+
+**Current limitation:** `compute_highlight` only sees current odds vs opening odds (two points in time). It doesn't query `odds_snapshots` or `odds_aggregated` for time-series data. Level 2 will add this — the snapshot data already exists in the DB.
+
+**Files:** `backend/app/utils/highlights.py`, `frontend/app/page.tsx` (Highlights section rendering)
 
 ### Odds Polling
 - Live games: Every 30 seconds
@@ -231,9 +269,13 @@ Futures markets are categorized using a hybrid approach: pattern matching rules 
 1. Check `llm_sport_category` from database (cached LLM result)
 2. Try prefix matching on sport key (e.g., `golf_masters` → Golf)
 3. Try regex patterns on market name (e.g., "College Football Playoff" → Football)
-4. Handle baseball awards like "AL MVP", "NL Cy Young" → Baseball
+4. Handle sport-specific awards (AL MVP → Baseball, Hart Trophy → Hockey, etc.)
 5. Use athlete name detection for ambiguous markets like "US Open"
 6. Fall back to LLM (GPT-4o-mini) for uncategorized markets
+7. LLM always returns a category (never NULL) — defaults to "other"
+
+**Supported categories (22):**
+football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, other
 
 **Files:**
 - Frontend patterns: `frontend/lib/sportCategories.ts`
@@ -250,6 +292,10 @@ SPORT_PATTERNS = [
 ]
 ```
 
+**Important:** Pattern order matters — more specific patterns (e.g., `defensive.player.of.the.year` → football) should come before broader ones (e.g., `defensive.player` → basketball). The LLM handles everything patterns miss, so only add patterns for high-volume categories to save API costs.
+
+**Known limitation:** Some Kalshi markets have ambiguous names like "MVP Winner?" without any sport context. These correctly categorize as "other" since there's no way to determine the sport. Improving Kalshi category pass-through would help here.
+
 **Admin endpoints:**
 ```bash
 # Check categorization status
@@ -260,6 +306,12 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/fut
 
 # Dry run (preview without saving)
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorize?secret=xxx&dry_run=true"
+
+# View uncategorized markets (diagnostic)
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/uncategorized"
+
+# Force-categorize all remaining via LLM
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/force-categorize?secret=xxx&limit=100"
 ```
 
 **Debug endpoints:**
@@ -271,31 +323,24 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sou
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sport-mapping"
 ```
 
-### LLM Metadata Enrichment
-Events and futures markets are enriched with LLM-generated metadata for filtering and categorization.
+### Pinned Events & Futures
+Users can pin events and futures markets they want to track closely. Pinned items appear in dedicated sections at the top of the homepage.
 
-**Metadata Fields:**
-| Field | Values | Purpose |
-|-------|--------|---------|
-| `llm_gender` | men, women, mixed, unknown | Filter by gender |
-| `llm_level` | professional, college, amateur, youth | Competition level |
-| `llm_league` | NFL, NCAAF, NBA, etc. | More granular than sport |
-| `llm_importance` | championship, playoff, regular_season, exhibition | Game significance |
+**Features:**
+- Pin/unpin events and futures from any card or detail page
+- Pinned sections appear above Highlights on homepage
+- Maximum 6 pinned events + 6 pinned futures
+- Works for events outside the 7-day window (e.g., Super Bowl weeks away)
+- Cross-tab sync via localStorage storage events
+- Separate limits for events vs futures
 
-**Files:**
-- LLM service: `backend/app/services/llm.py`
-- Model columns: `llm_gender`, `llm_level`, `llm_league`, `llm_importance` on events and futures_markets
+**Storage:**
+Currently uses localStorage (no auth required). When Firebase Auth is added, this can be upgraded to database-backed storage for cross-device sync.
 
-**Admin endpoints:**
-```bash
-# Enrich events with metadata
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/events/enrich-metadata?secret=xxx&limit=50"
-
-# Check enrichment status
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/events/metadata-status"
-
-# Enrich futures
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/enrich-metadata?secret=xxx&limit=50"
+```javascript
+// localStorage keys
+oddsTracker_pinnedEvents    // Array of event IDs
+oddsTracker_pinnedFutures   // Array of futures market IDs
 ```
 
 ### ESPN Integration
@@ -344,14 +389,6 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/esp
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
 ```
 
-**Entity Resolution:**
-ESPN team names may differ from The Odds API names. The system uses:
-1. Exact name matching
-2. Partial string matching
-3. LLM-powered fuzzy matching (confidence score 0.0-1.0)
-
-Teams are linked by storing `espn_id` and `alternate_names` for future lookups.
-
 ---
 
 ## API Patterns
@@ -364,8 +401,8 @@ Teams are linked by storing `espn_id` and `alternate_names` for future lookups.
 # Timestamps in ISO 8601
 {"commence_time": "2026-02-03T19:00:00+00:00"}
 
-# Pulse included when available
-{"pulse": {"score": 75, "status": "strong", "emoji": "💓", "label": "Exciting"}}
+# Pulse included when available (score = percentile, raw_score = pre-percentile)
+{"pulse": {"score": 75, "raw_score": 68, "status": "strong", "emoji": "💓", "label": "Exciting"}}
 ```
 
 ### Event Statuses
@@ -453,14 +490,18 @@ Both backend and frontend auto-deploy from `master` branch.
 3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
 4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
 5. ✅ Pulse Hall of Fame page
-6. ✅ ESPN integration (team colors, logos, broadcast info, win probability, auto-sync)
-7. ✅ LLM metadata enrichment (gender, level, league, importance on events)
-8. 🔄 Monitoring and reliability improvements
-9. 📋 Next: Firebase Auth for user accounts
-10. 📋 Next: Favorites and personalization
-11. 📋 Next: LLM-powered odds movement explanations
+6. ✅ Pinned Events & Futures (localStorage-based tracking)
+7. ✅ Futures categorization hardened (0 uncategorized markets)
+8. ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
+9. 🔄 Monitoring and reliability improvements
+10. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+11. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
+12. 📋 Next: Firebase Auth for user accounts
+13. 📋 Next: Migrate pinned items to database (after auth)
+14. 📋 Next: LLM-powered odds movement explanations
+15. 📋 Next: Sport-specific Pulse normalization (different ceilings per sport)
 
-**LLM is now available** for new features! See `backend/app/services/llm.py`
+**LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
 
 See `docs/PRD.md` for full roadmap.
 
@@ -470,13 +511,21 @@ See `docs/PRD.md` for full roadmap.
 
 1. **Alembic multiple heads**: If you see this error, check `down_revision` in migration files - they should form a single chain.
 
-2. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
+2. **Alembic revision IDs must be ≤32 characters**: The `alembic_version.version_num` column is `VARCHAR(32)`. Longer revision IDs will cause `StringDataRightTruncation` errors during Heroku release. Use short descriptive names (e.g., `add_outcome_search_idx` not `add_futures_outcomes_search_index`).
 
-3. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated.
+3. **Alembic migrations use psycopg2, not asyncpg**: The `alembic/env.py` uses synchronous psycopg2 for migrations even though the app uses asyncpg at runtime. This is intentional — async engines don't work reliably in Heroku's release phase.
 
-4. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-5. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+3. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated. Hall of Fame rankings require 10+ snapshots.
+
+7. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+
+8. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+
+6. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
+
+7. **Pulse percentiles use completed games only**: The `gei_percentiles` table is computed from completed/closed events with `raw_gei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
 
 6. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New Celery tasks must follow this pattern:
    ```python
@@ -500,6 +549,7 @@ See `docs/PRD.md` for full roadmap.
 |------|-------|
 | API docs | `/docs` on backend URL |
 | Pulse explainer | https://odds.alexbain.com/pulse |
+| Pulse Hall of Fame | https://odds.alexbain.com/pulse/hall-of-fame |
 | Search | https://odds.alexbain.com/search?q=celtics |
 | PRD | `docs/PRD.md` |
 | Debug endpoints | `/api/events/debug/*` |

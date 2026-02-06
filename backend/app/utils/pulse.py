@@ -24,9 +24,10 @@ Copyright OddsTracker. All rights reserved.
 
 import json
 import math
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from statistics import mean, stdev
+from statistics import mean, median, stdev
 from typing import Optional
 
 
@@ -150,6 +151,55 @@ def get_pulse_label(score: int) -> str:
         return 'Flatline'
 
 
+def _aggregate_snapshots(snapshots: list[PulseDataPoint], bucket_seconds: int = 60) -> list[PulseDataPoint]:
+    """
+    Aggregate multi-bookmaker snapshots into one data point per time bucket.
+
+    Multiple bookmakers report slightly different probabilities at each polling
+    cycle. Without aggregation, the algorithm treats bookmaker disagreements as
+    probability "movements", massively inflating heart_rate, amplitude,
+    arrhythmia, and phantom lead changes.
+
+    Groups snapshots into time buckets and takes the median probability across
+    all bookmakers in each bucket, producing a single clean time series.
+
+    Args:
+        snapshots: Raw snapshots (may contain multiple bookmakers per timestamp)
+        bucket_seconds: Time bucket size in seconds (default 60s)
+
+    Returns:
+        Aggregated list with one PulseDataPoint per time bucket
+    """
+    if not snapshots:
+        return []
+
+    # Group snapshots into time buckets
+    buckets: dict[int, list[PulseDataPoint]] = defaultdict(list)
+    for s in snapshots:
+        # Round timestamp to nearest bucket
+        ts = s.captured_at.timestamp()
+        bucket_key = int(ts // bucket_seconds) * bucket_seconds
+        buckets[bucket_key].append(s)
+
+    # Produce one data point per bucket using median probability
+    aggregated = []
+    for bucket_key in sorted(buckets.keys()):
+        bucket = buckets[bucket_key]
+        probs = [s.home_win_probability for s in bucket if s.home_win_probability is not None]
+        if not probs:
+            continue
+
+        # Use the midpoint of the bucket as the timestamp
+        representative_time = bucket[0].captured_at
+        aggregated.append(PulseDataPoint(
+            captured_at=representative_time,
+            home_win_probability=median(probs),
+            bookmaker="consensus",
+        ))
+
+    return aggregated
+
+
 def calculate_pulse(
     snapshots: list[PulseDataPoint],
     game_start: datetime,
@@ -176,14 +226,17 @@ def calculate_pulse(
     ]
 
     if len(valid_snapshots) < MIN_SNAPSHOTS:
-        # Return minimal pulse for insufficient data
-        return PulseResult(
-            score=1,
-            components=PulseComponents(0, 0, 0, 0, 1.0, 0),
-            status='flatline',
-            data_quality='insufficient',
-            snapshot_count=len(valid_snapshots)
-        )
+        # Not enough data to compute a meaningful score
+        return None
+
+    # Aggregate multi-bookmaker snapshots into one data point per time bucket.
+    # This prevents bookmaker disagreements from being counted as movements.
+    raw_count = len(valid_snapshots)
+    valid_snapshots = _aggregate_snapshots(valid_snapshots)
+
+    if len(valid_snapshots) < MIN_SNAPSHOTS:
+        # Not enough distinct time buckets after aggregation
+        return None
 
     # Sort by time
     valid_snapshots.sort(key=lambda s: s.captured_at)
@@ -204,9 +257,11 @@ def calculate_pulse(
     # =========================================================================
     significant_moves = sum(1 for d in deltas if d >= SIGNIFICANT_MOVE_THRESHOLD)
 
-    # Normalize: expect about 0.3 significant moves per minute in exciting game
+    # Normalize: ceiling of 0.6 moves/min lets the most exciting observed games
+    # reach ~95% while spreading the middle. (0.3 caused 26% saturation, 1.5
+    # compressed everything below 38%.)
     moves_per_minute = significant_moves / max(1, elapsed_minutes)
-    heart_rate = min(1.0, moves_per_minute / 0.3)
+    heart_rate = min(1.0, moves_per_minute / 0.6)
 
     # =========================================================================
     # 2. AMPLITUDE: Average magnitude of swings
@@ -214,8 +269,8 @@ def calculate_pulse(
     if deltas:
         # Use RMS (root mean square) to weight larger swings more
         rms_amplitude = math.sqrt(mean([d**2 for d in deltas]))
-        # Normalize: 8% average swing = max amplitude
-        amplitude = min(1.0, rms_amplitude / 0.08)
+        # Normalize: 15% RMS swing = max amplitude (was 8%, too easy to saturate)
+        amplitude = min(1.0, rms_amplitude / 0.15)
     else:
         amplitude = 0.0
 
@@ -226,21 +281,20 @@ def calculate_pulse(
         try:
             delta_stdev = stdev(deltas)
             # Normalize: high variance = unpredictable = exciting
-            arrhythmia = min(1.0, delta_stdev / 0.05)
+            arrhythmia = min(1.0, delta_stdev / 0.10)
         except:
             arrhythmia = 0.0
     else:
         arrhythmia = 0.0
 
     # =========================================================================
-    # 4. VITALS: Current competitiveness (closeness to 50%)
+    # 4. VITALS: Average competitiveness across the game
     # =========================================================================
-    current_prob = probs[-1]
-    # 1.0 at 50%, 0.0 at 0% or 100%
-    vitals = 1.0 - abs(current_prob - 0.5) * 2
-    # Boost vitals slightly for competitive games (40-60% range)
-    if 0.4 <= current_prob <= 0.6:
-        vitals = min(1.0, vitals * 1.1)
+    # Use average closeness to 50% across all snapshots, not just the final one.
+    # This rewards games that stayed competitive throughout, not just games that
+    # happened to end close. Each snapshot contributes: 1.0 at 50%, 0.0 at 0%/100%.
+    closeness_scores = [1.0 - abs(p - 0.5) * 2 for p in probs]
+    vitals = mean(closeness_scores)
 
     # =========================================================================
     # 5. TIME WEIGHT: Late game drama matters more
@@ -272,9 +326,12 @@ def calculate_pulse(
     ) * time_weight
 
     # Scale to 1-100
-    # The max theoretical raw_score is about 1.2 (1.0 * 1.0 time_weight + 0.2 bonus)
-    # Scale so that 0.8 raw = 100 (leaves room for exceptional games)
-    scaled_score = raw_score / 0.8 * 100
+    # The max theoretical raw_score is about 1.2 (all components 1.0 + 0.2 lead bonus)
+    # A divisor of 1.0 means only truly exceptional games reach 100:
+    # - All components maxed without lead changes = exactly 100
+    # - Lead changes can push past, but get clamped to 100
+    # - A typical close game scores 60-75 instead of hitting the ceiling
+    scaled_score = raw_score / 1.0 * 100
     final_score = max(1, min(100, round(scaled_score)))
 
     # Determine data quality

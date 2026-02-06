@@ -311,17 +311,41 @@ async def get_pulse_rankings(
 
     Returns two lists: the most exciting games ever tracked (highest Pulse)
     and the most boring/one-sided games (lowest Pulse).
+
+    Only includes events with sufficient odds data (10+ snapshots) to avoid
+    inflated scores from games with sparse data.
     """
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
 
-    # Base query for completed events with GEI
+    # Subquery: count distinct time buckets (minutes) per event.
+    # Raw odds_snapshots contain multiple bookmakers per polling cycle,
+    # so counting raw rows inflates the count (10 rows from 2 polls with
+    # 5 bookmakers each is only 2 actual data points). Counting distinct
+    # minute-level buckets matches Pulse's 60-second aggregation and gives
+    # an accurate measure of how much real data we have for the game.
+    snapshot_count = (
+        select(
+            OddsSnapshot.event_id,
+            func.count(
+                func.distinct(func.date_trunc('minute', OddsSnapshot.captured_at))
+            ).label("snap_count"),
+        )
+        .group_by(OddsSnapshot.event_id)
+        .subquery()
+    )
+
+    MIN_SNAPSHOTS_FOR_RANKING = 20
+
+    # Base query for completed events with GEI and enough data
     base_query = (
         select(Event)
         .options(selectinload(Event.sport))
+        .join(snapshot_count, Event.id == snapshot_count.c.event_id)
         .where(
             Event.status.in_(["completed", "closed"]),
             Event.raw_gei.isnot(None),
+            snapshot_count.c.snap_count >= MIN_SNAPSHOTS_FOR_RANKING,
         )
     )
 
@@ -523,13 +547,16 @@ async def search_events(
     # Calculate pagination metadata
     total_pages = (total_count + per_page - 1) // per_page
 
-    # Also search futures markets by name
+    # Also search futures markets by name or outcome (label) name
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.sport))
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            FuturesMarket.name.ilike(search_pattern),
+            or_(
+                FuturesMarket.name.ilike(search_pattern),
+                FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(search_pattern)),
+            ),
             FuturesMarket.status == "open",
         )
         .order_by(FuturesMarket.updated_at.desc())
@@ -1587,8 +1614,7 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             from app.utils.pulse import get_pulse_label, get_pulse_emoji, get_pulse_status
             import json
 
-            # raw_gei stores score/100 (e.g., 0.75 = score 75)
-            pulse_score = max(1, min(100, round(float(event.raw_gei) * 100)))
+            raw_gei = float(event.raw_gei)
 
             # Parse components if stored
             components = None
@@ -1598,11 +1624,26 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
                 except json.JSONDecodeError:
                     pass
 
+            # Compute percentile score from the stored thresholds.
+            # Use sport-specific percentile if available, fall back to global.
+            sport_key = event.sport.key if event.sport else None
+            percentile_score = None
+            if gei_percentiles:
+                if sport_key:
+                    percentile_score = _calculate_percentile(raw_gei, gei_percentiles, sport_key)
+                if percentile_score is None:
+                    percentile_score = _calculate_percentile(raw_gei, gei_percentiles, 'global')
+
+            # Use percentile as the display score when available, raw conversion as fallback
+            raw_score = max(1, min(100, round(raw_gei * 100)))
+            display_score = percentile_score if percentile_score is not None else raw_score
+
             response["pulse"] = {
-                "score": pulse_score,
-                "status": get_pulse_status(pulse_score),
-                "label": get_pulse_label(pulse_score),
-                "emoji": get_pulse_emoji(pulse_score),
+                "score": display_score,
+                "raw_score": raw_score,
+                "status": get_pulse_status(display_score),
+                "label": get_pulse_label(display_score),
+                "emoji": get_pulse_emoji(display_score),
                 "components": components,
             }
     except Exception as e:

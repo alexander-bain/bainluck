@@ -83,7 +83,8 @@ export interface PulseComponents {
 }
 
 export interface PulseData {
-  score: number;           // 1-100
+  score: number;           // 1-100 (percentile when available, raw otherwise)
+  raw_score?: number;      // 1-100 raw score before percentile mapping
   status: string;          // 'racing' | 'strong' | 'steady' | 'weak' | 'flatline'
   label: string;           // 'Must-Watch', 'Exciting', etc.
   emoji: string;           // 🫀 💓 💗 🩺 📉

@@ -1417,7 +1417,16 @@ async def _compute_pulse_for_event(event_id: int):
         )
 
         if pulse_result is None:
-            return {"error": "Pulse calculation failed"}
+            return {"error": "Pulse calculation returned None (insufficient data)"}
+
+        # Don't store unreliable scores for completed events
+        if pulse_result.data_quality == "minimal":
+            return {
+                "event_id": event_id,
+                "skipped": True,
+                "reason": f"Insufficient aggregated data ({pulse_result.snapshot_count} time buckets, need 10+)",
+                "data_quality": pulse_result.data_quality,
+            }
 
         # Update event with Pulse (store score/100 to fit existing field)
         event.raw_gei = pulse_result.score / 100.0
@@ -1508,7 +1517,7 @@ async def _compute_pulse_batch(limit: int):
                     sport_key=sport_key,
                 )
 
-                if pulse_result:
+                if pulse_result and pulse_result.data_quality != "minimal":
                     event.raw_gei = pulse_result.score / 100.0
                     event.gei_components = pulse_result.components.to_json()
                     event.gei_computed_at = datetime.now(timezone.utc)
@@ -1542,13 +1551,15 @@ async def _compute_gei_percentiles():
     from app.models import GEIPercentile
 
     async with get_task_session() as session:
-        # Get all completed events with raw GEI
+        # Get all finished events with raw GEI (completed + closed)
+        # Exclude events with raw_gei=0 (insufficient data / flatline placeholders)
         result = await session.execute(
             select(Event.raw_gei, Sport.key)
             .join(Sport)
             .where(
-                Event.status == "completed",
+                Event.status.in_(["completed", "closed"]),
                 Event.raw_gei.isnot(None),
+                Event.raw_gei > 0,
             )
         )
         events = result.all()
@@ -1870,10 +1881,15 @@ def _infer_category(sport_key: str) -> str:
 def _aggregate_futures_outcomes(markets_data) -> dict:
     """Aggregate outcome odds across multiple bookmakers.
 
+    Normalizes each bookmaker's implied probabilities to remove the vig
+    (overround) before averaging across bookmakers. Without normalization,
+    implied probabilities from American odds sum to >100% (often 130-150%
+    for markets with many outcomes), inflating every outcome's probability.
+
     Returns a dict mapping outcome names to aggregated data:
     {
         "Lakers": {
-            "probability": 0.15,  # Average across books
+            "probability": 0.11,  # Average of vig-removed probs across books
             "bookmakers": {
                 "draftkings": {"probability": 0.14, "american_odds": 600},
                 "fanduel": {"probability": 0.16, "american_odds": 525},
@@ -1882,32 +1898,46 @@ def _aggregate_futures_outcomes(markets_data) -> dict:
     }
     """
     from statistics import mean
+    from collections import defaultdict
 
-    outcomes = {}
+    # First pass: group outcomes by bookmaker to calculate per-bookmaker totals
+    bookmaker_outcomes = defaultdict(list)  # bookmaker -> [(name, probability, american_odds)]
 
     for market in markets_data:
         bookmaker = market.bookmaker
-
         for outcome in market.outcomes:
-            name = outcome.name
+            bookmaker_outcomes[bookmaker].append(
+                (outcome.name, outcome.probability, outcome.american_odds)
+            )
+
+    # Second pass: normalize each bookmaker's probabilities to sum to 1.0
+    # This removes the vig/overround
+    outcomes = {}
+
+    for bookmaker, bm_outcomes in bookmaker_outcomes.items():
+        total_prob = sum(prob for _, prob, _ in bm_outcomes)
+
+        for name, raw_prob, american_odds in bm_outcomes:
+            # Normalize: divide by total so all outcomes sum to 1.0
+            normalized_prob = raw_prob / total_prob if total_prob > 0 else raw_prob
 
             if name not in outcomes:
                 outcomes[name] = {
-                    "probabilities": [],
+                    "normalized_probabilities": [],
                     "bookmakers": {},
                 }
 
-            outcomes[name]["probabilities"].append(outcome.probability)
+            outcomes[name]["normalized_probabilities"].append(normalized_prob)
             outcomes[name]["bookmakers"][bookmaker] = {
-                "probability": outcome.probability,
-                "american_odds": outcome.american_odds,
+                "probability": raw_prob,  # Keep raw implied prob for bookmaker display
+                "american_odds": american_odds,
             }
 
-    # Calculate average probability for each outcome
+    # Calculate average normalized probability for each outcome
     result = {}
     for name, data in outcomes.items():
         result[name] = {
-            "probability": mean(data["probabilities"]),
+            "probability": mean(data["normalized_probabilities"]),
             "bookmakers": data["bookmakers"],
         }
 
@@ -2011,10 +2041,9 @@ async def _poll_kalshi_markets():
                     futures_market_id = result.scalar_one()
                     stats["events_processed"] += 1
 
-                    # Process each market as an outcome
-                    for idx, market in enumerate(event.markets, 1):
-                        stats["markets_processed"] += 1
-
+                    # First pass: compute probabilities and names for all outcomes
+                    outcome_data = []
+                    for market in event.markets:
                         # Calculate probability from bid/ask midpoint or last price
                         if market.yes_bid is not None and market.yes_ask is not None:
                             prob = (market.yes_bid + market.yes_ask) / 2
@@ -2026,11 +2055,39 @@ async def _poll_kalshi_markets():
                         american = probability_to_american(prob) if prob and prob > 0 else None
 
                         # For single-market events, use "Yes" as outcome name
-                        # For multi-market events, use market title
+                        # For multi-market events, prefer yes_sub_title (player/team name),
+                        # then subtitle, then title if it differs from event title,
+                        # then parsed ticker as last resort
                         if len(event.markets) == 1:
                             outcome_name = "Yes"
                         else:
-                            outcome_name = market.title or market.ticker
+                            if market.yes_sub_title:
+                                outcome_name = market.yes_sub_title
+                            elif market.subtitle:
+                                outcome_name = market.subtitle
+                            elif market.title and market.title != event.title:
+                                outcome_name = market.title
+                            else:
+                                # Extract name from ticker (e.g. "COTY-24-BELICHICK" -> "Belichick")
+                                outcome_name = _parse_kalshi_ticker_name(market.ticker)
+
+                        outcome_data.append({
+                            "market": market,
+                            "prob": prob,
+                            "american": american,
+                            "outcome_name": outcome_name,
+                        })
+
+                    # Sort by probability descending to compute ranks (1 = highest)
+                    outcome_data.sort(key=lambda x: x["prob"], reverse=True)
+
+                    # Second pass: upsert outcomes with correct probability-based ranks
+                    for rank, od in enumerate(outcome_data, 1):
+                        market = od["market"]
+                        prob = od["prob"]
+                        american = od["american"]
+                        outcome_name = od["outcome_name"]
+                        stats["markets_processed"] += 1
 
                         # Upsert outcome
                         outcome_stmt = pg_insert(FuturesOutcome).values(
@@ -2044,7 +2101,7 @@ async def _poll_kalshi_markets():
                             opening_probability=prob,
                             opening_american_odds=american,
                             opening_captured_at=now,
-                            rank=idx,
+                            rank=rank,
                         ).on_conflict_do_update(
                             index_elements=["market_id", "external_id"],
                             set_={
@@ -2053,7 +2110,7 @@ async def _poll_kalshi_markets():
                                 "current_american_odds": american,
                                 "current_yes_bid": market.yes_bid,
                                 "current_yes_ask": market.yes_ask,
-                                "rank": idx,
+                                "rank": rank,
                                 "last_updated": func.now(),
                             }
                         ).returning(FuturesOutcome.id)
@@ -2089,6 +2146,23 @@ async def _poll_kalshi_markets():
         await service.close()
 
     return stats
+
+
+def _parse_kalshi_ticker_name(ticker: str) -> str:
+    """Extract a human-readable name from a Kalshi market ticker.
+
+    Kalshi tickers look like 'KXCOTY-24-BELICHICK' or 'NBACHAMP-BOS'.
+    We take the last segment that isn't purely numeric and title-case it.
+    """
+    if not ticker:
+        return "Unknown"
+    parts = ticker.split("-")
+    # Walk backwards to find the last non-numeric segment
+    for part in reversed(parts):
+        if part and not part.isdigit():
+            # Title-case and return (e.g. "BELICHICK" -> "Belichick")
+            return part.title()
+    return ticker
 
 
 def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
