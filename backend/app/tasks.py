@@ -118,6 +118,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_espn_live_events",
         "schedule": 60.0,  # Every 60 seconds for live game data (scores, clock, win prob)
     },
+    "backfill-team-logos": {
+        "task": "app.tasks.backfill_team_logos",
+        "schedule": crontab(minute=15, hour="*/6"),  # Every 6 hours at :15
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -2600,5 +2604,144 @@ async def _sync_espn_live_events():
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
         print(f"ESPN sync task error: {e}\n{traceback.format_exc()}")
+
+    return stats
+
+
+# ============================================================================
+# ESPN Team Logo Backfill
+# ============================================================================
+
+
+@celery_app.task(bind=True)
+def backfill_team_logos(self):
+    """
+    Fetch all teams from ESPN's /teams endpoint and fill in missing logos.
+
+    This runs periodically to ensure all teams in supported leagues have
+    logo data, even if they haven't appeared in a live/scheduled game
+    during an ESPN sync cycle.
+    """
+    return run_async(_backfill_team_logos())
+
+
+async def _backfill_team_logos():
+    """Async implementation of backfill_team_logos."""
+    from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
+    from app.models.models import Team, Sport
+    from sqlalchemy import select
+
+    stats = {
+        "sports_checked": 0,
+        "teams_fetched": 0,
+        "teams_updated": 0,
+        "errors": [],
+    }
+
+    try:
+        async with get_task_session() as session:
+            # Find teams missing logos, grouped by sport
+            result = await session.execute(
+                select(Team, Sport.key)
+                .join(Sport)
+                .where(Team.logo_url_small.is_(None))
+            )
+            teams_missing_logos = result.all()
+
+            if not teams_missing_logos:
+                return {"status": "no_teams_missing_logos", **stats}
+
+            # Group by sport key
+            sport_keys_needed = set()
+            teams_by_sport = {}
+            for team, sport_key in teams_missing_logos:
+                if sport_key in SPORT_LEAGUE_MAP:
+                    sport_keys_needed.add(sport_key)
+                    teams_by_sport.setdefault(sport_key, []).append(team)
+
+            if not sport_keys_needed:
+                return {"status": "no_espn_mapped_sports_need_logos", **stats}
+
+            # Fetch teams from ESPN for each sport
+            espn = ESPNAPIService()
+            try:
+                for sport_key in sport_keys_needed:
+                    stats["sports_checked"] += 1
+                    try:
+                        espn_teams = await espn.get_teams(sport_key)
+                        stats["teams_fetched"] += len(espn_teams)
+                    except Exception as e:
+                        stats["errors"].append(f"fetch_{sport_key}: {str(e)}")
+                        continue
+
+                    if not espn_teams:
+                        continue
+
+                    # Build lookup of ESPN teams by various name forms
+                    espn_by_id = {}
+                    espn_by_name = {}
+                    for et in espn_teams:
+                        espn_by_id[et.espn_id] = et
+                        for name in [et.display_name, et.name, et.short_name, et.nickname]:
+                            if name:
+                                espn_by_name[name.lower()] = et
+
+                    # Try to match our teams to ESPN teams
+                    for team in teams_by_sport.get(sport_key, []):
+                        matched_espn = None
+
+                        # Match by ESPN ID first (most reliable)
+                        if team.espn_id and team.espn_id in espn_by_id:
+                            matched_espn = espn_by_id[team.espn_id]
+                        else:
+                            # Match by name
+                            names_to_check = [team.name]
+                            if team.alternate_names:
+                                names_to_check.extend(team.alternate_names)
+
+                            for name in names_to_check:
+                                name_lower = name.lower()
+                                # Exact match
+                                if name_lower in espn_by_name:
+                                    matched_espn = espn_by_name[name_lower]
+                                    break
+                                # Substring match
+                                for espn_name, et in espn_by_name.items():
+                                    if name_lower in espn_name or espn_name in name_lower:
+                                        matched_espn = et
+                                        break
+                                if matched_espn:
+                                    break
+
+                        if matched_espn and matched_espn.logo_url:
+                            team.logo_url_small = matched_espn.logo_url
+                            team.logo_url_large = matched_espn.logo_url
+                            if not team.espn_id:
+                                team.espn_id = matched_espn.espn_id
+                            if matched_espn.primary_color and not team.primary_color:
+                                color = matched_espn.primary_color
+                                if not color.startswith("#"):
+                                    color = f"#{color}"
+                                team.primary_color = color
+                            if matched_espn.secondary_color and not team.secondary_color:
+                                color = matched_espn.secondary_color
+                                if not color.startswith("#"):
+                                    color = f"#{color}"
+                                team.secondary_color = color
+                            # Store alternate names for future matching
+                            alt_names = set(team.alternate_names or [])
+                            for n in [matched_espn.display_name, matched_espn.short_name, matched_espn.nickname, matched_espn.name]:
+                                if n and n != team.name:
+                                    alt_names.add(n)
+                            if alt_names:
+                                team.alternate_names = list(alt_names)
+                            stats["teams_updated"] += 1
+            finally:
+                await espn.close()
+
+    except Exception as e:
+        stats["errors"].append(f"Task error: {str(e)}")
+        import traceback
+        print(f"Team logo backfill error: {e}\n{traceback.format_exc()}")
 
     return stats
