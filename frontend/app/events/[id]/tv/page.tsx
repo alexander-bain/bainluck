@@ -494,6 +494,7 @@ export default function TVPage({ params }: TVPageProps) {
                   bookmakerHistory={historyData?.bookmaker_history}
                   espnHistory={historyData?.espn_history}
                   eventStatus={event.status}
+                  fillContainer
                 />
               </div>
             ) : (
