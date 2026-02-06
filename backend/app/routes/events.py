@@ -318,17 +318,24 @@ async def get_pulse_rankings(
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
 
-    # Subquery: count odds snapshots per event
+    # Subquery: count distinct time buckets (minutes) per event.
+    # Raw odds_snapshots contain multiple bookmakers per polling cycle,
+    # so counting raw rows inflates the count (10 rows from 2 polls with
+    # 5 bookmakers each is only 2 actual data points). Counting distinct
+    # minute-level buckets matches Pulse's 60-second aggregation and gives
+    # an accurate measure of how much real data we have for the game.
     snapshot_count = (
         select(
             OddsSnapshot.event_id,
-            func.count().label("snap_count"),
+            func.count(
+                func.distinct(func.date_trunc('minute', OddsSnapshot.captured_at))
+            ).label("snap_count"),
         )
         .group_by(OddsSnapshot.event_id)
         .subquery()
     )
 
-    MIN_SNAPSHOTS_FOR_RANKING = 10
+    MIN_SNAPSHOTS_FOR_RANKING = 20
 
     # Base query for completed events with GEI and enough data
     base_query = (
