@@ -101,6 +101,10 @@ odds-tracker/
 | `frontend/hooks/usePinnedEvents.ts` | Hook for managing pinned events (localStorage) |
 | `frontend/hooks/usePinnedFutures.ts` | Hook for managing pinned futures (localStorage) |
 | `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
+| `frontend/app/events/[id]/tv/page.tsx` | TV/Party mode — fullscreen event display for monitors |
+| `frontend/components/party/PropBets.tsx` | Dual-panel auto-scrolling player props display |
+| `frontend/components/party/Confetti.tsx` | Canvas confetti animation (triggers on lead changes) |
+| `frontend/components/party/PulseECG.tsx` | Canvas ECG heartbeat animation synced to Pulse |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
 ---
@@ -389,6 +393,37 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/esp
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
 ```
 
+### TV Mode (Party Display)
+Fullscreen display optimized for showing an event on a TV/monitor during watch parties.
+
+**URL:** `/events/{id}/tv` (also accessible via "TV Mode" button on event detail page)
+
+**Architecture:**
+- Uses `fixed inset-0 z-[9999]` to overlay the root layout (which adds OddsTracker header/footer to all pages). This is intentional — Next.js app router doesn't support opting out of parent layouts.
+- All sizing uses **viewport-relative units** (`vh`/`vw`) so the layout scales to any display resolution. Designed for 4K monitors (3840x2160) at 2x Retina (1920x1080 logical).
+- Layout: Header bar → Hero (logos, score, probability) → Chart + Key Moments (flex-[2]) → Props panels (flex-[3])
+
+**Features:**
+- Giant score and win probability numbers (7.5vh / 5.5vh)
+- Team-colored probability bar
+- Lead change confetti (canvas animation with team colors)
+- Pulse ECG heartbeat animation (speed proportional to excitement)
+- Momentum indicator (last 5 min trend)
+- Key moments feed (detects 3%+ probability shifts)
+- Dual-panel auto-scrolling player props (stats panel + scoring panel)
+
+**Player Props:**
+- Backend endpoint: `GET /api/events/{id}/props`
+- Fetches from The Odds API per-event endpoint (`/v4/sports/{sport}/events/{eventId}/odds`)
+- Markets: `player_pass_tds`, `player_pass_yds`, `player_pass_completions`, `player_pass_interceptions`, `player_rush_yds`, `player_reception_yds`, `player_receptions`, `player_anytime_td`, `player_kicking_points`
+- Each market fetched individually (The Odds API returns 422 if ANY requested market is unavailable)
+- Deduplication: keeps only the most popular line per player+market
+- FanDuel/DraftKings data included via The Odds API aggregator (no separate API needed)
+
+**Props auto-scroll:** Uses `requestAnimationFrame` with duplicated content for seamless infinite looping. Pauses on hover. Content split into "Player Stats" (O/U props) and "Touchdown & Scoring" (yes/no props).
+
+**Files:** `frontend/app/events/[id]/tv/page.tsx`, `frontend/components/party/PropBets.tsx`, `frontend/components/party/Confetti.tsx`, `frontend/components/party/PulseECG.tsx`
+
 ---
 
 ## API Patterns
@@ -493,13 +528,15 @@ Both backend and frontend auto-deploy from `master` branch.
 6. ✅ Pinned Events & Futures (localStorage-based tracking)
 7. ✅ Futures categorization hardened (0 uncategorized markets)
 8. ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
-9. 🔄 Monitoring and reliability improvements
-10. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
+9. ✅ TV/Party mode with player props, confetti, ECG, momentum (4K-optimized)
+10. 🔄 Monitoring and reliability improvements
+11. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
 11. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
 12. 📋 Next: Firebase Auth for user accounts
 13. 📋 Next: Migrate pinned items to database (after auth)
 14. 📋 Next: LLM-powered odds movement explanations
 15. 📋 Next: Sport-specific Pulse normalization (different ceilings per sport)
+16. 📋 Next: TV mode — live prop resolution tracking (show which props hit/missed during game)
 
 **LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
 
@@ -541,6 +578,10 @@ See `docs/PRD.md` for full roadmap.
 
 7. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
+8. **TV mode uses `fixed inset-0` overlay**: The root layout (`app/layout.tsx`) wraps ALL pages with a header/footer. TV mode can't opt out of this in Next.js app router, so it uses `fixed inset-0 z-[9999]` to cover the root layout entirely. Don't change this to `h-screen` — it will render inside the root layout chrome and break.
+
+9. **The Odds API per-event props: fetch markets individually**: Requesting multiple prop markets in one call returns 422 if ANY single market is unavailable. The props endpoint fetches each market in its own API call and aggregates results.
+
 ---
 
 ## Quick Reference
@@ -552,5 +593,7 @@ See `docs/PRD.md` for full roadmap.
 | Pulse Hall of Fame | https://odds.alexbain.com/pulse/hall-of-fame |
 | Search | https://odds.alexbain.com/search?q=celtics |
 | PRD | `docs/PRD.md` |
+| TV Mode (example) | https://odds.alexbain.com/events/1/tv |
+| Player props API | `/api/events/{id}/props` |
 | Debug endpoints | `/api/events/debug/*` |
 | Admin endpoints | `/api/admin/*` |
