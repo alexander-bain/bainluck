@@ -6,6 +6,7 @@ import type {
   EventsResponse,
   EventDetailResponse,
   EventHistoryResponse,
+  EventPropsResponse,
   SportsResponse,
   LiveOddsResponse,
   FuturesMarketsResponse,
@@ -81,6 +82,13 @@ export async function fetchEventHistory(
   return apiFetch<EventHistoryResponse>(
     `/api/events/${id}/history?hours=${hours}`
   );
+}
+
+/**
+ * Fetch player prop bets for an event
+ */
+export async function fetchEventProps(id: number): Promise<EventPropsResponse> {
+  return apiFetch<EventPropsResponse>(`/api/events/${id}/props`);
 }
 
 /**

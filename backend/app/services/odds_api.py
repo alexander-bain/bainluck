@@ -159,6 +159,41 @@ class OddsAPIService:
         response.raise_for_status()
         return response.json()
     
+    async def get_event_odds(
+        self,
+        sport_key: str,
+        event_id: str,
+        markets: str = "player_pass_tds,player_pass_yds,player_pass_completions,player_pass_interceptions,player_rush_yds,player_reception_yds,player_receptions,player_anytime_td,player_first_td,player_kicking_points",
+        regions: str = "us,us2",
+        odds_format: str = "american",
+    ) -> dict:
+        """
+        Fetch odds for a specific event, including player props.
+
+        Uses the per-event endpoint which supports player prop markets.
+
+        Args:
+            sport_key: Sport identifier (e.g., "americanfootball_nfl")
+            event_id: The Odds API event ID (external_id)
+            markets: Comma-separated market keys
+            regions: Bookmaker regions
+            odds_format: "american" or "decimal"
+
+        Returns:
+            Event dict with bookmaker odds including player props.
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/sports/{sport_key}/events/{event_id}/odds",
+            params={
+                "apiKey": self.api_key,
+                "regions": regions,
+                "markets": markets,
+                "oddsFormat": odds_format,
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def get_all_odds(
         self, 
         sports: Optional[list[str]] = None
