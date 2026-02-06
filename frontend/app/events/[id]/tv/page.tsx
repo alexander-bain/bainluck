@@ -273,7 +273,7 @@ export default function TVPage({ params }: TVPageProps) {
       : "#64748b";
 
   return (
-    <div className="h-screen bg-[#0a0a0f] text-white overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-[9999] bg-[#0a0a0f] text-white overflow-hidden flex flex-col">
       <Confetti
         active={confettiActive}
         colors={confettiColors.length > 0 ? confettiColors : undefined}
@@ -479,12 +479,12 @@ export default function TVPage({ params }: TVPageProps) {
         {/* === CHART + KEY MOMENTS ROW (~35% of remaining) === */}
         <div className="flex-[2] min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-[0.8vw]">
           {/* Win Probability Chart */}
-          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0">
+          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
             <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider mb-[0.5vh] font-semibold shrink-0">
               Win Probability
             </h3>
             {historyData?.history && historyData.history.length > 0 ? (
-              <div className="flex-1 min-h-0 [&_.recharts-cartesian-grid_line]:!stroke-white/10 [&_.recharts-xAxis_text]:!fill-white/40 [&_.recharts-yAxis_text]:!fill-white/40 [&_.recharts-reference-line_line]:!stroke-white/20">
+              <div className="flex-1 min-h-0 overflow-hidden [&_.recharts-cartesian-grid_line]:!stroke-white/10 [&_.recharts-xAxis_text]:!fill-white/40 [&_.recharts-yAxis_text]:!fill-white/40 [&_.recharts-reference-line_line]:!stroke-white/20">
                 <OddsChart
                   history={historyData.history}
                   homeTeam={event.home_team}
