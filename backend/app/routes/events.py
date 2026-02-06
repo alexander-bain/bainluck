@@ -1231,6 +1231,8 @@ async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
     from collections import defaultdict
     prop_aggregator = defaultdict(lambda: {"over_odds": [], "under_odds": [], "yes_odds": [], "no_odds": []})
 
+    TD_MARKETS = ("player_anytime_td", "player_first_td")
+
     for bookmaker in all_bookmakers_data:
         for market in bookmaker.get("markets", []):
             market_key = market["key"]
@@ -1238,27 +1240,30 @@ async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
                 continue
 
             for outcome in market.get("outcomes", []):
-                player = outcome.get("description", outcome.get("name", "Unknown"))
-                line = outcome.get("point")
                 price = outcome.get("price")
-                name = outcome.get("name", "")
-
                 if price is None:
                     continue
 
-                key = (player, market_key, line)
+                name = outcome.get("name", "")
+                description = outcome.get("description", "")
+                line = outcome.get("point")
 
-                if name == "Over":
-                    prop_aggregator[key]["over_odds"].append(price)
-                elif name == "Under":
-                    prop_aggregator[key]["under_odds"].append(price)
-                elif name == "Yes" or (market_key in ("player_anytime_td", "player_first_td") and name != "No"):
-                    # For anytime TD / first TD, the player name is in the outcome name
-                    if market_key in ("player_anytime_td", "player_first_td"):
-                        key = (name, market_key, line)
+                if market_key in TD_MARKETS:
+                    # For TD markets: name=player, description=player (or empty)
+                    # Each outcome is a different player with yes/no implied
+                    player = description or name
+                    if player in ("Yes", "No"):
+                        continue  # Skip generic yes/no, we want player-specific
+                    key = (player, market_key, line)
                     prop_aggregator[key]["yes_odds"].append(price)
-                elif name == "No":
-                    prop_aggregator[key]["no_odds"].append(price)
+                else:
+                    # Standard over/under prop
+                    player = description or name
+                    key = (player, market_key, line)
+                    if name == "Over":
+                        prop_aggregator[key]["over_odds"].append(price)
+                    elif name == "Under":
+                        prop_aggregator[key]["under_odds"].append(price)
 
     # Build response grouped by category
     from statistics import median
@@ -1291,13 +1296,8 @@ async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
             # Yes/No prop (anytime TD, first TD)
             med_yes = int(median(odds_data["yes_odds"]))
             yes_prob = american_to_probability(med_yes)
-            if odds_data["no_odds"]:
-                med_no = int(median(odds_data["no_odds"]))
-                no_prob = american_to_probability(med_no)
-                yes_fair, no_fair = remove_vig(yes_prob, no_prob)
-            else:
-                # No "no" odds available, use raw probability
-                yes_fair = yes_prob
+            # For TD props, estimate no probability from yes
+            yes_fair = min(yes_prob, 0.99)  # Cap to avoid division issues
             prop_entry["probability"] = round(yes_fair, 4)
             prop_entry["american_odds"] = med_yes
             prop_entry["bookmaker_count"] = len(odds_data["yes_odds"])
@@ -1306,9 +1306,21 @@ async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
 
         categories[info["category"]].append(prop_entry)
 
-    # Sort props within each category by player name
+    # Deduplicate: for over/under props, keep only the most popular line
+    # per player+type (the one with the most bookmakers)
     for cat in categories:
-        categories[cat].sort(key=lambda p: p["player"])
+        deduped = {}
+        for prop in categories[cat]:
+            dedup_key = (prop["player"], prop["market_key"])
+            existing = deduped.get(dedup_key)
+            if existing is None or prop.get("bookmaker_count", 0) > existing.get("bookmaker_count", 0):
+                deduped[dedup_key] = prop
+        categories[cat] = list(deduped.values())
+
+    # Sort: TD props by probability descending, others by player name
+    for cat in categories:
+        if cat == "Scoring":
+            categories[cat].sort(key=lambda p: -(p.get("probability", 0)))
 
     # Order categories
     category_order = ["Passing", "Rushing", "Receiving", "Scoring", "Kicking"]
