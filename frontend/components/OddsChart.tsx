@@ -201,7 +201,8 @@ export default function OddsChart({
 
     // Ensure all bookmaker keys exist on all data points
     const allBookmakers = Object.keys(filteredBookmakerHistory);
-    for (const point of dataMap.values()) {
+    const allPoints = Array.from(dataMap.values());
+    for (const point of allPoints) {
       for (const bookmaker of allBookmakers) {
         if (point[`${bookmaker}_delta`] === undefined) {
           point[`${bookmaker}_delta`] = null;
