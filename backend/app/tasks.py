@@ -2437,7 +2437,7 @@ async def _sync_espn_live_events():
                 if k in ESPN_SPORT_MAPPING:
                     all_fetch_keys.add(k)
             for k in scheduled_sport_keys:
-                if k in ESPN_SPORT_MAPPING and k not in live_sport_keys:
+                if k in ESPN_SPORT_MAPPING:
                     all_fetch_keys.add(k)
 
             if not all_fetch_keys:
@@ -2560,8 +2560,6 @@ async def _sync_espn_live_events():
             for sport_key in scheduled_sport_keys:
                 if sport_key not in ESPN_SPORT_MAPPING:
                     continue
-                if sport_key in live_sport_keys:
-                    continue  # Already processed above
 
                 espn_events = espn_data.get(sport_key, [])
                 if not espn_events:
