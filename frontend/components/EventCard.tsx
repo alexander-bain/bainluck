@@ -95,8 +95,8 @@ export default function EventCard({
   const isFeaturedHighlight = event.highlight?.flags?.favorite_switched ||
     event.highlight?.flags?.is_upset;
 
-  // Show logo placeholders when one team has a logo but the other doesn't
-  const eitherTeamHasLogo = !!(event.home_team_data?.logo_small || event.away_team_data?.logo_small);
+  // Only show logos when both teams have them (avoids asymmetric display)
+  const bothTeamsHaveLogos = !!(event.home_team_data?.logo_small && event.away_team_data?.logo_small);
 
   // Card border/background based on state
   const cardClasses = effectivelyLive
@@ -228,20 +228,13 @@ export default function EventCard({
           {/* Home Team Row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              {event.home_team_data?.logo_small ? (
+              {bothTeamsHaveLogos && (
                 <img
-                  src={event.home_team_data.logo_small}
+                  src={event.home_team_data!.logo_small!}
                   alt=""
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
-              ) : eitherTeamHasLogo ? (
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: event.home_team_data?.primary_color || '#94a3b8' }}
-                >
-                  <span className="text-[10px] font-bold text-white leading-none">{event.home_team[0]}</span>
-                </div>
-              ) : null}
+              )}
               <span
                 className={`text-base font-semibold truncate ${
                   homeFavorite ? "text-graphite" : "text-slate"
@@ -283,20 +276,13 @@ export default function EventCard({
           {/* Away Team Row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              {event.away_team_data?.logo_small ? (
+              {bothTeamsHaveLogos && (
                 <img
-                  src={event.away_team_data.logo_small}
+                  src={event.away_team_data!.logo_small!}
                   alt=""
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
-              ) : eitherTeamHasLogo ? (
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: event.away_team_data?.primary_color || '#94a3b8' }}
-                >
-                  <span className="text-[10px] font-bold text-white leading-none">{event.away_team[0]}</span>
-                </div>
-              ) : null}
+              )}
               <span
                 className={`text-base font-semibold truncate ${
                   !homeFavorite ? "text-graphite" : "text-slate"
