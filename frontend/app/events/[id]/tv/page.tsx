@@ -484,7 +484,7 @@ export default function TVPage({ params }: TVPageProps) {
               Win Probability
             </h3>
             {historyData?.history && historyData.history.length > 0 ? (
-              <div className="flex-1 min-h-0 overflow-hidden [&_.recharts-cartesian-grid_line]:!stroke-white/10 [&_.recharts-xAxis_text]:!fill-white/40 [&_.recharts-yAxis_text]:!fill-white/40 [&_.recharts-reference-line_line]:!stroke-white/20">
+              <div className="flex-1 min-h-0 [&_.recharts-cartesian-grid_line]:!stroke-white/10 [&_.recharts-xAxis_text]:!fill-white/40 [&_.recharts-yAxis_text]:!fill-white/40 [&_.recharts-reference-line_line]:!stroke-white/20">
                 <OddsChart
                   history={historyData.history}
                   homeTeam={event.home_team}
