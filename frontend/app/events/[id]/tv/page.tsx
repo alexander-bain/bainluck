@@ -273,7 +273,7 @@ export default function TVPage({ params }: TVPageProps) {
       : "#64748b";
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white overflow-hidden">
+    <div className="h-screen bg-[#0a0a0f] text-white overflow-hidden flex flex-col">
       <Confetti
         active={confettiActive}
         colors={confettiColors.length > 0 ? confettiColors : undefined}
@@ -334,9 +334,9 @@ export default function TVPage({ params }: TVPageProps) {
       </header>
 
       {/* === MAIN CONTENT === */}
-      <div className="max-w-[1800px] mx-auto px-6 py-4">
+      <div className="flex-1 min-h-0 flex flex-col max-w-[1800px] w-full mx-auto px-6 py-3">
         {/* Score + Probability Hero */}
-        <div className="mb-4">
+        <div className="shrink-0 mb-3">
           <div className="flex items-center justify-center gap-8 md:gap-16 mb-4">
             {/* Home Team */}
             <div className="flex flex-col items-center gap-2 flex-1">
@@ -464,8 +464,8 @@ export default function TVPage({ params }: TVPageProps) {
           )}
         </div>
 
-        {/* === BOTTOM SECTION: Chart + Sidebar === */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* === CHART + KEY MOMENTS ROW === */}
+        <div className="shrink-0 grid grid-cols-1 lg:grid-cols-3 gap-3">
           {/* Win Probability Chart - takes 2 columns */}
           <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-4 border border-white/5">
             <h3 className="text-white/50 text-xs uppercase tracking-wider mb-2 font-semibold">
@@ -509,10 +509,9 @@ export default function TVPage({ params }: TVPageProps) {
             )}
           </div>
 
-          {/* Sidebar: Key Moments + Props */}
-          <div className="space-y-4">
-            {/* Key Moments */}
-            <div className="bg-[#111118] rounded-2xl p-4 border border-white/5">
+          {/* Sidebar: Key Moments */}
+          <div>
+            <div className="bg-[#111118] rounded-2xl p-4 border border-white/5 h-full overflow-hidden">
               <h3 className="text-white/50 text-xs uppercase tracking-wider mb-3 font-semibold">
                 Key Moments
               </h3>
@@ -544,12 +543,12 @@ export default function TVPage({ params }: TVPageProps) {
                 </div>
               )}
             </div>
-
-            {/* Player Props */}
-            <div className="bg-[#111118] rounded-2xl p-4 border border-white/5">
-              <PropBets eventId={eventId} />
-            </div>
           </div>
+        </div>
+
+        {/* === PLAYER PROPS — dual auto-scrolling panels === */}
+        <div className="flex-1 min-h-0 mt-3">
+          <PropBets eventId={eventId} />
         </div>
       </div>
 
