@@ -192,7 +192,7 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pul
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/distributions"
 ```
 
-**Hall of Fame filtering:** The `pulse-rankings` endpoint requires 10+ odds snapshots per event to prevent low-data games from appearing in rankings.
+**Hall of Fame filtering:** The `pulse-rankings` endpoint requires 20+ distinct minute-level time buckets (not raw snapshot rows, since each poll captures 5-11 bookmakers). Completed events with `data_quality == "minimal"` (< 10 aggregated time buckets) never get a stored Pulse score, providing a second layer of filtering.
 
 ### Highlights (Event Ranking)
 Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points. This is **Level 1 (snapshot scoring)** of a multi-level ranking system — see "Ranking & Feed Evolution" in `docs/PRD.md` for the full roadmap toward the iOS feed tab.
@@ -497,7 +497,7 @@ See `docs/PRD.md` for full roadmap.
 
 4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-3. **Pulse requires 3+ snapshots**: Events with fewer odds updates won't have Pulse calculated. Hall of Fame rankings require 10+ snapshots.
+3. **Pulse data quality gating**: `calculate_pulse()` returns `None` for < 3 aggregated time buckets. For completed events, Pulse is only stored when `data_quality` is `"limited"` (10-29 buckets) or `"good"` (30+). Events with `"minimal"` data (3-9 buckets) get no stored score. Hall of Fame rankings additionally require 20+ distinct minute-level time buckets. Note: live games still show Pulse with any data quality for real-time feedback.
 
 7. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
