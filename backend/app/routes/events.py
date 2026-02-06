@@ -1405,35 +1405,49 @@ async def get_event_odds_history(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Get snapshots within time range
-    # Include snapshots where:
-    # 1. captured_at >= cutoff (created within the window), OR
-    # 2. captured_at < cutoff AND valid_until >= cutoff (created before but still valid during window)
-    # This ensures we show trend lines even when odds haven't changed for a while
+    # For completed/closed events, return ALL snapshots (no time window)
+    # so users can always see the full probability history.
+    # For live/scheduled events, apply a time window to keep responses focused.
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=hours)
+    is_finished = event.status in ("completed", "closed")
 
-    result = await db.execute(
-        select(OddsSnapshot)
-        .where(
-            and_(
-                OddsSnapshot.event_id == event_id,
-                or_(
-                    # Case 1: Snapshot created within the time window
-                    OddsSnapshot.captured_at >= cutoff,
-                    # Case 2: Snapshot created before window but was valid during it
-                    and_(
-                        OddsSnapshot.captured_at < cutoff,
-                        or_(
-                            OddsSnapshot.valid_until >= cutoff,
-                            # Include if valid_until is NULL (snapshot never superseded)
-                            OddsSnapshot.valid_until.is_(None)
+    if is_finished:
+        # Return all snapshots for finished events
+        result = await db.execute(
+            select(OddsSnapshot)
+            .where(OddsSnapshot.event_id == event_id)
+            .order_by(OddsSnapshot.captured_at)
+        )
+        cutoff = None
+    else:
+        # Include snapshots where:
+        # 1. captured_at >= cutoff (created within the window), OR
+        # 2. captured_at < cutoff AND valid_until >= cutoff (created before but still valid during window)
+        # This ensures we show trend lines even when odds haven't changed for a while
+        cutoff = now - timedelta(hours=hours)
+
+        result = await db.execute(
+            select(OddsSnapshot)
+            .where(
+                and_(
+                    OddsSnapshot.event_id == event_id,
+                    or_(
+                        # Case 1: Snapshot created within the time window
+                        OddsSnapshot.captured_at >= cutoff,
+                        # Case 2: Snapshot created before window but was valid during it
+                        and_(
+                            OddsSnapshot.captured_at < cutoff,
+                            or_(
+                                OddsSnapshot.valid_until >= cutoff,
+                                # Include if valid_until is NULL (snapshot never superseded)
+                                OddsSnapshot.valid_until.is_(None)
+                            )
                         )
                     )
                 )
             )
+            .order_by(OddsSnapshot.captured_at)
         )
-        .order_by(OddsSnapshot.captured_at)
-    )
     snapshots = result.scalars().all()
 
     # Group snapshots by capture time and aggregate across bookmakers
@@ -1442,7 +1456,7 @@ async def get_event_odds_history(
     from collections import defaultdict
     snapshots_by_time = defaultdict(list)
     for snap in snapshots:
-        if snap.captured_at >= cutoff:
+        if cutoff is None or snap.captured_at >= cutoff:
             # Normal case: use actual capture time
             time_key = snap.captured_at.replace(second=0, microsecond=0)
             snapshots_by_time[time_key].append(snap)
@@ -1501,7 +1515,7 @@ async def get_event_odds_history(
                 "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
 
-            if snap.captured_at >= cutoff:
+            if cutoff is None or snap.captured_at >= cutoff:
                 # Normal case: use actual capture time
                 bm_points.append({
                     "timestamp": snap.captured_at.replace(second=0, microsecond=0).isoformat(),
@@ -1548,13 +1562,13 @@ async def get_event_odds_history(
     espn_history = []
     try:
         from app.models import ESPNSnapshot
+        espn_query = select(ESPNSnapshot).where(
+            ESPNSnapshot.event_id == event_id,
+        )
+        if cutoff is not None:
+            espn_query = espn_query.where(ESPNSnapshot.captured_at >= cutoff)
         espn_result = await db.execute(
-            select(ESPNSnapshot)
-            .where(
-                ESPNSnapshot.event_id == event_id,
-                ESPNSnapshot.captured_at >= cutoff,
-            )
-            .order_by(ESPNSnapshot.captured_at)
+            espn_query.order_by(ESPNSnapshot.captured_at)
         )
         espn_snapshots = espn_result.scalars().all()
 
