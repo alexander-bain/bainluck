@@ -517,7 +517,7 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Prop Odds Carousel (one prop at a time with bar charts, auto-rotating)
+// Prop Odds Carousel — grouped comparisons with animated transitions
 // ---------------------------------------------------------------------------
 const PROP_CAT_COLORS: Record<string, string> = {
   Passing: "#60a5fa",
@@ -535,8 +535,15 @@ const PROP_CAT_ICONS: Record<string, string> = {
   Kicking: "\uD83E\uDD7E",
 };
 
-interface CarouselProp extends SportsbookProp {
+interface PropGroup {
   category: string;
+  type: string;
+  isOverUnder: boolean;
+  players: {
+    name: string;
+    pct: number;
+    line: number | null;
+  }[];
 }
 
 function TVPropCarousel({ eventId }: { eventId: number }) {
@@ -561,22 +568,50 @@ function TVPropCarousel({ eventId }: { eventId: number }) {
     return () => clearInterval(iv);
   }, [fetchProps]);
 
-  const allProps: CarouselProp[] = useMemo(() => {
+  // Group props by category + type (e.g., all "Anytime TD" together)
+  const groups: PropGroup[] = useMemo(() => {
     if (!data) return [];
-    return data.categories.flatMap((cat) =>
-      cat.props.map((p) => ({ ...p, category: cat.category }))
-    );
+    const groupMap: Record<string, PropGroup> = {};
+
+    for (const cat of data.categories) {
+      for (const prop of cat.props) {
+        const key = `${cat.category}::${prop.type}`;
+        if (!groupMap[key]) {
+          groupMap[key] = {
+            category: cat.category,
+            type: prop.type,
+            isOverUnder: prop.over_probability != null,
+            players: [],
+          };
+        }
+        const pct = prop.probability ?? prop.over_probability ?? 0;
+        groupMap[key].players.push({
+          name: prop.player,
+          pct: Math.round(pct * 100),
+          line: prop.line,
+        });
+      }
+    }
+
+    // Sort players within each group by probability descending
+    for (const group of Object.values(groupMap)) {
+      group.players.sort((a, b) => b.pct - a.pct);
+    }
+
+    // Only show groups with 2+ players (comparisons are interesting)
+    // Put single-player groups at the end
+    const multi = Object.values(groupMap).filter((g) => g.players.length >= 2);
+    const single = Object.values(groupMap).filter((g) => g.players.length === 1);
+    return [...multi, ...single];
   }, [data]);
 
-  // Auto-rotate every 7 seconds
+  // Auto-rotate every 8 seconds
   useEffect(() => {
-    if (allProps.length <= 1) return;
+    if (groups.length <= 1) return;
     const timer = setInterval(() => {
-      // Slide out
       setAnimClass("opacity-0 -translate-x-[2vw]");
       setTimeout(() => {
-        setCurrentIndex((prev) => (prev + 1) % allProps.length);
-        // Reset to right side, then slide in
+        setCurrentIndex((prev) => (prev + 1) % groups.length);
         setAnimClass("opacity-0 translate-x-[2vw]");
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -585,11 +620,11 @@ function TVPropCarousel({ eventId }: { eventId: number }) {
         });
         timerKeyRef.current += 1;
       }, 350);
-    }, 7000);
+    }, 8000);
     return () => clearInterval(timer);
-  }, [allProps.length]);
+  }, [groups.length]);
 
-  if (!data || allProps.length === 0) {
+  if (!data || groups.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
         Loading prop odds...
@@ -597,17 +632,16 @@ function TVPropCarousel({ eventId }: { eventId: number }) {
     );
   }
 
-  const prop = allProps[currentIndex];
-  const catColor = PROP_CAT_COLORS[prop.category] || "#64748b";
-  const catIcon = PROP_CAT_ICONS[prop.category] || "\uD83D\uDCCA";
-  const overPct = prop.over_probability != null ? Math.round(prop.over_probability * 100) : null;
-  const underPct = prop.under_probability != null ? Math.round(prop.under_probability * 100) : null;
-  const yesPct = prop.probability != null ? Math.round(prop.probability * 100) : null;
+  const group = groups[currentIndex % groups.length];
+  const catColor = PROP_CAT_COLORS[group.category] || "#64748b";
+  const catIcon = PROP_CAT_ICONS[group.category] || "\uD83D\uDCCA";
+  // Max probability in group for scaling bars relative to each other
+  const maxPct = Math.max(...group.players.map((p) => p.pct), 1);
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between mb-[0.6vh]">
+      <div className="shrink-0 flex items-center justify-between mb-[0.4vh]">
         <div className="flex items-center gap-[0.4vw]">
           <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider font-semibold">
             Prop Odds
@@ -615,113 +649,87 @@ function TVPropCarousel({ eventId }: { eventId: number }) {
           <span className="inline-block w-[0.5vh] h-[0.5vh] rounded-full bg-emerald-400 animate-pulse" />
         </div>
         <span className="text-white/20 text-[1vh] font-mono">
-          {currentIndex + 1}/{allProps.length}
+          {(currentIndex % groups.length) + 1}/{groups.length}
         </span>
       </div>
 
-      {/* Animated prop card */}
-      <div className={`flex-1 min-h-0 flex flex-col justify-center transition-all duration-300 ease-out ${animClass}`}>
-        {/* Category badge */}
-        <div className="flex items-center gap-[0.3vw] mb-[0.5vh]">
-          <span className="text-[1.2vh]">{catIcon}</span>
-          <span
-            className="text-[1vh] uppercase tracking-widest font-bold"
-            style={{ color: catColor }}
-          >
-            {prop.category}
-          </span>
-        </div>
-
-        {/* Player name - BIG */}
-        <div className="text-white font-bold text-[2.2vh] leading-tight mb-[0.2vh]">
-          {prop.player}
-        </div>
-
-        {/* Prop type + line */}
-        <div className="text-white/40 text-[1.1vh] mb-[1vh]">
-          {prop.type}
-          {prop.line != null && (
-            <span className="text-blue-400/80 font-mono ml-[0.3vw]">{prop.line}</span>
-          )}
-        </div>
-
-        {/* Bar chart */}
-        {overPct != null && underPct != null ? (
-          <div className="space-y-[0.6vh]">
-            {/* Over bar */}
-            <div>
-              <div className="flex items-center justify-between mb-[0.2vh]">
-                <span className="text-emerald-400 text-[1vh] font-semibold uppercase tracking-wider">
-                  Over
-                </span>
-                <span className="text-emerald-400 font-mono font-bold text-[1.8vh]">
-                  {overPct}%
-                </span>
-              </div>
-              <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "1.8vh" }}>
-                <div
-                  className="h-full rounded-full transition-all duration-1000 ease-out"
-                  style={{
-                    width: `${overPct}%`,
-                    background: "linear-gradient(90deg, #059669, #34d399)",
-                  }}
-                />
-              </div>
-            </div>
-            {/* Under bar */}
-            <div>
-              <div className="flex items-center justify-between mb-[0.2vh]">
-                <span className="text-red-400 text-[1vh] font-semibold uppercase tracking-wider">
-                  Under
-                </span>
-                <span className="text-red-400 font-mono font-bold text-[1.8vh]">
-                  {underPct}%
-                </span>
-              </div>
-              <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "1.8vh" }}>
-                <div
-                  className="h-full rounded-full transition-all duration-1000 ease-out"
-                  style={{
-                    width: `${underPct}%`,
-                    background: "linear-gradient(90deg, #dc2626, #f87171)",
-                  }}
-                />
-              </div>
-            </div>
+      {/* Animated group slide */}
+      <div className={`flex-1 min-h-0 flex flex-col transition-all duration-300 ease-out ${animClass}`}>
+        {/* Category + type */}
+        <div className="shrink-0 mb-[0.4vh]">
+          <div className="flex items-center gap-[0.3vw] mb-[0.15vh]">
+            <span className="text-[1.1vh]">{catIcon}</span>
+            <span
+              className="text-[0.9vh] uppercase tracking-widest font-bold"
+              style={{ color: catColor }}
+            >
+              {group.category}
+            </span>
           </div>
-        ) : yesPct != null ? (
-          <div>
-            <div className="flex items-center justify-between mb-[0.3vh]">
-              <span className="text-white/40 text-[1vh] font-semibold uppercase tracking-wider">
-                Probability
+          <div className="text-white font-bold text-[1.7vh] leading-tight">
+            {group.type}
+            {group.isOverUnder && (
+              <span className="text-white/30 font-normal text-[1.1vh] ml-[0.3vw]">
+                (Over)
               </span>
-              <span
-                className="font-mono font-bold text-[2.5vh]"
-                style={{ color: catColor }}
-              >
-                {yesPct}%
-              </span>
-            </div>
-            <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "2.2vh" }}>
-              <div
-                className="h-full rounded-full transition-all duration-1000 ease-out"
-                style={{
-                  width: `${yesPct}%`,
-                  background: `linear-gradient(90deg, ${catColor}cc, ${catColor})`,
-                }}
-              />
-            </div>
+            )}
           </div>
-        ) : null}
+        </div>
+
+        {/* Player comparison bar chart */}
+        <AutoScrollContainer className="flex-1 min-h-0" speed={0.25}>
+          <div className="space-y-[0.4vh]">
+            {group.players.map((player, i) => {
+              const barWidth = (player.pct / maxPct) * 100;
+              const lastName = player.name.split(" ").pop() || player.name;
+              return (
+                <div key={`${player.name}-${i}`}>
+                  {/* Name + line + percentage */}
+                  <div className="flex items-baseline justify-between mb-[0.1vh]">
+                    <div className="flex items-baseline gap-[0.3vw] min-w-0">
+                      <span className="text-white/80 text-[1.1vh] font-semibold truncate">
+                        {lastName}
+                      </span>
+                      {player.line != null && (
+                        <span className="text-white/25 font-mono text-[0.85vh] shrink-0">
+                          {player.line}
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className="font-mono font-bold text-[1.6vh] shrink-0 ml-[0.3vw]"
+                      style={{ color: catColor }}
+                    >
+                      {player.pct}%
+                    </span>
+                  </div>
+                  {/* Bar */}
+                  <div
+                    className="w-full rounded-full overflow-hidden"
+                    style={{ height: "1vh", backgroundColor: "rgba(255,255,255,0.04)" }}
+                  >
+                    <div
+                      className="h-full rounded-full transition-all duration-1000 ease-out"
+                      style={{
+                        width: `${barWidth}%`,
+                        background: `linear-gradient(90deg, ${catColor}99, ${catColor})`,
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </AutoScrollContainer>
       </div>
 
       {/* Auto-advance progress bar */}
-      <div className="shrink-0 mt-[0.5vh]">
+      <div className="shrink-0 mt-[0.3vh]">
         <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "0.3vh" }}>
           <div
             key={timerKeyRef.current}
             className="h-full bg-white/20 rounded-full"
-            style={{ animation: "propTimer 7s linear" }}
+            style={{ animation: "propTimer 8s linear" }}
           />
         </div>
       </div>
