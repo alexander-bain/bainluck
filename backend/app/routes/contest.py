@@ -2174,6 +2174,201 @@ async def capture_bitcoin_start(secret: str = Query("", description="Admin secre
         return {"error": str(e)}
 
 
+# ---------------------------------------------------------------------------
+# YouTube Super Bowl Ad Leaderboard
+# ---------------------------------------------------------------------------
+
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+YOUTUBE_CACHE_TTL = 120  # Cache for 2 minutes
+
+# Pre-curated list of known Super Bowl LX advertisers with search terms
+# This helps find the correct official ads vs random uploads
+SB_AD_BRANDS = [
+    "Budweiser", "Uber Eats", "Doritos", "Pepsi", "Coca-Cola",
+    "Mountain Dew", "T-Mobile", "Verizon", "Google", "Apple",
+    "BMW", "Hyundai", "Kia", "Toyota", "Ram Trucks",
+    "Nike", "Meta", "OpenAI", "Microsoft", "Amazon",
+    "DoorDash", "Instacart", "FanDuel", "DraftKings",
+    "Disney", "Paramount", "Netflix", "Tubi",
+    "Pringles", "M&Ms", "Reese's", "Hellmann's",
+    "Bud Light", "Michelob Ultra", "Crown Royal",
+    "Squarespace", "GoDaddy", "Homes.com",
+]
+
+
+async def _fetch_youtube_ads() -> list[dict]:
+    """Fetch Super Bowl LX commercial data from YouTube Data API."""
+    if not YOUTUBE_API_KEY:
+        logger.warning("YOUTUBE_API_KEY not configured")
+        return []
+
+    cache_key = f"{REDIS_KEY_PREFIX}youtube_ads"
+
+    # Check Redis cache
+    try:
+        r = _redis()
+        cached = r.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    try:
+        ads = []
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Search for Super Bowl LX commercials
+            search_url = "https://www.googleapis.com/youtube/v3/search"
+            search_params = {
+                "key": YOUTUBE_API_KEY,
+                "q": "Super Bowl LX 2026 commercial ad",
+                "type": "video",
+                "part": "snippet",
+                "maxResults": 50,
+                "order": "viewCount",
+                "publishedAfter": "2026-01-15T00:00:00Z",
+            }
+
+            resp = await client.get(search_url, params=search_params)
+            if resp.status_code != 200:
+                logger.error(f"YouTube search API error: {resp.status_code} {resp.text[:200]}")
+                return []
+
+            search_data = resp.json()
+            video_ids = [
+                item["id"]["videoId"]
+                for item in search_data.get("items", [])
+                if item.get("id", {}).get("videoId")
+            ]
+
+            if not video_ids:
+                return []
+
+            # Fetch video statistics (views, likes)
+            stats_url = "https://www.googleapis.com/youtube/v3/videos"
+            stats_params = {
+                "key": YOUTUBE_API_KEY,
+                "id": ",".join(video_ids),
+                "part": "statistics,snippet,contentDetails",
+            }
+
+            resp = await client.get(stats_url, params=stats_params)
+            if resp.status_code != 200:
+                logger.error(f"YouTube videos API error: {resp.status_code}")
+                return []
+
+            videos_data = resp.json()
+
+            for item in videos_data.get("items", []):
+                snippet = item.get("snippet", {})
+                stats = item.get("statistics", {})
+                title = snippet.get("title", "")
+                channel = snippet.get("channelTitle", "")
+
+                # Try to identify the brand from the title or channel
+                brand = _identify_brand(title, channel)
+                if not brand:
+                    continue  # Skip non-brand/non-ad videos
+
+                views = int(stats.get("viewCount", 0))
+                likes = int(stats.get("likeCount", 0))
+                comments = int(stats.get("commentCount", 0))
+
+                ads.append({
+                    "brand": brand,
+                    "title": title,
+                    "video_id": item["id"],
+                    "channel": channel,
+                    "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
+                    "views": views,
+                    "likes": likes,
+                    "comments": comments,
+                    "published_at": snippet.get("publishedAt", ""),
+                })
+
+        # Deduplicate by brand (keep highest-viewed per brand)
+        brand_best: dict[str, dict] = {}
+        for ad in ads:
+            b = ad["brand"]
+            if b not in brand_best or ad["views"] > brand_best[b]["views"]:
+                brand_best[b] = ad
+
+        # Sort by views descending
+        result = sorted(brand_best.values(), key=lambda x: -x["views"])
+
+        # Cache result
+        try:
+            r = _redis()
+            r.setex(cache_key, YOUTUBE_CACHE_TTL, json.dumps(result))
+        except Exception:
+            pass
+
+        return result
+
+    except Exception as e:
+        logger.error(f"YouTube ads fetch error: {e}")
+        return []
+
+
+def _identify_brand(title: str, channel: str) -> Optional[str]:
+    """Identify the advertiser brand from a YouTube video title/channel."""
+    title_lower = title.lower()
+    channel_lower = channel.lower()
+    combined = title_lower + " " + channel_lower
+
+    # Check against known brands
+    for brand in SB_AD_BRANDS:
+        brand_lower = brand.lower()
+        # Check exact word boundary match in title or channel
+        if re.search(r'\b' + re.escape(brand_lower) + r'\b', combined):
+            return brand
+
+    # Also check if the channel name IS the brand (official uploads)
+    for brand in SB_AD_BRANDS:
+        if brand.lower() in channel_lower:
+            return brand
+
+    # Check for "super bowl" + "ad" or "commercial" in title (likely an ad even if brand unknown)
+    if ("super bowl" in title_lower or "sb " in title_lower) and \
+       any(w in title_lower for w in ["ad", "commercial", "spot", "teaser", "trailer"]):
+        # Try to extract brand from start of title (common pattern: "Brand - Super Bowl Ad")
+        dash_split = title.split(" - ")
+        if len(dash_split) >= 2 and len(dash_split[0].strip()) < 30:
+            return dash_split[0].strip()
+        pipe_split = title.split(" | ")
+        if len(pipe_split) >= 2 and len(pipe_split[0].strip()) < 30:
+            return pipe_split[0].strip()
+
+    return None
+
+
+def _format_view_count(views: int) -> str:
+    """Format a view count for display: 1234567 -> '1.2M'"""
+    if views >= 1_000_000:
+        return f"{views / 1_000_000:.1f}M"
+    elif views >= 1_000:
+        return f"{views / 1_000:.1f}K"
+    return str(views)
+
+
+@router.get("/ads")
+async def get_ad_leaderboard():
+    """Get Super Bowl ad leaderboard ranked by YouTube views."""
+    ads = await _fetch_youtube_ads()
+
+    # Add rank and formatted views
+    for i, ad in enumerate(ads):
+        ad["rank"] = i + 1
+        ad["views_formatted"] = _format_view_count(ad["views"])
+        ad["likes_formatted"] = _format_view_count(ad["likes"])
+
+    return {
+        "ads": ads,
+        "count": len(ads),
+        "cached": True,  # Always from cache or fresh fetch
+        "youtube_configured": bool(YOUTUBE_API_KEY),
+    }
+
+
 @router.post("/reset")
 async def reset_contest(secret: str = Query("", description="Admin secret")):
     """Admin: reset all resolutions and overrides."""
