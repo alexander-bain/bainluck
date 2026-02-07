@@ -116,6 +116,11 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Backend** and **frontend** auto-deploy from `master` via Heroku and Vercel respectively
 - **Database migrations**: Create with `alembic revision --autogenerate -m "description"`, applied automatically on Heroku release (`alembic upgrade head`)
 - **Testing changes**: Push to master and verify on production, or use Heroku/Vercel preview deployments
+- **Running tests**:
+  - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
+  - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
+  - Backend tests cover: Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked)
+  - Frontend tests cover: sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
 
 ### Querying the Production API
 
