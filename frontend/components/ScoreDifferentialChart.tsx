@@ -31,6 +31,8 @@ interface ScoreDifferentialChartProps {
   currentHomeScore?: number | null;
   currentAwayScore?: number | null;
   eventStatus?: string;
+  /** When true, chart fills its parent container height instead of using fixed h-64 */
+  fillContainer?: boolean;
 }
 
 type TimeRange = "all" | "live";
@@ -63,6 +65,7 @@ export default function ScoreDifferentialChart({
   currentHomeScore,
   currentAwayScore,
   eventStatus,
+  fillContainer = false,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
@@ -367,9 +370,9 @@ export default function ScoreDifferentialChart({
   };
 
   return (
-    <div className="space-y-4">
+    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-4"}>
       {/* Time range selector */}
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1 shrink-0">
         {TIME_RANGE_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -386,11 +389,11 @@ export default function ScoreDifferentialChart({
       </div>
 
       {/* Chart */}
-      <div className="w-full h-64">
+      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-64"}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
-            margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+            margin={{ top: 5, right: 10, left: fillContainer ? 5 : 0, bottom: 5 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
@@ -490,14 +493,14 @@ export default function ScoreDifferentialChart({
       </div>
 
       {/* Axis labels */}
-      <div className="flex justify-between text-xs text-gray-400 px-2">
+      <div className="flex justify-between text-xs text-gray-400 px-2 shrink-0">
         <span>+ = {homeShort} leading</span>
         <span>- = {awayShort} leading</span>
       </div>
 
       {/* Info about gray lines */}
       {bookmakers.length > 0 && (
-        <p className="text-xs text-gray-400 text-center">
+        <p className="text-xs text-gray-400 text-center shrink-0">
           Gray lines show individual sportsbooks
         </p>
       )}
