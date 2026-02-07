@@ -345,38 +345,15 @@ function TVLeaderboard({
 function TVContestSidebar({
   props,
   commentary,
-  recentResolution,
 }: {
   props: ContestProp[];
   commentary: string;
-  recentResolution: { question: string; answer: string } | null;
 }) {
   const resolved = props.filter((p) => p.resolved && !p.is_tiebreaker);
   const pending = props.filter((p) => !p.resolved && !p.is_tiebreaker);
 
   return (
     <div className="flex flex-col h-full gap-[0.8vh]">
-      {/* Resolution flash */}
-      {recentResolution && (
-        <div
-          className="shrink-0 rounded-xl px-[1vw] py-[0.8vh] text-center"
-          style={{
-            background: "linear-gradient(135deg, #69BE28, #C60C30)",
-            animation: "pulse 1.5s ease-in-out infinite",
-          }}
-        >
-          <div className="text-[1.3vh] font-bold uppercase tracking-wider opacity-80">
-            Prop Resolved!
-          </div>
-          <div className="text-[1.1vh] opacity-70 mt-[0.2vh]">
-            {recentResolution.question}
-          </div>
-          <div className="text-[1.8vh] font-bold mt-[0.2vh]">
-            {recentResolution.answer}
-          </div>
-        </div>
-      )}
-
       {/* AI Commentary */}
       {commentary && (
         <div className="shrink-0 bg-gradient-to-r from-[#1a1a2e] to-[#16213e] rounded-xl px-[1vw] py-[0.6vh] border border-white/5">
@@ -456,11 +433,17 @@ export default function TVPage({ params }: TVPageProps) {
   const prevFavoriteRef = useRef<string | null>(null);
   const [confettiColors, setConfettiColors] = useState<string[]>([]);
   const [showQR, setShowQR] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   // Contest state
   const [contestData, setContestData] = useState<ContestData | null>(null);
   const [commentary, setCommentary] = useState("");
-  const [recentResolution, setRecentResolution] = useState<{
+
+  // Resolution notification queue — full-screen, shown one at a time
+  const [resolutionQueue, setResolutionQueue] = useState<
+    { question: string; answer: string }[]
+  >([]);
+  const [activeResolution, setActiveResolution] = useState<{
     question: string;
     answer: string;
   } | null>(null);
@@ -552,17 +535,17 @@ export default function TVPage({ params }: TVPageProps) {
         setConfettiActive(true);
         setTimeout(() => setConfettiActive(false), 5000);
 
-        // Show resolution flash
-        const resolved = newlyResolved
+        // Queue ALL newly resolved props for full-screen display
+        const resolvedProps = newlyResolved
           .map((id) => data.props.find((p) => p.id === id))
-          .filter(Boolean);
+          .filter(Boolean)
+          .map((p) => ({
+            question: p!.question,
+            answer: p!.correct_answer || "",
+          }));
 
-        if (resolved.length > 0 && resolved[0]) {
-          setRecentResolution({
-            question: resolved[0].question,
-            answer: resolved[0].correct_answer || "",
-          });
-          setTimeout(() => setRecentResolution(null), 12000);
+        if (resolvedProps.length > 0) {
+          setResolutionQueue((prev) => [...prev, ...resolvedProps]);
         }
       }
 
@@ -594,6 +577,22 @@ export default function TVPage({ params }: TVPageProps) {
     const interval = setInterval(fetchContestCommentary, COMMENTARY_REFRESH_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchContestCommentary]);
+
+  // Process resolution queue: show one at a time for 8 seconds each
+  useEffect(() => {
+    if (activeResolution || resolutionQueue.length === 0) return;
+    const [next, ...rest] = resolutionQueue;
+    setActiveResolution(next);
+    setResolutionQueue(rest);
+    // Fire confetti for each resolution in the queue
+    setConfettiColors(["#69BE28", "#C60C30", "#FFD700", "#00D4FF", "#FF1493"]);
+    setConfettiActive(true);
+    const timer = setTimeout(() => {
+      setActiveResolution(null);
+      setConfettiActive(false);
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [activeResolution, resolutionQueue]);
 
   // Key moments
   const keyMoments = useMemo(
@@ -994,7 +993,6 @@ export default function TVPage({ params }: TVPageProps) {
               <TVContestSidebar
                 props={contestData.props}
                 commentary={commentary}
-                recentResolution={recentResolution}
               />
             ) : (
               <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
@@ -1009,6 +1007,160 @@ export default function TVPage({ params }: TVPageProps) {
           </div>
         </div>
       </div>
+
+      {/* ===== FULL-SCREEN RESOLUTION OVERLAY ===== */}
+      {activeResolution && (
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center pointer-events-none">
+          {/* Dark backdrop */}
+          <div className="absolute inset-0 bg-black/60" />
+          {/* Animated banner */}
+          <div
+            className="relative z-10 w-[80vw] max-w-[1200px] rounded-3xl px-[4vw] py-[4vh] text-center"
+            style={{
+              background: "linear-gradient(135deg, #69BE28 0%, #003831 40%, #C60C30 100%)",
+              animation: "resolutionSlideIn 0.5s ease-out",
+              boxShadow: "0 0 80px rgba(105, 190, 40, 0.3), 0 0 80px rgba(198, 12, 48, 0.3)",
+            }}
+          >
+            <div
+              className="text-[2.5vh] font-black uppercase tracking-[0.3em] mb-[1vh]"
+              style={{ color: "#FFD700" }}
+            >
+              Prop Resolved!
+            </div>
+            <div className="text-white/80 text-[2vh] mb-[1.5vh] leading-snug">
+              {activeResolution.question}
+            </div>
+            <div
+              className="text-[5vh] font-black uppercase tracking-wide"
+              style={{
+                color: "#FFFFFF",
+                textShadow: "0 0 30px rgba(255,215,0,0.5)",
+              }}
+            >
+              {activeResolution.answer}
+            </div>
+            {/* Progress bar showing how long it'll stay */}
+            <div className="mt-[2vh] mx-auto w-[40%] h-[0.4vh] bg-white/20 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-white/60 rounded-full"
+                style={{
+                  animation: "resolutionProgress 8s linear",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== ADMIN PANEL (phone-friendly) ===== */}
+      {showAdmin && contestData && (
+        <div
+          className="fixed inset-0 z-[10002] bg-black/90 overflow-y-auto p-[2vw]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAdmin(false);
+          }}
+        >
+          <div className="max-w-2xl mx-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-white text-xl font-bold">Contest Admin</h2>
+              <button
+                onClick={() => setShowAdmin(false)}
+                className="text-white/50 hover:text-white text-2xl px-2"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Resolved props */}
+            <div className="mb-6">
+              <h3 className="text-white/50 text-sm uppercase tracking-wider mb-2">
+                Resolved ({contestData.props.filter((p) => p.resolved).length})
+              </h3>
+              <div className="space-y-2">
+                {contestData.props
+                  .filter((p) => p.resolved)
+                  .map((prop) => (
+                    <div
+                      key={prop.id}
+                      className="bg-white/5 rounded-lg p-3 flex items-center justify-between"
+                    >
+                      <div>
+                        <div className="text-white/60 text-sm">
+                          {prop.question}
+                        </div>
+                        <div className="text-emerald-400 font-bold">
+                          {prop.correct_answer}
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Unresolve "${prop.question}"?`)) return;
+                          await fetch(
+                            `${API_URL}/api/contest/unresolve?prop_id=${prop.id}&secret=admin`,
+                            { method: "POST" }
+                          );
+                          fetchContest();
+                        }}
+                        className="bg-red-500/20 text-red-400 px-3 py-1 rounded text-sm font-bold hover:bg-red-500/30 shrink-0 ml-2"
+                      >
+                        Undo
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            {/* Unresolved props — tap to resolve */}
+            <div>
+              <h3 className="text-white/50 text-sm uppercase tracking-wider mb-2">
+                Unresolved ({contestData.props.filter((p) => !p.resolved && !p.is_tiebreaker).length})
+              </h3>
+              <div className="space-y-2">
+                {contestData.props
+                  .filter((p) => !p.resolved && !p.is_tiebreaker)
+                  .map((prop) => (
+                    <div key={prop.id} className="bg-white/5 rounded-lg p-3">
+                      <div className="text-white/80 text-sm mb-2">
+                        {prop.question}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {Object.keys(prop.choices).map((choice) => (
+                          <button
+                            key={choice}
+                            onClick={async () => {
+                              if (!confirm(`Resolve "${prop.question}" as "${choice}"?`)) return;
+                              await fetch(
+                                `${API_URL}/api/contest/resolve?prop_id=${prop.id}&correct_answer=${encodeURIComponent(choice)}&secret=admin`,
+                                { method: "POST" }
+                              );
+                              fetchContest();
+                            }}
+                            className="bg-blue-500/20 text-blue-300 px-2 py-1 rounded text-xs font-medium hover:bg-blue-500/30"
+                          >
+                            {choice}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Keyframe animations for resolution overlay */}
+      <style jsx global>{`
+        @keyframes resolutionSlideIn {
+          from { transform: scale(0.8) translateY(20px); opacity: 0; }
+          to { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        @keyframes resolutionProgress {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+      `}</style>
 
       {/* QR Code Overlay */}
       {showQR && (
@@ -1041,15 +1193,23 @@ export default function TVPage({ params }: TVPageProps) {
         >
           Exit TV Mode
         </a>
-        <button
-          onClick={() => setShowQR(true)}
-          className="text-white/30 hover:text-white/70 text-[1.5vh] transition-colors bg-black/50 px-[1vw] py-[0.4vh] rounded-full backdrop-blur flex items-center gap-[0.4vw]"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-[1.8vh] h-[1.8vh]">
-            <path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm11-2h2v2h-2v-2zm-4 0h2v2h-2v-2zm0 4h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-4 2h2v2h-2v-2zm4 0h2v2h-2v-2z"/>
-          </svg>
-          QR Code
-        </button>
+        <div className="flex items-center gap-[0.5vw]">
+          <button
+            onClick={() => setShowAdmin(true)}
+            className="text-white/20 hover:text-white/50 text-[1.2vh] transition-colors bg-black/50 px-[0.8vw] py-[0.4vh] rounded-full backdrop-blur"
+          >
+            Admin
+          </button>
+          <button
+            onClick={() => setShowQR(true)}
+            className="text-white/30 hover:text-white/70 text-[1.5vh] transition-colors bg-black/50 px-[1vw] py-[0.4vh] rounded-full backdrop-blur flex items-center gap-[0.4vw]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-[1.8vh] h-[1.8vh]">
+              <path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm11-2h2v2h-2v-2zm-4 0h2v2h-2v-2zm0 4h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-4 2h2v2h-2v-2zm4 0h2v2h-2v-2z"/>
+            </svg>
+            QR Code
+          </button>
+        </div>
       </div>
     </div>
   );
