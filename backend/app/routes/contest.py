@@ -395,17 +395,25 @@ SHEET_CSV_URL = os.getenv(
 def _detect_name_column(headers: list[str]) -> Optional[str]:
     """Detect which column contains entrant names."""
     # Priority 1: Explicit name keywords (short columns only)
-    name_keywords = ["your name", "full name", "first name", "nickname", "who are you"]
+    name_keywords = ["your name", "full name", "first name", "nickname", "who are you", "what is your name", "what's your name"]
     for h in headers:
         h_lower = h.lower().strip()
         for kw in name_keywords:
-            if kw in h_lower and len(h.strip()) < 80:
+            if kw in h_lower and len(h.strip()) < 120:
                 return h
 
     # Priority 2: Column header that is just "Name" or similar
     for h in headers:
         h_lower = h.lower().strip()
-        if h_lower in ("name", "player", "player name", "contestant"):
+        if h_lower in ("name", "player", "player name", "contestant", "your name"):
+            return h
+
+    # Priority 2b: Column that contains "name" as a word
+    for h in headers:
+        h_lower = h.lower().strip()
+        if h_lower in ("timestamp", "email address"):
+            continue
+        if re.search(r'\bname\b', h_lower) and len(h.strip()) < 120:
             return h
 
     # Priority 3: Second column (first after Timestamp) — Google Forms
@@ -416,7 +424,7 @@ def _detect_name_column(headers: list[str]) -> Optional[str]:
         first_col = non_skip[0]
         # If the first non-Timestamp/Email column is relatively short,
         # it's likely a name or identifier field
-        if len(first_col.strip()) < 60:
+        if len(first_col.strip()) < 80:
             # Check it's not matching one of our props (question text)
             is_prop = any(
                 p["column_match"].lower() in first_col.lower()
@@ -460,7 +468,13 @@ async def _fetch_sheet_entries() -> tuple[list[dict], list[str]]:
             if entry:
                 entries.append(entry)
             else:
-                logger.warning(f"Row {i} skipped (no name): first values = {list(row.values())[:3]}")
+                # Never skip entries — assign fallback name
+                fallback = _parse_entry_fallback(row, name_col, i + 1)
+                if fallback:
+                    entries.append(fallback)
+                    logger.warning(f"Row {i} used fallback name '{fallback['name']}': first values = {list(row.values())[:3]}")
+                else:
+                    logger.warning(f"Row {i} skipped (empty row): first values = {list(row.values())[:3]}")
 
         logger.info(f"Parsed {len(entries)} entries from {len(rows)} rows")
         return entries, headers
@@ -516,6 +530,78 @@ def _parse_entry(row: dict, name_col: Optional[str]) -> Optional[dict]:
                     break
 
     if not name:
+        return None
+
+    return {
+        "name": name,
+        "picks": picks,
+        "tiebreaker": tiebreaker,
+        "submitted_at": row.get("Timestamp", ""),
+    }
+
+
+def _parse_entry_fallback(row: dict, name_col: Optional[str], row_num: int) -> Optional[dict]:
+    """Parse an entry even when name detection fails. Uses email or 'Player N' fallback."""
+    picks = {}
+    tiebreaker = None
+
+    # Try to find ANY identifying info for the name
+    name = None
+
+    # Try email address as name
+    for col in row:
+        if col.lower().strip() == "email address":
+            email = (row[col] or "").strip()
+            if email:
+                # Use part before @ as display name
+                name = email.split("@")[0].replace(".", " ").title()
+                break
+
+    # Try any short non-prop value as a name
+    if not name:
+        for col, val in row.items():
+            col_lower = col.lower().strip()
+            if col_lower in ("timestamp", "email address"):
+                continue
+            val = (val or "").strip()
+            if not val or len(val) > 50:
+                continue
+            # Check if this column matches a prop
+            is_prop = any(
+                p["column_match"].lower() in col_lower
+                for p in PROPS
+            )
+            if not is_prop:
+                name = val
+                break
+
+    # Ultimate fallback
+    if not name:
+        name = f"Player {row_num}"
+
+    # Match columns to props (same logic as _parse_entry)
+    for col, val in row.items():
+        col_lower = col.lower().strip()
+        val = (val or "").strip()
+        if not val:
+            continue
+        if col == name_col or col_lower == "timestamp" or col_lower == "email address":
+            continue
+
+        for prop in PROPS:
+            if prop.get("is_tiebreaker"):
+                if prop["column_match"].lower() in col_lower:
+                    try:
+                        tiebreaker = float(val.replace(",", ""))
+                    except (ValueError, TypeError):
+                        tiebreaker = None
+                    break
+            elif prop["column_match"].lower() in col_lower:
+                picks[prop["id"]] = val
+                break
+
+    # Only return if they have at least some picks (not a totally empty row)
+    if not picks and tiebreaker is None:
         return None
 
     return {
@@ -2086,6 +2172,201 @@ async def capture_bitcoin_start(secret: str = Query("", description="Admin secre
         return {"status": "captured", "price": price, "message": "Bitcoin start price saved. Will auto-resolve when game ends."}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# YouTube Super Bowl Ad Leaderboard
+# ---------------------------------------------------------------------------
+
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+YOUTUBE_CACHE_TTL = 120  # Cache for 2 minutes
+
+# Pre-curated list of known Super Bowl LX advertisers with search terms
+# This helps find the correct official ads vs random uploads
+SB_AD_BRANDS = [
+    "Budweiser", "Uber Eats", "Doritos", "Pepsi", "Coca-Cola",
+    "Mountain Dew", "T-Mobile", "Verizon", "Google", "Apple",
+    "BMW", "Hyundai", "Kia", "Toyota", "Ram Trucks",
+    "Nike", "Meta", "OpenAI", "Microsoft", "Amazon",
+    "DoorDash", "Instacart", "FanDuel", "DraftKings",
+    "Disney", "Paramount", "Netflix", "Tubi",
+    "Pringles", "M&Ms", "Reese's", "Hellmann's",
+    "Bud Light", "Michelob Ultra", "Crown Royal",
+    "Squarespace", "GoDaddy", "Homes.com",
+]
+
+
+async def _fetch_youtube_ads() -> list[dict]:
+    """Fetch Super Bowl LX commercial data from YouTube Data API."""
+    if not YOUTUBE_API_KEY:
+        logger.warning("YOUTUBE_API_KEY not configured")
+        return []
+
+    cache_key = f"{REDIS_KEY_PREFIX}youtube_ads"
+
+    # Check Redis cache
+    try:
+        r = _redis()
+        cached = r.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    try:
+        ads = []
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Search for Super Bowl LX commercials
+            search_url = "https://www.googleapis.com/youtube/v3/search"
+            search_params = {
+                "key": YOUTUBE_API_KEY,
+                "q": "Super Bowl LX 2026 commercial ad",
+                "type": "video",
+                "part": "snippet",
+                "maxResults": 50,
+                "order": "viewCount",
+                "publishedAfter": "2026-01-15T00:00:00Z",
+            }
+
+            resp = await client.get(search_url, params=search_params)
+            if resp.status_code != 200:
+                logger.error(f"YouTube search API error: {resp.status_code} {resp.text[:200]}")
+                return []
+
+            search_data = resp.json()
+            video_ids = [
+                item["id"]["videoId"]
+                for item in search_data.get("items", [])
+                if item.get("id", {}).get("videoId")
+            ]
+
+            if not video_ids:
+                return []
+
+            # Fetch video statistics (views, likes)
+            stats_url = "https://www.googleapis.com/youtube/v3/videos"
+            stats_params = {
+                "key": YOUTUBE_API_KEY,
+                "id": ",".join(video_ids),
+                "part": "statistics,snippet,contentDetails",
+            }
+
+            resp = await client.get(stats_url, params=stats_params)
+            if resp.status_code != 200:
+                logger.error(f"YouTube videos API error: {resp.status_code}")
+                return []
+
+            videos_data = resp.json()
+
+            for item in videos_data.get("items", []):
+                snippet = item.get("snippet", {})
+                stats = item.get("statistics", {})
+                title = snippet.get("title", "")
+                channel = snippet.get("channelTitle", "")
+
+                # Try to identify the brand from the title or channel
+                brand = _identify_brand(title, channel)
+                if not brand:
+                    continue  # Skip non-brand/non-ad videos
+
+                views = int(stats.get("viewCount", 0))
+                likes = int(stats.get("likeCount", 0))
+                comments = int(stats.get("commentCount", 0))
+
+                ads.append({
+                    "brand": brand,
+                    "title": title,
+                    "video_id": item["id"],
+                    "channel": channel,
+                    "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
+                    "views": views,
+                    "likes": likes,
+                    "comments": comments,
+                    "published_at": snippet.get("publishedAt", ""),
+                })
+
+        # Deduplicate by brand (keep highest-viewed per brand)
+        brand_best: dict[str, dict] = {}
+        for ad in ads:
+            b = ad["brand"]
+            if b not in brand_best or ad["views"] > brand_best[b]["views"]:
+                brand_best[b] = ad
+
+        # Sort by views descending
+        result = sorted(brand_best.values(), key=lambda x: -x["views"])
+
+        # Cache result
+        try:
+            r = _redis()
+            r.setex(cache_key, YOUTUBE_CACHE_TTL, json.dumps(result))
+        except Exception:
+            pass
+
+        return result
+
+    except Exception as e:
+        logger.error(f"YouTube ads fetch error: {e}")
+        return []
+
+
+def _identify_brand(title: str, channel: str) -> Optional[str]:
+    """Identify the advertiser brand from a YouTube video title/channel."""
+    title_lower = title.lower()
+    channel_lower = channel.lower()
+    combined = title_lower + " " + channel_lower
+
+    # Check against known brands
+    for brand in SB_AD_BRANDS:
+        brand_lower = brand.lower()
+        # Check exact word boundary match in title or channel
+        if re.search(r'\b' + re.escape(brand_lower) + r'\b', combined):
+            return brand
+
+    # Also check if the channel name IS the brand (official uploads)
+    for brand in SB_AD_BRANDS:
+        if brand.lower() in channel_lower:
+            return brand
+
+    # Check for "super bowl" + "ad" or "commercial" in title (likely an ad even if brand unknown)
+    if ("super bowl" in title_lower or "sb " in title_lower) and \
+       any(w in title_lower for w in ["ad", "commercial", "spot", "teaser", "trailer"]):
+        # Try to extract brand from start of title (common pattern: "Brand - Super Bowl Ad")
+        dash_split = title.split(" - ")
+        if len(dash_split) >= 2 and len(dash_split[0].strip()) < 30:
+            return dash_split[0].strip()
+        pipe_split = title.split(" | ")
+        if len(pipe_split) >= 2 and len(pipe_split[0].strip()) < 30:
+            return pipe_split[0].strip()
+
+    return None
+
+
+def _format_view_count(views: int) -> str:
+    """Format a view count for display: 1234567 -> '1.2M'"""
+    if views >= 1_000_000:
+        return f"{views / 1_000_000:.1f}M"
+    elif views >= 1_000:
+        return f"{views / 1_000:.1f}K"
+    return str(views)
+
+
+@router.get("/ads")
+async def get_ad_leaderboard():
+    """Get Super Bowl ad leaderboard ranked by YouTube views."""
+    ads = await _fetch_youtube_ads()
+
+    # Add rank and formatted views
+    for i, ad in enumerate(ads):
+        ad["rank"] = i + 1
+        ad["views_formatted"] = _format_view_count(ad["views"])
+        ad["likes_formatted"] = _format_view_count(ad["likes"])
+
+    return {
+        "ads": ads,
+        "count": len(ads),
+        "cached": True,  # Always from cache or fresh fetch
+        "youtube_configured": bool(YOUTUBE_API_KEY),
+    }
 
 
 @router.post("/reset")
