@@ -28,6 +28,7 @@ python-dateutil>=2.8.2
 
 # LLM (for smart categorization, etc.)
 openai>=1.12.0
+anthropic>=0.45.0
 
 # Development
 pytest>=7.4.4
