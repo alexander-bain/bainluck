@@ -13,18 +13,86 @@ import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
-import PropBets from "@/components/party/PropBets";
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
 } from "@/lib/types";
 
+// ---------------------------------------------------------------------------
+// Contest Types
+// ---------------------------------------------------------------------------
+interface ContestProp {
+  id: string;
+  question: string;
+  category: string;
+  choices: Record<string, number>;
+  resolved: boolean;
+  correct_answer: string | null;
+  resolved_at: string | null;
+  has_other: boolean;
+  other_probability: number;
+  is_tiebreaker?: boolean;
+}
+
+interface ContestPendingPick {
+  prop_id: string;
+  question: string;
+  pick: string;
+  probability: number;
+}
+
+interface ContestKeyProp {
+  prop_id: string;
+  question: string;
+  pick: string;
+  probability: number;
+  impact_score: number;
+  uniqueness: number;
+}
+
+interface ContestEntrant {
+  rank: number;
+  name: string;
+  actual_points: number;
+  forecasted_points: number;
+  max_possible: number;
+  correct_picks: { prop_id: string; question: string; pick: string }[];
+  incorrect_picks: { prop_id: string; question: string; pick: string; correct_answer: string }[];
+  pending_picks: ContestPendingPick[];
+  key_props: ContestKeyProp[];
+  best_possible_finish: number;
+  can_still_win: boolean;
+  eliminated: boolean;
+  tiebreaker: number | null;
+  total_picks: number;
+}
+
+interface ContestSummary {
+  total_props: number;
+  resolved_count: number;
+  open_count: number;
+  entrant_count: number;
+}
+
+interface ContestData {
+  leaderboard: ContestEntrant[];
+  props: ContestProp[];
+  summary: ContestSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Page Types
+// ---------------------------------------------------------------------------
 interface TVPageProps {
   params: { id: string };
 }
 
 const LIVE_REFRESH_INTERVAL = 32000;
 const SCHEDULED_REFRESH_INTERVAL = 60000;
+const CONTEST_REFRESH_INTERVAL = 20000;
+const COMMENTARY_REFRESH_INTERVAL = 90000;
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ------ Key Moments Detection ------
 interface KeyMoment {
@@ -152,11 +220,249 @@ function calculateMomentum(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Contest TV Components
+// ---------------------------------------------------------------------------
+const MEDAL_COLORS = ["#FFD700", "#C0C0C0", "#CD7F32"];
+
+function TVLeaderboard({
+  leaderboard,
+  resolvedCount,
+  totalProps,
+}: {
+  leaderboard: ContestEntrant[];
+  resolvedCount: number;
+  totalProps: number;
+}) {
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="shrink-0 flex items-center justify-between mb-[0.6vh]">
+        <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider font-semibold">
+          Contest Leaderboard
+        </h3>
+        <span className="text-white/30 text-[1.2vh] font-mono">
+          {resolvedCount}/{totalProps} props
+        </span>
+      </div>
+
+      {/* Column headers */}
+      <div className="shrink-0 flex items-center gap-[0.5vw] text-[1.1vh] text-white/30 uppercase tracking-wider mb-[0.3vh] px-[0.5vw]">
+        <span className="w-[2.5vw]">#</span>
+        <span className="flex-1">Name</span>
+        <span className="w-[4vw] text-right">Pts</span>
+        <span className="w-[4vw] text-right">Fcast</span>
+        <span className="w-[3vw] text-right">Best</span>
+        <span className="flex-1 text-right">Key Prop</span>
+      </div>
+
+      {/* Scrollable rows */}
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-[0.2vh]">
+        {leaderboard.map((entry) => {
+          const isTop3 = entry.rank <= 3;
+          const bestKeyProp = entry.key_props[0];
+
+          return (
+            <div
+              key={entry.name}
+              className={`flex items-center gap-[0.5vw] px-[0.5vw] py-[0.4vh] rounded-lg transition-all ${
+                entry.eliminated
+                  ? "opacity-40"
+                  : isTop3
+                    ? "bg-white/5"
+                    : ""
+              }`}
+            >
+              {/* Rank */}
+              <div
+                className="w-[2.5vw] text-center font-bold text-[1.6vh] shrink-0"
+                style={{
+                  color: isTop3 ? MEDAL_COLORS[entry.rank - 1] : "rgba(255,255,255,0.4)",
+                }}
+              >
+                {entry.rank}
+              </div>
+
+              {/* Name + status */}
+              <div className="flex-1 min-w-0 flex items-center gap-[0.4vw]">
+                <span
+                  className={`truncate text-[1.5vh] ${
+                    isTop3 ? "text-white font-semibold" : "text-white/70"
+                  }`}
+                >
+                  {entry.name}
+                </span>
+                {entry.can_still_win && entry.rank > 1 && (
+                  <span className="shrink-0 text-[0.9vh] px-[0.4vw] py-[0.1vh] bg-amber-500/20 text-amber-400 rounded font-bold">
+                    CAN WIN
+                  </span>
+                )}
+                {entry.eliminated && (
+                  <span className="shrink-0 text-[0.9vh] px-[0.4vw] py-[0.1vh] bg-red-500/20 text-red-400 rounded font-bold">
+                    OUT
+                  </span>
+                )}
+              </div>
+
+              {/* Actual points */}
+              <div className="w-[4vw] text-right font-mono font-bold text-[1.8vh] text-white shrink-0">
+                {entry.actual_points}
+              </div>
+
+              {/* Forecasted */}
+              <div className="w-[4vw] text-right font-mono text-[1.4vh] text-emerald-400 shrink-0">
+                {entry.forecasted_points}
+              </div>
+
+              {/* Best possible */}
+              <div className="w-[3vw] text-right font-mono text-[1.2vh] text-white/30 shrink-0">
+                #{entry.best_possible_finish}
+              </div>
+
+              {/* Key prop (most impactful pending pick) */}
+              <div className="flex-1 text-right min-w-0">
+                {bestKeyProp ? (
+                  <span className="text-[1.1vh] text-white/40 truncate block">
+                    <span className="text-white/60 font-medium">&ldquo;{bestKeyProp.pick}&rdquo;</span>
+                    {" "}
+                    <span className="font-mono text-blue-400">
+                      {Math.round(bestKeyProp.probability * 100)}%
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-[1.1vh] text-white/20">-</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TVContestSidebar({
+  props,
+  commentary,
+  recentResolution,
+}: {
+  props: ContestProp[];
+  commentary: string;
+  recentResolution: { question: string; answer: string } | null;
+}) {
+  const resolved = props.filter((p) => p.resolved && !p.is_tiebreaker);
+  const pending = props.filter((p) => !p.resolved && !p.is_tiebreaker);
+
+  return (
+    <div className="flex flex-col h-full gap-[0.8vh]">
+      {/* Resolution flash */}
+      {recentResolution && (
+        <div
+          className="shrink-0 rounded-xl px-[1vw] py-[0.8vh] text-center"
+          style={{
+            background: "linear-gradient(135deg, #69BE28, #C60C30)",
+            animation: "pulse 1.5s ease-in-out infinite",
+          }}
+        >
+          <div className="text-[1.3vh] font-bold uppercase tracking-wider opacity-80">
+            Prop Resolved!
+          </div>
+          <div className="text-[1.1vh] opacity-70 mt-[0.2vh]">
+            {recentResolution.question}
+          </div>
+          <div className="text-[1.8vh] font-bold mt-[0.2vh]">
+            {recentResolution.answer}
+          </div>
+        </div>
+      )}
+
+      {/* AI Commentary */}
+      {commentary && (
+        <div className="shrink-0 bg-gradient-to-r from-[#1a1a2e] to-[#16213e] rounded-xl px-[1vw] py-[0.6vh] border border-white/5">
+          <div className="text-[0.9vh] text-white/30 uppercase tracking-wider font-bold mb-[0.2vh]">
+            AI Commentary
+          </div>
+          <div className="text-[1.2vh] text-white/70 leading-relaxed">
+            {commentary}
+          </div>
+        </div>
+      )}
+
+      {/* Recently Resolved */}
+      {resolved.length > 0 && (
+        <div className="shrink-0">
+          <h4 className="text-[1vh] text-white/30 uppercase tracking-wider font-bold mb-[0.3vh]">
+            Resolved ({resolved.length})
+          </h4>
+          <div className="space-y-[0.2vh]">
+            {resolved.slice(-6).reverse().map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center gap-[0.4vw] text-[1.1vh]"
+              >
+                <span className="text-emerald-400 shrink-0">&#10003;</span>
+                <span className="text-white/40 truncate flex-1">{p.question}</span>
+                <span className="text-emerald-400 font-medium shrink-0 text-right">
+                  {p.correct_answer}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Upcoming Props */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <h4 className="text-[1vh] text-white/30 uppercase tracking-wider font-bold mb-[0.3vh]">
+          Upcoming ({pending.length})
+        </h4>
+        <div className="space-y-[0.3vh] overflow-y-auto h-full">
+          {pending.slice(0, 10).map((p) => {
+            const topChoice = Object.entries(p.choices).sort(
+              (a, b) => b[1] - a[1]
+            )[0];
+            return (
+              <div key={p.id} className="text-[1.1vh]">
+                <div className="text-white/50 truncate leading-tight">
+                  {p.question}
+                </div>
+                {topChoice && (
+                  <div className="flex items-center gap-[0.3vw] mt-[0.1vh]">
+                    <div
+                      className="h-[0.4vh] rounded-full bg-blue-500/50"
+                      style={{ width: `${topChoice[1] * 100}%`, maxWidth: "60%" }}
+                    />
+                    <span className="text-white/30 text-[0.9vh]">
+                      {topChoice[0]} ({Math.round(topChoice[1] * 100)}%)
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main TV Page
+// ---------------------------------------------------------------------------
 export default function TVPage({ params }: TVPageProps) {
   const eventId = parseInt(params.id, 10);
   const [confettiActive, setConfettiActive] = useState(false);
   const prevFavoriteRef = useRef<string | null>(null);
   const [confettiColors, setConfettiColors] = useState<string[]>([]);
+
+  // Contest state
+  const [contestData, setContestData] = useState<ContestData | null>(null);
+  const [commentary, setCommentary] = useState("");
+  const [recentResolution, setRecentResolution] = useState<{
+    question: string;
+    answer: string;
+  } | null>(null);
+  const prevResolvedRef = useRef<Set<string>>(new Set());
 
   // Fetch event data
   const { data: event } = useSWR(
@@ -221,6 +527,71 @@ export default function TVPage({ params }: TVPageProps) {
 
     prevFavoriteRef.current = currentFavorite;
   }, [event, homeProb, isLive]);
+
+  // ---- Contest data polling ----
+  const fetchContest = useCallback(async () => {
+    try {
+      const resp = await fetch(`${API_URL}/api/contest/leaderboard`);
+      if (!resp.ok) return;
+      const data: ContestData = await resp.json();
+      setContestData(data);
+
+      // Detect newly resolved props
+      const currentResolved = new Set(
+        data.props.filter((p) => p.resolved).map((p) => p.id)
+      );
+      const newlyResolved = Array.from(currentResolved).filter(
+        (id) => !prevResolvedRef.current.has(id)
+      );
+
+      if (newlyResolved.length > 0 && prevResolvedRef.current.size > 0) {
+        // Fire confetti for prop resolution
+        setConfettiColors(["#69BE28", "#C60C30", "#FFD700", "#00D4FF", "#FF1493"]);
+        setConfettiActive(true);
+        setTimeout(() => setConfettiActive(false), 5000);
+
+        // Show resolution flash
+        const resolved = newlyResolved
+          .map((id) => data.props.find((p) => p.id === id))
+          .filter(Boolean);
+
+        if (resolved.length > 0 && resolved[0]) {
+          setRecentResolution({
+            question: resolved[0].question,
+            answer: resolved[0].correct_answer || "",
+          });
+          setTimeout(() => setRecentResolution(null), 12000);
+        }
+      }
+
+      prevResolvedRef.current = currentResolved;
+    } catch {
+      // Silently ignore contest fetch failures
+    }
+  }, []);
+
+  const fetchContestCommentary = useCallback(async () => {
+    try {
+      const resp = await fetch(`${API_URL}/api/contest/commentary`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      setCommentary(data.commentary);
+    } catch {
+      // Silently ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchContest();
+    const interval = setInterval(fetchContest, CONTEST_REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, [fetchContest]);
+
+  useEffect(() => {
+    fetchContestCommentary();
+    const interval = setInterval(fetchContestCommentary, COMMENTARY_REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, [fetchContestCommentary]);
 
   // Key moments
   const keyMoments = useMemo(
@@ -302,6 +673,20 @@ export default function TVPage({ params }: TVPageProps) {
           </div>
 
           <div className="flex items-center gap-[1.5vw]">
+            {/* Contest progress */}
+            {contestData && (
+              <div className="flex items-center gap-[0.5vw] bg-white/5 px-[1vw] py-[0.3vh] rounded-full">
+                <span className="text-white/40 text-[1.2vh] uppercase tracking-wider">
+                  Contest
+                </span>
+                <span className="text-emerald-400 font-mono font-bold text-[1.5vh]">
+                  {contestData.summary.resolved_count}/{contestData.summary.total_props}
+                </span>
+                <span className="text-white/30 text-[1.2vh]">
+                  &middot; {contestData.summary.entrant_count} players
+                </span>
+              </div>
+            )}
             {event.espn?.broadcast && (
               <span className="text-white/40 text-[1.5vh]">
                 {event.espn.broadcast}
@@ -584,9 +969,37 @@ export default function TVPage({ params }: TVPageProps) {
           </div>
         </div>
 
-        {/* === PLAYER PROPS — dual auto-scrolling panels (~55% of remaining) === */}
-        <div className="flex-[3] min-h-0">
-          <PropBets eventId={eventId} />
+        {/* === CONTEST LEADERBOARD + SIDEBAR (~55% of remaining) === */}
+        <div className="flex-[3] min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-[0.8vw]">
+          {/* Leaderboard (2 columns) */}
+          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
+            {contestData ? (
+              <TVLeaderboard
+                leaderboard={contestData.leaderboard}
+                resolvedCount={contestData.summary.resolved_count}
+                totalProps={contestData.summary.total_props}
+              />
+            ) : (
+              <div className="h-full flex items-center justify-center text-white/20 text-[1.5vh]">
+                Loading contest...
+              </div>
+            )}
+          </div>
+
+          {/* Contest Sidebar (1 column) */}
+          <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
+            {contestData ? (
+              <TVContestSidebar
+                props={contestData.props}
+                commentary={commentary}
+                recentResolution={recentResolution}
+              />
+            ) : (
+              <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
+                Loading props...
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
