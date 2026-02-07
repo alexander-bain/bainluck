@@ -1903,32 +1903,27 @@ async def _generate_commentary(leaderboard_data: dict) -> str:
 
         notable_text = "\n".join(notable) if notable else "No major drama yet."
 
-        prompt = f"""You are the world's funniest Super Bowl party host providing commentary on a prop bet contest.
-The contest is for Super Bowl LX: Seattle Seahawks vs New England Patriots.
+        prompt = f"""Super Bowl LX prop bet contest — Seahawks vs Patriots.
 
-Current state:
-- {summary['resolved_count']} of {summary['total_props']} props resolved
-- {summary['entrant_count']} contestants
+State: {summary['resolved_count']}/{summary['total_props']} props resolved, {summary['entrant_count']} contestants.
 
 Standings:
 {standings}
 
-Recently resolved props:
-{resolved_text}
+Resolved: {resolved_text}
 
-Notable situations:
-{notable_text}
+Drama: {notable_text}
 
-Write 2-3 sentences of hilarious, entertaining commentary about the current state of the contest. Be playful and roast people who are losing, hype up people who are winning. Reference specific names and picks when possible. Keep it PG-rated (safe for kids). Be creative and funny - think sportscaster meets comedian. Don't use hashtags. Keep it short and punchy."""
+Write ONE punchy sentence (max 20 words) of hilarious commentary. Roast losers, hype winners. Use specific names. Think comedian, not sportscaster. No hashtags."""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a hilarious Super Bowl party host. Keep commentary PG-rated, short, and funny."},
+                {"role": "system", "content": "You are a ruthlessly funny Super Bowl party roast comedian. One devastating sentence only. PG-rated."},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,
-            temperature=0.9,
+            max_tokens=80,
+            temperature=1.0,
         )
 
         return response.choices[0].message.content.strip()
