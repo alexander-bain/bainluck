@@ -116,6 +116,11 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Backend** and **frontend** auto-deploy from `master` via Heroku and Vercel respectively
 - **Database migrations**: Create with `alembic revision --autogenerate -m "description"`, applied automatically on Heroku release (`alembic upgrade head`)
 - **Testing changes**: Push to master and verify on production, or use Heroku/Vercel preview deployments
+- **Running tests**:
+  - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
+  - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
+  - Backend tests cover: Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked)
+  - Frontend tests cover: sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
 
 ### Querying the Production API
 
@@ -519,7 +524,7 @@ Both backend and frontend auto-deploy from `master` branch.
 7. ✅ Futures categorization hardened (0 uncategorized markets)
 8. ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
 9. ✅ TV/Party mode with player props, confetti, ECG, momentum (4K-optimized)
-10. 🔄 Monitoring and reliability improvements
+10. ✅ Automated test suite (468 tests: 361 backend pytest, 107 frontend Jest)
 11. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
 11. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
 12. 📋 Next: Firebase Auth for user accounts
