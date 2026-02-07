@@ -13,6 +13,7 @@ import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
+import CommercialLeaderboard from "@/components/party/CommercialLeaderboard";
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
@@ -970,8 +971,8 @@ export default function TVPage({ params }: TVPageProps) {
           </div>
         </div>
 
-        {/* === CONTEST LEADERBOARD + SIDEBAR (~55% of remaining) === */}
-        <div className="flex-[3] min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-[0.8vw]">
+        {/* === CONTEST LEADERBOARD + SIDEBAR + COMMERCIALS (~55% of remaining) === */}
+        <div className="flex-[3] min-h-0 grid grid-cols-1 lg:grid-cols-4 gap-[0.8vw]">
           {/* Leaderboard (2 columns) */}
           <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
             {contestData ? (
@@ -1000,6 +1001,11 @@ export default function TVPage({ params }: TVPageProps) {
                 Loading props...
               </div>
             )}
+          </div>
+
+          {/* Commercial Leaderboard (1 column) */}
+          <div className="min-h-0">
+            <CommercialLeaderboard />
           </div>
         </div>
       </div>
