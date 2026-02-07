@@ -734,7 +734,10 @@ async def _auto_resolve_from_game_state(db: AsyncSession) -> list[str]:
         espn_resolved = await _auto_resolve_from_espn(event, resolutions, is_seahawks_home)
         newly_resolved.extend(espn_resolved)
 
-    # --- Bitcoin price auto-resolution ---
+    # --- Bitcoin price auto-capture and resolution ---
+    # Auto-capture start price when game goes live (no manual curl needed)
+    if event.status in ("live", "completed", "closed"):
+        await _ensure_bitcoin_start_price()
     if "bitcoin" not in resolutions and event.status in ("completed", "closed"):
         btc_answer = await _resolve_bitcoin()
         if btc_answer:
@@ -1198,6 +1201,29 @@ async def _auto_resolve_from_espn(event, resolutions: dict, is_seahawks_home: bo
 # ---------------------------------------------------------------------------
 # Bitcoin price auto-resolution
 # ---------------------------------------------------------------------------
+
+async def _ensure_bitcoin_start_price():
+    """Auto-capture bitcoin price at kickoff if not already captured."""
+    try:
+        r = _redis()
+        existing = r.get(f"{REDIS_KEY_PREFIX}btc_start_price")
+        if existing:
+            return  # Already captured
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+            )
+            if resp.status_code != 200:
+                return
+            price = resp.json().get("bitcoin", {}).get("usd")
+
+        if price:
+            r.set(f"{REDIS_KEY_PREFIX}btc_start_price", str(price))
+            logger.info(f"Auto-captured Bitcoin start price: ${price}")
+    except Exception as e:
+        logger.error(f"Bitcoin start price capture error: {e}")
+
 
 async def _resolve_bitcoin() -> Optional[str]:
     """Check bitcoin price change during the game. Returns 'Goes up' or 'Goes down'."""
