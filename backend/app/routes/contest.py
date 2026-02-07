@@ -388,7 +388,7 @@ CATEGORY_LABELS = {
 # ---------------------------------------------------------------------------
 SHEET_CSV_URL = os.getenv(
     "CONTEST_SHEET_URL",
-    "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-5ILxaFfHVRe6E3W0ZcFkVxO_9XrE1Ocu_1EG6FawCAROl-JOye7pvc4-S8797vGJV-nttDnMsBP8/pub?gid=0&single=true&output=csv",
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-5ILxaFfHVRe6E3W0ZcFkVxO_9XrE1Ocu_1EG6FawCAROl-JOye7pvc4-S8797vGJV-nttDnMsBP8/pub?output=csv",
 )
 
 
@@ -2403,16 +2403,37 @@ async def get_ad_leaderboard():
     """Get Super Bowl ad leaderboard ranked by YouTube views."""
     ads = await _fetch_youtube_ads()
 
-    # Add rank and formatted views
+    # Baseline snapshot: store initial view counts so we can show growth during game
+    baseline_key = f"{REDIS_KEY_PREFIX}ad_baseline"
+    baseline: dict[str, int] = {}
+    try:
+        r = _redis()
+        cached_baseline = r.get(baseline_key)
+        if cached_baseline:
+            baseline = json.loads(cached_baseline)
+        elif ads:
+            # First fetch — snapshot current view counts as baseline (expires in 24h)
+            baseline = {ad["video_id"]: ad["views"] for ad in ads}
+            r.setex(baseline_key, 86400, json.dumps(baseline))
+    except Exception:
+        pass
+
+    # Add rank, formatted views, and delta from baseline
     for i, ad in enumerate(ads):
         ad["rank"] = i + 1
         ad["views_formatted"] = _format_view_count(ad["views"])
         ad["likes_formatted"] = _format_view_count(ad["likes"])
 
+        # Views gained since baseline snapshot (during the game)
+        base_views = baseline.get(ad["video_id"], ad["views"])
+        delta = max(0, ad["views"] - base_views)
+        ad["views_delta"] = delta
+        ad["views_delta_formatted"] = f"+{_format_view_count(delta)}" if delta > 0 else ""
+
     return {
         "ads": ads,
         "count": len(ads),
-        "cached": True,  # Always from cache or fresh fetch
+        "cached": True,
         "youtube_configured": bool(YOUTUBE_API_KEY),
     }
 

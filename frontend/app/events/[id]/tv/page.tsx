@@ -96,6 +96,8 @@ interface YouTubeAd {
   comments: number;
   views_formatted: string;
   likes_formatted: string;
+  views_delta: number;
+  views_delta_formatted: string;
   published_at: string;
 }
 
@@ -562,11 +564,16 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
                   &#9654;
                 </button>
 
-                {/* Views */}
-                <div className="text-right shrink-0 w-[2.5vw]">
+                {/* Views + delta */}
+                <div className="text-right shrink-0 w-[3.5vw]">
                   <div className="text-white font-mono font-bold text-[1.2vh]">
                     {ad.views_formatted}
                   </div>
+                  {ad.views_delta > 0 && (
+                    <div className="text-emerald-400 font-mono text-[0.8vh] leading-tight">
+                      {ad.views_delta_formatted}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -586,6 +593,14 @@ const PROP_CAT_COLORS: Record<string, string> = {
   Receiving: "#f472b6",
   Scoring: "#fbbf24",
   Kicking: "#a78bfa",
+};
+
+const PROP_CAT_ICONS: Record<string, string> = {
+  Passing: "\uD83C\uDFC8",
+  Rushing: "\uD83C\uDFC3",
+  Receiving: "\uD83D\uDD90\uFE0F",
+  Scoring: "\uD83C\uDF1F",
+  Kicking: "\uD83E\uDD7E",
 };
 
 function TVSportsbookProps({ eventId }: { eventId: number }) {
@@ -621,58 +636,113 @@ function TVSportsbookProps({ eventId }: { eventId: number }) {
         <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider font-semibold">
           Prop Odds
         </h3>
-        <span className="text-white/30 text-[1.1vh] font-mono">
-          {data.total_props} props &middot; Live
-        </span>
+        <div className="flex items-center gap-[0.3vw]">
+          <span className="inline-block w-[0.6vh] h-[0.6vh] rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-white/30 text-[1vh] font-mono">
+            {data.total_props} live
+          </span>
+        </div>
       </div>
 
-      <AutoScrollContainer className="flex-1 min-h-0" speed={0.3}>
-        <div className="space-y-[0.6vh]">
+      <AutoScrollContainer className="flex-1 min-h-0" speed={0.35}>
+        <div className="space-y-[0.8vh]">
           {data.categories.map((cat) => {
             const catColor = PROP_CAT_COLORS[cat.category] || "#64748b";
+            const catIcon = PROP_CAT_ICONS[cat.category] || "\uD83D\uDCCA";
             return (
               <div key={cat.category}>
-                <div
-                  className="text-[0.9vh] uppercase tracking-wider font-bold mb-[0.2vh] pb-[0.2vh] border-b border-white/5"
-                  style={{ color: catColor }}
-                >
-                  {cat.category}
+                {/* Category header with colored accent */}
+                <div className="flex items-center gap-[0.3vw] mb-[0.3vh]">
+                  <div
+                    className="w-[0.3vw] h-[1.8vh] rounded-full shrink-0"
+                    style={{ backgroundColor: catColor }}
+                  />
+                  <span className="text-[1vh]">{catIcon}</span>
+                  <span
+                    className="text-[0.9vh] uppercase tracking-widest font-bold"
+                    style={{ color: catColor }}
+                  >
+                    {cat.category}
+                  </span>
+                  <span className="text-white/15 text-[0.8vh] font-mono">
+                    {cat.props.length}
+                  </span>
                 </div>
-                <div className="space-y-[0.1vh]">
+
+                <div className="space-y-[0.15vh]">
                   {cat.props.map((prop, i) => {
-                    const lastName = prop.player.split(" ").pop() || prop.player;
+                    // Calculate the primary probability for the bar
+                    const barPct =
+                      prop.probability != null
+                        ? Math.round(prop.probability * 100)
+                        : prop.over_probability != null
+                          ? Math.round(prop.over_probability * 100)
+                          : null;
+
                     return (
                       <div
                         key={`${prop.player}-${prop.market_key}-${i}`}
-                        className="flex items-center gap-[0.3vw] py-[0.15vh]"
+                        className="relative rounded overflow-hidden"
+                        style={{ minHeight: "2.2vh" }}
                       >
-                        <span className="text-white/70 text-[1vh] shrink-0 w-[5vw] truncate font-medium">
-                          {lastName}
-                        </span>
-                        <span className="text-white/30 text-[0.9vh] shrink-0">
-                          {prop.type}
-                        </span>
-                        {prop.line != null && (
-                          <span className="text-blue-400/70 font-mono text-[0.9vh] shrink-0">
-                            {prop.line}
-                          </span>
+                        {/* Background probability bar */}
+                        {barPct != null && (
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-r transition-all duration-700"
+                            style={{
+                              width: `${Math.min(barPct, 100)}%`,
+                              backgroundColor: catColor,
+                              opacity: 0.12,
+                            }}
+                          />
                         )}
-                        {prop.over_probability != null &&
-                        prop.under_probability != null ? (
-                          <div className="flex items-center gap-[0.15vw] ml-auto shrink-0">
-                            <span className="text-emerald-400 font-mono text-[0.9vh]">
-                              O {Math.round(prop.over_probability * 100)}%
-                            </span>
-                            <span className="text-white/10">|</span>
-                            <span className="text-red-400 font-mono text-[0.9vh]">
-                              U {Math.round(prop.under_probability * 100)}%
-                            </span>
-                          </div>
-                        ) : prop.probability != null ? (
-                          <span className="text-emerald-400 font-mono text-[0.9vh] ml-auto shrink-0">
-                            {Math.round(prop.probability * 100)}%
+
+                        {/* Content over bar */}
+                        <div className="relative flex items-center px-[0.3vw] py-[0.2vh]">
+                          {/* Player name */}
+                          <span className="text-white/80 text-[0.95vh] font-semibold truncate flex-1 min-w-0">
+                            {prop.player}
                           </span>
-                        ) : null}
+
+                          {/* Line (for O/U props) */}
+                          {prop.line != null && (
+                            <span className="text-blue-400/70 font-mono text-[0.85vh] shrink-0 mx-[0.2vw]">
+                              {prop.line}
+                            </span>
+                          )}
+
+                          {/* Probabilities */}
+                          {prop.over_probability != null &&
+                          prop.under_probability != null ? (
+                            <div className="flex items-center gap-[0.2vw] shrink-0">
+                              <span
+                                className="font-mono font-bold text-[0.95vh] px-[0.2vw] rounded"
+                                style={{
+                                  color: "#34d399",
+                                  backgroundColor: "rgba(52,211,153,0.1)",
+                                }}
+                              >
+                                O{Math.round(prop.over_probability * 100)}
+                              </span>
+                              <span
+                                className="font-mono font-bold text-[0.95vh] px-[0.2vw] rounded"
+                                style={{
+                                  color: "#f87171",
+                                  backgroundColor: "rgba(248,113,113,0.1)",
+                                }}
+                              >
+                                U{Math.round(prop.under_probability * 100)}
+                              </span>
+                            </div>
+                          ) : prop.probability != null ? (
+                            <span
+                              className="font-mono font-bold text-[1vh] shrink-0"
+                              style={{ color: catColor }}
+                            >
+                              {Math.round(prop.probability * 100)}%
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     );
                   })}
