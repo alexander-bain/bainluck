@@ -7,9 +7,22 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import sentry_sdk
 
 from app.routes import events, sports, health, futures, admin, contest
 from app.services.database import init_db
+
+# Initialize Sentry error tracking
+# Set SENTRY_DSN env var in Heroku to enable
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        traces_sample_rate=0.1,  # 10% of requests for performance monitoring
+        profiles_sample_rate=0.1,
+        send_default_pii=False,
+    )
 
 
 @asynccontextmanager

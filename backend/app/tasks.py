@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import redis
+import sentry_sdk
 from contextlib import asynccontextmanager
 
 from celery import Celery
@@ -77,6 +78,17 @@ if broker_use_ssl:
     celery_config["redis_backend_use_ssl"] = broker_use_ssl
 
 celery_app.conf.update(**celery_config)
+
+# Initialize Sentry for Celery workers
+# Set SENTRY_DSN env var in Heroku to enable
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        traces_sample_rate=0.05,  # 5% of tasks for performance monitoring
+        send_default_pii=False,
+    )
 
 # Beat schedule for periodic tasks
 celery_app.conf.beat_schedule = {
