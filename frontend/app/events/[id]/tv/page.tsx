@@ -13,7 +13,7 @@ import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
-import CommercialLeaderboard from "@/components/party/CommercialLeaderboard";
+// CommercialLeaderboard removed — replaced by TVAdLeaderboard with YouTube API
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
@@ -106,6 +106,30 @@ interface AdLeaderboardData {
 }
 
 // ---------------------------------------------------------------------------
+// Sportsbook Props Types (from The Odds API)
+// ---------------------------------------------------------------------------
+interface SportsbookProp {
+  player: string;
+  type: string;
+  market_key: string;
+  line: number | null;
+  over_probability?: number;
+  under_probability?: number;
+  probability?: number;
+  bookmaker_count?: number;
+}
+
+interface PropCategoryData {
+  category: string;
+  props: SportsbookProp[];
+}
+
+interface SportsbookPropsResponse {
+  categories: PropCategoryData[];
+  total_props: number;
+}
+
+// ---------------------------------------------------------------------------
 // Page Types
 // ---------------------------------------------------------------------------
 interface TVPageProps {
@@ -169,6 +193,79 @@ function calculateMomentum(
 }
 
 // ---------------------------------------------------------------------------
+// Auto-Scroll Container (infinite seamless loop, pauses on hover)
+// ---------------------------------------------------------------------------
+function AutoScrollContainer({
+  children,
+  speed = 0.3,
+  className = "",
+}: {
+  children: React.ReactNode;
+  speed?: number;
+  className?: string;
+}) {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const firstRef = useRef<HTMLDivElement>(null);
+  const scrollPos = useRef(0);
+  const paused = useRef(false);
+  const rafRef = useRef<number>();
+  const [needsScroll, setNeedsScroll] = useState(false);
+
+  useEffect(() => {
+    const outer = outerRef.current;
+    const first = firstRef.current;
+    if (!outer || !first) return;
+    const check = () => {
+      setNeedsScroll(first.scrollHeight > outer.clientHeight + 10);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(first);
+    observer.observe(outer);
+    return () => observer.disconnect();
+  }, [children]);
+
+  useEffect(() => {
+    if (!needsScroll) return;
+    const outer = outerRef.current;
+    const first = firstRef.current;
+    if (!outer || !first) return;
+    const singleH = first.scrollHeight;
+
+    const animate = () => {
+      if (!paused.current) {
+        scrollPos.current += speed;
+        if (scrollPos.current >= singleH) {
+          scrollPos.current -= singleH;
+        }
+        outer.scrollTop = scrollPos.current;
+      }
+      rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [needsScroll, speed]);
+
+  return (
+    <div
+      ref={outerRef}
+      className={`overflow-hidden ${className}`}
+      onMouseEnter={() => {
+        paused.current = true;
+      }}
+      onMouseLeave={() => {
+        paused.current = false;
+      }}
+    >
+      <div ref={firstRef}>{children}</div>
+      {needsScroll && <div className="pt-[1vh]">{children}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Contest TV Components
 // ---------------------------------------------------------------------------
 const MEDAL_COLORS = ["#FFD700", "#C0C0C0", "#CD7F32"];
@@ -204,87 +301,89 @@ function TVLeaderboard({
         <span className="flex-1 text-right">Key Prop</span>
       </div>
 
-      {/* Scrollable rows */}
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-[0.2vh]">
-        {leaderboard.map((entry) => {
-          const isTop3 = entry.rank <= 3;
-          const bestKeyProp = entry.key_props[0];
+      {/* Auto-scrolling rows */}
+      <AutoScrollContainer className="flex-1 min-h-0" speed={0.2}>
+        <div className="space-y-[0.2vh]">
+          {leaderboard.map((entry) => {
+            const isTop3 = entry.rank <= 3;
+            const bestKeyProp = entry.key_props[0];
 
-          return (
-            <div
-              key={entry.name}
-              className={`flex items-center gap-[0.5vw] px-[0.5vw] py-[0.4vh] rounded-lg transition-all ${
-                entry.eliminated
-                  ? "opacity-40"
-                  : isTop3
-                    ? "bg-white/5"
-                    : ""
-              }`}
-            >
-              {/* Rank */}
+            return (
               <div
-                className="w-[2.5vw] text-center font-bold text-[1.6vh] shrink-0"
-                style={{
-                  color: isTop3 ? MEDAL_COLORS[entry.rank - 1] : "rgba(255,255,255,0.4)",
-                }}
+                key={entry.name}
+                className={`flex items-center gap-[0.5vw] px-[0.5vw] py-[0.4vh] rounded-lg transition-all ${
+                  entry.eliminated
+                    ? "opacity-40"
+                    : isTop3
+                      ? "bg-white/5"
+                      : ""
+                }`}
               >
-                {entry.rank}
-              </div>
-
-              {/* Name + status */}
-              <div className="flex-1 min-w-0 flex items-center gap-[0.4vw]">
-                <span
-                  className={`truncate text-[1.5vh] ${
-                    isTop3 ? "text-white font-semibold" : "text-white/70"
-                  }`}
+                {/* Rank */}
+                <div
+                  className="w-[2.5vw] text-center font-bold text-[1.6vh] shrink-0"
+                  style={{
+                    color: isTop3 ? MEDAL_COLORS[entry.rank - 1] : "rgba(255,255,255,0.4)",
+                  }}
                 >
-                  {entry.name}
-                </span>
-                {entry.can_still_win && entry.rank > 1 && (
-                  <span className="shrink-0 text-[0.9vh] px-[0.4vw] py-[0.1vh] bg-amber-500/20 text-amber-400 rounded font-bold">
-                    CAN WIN
+                  {entry.rank}
+                </div>
+
+                {/* Name + status */}
+                <div className="flex-1 min-w-0 flex items-center gap-[0.4vw]">
+                  <span
+                    className={`truncate text-[1.5vh] ${
+                      isTop3 ? "text-white font-semibold" : "text-white/70"
+                    }`}
+                  >
+                    {entry.name}
                   </span>
-                )}
-                {entry.eliminated && (
-                  <span className="shrink-0 text-[0.9vh] px-[0.4vw] py-[0.1vh] bg-red-500/20 text-red-400 rounded font-bold">
-                    OUT
-                  </span>
-                )}
-              </div>
-
-              {/* Actual points */}
-              <div className="w-[4vw] text-right font-mono font-bold text-[1.8vh] text-white shrink-0">
-                {entry.actual_points}
-              </div>
-
-              {/* Forecasted */}
-              <div className="w-[4vw] text-right font-mono text-[1.4vh] text-emerald-400 shrink-0">
-                {entry.forecasted_points}
-              </div>
-
-              {/* Best possible */}
-              <div className="w-[3vw] text-right font-mono text-[1.2vh] text-white/30 shrink-0">
-                #{entry.best_possible_finish}
-              </div>
-
-              {/* Key prop (most impactful pending pick) */}
-              <div className="flex-1 text-right min-w-0">
-                {bestKeyProp ? (
-                  <span className="text-[1.1vh] text-white/40 truncate block">
-                    <span className="text-white/60 font-medium">&ldquo;{bestKeyProp.pick}&rdquo;</span>
-                    {" "}
-                    <span className="font-mono text-blue-400">
-                      {Math.round(bestKeyProp.probability * 100)}%
+                  {entry.can_still_win && entry.rank > 1 && (
+                    <span className="shrink-0 text-[0.9vh] px-[0.4vw] py-[0.1vh] bg-amber-500/20 text-amber-400 rounded font-bold">
+                      CAN WIN
                     </span>
-                  </span>
-                ) : (
-                  <span className="text-[1.1vh] text-white/20">-</span>
-                )}
+                  )}
+                  {entry.eliminated && (
+                    <span className="shrink-0 text-[0.9vh] px-[0.4vw] py-[0.1vh] bg-red-500/20 text-red-400 rounded font-bold">
+                      OUT
+                    </span>
+                  )}
+                </div>
+
+                {/* Actual points */}
+                <div className="w-[4vw] text-right font-mono font-bold text-[1.8vh] text-white shrink-0">
+                  {entry.actual_points}
+                </div>
+
+                {/* Forecasted */}
+                <div className="w-[4vw] text-right font-mono text-[1.4vh] text-emerald-400 shrink-0">
+                  {entry.forecasted_points}
+                </div>
+
+                {/* Best possible */}
+                <div className="w-[3vw] text-right font-mono text-[1.2vh] text-white/30 shrink-0">
+                  #{entry.best_possible_finish}
+                </div>
+
+                {/* Key prop (most impactful pending pick) */}
+                <div className="flex-1 text-right min-w-0">
+                  {bestKeyProp ? (
+                    <span className="text-[1.1vh] text-white/40 truncate block">
+                      <span className="text-white/60 font-medium">&ldquo;{bestKeyProp.pick}&rdquo;</span>
+                      {" "}
+                      <span className="font-mono text-blue-400">
+                        {Math.round(bestKeyProp.probability * 100)}%
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-[1.1vh] text-white/20">-</span>
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </AutoScrollContainer>
     </div>
   );
 }
@@ -377,6 +476,36 @@ function TVContestSidebar({
 const AD_MEDAL_EMOJIS = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"]; // gold, silver, bronze
 
 function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
+  const [playingId, setPlayingId] = useState<string | null>(null);
+
+  if (playingId) {
+    const ad = ads.find((a) => a.video_id === playingId);
+    return (
+      <div className="flex flex-col h-full">
+        <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
+          <button
+            onClick={() => setPlayingId(null)}
+            className="text-blue-400 text-[1.2vh] hover:text-blue-300 flex items-center gap-[0.3vw]"
+          >
+            &larr; Back
+          </button>
+          <span className="text-white/50 text-[1.1vh] font-semibold truncate">
+            {ad?.brand}
+          </span>
+        </div>
+        <div className="flex-1 min-h-0 flex items-center justify-center">
+          <iframe
+            src={`https://www.youtube.com/embed/${playingId}?autoplay=1&controls=1`}
+            className="w-full rounded-xl"
+            style={{ aspectRatio: "16/9", maxHeight: "100%" }}
+            allow="autoplay; encrypted-media"
+            allowFullScreen
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
@@ -384,87 +513,107 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
           Ad Leaderboard
         </h3>
         <span className="text-white/30 text-[1.1vh]">
-          {ads.length} ads tracked
+          {ads.length} ads
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-[0.3vh]">
-        {ads.map((ad, i) => {
-          const isTop3 = i < 3;
-          return (
-            <div
-              key={ad.video_id}
-              className={`flex items-center gap-[0.4vw] px-[0.3vw] py-[0.3vh] rounded-lg ${
-                isTop3 ? "bg-white/5" : ""
-              }`}
-            >
-              {/* Rank */}
-              <div className="w-[1.8vw] text-center shrink-0">
-                {isTop3 ? (
-                  <span className="text-[1.8vh]">{AD_MEDAL_EMOJIS[i]}</span>
-                ) : (
-                  <span className="text-white/30 font-mono text-[1.3vh]">
-                    {ad.rank}
-                  </span>
-                )}
-              </div>
+      <AutoScrollContainer className="flex-1 min-h-0" speed={0.2}>
+        <div className="space-y-[0.3vh]">
+          {ads.map((ad, i) => {
+            const isTop3 = i < 3;
+            return (
+              <div
+                key={ad.video_id}
+                className={`flex items-center gap-[0.4vw] px-[0.3vw] py-[0.3vh] rounded-lg ${
+                  isTop3 ? "bg-white/5" : ""
+                }`}
+              >
+                {/* Rank */}
+                <div className="w-[1.5vw] text-center shrink-0">
+                  {isTop3 ? (
+                    <span className="text-[1.6vh]">{AD_MEDAL_EMOJIS[i]}</span>
+                  ) : (
+                    <span className="text-white/30 font-mono text-[1.2vh]">
+                      {ad.rank}
+                    </span>
+                  )}
+                </div>
 
-              {/* Brand + title */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-[0.3vw]">
+                {/* Brand + title */}
+                <div className="flex-1 min-w-0">
                   <span
-                    className={`text-[1.4vh] font-semibold truncate ${
+                    className={`text-[1.3vh] font-semibold truncate block ${
                       isTop3 ? "text-white" : "text-white/70"
                     }`}
                   >
                     {ad.brand}
                   </span>
+                  <div className="text-white/30 text-[0.85vh] truncate leading-tight">
+                    {ad.title}
+                  </div>
                 </div>
-                <div className="text-white/30 text-[0.9vh] truncate leading-tight">
-                  {ad.title}
-                </div>
-              </div>
 
-              {/* Views */}
-              <div className="text-right shrink-0">
-                <div className="text-white font-mono font-bold text-[1.5vh]">
-                  {ad.views_formatted}
+                {/* Play button */}
+                <button
+                  onClick={() => setPlayingId(ad.video_id)}
+                  className="shrink-0 text-blue-400 hover:text-blue-300 text-[1.5vh] w-[1.8vw] h-[2.5vh] flex items-center justify-center rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
+                  title={`Play ${ad.brand}`}
+                >
+                  &#9654;
+                </button>
+
+                {/* Views */}
+                <div className="text-right shrink-0 w-[2.5vw]">
+                  <div className="text-white font-mono font-bold text-[1.2vh]">
+                    {ad.views_formatted}
+                  </div>
                 </div>
-                <div className="text-white/30 text-[0.8vh]">views</div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </AutoScrollContainer>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Dense Prop Bet Probabilities Grid (replaces Key Moments)
+// Sportsbook Props from The Odds API (live-updating, auto-scroll)
 // ---------------------------------------------------------------------------
-const CATEGORY_COLORS: Record<string, string> = {
-  pregame: "#a78bfa",     // violet
-  first_quarter: "#60a5fa", // blue
-  second_quarter: "#34d399", // emerald
-  halftime: "#f472b6",    // pink
-  game: "#fbbf24",        // amber
-  postgame: "#f87171",    // red
+const PROP_CAT_COLORS: Record<string, string> = {
+  Passing: "#60a5fa",
+  Rushing: "#34d399",
+  Receiving: "#f472b6",
+  Scoring: "#fbbf24",
+  Kicking: "#a78bfa",
 };
 
-const CATEGORY_SHORT: Record<string, string> = {
-  pregame: "PRE",
-  first_quarter: "Q1",
-  second_quarter: "Q2",
-  halftime: "HT",
-  game: "GAME",
-  postgame: "POST",
-};
+function TVSportsbookProps({ eventId }: { eventId: number }) {
+  const [data, setData] = useState<SportsbookPropsResponse | null>(null);
 
-function TVPropsGrid({ props }: { props: ContestProp[] }) {
-  const scorable = props.filter((p) => !p.is_tiebreaker);
-  const resolved = scorable.filter((p) => p.resolved);
-  const pending = scorable.filter((p) => !p.resolved);
+  const fetchProps = useCallback(async () => {
+    try {
+      const resp = await fetch(`${API_URL}/api/events/${eventId}/props`);
+      if (!resp.ok) return;
+      setData(await resp.json());
+    } catch {
+      /* ignore */
+    }
+  }, [eventId]);
+
+  useEffect(() => {
+    fetchProps();
+    const iv = setInterval(fetchProps, 120000);
+    return () => clearInterval(iv);
+  }, [fetchProps]);
+
+  if (!data || data.categories.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
+        Loading sportsbook props...
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -473,93 +622,66 @@ function TVPropsGrid({ props }: { props: ContestProp[] }) {
           Prop Odds
         </h3>
         <span className="text-white/30 text-[1.1vh] font-mono">
-          {resolved.length}/{scorable.length} resolved
+          {data.total_props} props &middot; Live
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-[0.25vh] pr-[0.2vw]">
-        {scorable.map((prop) => {
-          const catColor = CATEGORY_COLORS[prop.category] || "#64748b";
-          const catShort = CATEGORY_SHORT[prop.category] || "?";
-          const sortedChoices = Object.entries(prop.choices).sort(
-            (a, b) => b[1] - a[1]
-          );
-          const topChoice = sortedChoices[0];
-          const shortQ = prop.question.length > 40
-            ? prop.question.slice(0, 38) + "..."
-            : prop.question;
-
-          if (prop.resolved) {
+      <AutoScrollContainer className="flex-1 min-h-0" speed={0.3}>
+        <div className="space-y-[0.6vh]">
+          {data.categories.map((cat) => {
+            const catColor = PROP_CAT_COLORS[cat.category] || "#64748b";
             return (
-              <div
-                key={prop.id}
-                className="flex items-center gap-[0.3vw] py-[0.2vh] opacity-70"
-              >
-                <span
-                  className="shrink-0 text-[0.8vh] font-bold px-[0.25vw] rounded"
-                  style={{ backgroundColor: `${catColor}30`, color: catColor }}
+              <div key={cat.category}>
+                <div
+                  className="text-[0.9vh] uppercase tracking-wider font-bold mb-[0.2vh] pb-[0.2vh] border-b border-white/5"
+                  style={{ color: catColor }}
                 >
-                  {catShort}
-                </span>
-                <span className="text-emerald-400 shrink-0 text-[1.1vh]">&#10003;</span>
-                <span className="text-white/40 text-[1vh] truncate flex-1 leading-tight">
-                  {shortQ}
-                </span>
-                <span className="text-emerald-400 text-[1vh] font-medium shrink-0 truncate max-w-[5vw]">
-                  {prop.correct_answer}
-                </span>
+                  {cat.category}
+                </div>
+                <div className="space-y-[0.1vh]">
+                  {cat.props.map((prop, i) => {
+                    const lastName = prop.player.split(" ").pop() || prop.player;
+                    return (
+                      <div
+                        key={`${prop.player}-${prop.market_key}-${i}`}
+                        className="flex items-center gap-[0.3vw] py-[0.15vh]"
+                      >
+                        <span className="text-white/70 text-[1vh] shrink-0 w-[5vw] truncate font-medium">
+                          {lastName}
+                        </span>
+                        <span className="text-white/30 text-[0.9vh] shrink-0">
+                          {prop.type}
+                        </span>
+                        {prop.line != null && (
+                          <span className="text-blue-400/70 font-mono text-[0.9vh] shrink-0">
+                            {prop.line}
+                          </span>
+                        )}
+                        {prop.over_probability != null &&
+                        prop.under_probability != null ? (
+                          <div className="flex items-center gap-[0.15vw] ml-auto shrink-0">
+                            <span className="text-emerald-400 font-mono text-[0.9vh]">
+                              O {Math.round(prop.over_probability * 100)}%
+                            </span>
+                            <span className="text-white/10">|</span>
+                            <span className="text-red-400 font-mono text-[0.9vh]">
+                              U {Math.round(prop.under_probability * 100)}%
+                            </span>
+                          </div>
+                        ) : prop.probability != null ? (
+                          <span className="text-emerald-400 font-mono text-[0.9vh] ml-auto shrink-0">
+                            {Math.round(prop.probability * 100)}%
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
-          }
-
-          return (
-            <div key={prop.id} className="py-[0.2vh]">
-              <div className="flex items-center gap-[0.3vw]">
-                <span
-                  className="shrink-0 text-[0.8vh] font-bold px-[0.25vw] rounded"
-                  style={{ backgroundColor: `${catColor}30`, color: catColor }}
-                >
-                  {catShort}
-                </span>
-                <span className="text-white/50 text-[1vh] truncate flex-1 leading-tight">
-                  {shortQ}
-                </span>
-              </div>
-              {/* Compact probability bars for all choices */}
-              <div className="flex gap-[0.2vw] mt-[0.15vh] pl-[1.8vw]">
-                {sortedChoices.slice(0, 3).map(([choice, prob]) => (
-                  <div
-                    key={choice}
-                    className="flex items-center gap-[0.15vw] min-w-0"
-                    style={{ flex: `${prob} 1 0%` }}
-                  >
-                    <div
-                      className="h-[0.5vh] rounded-full shrink-0"
-                      style={{
-                        width: `${Math.max(prob * 100, 4)}%`,
-                        minWidth: "3px",
-                        backgroundColor: catColor,
-                        opacity: 0.6,
-                      }}
-                    />
-                    <span className="text-white/30 text-[0.85vh] truncate whitespace-nowrap">
-                      {choice.length > 12 ? choice.slice(0, 10) + ".." : choice}{" "}
-                      <span className="text-white/50 font-mono">
-                        {Math.round(prob * 100)}%
-                      </span>
-                    </span>
-                  </div>
-                ))}
-                {sortedChoices.length > 3 && (
-                  <span className="text-white/20 text-[0.8vh]">
-                    +{sortedChoices.length - 3}
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+          })}
+        </div>
+      </AutoScrollContainer>
     </div>
   );
 }
@@ -1084,15 +1206,9 @@ export default function TVPage({ params }: TVPageProps) {
             )}
           </div>
 
-          {/* Prop Bet Odds Grid */}
+          {/* Sportsbook Prop Odds (from The Odds API) */}
           <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
-            {contestData ? (
-              <TVPropsGrid props={contestData.props} />
-            ) : (
-              <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
-                Loading props...
-              </div>
-            )}
+            <TVSportsbookProps eventId={eventId} />
           </div>
         </div>
 
@@ -1143,10 +1259,6 @@ export default function TVPage({ params }: TVPageProps) {
             )}
           </div>
 
-          {/* Commercial Leaderboard (1 column) */}
-          <div className="min-h-0">
-            <CommercialLeaderboard />
-          </div>
         </div>
       </div>
 

@@ -476,11 +476,34 @@ async def _fetch_sheet_entries() -> tuple[list[dict], list[str]]:
                 else:
                     logger.warning(f"Row {i} skipped (empty row): first values = {list(row.values())[:3]}")
 
-        logger.info(f"Parsed {len(entries)} entries from {len(rows)} rows")
+        logger.info(f"Parsed {len(entries)} entries from {len(rows)} rows, headers={headers[:5]}, name_col={name_col!r}")
+
+        # Cache successful parse in Redis (5 min TTL)
+        if entries:
+            try:
+                r = _redis()
+                r.setex(
+                    f"{REDIS_KEY_PREFIX}entries_cache",
+                    300,
+                    json.dumps({"entries": entries, "headers": headers}),
+                )
+            except Exception:
+                pass
+
         return entries, headers
 
     except Exception as e:
         logger.error(f"Failed to fetch Google Sheet: {e}")
+        # Fall back to cached entries on failure
+        try:
+            r = _redis()
+            cached = r.get(f"{REDIS_KEY_PREFIX}entries_cache")
+            if cached:
+                data = json.loads(cached)
+                logger.info(f"Using {len(data['entries'])} cached entries (sheet fetch failed)")
+                return data["entries"], data.get("headers", [])
+        except Exception:
+            pass
         return [], []
 
 
@@ -2121,13 +2144,38 @@ async def debug_contest(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         event_info = {"error": str(e)}
 
+    # Show all entries with their pick counts for debugging
+    entries_debug = []
+    for e in entries:
+        entries_debug.append({
+            "name": e["name"],
+            "picks_count": len(e.get("picks", {})),
+            "picks": e.get("picks", {}),
+            "tiebreaker": e.get("tiebreaker"),
+        })
+
+    # Check Redis cache status
+    redis_cache = None
+    try:
+        r = _redis()
+        cached = r.get(f"{REDIS_KEY_PREFIX}entries_cache")
+        if cached:
+            cdata = json.loads(cached)
+            redis_cache = f"{len(cdata.get('entries', []))} entries cached"
+        else:
+            redis_cache = "no cache"
+    except Exception as ex:
+        redis_cache = f"error: {ex}"
+
     return {
         "csv": {
             "url": SHEET_CSV_URL,
             "headers": headers,
+            "header_count": len(headers),
             "detected_name_column": _detect_name_column(headers) if headers else None,
             "entry_count": len(entries),
-            "sample_entry": entries[0] if entries else None,
+            "entries": entries_debug,
+            "redis_cache": redis_cache,
         },
         "resolutions": resolutions,
         "overrides": overrides,
