@@ -6,6 +6,8 @@ Manages a prop bet contest for a Super Bowl watch party.
 - Defines all 24 props with odds from sportsbook research
 - Tracks resolution state in Redis
 - Computes leaderboard with forecasted points
+- Auto-resolves props from game state when possible
+- Updates live odds from current event data
 - Generates AI commentary via OpenAI
 """
 
@@ -14,13 +16,19 @@ import io
 import json
 import logging
 import os
+import re
 import ssl
 from datetime import datetime, timezone
+from statistics import median
 from typing import Optional
 
 import httpx
 import redis
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, func, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +39,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 REDIS_KEY_PREFIX = "sb_contest:"
+
 
 def _redis():
     if REDIS_URL.startswith("rediss://"):
@@ -82,9 +91,6 @@ def _save_odds_overrides(overrides: dict):
 # ---------------------------------------------------------------------------
 # Prop definitions – 24 props with sportsbook-researched odds
 # ---------------------------------------------------------------------------
-# Column headers from the Google Form response sheet (abbreviated).
-# The CSV columns are: Timestamp, Name, then one column per question.
-# We map each prop to the column header substring that identifies it.
 
 PROPS = [
     {
@@ -348,6 +354,7 @@ PROPS = [
             "Seahawks (-4.5)": 0.675,
             "Patriots": 0.325,
         },
+        "live_odds": True,
     },
     {
         "id": "total_points",
@@ -361,7 +368,6 @@ PROPS = [
 
 PROP_BY_ID = {p["id"]: p for p in PROPS}
 
-# Category display order for the frontend
 CATEGORY_ORDER = [
     "pregame", "first_quarter", "second_quarter",
     "halftime", "game", "postgame",
@@ -385,36 +391,95 @@ SHEET_CSV_URL = os.getenv(
 )
 
 
-async def _fetch_sheet_entries() -> list[dict]:
-    """Fetch and parse the Google Sheet CSV into a list of entries."""
+def _detect_name_column(headers: list[str]) -> Optional[str]:
+    """Detect which column contains entrant names."""
+    # Priority 1: Explicit name keywords (short columns only)
+    name_keywords = ["your name", "full name", "first name", "nickname", "who are you"]
+    for h in headers:
+        h_lower = h.lower().strip()
+        for kw in name_keywords:
+            if kw in h_lower and len(h.strip()) < 80:
+                return h
+
+    # Priority 2: Column header that is just "Name" or similar
+    for h in headers:
+        h_lower = h.lower().strip()
+        if h_lower in ("name", "player", "player name", "contestant"):
+            return h
+
+    # Priority 3: Second column (first after Timestamp) — Google Forms
+    # always puts Timestamp first, then optional email, then questions.
+    # If a name field was added it's usually right after Timestamp.
+    non_skip = [h for h in headers if h.lower().strip() not in ("timestamp", "email address")]
+    if non_skip:
+        first_col = non_skip[0]
+        # If the first non-Timestamp/Email column is relatively short,
+        # it's likely a name or identifier field
+        if len(first_col.strip()) < 60:
+            # Check it's not matching one of our props (question text)
+            is_prop = any(
+                p["column_match"].lower() in first_col.lower()
+                for p in PROPS
+            )
+            if not is_prop:
+                return first_col
+
+    # Priority 4: Just use second column regardless
+    if len(headers) >= 2:
+        second = headers[1]
+        if second.lower().strip() != "timestamp":
+            return second
+
+    return None
+
+
+async def _fetch_sheet_entries() -> tuple[list[dict], list[str]]:
+    """Fetch and parse the Google Sheet CSV. Returns (entries, headers)."""
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(SHEET_CSV_URL)
             resp.raise_for_status()
 
         text = resp.text
+        logger.info(f"CSV fetched: {len(text)} bytes")
+
         reader = csv.DictReader(io.StringIO(text))
+        headers = list(reader.fieldnames or [])
+        logger.info(f"CSV headers ({len(headers)}): {headers[:5]}...")
+
         rows = list(reader)
+        logger.info(f"CSV rows: {len(rows)}")
+
+        name_col = _detect_name_column(headers)
+        logger.info(f"Detected name column: {name_col!r}")
 
         entries = []
-        for row in rows:
-            entry = _parse_entry(row)
+        for i, row in enumerate(rows):
+            entry = _parse_entry(row, name_col)
             if entry:
                 entries.append(entry)
-        return entries
+            else:
+                logger.warning(f"Row {i} skipped (no name): first values = {list(row.values())[:3]}")
+
+        logger.info(f"Parsed {len(entries)} entries from {len(rows)} rows")
+        return entries, headers
 
     except Exception as e:
         logger.error(f"Failed to fetch Google Sheet: {e}")
-        return []
+        return [], []
 
 
-def _parse_entry(row: dict) -> Optional[dict]:
+def _parse_entry(row: dict, name_col: Optional[str]) -> Optional[dict]:
     """Parse a single CSV row into a contest entry."""
-    # Find the name column (usually second column after Timestamp)
     name = None
     picks = {}
     tiebreaker = None
 
+    # Get name from detected column
+    if name_col and name_col in row:
+        name = (row[name_col] or "").strip()
+
+    # Match remaining columns to props
     for col, val in row.items():
         col_lower = col.lower().strip()
         val = (val or "").strip()
@@ -422,9 +487,8 @@ def _parse_entry(row: dict) -> Optional[dict]:
         if not val:
             continue
 
-        # Name column detection
-        if "name" in col_lower or "your name" in col_lower or "who are you" in col_lower:
-            name = val
+        # Skip name/timestamp/email columns
+        if col == name_col or col_lower == "timestamp" or col_lower == "email address":
             continue
 
         # Match to props by column_match
@@ -432,7 +496,7 @@ def _parse_entry(row: dict) -> Optional[dict]:
             if prop.get("is_tiebreaker"):
                 if prop["column_match"].lower() in col_lower:
                     try:
-                        tiebreaker = float(val)
+                        tiebreaker = float(val.replace(",", ""))
                     except (ValueError, TypeError):
                         tiebreaker = None
                     break
@@ -440,11 +504,15 @@ def _parse_entry(row: dict) -> Optional[dict]:
                 picks[prop["id"]] = val
                 break
 
+    # Fallback: try second column if name still empty
     if not name:
-        # Try first non-Timestamp column as name
         cols = list(row.keys())
-        if len(cols) >= 2:
-            name = (row[cols[1]] or "").strip()
+        for c in cols:
+            if c.lower().strip() not in ("timestamp", "email address"):
+                candidate = (row[c] or "").strip()
+                if candidate and len(candidate) < 50:
+                    name = candidate
+                    break
 
     if not name:
         return None
@@ -455,6 +523,704 @@ def _parse_entry(row: dict) -> Optional[dict]:
         "tiebreaker": tiebreaker,
         "submitted_at": row.get("Timestamp", ""),
     }
+
+
+# ---------------------------------------------------------------------------
+# Database integration – live odds & auto-resolution
+# ---------------------------------------------------------------------------
+
+async def _find_super_bowl_event(db: AsyncSession):
+    """Find the Super Bowl LX event in the database."""
+    from app.models.models import Event
+
+    result = await db.execute(
+        select(Event).where(
+            Event.home_team_name.ilike("%seahawks%"),
+            Event.away_team_name.ilike("%patriots%"),
+        )
+    )
+    event = result.scalar_one_or_none()
+
+    if not event:
+        result = await db.execute(
+            select(Event).where(
+                Event.home_team_name.ilike("%patriots%"),
+                Event.away_team_name.ilike("%seahawks%"),
+            )
+        )
+        event = result.scalar_one_or_none()
+
+    return event
+
+
+async def _get_live_odds_updates(db: AsyncSession, event) -> dict:
+    """Get current live odds from latest bookmaker snapshots."""
+    from app.models.models import OddsSnapshot
+
+    # Get latest snapshot per bookmaker
+    subq = (
+        select(
+            OddsSnapshot.bookmaker,
+            func.max(OddsSnapshot.captured_at).label("max_time"),
+        )
+        .where(OddsSnapshot.event_id == event.id)
+        .group_by(OddsSnapshot.bookmaker)
+        .subquery()
+    )
+
+    result = await db.execute(
+        select(OddsSnapshot).join(
+            subq,
+            and_(
+                OddsSnapshot.bookmaker == subq.c.bookmaker,
+                OddsSnapshot.captured_at == subq.c.max_time,
+                OddsSnapshot.event_id == event.id,
+            ),
+        )
+    )
+    snapshots = result.scalars().all()
+
+    if not snapshots:
+        return {}
+
+    probs = [
+        float(s.home_win_probability)
+        for s in snapshots
+        if s.home_win_probability is not None
+    ]
+    if not probs:
+        return {}
+
+    home_prob = median(probs)
+    away_prob = 1.0 - home_prob
+
+    is_seahawks_home = "seahawks" in event.home_team_name.lower()
+    seahawks_prob = home_prob if is_seahawks_home else away_prob
+    patriots_prob = 1.0 - seahawks_prob
+
+    updates = {
+        "game_winner": {
+            "Seahawks (-4.5)": round(seahawks_prob, 3),
+            "Patriots": round(patriots_prob, 3),
+        },
+    }
+
+    return updates
+
+
+async def _get_halftime_scores(db: AsyncSession, event) -> Optional[dict]:
+    """Get halftime scores from ESPN snapshots or Redis cache."""
+    # Check Redis cache first
+    try:
+        r = _redis()
+        cached = r.get(f"{REDIS_KEY_PREFIX}halftime_scores")
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    # Look at ESPN snapshots for period transition to find halftime score
+    from app.models.models import ESPNSnapshot
+
+    result = await db.execute(
+        select(ESPNSnapshot)
+        .where(ESPNSnapshot.event_id == event.id)
+        .order_by(ESPNSnapshot.captured_at)
+    )
+    snapshots = result.scalars().all()
+
+    if not snapshots:
+        return None
+
+    # Find the last snapshot before the 3rd quarter started
+    halftime_snap = None
+    for snap in snapshots:
+        period = (snap.period or "").lower()
+        # Capture every Q2 / 2nd quarter snapshot we see
+        if any(x in period for x in ["2nd", "q2"]):
+            halftime_snap = snap
+        elif any(x in period for x in ["half", "3rd", "q3", "3", "4th", "q4", "ot"]):
+            # Past halftime — use the last Q2 snapshot we found
+            if halftime_snap:
+                break
+
+    if halftime_snap and halftime_snap.home_score is not None and halftime_snap.away_score is not None:
+        scores = {
+            "home": halftime_snap.home_score,
+            "away": halftime_snap.away_score,
+        }
+        # Cache in Redis so we don't re-query
+        try:
+            r = _redis()
+            r.set(f"{REDIS_KEY_PREFIX}halftime_scores", json.dumps(scores))
+        except Exception:
+            pass
+        return scores
+
+    return None
+
+
+async def _auto_resolve_from_game_state(db: AsyncSession) -> list[str]:
+    """Check game state and auto-resolve determinable props. Returns list of newly resolved prop IDs."""
+    event = await _find_super_bowl_event(db)
+    if not event:
+        return []
+
+    resolutions = _get_resolution_state()
+    newly_resolved = []
+
+    is_seahawks_home = "seahawks" in event.home_team_name.lower()
+
+    def _seahawks_score():
+        return event.home_score if is_seahawks_home else event.away_score
+
+    def _patriots_score():
+        return event.away_score if is_seahawks_home else event.home_score
+
+    # --- game_winner: when game is completed/closed ---
+    if event.status in ("completed", "closed") and "game_winner" not in resolutions:
+        s_score = _seahawks_score()
+        p_score = _patriots_score()
+        if s_score is not None and p_score is not None:
+            if s_score > p_score:
+                resolutions["game_winner"] = {
+                    "correct_answer": "Seahawks (-4.5)",
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    "auto_resolved": True,
+                }
+                newly_resolved.append("game_winner")
+            elif p_score > s_score:
+                resolutions["game_winner"] = {
+                    "correct_answer": "Patriots",
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    "auto_resolved": True,
+                }
+                newly_resolved.append("game_winner")
+
+    # --- halftime_leader: when past halftime ---
+    if "halftime_leader" not in resolutions:
+        period = (event.period or "").lower()
+        past_halftime = event.status in ("completed", "closed") or any(
+            x in period for x in ["3rd", "4th", "q3", "q4", "ot", "overtime", "final"]
+        )
+
+        if past_halftime:
+            scores = await _get_halftime_scores(db, event)
+            if scores:
+                h_score = scores["home"]
+                a_score = scores["away"]
+                sea_ht = h_score if is_seahawks_home else a_score
+                ne_ht = a_score if is_seahawks_home else h_score
+
+                if sea_ht > ne_ht:
+                    resolutions["halftime_leader"] = {
+                        "correct_answer": "Seahawks",
+                        "resolved_at": datetime.now(timezone.utc).isoformat(),
+                        "auto_resolved": True,
+                    }
+                    newly_resolved.append("halftime_leader")
+                elif ne_ht > sea_ht:
+                    resolutions["halftime_leader"] = {
+                        "correct_answer": "Patriots",
+                        "resolved_at": datetime.now(timezone.utc).isoformat(),
+                        "auto_resolved": True,
+                    }
+                    newly_resolved.append("halftime_leader")
+                # Tied = no one wins (not resolved as "no winner")
+
+    # --- ESPN play-by-play auto-resolution ---
+    if event.espn_id and event.status in ("live", "completed", "closed"):
+        espn_resolved = await _auto_resolve_from_espn(event, resolutions, is_seahawks_home)
+        newly_resolved.extend(espn_resolved)
+
+    # --- Bitcoin price auto-resolution ---
+    if "bitcoin" not in resolutions and event.status in ("completed", "closed"):
+        btc_answer = await _resolve_bitcoin()
+        if btc_answer:
+            resolutions["bitcoin"] = {
+                "correct_answer": btc_answer,
+                "resolved_at": datetime.now(timezone.utc).isoformat(),
+                "auto_resolved": True,
+            }
+            newly_resolved.append("bitcoin")
+
+    if newly_resolved:
+        _save_resolution_state(resolutions)
+        logger.info(f"Auto-resolved props: {newly_resolved}")
+
+    return newly_resolved
+
+
+# ---------------------------------------------------------------------------
+# ESPN play-by-play auto-resolution
+# ---------------------------------------------------------------------------
+
+ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
+ESPN_CACHE_TTL = 30  # Cache ESPN summary for 30 seconds
+
+
+async def _fetch_espn_summary(espn_id: str) -> Optional[dict]:
+    """Fetch ESPN game summary with Redis caching."""
+    cache_key = f"{REDIS_KEY_PREFIX}espn_summary"
+
+    # Check cache
+    try:
+        r = _redis()
+        cached = r.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    # Fetch from ESPN
+    try:
+        url = f"{ESPN_API_BASE}/football/nfl/summary?event={espn_id}"
+        async with httpx.AsyncClient(timeout=12) as client:
+            resp = await client.get(url, headers={"User-Agent": "OddsTracker/1.0"})
+            if resp.status_code != 200:
+                logger.warning(f"ESPN summary returned {resp.status_code}")
+                return None
+            data = resp.json()
+
+        # Cache for 30 seconds
+        try:
+            r = _redis()
+            r.setex(cache_key, ESPN_CACHE_TTL, json.dumps(data))
+        except Exception:
+            pass
+
+        return data
+    except Exception as e:
+        logger.error(f"ESPN summary fetch error: {e}")
+        return None
+
+
+def _get_all_plays(data: dict) -> list[dict]:
+    """Extract all plays in order from ESPN drives data."""
+    plays = []
+    drives = data.get("drives", {})
+
+    for drive in drives.get("previous", []):
+        for play in drive.get("plays", []):
+            plays.append(play)
+
+    # Include current drive plays
+    current = drives.get("current", {})
+    for play in current.get("plays", []):
+        plays.append(play)
+
+    return plays
+
+
+def _team_abbr_to_name(abbr: str) -> Optional[str]:
+    """Map ESPN team abbreviation to contest team name."""
+    abbr_upper = abbr.upper()
+    if abbr_upper in ("SEA",):
+        return "Seahawks"
+    elif abbr_upper in ("NE", "NWE"):
+        return "Patriots"
+    return None
+
+
+def _play_team(play: dict) -> Optional[str]:
+    """Get which team (Seahawks/Patriots) made a play."""
+    start = play.get("start", {})
+    team = start.get("team", {})
+    abbr = team.get("abbreviation", "")
+    if abbr:
+        return _team_abbr_to_name(abbr)
+
+    # Fallback: check end.team
+    end = play.get("end", {})
+    team = end.get("team", {})
+    abbr = team.get("abbreviation", "")
+    return _team_abbr_to_name(abbr) if abbr else None
+
+
+async def _auto_resolve_from_espn(event, resolutions: dict, is_seahawks_home: bool) -> list[str]:
+    """Parse ESPN play-by-play data to auto-resolve contest props."""
+    data = await _fetch_espn_summary(event.espn_id)
+    if not data:
+        return []
+
+    newly_resolved = []
+    plays = _get_all_plays(data)
+    if not plays:
+        return []
+
+    def _resolve(prop_id: str, answer: str):
+        if prop_id not in resolutions:
+            resolutions[prop_id] = {
+                "correct_answer": answer,
+                "resolved_at": datetime.now(timezone.utc).isoformat(),
+                "auto_resolved": True,
+            }
+            newly_resolved.append(prop_id)
+
+    # --- coin_toss_winner: from first drive receiving team ---
+    if "coin_toss_winner" not in resolutions:
+        # The team that receives the opening kickoff won the toss (or deferred)
+        # ESPN's first drive data shows which team had the first possession
+        for play in plays:
+            play_type = play.get("type", {}).get("text", "").lower()
+            if "kickoff" in play_type:
+                # The team kicking off LOST the toss (or chose to kick)
+                # The receiving team chose to receive
+                # This isn't a perfect mapping but for our prop, it's the receiving team
+                kick_team = _play_team(play)
+                if kick_team == "Seahawks":
+                    _resolve("coin_toss_winner", "Patriots")
+                elif kick_team == "Patriots":
+                    _resolve("coin_toss_winner", "Seahawks")
+                break
+
+    # --- opening_kickoff: touchback/return/OOB ---
+    if "opening_kickoff" not in resolutions:
+        for play in plays:
+            play_type = play.get("type", {}).get("text", "").lower()
+            text = play.get("text", "").lower()
+            if "kickoff" in play_type:
+                if "touchback" in text:
+                    _resolve("opening_kickoff", "Touchback")
+                elif "out of bounds" in text or "out-of-bounds" in text:
+                    _resolve("opening_kickoff", "Out of bounds/other")
+                elif "return" in text or "returned" in text or "to the" in text:
+                    _resolve("opening_kickoff", "Return")
+                break
+
+    # --- first_play: pass or run on first offensive play ---
+    if "first_play" not in resolutions:
+        for play in plays:
+            play_type = play.get("type", {}).get("text", "").lower()
+            text = play.get("text", "").lower()
+            # Skip kickoffs, coin toss, etc.
+            if "kickoff" in play_type or "kick" in play_type or "timeout" in play_type:
+                continue
+            if "pass" in play_type or "pass" in text or "sack" in play_type:
+                _resolve("first_play", "Pass")
+                break
+            elif "rush" in play_type or "run" in text or "rush" in text:
+                _resolve("first_play", "Run")
+                break
+
+    # --- first_drive: result of the first offensive drive ---
+    if "first_drive" not in resolutions:
+        drives = data.get("drives", {}).get("previous", [])
+        for drive in drives:
+            result = (drive.get("result") or "").lower()
+            desc = (drive.get("description") or "").lower()
+
+            # Skip kickoff-only "drives"
+            drive_plays = drive.get("plays", [])
+            if len(drive_plays) <= 1:
+                play_type = drive_plays[0].get("type", {}).get("text", "").lower() if drive_plays else ""
+                if "kickoff" in play_type:
+                    continue
+
+            if "touchdown" in result:
+                _resolve("first_drive", "Touchdown")
+            elif "punt" in result:
+                _resolve("first_drive", "Punt")
+            elif "field goal" in result and "missed" not in result:
+                _resolve("first_drive", "Field goal")
+            elif "missed" in result and "field goal" in result:
+                _resolve("first_drive", "Missed field goal")
+            elif "fumble" in result or "interception" in result or "turnover" in result:
+                _resolve("first_drive", "Turnover")
+            elif "downs" in result:
+                _resolve("first_drive", "Turnover on downs")
+            elif "safety" in result:
+                _resolve("first_drive", "Safety")
+            break
+
+    # --- darnold_first_pass: Sam Darnold's first pass ---
+    if "darnold_first_pass" not in resolutions:
+        for play in plays:
+            text = play.get("text", "").lower()
+            play_type = play.get("type", {}).get("text", "").lower()
+            if "darnold" not in text:
+                continue
+            if "pass" not in text and "sack" not in play_type:
+                continue
+
+            if "touchdown" in text and ("pass" in text or "complete" in text):
+                _resolve("darnold_first_pass", "Touchdown")
+            elif "intercept" in text:
+                _resolve("darnold_first_pass", "Interception")
+            elif "incomplete" in text or "incompletion" in play_type:
+                _resolve("darnold_first_pass", "Incompletion")
+            elif "complete" in text or "reception" in play_type:
+                _resolve("darnold_first_pass", "Completion")
+            elif "sack" in text or "sack" in play_type:
+                _resolve("darnold_first_pass", "Incompletion")  # Sack counts as incompletion
+            break
+
+    # --- maye_first_pass: Drake Maye's first pass ---
+    if "maye_first_pass" not in resolutions:
+        for play in plays:
+            text = play.get("text", "").lower()
+            play_type = play.get("type", {}).get("text", "").lower()
+            if "maye" not in text:
+                continue
+            if "pass" not in text and "sack" not in play_type:
+                continue
+
+            if "touchdown" in text and ("pass" in text or "complete" in text):
+                _resolve("maye_first_pass", "Touchdown")
+            elif "intercept" in text:
+                _resolve("maye_first_pass", "Interception")
+            elif "incomplete" in text or "incompletion" in play_type:
+                _resolve("maye_first_pass", "Incompletion")
+            elif "complete" in text or "reception" in play_type:
+                _resolve("maye_first_pass", "Completion")
+            elif "sack" in text or "sack" in play_type:
+                _resolve("maye_first_pass", "Incompletion")
+            break
+
+    # --- first_td_jersey: Jersey number of first TD scorer ---
+    if "first_td_jersey" not in resolutions:
+        scoring_plays = data.get("scoringPlays", [])
+        for sp in scoring_plays:
+            sp_type = sp.get("type", {}).get("text", "").lower()
+            if "touchdown" not in sp_type and "td" not in sp_type:
+                # Also check if it's a TD via the scoring type
+                if sp.get("scoringType", {}).get("name", "").lower() not in ("touchdown",):
+                    continue
+
+            # Look for the athlete who scored
+            athletes = sp.get("participants", []) or []
+            for athlete_entry in athletes:
+                jersey = None
+                athlete = athlete_entry.get("athlete", {})
+                jersey = athlete.get("jersey")
+                if jersey:
+                    try:
+                        jersey_num = int(jersey)
+                        if jersey_num > 19:
+                            _resolve("first_td_jersey", "Over 19.5")
+                        else:
+                            _resolve("first_td_jersey", "Under 19.5")
+                    except ValueError:
+                        pass
+                    break
+            if "first_td_jersey" in resolutions:
+                break
+
+        # If no TDs found and game is over, resolve as "No touchdowns"
+        if "first_td_jersey" not in resolutions and event.status in ("completed", "closed"):
+            if not scoring_plays or not any(
+                "touchdown" in (sp.get("type", {}).get("text", "") or sp.get("scoringType", {}).get("name", "")).lower()
+                for sp in scoring_plays
+            ):
+                _resolve("first_td_jersey", "No touchdowns scored in the game")
+
+    # --- longest_fg: longest field goal distance ---
+    if "longest_fg" not in resolutions and event.status in ("completed", "closed"):
+        max_fg = 0
+        any_fg = False
+        for play in plays:
+            text = play.get("text", "").lower()
+            play_type = play.get("type", {}).get("text", "").lower()
+            if "field goal" in play_type and "good" in play_type or "field goal" in text and ("good" in text or "made" in text):
+                any_fg = True
+                # Try to extract yardage from text like "40 Yd Field Goal"
+                yd_match = re.search(r"(\d+)\s*(?:yd|yard)", text)
+                if yd_match:
+                    yds = int(yd_match.group(1))
+                    max_fg = max(max_fg, yds)
+                # Also check statYardage
+                stat_yds = play.get("statYardage")
+                if stat_yds:
+                    try:
+                        max_fg = max(max_fg, int(stat_yds))
+                    except (ValueError, TypeError):
+                        pass
+
+        if any_fg and max_fg > 0:
+            if max_fg > 49:
+                _resolve("longest_fg", "Over 49.5 yards")
+            else:
+                _resolve("longest_fg", "Under 49.5 yards")
+        elif not any_fg:
+            _resolve("longest_fg", "No field goals made in the game")
+
+    # --- first_penalty_team and first_penalty_type ---
+    if "first_penalty_team" not in resolutions or "first_penalty_type" not in resolutions:
+        for play in plays:
+            play_type = play.get("type", {}).get("text", "").lower()
+            text = play.get("text", "").lower()
+
+            if "penalty" not in play_type and "penalty" not in text:
+                continue
+
+            # Which team committed the penalty
+            if "first_penalty_team" not in resolutions:
+                team = _play_team(play)
+                if team:
+                    # ESPN penalty plays: the team shown is the penalized team
+                    # But penalty on offense vs defense matters. Check text.
+                    # The text usually says "Penalty on SEA" or "PENALTY on NE"
+                    if "seahawk" in text or ("sea" in text and "penalty" in text):
+                        _resolve("first_penalty_team", "Seahawks")
+                    elif "patriot" in text or ("ne " in text and "penalty" in text) or "new england" in text:
+                        _resolve("first_penalty_team", "Patriots")
+                    elif team:
+                        _resolve("first_penalty_team", team)
+
+            # Penalty type
+            if "first_penalty_type" not in resolutions:
+                text_lower = text
+                if "holding" in text_lower or "pass interference" in text_lower:
+                    _resolve("first_penalty_type", "Holding/Pass Interference")
+                elif "false start" in text_lower or "encroachment" in text_lower or "offsides" in text_lower or "offside" in text_lower:
+                    _resolve("first_penalty_type", "False Start/Encroachment/Offsides")
+                elif "horse collar" in text_lower or "face mask" in text_lower or "facemask" in text_lower:
+                    _resolve("first_penalty_type", "Horse collar/Face mask")
+                elif "roughing" in text_lower or "unnecessary roughness" in text_lower:
+                    _resolve("first_penalty_type", "Roughing the passer/kicker/unnessecary roughness")
+                else:
+                    # It's an "other" type - resolve as the actual penalty text
+                    _resolve("first_penalty_type", "Other")
+
+            if "first_penalty_team" in resolutions and "first_penalty_type" in resolutions:
+                break
+
+    # --- first_challenge_who / first_challenge_result ---
+    if "first_challenge_who" not in resolutions or "first_challenge_result" not in resolutions:
+        found_challenge = False
+        for play in plays:
+            text = play.get("text", "").lower()
+            play_type = play.get("type", {}).get("text", "").lower()
+
+            if "challenge" not in text and "challenge" not in play_type:
+                continue
+
+            found_challenge = True
+
+            if "first_challenge_who" not in resolutions:
+                if "macdonald" in text or "seahawk" in text:
+                    _resolve("first_challenge_who", "Mike Macdonald")
+                elif "vrabel" in text or "patriot" in text or "new england" in text:
+                    _resolve("first_challenge_who", "Mike Vrabel")
+
+            if "first_challenge_result" not in resolutions:
+                if "overturn" in text or "reversed" in text:
+                    _resolve("first_challenge_result", "Call overturned")
+                elif "confirmed" in text or "stands" in text or "upheld" in text:
+                    _resolve("first_challenge_result", "Call stands/confirmed")
+            break
+
+        # If game is over and no challenge was found
+        if not found_challenge and event.status in ("completed", "closed"):
+            _resolve("first_challenge_who", "No coach's challenge will be called in the game")
+            _resolve("first_challenge_result", "No coach's challenge will be called in the game")
+
+    # --- pass_attempters: count unique passers from box score ---
+    if "pass_attempters" not in resolutions and event.status in ("completed", "closed"):
+        boxscore = data.get("boxscore", {})
+        unique_passers = set()
+
+        for team_players in boxscore.get("players", []):
+            for stat_group in team_players.get("statistics", []):
+                if stat_group.get("name", "").lower() == "passing":
+                    for athlete_entry in stat_group.get("athletes", []):
+                        name = athlete_entry.get("athlete", {}).get("displayName", "")
+                        stats = athlete_entry.get("stats", [])
+                        # First stat is usually C/ATT (completions/attempts)
+                        if stats and name:
+                            # Check if they actually attempted a pass (not just 0/0)
+                            c_att = stats[0] if stats else ""
+                            if "/" in str(c_att):
+                                att = c_att.split("/")[1]
+                                if int(att) > 0:
+                                    unique_passers.add(name)
+
+        if unique_passers:
+            if len(unique_passers) > 2:
+                _resolve("pass_attempters", "Over 2.5")
+            else:
+                _resolve("pass_attempters", "Under 2.5")
+
+    # --- mvp_position: from ESPN game data (usually in header or article) ---
+    if "mvp_position" not in resolutions and event.status in ("completed", "closed"):
+        # ESPN sometimes includes MVP in the header or news section
+        news = data.get("news", {})
+        articles = news.get("articles", []) if isinstance(news, dict) else []
+        header = data.get("header", {})
+
+        # Check game notes or article headlines for MVP mention
+        for article in articles:
+            headline = (article.get("headline") or "").lower()
+            desc = (article.get("description") or "").lower()
+            text = headline + " " + desc
+
+            if "mvp" in text:
+                # Try to determine position from the MVP name
+                # This is best-effort — if we can't determine position, skip
+                boxscore = data.get("boxscore", {})
+                for team_players in boxscore.get("players", []):
+                    for stat_group in team_players.get("statistics", []):
+                        for athlete_entry in stat_group.get("athletes", []):
+                            player_name = athlete_entry.get("athlete", {}).get("displayName", "").lower()
+                            position = athlete_entry.get("athlete", {}).get("position", {}).get("abbreviation", "")
+                            if player_name and player_name in text:
+                                pos_upper = position.upper()
+                                if pos_upper == "QB":
+                                    _resolve("mvp_position", "QB")
+                                elif pos_upper == "WR":
+                                    _resolve("mvp_position", "WR")
+                                elif pos_upper == "RB":
+                                    _resolve("mvp_position", "RB")
+                                elif pos_upper == "TE":
+                                    _resolve("mvp_position", "TE")
+                                elif pos_upper in ("CB", "LB", "DE", "DT", "S", "SS", "FS", "OLB", "ILB", "MLB", "DB", "DL"):
+                                    _resolve("mvp_position", "Any Defense")
+                                else:
+                                    _resolve("mvp_position", "Other")
+                                break
+                    if "mvp_position" in resolutions:
+                        break
+            if "mvp_position" in resolutions:
+                break
+
+    return newly_resolved
+
+
+# ---------------------------------------------------------------------------
+# Bitcoin price auto-resolution
+# ---------------------------------------------------------------------------
+
+async def _resolve_bitcoin() -> Optional[str]:
+    """Check bitcoin price change during the game. Returns 'Goes up' or 'Goes down'."""
+    try:
+        r = _redis()
+        # We need start and end prices stored in Redis
+        start_price = r.get(f"{REDIS_KEY_PREFIX}btc_start_price")
+        if not start_price:
+            return None
+
+        start_price = float(start_price)
+
+        # Fetch current price from CoinGecko
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            current_price = data.get("bitcoin", {}).get("usd")
+
+        if current_price is None:
+            return None
+
+        if current_price > start_price:
+            return "Goes up"
+        else:
+            return "Goes down"
+    except Exception as e:
+        logger.error(f"Bitcoin price check error: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -474,8 +1240,7 @@ def _pick_matches(pick: str, correct: str, prop: dict) -> bool:
     if pick_norm == correct_norm:
         return True
 
-    # Handle "Other" answers - if correct answer is "Other" and the pick
-    # doesn't match any predefined choice, it's an "Other" pick
+    # Handle "Other" answers
     if prop.get("has_other"):
         predefined = [_normalize_answer(c) for c in prop["choices"]]
         pick_is_other = pick_norm not in predefined
@@ -493,9 +1258,8 @@ def _get_pick_probability(prop_id: str, pick: str, overrides: dict) -> float:
         return 0.0
 
     # Check for admin odds override
-    override_key = f"{prop_id}"
-    if override_key in overrides:
-        override_choices = overrides[override_key]
+    if prop_id in overrides:
+        override_choices = overrides[prop_id]
         for choice, prob in override_choices.items():
             if _normalize_answer(pick) == _normalize_answer(choice):
                 return prob
@@ -531,7 +1295,7 @@ def _compute_leaderboard(entries: list[dict], resolutions: dict, overrides: dict
 
         for choice, prob in prop["choices"].items():
             current_odds[choice] = prob
-        # Apply overrides
+        # Apply overrides (live odds updates)
         if prop["id"] in overrides:
             current_odds.update(overrides[prop["id"]])
 
@@ -553,6 +1317,7 @@ def _compute_leaderboard(entries: list[dict], resolutions: dict, overrides: dict
             "resolved_at": resolution.get("resolved_at") if resolution else None,
             "has_other": prop.get("has_other", False),
             "other_probability": prop.get("other_probability", 0.0),
+            "auto_resolved": resolution.get("auto_resolved", False) if resolution else False,
         })
 
     # Score each entrant
@@ -596,7 +1361,6 @@ def _compute_leaderboard(entries: list[dict], resolutions: dict, overrides: dict
                     "probability": round(prob, 3),
                 })
 
-        # Max possible = actual + all remaining open props they picked
         max_possible = actual_points + len(pending_picks)
 
         leaderboard.append({
@@ -623,10 +1387,8 @@ def _compute_leaderboard(entries: list[dict], resolutions: dict, overrides: dict
     for i, entry in enumerate(leaderboard):
         entry["rank"] = i + 1
 
-    # Compute "key props" – open props with highest impact on ranking
+    # Compute "key props" and best possible finish
     _compute_key_props(leaderboard, open_ids, overrides)
-
-    # Compute best possible finish for each entrant
     _compute_best_possible_finish(leaderboard, open_ids, overrides)
 
     return {
@@ -650,15 +1412,10 @@ def _compute_key_props(leaderboard: list, open_ids: list, overrides: dict):
             entry["key_props"] = []
             continue
 
-        # For each pending pick, how much would landing it change their ranking?
         key_props = []
         for pending in entry["pending_picks"]:
-            # Impact = probability that this prop lands * how much it would help
-            # A high-probability pick that others also have = less impactful
-            # A low-probability pick that few others have = more impactful
             prob = pending["probability"]
 
-            # Count how many other people picked the same thing
             same_pick_count = sum(
                 1 for other in leaderboard
                 if other["name"] != entry["name"]
@@ -671,7 +1428,6 @@ def _compute_key_props(leaderboard: list, open_ids: list, overrides: dict):
             total_others = len(leaderboard) - 1
             uniqueness = 1.0 - (same_pick_count / max(total_others, 1))
 
-            # Impact score: higher when the pick is unique and probable
             impact = prob * (0.5 + 0.5 * uniqueness)
 
             key_props.append({
@@ -683,76 +1439,22 @@ def _compute_key_props(leaderboard: list, open_ids: list, overrides: dict):
                 "uniqueness": round(uniqueness, 2),
             })
 
-        # Sort by impact score descending, take top 3
         key_props.sort(key=lambda x: -x["impact_score"])
         entry["key_props"] = key_props[:3]
 
 
 def _compute_best_possible_finish(leaderboard: list, open_ids: list, overrides: dict):
     """For each entrant, compute their best possible final rank."""
-    n = len(leaderboard)
-
     for entry in leaderboard:
-        # Best case: this entrant gets ALL their open picks correct
         my_best = entry["actual_points"] + len(entry["pending_picks"])
 
-        # For every OTHER entrant, what's the WORST they could do?
-        # (all their remaining picks incorrect)
         better_count = 0
         for other in leaderboard:
             if other["name"] == entry["name"]:
                 continue
-            # Other's best case (for computing if they can still beat us)
-            other_best = other["actual_points"] + len(other["pending_picks"])
-
-            # Can this other person definitely beat us?
-            # They beat us if their MINIMUM score > our MAXIMUM score
-            # Other's minimum = their actual_points (all remaining wrong)
             other_min = other["actual_points"]
-
             if other_min > my_best:
-                # They're already ahead even if we max out
                 better_count += 1
-            elif other_min == my_best and other["actual_points"] > entry["actual_points"] + len(entry["pending_picks"]):
-                better_count += 1
-
-        # But we also need to check: even among people who COULD beat us,
-        # do they have the same picks as us on remaining props?
-        # If two people have identical remaining picks, the one behind can never pass.
-        can_never_pass = 0
-        for other in leaderboard:
-            if other["name"] == entry["name"]:
-                continue
-            if other["actual_points"] <= entry["actual_points"]:
-                continue
-
-            # They're currently ahead in actual points.
-            # Check if we have any different open picks that could help us catch up.
-            my_open = {p["prop_id"]: p["pick"] for p in entry["pending_picks"]}
-            their_open = {p["prop_id"]: p["pick"] for p in other["pending_picks"]}
-
-            # Find props where our picks differ
-            differing_props = []
-            for pid in set(list(my_open.keys()) + list(their_open.keys())):
-                my_pick = my_open.get(pid, "")
-                their_pick = their_open.get(pid, "")
-                if _normalize_answer(my_pick) != _normalize_answer(their_pick):
-                    differing_props.append(pid)
-
-            # Points we can gain on different props - their losses on different props
-            max_swing = 0
-            for pid in differing_props:
-                if pid in my_open:
-                    max_swing += 1  # We could gain a point they don't
-                if pid in their_open and pid not in my_open:
-                    pass  # They could gain or lose, doesn't help us directly
-
-            gap = other["actual_points"] - entry["actual_points"]
-            # Account for resolved props difference
-            gap_with_forecasted = other["forecasted_points"] - entry["forecasted_points"]
-
-            if max_swing < gap and len(differing_props) == 0:
-                can_never_pass += 1
 
         best_rank = better_count + 1
         entry["best_possible_finish"] = best_rank
@@ -778,7 +1480,6 @@ async def _generate_commentary(leaderboard_data: dict) -> str:
         summary = leaderboard_data["summary"]
         lb = leaderboard_data["leaderboard"]
 
-        # Build context
         leader = lb[0] if lb else None
         last = lb[-1] if lb else None
 
@@ -794,7 +1495,6 @@ async def _generate_commentary(leaderboard_data: dict) -> str:
             for e in lb[:10]
         )
 
-        # Fun upsets / notable situations
         notable = []
         for e in lb:
             if e.get("eliminated"):
@@ -844,16 +1544,43 @@ Write 2-3 sentences of hilarious, entertaining commentary about the current stat
 # ---------------------------------------------------------------------------
 
 @router.get("/leaderboard")
-async def get_leaderboard():
+async def get_leaderboard(db: AsyncSession = Depends(get_db)):
     """
     Main endpoint: fetches entries, computes scores, returns full leaderboard.
+    Also runs auto-resolution and live odds updates from the database.
     Designed to be polled every 15-30 seconds by the frontend.
     """
-    entries = await _fetch_sheet_entries()
-    resolutions = _get_resolution_state()
-    overrides = _get_odds_overrides()
+    # 1. Auto-resolve any props determinable from game state
+    try:
+        auto_resolved = await _auto_resolve_from_game_state(db)
+        if auto_resolved:
+            logger.info(f"Auto-resolved during leaderboard: {auto_resolved}")
+    except Exception as e:
+        logger.error(f"Auto-resolve error: {e}")
 
-    result = _compute_leaderboard(entries, resolutions, overrides)
+    # 2. Get live odds updates from DB
+    live_odds = {}
+    try:
+        sb_event = await _find_super_bowl_event(db)
+        if sb_event:
+            live_odds = await _get_live_odds_updates(db, sb_event)
+    except Exception as e:
+        logger.error(f"Live odds error: {e}")
+
+    # 3. Merge live odds into overrides (live odds take priority)
+    overrides = _get_odds_overrides()
+    merged_overrides = {**overrides}
+    for prop_id, choices in live_odds.items():
+        if not prop_id.startswith("_"):
+            # Only override if there's no manual admin override for this prop
+            if prop_id not in overrides:
+                merged_overrides[prop_id] = choices
+
+    # 4. Fetch entries and compute
+    entries, _headers = await _fetch_sheet_entries()
+    resolutions = _get_resolution_state()
+
+    result = _compute_leaderboard(entries, resolutions, merged_overrides)
     return result
 
 
@@ -960,9 +1687,15 @@ async def update_odds(
 
 
 @router.get("/commentary")
-async def get_commentary():
+async def get_commentary(db: AsyncSession = Depends(get_db)):
     """Generate AI commentary about the current contest state."""
-    entries = await _fetch_sheet_entries()
+    # Also run auto-resolve so commentary reflects latest state
+    try:
+        await _auto_resolve_from_game_state(db)
+    except Exception:
+        pass
+
+    entries, _headers = await _fetch_sheet_entries()
     resolutions = _get_resolution_state()
     overrides = _get_odds_overrides()
 
@@ -975,8 +1708,94 @@ async def get_commentary():
 @router.get("/entries")
 async def get_entries():
     """Debug: view all parsed entries from the Google Sheet."""
-    entries = await _fetch_sheet_entries()
-    return {"entries": entries, "count": len(entries)}
+    entries, headers = await _fetch_sheet_entries()
+    return {
+        "entries": entries,
+        "count": len(entries),
+        "csv_headers": headers,
+        "detected_name_column": _detect_name_column(headers) if headers else None,
+        "sheet_url": SHEET_CSV_URL,
+    }
+
+
+@router.get("/debug")
+async def debug_contest(db: AsyncSession = Depends(get_db)):
+    """Debug: full diagnostic of contest state."""
+    entries, headers = await _fetch_sheet_entries()
+    resolutions = _get_resolution_state()
+    overrides = _get_odds_overrides()
+
+    sb_event = None
+    live_odds = {}
+    event_info = None
+    try:
+        sb_event = await _find_super_bowl_event(db)
+        if sb_event:
+            live_odds = await _get_live_odds_updates(db, sb_event)
+            event_info = {
+                "id": sb_event.id,
+                "status": sb_event.status,
+                "home_team": sb_event.home_team_name,
+                "away_team": sb_event.away_team_name,
+                "home_score": sb_event.home_score,
+                "away_score": sb_event.away_score,
+                "period": sb_event.period,
+                "game_clock": sb_event.game_clock,
+            }
+    except Exception as e:
+        event_info = {"error": str(e)}
+
+    return {
+        "csv": {
+            "url": SHEET_CSV_URL,
+            "headers": headers,
+            "detected_name_column": _detect_name_column(headers) if headers else None,
+            "entry_count": len(entries),
+            "sample_entry": entries[0] if entries else None,
+        },
+        "resolutions": resolutions,
+        "overrides": overrides,
+        "live_odds": live_odds,
+        "super_bowl_event": event_info,
+        "prop_ids": [p["id"] for p in PROPS if not p.get("is_tiebreaker")],
+    }
+
+
+@router.post("/set-halftime-score")
+async def set_halftime_score(
+    home_score: int = Query(..., description="Home team halftime score"),
+    away_score: int = Query(..., description="Away team halftime score"),
+    secret: str = Query("", description="Admin secret"),
+):
+    """Admin: manually set halftime scores (triggers halftime_leader resolution)."""
+    try:
+        r = _redis()
+        scores = {"home": home_score, "away": away_score}
+        r.set(f"{REDIS_KEY_PREFIX}halftime_scores", json.dumps(scores))
+        return {"status": "set", "scores": scores, "message": "Halftime scores saved. Auto-resolution will pick this up on next leaderboard poll."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.post("/capture-bitcoin-start")
+async def capture_bitcoin_start(secret: str = Query("", description="Admin secret")):
+    """Admin: capture bitcoin price at kickoff. Call this when the game starts."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+            )
+            resp.raise_for_status()
+            price = resp.json().get("bitcoin", {}).get("usd")
+
+        if price is None:
+            return {"error": "Could not fetch bitcoin price"}
+
+        r = _redis()
+        r.set(f"{REDIS_KEY_PREFIX}btc_start_price", str(price))
+        return {"status": "captured", "price": price, "message": "Bitcoin start price saved. Will auto-resolve when game ends."}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @router.post("/reset")
@@ -986,6 +1805,9 @@ async def reset_contest(secret: str = Query("", description="Admin secret")):
         r = _redis()
         r.delete(f"{REDIS_KEY_PREFIX}resolutions")
         r.delete(f"{REDIS_KEY_PREFIX}odds_overrides")
-        return {"status": "reset", "message": "All resolutions and overrides cleared"}
+        r.delete(f"{REDIS_KEY_PREFIX}halftime_scores")
+        r.delete(f"{REDIS_KEY_PREFIX}btc_start_price")
+        r.delete(f"{REDIS_KEY_PREFIX}espn_summary")
+        return {"status": "reset", "message": "All resolutions, overrides, and cached data cleared"}
     except Exception as e:
         return {"error": str(e)}
