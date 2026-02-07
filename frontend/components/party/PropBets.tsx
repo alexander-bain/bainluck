@@ -29,40 +29,28 @@ function PropRow({ prop }: { prop: PropBet }) {
     const isOverFavored = overPct >= 50;
 
     return (
-      <div className="flex items-center justify-between py-[0.5vh] px-[0.6vw] rounded-lg bg-white/5">
-        <div className="flex-1 min-w-0">
-          <span className="text-white font-medium text-[1.5vh] truncate block">
-            {prop.player}
-          </span>
-          <span className="text-white/50 text-[1.2vh]">
-            {prop.type} {prop.line != null ? `O/U ${prop.line}` : ""}
-          </span>
-        </div>
-        <div className="flex items-center gap-[0.8vw] ml-[0.6vw]">
-          <div
-            className={`text-right ${
-              isOverFavored ? "text-emerald-400" : "text-white/60"
-            }`}
-          >
-            <div className="font-bold font-mono" style={{ fontSize: "2vh" }}>{overPct}%</div>
-            <div className="text-[1vh] uppercase tracking-wide opacity-60">
-              Over
-            </div>
-          </div>
-          <div className="w-px bg-white/20" style={{ height: "3vh" }} />
-          <div
-            className={`text-right ${
-              !isOverFavored ? "text-emerald-400" : "text-white/60"
-            }`}
-          >
-            <div className="font-bold font-mono" style={{ fontSize: "2vh" }}>
-              {100 - overPct}%
-            </div>
-            <div className="text-[1vh] uppercase tracking-wide opacity-60">
-              Under
-            </div>
-          </div>
-        </div>
+      <div className="flex items-center py-[0.3vh] px-[0.4vw] rounded bg-white/5 gap-[0.3vw]">
+        <span className="text-white font-medium text-[1.4vh] truncate flex-1 min-w-0">
+          {prop.player}
+        </span>
+        <span className="text-white/40 text-[1.1vh] whitespace-nowrap shrink-0">
+          {prop.line != null ? `O/U ${prop.line}` : prop.type}
+        </span>
+        <span
+          className={`font-bold font-mono text-[1.6vh] tabular-nums shrink-0 ${
+            isOverFavored ? "text-emerald-400" : "text-white/50"
+          }`}
+        >
+          {overPct}%
+        </span>
+        <span className="text-white/20 text-[1vh] shrink-0">/</span>
+        <span
+          className={`font-bold font-mono text-[1.6vh] tabular-nums shrink-0 ${
+            !isOverFavored ? "text-emerald-400" : "text-white/50"
+          }`}
+        >
+          {100 - overPct}%
+        </span>
       </div>
     );
   }
@@ -71,16 +59,13 @@ function PropRow({ prop }: { prop: PropBet }) {
   if (prop.probability != null) {
     const pct = Math.round(prop.probability * 100);
     return (
-      <div className="flex items-center justify-between py-[0.5vh] px-[0.6vw] rounded-lg bg-white/5">
-        <div className="flex-1 min-w-0">
-          <span className="text-white font-medium text-[1.5vh] truncate block">
-            {prop.player}
-          </span>
-          <span className="text-white/50 text-[1.2vh]">{prop.type}</span>
-        </div>
-        <div className="text-emerald-400 font-bold font-mono ml-[0.6vw]" style={{ fontSize: "2vh" }}>
+      <div className="flex items-center py-[0.3vh] px-[0.4vw] rounded bg-white/5 gap-[0.3vw]">
+        <span className="text-white font-medium text-[1.4vh] truncate flex-1 min-w-0">
+          {prop.player}
+        </span>
+        <span className="text-emerald-400 font-bold font-mono text-[1.6vh] tabular-nums shrink-0">
           {pct}%
-        </div>
+        </span>
       </div>
     );
   }
