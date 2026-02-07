@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.data.sb_fun_facts import SB_FUN_FACTS
 from app.services.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -2082,12 +2083,46 @@ async def update_odds(
 
 @router.get("/commentary")
 async def get_commentary(db: AsyncSession = Depends(get_db)):
-    """Generate AI commentary about the current contest state."""
+    """Generate AI commentary or fun fact, alternating each request."""
     # Also run auto-resolve so commentary reflects latest state
     try:
         await _auto_resolve_from_game_state(db)
     except Exception:
         pass
+
+    # Alternate between AI roast and fun fact using Redis counter
+    show_fun_fact = False
+    try:
+        r = _redis()
+        counter = int(r.get(f"{REDIS_KEY_PREFIX}commentary_counter") or 0)
+        show_fun_fact = counter % 2 == 1  # odd = fun fact, even = roast
+        r.set(f"{REDIS_KEY_PREFIX}commentary_counter", counter + 1)
+    except Exception:
+        pass
+
+    if show_fun_fact and SB_FUN_FACTS:
+        # Pick a random fun fact (use counter as seed for variety)
+        import random as _rng
+        fact_data = _rng.choice(SB_FUN_FACTS)
+
+        # If fact has trivia fields, return as interactive trivia question
+        if fact_data.get("trivia_question"):
+            return {
+                "commentary": fact_data["fact"],
+                "type": "trivia",
+                "category": fact_data.get("category", ""),
+                "trivia_question": fact_data["trivia_question"],
+                "trivia_answer": fact_data["trivia_answer"],
+                "trivia_wrong": fact_data["trivia_wrong"],
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        return {
+            "commentary": fact_data["fact"],
+            "type": "fun_fact",
+            "category": fact_data.get("category", ""),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     entries, _headers = await _fetch_sheet_entries()
     resolutions = _get_resolution_state()
@@ -2096,7 +2131,11 @@ async def get_commentary(db: AsyncSession = Depends(get_db)):
     leaderboard_data = _compute_leaderboard(entries, resolutions, overrides)
     commentary = await _generate_commentary(leaderboard_data)
 
-    return {"commentary": commentary, "generated_at": datetime.now(timezone.utc).isoformat()}
+    return {
+        "commentary": commentary,
+        "type": "roast",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/entries")
