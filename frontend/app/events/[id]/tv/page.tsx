@@ -93,83 +93,6 @@ const COMMENTARY_REFRESH_INTERVAL = 90000;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// ------ Key Moments Detection ------
-interface KeyMoment {
-  time: string;
-  timestamp: number;
-  description: string;
-  probShift: number;
-}
-
-function detectKeyMoments(
-  history: OddsHistoryPoint[],
-  homeTeam: string,
-  awayTeam: string,
-  commenceTime?: string
-): KeyMoment[] {
-  if (!history || history.length < 2) return [];
-
-  const moments: KeyMoment[] = [];
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
-
-  // Only look at post-start data if commence_time is available
-  const cutoff = commenceTime ? new Date(commenceTime).getTime() : 0;
-  const relevant = history.filter(
-    (p) => new Date(p.timestamp).getTime() >= cutoff && p.home_probability != null
-  );
-
-  for (let i = 1; i < relevant.length; i++) {
-    const prev = relevant[i - 1];
-    const curr = relevant[i];
-    if (prev.home_probability == null || curr.home_probability == null) continue;
-
-    const shift = curr.home_probability - prev.home_probability;
-    const absShift = Math.abs(shift);
-
-    if (absShift >= 0.03) {
-      // 3%+ shift is notable
-      const team = shift > 0 ? homeShort : awayShort;
-      const pct = Math.round(Math.abs(shift) * 100);
-      const newProb = Math.round(
-        (shift > 0 ? curr.home_probability : 1 - curr.home_probability) * 100
-      );
-
-      let desc = "";
-      if (absShift >= 0.10) {
-        desc = `Big swing to ${team} (+${pct}%) \u2192 ${newProb}%`;
-      } else if (absShift >= 0.05) {
-        desc = `${team} surges +${pct}% \u2192 ${newProb}%`;
-      } else {
-        desc = `${team} gains momentum (+${pct}%) \u2192 ${newProb}%`;
-      }
-
-      // Check for lead change (crosses 50%)
-      if (
-        (prev.home_probability < 0.5 && curr.home_probability >= 0.5) ||
-        (prev.home_probability >= 0.5 && curr.home_probability < 0.5)
-      ) {
-        const newFav = curr.home_probability >= 0.5 ? homeShort : awayShort;
-        desc = `Lead change! ${newFav} takes the lead at ${newProb}%`;
-      }
-
-      const d = new Date(curr.timestamp);
-      moments.push({
-        time: d.toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-        }),
-        timestamp: d.getTime(),
-        description: desc,
-        probShift: shift,
-      });
-    }
-  }
-
-  // Return most recent first, max 20
-  return moments.reverse().slice(0, 20);
-}
-
 // ------ Momentum Calculation ------
 function calculateMomentum(
   history: OddsHistoryPoint[],
@@ -423,6 +346,130 @@ function TVContestSidebar({
 }
 
 // ---------------------------------------------------------------------------
+// Dense Prop Bet Probabilities Grid (replaces Key Moments)
+// ---------------------------------------------------------------------------
+const CATEGORY_COLORS: Record<string, string> = {
+  pregame: "#a78bfa",     // violet
+  first_quarter: "#60a5fa", // blue
+  second_quarter: "#34d399", // emerald
+  halftime: "#f472b6",    // pink
+  game: "#fbbf24",        // amber
+  postgame: "#f87171",    // red
+};
+
+const CATEGORY_SHORT: Record<string, string> = {
+  pregame: "PRE",
+  first_quarter: "Q1",
+  second_quarter: "Q2",
+  halftime: "HT",
+  game: "GAME",
+  postgame: "POST",
+};
+
+function TVPropsGrid({ props }: { props: ContestProp[] }) {
+  const scorable = props.filter((p) => !p.is_tiebreaker);
+  const resolved = scorable.filter((p) => p.resolved);
+  const pending = scorable.filter((p) => !p.resolved);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
+        <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider font-semibold">
+          Prop Odds
+        </h3>
+        <span className="text-white/30 text-[1.1vh] font-mono">
+          {resolved.length}/{scorable.length} resolved
+        </span>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-[0.25vh] pr-[0.2vw]">
+        {scorable.map((prop) => {
+          const catColor = CATEGORY_COLORS[prop.category] || "#64748b";
+          const catShort = CATEGORY_SHORT[prop.category] || "?";
+          const sortedChoices = Object.entries(prop.choices).sort(
+            (a, b) => b[1] - a[1]
+          );
+          const topChoice = sortedChoices[0];
+          const shortQ = prop.question.length > 40
+            ? prop.question.slice(0, 38) + "..."
+            : prop.question;
+
+          if (prop.resolved) {
+            return (
+              <div
+                key={prop.id}
+                className="flex items-center gap-[0.3vw] py-[0.2vh] opacity-70"
+              >
+                <span
+                  className="shrink-0 text-[0.8vh] font-bold px-[0.25vw] rounded"
+                  style={{ backgroundColor: `${catColor}30`, color: catColor }}
+                >
+                  {catShort}
+                </span>
+                <span className="text-emerald-400 shrink-0 text-[1.1vh]">&#10003;</span>
+                <span className="text-white/40 text-[1vh] truncate flex-1 leading-tight">
+                  {shortQ}
+                </span>
+                <span className="text-emerald-400 text-[1vh] font-medium shrink-0 truncate max-w-[5vw]">
+                  {prop.correct_answer}
+                </span>
+              </div>
+            );
+          }
+
+          return (
+            <div key={prop.id} className="py-[0.2vh]">
+              <div className="flex items-center gap-[0.3vw]">
+                <span
+                  className="shrink-0 text-[0.8vh] font-bold px-[0.25vw] rounded"
+                  style={{ backgroundColor: `${catColor}30`, color: catColor }}
+                >
+                  {catShort}
+                </span>
+                <span className="text-white/50 text-[1vh] truncate flex-1 leading-tight">
+                  {shortQ}
+                </span>
+              </div>
+              {/* Compact probability bars for all choices */}
+              <div className="flex gap-[0.2vw] mt-[0.15vh] pl-[1.8vw]">
+                {sortedChoices.slice(0, 3).map(([choice, prob]) => (
+                  <div
+                    key={choice}
+                    className="flex items-center gap-[0.15vw] min-w-0"
+                    style={{ flex: `${prob} 1 0%` }}
+                  >
+                    <div
+                      className="h-[0.5vh] rounded-full shrink-0"
+                      style={{
+                        width: `${Math.max(prob * 100, 4)}%`,
+                        minWidth: "3px",
+                        backgroundColor: catColor,
+                        opacity: 0.6,
+                      }}
+                    />
+                    <span className="text-white/30 text-[0.85vh] truncate whitespace-nowrap">
+                      {choice.length > 12 ? choice.slice(0, 10) + ".." : choice}{" "}
+                      <span className="text-white/50 font-mono">
+                        {Math.round(prob * 100)}%
+                      </span>
+                    </span>
+                  </div>
+                ))}
+                {sortedChoices.length > 3 && (
+                  <span className="text-white/20 text-[0.8vh]">
+                    +{sortedChoices.length - 3}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main TV Page
 // ---------------------------------------------------------------------------
 export default function TVPage({ params }: TVPageProps) {
@@ -591,18 +638,6 @@ export default function TVPage({ params }: TVPageProps) {
     }, 8000);
     return () => clearTimeout(timer);
   }, [activeResolution, resolutionQueue]);
-
-  // Key moments
-  const keyMoments = useMemo(
-    () =>
-      detectKeyMoments(
-        historyData?.history ?? [],
-        event?.home_team ?? "",
-        event?.away_team ?? "",
-        event?.commence_time
-      ),
-    [historyData?.history, event?.home_team, event?.away_team, event?.commence_time]
-  );
 
   // Momentum
   const momentum = useMemo(
@@ -906,34 +941,13 @@ export default function TVPage({ params }: TVPageProps) {
             )}
           </div>
 
-          {/* Key Moments */}
+          {/* Prop Bet Odds Grid */}
           <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
-            <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider mb-[0.8vh] font-semibold shrink-0">
-              Key Moments
-            </h3>
-            {keyMoments.length > 0 ? (
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-[0.5vh] pr-1">
-                {keyMoments.map((moment, i) => (
-                  <div
-                    key={`${moment.timestamp}-${i}`}
-                    className={`flex gap-[0.8vw] py-[0.3vh] ${
-                      i === 0 ? "text-white" : "text-white/50"
-                    }`}
-                  >
-                    <span className="text-[1.2vh] font-mono whitespace-nowrap opacity-60 pt-[0.1vh]">
-                      {moment.time}
-                    </span>
-                    <span className="text-[1.3vh] leading-tight">
-                      {moment.description}
-                    </span>
-                  </div>
-                ))}
-              </div>
+            {contestData ? (
+              <TVPropsGrid props={contestData.props} />
             ) : (
-              <div className="flex-1 flex items-center justify-center text-white/20 text-[1.3vh]">
-                {isLive
-                  ? "Waiting for notable shifts..."
-                  : "Moments appear during live games"}
+              <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
+                Loading props...
               </div>
             )}
           </div>

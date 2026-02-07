@@ -395,17 +395,25 @@ SHEET_CSV_URL = os.getenv(
 def _detect_name_column(headers: list[str]) -> Optional[str]:
     """Detect which column contains entrant names."""
     # Priority 1: Explicit name keywords (short columns only)
-    name_keywords = ["your name", "full name", "first name", "nickname", "who are you"]
+    name_keywords = ["your name", "full name", "first name", "nickname", "who are you", "what is your name", "what's your name"]
     for h in headers:
         h_lower = h.lower().strip()
         for kw in name_keywords:
-            if kw in h_lower and len(h.strip()) < 80:
+            if kw in h_lower and len(h.strip()) < 120:
                 return h
 
     # Priority 2: Column header that is just "Name" or similar
     for h in headers:
         h_lower = h.lower().strip()
-        if h_lower in ("name", "player", "player name", "contestant"):
+        if h_lower in ("name", "player", "player name", "contestant", "your name"):
+            return h
+
+    # Priority 2b: Column that contains "name" as a word
+    for h in headers:
+        h_lower = h.lower().strip()
+        if h_lower in ("timestamp", "email address"):
+            continue
+        if re.search(r'\bname\b', h_lower) and len(h.strip()) < 120:
             return h
 
     # Priority 3: Second column (first after Timestamp) — Google Forms
@@ -416,7 +424,7 @@ def _detect_name_column(headers: list[str]) -> Optional[str]:
         first_col = non_skip[0]
         # If the first non-Timestamp/Email column is relatively short,
         # it's likely a name or identifier field
-        if len(first_col.strip()) < 60:
+        if len(first_col.strip()) < 80:
             # Check it's not matching one of our props (question text)
             is_prop = any(
                 p["column_match"].lower() in first_col.lower()
@@ -460,7 +468,13 @@ async def _fetch_sheet_entries() -> tuple[list[dict], list[str]]:
             if entry:
                 entries.append(entry)
             else:
-                logger.warning(f"Row {i} skipped (no name): first values = {list(row.values())[:3]}")
+                # Never skip entries — assign fallback name
+                fallback = _parse_entry_fallback(row, name_col, i + 1)
+                if fallback:
+                    entries.append(fallback)
+                    logger.warning(f"Row {i} used fallback name '{fallback['name']}': first values = {list(row.values())[:3]}")
+                else:
+                    logger.warning(f"Row {i} skipped (empty row): first values = {list(row.values())[:3]}")
 
         logger.info(f"Parsed {len(entries)} entries from {len(rows)} rows")
         return entries, headers
@@ -516,6 +530,78 @@ def _parse_entry(row: dict, name_col: Optional[str]) -> Optional[dict]:
                     break
 
     if not name:
+        return None
+
+    return {
+        "name": name,
+        "picks": picks,
+        "tiebreaker": tiebreaker,
+        "submitted_at": row.get("Timestamp", ""),
+    }
+
+
+def _parse_entry_fallback(row: dict, name_col: Optional[str], row_num: int) -> Optional[dict]:
+    """Parse an entry even when name detection fails. Uses email or 'Player N' fallback."""
+    picks = {}
+    tiebreaker = None
+
+    # Try to find ANY identifying info for the name
+    name = None
+
+    # Try email address as name
+    for col in row:
+        if col.lower().strip() == "email address":
+            email = (row[col] or "").strip()
+            if email:
+                # Use part before @ as display name
+                name = email.split("@")[0].replace(".", " ").title()
+                break
+
+    # Try any short non-prop value as a name
+    if not name:
+        for col, val in row.items():
+            col_lower = col.lower().strip()
+            if col_lower in ("timestamp", "email address"):
+                continue
+            val = (val or "").strip()
+            if not val or len(val) > 50:
+                continue
+            # Check if this column matches a prop
+            is_prop = any(
+                p["column_match"].lower() in col_lower
+                for p in PROPS
+            )
+            if not is_prop:
+                name = val
+                break
+
+    # Ultimate fallback
+    if not name:
+        name = f"Player {row_num}"
+
+    # Match columns to props (same logic as _parse_entry)
+    for col, val in row.items():
+        col_lower = col.lower().strip()
+        val = (val or "").strip()
+        if not val:
+            continue
+        if col == name_col or col_lower == "timestamp" or col_lower == "email address":
+            continue
+
+        for prop in PROPS:
+            if prop.get("is_tiebreaker"):
+                if prop["column_match"].lower() in col_lower:
+                    try:
+                        tiebreaker = float(val.replace(",", ""))
+                    except (ValueError, TypeError):
+                        tiebreaker = None
+                    break
+            elif prop["column_match"].lower() in col_lower:
+                picks[prop["id"]] = val
+                break
+
+    # Only return if they have at least some picks (not a totally empty row)
+    if not picks and tiebreaker is None:
         return None
 
     return {
