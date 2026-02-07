@@ -13,7 +13,7 @@ import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
-import CommercialLeaderboard from "@/components/party/CommercialLeaderboard";
+// CommercialLeaderboard removed — replaced by TVAdLeaderboard with YouTube API
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
@@ -1259,10 +1259,6 @@ export default function TVPage({ params }: TVPageProps) {
             )}
           </div>
 
-          {/* Commercial Leaderboard (1 column) */}
-          <div className="min-h-0">
-            <CommercialLeaderboard />
-          </div>
         </div>
       </div>
 
