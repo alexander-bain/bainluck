@@ -146,6 +146,8 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `DATABASE_URL` - PostgreSQL connection string (managed by Heroku Postgres)
 - `REDIS_URL` - Redis for Celery (managed by Heroku Redis)
 - `ADMIN_SECRET` - Optional: protect admin endpoints
+- `SENTRY_DSN` - From sentry.io (optional - enables error tracking + performance monitoring)
+- `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
 
 ### Frontend (Vercel Environment Variables)
 - `NEXT_PUBLIC_API_URL` = `https://what-are-the-odds-0283511a7d93.herokuapp.com`
@@ -518,8 +520,7 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Add error tracking (Sentry)** — Backend + Celery worker. Free tier is sufficient. Without this, bugs in background tasks go undetected for days (e.g., the ESPN import name typo that silently broke all syncs).
-2. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Currently only `test_odds_math.py` exists (240 lines). Zero frontend tests.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Currently only `test_odds_math.py` exists (240 lines). Zero frontend tests.
 3. 🟡 **Data retention policy** — Implement snapshot pruning. Polling every 30s for live games with 5-11 bookmakers generates tens of thousands of rows per game day. No retention policy exists. Check Heroku Postgres row count and storage usage.
 4. 🟡 **Clean up Super Bowl one-offs** — Remove or disable dead code from the Super Bowl party: `backend/app/routes/superbowl.py`, `backend/app/routes/contest.py`, `backend/app/services/youtube_api.py`, `frontend/components/party/CommercialLeaderboard.tsx`. Check if any related Celery beat tasks are still scheduled.
 5. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
@@ -546,6 +547,7 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Futures categorization hardened (0 uncategorized markets)
 - ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
 - ✅ TV/Party mode with player props, confetti, ECG, momentum (4K-optimized)
+- ✅ Sentry error tracking (FastAPI + Celery worker, controlled by SENTRY_DSN env var)
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -558,7 +560,7 @@ See `docs/PRD.md` for full roadmap.
 ~34% of recent commits are bug fixes, often for issues that could have been caught before deploy. Root causes:
 - No test suite beyond `test_odds_math.py` (240 lines)
 - Direct deploy to production without staging verification
-- Background task failures (Celery) go unnoticed without error tracking
+- Background task failures (Celery) — now mitigated by Sentry error tracking
 
 **Rule of thumb:** Before shipping changes to `pulse.py`, `highlights.py`, or `tasks.py`, write or run tests first. These three files account for the majority of fix-commit cycles.
 
