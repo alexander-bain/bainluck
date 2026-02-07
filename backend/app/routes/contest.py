@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import ssl
+import time
 from datetime import datetime, timezone
 from statistics import median
 from typing import Optional
@@ -733,7 +734,10 @@ async def _auto_resolve_from_game_state(db: AsyncSession) -> list[str]:
         espn_resolved = await _auto_resolve_from_espn(event, resolutions, is_seahawks_home)
         newly_resolved.extend(espn_resolved)
 
-    # --- Bitcoin price auto-resolution ---
+    # --- Bitcoin price auto-capture and resolution ---
+    # Auto-capture start price when game goes live (no manual curl needed)
+    if event.status in ("live", "completed", "closed"):
+        await _ensure_bitcoin_start_price()
     if "bitcoin" not in resolutions and event.status in ("completed", "closed"):
         btc_answer = await _resolve_bitcoin()
         if btc_answer:
@@ -743,6 +747,14 @@ async def _auto_resolve_from_game_state(db: AsyncSession) -> list[str]:
                 "auto_resolved": True,
             }
             newly_resolved.append("bitcoin")
+
+    # --- Claude web search for remaining props (anthem, coin toss result, etc.) ---
+    if event.status in ("live", "completed", "closed"):
+        try:
+            ws_resolved = await _auto_resolve_via_web_search(resolutions)
+            newly_resolved.extend(ws_resolved)
+        except Exception as e:
+            logger.error(f"Web search auto-resolve error: {e}")
 
     if newly_resolved:
         _save_resolution_state(resolutions)
@@ -1190,6 +1202,29 @@ async def _auto_resolve_from_espn(event, resolutions: dict, is_seahawks_home: bo
 # Bitcoin price auto-resolution
 # ---------------------------------------------------------------------------
 
+async def _ensure_bitcoin_start_price():
+    """Auto-capture bitcoin price at kickoff if not already captured."""
+    try:
+        r = _redis()
+        existing = r.get(f"{REDIS_KEY_PREFIX}btc_start_price")
+        if existing:
+            return  # Already captured
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+            )
+            if resp.status_code != 200:
+                return
+            price = resp.json().get("bitcoin", {}).get("usd")
+
+        if price:
+            r.set(f"{REDIS_KEY_PREFIX}btc_start_price", str(price))
+            logger.info(f"Auto-captured Bitcoin start price: ${price}")
+    except Exception as e:
+        logger.error(f"Bitcoin start price capture error: {e}")
+
+
 async def _resolve_bitcoin() -> Optional[str]:
     """Check bitcoin price change during the game. Returns 'Goes up' or 'Goes down'."""
     try:
@@ -1221,6 +1256,261 @@ async def _resolve_bitcoin() -> Optional[str]:
     except Exception as e:
         logger.error(f"Bitcoin price check error: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Claude web search auto-resolution (for props without data feeds)
+# ---------------------------------------------------------------------------
+
+WEB_SEARCH_CACHE_TTL = 300  # 5 minutes between web search checks
+
+WEB_SEARCH_PROPS = {
+    "anthem_length": {
+        "instruction": (
+            "Super Bowl LX (60) 2026, Seahawks vs Patriots: "
+            "How long was the national anthem? Report the exact duration. "
+            "Was it UNDER or OVER 120.5 seconds (2 minutes 0.5 seconds)? "
+            "Respond with EXACTLY one of: Under 120.5 seconds | Over 120.5 seconds"
+        ),
+    },
+    "coin_toss_result": {
+        "instruction": (
+            "Super Bowl LX (60) 2026, Seahawks vs Patriots: "
+            "What was the coin toss result — heads or tails? "
+            "Respond with EXACTLY one of: Heads | Tails"
+        ),
+    },
+    "first_commercial": {
+        "instruction": (
+            "Super Bowl LX (60) 2026: Which brand aired a commercial first during the "
+            "broadcast — Budweiser or Uber Eats? Search for Super Bowl LX ad order/tracker. "
+            "Respond with EXACTLY one of: Budweiser | Uber Eats"
+        ),
+    },
+    "bad_bunny_dtmf": {
+        "instruction": (
+            "Super Bowl LX (60) 2026 halftime show: Did Bad Bunny perform the song 'DtMF'? "
+            "If so, was it the first song, the last song, or somewhere in between? "
+            "Search for the Super Bowl LX halftime show setlist. "
+            "Respond with EXACTLY one of: First song | Last song | In between the first and last song | He will not play \"DtMF\""
+        ),
+    },
+    "gatorade_color": {
+        "instruction": (
+            "Super Bowl LX (60) 2026: What color was the Gatorade (or liquid) dumped on "
+            "the winning head coach at the end of the game? "
+            "Respond with EXACTLY one of: Blue | Green | Yellow | Red | Orange | Purple | Other"
+        ),
+    },
+}
+
+
+def _get_anthropic_client():
+    """Get async Anthropic client if API key is available."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import anthropic
+        return anthropic.AsyncAnthropic(api_key=api_key)
+    except ImportError:
+        logger.warning("anthropic package not installed")
+        return None
+
+
+async def _auto_resolve_via_web_search(resolutions: dict) -> list[str]:
+    """Use Claude with web search to resolve props that have no data feed."""
+    # Check which web-search props still need resolution
+    unresolved = [pid for pid in WEB_SEARCH_PROPS if pid not in resolutions]
+    if not unresolved:
+        return []
+
+    # Rate limit: only run web search every 5 minutes
+    try:
+        r = _redis()
+        last_check = r.get(f"{REDIS_KEY_PREFIX}web_search_last_check")
+        if last_check:
+            elapsed = time.time() - float(last_check)
+            if elapsed < WEB_SEARCH_CACHE_TTL:
+                return []
+        r.set(f"{REDIS_KEY_PREFIX}web_search_last_check", str(time.time()))
+    except Exception:
+        pass
+
+    client = _get_anthropic_client()
+    if not client:
+        return []
+
+    newly_resolved = []
+
+    for prop_id in unresolved:
+        ws_prop = WEB_SEARCH_PROPS[prop_id]
+        prop_def = PROP_BY_ID.get(prop_id)
+        if not prop_def:
+            continue
+
+        # Check if we have a cached result
+        cache_key = f"{REDIS_KEY_PREFIX}ws_{prop_id}"
+        try:
+            r = _redis()
+            cached = r.get(cache_key)
+            if cached:
+                cached_data = json.loads(cached)
+                if cached_data.get("answer") == "__NOT_AVAILABLE__":
+                    continue
+                # Use cached answer
+                answer = cached_data["answer"]
+                if answer and prop_id not in resolutions:
+                    resolutions[prop_id] = {
+                        "correct_answer": answer,
+                        "resolved_at": datetime.now(timezone.utc).isoformat(),
+                        "auto_resolved": True,
+                        "source": "web_search",
+                    }
+                    newly_resolved.append(prop_id)
+                continue
+        except Exception:
+            pass
+
+        # Call Claude with web search
+        try:
+            choices_list = list(prop_def.get("choices", {}).keys())
+            if prop_def.get("has_other"):
+                choices_list.append("Other")
+
+            system_prompt = (
+                "You are resolving a Super Bowl prop bet. Use web search to find the definitive answer. "
+                "You MUST respond with ONLY the exact answer text matching one of the provided choices. "
+                "If the event hasn't happened yet or no definitive result is available, respond with: NOT_AVAILABLE"
+            )
+
+            user_msg = (
+                f"{ws_prop['instruction']}\n\n"
+                f"Valid choices are: {' | '.join(choices_list)}\n\n"
+                f"Respond with ONLY the exact choice text, nothing else. "
+                f"If no result is available yet, respond with: NOT_AVAILABLE"
+            )
+
+            response = await client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=256,
+                system=system_prompt,
+                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+                messages=[{"role": "user", "content": user_msg}],
+            )
+
+            # Extract text from response
+            answer_text = ""
+            for block in response.content:
+                if block.type == "text":
+                    answer_text += block.text
+
+            answer_text = answer_text.strip().strip('"').strip("'")
+
+            if "NOT_AVAILABLE" in answer_text.upper() or not answer_text:
+                # Cache the "not available" result for 5 minutes
+                try:
+                    r = _redis()
+                    r.setex(cache_key, WEB_SEARCH_CACHE_TTL, json.dumps({"answer": "__NOT_AVAILABLE__"}))
+                except Exception:
+                    pass
+                logger.info(f"Web search: {prop_id} = NOT_AVAILABLE")
+                continue
+
+            # Try to match to a valid choice
+            matched = _match_web_search_answer(answer_text, choices_list, prop_def)
+            if matched:
+                resolutions[prop_id] = {
+                    "correct_answer": matched,
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    "auto_resolved": True,
+                    "source": "web_search",
+                }
+                newly_resolved.append(prop_id)
+                logger.info(f"Web search resolved: {prop_id} = {matched}")
+
+                # Cache the result
+                try:
+                    r = _redis()
+                    r.setex(cache_key, WEB_SEARCH_CACHE_TTL, json.dumps({"answer": matched}))
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.error(f"Web search error for {prop_id}: {e}")
+
+    return newly_resolved
+
+
+def _match_web_search_answer(answer: str, choices: list[str], prop_def: dict) -> Optional[str]:
+    """Match a web search answer to one of the valid prop choices."""
+    answer_lower = answer.lower().strip()
+
+    # Exact match
+    for choice in choices:
+        if answer_lower == choice.lower().strip():
+            return choice
+
+    # Fuzzy match: check if the answer contains a choice keyword
+    for choice in choices:
+        choice_lower = choice.lower()
+        # For short choices like "Heads", "Tails", check containment
+        if len(choice) <= 20 and choice_lower in answer_lower:
+            return choice
+
+    # Special handling per prop
+    prop_id = prop_def.get("id", "")
+
+    if prop_id == "anthem_length":
+        if "under" in answer_lower:
+            return "Under 120.5 seconds"
+        elif "over" in answer_lower:
+            return "Over 120.5 seconds"
+        # Try to parse a duration
+        duration_match = re.search(r"(\d+)\s*(?:minutes?|min)\s*(?:and\s*)?(\d+)\s*(?:seconds?|sec)", answer_lower)
+        if duration_match:
+            mins = int(duration_match.group(1))
+            secs = int(duration_match.group(2))
+            total_secs = mins * 60 + secs
+            return "Under 120.5 seconds" if total_secs < 120.5 else "Over 120.5 seconds"
+        secs_match = re.search(r"(\d+\.?\d*)\s*seconds", answer_lower)
+        if secs_match:
+            total_secs = float(secs_match.group(1))
+            return "Under 120.5 seconds" if total_secs < 120.5 else "Over 120.5 seconds"
+
+    elif prop_id == "coin_toss_result":
+        if "heads" in answer_lower:
+            return "Heads"
+        elif "tails" in answer_lower:
+            return "Tails"
+
+    elif prop_id == "first_commercial":
+        if "budweiser" in answer_lower or "bud" in answer_lower:
+            return "Budweiser"
+        elif "uber" in answer_lower:
+            return "Uber Eats"
+
+    elif prop_id == "bad_bunny_dtmf":
+        if "first song" in answer_lower or "opened with" in answer_lower or "opener" in answer_lower:
+            return "First song"
+        elif "last song" in answer_lower or "closed with" in answer_lower or "closer" in answer_lower or "finale" in answer_lower:
+            return "Last song"
+        elif "did not" in answer_lower or "will not" in answer_lower or "didn't" in answer_lower or "not play" in answer_lower:
+            return 'He will not play "DtMF"'
+        elif "between" in answer_lower or "middle" in answer_lower:
+            return "In between the first and last song"
+
+    elif prop_id == "gatorade_color":
+        colors = {"blue": "Blue", "green": "Green", "yellow": "Yellow",
+                  "red": "Red", "orange": "Orange", "purple": "Purple"}
+        for color_key, color_val in colors.items():
+            if color_key in answer_lower:
+                return color_val
+        # If a color was mentioned but not in our list
+        if any(c in answer_lower for c in ["clear", "water", "white", "pink"]):
+            return "Other"
+
+    return None
 
 
 # ---------------------------------------------------------------------------
