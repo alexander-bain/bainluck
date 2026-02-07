@@ -14,6 +14,7 @@ import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
 import PropBets from "@/components/party/PropBets";
+import CommercialLeaderboard from "@/components/party/CommercialLeaderboard";
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
@@ -584,9 +585,14 @@ export default function TVPage({ params }: TVPageProps) {
           </div>
         </div>
 
-        {/* === PLAYER PROPS — dual auto-scrolling panels (~55% of remaining) === */}
-        <div className="flex-[3] min-h-0">
-          <PropBets eventId={eventId} />
+        {/* === PLAYER PROPS + COMMERCIAL LEADERBOARD === */}
+        <div className="flex-[3] min-h-0 flex gap-[0.6vw]">
+          <div className="flex-[3] min-h-0">
+            <PropBets eventId={eventId} />
+          </div>
+          <div className="flex-[1] min-h-0 min-w-[18vw]">
+            <CommercialLeaderboard />
+          </div>
         </div>
       </div>
 
