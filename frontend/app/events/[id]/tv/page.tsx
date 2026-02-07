@@ -141,7 +141,7 @@ interface TVPageProps {
 const LIVE_REFRESH_INTERVAL = 32000;
 const SCHEDULED_REFRESH_INTERVAL = 60000;
 const CONTEST_REFRESH_INTERVAL = 20000;
-const COMMENTARY_REFRESH_INTERVAL = 90000;
+const COMMENTARY_REFRESH_INTERVAL = 32000;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -300,7 +300,7 @@ function TVLeaderboard({
         <span className="w-[4vw] text-right">Pts</span>
         <span className="w-[4vw] text-right">Fcast</span>
         <span className="w-[3vw] text-right">Best</span>
-        <span className="flex-1 text-right">Key Prop</span>
+        <span className="flex-1 text-right">Swing Pick</span>
       </div>
 
       {/* Auto-scrolling rows */}
@@ -367,16 +367,30 @@ function TVLeaderboard({
                   #{entry.best_possible_finish}
                 </div>
 
-                {/* Key prop (most impactful pending pick) */}
+                {/* Swing pick: the pending pick most likely to change their standing */}
                 <div className="flex-1 text-right min-w-0">
                   {bestKeyProp ? (
-                    <span className="text-[1.1vh] text-white/40 truncate block">
-                      <span className="text-white/60 font-medium">&ldquo;{bestKeyProp.pick}&rdquo;</span>
-                      {" "}
-                      <span className="font-mono text-blue-400">
-                        {Math.round(bestKeyProp.probability * 100)}%
-                      </span>
-                    </span>
+                    <div className="leading-tight">
+                      <div className="text-[0.85vh] text-white/25 truncate">
+                        Needs &ldquo;{bestKeyProp.pick}&rdquo;
+                      </div>
+                      <div className="text-[1vh]">
+                        <span className="text-white/50 truncate">
+                          {bestKeyProp.question.length > 22
+                            ? bestKeyProp.question.slice(0, 22) + "..."
+                            : bestKeyProp.question}
+                        </span>
+                        {" "}
+                        <span
+                          className="font-mono font-bold"
+                          style={{
+                            color: bestKeyProp.probability >= 0.5 ? "#34d399" : "#f87171",
+                          }}
+                        >
+                          {Math.round(bestKeyProp.probability * 100)}%
+                        </span>
+                      </div>
+                    </div>
                   ) : (
                     <span className="text-[1.1vh] text-white/20">-</span>
                   )}
@@ -386,88 +400,6 @@ function TVLeaderboard({
           })}
         </div>
       </AutoScrollContainer>
-    </div>
-  );
-}
-
-function TVContestSidebar({
-  props,
-  commentary,
-}: {
-  props: ContestProp[];
-  commentary: string;
-}) {
-  const resolved = props.filter((p) => p.resolved && !p.is_tiebreaker);
-  const pending = props.filter((p) => !p.resolved && !p.is_tiebreaker);
-
-  return (
-    <div className="flex flex-col h-full gap-[0.8vh]">
-      {/* AI Commentary */}
-      {commentary && (
-        <div className="shrink-0 bg-gradient-to-r from-[#1a1a2e] to-[#16213e] rounded-xl px-[1vw] py-[0.6vh] border border-white/5">
-          <div className="text-[0.9vh] text-white/30 uppercase tracking-wider font-bold mb-[0.2vh]">
-            AI Commentary
-          </div>
-          <div className="text-[1.2vh] text-white/70 leading-relaxed">
-            {commentary}
-          </div>
-        </div>
-      )}
-
-      {/* Recently Resolved */}
-      {resolved.length > 0 && (
-        <div className="shrink-0">
-          <h4 className="text-[1vh] text-white/30 uppercase tracking-wider font-bold mb-[0.3vh]">
-            Resolved ({resolved.length})
-          </h4>
-          <div className="space-y-[0.2vh]">
-            {resolved.slice(-6).reverse().map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center gap-[0.4vw] text-[1.1vh]"
-              >
-                <span className="text-emerald-400 shrink-0">&#10003;</span>
-                <span className="text-white/40 truncate flex-1">{p.question}</span>
-                <span className="text-emerald-400 font-medium shrink-0 text-right">
-                  {p.correct_answer}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Upcoming Props */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <h4 className="text-[1vh] text-white/30 uppercase tracking-wider font-bold mb-[0.3vh]">
-          Upcoming ({pending.length})
-        </h4>
-        <div className="space-y-[0.3vh] overflow-y-auto h-full">
-          {pending.slice(0, 10).map((p) => {
-            const topChoice = Object.entries(p.choices).sort(
-              (a, b) => b[1] - a[1]
-            )[0];
-            return (
-              <div key={p.id} className="text-[1.1vh]">
-                <div className="text-white/50 truncate leading-tight">
-                  {p.question}
-                </div>
-                {topChoice && (
-                  <div className="flex items-center gap-[0.3vw] mt-[0.1vh]">
-                    <div
-                      className="h-[0.4vh] rounded-full bg-blue-500/50"
-                      style={{ width: `${topChoice[1] * 100}%`, maxWidth: "60%" }}
-                    />
-                    <span className="text-white/30 text-[0.9vh]">
-                      {topChoice[0]} ({Math.round(topChoice[1] * 100)}%)
-                    </span>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }
@@ -585,7 +517,7 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Sportsbook Props from The Odds API (live-updating, auto-scroll)
+// Prop Odds Carousel (one prop at a time with bar charts, auto-rotating)
 // ---------------------------------------------------------------------------
 const PROP_CAT_COLORS: Record<string, string> = {
   Passing: "#60a5fa",
@@ -603,8 +535,15 @@ const PROP_CAT_ICONS: Record<string, string> = {
   Kicking: "\uD83E\uDD7E",
 };
 
-function TVSportsbookProps({ eventId }: { eventId: number }) {
+interface CarouselProp extends SportsbookProp {
+  category: string;
+}
+
+function TVPropCarousel({ eventId }: { eventId: number }) {
   const [data, setData] = useState<SportsbookPropsResponse | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [animClass, setAnimClass] = useState("opacity-100 translate-x-0");
+  const timerKeyRef = useRef(0);
 
   const fetchProps = useCallback(async () => {
     try {
@@ -622,136 +561,213 @@ function TVSportsbookProps({ eventId }: { eventId: number }) {
     return () => clearInterval(iv);
   }, [fetchProps]);
 
-  if (!data || data.categories.length === 0) {
+  const allProps: CarouselProp[] = useMemo(() => {
+    if (!data) return [];
+    return data.categories.flatMap((cat) =>
+      cat.props.map((p) => ({ ...p, category: cat.category }))
+    );
+  }, [data]);
+
+  // Auto-rotate every 7 seconds
+  useEffect(() => {
+    if (allProps.length <= 1) return;
+    const timer = setInterval(() => {
+      // Slide out
+      setAnimClass("opacity-0 -translate-x-[2vw]");
+      setTimeout(() => {
+        setCurrentIndex((prev) => (prev + 1) % allProps.length);
+        // Reset to right side, then slide in
+        setAnimClass("opacity-0 translate-x-[2vw]");
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setAnimClass("opacity-100 translate-x-0");
+          });
+        });
+        timerKeyRef.current += 1;
+      }, 350);
+    }, 7000);
+    return () => clearInterval(timer);
+  }, [allProps.length]);
+
+  if (!data || allProps.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
-        Loading sportsbook props...
+        Loading prop odds...
       </div>
     );
   }
 
+  const prop = allProps[currentIndex];
+  const catColor = PROP_CAT_COLORS[prop.category] || "#64748b";
+  const catIcon = PROP_CAT_ICONS[prop.category] || "\uD83D\uDCCA";
+  const overPct = prop.over_probability != null ? Math.round(prop.over_probability * 100) : null;
+  const underPct = prop.under_probability != null ? Math.round(prop.under_probability * 100) : null;
+  const yesPct = prop.probability != null ? Math.round(prop.probability * 100) : null;
+
   return (
     <div className="flex flex-col h-full">
-      <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
-        <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider font-semibold">
-          Prop Odds
-        </h3>
-        <div className="flex items-center gap-[0.3vw]">
-          <span className="inline-block w-[0.6vh] h-[0.6vh] rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-white/30 text-[1vh] font-mono">
-            {data.total_props} live
+      {/* Header */}
+      <div className="shrink-0 flex items-center justify-between mb-[0.6vh]">
+        <div className="flex items-center gap-[0.4vw]">
+          <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider font-semibold">
+            Prop Odds
+          </h3>
+          <span className="inline-block w-[0.5vh] h-[0.5vh] rounded-full bg-emerald-400 animate-pulse" />
+        </div>
+        <span className="text-white/20 text-[1vh] font-mono">
+          {currentIndex + 1}/{allProps.length}
+        </span>
+      </div>
+
+      {/* Animated prop card */}
+      <div className={`flex-1 min-h-0 flex flex-col justify-center transition-all duration-300 ease-out ${animClass}`}>
+        {/* Category badge */}
+        <div className="flex items-center gap-[0.3vw] mb-[0.5vh]">
+          <span className="text-[1.2vh]">{catIcon}</span>
+          <span
+            className="text-[1vh] uppercase tracking-widest font-bold"
+            style={{ color: catColor }}
+          >
+            {prop.category}
           </span>
+        </div>
+
+        {/* Player name - BIG */}
+        <div className="text-white font-bold text-[2.2vh] leading-tight mb-[0.2vh]">
+          {prop.player}
+        </div>
+
+        {/* Prop type + line */}
+        <div className="text-white/40 text-[1.1vh] mb-[1vh]">
+          {prop.type}
+          {prop.line != null && (
+            <span className="text-blue-400/80 font-mono ml-[0.3vw]">{prop.line}</span>
+          )}
+        </div>
+
+        {/* Bar chart */}
+        {overPct != null && underPct != null ? (
+          <div className="space-y-[0.6vh]">
+            {/* Over bar */}
+            <div>
+              <div className="flex items-center justify-between mb-[0.2vh]">
+                <span className="text-emerald-400 text-[1vh] font-semibold uppercase tracking-wider">
+                  Over
+                </span>
+                <span className="text-emerald-400 font-mono font-bold text-[1.8vh]">
+                  {overPct}%
+                </span>
+              </div>
+              <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "1.8vh" }}>
+                <div
+                  className="h-full rounded-full transition-all duration-1000 ease-out"
+                  style={{
+                    width: `${overPct}%`,
+                    background: "linear-gradient(90deg, #059669, #34d399)",
+                  }}
+                />
+              </div>
+            </div>
+            {/* Under bar */}
+            <div>
+              <div className="flex items-center justify-between mb-[0.2vh]">
+                <span className="text-red-400 text-[1vh] font-semibold uppercase tracking-wider">
+                  Under
+                </span>
+                <span className="text-red-400 font-mono font-bold text-[1.8vh]">
+                  {underPct}%
+                </span>
+              </div>
+              <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "1.8vh" }}>
+                <div
+                  className="h-full rounded-full transition-all duration-1000 ease-out"
+                  style={{
+                    width: `${underPct}%`,
+                    background: "linear-gradient(90deg, #dc2626, #f87171)",
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        ) : yesPct != null ? (
+          <div>
+            <div className="flex items-center justify-between mb-[0.3vh]">
+              <span className="text-white/40 text-[1vh] font-semibold uppercase tracking-wider">
+                Probability
+              </span>
+              <span
+                className="font-mono font-bold text-[2.5vh]"
+                style={{ color: catColor }}
+              >
+                {yesPct}%
+              </span>
+            </div>
+            <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "2.2vh" }}>
+              <div
+                className="h-full rounded-full transition-all duration-1000 ease-out"
+                style={{
+                  width: `${yesPct}%`,
+                  background: `linear-gradient(90deg, ${catColor}cc, ${catColor})`,
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Auto-advance progress bar */}
+      <div className="shrink-0 mt-[0.5vh]">
+        <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "0.3vh" }}>
+          <div
+            key={timerKeyRef.current}
+            className="h-full bg-white/20 rounded-full"
+            style={{ animation: "propTimer 7s linear" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AI Commentary Panel (middle row, large readable font)
+// ---------------------------------------------------------------------------
+function TVCommentaryPanel({
+  commentary,
+  resolvedProps,
+}: {
+  commentary: string;
+  resolvedProps: ContestProp[];
+}) {
+  return (
+    <div className="flex flex-col h-full">
+      {/* Commentary */}
+      <div className="flex-1 flex flex-col justify-center px-[0.5vw]">
+        <div className="text-white/30 text-[0.9vh] uppercase tracking-widest font-bold mb-[0.5vh]">
+          AI Commentary
+        </div>
+        <div className="text-white/90 text-[1.6vh] leading-relaxed font-medium">
+          {commentary || "Warming up the hot takes..."}
         </div>
       </div>
 
-      <AutoScrollContainer className="flex-1 min-h-0" speed={0.35}>
-        <div className="space-y-[0.8vh]">
-          {data.categories.map((cat) => {
-            const catColor = PROP_CAT_COLORS[cat.category] || "#64748b";
-            const catIcon = PROP_CAT_ICONS[cat.category] || "\uD83D\uDCCA";
-            return (
-              <div key={cat.category}>
-                {/* Category header with colored accent */}
-                <div className="flex items-center gap-[0.3vw] mb-[0.3vh]">
-                  <div
-                    className="w-[0.3vw] h-[1.8vh] rounded-full shrink-0"
-                    style={{ backgroundColor: catColor }}
-                  />
-                  <span className="text-[1vh]">{catIcon}</span>
-                  <span
-                    className="text-[0.9vh] uppercase tracking-widest font-bold"
-                    style={{ color: catColor }}
-                  >
-                    {cat.category}
-                  </span>
-                  <span className="text-white/15 text-[0.8vh] font-mono">
-                    {cat.props.length}
-                  </span>
-                </div>
-
-                <div className="space-y-[0.15vh]">
-                  {cat.props.map((prop, i) => {
-                    // Calculate the primary probability for the bar
-                    const barPct =
-                      prop.probability != null
-                        ? Math.round(prop.probability * 100)
-                        : prop.over_probability != null
-                          ? Math.round(prop.over_probability * 100)
-                          : null;
-
-                    return (
-                      <div
-                        key={`${prop.player}-${prop.market_key}-${i}`}
-                        className="relative rounded overflow-hidden"
-                        style={{ minHeight: "2.2vh" }}
-                      >
-                        {/* Background probability bar */}
-                        {barPct != null && (
-                          <div
-                            className="absolute inset-y-0 left-0 rounded-r transition-all duration-700"
-                            style={{
-                              width: `${Math.min(barPct, 100)}%`,
-                              backgroundColor: catColor,
-                              opacity: 0.12,
-                            }}
-                          />
-                        )}
-
-                        {/* Content over bar */}
-                        <div className="relative flex items-center px-[0.3vw] py-[0.2vh]">
-                          {/* Player name */}
-                          <span className="text-white/80 text-[0.95vh] font-semibold truncate flex-1 min-w-0">
-                            {prop.player}
-                          </span>
-
-                          {/* Line (for O/U props) */}
-                          {prop.line != null && (
-                            <span className="text-blue-400/70 font-mono text-[0.85vh] shrink-0 mx-[0.2vw]">
-                              {prop.line}
-                            </span>
-                          )}
-
-                          {/* Probabilities */}
-                          {prop.over_probability != null &&
-                          prop.under_probability != null ? (
-                            <div className="flex items-center gap-[0.2vw] shrink-0">
-                              <span
-                                className="font-mono font-bold text-[0.95vh] px-[0.2vw] rounded"
-                                style={{
-                                  color: "#34d399",
-                                  backgroundColor: "rgba(52,211,153,0.1)",
-                                }}
-                              >
-                                O{Math.round(prop.over_probability * 100)}
-                              </span>
-                              <span
-                                className="font-mono font-bold text-[0.95vh] px-[0.2vw] rounded"
-                                style={{
-                                  color: "#f87171",
-                                  backgroundColor: "rgba(248,113,113,0.1)",
-                                }}
-                              >
-                                U{Math.round(prop.under_probability * 100)}
-                              </span>
-                            </div>
-                          ) : prop.probability != null ? (
-                            <span
-                              className="font-mono font-bold text-[1vh] shrink-0"
-                              style={{ color: catColor }}
-                            >
-                              {Math.round(prop.probability * 100)}%
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+      {/* Recently resolved (compact) */}
+      {resolvedProps.length > 0 && (
+        <div className="shrink-0 border-t border-white/5 pt-[0.5vh] mt-[0.5vh]">
+          <div className="text-white/20 text-[0.8vh] uppercase tracking-widest font-bold mb-[0.3vh]">
+            Resolved ({resolvedProps.length})
+          </div>
+          <div className="space-y-[0.15vh]">
+            {resolvedProps.slice(-4).reverse().map((p) => (
+              <div key={p.id} className="flex items-center gap-[0.3vw] text-[0.9vh]">
+                <span className="text-emerald-400 shrink-0">&#10003;</span>
+                <span className="text-white/30 truncate flex-1">{p.question}</span>
+                <span className="text-emerald-400 font-medium shrink-0">{p.correct_answer}</span>
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
-      </AutoScrollContainer>
+      )}
     </div>
   );
 }
@@ -1276,13 +1292,16 @@ export default function TVPage({ params }: TVPageProps) {
             )}
           </div>
 
-          {/* Sportsbook Prop Odds (from The Odds API) */}
-          <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
-            <TVSportsbookProps eventId={eventId} />
+          {/* AI Commentary Panel */}
+          <div className="bg-gradient-to-br from-[#111118] to-[#16162a] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
+            <TVCommentaryPanel
+              commentary={commentary}
+              resolvedProps={contestData?.props.filter((p) => p.resolved && !p.is_tiebreaker) || []}
+            />
           </div>
         </div>
 
-        {/* === CONTEST LEADERBOARD + ADS + SIDEBAR (~55% of remaining) === */}
+        {/* === CONTEST LEADERBOARD + PROP CAROUSEL + ADS === */}
         <div className="flex-[3] min-h-0 grid grid-cols-1 lg:grid-cols-4 gap-[0.8vw]">
           {/* Leaderboard (2 columns) */}
           <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
@@ -1299,6 +1318,11 @@ export default function TVPage({ params }: TVPageProps) {
             )}
           </div>
 
+          {/* Prop Odds Carousel (1 column) */}
+          <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
+            <TVPropCarousel eventId={eventId} />
+          </div>
+
           {/* Ad Leaderboard (1 column) */}
           <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
             {adData && adData.ads.length > 0 ? (
@@ -1311,20 +1335,6 @@ export default function TVPage({ params }: TVPageProps) {
                 ) : (
                   <span>Loading ad leaderboard...</span>
                 )}
-              </div>
-            )}
-          </div>
-
-          {/* Contest Sidebar (1 column) */}
-          <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
-            {contestData ? (
-              <TVContestSidebar
-                props={contestData.props}
-                commentary={commentary}
-              />
-            ) : (
-              <div className="h-full flex items-center justify-center text-white/20 text-[1.3vh]">
-                Loading props...
               </div>
             )}
           </div>
@@ -1474,7 +1484,7 @@ export default function TVPage({ params }: TVPageProps) {
         </div>
       )}
 
-      {/* Keyframe animations for resolution overlay */}
+      {/* Keyframe animations */}
       <style jsx global>{`
         @keyframes resolutionSlideIn {
           from { transform: scale(0.8) translateY(20px); opacity: 0; }
@@ -1483,6 +1493,10 @@ export default function TVPage({ params }: TVPageProps) {
         @keyframes resolutionProgress {
           from { width: 100%; }
           to { width: 0%; }
+        }
+        @keyframes propTimer {
+          from { width: 0%; }
+          to { width: 100%; }
         }
       `}</style>
 
