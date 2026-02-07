@@ -454,6 +454,7 @@ export default function TVPage({ params }: TVPageProps) {
   const [confettiActive, setConfettiActive] = useState(false);
   const prevFavoriteRef = useRef<string | null>(null);
   const [confettiColors, setConfettiColors] = useState<string[]>([]);
+  const [showQR, setShowQR] = useState(false);
 
   // Contest state
   const [contestData, setContestData] = useState<ContestData | null>(null);
@@ -1003,14 +1004,46 @@ export default function TVPage({ params }: TVPageProps) {
         </div>
       </div>
 
-      {/* Exit TV mode link */}
-      <div className="fixed bottom-[1vh] left-[1vw] z-50">
+      {/* QR Code Overlay */}
+      {showQR && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 backdrop-blur-sm cursor-pointer"
+          onClick={() => setShowQR(false)}
+        >
+          <div className="bg-white rounded-3xl p-[2vw] flex flex-col items-center gap-[1.5vh]">
+            <img
+              src="/sb-contest-qr.png"
+              alt="Scan to join the contest"
+              style={{ width: "35vh", height: "35vh" }}
+              className="rounded-xl"
+            />
+            <div className="text-black text-center">
+              <div className="font-bold text-[2.5vh]">Join the Contest!</div>
+              <div className="text-[1.5vh] text-gray-500 mt-[0.3vh]">
+                Scan to submit your picks
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom bar: Exit + QR toggle */}
+      <div className="fixed bottom-[1vh] left-[1vw] right-[1vw] z-50 flex items-center justify-between">
         <a
           href={`/events/${eventId}`}
           className="text-white/20 hover:text-white/60 text-[1.2vh] transition-colors bg-black/50 px-[1vw] py-[0.4vh] rounded-full backdrop-blur"
         >
           Exit TV Mode
         </a>
+        <button
+          onClick={() => setShowQR(true)}
+          className="text-white/30 hover:text-white/70 text-[1.5vh] transition-colors bg-black/50 px-[1vw] py-[0.4vh] rounded-full backdrop-blur flex items-center gap-[0.4vw]"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-[1.8vh] h-[1.8vh]">
+            <path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm11-2h2v2h-2v-2zm-4 0h2v2h-2v-2zm0 4h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-4 2h2v2h-2v-2zm4 0h2v2h-2v-2z"/>
+          </svg>
+          QR Code
+        </button>
       </div>
     </div>
   );
