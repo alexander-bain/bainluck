@@ -65,7 +65,7 @@ odds-tracker/
 │   │   └── sportCategories.ts  # Sport grouping logic
 │   └── hooks/                   # Custom React hooks
 ├── docs/PRD.md                  # Full product requirements
-└── docker-compose.yml           # Local dev environment
+└── tools/mcp-api-proxy/         # MCP proxy for API access
 ```
 
 ---
@@ -109,52 +109,42 @@ odds-tracker/
 
 ---
 
-## Development Commands
+## Development Workflow
 
+Development happens primarily through **Claude Code on the web** (GitHub-based). There is no local dev environment.
+
+- **Backend** and **frontend** auto-deploy from `master` via Heroku and Vercel respectively
+- **Database migrations**: Create with `alembic revision --autogenerate -m "description"`, applied automatically on Heroku release (`alembic upgrade head`)
+- **Testing changes**: Push to master and verify on production, or use Heroku/Vercel preview deployments
+
+### Querying the Production API
+
+Use `curl` against the production API to inspect data:
 ```bash
-# Backend (local)
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-
-# Frontend (local)
-cd frontend
-npm install
-npm run dev
-
-# Database migrations
-cd backend
-alembic revision --autogenerate -m "description"
-alembic upgrade head
-
-# Run Celery worker (local)
-cd backend
-celery -A app.tasks worker --loglevel=info
-
-# Run Celery beat (scheduled tasks)
-celery -A app.tasks beat --loglevel=info
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/events?sport=americanfootball_nfl"
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/events/search?q=celtics"
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/status"
 ```
+
+**Note:** When running in Claude Code's web sandbox, direct HTTP requests to the production API may be blocked by egress restrictions. The MCP proxy at `tools/mcp-api-proxy/` is designed for local Claude Code CLI usage only.
 
 ---
 
 ## Environment Variables
 
-### Backend (.env)
-```
-ODDS_API_KEY=xxx          # From the-odds-api.com
-KALSHI_API_KEY=xxx        # From kalshi.com (optional - enables Kalshi polling)
-OPENAI_API_KEY=xxx        # From platform.openai.com (optional - enables LLM categorization)
-DATABASE_URL=xxx          # PostgreSQL connection string
-REDIS_URL=xxx             # Redis for Celery
-ADMIN_SECRET=xxx          # Optional: protect admin endpoints
-```
+Backend and frontend environment variables are configured in **Heroku** and **Vercel** respectively (not local `.env` files).
 
-### Frontend (.env.local)
-```
-NEXT_PUBLIC_API_URL=https://what-are-the-odds-0283511a7d93.herokuapp.com
-NEXT_PUBLIC_GA_MEASUREMENT_ID=xxx  # Google Analytics
-```
+### Backend (Heroku Config Vars)
+- `ODDS_API_KEY` - From the-odds-api.com
+- `KALSHI_API_KEY` - From kalshi.com (optional - enables Kalshi polling)
+- `OPENAI_API_KEY` - From platform.openai.com (optional - enables LLM categorization)
+- `DATABASE_URL` - PostgreSQL connection string (managed by Heroku Postgres)
+- `REDIS_URL` - Redis for Celery (managed by Heroku Redis)
+- `ADMIN_SECRET` - Optional: protect admin endpoints
+
+### Frontend (Vercel Environment Variables)
+- `NEXT_PUBLIC_API_URL` = `https://what-are-the-odds-0283511a7d93.herokuapp.com`
+- `NEXT_PUBLIC_GA_MEASUREMENT_ID` - Google Analytics
 
 ---
 

@@ -3,6 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 import { GoogleAnalytics, AnalyticsProvider, ConsentBanner } from "@/components/Analytics";
 import SearchBox from "@/components/SearchBox";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "OddsTracker - Win Probabilities",
@@ -76,6 +77,7 @@ export default function RootLayout({
           {/* Consent Banner - shows if user hasn't made a choice */}
           <ConsentBanner />
         </AnalyticsProvider>
+        <Analytics />
       </body>
     </html>
   );

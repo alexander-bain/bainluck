@@ -9,9 +9,11 @@ import {
 } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import OddsChart from "@/components/OddsChart";
+import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
+import CommercialLeaderboard from "@/components/party/CommercialLeaderboard";
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
@@ -964,9 +966,9 @@ export default function TVPage({ params }: TVPageProps) {
             </span>
           </div>
 
-          {/* Probability Bar (wider for TV impact) */}
-          <div className="max-w-[75%] mx-auto mb-[0.5vh]">
-            <div className="w-full rounded-full overflow-hidden flex bg-white/10" style={{ height: "2.2vh" }}>
+          {/* Probability Bar */}
+          <div className="max-w-[60%] mx-auto mb-[0.5vh]">
+            <div className="w-full rounded-full overflow-hidden flex bg-white/10" style={{ height: "0.8vh", minHeight: "4px" }}>
               <div
                 className="transition-all duration-700 ease-out rounded-l-full"
                 style={{
@@ -1008,11 +1010,11 @@ export default function TVPage({ params }: TVPageProps) {
           )}
         </div>
 
-        {/* === CHART + KEY MOMENTS ROW (~35% of remaining) === */}
-        <div className="flex-[2] min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-[0.8vw]">
+        {/* === CHARTS + KEY MOMENTS ROW === */}
+        <div className="flex-[2] min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-[0.6vw]">
           {/* Win Probability Chart */}
-          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
-            <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider mb-[0.5vh] font-semibold shrink-0">
+          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[0.8vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
+            <h3 className="text-white/50 text-[1.2vh] uppercase tracking-wider mb-[0.3vh] font-semibold shrink-0">
               Win Probability
             </h3>
             {historyData?.history && historyData.history.length > 0 ? (
@@ -1026,29 +1028,58 @@ export default function TVPage({ params }: TVPageProps) {
                   bookmakerHistory={historyData?.bookmaker_history}
                   espnHistory={historyData?.espn_history}
                   eventStatus={event.status}
+                  fillContainer
                 />
               </div>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-white/20 text-[1.5vh]">
+              <div className="flex-1 flex items-center justify-center text-white/20 text-[1.4vh]">
                 Waiting for data...
               </div>
             )}
 
             {/* Pulse ECG Animation */}
             {event.pulse && (
-              <div className="shrink-0 mt-[0.5vh] border-t border-white/5 pt-[0.5vh]">
-                <div className="flex items-center justify-between mb-[0.3vh]">
-                  <span className="text-white/30 text-[1.2vh] uppercase tracking-wider">
+              <div className="shrink-0 mt-[0.3vh] border-t border-white/5 pt-[0.3vh]">
+                <div className="flex items-center justify-between mb-[0.2vh]">
+                  <span className="text-white/30 text-[1.1vh] uppercase tracking-wider">
                     {event.pulse.emoji} Pulse: {event.pulse.label}
                   </span>
                   <span
-                    className="font-mono text-[1.3vh] font-bold"
+                    className="font-mono text-[1.2vh] font-bold"
                     style={{ color: pulseColor }}
                   >
                     {event.pulse.score}/100
                   </span>
                 </div>
-                <PulseECG score={event.pulse.score} color={pulseColor} height={40} />
+                <PulseECG score={event.pulse.score} color={pulseColor} height={30} />
+              </div>
+            )}
+          </div>
+
+          {/* Score Differential Chart */}
+          <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[0.8vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
+            <h3 className="text-white/50 text-[1.2vh] uppercase tracking-wider mb-[0.3vh] font-semibold shrink-0">
+              Score Differential
+            </h3>
+            {historyData?.history && historyData.history.length > 0 ? (
+              <div className="flex-1 min-h-0 [&_.recharts-cartesian-grid_line]:!stroke-white/10 [&_.recharts-xAxis_text]:!fill-white/40 [&_.recharts-yAxis_text]:!fill-white/40 [&_.recharts-reference-line_line]:!stroke-white/20 [&_.recharts-legend-wrapper]:!text-white/40">
+                <ScoreDifferentialChart
+                  history={historyData.history}
+                  homeTeam={event.home_team}
+                  awayTeam={event.away_team}
+                  commenceTime={event.commence_time}
+                  isLive={isLive}
+                  bookmakerHistory={historyData?.bookmaker_history}
+                  scoreHistory={historyData?.score_history}
+                  currentHomeScore={event.home_score}
+                  currentAwayScore={event.away_score}
+                  eventStatus={event.status}
+                  fillContainer
+                />
+              </div>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-white/20 text-[1.4vh]">
+                Waiting for data...
               </div>
             )}
           </div>
@@ -1110,6 +1141,11 @@ export default function TVPage({ params }: TVPageProps) {
                 Loading props...
               </div>
             )}
+          </div>
+
+          {/* Commercial Leaderboard (1 column) */}
+          <div className="min-h-0">
+            <CommercialLeaderboard />
           </div>
         </div>
       </div>
