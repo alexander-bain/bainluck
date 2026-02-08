@@ -2344,6 +2344,49 @@ SB_AD_BRANDS = [ad["brand"].split("/")[0] for ad in SB_ADS_CURATED] + [
     "GrubHub", "Wells Fargo", "Ramp", "Fanatics", "Ring", "Ro",
 ]
 
+# Map short/alternate names → curated brand name.  Checked BEFORE SB_AD_BRANDS.
+BRAND_ALIASES: dict[str, str] = {
+    "pepsi": "Pepsi Zero Sugar",
+    "google": "Google Gemini",
+    "gemini": "Google Gemini",
+    "amazon": "Amazon Alexa+",
+    "alexa": "Amazon Alexa+",
+    "alexa+": "Amazon Alexa+",
+    "meta": "Meta/Oakley",
+    "oakley": "Meta/Oakley",
+    "rocket": "Rocket/Redfin",
+    "redfin": "Rocket/Redfin",
+    "rocket mortgage": "Rocket/Redfin",
+    "mrbeast": "Salesforce",
+    "franks": "Frank's RedHot",
+    "frank's": "Frank's RedHot",
+    "redhot": "Frank's RedHot",
+    "elf": "e.l.f. Cosmetics",
+    "e.l.f.": "e.l.f. Cosmetics",
+    "elf cosmetics": "e.l.f. Cosmetics",
+    "t-mobile": "T-Mobile",
+    "tmobile": "T-Mobile",
+    "michelob": "Michelob Ultra",
+    "bud light": "Bud Light",
+    "budweiser": "Budweiser",
+    "uber eats": "Uber Eats",
+    "uber": "Uber Eats",
+    "doordash": "DoorDash",
+    "door dash": "DoorDash",
+    "turbotax": "TurboTax",
+    "turbo tax": "TurboTax",
+    "hellmanns": "Hellmann's",
+    "hellmann's": "Hellmann's",
+    "dunkin": "Dunkin'",
+    "dunkin'": "Dunkin'",
+    "squarespace": "Squarespace",
+    "lay's": "Lay's",
+    "lays": "Lay's",
+    "frito-lay": "Lay's",
+    "anthropic": "Anthropic",
+    "claude": "Anthropic",
+}
+
 
 async def _fetch_youtube_ads() -> list[dict]:
     """Fetch Super Bowl LX ad leaderboard.
@@ -2431,8 +2474,10 @@ async def _fetch_youtube_ads() -> list[dict]:
                     if c["brand"] not in preliminary_brands and c.get("search")
                 ]
                 if missing:
-                    # Pregame: limit to 5 targeted (500 units). Game: up to 15 (1,500 units).
-                    max_targeted = 15 if mode == "game" else 5
+                    # Pregame: up to 15 targeted (1,500 units, 45 min cache = ~8 misses/6h).
+                    # Game: up to 20 targeted (2,000 units, 7 min cache — but most brands
+                    # are already cached so only missing ones are searched).
+                    max_targeted = 20 if mode == "game" else 15
                     for curated in missing[:max_targeted]:
                         resp = await client.get(search_url, params={
                             "key": YOUTUBE_API_KEY,
@@ -2538,22 +2583,40 @@ def _identify_brand(title: str, channel: str) -> Optional[str]:
     channel_lower = channel.lower()
     combined = title_lower + " " + channel_lower
 
-    # Check against known brands
+    # 1. Check aliases first (maps short names → canonical curated brand)
+    for alias, canonical in BRAND_ALIASES.items():
+        if re.search(r'\b' + re.escape(alias) + r'\b', combined):
+            return canonical
+
+    # 2. Check against known brands (exact word boundary)
     for brand in SB_AD_BRANDS:
         brand_lower = brand.lower()
-        # Check exact word boundary match in title or channel
         if re.search(r'\b' + re.escape(brand_lower) + r'\b', combined):
-            return brand
+            # Map back to curated brand if this is a substring (e.g., "Rocket" → "Rocket/Redfin")
+            curated = next((c["brand"] for c in SB_ADS_CURATED if brand_lower in c["brand"].lower()), None)
+            return curated or brand
 
-    # Also check if the channel name IS the brand (official uploads)
+    # 3. Check if the channel name IS the brand (official uploads)
     for brand in SB_AD_BRANDS:
         if brand.lower() in channel_lower:
-            return brand
+            curated = next((c["brand"] for c in SB_ADS_CURATED if brand.lower() in c["brand"].lower()), None)
+            return curated or brand
 
-    # Check for "super bowl" + "ad" or "commercial" in title (likely an ad even if brand unknown)
+    # 4. Title parsing fallback — check each segment for known brands
     if ("super bowl" in title_lower or "sb " in title_lower) and \
        any(w in title_lower for w in ["ad", "commercial", "spot", "teaser", "trailer"]):
-        # Try to extract brand from start of title (common pattern: "Brand - Super Bowl Ad")
+        # Check pipe/dash segments for brand matches before blind extraction
+        for sep in [" | ", " - "]:
+            for segment in title.split(sep):
+                seg = segment.strip().lower()
+                for alias, canonical in BRAND_ALIASES.items():
+                    if re.search(r'\b' + re.escape(alias) + r'\b', seg):
+                        return canonical
+                for brand in SB_AD_BRANDS:
+                    if re.search(r'\b' + re.escape(brand.lower()) + r'\b', seg):
+                        curated = next((c["brand"] for c in SB_ADS_CURATED if brand.lower() in c["brand"].lower()), None)
+                        return curated or brand
+        # Last resort: use first segment as brand name
         dash_split = title.split(" - ")
         if len(dash_split) >= 2 and len(dash_split[0].strip()) < 30:
             return dash_split[0].strip()
