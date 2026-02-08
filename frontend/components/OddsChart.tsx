@@ -468,10 +468,18 @@ export default function OddsChart({
           <button
             key={option.value}
             onClick={() => setTimeRange(option.value)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-              timeRange === option.value
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            className={`font-medium rounded-full transition-colors ${
+              fillContainer
+                ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${
+                    timeRange === option.value
+                      ? "bg-white/10 text-white/40"
+                      : "text-white/15 hover:text-white/25"
+                  }`
+                : `px-3 py-1.5 text-xs ${
+                    timeRange === option.value
+                      ? "bg-gray-900 text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`
             }`}
           >
             {option.label}
