@@ -2261,7 +2261,7 @@ async def capture_bitcoin_start(secret: str = Query("", description="Admin secre
 # ---------------------------------------------------------------------------
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
-YOUTUBE_CACHE_TTL = 120  # Cache for 2 minutes
+YOUTUBE_CACHE_TTL = 300  # Cache for 5 minutes (conserve YouTube API quota)
 
 # Hardcoded Super Bowl LX ads — always available even without YouTube API.
 # When the YouTube API is configured, live view counts replace these.
@@ -2310,10 +2310,10 @@ SB_AD_BRANDS = [ad["brand"].split("/")[0] for ad in SB_ADS_CURATED] + [
 async def _fetch_youtube_ads() -> list[dict]:
     """Fetch Super Bowl LX ad leaderboard.
 
-    Strategy: For each curated ad, search YouTube by its specific search term
-    to find the actual teaser/commercial video. This works even before game day
-    because most brands release teasers early. Falls back to curated metadata
-    (with no video) if YouTube API is unavailable.
+    Strategy: One broad YouTube search for SB LX commercials (100 quota units),
+    then match results to our curated brand list. Stats fetch is 1 unit per video.
+    Curated entries that weren't found get a second targeted search (1 per brand).
+    Results cached for 5 minutes to conserve quota.
     """
     cache_key = f"{REDIS_KEY_PREFIX}youtube_ads"
 
@@ -2327,25 +2327,95 @@ async def _fetch_youtube_ads() -> list[dict]:
         pass
 
     ads: list[dict] = []
+    found_brands: set[str] = set()
 
     if YOUTUBE_API_KEY:
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                # Step 1: Search for each curated ad to find its YouTube video
-                # Batch searches: 5 ads per search request using specific terms
-                video_map: dict[str, dict] = {}  # video_id -> curated ad info
+                # Step 1: Broad search for SB LX ads (costs 100 quota units)
                 all_video_ids: list[str] = []
+                video_snippets: dict[str, dict] = {}
 
-                for curated in SB_ADS_CURATED:
+                for query in [
+                    "Super Bowl LX 2026 commercial",
+                    "Super Bowl 2026 ad official",
+                ]:
+                    search_url = "https://www.googleapis.com/youtube/v3/search"
+                    search_params = {
+                        "key": YOUTUBE_API_KEY,
+                        "q": query,
+                        "type": "video",
+                        "part": "snippet",
+                        "maxResults": 50,
+                        "order": "viewCount",
+                        "publishedAfter": "2025-11-01T00:00:00Z",
+                    }
+                    resp = await client.get(search_url, params=search_params)
+                    if resp.status_code == 200:
+                        for item in resp.json().get("items", []):
+                            vid_id = item.get("id", {}).get("videoId", "")
+                            if vid_id and vid_id not in video_snippets:
+                                all_video_ids.append(vid_id)
+                                video_snippets[vid_id] = item.get("snippet", {})
+                    elif resp.status_code == 403:
+                        logger.error(f"YouTube quota exceeded on broad search")
+                        break
+
+                # Step 2: Fetch video stats in batch (1 unit per video)
+                stats_map: dict[str, dict] = {}
+                for i in range(0, len(all_video_ids), 50):
+                    batch = all_video_ids[i:i+50]
+                    stats_url = "https://www.googleapis.com/youtube/v3/videos"
+                    stats_params = {
+                        "key": YOUTUBE_API_KEY,
+                        "id": ",".join(batch),
+                        "part": "statistics",
+                    }
+                    resp = await client.get(stats_url, params=stats_params)
+                    if resp.status_code == 200:
+                        for item in resp.json().get("items", []):
+                            stats_map[item["id"]] = item.get("statistics", {})
+
+                # Step 3: Match videos to curated brands
+                for vid_id in all_video_ids:
+                    snippet = video_snippets.get(vid_id, {})
+                    stats = stats_map.get(vid_id, {})
+                    title = snippet.get("title", "")
+                    channel = snippet.get("channelTitle", "")
+                    brand = _identify_brand(title, channel)
+
+                    if brand and brand not in found_brands:
+                        # Find matching curated entry for celebrity info
+                        curated_match = next(
+                            (c for c in SB_ADS_CURATED if c["brand"] == brand), None
+                        )
+                        found_brands.add(brand)
+                        ads.append({
+                            "brand": brand,
+                            "title": curated_match["title"] if curated_match else title,
+                            "video_id": vid_id,
+                            "channel": channel,
+                            "celebrity": curated_match.get("celebrity", "") if curated_match else "",
+                            "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
+                            "views": int(stats.get("viewCount", 0)),
+                            "likes": int(stats.get("likeCount", 0)),
+                            "comments": int(stats.get("commentCount", 0)),
+                            "published_at": snippet.get("publishedAt", ""),
+                        })
+
+                # Step 4: For curated brands NOT found in broad search,
+                # do targeted searches (100 units each — only for missing brands)
+                missing = [c for c in SB_ADS_CURATED if c["brand"] not in found_brands]
+                for curated in missing:
                     search_url = "https://www.googleapis.com/youtube/v3/search"
                     search_params = {
                         "key": YOUTUBE_API_KEY,
                         "q": curated["search"],
                         "type": "video",
                         "part": "snippet",
-                        "maxResults": 3,
+                        "maxResults": 1,
                         "order": "relevance",
-                        "publishedAfter": "2025-12-01T00:00:00Z",
+                        "publishedAfter": "2025-11-01T00:00:00Z",
                     }
                     try:
                         resp = await client.get(search_url, params=search_params)
@@ -2353,53 +2423,46 @@ async def _fetch_youtube_ads() -> list[dict]:
                             items = resp.json().get("items", [])
                             if items:
                                 vid_id = items[0]["id"].get("videoId", "")
-                                if vid_id and vid_id not in video_map:
-                                    video_map[vid_id] = curated
-                                    all_video_ids.append(vid_id)
+                                if vid_id:
+                                    # Fetch stats for this video
+                                    sr = await client.get(
+                                        "https://www.googleapis.com/youtube/v3/videos",
+                                        params={
+                                            "key": YOUTUBE_API_KEY,
+                                            "id": vid_id,
+                                            "part": "statistics",
+                                        },
+                                    )
+                                    vst = {}
+                                    if sr.status_code == 200:
+                                        si = sr.json().get("items", [])
+                                        if si:
+                                            vst = si[0].get("statistics", {})
+                                    found_brands.add(curated["brand"])
+                                    ads.append({
+                                        "brand": curated["brand"],
+                                        "title": curated["title"],
+                                        "video_id": vid_id,
+                                        "channel": items[0].get("snippet", {}).get("channelTitle", ""),
+                                        "celebrity": curated.get("celebrity", ""),
+                                        "thumbnail": items[0].get("snippet", {}).get("thumbnails", {}).get("medium", {}).get("url", ""),
+                                        "views": int(vst.get("viewCount", 0)),
+                                        "likes": int(vst.get("likeCount", 0)),
+                                        "comments": int(vst.get("commentCount", 0)),
+                                        "published_at": items[0].get("snippet", {}).get("publishedAt", ""),
+                                    })
                         elif resp.status_code == 403:
-                            # Quota exceeded — stop searching, use what we have
-                            logger.error(f"YouTube quota exceeded searching for {curated['brand']}")
+                            logger.error("YouTube quota exceeded on targeted search")
                             break
                     except Exception as e:
-                        logger.error(f"YouTube search error for {curated['brand']}: {e}")
-
-                # Step 2: Batch fetch video stats (50 per request)
-                if all_video_ids:
-                    for i in range(0, len(all_video_ids), 50):
-                        batch = all_video_ids[i:i+50]
-                        stats_url = "https://www.googleapis.com/youtube/v3/videos"
-                        stats_params = {
-                            "key": YOUTUBE_API_KEY,
-                            "id": ",".join(batch),
-                            "part": "statistics,snippet",
-                        }
-                        resp = await client.get(stats_url, params=stats_params)
-                        if resp.status_code == 200:
-                            for item in resp.json().get("items", []):
-                                vid_id = item["id"]
-                                snippet = item.get("snippet", {})
-                                stats = item.get("statistics", {})
-                                curated = video_map.get(vid_id, {})
-                                ads.append({
-                                    "brand": curated.get("brand", snippet.get("channelTitle", "Unknown")),
-                                    "title": curated.get("title", snippet.get("title", "")),
-                                    "video_id": vid_id,
-                                    "channel": snippet.get("channelTitle", ""),
-                                    "celebrity": curated.get("celebrity", ""),
-                                    "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
-                                    "views": int(stats.get("viewCount", 0)),
-                                    "likes": int(stats.get("likeCount", 0)),
-                                    "comments": int(stats.get("commentCount", 0)),
-                                    "published_at": snippet.get("publishedAt", ""),
-                                })
+                        logger.error(f"YouTube targeted search error for {curated['brand']}: {e}")
 
                 # Sort by views
                 ads.sort(key=lambda x: -x["views"])
         except Exception as e:
             logger.error(f"YouTube API error: {e}")
 
-    # For any curated ads not found via YouTube, add them without video
-    found_brands = {ad["brand"] for ad in ads}
+    # Any curated ads still not found — add without video
     for curated in SB_ADS_CURATED:
         if curated["brand"] not in found_brands:
             ads.append({
@@ -2481,7 +2544,7 @@ async def get_ad_leaderboard():
             baseline = json.loads(cached_baseline)
         elif ads:
             # First fetch — snapshot current view counts as baseline (expires in 24h)
-            baseline = {ad["video_id"]: ad["views"] for ad in ads}
+            baseline = {ad["video_id"]: ad["views"] for ad in ads if ad["video_id"]}
             r.setex(baseline_key, 86400, json.dumps(baseline))
     except Exception:
         pass
@@ -2505,10 +2568,11 @@ async def get_ad_leaderboard():
     for i, ad in enumerate(ads):
         ad["rank"] = i + 1
 
+    with_video = sum(1 for ad in ads if ad.get("video_id"))
     return {
         "ads": ads,
         "count": len(ads),
-        "cached": True,
+        "with_video": with_video,
         "youtube_configured": bool(YOUTUBE_API_KEY),
     }
 
