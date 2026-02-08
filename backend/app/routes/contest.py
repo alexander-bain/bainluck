@@ -2261,7 +2261,23 @@ async def capture_bitcoin_start(secret: str = Query("", description="Admin secre
 # ---------------------------------------------------------------------------
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
-YOUTUBE_CACHE_TTL = 600  # Cache for 10 minutes (conserve YouTube API quota)
+
+# Game day: Feb 9, 2026. 2PM Pacific = 22:00 UTC. Game ends ~8PM Pacific = 04:00 UTC Feb 10.
+# Dynamic cache TTL to maximize freshness during the game while staying under 10K quota.
+#   Pre-game: 30 min cache → ~1K quota units
+#   Game time (2PM-8PM Pacific): 7 min cache → ~7.7K quota units
+#   Post-game: 30 min cache
+#   Total worst case: ~8.7K / 10K budget
+GAME_START_UTC = datetime(2026, 2, 9, 22, 0, 0, tzinfo=timezone.utc)
+GAME_END_UTC = datetime(2026, 2, 10, 4, 0, 0, tzinfo=timezone.utc)
+
+
+def _youtube_cache_ttl() -> int:
+    """Dynamic cache TTL based on game time."""
+    now = datetime.now(timezone.utc)
+    if GAME_START_UTC <= now <= GAME_END_UTC:
+        return 420  # 7 minutes during game
+    return 1800  # 30 minutes otherwise
 
 # Hardcoded Super Bowl LX ads — always available even without YouTube API.
 # When the YouTube API is configured, live view counts replace these.
@@ -2425,7 +2441,7 @@ async def _fetch_youtube_ads() -> list[dict]:
     # Cache result
     try:
         r = _redis()
-        r.setex(cache_key, YOUTUBE_CACHE_TTL, json.dumps(ads))
+        r.setex(cache_key, _youtube_cache_ttl(), json.dumps(ads))
     except Exception:
         pass
 
@@ -2513,11 +2529,14 @@ async def get_ad_leaderboard():
         ad["rank"] = i + 1
 
     with_video = sum(1 for ad in ads if ad.get("video_id"))
+    ttl = _youtube_cache_ttl()
     return {
         "ads": ads,
         "count": len(ads),
         "with_video": with_video,
         "youtube_configured": bool(YOUTUBE_API_KEY),
+        "cache_ttl_seconds": ttl,
+        "mode": "game" if ttl < 600 else "idle",
     }
 
 

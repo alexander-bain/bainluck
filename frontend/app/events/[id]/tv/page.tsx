@@ -1184,13 +1184,28 @@ export default function TVPage({ params }: TVPageProps) {
     return () => clearInterval(interval);
   }, [fetchContestCommentary]);
 
-  // ---- Ad Leaderboard polling (every 2 minutes) ----
+  // ---- Ad Leaderboard polling (adapts to backend game/idle mode) ----
+  const adPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const adModeRef = useRef<string>("idle");
+
   const fetchAds = useCallback(async () => {
     try {
       const resp = await fetch(`${API_URL}/api/contest/ads`);
       if (!resp.ok) return;
-      const data: AdLeaderboardData = await resp.json();
+      const data = await resp.json() as AdLeaderboardData & { mode?: string };
       setAdData(data);
+
+      // Switch polling rate when backend switches mode
+      const newMode = data.mode || "idle";
+      if (newMode !== adModeRef.current) {
+        adModeRef.current = newMode;
+        // Game mode: poll every 3 min. Idle: poll every 5 min.
+        // Backend cache is 7 min / 30 min respectively, so we'll
+        // hit cache most of the time but catch refreshes quickly.
+        const interval = newMode === "game" ? 180000 : 300000;
+        if (adPollRef.current) clearInterval(adPollRef.current);
+        adPollRef.current = setInterval(fetchAds, interval);
+      }
     } catch {
       // Silently ignore
     }
@@ -1198,8 +1213,8 @@ export default function TVPage({ params }: TVPageProps) {
 
   useEffect(() => {
     fetchAds();
-    const interval = setInterval(fetchAds, 120000); // 2 minutes
-    return () => clearInterval(interval);
+    adPollRef.current = setInterval(fetchAds, 300000); // start at 5 min
+    return () => { if (adPollRef.current) clearInterval(adPollRef.current); };
   }, [fetchAds]);
 
   // Process resolution queue: show one at a time for 8 seconds each
