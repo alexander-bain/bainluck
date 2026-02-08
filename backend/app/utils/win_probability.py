@@ -34,6 +34,7 @@ SPORT_PARAMS = {
     "football_ncaaf": (13.45, 3600),     # 60 minutes
     "basketball_nba": (12.0, 2880),      # 48 minutes
     "basketball_ncaab": (12.0, 2400),    # 40 minutes
+    "basketball_wncaab": (12.0, 2880),   # 40 minutes (4x10 quarters)
     "hockey_nhl": (2.5, 3600),           # 60 minutes
 }
 

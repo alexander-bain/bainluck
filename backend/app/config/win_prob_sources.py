@@ -23,7 +23,7 @@ WIN_PROB_SOURCES = {
         "display_name": "ESPN",
         "source_type": "model",
         "sports": [
-            "basketball_nba", "basketball_ncaab", "basketball_wncaab",
+            "basketball_nba", "basketball_ncaab", "basketball_wncaab", "basketball_wncaab",
             "football_nfl", "football_ncaaf",
             "hockey_nhl", "baseball_mlb", "soccer_usa_mls",
             "soccer_epl",
@@ -40,7 +40,7 @@ WIN_PROB_SOURCES = {
         "source_type": "model",
         "sports": [
             "football_nfl", "football_ncaaf",
-            "basketball_nba", "basketball_ncaab",
+            "basketball_nba", "basketball_ncaab", "basketball_wncaab",
         ],
         "color": "#8b5cf6",
         "dash_pattern": "4 4",
