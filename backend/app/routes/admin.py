@@ -1724,3 +1724,59 @@ async def get_team_task_status(
             response["error"] = str(result.result)
 
     return response
+
+
+@router.post("/espn/fix-commence-times")
+async def fix_commence_times(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(200, description="Max events to check"),
+):
+    """
+    Fix incorrect commence_time values using ESPN as authoritative source.
+
+    Finds events with espn_id, fetches ESPN scoreboard data for the relevant
+    dates, and corrects any commence_time that differs by more than 5 minutes.
+
+    Queues as a background Celery task to avoid HTTP timeout.
+    Use /api/admin/espn/task/{task_id} to check results.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import fix_commence_times_from_espn
+
+    try:
+        task = fix_commence_times_from_espn.delay(limit=limit)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Checking up to {limit} events with ESPN IDs. Use /api/admin/espn/task/{task.id} for results.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/espn/task/{task_id}")
+async def get_espn_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of an ESPN correction task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
