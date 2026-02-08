@@ -513,7 +513,13 @@ async def search_events(
         for snap in all_snapshots:
             snapshots_by_event[snap.event_id].append(snap)
 
+        # Build event status lookup for stale bookmaker filtering
+        event_status_map = {e.id: e.status for e in events}
+
         for event_id, snaps in snapshots_by_event.items():
+            snaps = _filter_stale_bookmaker_snapshots(
+                snaps, is_live=(event_status_map.get(event_id) == "live")
+            )
             latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
                 "snapshots": snaps,
@@ -1015,7 +1021,13 @@ async def list_events(
         for snap in all_snapshots:
             snapshots_by_event[snap.event_id].append(snap)
 
+        # Build event status lookup for stale bookmaker filtering
+        event_status_map = {e.id: e.status for e in events}
+
         for event_id, snaps in snapshots_by_event.items():
+            snaps = _filter_stale_bookmaker_snapshots(
+                snaps, is_live=(event_status_map.get(event_id) == "live")
+            )
             latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
                 "snapshots": snaps,
@@ -1376,6 +1388,9 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                 latest_by_bookmaker[s.bookmaker] = s
 
         latest_snapshots = list(latest_by_bookmaker.values())
+        latest_snapshots = _filter_stale_bookmaker_snapshots(
+            latest_snapshots, is_live=(event.status == "live")
+        )
         latest_time = max(s.captured_at for s in latest_snapshots)
 
         # Aggregate across bookmakers
@@ -1764,6 +1779,35 @@ async def debug_event_snapshots(
         },
         "snapshots": snapshot_data,
     }
+
+
+def _filter_stale_bookmaker_snapshots(snapshots: list, is_live: bool) -> list:
+    """Filter out stale bookmaker snapshots for live events.
+
+    During live games, many bookmakers stop updating odds. Their last snapshot
+    from pregame would contaminate the aggregate (e.g., showing 43% when active
+    bookmakers show 2%). We filter to only include bookmakers that have been
+    recently active (within 15 minutes of the most recent snapshot).
+
+    For non-live events, returns the original list unchanged.
+    """
+    if not is_live or not snapshots:
+        return snapshots
+
+    latest_time = max(s.captured_at for s in snapshots)
+    staleness_threshold = latest_time - timedelta(minutes=15)
+
+    fresh = [
+        s for s in snapshots
+        if s.captured_at >= staleness_threshold
+        or (s.valid_until is not None and s.valid_until >= staleness_threshold)
+    ]
+
+    # Only use filtered list if we still have at least one with valid probability
+    if any(s.home_win_probability is not None for s in fresh):
+        return fresh
+
+    return snapshots
 
 
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
