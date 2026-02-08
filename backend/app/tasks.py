@@ -2677,8 +2677,8 @@ async def _sync_espn_live_events():
                                     except Exception:
                                         pass  # Table may not exist yet
 
-                                # Compute statistical model win probability
-                                if ee.home_score is not None and ee.away_score is not None and ee.clock:
+                                # Compute statistical model win probability (live games only)
+                                if ee.status == "in" and ee.home_score is not None and ee.away_score is not None and ee.clock:
                                     try:
                                         from app.utils.win_probability import compute_statistical_win_prob
                                         from app.models.models import WinProbSnapshot
@@ -2730,7 +2730,8 @@ async def _sync_espn_live_events():
                                             )
                                     except Exception as e:
                                         logger.error(f"stat_model error for event {event.id}: {e}")
-                                else:
+                                elif ee.status == "in":
+                                    # Only track missing data for live games
                                     if ee.home_score is None or ee.away_score is None:
                                         stats["stat_model_no_score"] = stats.get("stat_model_no_score", 0) + 1
                                     elif not ee.clock:
