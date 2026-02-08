@@ -22,10 +22,13 @@ Estimated capacity: ~1.9 calls/second, ~166K calls/day.
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import time
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import redis
 import sentry_sdk
