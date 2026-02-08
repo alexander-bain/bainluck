@@ -396,6 +396,31 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/esp
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/task/{task_id}?secret=any"
 ```
 
+### Multi-Source Win Probability
+The chart can display win probabilities from multiple independent sources, each as a labeled line with its own color and dash pattern.
+
+**Architecture:**
+- **Source registry**: `backend/app/config/win_prob_sources.py` — Python dict (not DB table) defining display_name, color, dash_pattern, methodology, attribution for each source
+- **Generic storage**: `win_prob_snapshots` table with `source` column (replaces ESPN-specific storage for new sources)
+- **OddsTracker Model**: nflfastR-inspired statistical model in `backend/app/utils/win_probability.py`. Uses normal distribution: score diff + time remaining + pregame spread. Sport-specific params: NFL base_std=13.45, NBA/NCAAB=12.0, NHL=2.5
+- **Dual compute paths**: Stat model computes in both ESPN sync (every 60s) AND odds polling (every 30-60s) for redundancy
+- **Frontend**: OddsChart.tsx renders N sources dynamically; legend labels link to `/events/[id]/models` detail page
+
+**Current sources (3):**
+- **Betting Odds** (market, solid dark line) — consensus from 5-15 sportsbooks via The Odds API
+- **ESPN** (model, orange dashed) — ESPN's proprietary predictor, only available during live games
+- **OddsTracker Model** (model, purple dashed) — our statistical model, attribution to nflfastR/PFR methodology
+
+**Supported sports for stat model:** NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL
+
+**Adding a new source:** Add entry to `WIN_PROB_SOURCES` dict in `win_prob_sources.py`, write snapshots to `win_prob_snapshots` with the source key, and the chart/API pick it up automatically.
+
+**Known issues (Feb 2026):**
+- Stat model depends on `game_clock` and `period` from ESPN sync. If ESPN team name matching fails for an event, the stat model can't compute (no time remaining data). Name normalization helps but some college teams may still mismatch.
+- PFR is NOT viable as a live data source (no API, ToS blocks scraping, not real-time)
+
+**Files:** `backend/app/config/win_prob_sources.py`, `backend/app/utils/win_probability.py`, `backend/tests/test_win_probability.py` (29 tests), `frontend/components/OddsChart.tsx`, `frontend/app/events/[id]/models/page.tsx`
+
 ### TV Mode (Party Display)
 Fullscreen display optimized for showing an event on a TV/monitor during watch parties.
 
@@ -526,8 +551,8 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Currently only `test_odds_math.py` exists (240 lines). Zero frontend tests.
-3. 🟡 **Data retention policy** — DB is at 571MB / 1GB (56%), ~2M rows in `odds_snapshots`, ~1M in `futures_odds_snapshots`. Heroku plan: essential-0 (1GB cap, no row limit). Growing daily — estimated 1-2 months before hitting the cap. Raw snapshots are still read by OddsChart (history endpoint), Pulse recalculation, and Hall of Fame, so they can't be blindly deleted. Pre-game snapshots (before `commence_time`) are low-value candidates for pruning. An `odds_aggregated` table exists in the schema but has never been populated. Need to design a retention policy that balances storage savings against feature dependencies.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 390 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, and `test_win_probability.py`. Zero frontend tests.
+3. 🟡 **Data retention policy** — Implement snapshot pruning. Polling every 30s for live games with 5-11 bookmakers generates tens of thousands of rows per game day. No retention policy exists. Check Heroku Postgres row count and storage usage.
 4. 🟡 **Clean up Super Bowl one-offs** — Remove or disable dead code from the Super Bowl party: `backend/app/routes/superbowl.py`, `backend/app/routes/contest.py`, `backend/app/services/youtube_api.py`, `frontend/components/party/CommercialLeaderboard.tsx`. Check if any related Celery beat tasks are still scheduled.
 5. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
 
@@ -554,7 +579,10 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
 - ✅ TV/Party mode with player props, confetti, ECG, momentum (4K-optimized)
 - ✅ Sentry error tracking (FastAPI + Celery worker, controlled by SENTRY_DSN env var)
-- ✅ Commence_time timezone fix (ESPN cross-validation, stopped Odds API overwrites)
+- ✅ Multi-source win probability infrastructure (generic `win_prob_snapshots` table, source config, N-source chart)
+- ✅ OddsTracker statistical win probability model (nflfastR-inspired, NFL/NCAAF/NBA/NCAAB/WNCAAB/NHL)
+- ✅ Win probability source detail page (`/events/[id]/models`) with methodology + attribution
+- ✅ ESPN team name matching normalization (unicode/accent handling for college teams)
 </details>
 
 See `docs/PRD.md` for full roadmap.

@@ -1253,36 +1253,47 @@ Generate narrative summaries for high-Pulse games.
 - Feature in "Exciting Games This Week" section
 
 #### 11.4: Multi-Source Probability Integration
-Aggregate win probabilities from multiple statistical models.
+Aggregate win probabilities from multiple statistical models. **Phase 1 shipped Feb 2026.**
 
-**Potential Sources:**
-| Source | Type | Data |
-|--------|------|------|
-| ESPN | API | In-game win probability model |
-| FiveThirtyEight | Historical data | Pre-game Elo predictions |
-| TeamRankings | API (paid) | Statistical models |
-| kenpom.com | Scrape | College basketball advanced stats |
-| Sports Reference | Pages | Historical win probability |
+**Shipped (Feb 2026):**
+- Generic `win_prob_snapshots` table with source column (replaces ESPN-specific storage)
+- Source registry in `backend/app/config/win_prob_sources.py` (Python dict, not DB)
+- OddsTracker statistical win probability model (nflfastR-inspired normal distribution)
+  - Supports: NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL
+  - Uses score diff + time remaining + pregame spread
+- OddsChart renders N sources dynamically with labeled, color-coded lines
+- `/events/[id]/models` detail page showing methodology + attribution for each source
+- Dual compute paths: ESPN sync (60s) + odds polling (30-60s)
+- ESPN team name matching with unicode normalization (handles college team names)
 
-**Display:**
-```
-Win Probability Sources:
-├── Betting Markets:  65% (consensus of 8 sportsbooks)
-├── ESPN Model:       62% (statistical model)
-├── FiveThirtyEight:  68% (Elo-based prediction)
-└── Average:          65%
-```
+**Current sources (3):**
+| Source | Type | Status | Sports |
+|--------|------|--------|--------|
+| Betting Odds | Market (The Odds API) | ✅ Live | All |
+| ESPN | Model (undocumented API) | ✅ Live | NBA, NCAAB, NFL, NCAAF, NHL, MLB |
+| OddsTracker Model | Model (nflfastR methodology) | ✅ Live | NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL |
 
-**Benefits:**
-- Show divergence between "market" and "model" probabilities
-- More robust probability estimates
-- Interesting comparison ("The market says X, but ESPN's model says Y")
+**Future sources to evaluate:**
+| Source | Type | Viability | Notes |
+|--------|------|-----------|-------|
+| MoneyPuck | API | High (NHL) | Free JSON API with live game WP |
+| FanGraphs | API | High (MLB) | Free JSON endpoints for live WP |
+| Inpredictable | Web | Medium | College sports models, may need scraping |
+| kenpom.com | Web | Medium | College basketball, paid subscription |
+| FiveThirtyEight | Archive | Low | Shut down, historical Elo data only |
+| Pro Football Reference | Web | ❌ Not viable | No API, ToS blocks scraping, not real-time |
 
-**Legal Considerations:**
-- Undocumented APIs are legal to use (not hacking)
-- ToS violations are civil matters, not criminal
-- Worst case: they block IP, we stop using that source
-- Always have fallbacks; never break if one source is unavailable
+**Architecture for adding a new source:**
+1. Add entry to `WIN_PROB_SOURCES` dict in `win_prob_sources.py`
+2. Write snapshots to `win_prob_snapshots` table with the source key
+3. Chart and API pick it up automatically — no frontend changes needed
+
+**Known limitations:**
+- Stat model requires `game_clock` + `period` from ESPN sync. If ESPN name matching fails for an event, time remaining is unknown and the model can't compute.
+- ESPN's win probability is only available during live games — cannot be backfilled.
+- No pre-game win probability from models (only betting odds available pre-game).
+
+See `docs/win-probability-sources-plan.md` for the full staged rollout plan.
 
 #### 11.5: Historical Events Database
 Build comprehensive database of past games with their probability histories.
