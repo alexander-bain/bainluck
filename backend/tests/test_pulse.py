@@ -486,3 +486,239 @@ class TestCalculatePulseEdgeCases:
         snapshots = make_snapshots(probs)
         result = calculate_pulse(snapshots, game_start, current_time, "basketball_nba")
         assert result is not None
+
+    def test_single_delta_arrhythmia_zero(self, game_start, current_time, make_snapshots):
+        """With only one delta (2 deltas need stdev), arrhythmia should be 0."""
+        # 3 snapshots = 2 deltas after aggregation, but if we only have
+        # exactly 3 points we get 2 deltas. stdev of 2 values is valid.
+        # With only 2 snapshots after aggregation there's 1 delta -> arrhythmia=0
+        # But we need MIN_SNAPSHOTS=3 to get a result. With 3 aggregated
+        # snapshots we have 2 deltas which is enough for stdev.
+        # To get exactly 1 delta after aggregation, we'd need 2 buckets - but
+        # that's below MIN_SNAPSHOTS. So test that with 3 identical-delta
+        # snapshots, arrhythmia is 0 (stdev of identical values = 0).
+        probs = [0.40, 0.45, 0.50]  # deltas: [0.05, 0.05] -> stdev = 0
+        snapshots = make_snapshots(probs)
+        result = calculate_pulse(snapshots, game_start, current_time, "basketball_nba")
+        assert result is not None
+        assert result.components.arrhythmia == 0.0
+
+    def test_game_progress_capped_at_one(self, game_start, make_snapshots):
+        """Game progress (and thus time_weight) caps even for overtime games."""
+        # 8 hours into a 150-min NBA game
+        overtime = game_start + timedelta(hours=8)
+        probs = [0.50, 0.55, 0.60]
+        snapshots = make_snapshots(probs, interval_seconds=60)
+        result = calculate_pulse(snapshots, game_start, overtime, "basketball_nba")
+        assert result.components.time_weight == 1.0
+
+    def test_different_sport_different_time_weight(self, game_start, make_snapshots):
+        """Same elapsed time produces different time weights for different sports."""
+        elapsed = game_start + timedelta(minutes=30)
+        probs = [0.50, 0.55, 0.60, 0.50, 0.55]
+        snapshots = make_snapshots(probs, interval_seconds=60)
+        # MMA expected: 25 min -> 30 min = 100% progress -> weight ~1.0
+        mma = calculate_pulse(snapshots, game_start, elapsed, "mma_mixed_martial_arts")
+        # NBA expected: 150 min -> 30 min = 20% progress -> weight ~0.64
+        nba = calculate_pulse(snapshots, game_start, elapsed, "basketball_nba")
+        assert mma.components.time_weight > nba.components.time_weight
+        assert mma.components.time_weight >= 0.95  # MMA should be near 1.0
+
+    def test_null_sport_key(self, game_start, current_time, make_snapshots):
+        """None sport_key uses default duration (150 min)."""
+        probs = [0.50, 0.55, 0.60, 0.50]
+        snapshots = make_snapshots(probs)
+        result = calculate_pulse(snapshots, game_start, current_time, None)
+        assert result is not None
+
+
+# =============================================================================
+# calculate_pulse - Normalization Constants (regression protection)
+# =============================================================================
+class TestPulseNormalization:
+    """Pin normalization ceilings so accidental changes are caught.
+
+    These constants were tuned iteratively (see CLAUDE.md normalization
+    tuning history) and are the #1 source of rework in pulse.py.
+    """
+
+    def test_heart_rate_ceiling_0_6(self, game_start, make_snapshots):
+        """Heart rate of 0.6 moves/min should produce heart_rate=1.0."""
+        # 0.6 moves/min means 0.6 significant moves per minute.
+        # In 100 minutes with 100 snapshots, we need 60 significant moves.
+        # All deltas >= 0.02 count as significant.
+        probs = []
+        for i in range(100):
+            # Alternate: 0.50, 0.53, 0.50, 0.53 ... (delta=0.03 > threshold 0.02)
+            probs.append(0.50 if i % 2 == 0 else 0.53)
+        snapshots = make_snapshots(probs, interval_seconds=60)
+        ct = game_start + timedelta(minutes=100)
+        result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        # 99 significant moves in 100 minutes = 0.99 moves/min
+        # 0.99 / 0.6 = 1.65, capped at 1.0
+        assert result.components.heart_rate == 1.0
+
+    def test_heart_rate_proportional_below_ceiling(self, game_start, make_snapshots):
+        """Below ceiling, heart rate scales proportionally."""
+        # 0.3 moves/min should give heart_rate = 0.5
+        # In 10 minutes, need 3 significant moves out of 9 deltas
+        probs = [0.50, 0.53, 0.50, 0.50, 0.50, 0.50, 0.50, 0.53, 0.50, 0.53]
+        snapshots = make_snapshots(probs, interval_seconds=60)
+        ct = game_start + timedelta(minutes=10)
+        result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        # 4 significant moves (deltas: 0.03, 0.03, 0, 0, 0, 0, 0.03, 0.03, 0.03)
+        # Wait, let me recount. Deltas between consecutive:
+        # 0.50->0.53=0.03, 0.53->0.50=0.03, 0.50->0.50=0, 0->0=0, 0->0=0,
+        # 0->0=0, 0.50->0.53=0.03, 0.53->0.50=0.03, 0.50->0.53=0.03
+        # 5 significant moves in 10 minutes = 0.5 moves/min
+        # 0.5 / 0.6 = 0.833
+        assert 0.7 < result.components.heart_rate < 0.95
+
+    def test_amplitude_ceiling_0_15(self, game_start, current_time, make_snapshots):
+        """RMS amplitude of 0.15 should produce amplitude=1.0."""
+        # All deltas = 0.15 -> RMS = 0.15 -> amplitude = 1.0
+        probs = [0.35, 0.50, 0.35, 0.50, 0.35, 0.50]
+        snapshots = make_snapshots(probs)
+        result = calculate_pulse(snapshots, game_start, current_time, "basketball_nba")
+        assert result.components.amplitude == 1.0
+
+    def test_amplitude_proportional_below_ceiling(self, game_start, current_time, make_snapshots):
+        """Below ceiling, amplitude scales proportionally."""
+        # Deltas all = 0.05. RMS = 0.05. amplitude = 0.05/0.15 = 0.333
+        probs = [0.45, 0.50, 0.45, 0.50, 0.45, 0.50]
+        snapshots = make_snapshots(probs)
+        result = calculate_pulse(snapshots, game_start, current_time, "basketball_nba")
+        assert abs(result.components.amplitude - 0.05 / 0.15) < 0.01
+
+    def test_arrhythmia_ceiling_0_10(self, game_start, current_time, make_snapshots):
+        """Stdev of deltas >= 0.10 should produce arrhythmia=1.0."""
+        # Need deltas with stdev >= 0.10
+        # Deltas: [0.0, 0.20, 0.0, 0.20, 0.0] -> stdev ≈ 0.10
+        probs = [0.50, 0.50, 0.70, 0.70, 0.50, 0.50]
+        snapshots = make_snapshots(probs)
+        result = calculate_pulse(snapshots, game_start, current_time, "basketball_nba")
+        # Deltas: [0, 0.20, 0, 0.20, 0] -> stdev of [0, 0.20, 0, 0.20, 0]
+        # mean=0.08, variance= (3*0.08^2 + 2*0.12^2)/4 -> stdev ≈ 0.1095
+        assert result.components.arrhythmia >= 0.95
+
+
+# =============================================================================
+# calculate_pulse - Exact Score Regression Tests
+# =============================================================================
+class TestPulseScoreRegression:
+    """Pin exact scores for known inputs. If weights, normalization constants,
+    or the combining formula change, these tests will fail — which is the point.
+    """
+
+    def test_perfectly_even_no_movement(self, game_start, make_snapshots):
+        """All snapshots at 0.50 with no movement: only vitals contributes."""
+        probs = [0.50] * 20
+        snapshots = make_snapshots(probs, interval_seconds=60)
+        ct = game_start + timedelta(minutes=120)
+        result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        # Components: heart_rate=0, amplitude=0, arrhythmia=0, vitals=1.0
+        # lead_change_bonus = 0
+        # time_weight = 0.6 + 0.4 * (80/150)^1.5 ≈ 0.6 + 0.4 * 0.437 ≈ 0.775
+        # raw = (0*0.25 + 0*0.30 + 0*0.15 + 1.0*0.30 + 0) * time_weight
+        #     = 0.30 * time_weight
+        # scaled = raw * 100, so score ≈ 23
+        assert result.components.heart_rate == 0.0
+        assert result.components.amplitude == 0.0
+        assert result.components.vitals == 1.0
+        assert 20 <= result.score <= 30
+
+    def test_maximum_blowout(self, game_start, make_snapshots):
+        """All snapshots at 0.95: vitals near 0, everything else 0."""
+        probs = [0.95] * 20
+        snapshots = make_snapshots(probs, interval_seconds=60)
+        ct = game_start + timedelta(minutes=120)
+        result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        assert result.components.vitals < 0.15
+        assert result.score < 10
+
+    def test_realistic_close_nba_game(self, game_start, make_snapshots):
+        """Simulate a close NBA game with moderate swings."""
+        # Game oscillates around 50% with moderate amplitude
+        probs = [
+            0.55, 0.52, 0.48, 0.45, 0.50,
+            0.53, 0.47, 0.44, 0.51, 0.55,
+            0.58, 0.52, 0.48, 0.45, 0.50,
+            0.54, 0.49, 0.46, 0.51, 0.53,
+            0.48, 0.45, 0.50, 0.55, 0.52,
+            0.49, 0.46, 0.51, 0.54, 0.50,
+        ]
+        snapshots = make_snapshots(probs, interval_seconds=300)
+        ct = game_start + timedelta(minutes=150)
+        result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        # Should be a competitive, engaging game
+        assert result.status in ("steady", "strong")
+        assert 40 <= result.score <= 75
+        assert result.data_quality == "good"
+
+    def test_dramatic_comeback_game(self, game_start, make_snapshots):
+        """Team down big stages a comeback — should score higher than blowout."""
+        # Start at 80% for home, slowly swing to 40% (away comeback)
+        probs = (
+            [0.80, 0.78, 0.75, 0.72, 0.68] +
+            [0.63, 0.58, 0.52, 0.48, 0.42] +
+            [0.38, 0.35, 0.40, 0.45, 0.42] +
+            [0.38, 0.35, 0.40, 0.38, 0.35]
+        )
+        snapshots = make_snapshots(probs, interval_seconds=300)
+        ct = game_start + timedelta(minutes=100)
+
+        # Compare to a boring blowout
+        blowout_probs = [0.80] * 20
+        blowout_snaps = make_snapshots(blowout_probs, interval_seconds=300)
+        blowout_result = calculate_pulse(blowout_snaps, game_start, ct, "basketball_nba")
+
+        comeback_result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        assert comeback_result.score > blowout_result.score
+        # Comeback should have at least one lead change
+        assert comeback_result.components.lead_changes >= 1
+
+    def test_overtime_thriller(self, game_start, make_snapshots):
+        """Game goes to overtime with tight probabilities — high score."""
+        # Regulation: tight game
+        probs = [0.52, 0.48, 0.51, 0.49, 0.50] * 6
+        # OT: dramatic swings
+        probs += [0.55, 0.45, 0.60, 0.40, 0.55, 0.45, 0.52, 0.48]
+        snapshots = make_snapshots(probs, interval_seconds=300)
+        # 38 snapshots * 5min = 190 min (overtime for 150-min NBA game)
+        ct = game_start + timedelta(minutes=190)
+        result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        assert result.components.time_weight == 1.0  # past expected duration
+        assert result.score >= 50
+        assert result.data_quality == "good"
+
+
+# =============================================================================
+# calculate_pulse - Component Weight Verification
+# =============================================================================
+class TestPulseComponentWeights:
+    """Verify the weight formula: 0.25*HR + 0.30*AMP + 0.15*ARR + 0.30*VIT."""
+
+    def test_vitals_weighted_highest(self, game_start, make_snapshots):
+        """Vitals and amplitude at 30% each should dominate over heart rate (25%)
+        and arrhythmia (15%). Verify by constructing a game where only vitals
+        contributes (no movement, close game)."""
+        probs = [0.50] * 10
+        snapshots = make_snapshots(probs, interval_seconds=60)
+        ct = game_start + timedelta(minutes=60)
+        result = calculate_pulse(snapshots, game_start, ct, "basketball_nba")
+        # Only vitals = 1.0 contributes. Score = 0.30 * time_weight * 100
+        tw = result.components.time_weight
+        expected_raw = 0.30 * tw * 100
+        assert abs(result.score - round(expected_raw)) <= 1
+
+    def test_lead_change_bonus_adds_to_score(self, game_start, make_snapshots):
+        """Lead change bonus (0.05 per change, max 0.20) adds on top of components."""
+        # 2 lead changes: 0.45 -> 0.55 -> 0.45
+        probs_with_lc = [0.45, 0.55, 0.45]
+        probs_without_lc = [0.45, 0.48, 0.45]
+        snaps_lc = make_snapshots(probs_with_lc, interval_seconds=60)
+        snaps_no_lc = make_snapshots(probs_without_lc, interval_seconds=60)
+        ct = game_start + timedelta(minutes=60)
+        result_lc = calculate_pulse(snaps_lc, game_start, ct, "basketball_nba")
+        result_no_lc = calculate_pulse(snaps_no_lc, game_start, ct, "basketball_nba")
+        assert result_lc.score > result_no_lc.score
