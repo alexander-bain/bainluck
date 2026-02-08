@@ -413,8 +413,12 @@ function TVLeaderboard({
 // ---------------------------------------------------------------------------
 const AD_MEDAL_EMOJIS = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"]; // gold, silver, bronze
 
+const AD_SCROLL_LIMIT = 32;
+
 function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
   const [playingId, setPlayingId] = useState<string | null>(null);
+  // Show all ranks but only scroll through the top entries
+  const displayAds = ads.slice(0, AD_SCROLL_LIMIT);
 
   // --- Inline video player ---
   if (playingId) {
@@ -460,13 +464,13 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
           Ad Leaderboard
         </h3>
         <span className="text-white/30 text-[1.1vh]">
-          {ads.length} ads
+          Top {displayAds.length} of {ads.length} ads
         </span>
       </div>
 
       <AutoScrollContainer className="flex-1 min-h-0" speed={0.2}>
         <div className="space-y-[0.2vh]">
-          {ads.map((ad, i) => {
+          {displayAds.map((ad, i) => {
             const isTop3 = i < 3;
             const hasVideo = !!ad.video_id;
             const hasViews = ad.views > 0;

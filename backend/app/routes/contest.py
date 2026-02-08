@@ -2567,10 +2567,14 @@ async def _fetch_youtube_ads() -> list[dict]:
                 "published_at": "",
             })
 
-    # Cache result
+    # Cache result — only cache with full TTL if we got real YouTube data.
+    # If YouTube API failed (all ads have views=0), use a short TTL so the
+    # next request retries quickly instead of serving stale zero-view data.
+    has_real_data = any(ad.get("video_id") for ad in ads)
     try:
         r = _redis()
-        r.setex(cache_key, _youtube_cache_ttl(), json.dumps(ads))
+        ttl = _youtube_cache_ttl() if has_real_data else 30  # 30s retry on failure
+        r.setex(cache_key, ttl, json.dumps(ads))
     except Exception:
         pass
 
@@ -2788,22 +2792,36 @@ async def get_ad_leaderboard():
 
         # Check if we need to auto-reset for game mode transition
         if mode == "game" and not r.get(auto_reset_key):
-            # First request in this mode — reset baseline
-            r.delete(baseline_key)
-            r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")  # clear cache too
-            # Mark that we've reset for this mode (expires in 12 hours)
-            r.setex(auto_reset_key, 43200, "1")
+            # Save old data as fallback before clearing cache
+            old_cache = r.get(f"{REDIS_KEY_PREFIX}youtube_ads")
+            r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")  # clear cache to force fresh fetch
             logger.info(f"Auto-reset ad baseline for mode={mode}")
             # Re-fetch with fresh cache
             ads = await _fetch_youtube_ads()
+
+            has_real_data = any(ad.get("video_id") for ad in ads)
+            if has_real_data:
+                # Fresh fetch succeeded — reset baseline and mark reset done
+                r.delete(baseline_key)
+                r.setex(auto_reset_key, 43200, "1")
+            else:
+                # YouTube API failed — restore old cache so we don't lose data.
+                # Don't set auto_reset_key so we retry on next request.
+                logger.warning("Auto-reset: YouTube fetch returned no real data, restoring old cache")
+                if old_cache:
+                    r.setex(f"{REDIS_KEY_PREFIX}youtube_ads", _youtube_cache_ttl(), old_cache)
+                    ads = json.loads(old_cache)
 
         cached_baseline = r.get(baseline_key)
         if cached_baseline:
             baseline = json.loads(cached_baseline)
         elif ads:
-            # First fetch — snapshot current view counts as baseline (expires in 24h)
-            baseline = {ad["video_id"]: ad["views"] for ad in ads if ad["video_id"]}
-            r.setex(baseline_key, 86400, json.dumps(baseline))
+            # First fetch — snapshot current view counts as baseline (expires in 24h).
+            # Only include ads with real video data.
+            real_ads = {ad["video_id"]: ad["views"] for ad in ads if ad["video_id"] and ad["views"] > 0}
+            if real_ads:
+                baseline = real_ads
+                r.setex(baseline_key, 86400, json.dumps(baseline))
     except Exception:
         pass
 
