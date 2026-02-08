@@ -2614,11 +2614,16 @@ async def _sync_espn_live_events():
                                         if event.opening_home_spread is not None:
                                             pregame_spread = float(event.opening_home_spread)
 
+                                        # Prefer numeric period for reliability
+                                        period_str = ee.status_detail
+                                        if ee.period and not period_str:
+                                            period_str = str(ee.period)
+
                                         stat_wp = compute_statistical_win_prob(
                                             home_score=ee.home_score,
                                             away_score=ee.away_score,
                                             clock=ee.clock,
-                                            period=ee.status_detail,
+                                            period=period_str,
                                             sport_key=sport_key,
                                             pregame_spread=pregame_spread,
                                         )
@@ -2643,8 +2648,19 @@ async def _sync_espn_live_events():
                                             )
                                             session.add(stat_snap)
                                             stats["stat_model_computed"] = stats.get("stat_model_computed", 0) + 1
-                                    except Exception:
-                                        pass  # Model or table not available
+                                        else:
+                                            logger.warning(
+                                                f"stat_model returned None for event {event.id} "
+                                                f"(sport={sport_key}, clock={ee.clock!r}, period={ee.status_detail!r}, "
+                                                f"score={ee.home_score}-{ee.away_score})"
+                                            )
+                                    except Exception as e:
+                                        logger.error(f"stat_model error for event {event.id}: {e}")
+                                else:
+                                    if ee.home_score is None or ee.away_score is None:
+                                        stats["stat_model_no_score"] = stats.get("stat_model_no_score", 0) + 1
+                                    elif not ee.clock:
+                                        stats["stat_model_no_clock"] = stats.get("stat_model_no_clock", 0) + 1
 
                                 if changed:
                                     stats["events_updated"] += 1

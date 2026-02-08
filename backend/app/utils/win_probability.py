@@ -69,18 +69,29 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
     # Parse period to determine how many periods are left
     period_lower = period.lower().strip()
 
+    # Extract numeric period from various formats: "1", "Q1", "q2", etc.
+    period_num = None
+    if period_lower.isdigit():
+        period_num = int(period_lower)
+    elif len(period_lower) == 2 and period_lower[0] in ("q", "p") and period_lower[1].isdigit():
+        period_num = int(period_lower[1])
+
+    def _match_period(n: int, ordinal: str) -> bool:
+        """Check if period matches a given period number or ordinal string."""
+        return period_num == n or ordinal in period_lower
+
     if sport_key.startswith("football_"):
         # NFL/NCAAF: Q1-Q4, each 15 minutes (900s)
         period_seconds = 900
-        if "1" in period_lower or "1st" in period_lower:
+        if _match_period(1, "1st"):
             periods_remaining_after = 3
-        elif "2" in period_lower or "2nd" in period_lower:
+        elif _match_period(2, "2nd"):
             periods_remaining_after = 2
-        elif "3" in period_lower or "3rd" in period_lower:
+        elif _match_period(3, "3rd"):
             periods_remaining_after = 1
-        elif "4" in period_lower or "4th" in period_lower:
+        elif _match_period(4, "4th"):
             periods_remaining_after = 0
-        elif "ot" in period_lower or "overtime" in period_lower:
+        elif "ot" in period_lower or "overtime" in period_lower or (period_num is not None and period_num >= 5):
             # OT: treat as ~2.5 min remaining, low variance
             return 150
         elif "half" in period_lower:
@@ -92,29 +103,29 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
 
     elif sport_key.startswith("basketball_"):
         if sport_key == "basketball_ncaab":
-            # NCAA: 2 halves of 20 minutes each
-            if "1" in period_lower or "1st" in period_lower:
+            # NCAA men's: 2 halves of 20 minutes each
+            if _match_period(1, "1st"):
                 return 1200 + clock_seconds  # 20 min of 2nd half + current clock
-            elif "2" in period_lower or "2nd" in period_lower:
+            elif _match_period(2, "2nd"):
                 return clock_seconds
-            elif "ot" in period_lower or "overtime" in period_lower:
+            elif "ot" in period_lower or "overtime" in period_lower or (period_num is not None and period_num >= 3):
                 return clock_seconds  # OT is just current clock
             elif "half" in period_lower:
                 return 1200
             else:
                 return None
         else:
-            # NBA: 4 quarters of 12 minutes (720s each)
+            # NBA / WNCAAB: 4 quarters of 12 minutes (720s each)
             period_seconds = 720
-            if "1" in period_lower or "1st" in period_lower:
+            if _match_period(1, "1st"):
                 periods_remaining_after = 3
-            elif "2" in period_lower or "2nd" in period_lower:
+            elif _match_period(2, "2nd"):
                 periods_remaining_after = 2
-            elif "3" in period_lower or "3rd" in period_lower:
+            elif _match_period(3, "3rd"):
                 periods_remaining_after = 1
-            elif "4" in period_lower or "4th" in period_lower:
+            elif _match_period(4, "4th"):
                 periods_remaining_after = 0
-            elif "ot" in period_lower or "overtime" in period_lower:
+            elif "ot" in period_lower or "overtime" in period_lower or (period_num is not None and period_num >= 5):
                 return clock_seconds
             elif "half" in period_lower:
                 return 1440
@@ -125,18 +136,18 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
     elif sport_key.startswith("hockey_"):
         # NHL: 3 periods of 20 minutes (1200s each)
         period_seconds = 1200
-        if "1" in period_lower or "1st" in period_lower:
+        if _match_period(1, "1st"):
             periods_remaining_after = 2
-        elif "2" in period_lower or "2nd" in period_lower:
+        elif _match_period(2, "2nd"):
             periods_remaining_after = 1
-        elif "3" in period_lower or "3rd" in period_lower:
+        elif _match_period(3, "3rd"):
             periods_remaining_after = 0
-        elif "ot" in period_lower or "overtime" in period_lower:
+        elif "ot" in period_lower or "overtime" in period_lower or (period_num is not None and period_num >= 4):
             return clock_seconds
         elif "intermission" in period_lower:
-            if "1" in period_lower:
+            if "1st" in period_lower:
                 return 2400
-            elif "2" in period_lower:
+            elif "2nd" in period_lower:
                 return 1200
             else:
                 return 1200
