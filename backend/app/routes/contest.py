@@ -859,7 +859,10 @@ async def _auto_resolve_from_game_state(db: AsyncSession) -> list[str]:
             newly_resolved.append("bitcoin")
 
     # --- Claude web search for remaining props (anthem, coin toss result, etc.) ---
-    if event.status in ("live", "completed", "closed"):
+    # Run during pregame window too — anthem/coin toss happen before the event goes "live"
+    now = datetime.now(timezone.utc)
+    in_game_window = now >= PREGAME_START_UTC
+    if event.status in ("live", "completed", "closed") or in_game_window:
         try:
             ws_resolved = await _auto_resolve_via_web_search(resolutions)
             newly_resolved.extend(ws_resolved)
@@ -1372,7 +1375,17 @@ async def _resolve_bitcoin() -> Optional[str]:
 # Claude web search auto-resolution (for props without data feeds)
 # ---------------------------------------------------------------------------
 
-WEB_SEARCH_CACHE_TTL = 300  # 5 minutes between web search checks
+def _web_search_cache_ttl() -> int:
+    """Dynamic rate limit for web search — faster during game window."""
+    now = datetime.now(timezone.utc)
+    if GAME_START_UTC <= now <= GAME_END_UTC:
+        return 120  # 2 minutes during game
+    if PREGAME_START_UTC <= now < GAME_START_UTC:
+        return 180  # 3 minutes during pregame
+    return 300  # 5 minutes otherwise
+
+
+WEB_SEARCH_CACHE_TTL = 300  # fallback default; use _web_search_cache_ttl() for dynamic
 
 WEB_SEARCH_PROPS = {
     "anthem_length": {
@@ -1435,13 +1448,14 @@ async def _auto_resolve_via_web_search(resolutions: dict) -> list[str]:
     if not unresolved:
         return []
 
-    # Rate limit: only run web search every 5 minutes
+    # Rate limit: dynamic interval based on game time (2-5 minutes)
+    cache_ttl = _web_search_cache_ttl()
     try:
         r = _redis()
         last_check = r.get(f"{REDIS_KEY_PREFIX}web_search_last_check")
         if last_check:
             elapsed = time.time() - float(last_check)
-            if elapsed < WEB_SEARCH_CACHE_TTL:
+            if elapsed < cache_ttl:
                 return []
         r.set(f"{REDIS_KEY_PREFIX}web_search_last_check", str(time.time()))
     except Exception:
@@ -1518,10 +1532,10 @@ async def _auto_resolve_via_web_search(resolutions: dict) -> list[str]:
             answer_text = answer_text.strip().strip('"').strip("'")
 
             if "NOT_AVAILABLE" in answer_text.upper() or not answer_text:
-                # Cache the "not available" result for 5 minutes
+                # Cache the "not available" result using dynamic TTL
                 try:
                     r = _redis()
-                    r.setex(cache_key, WEB_SEARCH_CACHE_TTL, json.dumps({"answer": "__NOT_AVAILABLE__"}))
+                    r.setex(cache_key, cache_ttl, json.dumps({"answer": "__NOT_AVAILABLE__"}))
                 except Exception:
                     pass
                 logger.info(f"Web search: {prop_id} = NOT_AVAILABLE")
@@ -1542,7 +1556,7 @@ async def _auto_resolve_via_web_search(resolutions: dict) -> list[str]:
                 # Cache the result
                 try:
                     r = _redis()
-                    r.setex(cache_key, WEB_SEARCH_CACHE_TTL, json.dumps({"answer": matched}))
+                    r.setex(cache_key, cache_ttl, json.dumps({"answer": matched}))
                 except Exception:
                     pass
 
@@ -2059,6 +2073,48 @@ async def unresolve_prop(
         _save_resolution_state(resolutions)
         return {"status": "unresolved", "prop_id": prop_id}
     return {"error": f"Prop {prop_id} was not resolved"}
+
+
+@router.post("/force-resolve")
+async def force_web_search_resolve(
+    secret: str = Query("", description="Admin secret"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: force-run web search auto-resolution NOW, bypassing rate limit.
+
+    Clears cached NOT_AVAILABLE results and rate limit timer so all
+    unresolved web search props are re-checked immediately.
+    """
+    resolutions = _get_resolution_state()
+
+    # Clear rate limit and cached "not available" results
+    try:
+        r = _redis()
+        r.delete(f"{REDIS_KEY_PREFIX}web_search_last_check")
+        for prop_id in WEB_SEARCH_PROPS:
+            if prop_id not in resolutions:
+                r.delete(f"{REDIS_KEY_PREFIX}ws_{prop_id}")
+    except Exception:
+        pass
+
+    # Also force auto-resolve from game state (ESPN play-by-play, etc.)
+    all_resolved = []
+    try:
+        game_resolved = await _auto_resolve_from_game_state(db)
+        all_resolved.extend(game_resolved)
+    except Exception as e:
+        logger.error(f"Force-resolve game state error: {e}")
+
+    resolutions = _get_resolution_state()
+    resolved_ids = [pid for pid in resolutions]
+    unresolved_ids = [pid for pid in WEB_SEARCH_PROPS if pid not in resolutions]
+
+    return {
+        "status": "triggered",
+        "newly_resolved": all_resolved,
+        "already_resolved": resolved_ids,
+        "still_unresolved": unresolved_ids,
+    }
 
 
 @router.post("/update-odds")
