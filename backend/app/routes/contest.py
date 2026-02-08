@@ -2472,6 +2472,22 @@ async def get_ad_leaderboard():
     }
 
 
+@router.post("/reset-ad-baseline")
+async def reset_ad_baseline(secret: str = Query("", description="Admin secret")):
+    """Admin: reset the ad view baseline so deltas restart from NOW.
+
+    Call this at kickoff so the +/- movement shows views gained during the game.
+    """
+    try:
+        r = _redis()
+        # Delete baseline AND cache so next fetch snapshots fresh counts
+        r.delete(f"{REDIS_KEY_PREFIX}ad_baseline")
+        r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")
+        return {"status": "reset", "message": "Ad baseline cleared — next fetch will snapshot new baseline"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.post("/reset")
 async def reset_contest(secret: str = Query("", description="Admin secret")):
     """Admin: reset all resolutions and overrides."""
@@ -2482,6 +2498,7 @@ async def reset_contest(secret: str = Query("", description="Admin secret")):
         r.delete(f"{REDIS_KEY_PREFIX}halftime_scores")
         r.delete(f"{REDIS_KEY_PREFIX}btc_start_price")
         r.delete(f"{REDIS_KEY_PREFIX}espn_summary")
+        r.delete(f"{REDIS_KEY_PREFIX}ad_baseline")
         return {"status": "reset", "message": "All resolutions, overrides, and cached data cleared"}
     except Exception as e:
         return {"error": str(e)}
