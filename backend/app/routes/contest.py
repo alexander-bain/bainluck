@@ -2573,77 +2573,11 @@ def _format_view_count(views: int) -> str:
     return str(views)
 
 
-@router.get("/ads")
-async def get_ad_leaderboard():
-    """Get Super Bowl ad leaderboard ranked by YouTube views."""
-    ads = await _fetch_youtube_ads()
-    mode = _youtube_mode()
-
-    # --- Auto-reset baseline at 2PM Pacific (game start) ---
-    # Automatically reset the baseline so view deltas track game-time growth.
-    baseline_key = f"{REDIS_KEY_PREFIX}ad_baseline"
-    auto_reset_key = f"{REDIS_KEY_PREFIX}ad_auto_reset:game"
-    baseline: dict[str, int] = {}
-    try:
-        r = _redis()
-
-        # Check if we need to auto-reset for game mode transition
-        if mode == "game" and not r.get(auto_reset_key):
-            # First request in this mode — reset baseline
-            r.delete(baseline_key)
-            r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")  # clear cache too
-            # Mark that we've reset for this mode (expires in 12 hours)
-            r.setex(auto_reset_key, 43200, "1")
-            logger.info(f"Auto-reset ad baseline for mode={mode}")
-            # Re-fetch with fresh cache
-            ads = await _fetch_youtube_ads()
-
-        cached_baseline = r.get(baseline_key)
-        if cached_baseline:
-            baseline = json.loads(cached_baseline)
-        elif ads:
-            # First fetch — snapshot current view counts as baseline (expires in 24h)
-            baseline = {ad["video_id"]: ad["views"] for ad in ads if ad["video_id"]}
-            r.setex(baseline_key, 86400, json.dumps(baseline))
-    except Exception:
-        pass
-
-    # Compute deltas from baseline
-    has_any_delta = False
-    for ad in ads:
-        ad["views_formatted"] = _format_view_count(ad["views"])
-        ad["likes_formatted"] = _format_view_count(ad["likes"])
-        base_views = baseline.get(ad["video_id"], ad["views"])
-        delta = max(0, ad["views"] - base_views)
-        ad["views_delta"] = delta
-        ad["views_delta_formatted"] = f"+{_format_view_count(delta)}" if delta > 0 else ""
-        if delta > 0:
-            has_any_delta = True
-
-    # Once deltas exist, rank by views gained
-    if has_any_delta:
-        ads.sort(key=lambda x: -x["views_delta"])
-
-    for i, ad in enumerate(ads):
-        ad["rank"] = i + 1
-
-    with_video = sum(1 for ad in ads if ad.get("video_id"))
-    ttl = _youtube_cache_ttl()
-    return {
-        "ads": ads,
-        "count": len(ads),
-        "with_video": with_video,
-        "youtube_configured": bool(YOUTUBE_API_KEY),
-        "cache_ttl_seconds": ttl,
-        "mode": mode,
-    }
-
-
 @router.get("/ads/debug")
 async def debug_youtube_search():
     """Debug: run a fresh YouTube search and show raw results + brand matching.
 
-    Does NOT update the cache. Costs ~200 quota units (2 searches).
+    Does NOT update the cache. Costs ~500 quota units (2 broad + 3 targeted).
     """
     if not YOUTUBE_API_KEY:
         return {"error": "YOUTUBE_API_KEY not set"}
@@ -2773,6 +2707,72 @@ async def get_ad_status():
         status["redis_error"] = str(e)
 
     return status
+
+
+@router.get("/ads")
+async def get_ad_leaderboard():
+    """Get Super Bowl ad leaderboard ranked by YouTube views."""
+    ads = await _fetch_youtube_ads()
+    mode = _youtube_mode()
+
+    # --- Auto-reset baseline at 2PM Pacific (game start) ---
+    # Automatically reset the baseline so view deltas track game-time growth.
+    baseline_key = f"{REDIS_KEY_PREFIX}ad_baseline"
+    auto_reset_key = f"{REDIS_KEY_PREFIX}ad_auto_reset:game"
+    baseline: dict[str, int] = {}
+    try:
+        r = _redis()
+
+        # Check if we need to auto-reset for game mode transition
+        if mode == "game" and not r.get(auto_reset_key):
+            # First request in this mode — reset baseline
+            r.delete(baseline_key)
+            r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")  # clear cache too
+            # Mark that we've reset for this mode (expires in 12 hours)
+            r.setex(auto_reset_key, 43200, "1")
+            logger.info(f"Auto-reset ad baseline for mode={mode}")
+            # Re-fetch with fresh cache
+            ads = await _fetch_youtube_ads()
+
+        cached_baseline = r.get(baseline_key)
+        if cached_baseline:
+            baseline = json.loads(cached_baseline)
+        elif ads:
+            # First fetch — snapshot current view counts as baseline (expires in 24h)
+            baseline = {ad["video_id"]: ad["views"] for ad in ads if ad["video_id"]}
+            r.setex(baseline_key, 86400, json.dumps(baseline))
+    except Exception:
+        pass
+
+    # Compute deltas from baseline
+    has_any_delta = False
+    for ad in ads:
+        ad["views_formatted"] = _format_view_count(ad["views"])
+        ad["likes_formatted"] = _format_view_count(ad["likes"])
+        base_views = baseline.get(ad["video_id"], ad["views"])
+        delta = max(0, ad["views"] - base_views)
+        ad["views_delta"] = delta
+        ad["views_delta_formatted"] = f"+{_format_view_count(delta)}" if delta > 0 else ""
+        if delta > 0:
+            has_any_delta = True
+
+    # Once deltas exist, rank by views gained
+    if has_any_delta:
+        ads.sort(key=lambda x: -x["views_delta"])
+
+    for i, ad in enumerate(ads):
+        ad["rank"] = i + 1
+
+    with_video = sum(1 for ad in ads if ad.get("video_id"))
+    ttl = _youtube_cache_ttl()
+    return {
+        "ads": ads,
+        "count": len(ads),
+        "with_video": with_video,
+        "youtube_configured": bool(YOUTUBE_API_KEY),
+        "cache_ttl_seconds": ttl,
+        "mode": mode,
+    }
 
 
 @router.post("/reset-ad-baseline")
