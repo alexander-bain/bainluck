@@ -1718,8 +1718,8 @@ export default function TVPage({ params }: TVPageProps) {
         </div>
       )}
 
-      {/* Keyframe animations */}
-      <style jsx global>{`
+      {/* Keyframe animations — plain <style> tag works in App Router client components */}
+      <style dangerouslySetInnerHTML={{ __html: `
         @keyframes resolutionSlideIn {
           from { transform: scale(0.8) translateY(20px); opacity: 0; }
           to { transform: scale(1) translateY(0); opacity: 1; }
@@ -1760,7 +1760,7 @@ export default function TVPage({ params }: TVPageProps) {
           0%, 100% { opacity: 0.3; }
           50% { opacity: 1; }
         }
-      `}</style>
+      ` }} />
 
       {/* QR Code Overlay */}
       {showQR && (
