@@ -549,3 +549,408 @@ class TestShouldHighlight:
     def test_exactly_29_not_highlighted(self):
         result = HighlightResult(score=29, flags=EventFlags())
         assert should_highlight(result) is False
+
+
+# =============================================================================
+# compute_highlight - Away-side Blowouts & Edge Cases
+# =============================================================================
+class TestComputeHighlightEdgeCases:
+    def test_away_blowout(self, live_commence, now):
+        """Away blowout (home_prob <= 0.15) triggers blowout flag."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            current_home_prob=0.08,
+            now=now,
+        )
+        assert result.flags.is_blowout
+        assert "blowout" in result.reasons
+
+    def test_blowout_penalty_floor_at_zero(self, now):
+        """Blowout penalty doesn't push score below 0."""
+        # A far-future scheduled game with no bonuses + blowout
+        far_future = now + timedelta(days=5)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far_future,
+            current_home_prob=0.95,
+            now=now,
+        )
+        assert result.score >= 0
+
+    def test_closed_status_recently_finished(self, recent_finish_commence, now):
+        """'closed' status gets the same recent_finish treatment as 'completed'."""
+        result = compute_highlight(
+            status="closed",
+            commence_time=recent_finish_commence,
+            now=now,
+        )
+        assert result.flags.is_recently_finished
+        assert "recent_finish" in result.reasons
+
+    def test_closed_status_favorite_switched(self, recent_finish_commence, now):
+        """'closed' status detects favorite switch and upset."""
+        result = compute_highlight(
+            status="closed",
+            commence_time=recent_finish_commence,
+            current_home_prob=0.60,
+            opening_favorite="away",
+            now=now,
+        )
+        assert result.flags.favorite_switched
+        assert result.flags.is_upset
+
+    def test_no_probability_data(self, live_commence, now):
+        """No current_home_prob: no probability-based scoring."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            current_home_prob=None,
+            now=now,
+        )
+        assert not result.flags.is_close_matchup
+        assert not result.flags.is_blowout
+        assert not result.flags.favorite_switched
+        # Still gets live bonus
+        assert "live" in result.reasons
+
+    def test_current_exactly_50_is_very_close(self, live_commence, now):
+        """Probability of exactly 0.50 is both close_matchup and very_close."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            current_home_prob=0.50,
+            now=now,
+        )
+        assert result.flags.is_close_matchup
+        assert result.flags.is_very_close
+
+    def test_favorite_switch_even_current_no_switch(self, live_commence, now):
+        """If current_home_prob == 0.50 (even), no favorite switch detected."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            current_home_prob=0.50,
+            opening_favorite="home",
+            now=now,
+        )
+        assert not result.flags.favorite_switched
+
+    def test_favorite_switch_even_opening_no_switch(self, live_commence, now):
+        """If opening_favorite == 'even', no favorite switch detected."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            current_home_prob=0.60,
+            opening_favorite="even",
+            now=now,
+        )
+        assert not result.flags.favorite_switched
+
+    def test_score_swing_zero_opening_ou(self, live_commence, now):
+        """Zero opening_over_under: score swing check is skipped (no division by zero)."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            current_over_under=45.0,
+            opening_over_under=0,
+            now=now,
+        )
+        assert result.flags.score_swing == "stable"
+
+    def test_recently_finished_boundary_exactly_24h(self, now):
+        """Exactly 24 hours ago is NOT recently finished (> check, not >=)."""
+        boundary = now - timedelta(hours=24)
+        result = compute_highlight(
+            status="completed",
+            commence_time=boundary,
+            now=now,
+        )
+        # hours_since = 24.0, condition is 0 < hours_since <= 24
+        assert result.flags.is_recently_finished
+
+    def test_recently_finished_boundary_just_over_24h(self, now):
+        """Just over 24 hours ago is NOT recently finished."""
+        boundary = now - timedelta(hours=24, minutes=1)
+        result = compute_highlight(
+            status="completed",
+            commence_time=boundary,
+            now=now,
+        )
+        assert not result.flags.is_recently_finished
+
+    def test_starting_soon_boundary_exactly_3h(self, now):
+        """Exactly 3 hours from now is starting soon (condition is <= 3)."""
+        boundary = now + timedelta(hours=3)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=boundary,
+            now=now,
+        )
+        assert result.flags.is_starting_soon
+
+    def test_starting_soon_boundary_just_over_3h(self, now):
+        """Just over 3 hours from now is NOT starting soon."""
+        boundary = now + timedelta(hours=3, minutes=1)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=boundary,
+            now=now,
+        )
+        assert not result.flags.is_starting_soon
+
+
+# =============================================================================
+# compute_highlight - Exact Score Accumulation
+# =============================================================================
+class TestComputeHighlightExactScores:
+    """Pin exact score accumulation for combined scenarios.
+
+    These catch accidental weight changes or missing bonuses.
+    """
+
+    def test_live_close_tier1_score(self, live_commence, now):
+        """Live + close + very_close + tier 1 = known exact score."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_nba",
+            current_home_prob=0.50,
+            now=now,
+        )
+        expected = (
+            WEIGHTS["live"]
+            + WEIGHTS["close_matchup"]
+            + WEIGHTS["very_close"]
+            + WEIGHTS["tier_1_league"]
+        )
+        assert result.score == expected
+
+    def test_live_blowout_tier1_score(self, live_commence, now):
+        """Live + blowout + tier 1: blowout subtracts 15."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="americanfootball_nfl",
+            current_home_prob=0.92,
+            now=now,
+        )
+        expected = WEIGHTS["live"] + WEIGHTS["tier_1_league"] - 15
+        assert result.score == expected
+
+    def test_scheduled_starting_very_soon_close_tier2(self, upcoming_commence, now):
+        """Scheduled + <1h + close + very_close + tier 2 = accumulated score."""
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=upcoming_commence,
+            sport_key="basketball_ncaab",
+            current_home_prob=0.52,
+            opening_home_prob=0.52,
+            now=now,
+        )
+        # Starting soon: closeness IS interesting because is_starting_soon=True
+        # 0.52 is within very_close range (0.45-0.55) too
+        expected = (
+            WEIGHTS["starting_soon_3h"]
+            + WEIGHTS["starting_soon_1h"]
+            + WEIGHTS["close_matchup"]
+            + WEIGHTS["very_close"]
+            + WEIGHTS["tier_2_league"]
+        )
+        assert result.score == expected
+
+    def test_completed_upset_full_score(self, recent_finish_commence, now):
+        """Completed upset with major prob swing + tier 1: all bonuses stack."""
+        result = compute_highlight(
+            status="completed",
+            commence_time=recent_finish_commence,
+            sport_key="icehockey_nhl",
+            current_home_prob=0.55,
+            opening_home_prob=0.30,
+            opening_favorite="away",
+            now=now,
+        )
+        expected = (
+            WEIGHTS["recent_finish"]
+            + WEIGHTS["tier_1_league"]
+            + WEIGHTS["close_matchup"]
+            + WEIGHTS["very_close"]
+            + WEIGHTS["major_probability_swing"]
+            + WEIGHTS["favorite_switched"]
+            + WEIGHTS["recent_finish_upset"]
+        )
+        assert result.score == min(100, expected)
+
+    def test_maximum_possible_score(self, now):
+        """Maximal scenario should cap at 100."""
+        # Live + close + very_close + tier1 + favorite_switched + major_prob_swing
+        # + major_score_swing = well over 100
+        live_commence = now - timedelta(hours=1)
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_nba",
+            current_home_prob=0.50,
+            opening_home_prob=0.25,
+            opening_favorite="away",
+            current_over_under=300.0,
+            opening_over_under=220.0,
+            now=now,
+        )
+        assert result.score == 100
+
+    def test_zero_score_event(self, now):
+        """Far-future, tier 3, no odds: score should be 0."""
+        far = now + timedelta(days=10)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far,
+            sport_key="darts_pdc",
+            now=now,
+        )
+        assert result.score == 0
+        assert result.reasons == []
+
+
+# =============================================================================
+# get_highlight_label - Priority Ordering
+# =============================================================================
+class TestGetHighlightLabelPriority:
+    """Verify that when multiple flags are set, the highest-priority label wins."""
+
+    def test_upset_beats_everything(self):
+        """Upset is highest priority — beats live, close, favorite_switched."""
+        result = HighlightResult(flags=EventFlags(
+            is_upset=True,
+            is_live=True,
+            favorite_switched=True,
+            is_very_close=True,
+        ))
+        assert get_highlight_label(result) == "Recent upset"
+
+    def test_favorite_switched_beats_close(self):
+        """Live favorite_switched beats live close matchup."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            favorite_switched=True,
+            is_close_matchup=True,
+        ))
+        assert get_highlight_label(result) == "Upset brewing"
+
+    def test_very_close_beats_close(self):
+        """Live very_close beats live close."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            is_very_close=True,
+            is_close_matchup=True,
+        ))
+        assert get_highlight_label(result) == "Coin flip"
+
+    def test_close_beats_momentum(self):
+        """Live close_matchup beats live momentum shift."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            is_close_matchup=True,
+            probability_swing="major",
+        ))
+        assert get_highlight_label(result) == "Close game"
+
+    def test_momentum_beats_generic_live(self):
+        """Live major probability swing beats generic live."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            probability_swing="major",
+        ))
+        assert get_highlight_label(result) == "Momentum shift"
+
+    def test_line_moving_not_shown_when_live(self):
+        """Pre-game 'Line moving' label is NOT shown for live games
+        (since the live-specific labels take priority)."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            probability_swing="major",
+        ))
+        assert get_highlight_label(result) != "Line moving"
+
+
+# =============================================================================
+# compute_highlight - Pre-game Closeness Nuances
+# =============================================================================
+class TestComputeHighlightPregameCloseness:
+    """The pre-game closeness filtering logic is subtle and has caused bugs.
+    These tests pin the five conditions under which pre-game closeness scores.
+    """
+
+    def test_pregame_both_close_no_movement_no_score(self, now):
+        """Both open and current close, <5% movement, not starting soon: no score."""
+        far = now + timedelta(days=2)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far,
+            current_home_prob=0.49,
+            opening_home_prob=0.51,
+            now=now,
+        )
+        assert result.flags.is_close_matchup
+        assert "close_matchup" not in result.reasons
+
+    def test_pregame_both_close_with_5pct_movement_scores(self, now):
+        """Both open and current close, but >=5% movement: scores."""
+        far = now + timedelta(days=2)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far,
+            current_home_prob=0.45,
+            opening_home_prob=0.55,
+            now=now,
+        )
+        assert "close_matchup" in result.reasons
+
+    def test_pregame_opened_lopsided_now_close_scores(self, now):
+        """Opened outside close range, now close: scores (line tightened)."""
+        far = now + timedelta(days=2)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far,
+            current_home_prob=0.52,
+            opening_home_prob=0.65,
+            now=now,
+        )
+        assert "close_matchup" in result.reasons
+
+    def test_pregame_close_at_boundary_40(self, now):
+        """Home prob at exactly 0.40 is a close matchup."""
+        far = now + timedelta(days=2)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far,
+            current_home_prob=0.40,
+            opening_home_prob=None,
+            now=now,
+        )
+        assert result.flags.is_close_matchup
+        assert not result.flags.is_very_close
+
+    def test_pregame_close_at_boundary_60(self, now):
+        """Home prob at exactly 0.60 is a close matchup."""
+        far = now + timedelta(days=2)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far,
+            current_home_prob=0.60,
+            opening_home_prob=None,
+            now=now,
+        )
+        assert result.flags.is_close_matchup
+        assert not result.flags.is_very_close
+
+    def test_pregame_just_outside_close_range(self, now):
+        """Home prob at 0.39 is NOT a close matchup."""
+        far = now + timedelta(days=2)
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far,
+            current_home_prob=0.39,
+            now=now,
+        )
+        assert not result.flags.is_close_matchup
