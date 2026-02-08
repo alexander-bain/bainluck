@@ -552,18 +552,21 @@ Both backend and frontend auto-deploy from `master` branch.
 These are the current focus. Resist the urge to build new features until these are addressed.
 
 1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 390 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, and `test_win_probability.py`. Zero frontend tests.
-3. 🟡 **Data retention policy** — Implement snapshot pruning. Polling every 30s for live games with 5-11 bookmakers generates tens of thousands of rows per game day. No retention policy exists. Check Heroku Postgres row count and storage usage.
-4. 🟡 **Clean up Super Bowl one-offs** — Remove or disable dead code from the Super Bowl party: `backend/app/routes/superbowl.py`, `backend/app/routes/contest.py`, `backend/app/services/youtube_api.py`, `frontend/components/party/CommercialLeaderboard.tsx`. Check if any related Celery beat tasks are still scheduled.
-5. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
+2. 🔴 **Refactor `tasks.py`** — At 2900+ lines, every change has a large blast radius. ESPN sync, odds polling, win probability computation, Pulse calculation, and Kalshi polling should be separate modules. This is the root cause of most fix-commit cycles (missing imports, wrong variable names, status check gaps). Extract at minimum: `tasks/espn_sync.py`, `tasks/odds_poll.py`, `tasks/win_probability.py`.
+3. 🟡 **Data retention policy** — Implement snapshot pruning. `odds_snapshots` + `win_prob_snapshots` together generate tens of thousands of rows per game day. No retention policy exists. Check Heroku Postgres row count and storage usage.
+4. 🟡 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
+5. 🟡 **Clean up Super Bowl one-offs** — Remove or disable dead code from the Super Bowl party: `backend/app/routes/superbowl.py`, `backend/app/routes/contest.py`, `backend/app/services/youtube_api.py`, `frontend/components/party/CommercialLeaderboard.tsx`. Check if any related Celery beat tasks are still scheduled.
+6. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
 
 ### Next — Features (in priority order)
-6. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
-7. 📋 Pass Kalshi event category as sport_key for better disambiguation
-8. 📋 Firebase Auth for user accounts
-9. 📋 Migrate pinned items to database (after auth). **Note:** Stop adding new localStorage features until auth is in place — each one makes the migration harder.
-10. 📋 LLM-powered odds movement explanations
-11. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-12. 📋 TV mode — live prop resolution tracking (show which props hit/missed during game)
+7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
+8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
+9. 📋 Pass Kalshi event category as sport_key for better disambiguation
+10. 📋 Firebase Auth for user accounts
+11. 📋 Migrate pinned items to database (after auth). **Note:** Stop adding new localStorage features until auth is in place — each one makes the migration harder.
+12. 📋 LLM-powered odds movement explanations
+13. 📋 Sport-specific Pulse normalization (different ceilings per sport)
+14. 📋 TV mode — live prop resolution tracking (show which props hit/missed during game)
 
 ### Completed
 <details>
