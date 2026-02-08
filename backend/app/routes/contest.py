@@ -2095,7 +2095,7 @@ async def get_commentary(db: AsyncSession = Depends(get_db)):
     try:
         r = _redis()
         counter = int(r.get(f"{REDIS_KEY_PREFIX}commentary_counter") or 0)
-        show_fun_fact = counter % 2 == 1  # odd = fun fact, even = roast
+        show_fun_fact = counter % 3 != 0  # 2 out of 3 = fun fact/trivia, every 3rd = roast
         r.set(f"{REDIS_KEY_PREFIX}commentary_counter", counter + 1)
     except Exception:
         pass
@@ -2261,29 +2261,77 @@ async def capture_bitcoin_start(secret: str = Query("", description="Admin secre
 # ---------------------------------------------------------------------------
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
-YOUTUBE_CACHE_TTL = 120  # Cache for 2 minutes
 
-# Pre-curated list of known Super Bowl LX advertisers with search terms
-# This helps find the correct official ads vs random uploads
-SB_AD_BRANDS = [
-    "Budweiser", "Uber Eats", "Doritos", "Pepsi", "Coca-Cola",
-    "Mountain Dew", "T-Mobile", "Verizon", "Google", "Apple",
-    "BMW", "Hyundai", "Kia", "Toyota", "Ram Trucks",
-    "Nike", "Meta", "OpenAI", "Microsoft", "Amazon",
-    "DoorDash", "Instacart", "FanDuel", "DraftKings",
-    "Disney", "Paramount", "Netflix", "Tubi",
-    "Pringles", "M&Ms", "Reese's", "Hellmann's",
-    "Bud Light", "Michelob Ultra", "Crown Royal",
-    "Squarespace", "GoDaddy", "Homes.com",
+# Game day: Feb 9, 2026. 2PM Pacific = 22:00 UTC. Game ends ~8PM Pacific = 04:00 UTC Feb 10.
+# Dynamic cache TTL to maximize freshness during the game while staying under 10K quota.
+#   Pre-game: 30 min cache → ~1K quota units
+#   Game time (2PM-8PM Pacific): 7 min cache → ~7.7K quota units
+#   Post-game: 30 min cache
+#   Total worst case: ~8.7K / 10K budget
+GAME_START_UTC = datetime(2026, 2, 9, 22, 0, 0, tzinfo=timezone.utc)
+GAME_END_UTC = datetime(2026, 2, 10, 4, 0, 0, tzinfo=timezone.utc)
+
+
+def _youtube_cache_ttl() -> int:
+    """Dynamic cache TTL based on game time."""
+    now = datetime.now(timezone.utc)
+    if GAME_START_UTC <= now <= GAME_END_UTC:
+        return 420  # 7 minutes during game
+    return 1800  # 30 minutes otherwise
+
+# Hardcoded Super Bowl LX ads — always available even without YouTube API.
+# When the YouTube API is configured, live view counts replace these.
+SB_ADS_CURATED = [
+    {"brand": "Budweiser", "title": '"American Icons" — Clydesdale foal + bald eagle, set to Free Bird', "celebrity": "Clydesdale", "search": "Budweiser Super Bowl LX American Icons"},
+    {"brand": "Uber Eats", "title": '"Foodball" — Football was invented to sell food', "celebrity": "Matthew McConaughey, Bradley Cooper", "search": "Uber Eats Super Bowl 2026 McConaughey"},
+    {"brand": "Google Gemini", "title": '"New Home" — Mom + son using Gemini AI', "celebrity": "Randy Newman song", "search": "Google Gemini New Home Super Bowl 2026"},
+    {"brand": "Pepsi Zero Sugar", "title": '"The Choice" — Polar bear blind taste test', "celebrity": "Directed by Taika Waititi", "search": "Pepsi Zero Sugar Super Bowl 2026"},
+    {"brand": "Bud Light", "title": '"Keg" — Post Malone at a wedding', "celebrity": "Post Malone, Shane Gillis, Peyton Manning", "search": "Bud Light Super Bowl 2026 Keg"},
+    {"brand": "Instacart", "title": '"Bananas" — Directed by Spike Jonze', "celebrity": "Ben Stiller, Benson Boone", "search": "Instacart Bananas Super Bowl 2026"},
+    {"brand": "DoorDash", "title": '"Beef" — 50 Cent settles the beef', "celebrity": "50 Cent", "search": "DoorDash Super Bowl 2026 50 Cent"},
+    {"brand": "Pringles", "title": 'Sabrina Carpenter builds a man out of Pringles', "celebrity": "Sabrina Carpenter", "search": "Pringles Sabrina Carpenter Super Bowl 2026"},
+    {"brand": "Hellmann's", "title": '"Meal Diamond" — Andy Samberg condiment hero', "celebrity": "Andy Samberg, Elle Fanning", "search": "Hellmanns Super Bowl 2026 Andy Samberg"},
+    {"brand": "Dunkin'", "title": 'Ben Affleck + Friends cast reunion', "celebrity": "Ben Affleck, Jennifer Aniston, Jason Alexander", "search": "Dunkin Super Bowl 2026 Affleck"},
+    {"brand": "Squarespace", "title": '"Unavailable" — Directed by Yorgos Lanthimos', "celebrity": "Emma Stone", "search": "Squarespace Super Bowl 2026 Emma Stone"},
+    {"brand": "Ritz", "title": '"Ritz Island" — Celebrity island escape', "celebrity": "Jon Hamm, Scarlett Johansson, Bowen Yang", "search": "Ritz Super Bowl 2026 Jon Hamm"},
+    {"brand": "State Farm", "title": '"Halfway There" — Insurance agents gone wild', "celebrity": "Danny McBride, Keegan-Michael Key", "search": "State Farm Super Bowl 2026 McBride"},
+    {"brand": "Amazon Alexa+", "title": 'AI assistant horror comedy', "celebrity": "Chris Hemsworth, Elsa Pataky", "search": "Amazon Alexa Super Bowl 2026 Hemsworth"},
+    {"brand": "Xfinity", "title": '"Jurassic Park...Works" — Original cast reunion', "celebrity": "Sam Neill, Laura Dern, Jeff Goldblum", "search": "Xfinity Jurassic Park Super Bowl 2026"},
+    {"brand": "Toyota", "title": '"Superhero Belt" — RAV4 30th anniversary', "celebrity": "Grandfather-grandson story", "search": "Toyota Superhero Belt Super Bowl 2026"},
+    {"brand": "T-Mobile", "title": 'Backstreet Boys comeback', "celebrity": "Backstreet Boys, Druski", "search": "T-Mobile Super Bowl 2026 Backstreet Boys"},
+    {"brand": "Meta/Oakley", "title": '"Athletic Intelligence Is Here" — AI glasses', "celebrity": "Spike Lee, Marshawn Lynch", "search": "Meta Oakley Super Bowl 2026"},
+    {"brand": "Rocket/Redfin", "title": 'Mr. Rogers tribute, 60 seconds', "celebrity": "Lady Gaga", "search": "Rocket Redfin Super Bowl 2026 Lady Gaga"},
+    {"brand": "Dove", "title": '"The Game Is Ours" — Body positivity for girls in sports', "celebrity": "", "search": "Dove Super Bowl 2026"},
+    {"brand": "Michelob Ultra", "title": 'Skiing adventure', "celebrity": "Kurt Russell, Chloe Kim", "search": "Michelob Ultra Super Bowl 2026"},
+    {"brand": "Novartis", "title": '"Relax Your Tight End" — Prostate cancer screening', "celebrity": "Rob Gronkowski, George Kittle", "search": "Novartis Super Bowl 2026"},
+    {"brand": "TurboTax", "title": '"The Expert" — Noir-style tax drama', "celebrity": "Adrien Brody", "search": "TurboTax Super Bowl 2026 Adrien Brody"},
+    {"brand": "Oikos", "title": '"The Big Hill" — SF cable car', "celebrity": "Kathryn Hahn, Derrick Henry", "search": "Oikos Super Bowl 2026"},
+    {"brand": "Nerds", "title": '"Taste Buds" — Gummy character', "celebrity": "Andy Cohen", "search": "Nerds Taste Buds Super Bowl 2026"},
+    {"brand": "e.l.f. Cosmetics", "title": '"Melisa" — Telenovela parody', "celebrity": "Melissa McCarthy", "search": "elf Cosmetics Super Bowl 2026"},
+    {"brand": "Anthropic", "title": '"Can I Get a Six Pack Quickly?"', "celebrity": "Dr. Dre music", "search": "Anthropic Claude Super Bowl 2026"},
+    {"brand": "Salesforce", "title": 'Cash giveaway concept', "celebrity": "MrBeast", "search": "Salesforce Super Bowl 2026 MrBeast"},
+    {"brand": "Frank's RedHot", "title": '"Eat the GOAT"', "celebrity": "Ludacris, Chingy", "search": "Franks RedHot Super Bowl 2026"},
+    {"brand": "Lay's", "title": '"The Last Harvest" — Family potato farm', "celebrity": "", "search": "Lays Super Bowl 2026 Last Harvest"},
+]
+
+# Brand matching list (extracted from curated + extras)
+SB_AD_BRANDS = [ad["brand"].split("/")[0] for ad in SB_ADS_CURATED] + [
+    "Coca-Cola", "Mountain Dew", "Nike", "BMW", "Hyundai", "Kia",
+    "FanDuel", "DraftKings", "Disney", "Paramount", "Netflix", "Tubi",
+    "Crown Royal", "GoDaddy", "Homes.com", "Skechers", "Jeep", "Bosch",
+    "GrubHub", "Wells Fargo", "Ramp", "Fanatics", "Ring", "Ro",
 ]
 
 
 async def _fetch_youtube_ads() -> list[dict]:
-    """Fetch Super Bowl LX commercial data from YouTube Data API."""
-    if not YOUTUBE_API_KEY:
-        logger.warning("YOUTUBE_API_KEY not configured")
-        return []
+    """Fetch Super Bowl LX ad leaderboard.
 
+    One broad YouTube search (100 quota units) + batch stats (1 unit per video).
+    Matches results to curated brands. NO per-brand targeted searches.
+    Cached for 10 minutes. ~150 units per cache miss = ~2,200 units/day.
+
+    This is the same approach that worked yesterday on ~2.5K quota.
+    """
     cache_key = f"{REDIS_KEY_PREFIX}youtube_ads"
 
     # Check Redis cache
@@ -2295,100 +2343,109 @@ async def _fetch_youtube_ads() -> list[dict]:
     except Exception:
         pass
 
-    try:
-        ads = []
-        async with httpx.AsyncClient(timeout=15) as client:
-            # Search for Super Bowl LX commercials
-            search_url = "https://www.googleapis.com/youtube/v3/search"
-            search_params = {
-                "key": YOUTUBE_API_KEY,
-                "q": "Super Bowl LX 2026 commercial ad",
-                "type": "video",
-                "part": "snippet",
-                "maxResults": 50,
-                "order": "viewCount",
-                "publishedAfter": "2026-01-15T00:00:00Z",
-            }
+    ads: list[dict] = []
+    found_brands: set[str] = set()
 
-            resp = await client.get(search_url, params=search_params)
-            if resp.status_code != 200:
-                logger.error(f"YouTube search API error: {resp.status_code} {resp.text[:200]}")
-                return []
-
-            search_data = resp.json()
-            video_ids = [
-                item["id"]["videoId"]
-                for item in search_data.get("items", [])
-                if item.get("id", {}).get("videoId")
-            ]
-
-            if not video_ids:
-                return []
-
-            # Fetch video statistics (views, likes)
-            stats_url = "https://www.googleapis.com/youtube/v3/videos"
-            stats_params = {
-                "key": YOUTUBE_API_KEY,
-                "id": ",".join(video_ids),
-                "part": "statistics,snippet,contentDetails",
-            }
-
-            resp = await client.get(stats_url, params=stats_params)
-            if resp.status_code != 200:
-                logger.error(f"YouTube videos API error: {resp.status_code}")
-                return []
-
-            videos_data = resp.json()
-
-            for item in videos_data.get("items", []):
-                snippet = item.get("snippet", {})
-                stats = item.get("statistics", {})
-                title = snippet.get("title", "")
-                channel = snippet.get("channelTitle", "")
-
-                # Try to identify the brand from the title or channel
-                brand = _identify_brand(title, channel)
-                if not brand:
-                    continue  # Skip non-brand/non-ad videos
-
-                views = int(stats.get("viewCount", 0))
-                likes = int(stats.get("likeCount", 0))
-                comments = int(stats.get("commentCount", 0))
-
-                ads.append({
-                    "brand": brand,
-                    "title": title,
-                    "video_id": item["id"],
-                    "channel": channel,
-                    "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
-                    "views": views,
-                    "likes": likes,
-                    "comments": comments,
-                    "published_at": snippet.get("publishedAt", ""),
-                })
-
-        # Deduplicate by brand (keep highest-viewed per brand)
-        brand_best: dict[str, dict] = {}
-        for ad in ads:
-            b = ad["brand"]
-            if b not in brand_best or ad["views"] > brand_best[b]["views"]:
-                brand_best[b] = ad
-
-        # Sort by views descending
-        result = sorted(brand_best.values(), key=lambda x: -x["views"])
-
-        # Cache result
+    if YOUTUBE_API_KEY:
         try:
-            r = _redis()
-            r.setex(cache_key, YOUTUBE_CACHE_TTL, json.dumps(result))
-        except Exception:
-            pass
+            async with httpx.AsyncClient(timeout=15) as client:
+                # One broad search (100 quota units)
+                all_video_ids: list[str] = []
+                video_snippets: dict[str, dict] = {}
 
-        return result
+                search_url = "https://www.googleapis.com/youtube/v3/search"
+                search_params = {
+                    "key": YOUTUBE_API_KEY,
+                    "q": "Super Bowl LX 2026 commercial ad",
+                    "type": "video",
+                    "part": "snippet",
+                    "maxResults": 50,
+                    "order": "viewCount",
+                    "publishedAfter": "2025-11-01T00:00:00Z",
+                }
+                resp = await client.get(search_url, params=search_params)
+                if resp.status_code == 200:
+                    for item in resp.json().get("items", []):
+                        vid_id = item.get("id", {}).get("videoId", "")
+                        if vid_id and vid_id not in video_snippets:
+                            all_video_ids.append(vid_id)
+                            video_snippets[vid_id] = item.get("snippet", {})
+                elif resp.status_code == 403:
+                    logger.error("YouTube quota exceeded")
 
-    except Exception as e:
-        logger.error(f"YouTube ads fetch error: {e}")
-        return []
+                # Batch fetch stats (1 unit per video, not per request)
+                stats_map: dict[str, dict] = {}
+                for i in range(0, len(all_video_ids), 50):
+                    batch = all_video_ids[i:i+50]
+                    stats_url = "https://www.googleapis.com/youtube/v3/videos"
+                    stats_params = {
+                        "key": YOUTUBE_API_KEY,
+                        "id": ",".join(batch),
+                        "part": "statistics",
+                    }
+                    resp = await client.get(stats_url, params=stats_params)
+                    if resp.status_code == 200:
+                        for item in resp.json().get("items", []):
+                            stats_map[item["id"]] = item.get("statistics", {})
+
+                # Build ad list: match to curated brands, or use title/channel
+                for vid_id in all_video_ids:
+                    snippet = video_snippets.get(vid_id, {})
+                    stats = stats_map.get(vid_id, {})
+                    title = snippet.get("title", "")
+                    channel = snippet.get("channelTitle", "")
+                    brand = _identify_brand(title, channel)
+
+                    # Use brand from matching, or fall back to channel/title
+                    if not brand:
+                        brand = channel or title.split(" - ")[0][:30] or "Unknown"
+
+                    if brand not in found_brands:
+                        curated_match = next(
+                            (c for c in SB_ADS_CURATED if c["brand"] == brand), None
+                        )
+                        found_brands.add(brand)
+                        ads.append({
+                            "brand": brand,
+                            "title": curated_match["title"] if curated_match else title,
+                            "video_id": vid_id,
+                            "channel": channel,
+                            "celebrity": curated_match.get("celebrity", "") if curated_match else "",
+                            "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
+                            "views": int(stats.get("viewCount", 0)),
+                            "likes": int(stats.get("likeCount", 0)),
+                            "comments": int(stats.get("commentCount", 0)),
+                            "published_at": snippet.get("publishedAt", ""),
+                        })
+
+                ads.sort(key=lambda x: -x["views"])
+        except Exception as e:
+            logger.error(f"YouTube API error: {e}")
+
+    # Append curated ads not found via YouTube (no video, shown at bottom)
+    for curated in SB_ADS_CURATED:
+        if curated["brand"] not in found_brands:
+            ads.append({
+                "brand": curated["brand"],
+                "title": curated["title"],
+                "video_id": "",
+                "channel": "",
+                "celebrity": curated.get("celebrity", ""),
+                "thumbnail": "",
+                "views": 0,
+                "likes": 0,
+                "comments": 0,
+                "published_at": "",
+            })
+
+    # Cache result
+    try:
+        r = _redis()
+        r.setex(cache_key, _youtube_cache_ttl(), json.dumps(ads))
+    except Exception:
+        pass
+
+    return ads
 
 
 def _identify_brand(title: str, channel: str) -> Optional[str]:
@@ -2447,29 +2504,56 @@ async def get_ad_leaderboard():
             baseline = json.loads(cached_baseline)
         elif ads:
             # First fetch — snapshot current view counts as baseline (expires in 24h)
-            baseline = {ad["video_id"]: ad["views"] for ad in ads}
+            baseline = {ad["video_id"]: ad["views"] for ad in ads if ad["video_id"]}
             r.setex(baseline_key, 86400, json.dumps(baseline))
     except Exception:
         pass
 
-    # Add rank, formatted views, and delta from baseline
-    for i, ad in enumerate(ads):
-        ad["rank"] = i + 1
+    # Compute deltas from baseline
+    has_any_delta = False
+    for ad in ads:
         ad["views_formatted"] = _format_view_count(ad["views"])
         ad["likes_formatted"] = _format_view_count(ad["likes"])
-
-        # Views gained since baseline snapshot (during the game)
         base_views = baseline.get(ad["video_id"], ad["views"])
         delta = max(0, ad["views"] - base_views)
         ad["views_delta"] = delta
         ad["views_delta_formatted"] = f"+{_format_view_count(delta)}" if delta > 0 else ""
+        if delta > 0:
+            has_any_delta = True
 
+    # Once the game starts (deltas exist), rank by views gained during the game
+    if has_any_delta:
+        ads.sort(key=lambda x: -x["views_delta"])
+
+    for i, ad in enumerate(ads):
+        ad["rank"] = i + 1
+
+    with_video = sum(1 for ad in ads if ad.get("video_id"))
+    ttl = _youtube_cache_ttl()
     return {
         "ads": ads,
         "count": len(ads),
-        "cached": True,
+        "with_video": with_video,
         "youtube_configured": bool(YOUTUBE_API_KEY),
+        "cache_ttl_seconds": ttl,
+        "mode": "game" if ttl < 600 else "idle",
     }
+
+
+@router.post("/reset-ad-baseline")
+async def reset_ad_baseline(secret: str = Query("", description="Admin secret")):
+    """Admin: reset the ad view baseline so deltas restart from NOW.
+
+    Call this at kickoff so the +/- movement shows views gained during the game.
+    """
+    try:
+        r = _redis()
+        # Delete baseline AND cache so next fetch snapshots fresh counts
+        r.delete(f"{REDIS_KEY_PREFIX}ad_baseline")
+        r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")
+        return {"status": "reset", "message": "Ad baseline cleared — next fetch will snapshot new baseline"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @router.post("/reset")
@@ -2482,6 +2566,7 @@ async def reset_contest(secret: str = Query("", description="Admin secret")):
         r.delete(f"{REDIS_KEY_PREFIX}halftime_scores")
         r.delete(f"{REDIS_KEY_PREFIX}btc_start_price")
         r.delete(f"{REDIS_KEY_PREFIX}espn_summary")
+        r.delete(f"{REDIS_KEY_PREFIX}ad_baseline")
         return {"status": "reset", "message": "All resolutions, overrides, and cached data cleared"}
     except Exception as e:
         return {"error": str(e)}

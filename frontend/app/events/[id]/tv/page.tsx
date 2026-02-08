@@ -90,6 +90,7 @@ interface YouTubeAd {
   title: string;
   video_id: string;
   channel: string;
+  celebrity: string;
   thumbnail: string;
   views: number;
   likes: number;
@@ -141,7 +142,7 @@ interface TVPageProps {
 const LIVE_REFRESH_INTERVAL = 32000;
 const SCHEDULED_REFRESH_INTERVAL = 60000;
 const CONTEST_REFRESH_INTERVAL = 20000;
-const COMMENTARY_REFRESH_INTERVAL = 32000;
+const COMMENTARY_REFRESH_INTERVAL = 24000;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -412,21 +413,29 @@ const AD_MEDAL_EMOJIS = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"]; // gol
 function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
   const [playingId, setPlayingId] = useState<string | null>(null);
 
+  // --- Inline video player ---
   if (playingId) {
     const ad = ads.find((a) => a.video_id === playingId);
     return (
       <div className="flex flex-col h-full">
-        <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
+        {/* Prominent back button */}
+        <div className="shrink-0 mb-[1vh]">
           <button
             onClick={() => setPlayingId(null)}
-            className="text-blue-400 text-[1.2vh] hover:text-blue-300 flex items-center gap-[0.3vw]"
+            className="flex items-center gap-[0.5vw] px-[0.8vw] py-[0.6vh] rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-white text-[1.4vh] font-semibold"
           >
-            &larr; Back
+            <span className="text-[1.6vh]">&larr;</span>
+            Back to Leaderboard
           </button>
-          <span className="text-white/50 text-[1.1vh] font-semibold truncate">
-            {ad?.brand}
-          </span>
         </div>
+        {/* Brand info */}
+        <div className="shrink-0 mb-[0.8vh] text-center">
+          <div className="text-white font-bold text-[2vh]">{ad?.brand}</div>
+          {ad?.celebrity && (
+            <div className="text-white/40 text-[1.1vh]">ft. {ad.celebrity}</div>
+          )}
+        </div>
+        {/* Video */}
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <iframe
             src={`https://www.youtube.com/embed/${playingId}?autoplay=1&controls=1`}
@@ -440,6 +449,7 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
     );
   }
 
+  // --- Scrolling leaderboard ---
   return (
     <div className="flex flex-col h-full">
       <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
@@ -452,59 +462,75 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
       </div>
 
       <AutoScrollContainer className="flex-1 min-h-0" speed={0.2}>
-        <div className="space-y-[0.3vh]">
+        <div className="space-y-[0.2vh]">
           {ads.map((ad, i) => {
             const isTop3 = i < 3;
+            const hasVideo = !!ad.video_id;
+            const hasViews = ad.views > 0;
+            const subtitle = ad.celebrity || ad.title;
             return (
               <div
-                key={ad.video_id}
-                className={`flex items-center gap-[0.4vw] px-[0.3vw] py-[0.3vh] rounded-lg ${
+                key={`${ad.brand}-${i}`}
+                className={`flex items-center gap-[0.3vw] px-[0.3vw] py-[0.4vh] rounded-lg ${
                   isTop3 ? "bg-white/5" : ""
-                }`}
+                } ${hasVideo ? "cursor-pointer hover:bg-white/8" : ""}`}
+                onClick={hasVideo ? () => setPlayingId(ad.video_id) : undefined}
               >
                 {/* Rank */}
-                <div className="w-[1.5vw] text-center shrink-0">
+                <div className="w-[1.2vw] text-center shrink-0">
                   {isTop3 ? (
                     <span className="text-[1.6vh]">{AD_MEDAL_EMOJIS[i]}</span>
                   ) : (
-                    <span className="text-white/30 font-mono text-[1.2vh]">
+                    <span className="text-white/30 font-mono text-[1.1vh]">
                       {ad.rank}
                     </span>
                   )}
                 </div>
 
-                {/* Brand + title */}
+                {/* Play icon */}
+                <div className="w-[1.4vw] shrink-0 flex items-center justify-center">
+                  {hasVideo ? (
+                    <span className="text-red-400 text-[1.4vh]">&#9654;</span>
+                  ) : (
+                    <span className="text-white/10 text-[1.4vh]">&#9654;</span>
+                  )}
+                </div>
+
+                {/* Brand + subtitle */}
                 <div className="flex-1 min-w-0">
                   <span
-                    className={`text-[1.3vh] font-semibold truncate block ${
+                    className={`text-[1.2vh] font-semibold truncate block ${
                       isTop3 ? "text-white" : "text-white/70"
                     }`}
                   >
                     {ad.brand}
                   </span>
-                  <div className="text-white/30 text-[0.85vh] truncate leading-tight">
-                    {ad.title}
-                  </div>
+                  {subtitle && (
+                    <div className="text-white/30 text-[0.8vh] truncate leading-tight">
+                      {subtitle}
+                    </div>
+                  )}
                 </div>
 
-                {/* Play button */}
-                <button
-                  onClick={() => setPlayingId(ad.video_id)}
-                  className="shrink-0 text-blue-400 hover:text-blue-300 text-[1.5vh] w-[1.8vw] h-[2.5vh] flex items-center justify-center rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
-                  title={`Play ${ad.brand}`}
-                >
-                  &#9654;
-                </button>
-
-                {/* Views + delta */}
-                <div className="text-right shrink-0 w-[3.5vw]">
-                  <div className="text-white font-mono font-bold text-[1.2vh]">
-                    {ad.views_formatted}
-                  </div>
-                  {ad.views_delta > 0 && (
-                    <div className="text-emerald-400 font-mono text-[0.8vh] leading-tight">
-                      {ad.views_delta_formatted}
-                    </div>
+                {/* Views — big and bold */}
+                <div className="text-right shrink-0 min-w-[3vw]">
+                  {hasViews ? (
+                    ad.views_delta > 0 ? (
+                      <>
+                        <div className={`font-mono font-bold ${isTop3 ? "text-[1.8vh]" : "text-[1.5vh]"} text-emerald-400`}>
+                          {ad.views_delta_formatted}
+                        </div>
+                        <div className="text-white/20 font-mono text-[0.7vh] leading-tight">
+                          {ad.views_formatted} total
+                        </div>
+                      </>
+                    ) : (
+                      <div className={`font-mono font-bold ${isTop3 ? "text-[1.8vh]" : "text-[1.5vh]"} text-white/60`}>
+                        {ad.views_formatted}
+                      </div>
+                    )
+                  ) : (
+                    <span className="text-white/15 font-mono text-[1vh]">--</span>
                   )}
                 </div>
               </div>
@@ -738,22 +764,52 @@ function TVPropCarousel({ eventId }: { eventId: number }) {
 }
 
 // ---------------------------------------------------------------------------
-// AI Commentary Panel (middle row, large readable font)
-// Handles: roasts, fun facts, and interactive trivia with reveal animation
+// AI Commentary Panel (middle row)
+// Visual treatment: animated glow border, type-specific colors, countdown bar,
+// fade-in transitions. Feels "alive" — always moving, always branded.
 // ---------------------------------------------------------------------------
+const COMMENTARY_STYLES = {
+  roast: {
+    accent: "#f97316",       // orange
+    accentDim: "#f9731640",
+    glow: "rgba(249,115,22,0.15)",
+    icon: "\uD83C\uDF99\uFE0F",
+    label: "AI Commentary",
+    textClass: "text-white/90",
+  },
+  fun_fact: {
+    accent: "#60a5fa",       // blue
+    accentDim: "#60a5fa40",
+    glow: "rgba(96,165,250,0.15)",
+    icon: "\uD83C\uDFC8",
+    label: "Did You Know?",
+    textClass: "text-blue-100/90",
+  },
+  trivia: {
+    accent: "#f59e0b",       // amber
+    accentDim: "#f59e0b40",
+    glow: "rgba(245,158,11,0.15)",
+    icon: "\u2753",
+    label: "Trivia Time!",
+    textClass: "text-amber-50",
+  },
+};
+
 function TVCommentaryPanel({
   commentary,
   commentaryType,
+  commentaryKey,
   resolvedProps,
   triviaData,
 }: {
   commentary: string;
   commentaryType: "roast" | "fun_fact" | "trivia";
+  commentaryKey: number;
   resolvedProps: ContestProp[];
   triviaData: { question: string; answer: string; wrong: string; fact: string } | null;
 }) {
-  const isFunFact = commentaryType === "fun_fact";
   const isTrivia = commentaryType === "trivia" && triviaData;
+  const style = COMMENTARY_STYLES[commentaryType] || COMMENTARY_STYLES.roast;
 
   // Trivia state machine: "question" → "reveal"
   const [triviaPhase, setTriviaPhase] = useState<"question" | "reveal">("question");
@@ -767,7 +823,6 @@ function TVCommentaryPanel({
       if (key !== triviaKeyRef.current) {
         triviaKeyRef.current = key;
         setTriviaPhase("question");
-        // Randomly shuffle the two options
         const opts = [triviaData.answer, triviaData.wrong];
         if (Math.random() > 0.5) opts.reverse();
         setShuffledOptions(opts);
@@ -783,152 +838,172 @@ function TVCommentaryPanel({
     }
   }, [isTrivia, triviaPhase]);
 
-  // Trivia UI
-  if (isTrivia && triviaData) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="flex-1 flex flex-col justify-center px-[0.5vw]">
-          {/* Header */}
-          <div className="flex items-center gap-[0.3vw] mb-[0.8vh]">
-            <span className="text-[1.3vh]">{triviaPhase === "question" ? "\u2753" : "\u2728"}</span>
-            <span
-              className="text-[0.9vh] uppercase tracking-widest font-bold"
-              style={{ color: "#f59e0b" }}
-            >
-              {triviaPhase === "question" ? "Trivia Time!" : "Answer Revealed!"}
-            </span>
-            {/* Countdown bar during question phase */}
-            {triviaPhase === "question" && (
-              <div className="flex-1 ml-[0.5vw] h-[0.4vh] bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-amber-400/60 rounded-full"
-                  style={{
-                    animation: "triviaCountdown 6s linear forwards",
-                  }}
-                />
+  // Resolved props section (shared by all types)
+  const resolvedSection = resolvedProps.length > 0 && (
+    <div className="shrink-0 border-t border-white/5 pt-[0.5vh] mt-[0.5vh]">
+      <div className="text-white/20 text-[0.8vh] uppercase tracking-widest font-bold mb-[0.3vh]">
+        Resolved ({resolvedProps.length})
+      </div>
+      <div className="space-y-[0.15vh]">
+        {resolvedProps.slice(-3).reverse().map((p) => (
+          <div key={p.id} className="flex items-center gap-[0.3vw] text-[0.9vh]">
+            <span className="text-emerald-400 shrink-0">&#10003;</span>
+            <span className="text-white/30 truncate flex-1">{p.question}</span>
+            <span className="text-emerald-400 font-medium shrink-0">{p.correct_answer}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // Countdown progress bar (32s for roast/fact, 6s for trivia question phase)
+  const showCountdown = !isTrivia || triviaPhase === "question";
+  const countdownDuration = isTrivia ? 6 : 24;
+  const countdownBar = showCountdown && (
+    <div className="shrink-0 mt-auto pt-[0.4vh]">
+      <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "0.35vh" }}>
+        <div
+          key={isTrivia ? `trivia-${triviaKeyRef.current}` : `commentary-${commentaryKey}`}
+          className="h-full rounded-full"
+          style={{
+            background: `linear-gradient(90deg, ${style.accentDim}, ${style.accent})`,
+            animation: `commentaryCountdown ${countdownDuration}s linear forwards`,
+          }}
+        />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col h-full relative">
+      {/* Animated glow border (left edge accent) */}
+      <div
+        className="absolute left-0 top-[5%] bottom-[5%] w-[0.2vw] rounded-full"
+        style={{
+          background: `linear-gradient(180deg, transparent, ${style.accent}, transparent)`,
+          animation: "commentaryGlow 3s ease-in-out infinite",
+        }}
+      />
+
+      {/* Content area with fade-in on change */}
+      <div
+        key={commentaryKey}
+        className="flex-1 flex flex-col min-h-0 pl-[0.6vw]"
+        style={{ animation: "commentaryFadeIn 0.5s ease-out" }}
+      >
+        {/* === TRIVIA === */}
+        {isTrivia && triviaData ? (
+          <div className="flex-1 flex flex-col justify-center">
+            {/* Header */}
+            <div className="flex items-center gap-[0.3vw] mb-[0.8vh]">
+              <span
+                className="text-[1.3vh]"
+                style={{ animation: triviaPhase === "question" ? "commentaryPulseIcon 1.5s ease-in-out infinite" : "none" }}
+              >
+                {triviaPhase === "question" ? "\u2753" : "\u2728"}
+              </span>
+              <span
+                className="text-[0.9vh] uppercase tracking-widest font-bold"
+                style={{ color: style.accent }}
+              >
+                {triviaPhase === "question" ? "Trivia Time!" : "Answer Revealed!"}
+              </span>
+            </div>
+
+            {/* Question */}
+            <div className="text-[1.8vh] leading-snug font-semibold text-amber-50 mb-[1.2vh]">
+              {triviaData.question}
+            </div>
+
+            {/* Options */}
+            <div className="flex flex-col gap-[0.6vh]">
+              {shuffledOptions.map((option, i) => {
+                const isCorrect = option === triviaData.answer;
+                const letter = i === 0 ? "A" : "B";
+
+                let bgStyle: React.CSSProperties = {};
+                let textClass = "text-white/90";
+                let letterBg = "bg-white/10";
+                let borderClass = "border-white/10";
+
+                if (triviaPhase === "reveal") {
+                  if (isCorrect) {
+                    bgStyle = { background: "linear-gradient(90deg, rgba(16,185,129,0.25) 0%, rgba(16,185,129,0.08) 100%)" };
+                    textClass = "text-emerald-300 font-bold";
+                    letterBg = "bg-emerald-500/30";
+                    borderClass = "border-emerald-500/40";
+                  } else {
+                    bgStyle = { background: "rgba(239,68,68,0.08)" };
+                    textClass = "text-red-400/60 line-through";
+                    letterBg = "bg-red-500/20";
+                    borderClass = "border-red-500/20";
+                  }
+                }
+
+                return (
+                  <div
+                    key={option}
+                    className={`flex items-center gap-[0.5vw] p-[0.6vh] rounded-xl border ${borderClass} transition-all duration-700`}
+                    style={bgStyle}
+                  >
+                    <span className={`${letterBg} text-[1vh] font-bold w-[2vh] h-[2vh] rounded-lg flex items-center justify-center shrink-0 transition-colors duration-700`}>
+                      {triviaPhase === "reveal" && isCorrect ? "\u2713" : letter}
+                    </span>
+                    <span className={`text-[1.4vh] ${textClass} transition-all duration-700`}>
+                      {option}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Fact reveal (shown after answer) */}
+            {triviaPhase === "reveal" && (
+              <div
+                className="mt-[1vh] text-[1.1vh] text-blue-200/70 leading-relaxed"
+                style={{ animation: "triviaFadeIn 0.6s ease-out" }}
+              >
+                {triviaData.fact}
               </div>
             )}
           </div>
-
-          {/* Question */}
-          <div className="text-[1.8vh] leading-snug font-semibold text-amber-50 mb-[1.2vh]">
-            {triviaData.question}
-          </div>
-
-          {/* Options */}
-          <div className="flex flex-col gap-[0.6vh]">
-            {shuffledOptions.map((option, i) => {
-              const isCorrect = option === triviaData.answer;
-              const letter = i === 0 ? "A" : "B";
-
-              let bgStyle: React.CSSProperties = {};
-              let textClass = "text-white/90";
-              let letterBg = "bg-white/10";
-              let borderClass = "border-white/10";
-
-              if (triviaPhase === "reveal") {
-                if (isCorrect) {
-                  bgStyle = { background: "linear-gradient(90deg, rgba(16,185,129,0.25) 0%, rgba(16,185,129,0.08) 100%)" };
-                  textClass = "text-emerald-300 font-bold";
-                  letterBg = "bg-emerald-500/30";
-                  borderClass = "border-emerald-500/40";
-                } else {
-                  bgStyle = { background: "rgba(239,68,68,0.08)" };
-                  textClass = "text-red-400/60 line-through";
-                  letterBg = "bg-red-500/20";
-                  borderClass = "border-red-500/20";
-                }
-              }
-
-              return (
-                <div
-                  key={option}
-                  className={`flex items-center gap-[0.5vw] p-[0.6vh] rounded-xl border ${borderClass} transition-all duration-700`}
-                  style={bgStyle}
-                >
-                  <span className={`${letterBg} text-[1vh] font-bold w-[2vh] h-[2vh] rounded-lg flex items-center justify-center shrink-0 transition-colors duration-700`}>
-                    {triviaPhase === "reveal" && isCorrect ? "\u2713" : letter}
-                  </span>
-                  <span className={`text-[1.4vh] ${textClass} transition-all duration-700`}>
-                    {option}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Fact reveal (shown after answer) */}
-          {triviaPhase === "reveal" && (
+        ) : (
+          /* === ROAST / FUN FACT === */
+          <div className="flex-1 flex flex-col justify-center">
+            {/* Header with pulsing icon */}
+            <div className="flex items-center gap-[0.3vw] mb-[0.5vh]">
+              <span
+                className="text-[1.1vh]"
+                style={{ animation: "commentaryPulseIcon 2s ease-in-out infinite" }}
+              >
+                {style.icon}
+              </span>
+              <span
+                className="text-[0.9vh] uppercase tracking-widest font-bold"
+                style={{ color: style.accent }}
+              >
+                {style.label}
+              </span>
+              {/* Live dot */}
+              <span
+                className="w-[0.5vh] h-[0.5vh] rounded-full ml-auto"
+                style={{
+                  backgroundColor: style.accent,
+                  animation: "commentaryDot 2s ease-in-out infinite",
+                }}
+              />
+            </div>
             <div
-              className="mt-[1vh] text-[1.1vh] text-blue-200/70 leading-relaxed"
-              style={{ animation: "triviaFadeIn 0.6s ease-out" }}
+              className={`text-[1.6vh] leading-relaxed font-medium ${style.textClass}`}
             >
-              {triviaData.fact}
-            </div>
-          )}
-        </div>
-
-        {/* Recently resolved (compact) */}
-        {resolvedProps.length > 0 && (
-          <div className="shrink-0 border-t border-white/5 pt-[0.5vh] mt-[0.5vh]">
-            <div className="text-white/20 text-[0.8vh] uppercase tracking-widest font-bold mb-[0.3vh]">
-              Resolved ({resolvedProps.length})
-            </div>
-            <div className="space-y-[0.15vh]">
-              {resolvedProps.slice(-3).reverse().map((p) => (
-                <div key={p.id} className="flex items-center gap-[0.3vw] text-[0.9vh]">
-                  <span className="text-emerald-400 shrink-0">&#10003;</span>
-                  <span className="text-white/30 truncate flex-1">{p.question}</span>
-                  <span className="text-emerald-400 font-medium shrink-0">{p.correct_answer}</span>
-                </div>
-              ))}
+              {commentary || "Warming up the hot takes..."}
             </div>
           </div>
         )}
-      </div>
-    );
-  }
 
-  // Regular commentary / fun fact UI
-  return (
-    <div className="flex flex-col h-full">
-      {/* Commentary / Fun Fact */}
-      <div className="flex-1 flex flex-col justify-center px-[0.5vw]">
-        <div className="flex items-center gap-[0.3vw] mb-[0.5vh]">
-          <span className="text-[1.1vh]">{isFunFact ? "\uD83C\uDFC8" : "\uD83C\uDF99\uFE0F"}</span>
-          <span
-            className="text-[0.9vh] uppercase tracking-widest font-bold"
-            style={{ color: isFunFact ? "#60a5fa" : "rgba(255,255,255,0.3)" }}
-          >
-            {isFunFact ? "Did You Know?" : "AI Commentary"}
-          </span>
-        </div>
-        <div
-          className={`text-[1.6vh] leading-relaxed font-medium ${
-            isFunFact ? "text-blue-100/90" : "text-white/90"
-          }`}
-        >
-          {commentary || "Warming up the hot takes..."}
-        </div>
+        {resolvedSection}
+        {countdownBar}
       </div>
-
-      {/* Recently resolved (compact) */}
-      {resolvedProps.length > 0 && (
-        <div className="shrink-0 border-t border-white/5 pt-[0.5vh] mt-[0.5vh]">
-          <div className="text-white/20 text-[0.8vh] uppercase tracking-widest font-bold mb-[0.3vh]">
-            Resolved ({resolvedProps.length})
-          </div>
-          <div className="space-y-[0.15vh]">
-            {resolvedProps.slice(-4).reverse().map((p) => (
-              <div key={p.id} className="flex items-center gap-[0.3vw] text-[0.9vh]">
-                <span className="text-emerald-400 shrink-0">&#10003;</span>
-                <span className="text-white/30 truncate flex-1">{p.question}</span>
-                <span className="text-emerald-400 font-medium shrink-0">{p.correct_answer}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -948,6 +1023,7 @@ export default function TVPage({ params }: TVPageProps) {
   const [contestData, setContestData] = useState<ContestData | null>(null);
   const [commentary, setCommentary] = useState("");
   const [commentaryType, setCommentaryType] = useState<"roast" | "fun_fact" | "trivia">("roast");
+  const [commentaryKey, setCommentaryKey] = useState(0); // increments on each new commentary to reset animations
   const [triviaData, setTriviaData] = useState<{
     question: string;
     answer: string;
@@ -1078,6 +1154,7 @@ export default function TVPage({ params }: TVPageProps) {
       if (!resp.ok) return;
       const data = await resp.json();
       setCommentary(data.commentary);
+      setCommentaryKey((k) => k + 1);
       if (data.type === "trivia") {
         setCommentaryType("trivia");
         setTriviaData({
@@ -1107,13 +1184,28 @@ export default function TVPage({ params }: TVPageProps) {
     return () => clearInterval(interval);
   }, [fetchContestCommentary]);
 
-  // ---- Ad Leaderboard polling (every 2 minutes) ----
+  // ---- Ad Leaderboard polling (adapts to backend game/idle mode) ----
+  const adPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const adModeRef = useRef<string>("idle");
+
   const fetchAds = useCallback(async () => {
     try {
       const resp = await fetch(`${API_URL}/api/contest/ads`);
       if (!resp.ok) return;
-      const data: AdLeaderboardData = await resp.json();
+      const data = await resp.json() as AdLeaderboardData & { mode?: string };
       setAdData(data);
+
+      // Switch polling rate when backend switches mode
+      const newMode = data.mode || "idle";
+      if (newMode !== adModeRef.current) {
+        adModeRef.current = newMode;
+        // Game mode: poll every 3 min. Idle: poll every 5 min.
+        // Backend cache is 7 min / 30 min respectively, so we'll
+        // hit cache most of the time but catch refreshes quickly.
+        const interval = newMode === "game" ? 180000 : 300000;
+        if (adPollRef.current) clearInterval(adPollRef.current);
+        adPollRef.current = setInterval(fetchAds, interval);
+      }
     } catch {
       // Silently ignore
     }
@@ -1121,8 +1213,8 @@ export default function TVPage({ params }: TVPageProps) {
 
   useEffect(() => {
     fetchAds();
-    const interval = setInterval(fetchAds, 120000); // 2 minutes
-    return () => clearInterval(interval);
+    adPollRef.current = setInterval(fetchAds, 300000); // start at 5 min
+    return () => { if (adPollRef.current) clearInterval(adPollRef.current); };
   }, [fetchAds]);
 
   // Process resolution queue: show one at a time for 8 seconds each
@@ -1476,10 +1568,11 @@ export default function TVPage({ params }: TVPageProps) {
           </div>
 
           {/* AI Commentary Panel */}
-          <div className="bg-gradient-to-br from-[#111118] to-[#16162a] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
+          <div className="rounded-2xl p-[1vw] flex flex-col min-h-0 overflow-hidden relative" style={{ background: "linear-gradient(135deg, #111118 0%, #16162a 100%)" }}>
             <TVCommentaryPanel
               commentary={commentary}
               commentaryType={commentaryType}
+              commentaryKey={commentaryKey}
               resolvedProps={contestData?.props.filter((p) => p.resolved && !p.is_tiebreaker) || []}
               triviaData={triviaData}
             />
@@ -1515,10 +1608,15 @@ export default function TVPage({ params }: TVPageProps) {
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-white/20 text-[1.3vh] gap-[0.5vh]">
                 <span className="text-[2vh]">{"\uD83D\uDCFA"}</span>
-                {adData && !adData.youtube_configured ? (
+                {!adData ? (
+                  <span>Loading ad leaderboard...</span>
+                ) : !adData.youtube_configured ? (
                   <span>YouTube API key not configured</span>
                 ) : (
-                  <span>Loading ad leaderboard...</span>
+                  <>
+                    <span>Ad Leaderboard</span>
+                    <span className="text-[1vh] text-white/10">Ads will appear once they go live</span>
+                  </>
                 )}
               </div>
             )}
@@ -1669,8 +1767,8 @@ export default function TVPage({ params }: TVPageProps) {
         </div>
       )}
 
-      {/* Keyframe animations */}
-      <style jsx global>{`
+      {/* Keyframe animations — plain <style> tag works in App Router client components */}
+      <style dangerouslySetInnerHTML={{ __html: `
         @keyframes resolutionSlideIn {
           from { transform: scale(0.8) translateY(20px); opacity: 0; }
           to { transform: scale(1) translateY(0); opacity: 1; }
@@ -1691,7 +1789,27 @@ export default function TVPage({ params }: TVPageProps) {
           from { opacity: 0; transform: translateY(0.5vh); }
           to { opacity: 1; transform: translateY(0); }
         }
-      `}</style>
+        @keyframes commentaryCountdown {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+        @keyframes commentaryFadeIn {
+          from { opacity: 0; transform: translateX(0.5vw); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes commentaryGlow {
+          0%, 100% { opacity: 0.4; filter: blur(1px); }
+          50% { opacity: 1; filter: blur(2px); }
+        }
+        @keyframes commentaryPulseIcon {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.15); }
+        }
+        @keyframes commentaryDot {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
+        }
+      ` }} />
 
       {/* QR Code Overlay */}
       {showQR && (

@@ -137,6 +137,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_team_logos",
         "schedule": crontab(minute=15, hour="*/6"),  # Every 6 hours at :15
     },
+    "reset-ad-baseline-kickoff": {
+        "task": "app.tasks.reset_ad_baseline",
+        "schedule": crontab(minute=0, hour=22, day_of_month=9, month_of_year=2),  # Feb 9 @ 2PM Pacific (22:00 UTC)
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -579,7 +583,8 @@ async def _discover_events():
                             set_={
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
-                                "commence_time": commence_time,
+                                # Don't overwrite commence_time — The Odds API occasionally
+                                # returns local times as UTC. ESPN sync corrects these.
                                 "status": case(
                                     (Event.status == "scheduled", event_status),
                                     else_=Event.status
@@ -812,7 +817,8 @@ async def _poll_all_odds():
                             set_={
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
-                                "commence_time": commence_time,
+                                # Don't overwrite commence_time — The Odds API occasionally
+                                # returns local times as UTC. ESPN sync corrects these.
                                 # Only update status if currently "scheduled"
                                 # This allows scheduled->live but preserves completed
                                 "status": case(
@@ -1320,7 +1326,8 @@ async def _poll_sport_odds(sport_key: str):
                     set_={
                         "home_team_name": event_data["home_team"],
                         "away_team_name": event_data["away_team"],
-                        "commence_time": commence_time,
+                        # Don't overwrite commence_time — The Odds API occasionally
+                        # returns local times as UTC. ESPN sync corrects these.
                         # Only update status if currently "scheduled"
                         "status": case(
                             (Event.status == "scheduled", event_status),
@@ -2592,6 +2599,20 @@ async def _sync_espn_live_events():
                                     event.espn_id = ee.espn_id
                                     changed = True
 
+                                # Correct commence_time from ESPN if significantly different
+                                # The Odds API occasionally returns local times as UTC
+                                if ee.date and event.commence_time:
+                                    time_diff = abs((ee.date - event.commence_time).total_seconds())
+                                    if time_diff > 300:  # > 5 minutes difference
+                                        print(
+                                            f"ESPN: Correcting commence_time for event {event.id} "
+                                            f"({event.home_team_name} vs {event.away_team_name}): "
+                                            f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
+                                            f"(diff: {time_diff/3600:.1f}h)"
+                                        )
+                                        event.commence_time = ee.date
+                                        changed = True
+
                                 # Update game clock
                                 if ee.clock and event.game_clock != ee.clock:
                                     event.game_clock = ee.clock
@@ -2757,6 +2778,17 @@ async def _sync_espn_live_events():
                             if names_match(home_names, espn_home) and names_match(away_names, espn_away):
                                 await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
                                 await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                                # Correct commence_time from ESPN if significantly different
+                                if ee.date and event.commence_time:
+                                    time_diff = abs((ee.date - event.commence_time).total_seconds())
+                                    if time_diff > 300:  # > 5 minutes
+                                        print(
+                                            f"ESPN: Correcting commence_time for scheduled event {event.id} "
+                                            f"({event.home_team_name} vs {event.away_team_name}): "
+                                            f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
+                                            f"(diff: {time_diff/3600:.1f}h)"
+                                        )
+                                        event.commence_time = ee.date
                                 if ee.broadcasts and not event.broadcast_info:
                                     event.broadcast_info = ", ".join(ee.broadcasts)
                                 if ee.espn_id and not event.espn_id:
@@ -2910,3 +2942,29 @@ async def _backfill_team_logos():
         print(f"Team logo backfill error: {e}\n{traceback.format_exc()}")
 
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Ad Baseline Reset — scheduled at kickoff so view deltas track game-day growth
+# ---------------------------------------------------------------------------
+@celery_app.task(bind=True)
+def reset_ad_baseline(self):
+    """Clear the Super Bowl ad view baseline in Redis.
+
+    Scheduled to run at 2 PM Pacific (22:00 UTC) on Feb 9, 2026 — kickoff.
+    The next /api/contest/ads fetch will snapshot fresh view counts,
+    so all +/- deltas reflect views gained during the game.
+    """
+    import ssl as _ssl
+    try:
+        if REDIS_URL.startswith("rediss://"):
+            r = redis.from_url(REDIS_URL, ssl_cert_reqs=_ssl.CERT_NONE)
+        else:
+            r = redis.from_url(REDIS_URL)
+        r.delete("sb_contest:ad_baseline")
+        r.delete("sb_contest:youtube_ads")
+        print("Ad baseline reset — next fetch will snapshot fresh view counts")
+        return {"status": "reset", "message": "Ad baseline cleared at kickoff"}
+    except Exception as e:
+        print(f"Ad baseline reset error: {e}")
+        return {"status": "error", "error": str(e)}

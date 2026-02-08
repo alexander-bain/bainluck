@@ -388,6 +388,12 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/esp
 
 # Test team name matching
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
+
+# Fix incorrect commence_time values using ESPN as source of truth
+# (backfills completed events — the live sync task handles new ones automatically)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/fix-commence-times?secret=any&limit=500"
+# Check task status:
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/task/{task_id}?secret=any"
 ```
 
 ### Multi-Source Win Probability
@@ -650,6 +656,8 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 12. **TV mode uses `fixed inset-0` overlay**: The root layout (`app/layout.tsx`) wraps ALL pages with a header/footer. TV mode can't opt out of this in Next.js app router, so it uses `fixed inset-0 z-[9999]` to cover the root layout entirely. Don't change this to `h-screen` — it will render inside the root layout chrome and break.
 
 13. **The Odds API per-event props: fetch markets individually**: Requesting multiple prop markets in one call returns 422 if ANY single market is unavailable. The props endpoint fetches each market in its own API call and aggregates results.
+
+14. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Important:** `tasks.py` uses `print()` for logging, not `logging.getLogger()` — there is no `logger` variable in that file.
 
 ---
 
