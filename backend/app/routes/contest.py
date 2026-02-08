@@ -2262,22 +2262,44 @@ async def capture_bitcoin_start(secret: str = Query("", description="Admin secre
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
-# Game day: Feb 9, 2026. 2PM Pacific = 22:00 UTC. Game ends ~8PM Pacific = 04:00 UTC Feb 10.
-# Dynamic cache TTL to maximize freshness during the game while staying under 10K quota.
-#   Pre-game: 30 min cache → ~1K quota units
-#   Game time (2PM-8PM Pacific): 7 min cache → ~7.7K quota units
+# Game day: Feb 8, 2026 (Super Bowl LX).
+# Schedule:
+#   Morning-2PM Pacific: 45 min cache, budget quota (~600 units)
+#   2PM Pacific: auto-reset baseline so view deltas track game-time growth
+#   2PM-8PM Pacific: 7 min cache, maximize freshness (~7.7K units)
 #   Post-game: 30 min cache
-#   Total worst case: ~8.7K / 10K budget
-GAME_START_UTC = datetime(2026, 2, 9, 22, 0, 0, tzinfo=timezone.utc)
-GAME_END_UTC = datetime(2026, 2, 10, 4, 0, 0, tzinfo=timezone.utc)
+#   Total worst case: ~8.3K / 10K quota budget
+#
+# 2PM Pacific = 22:00 UTC.  8PM Pacific = 04:00 UTC next day.
+
+PREGAME_START_UTC = datetime(2026, 2, 8, 16, 0, 0, tzinfo=timezone.utc)  # 8 AM Pacific
+GAME_START_UTC = datetime(2026, 2, 8, 22, 0, 0, tzinfo=timezone.utc)     # 2 PM Pacific
+GAME_END_UTC = datetime(2026, 2, 9, 4, 0, 0, tzinfo=timezone.utc)        # 8 PM Pacific
 
 
 def _youtube_cache_ttl() -> int:
-    """Dynamic cache TTL based on game time."""
+    """Dynamic cache TTL based on game time.
+
+    Returns (ttl_seconds).  Mode is derived separately in _youtube_mode().
+    """
+    now = datetime.now(timezone.utc)
+    # Game window (2PM-8PM Pacific) — most aggressive
+    if GAME_START_UTC <= now <= GAME_END_UTC:
+        return 420   # 7 minutes
+    # Pre-game morning (8AM-2PM Pacific) — conservative, save quota
+    if PREGAME_START_UTC <= now < GAME_START_UTC:
+        return 2700  # 45 minutes
+    return 1800      # 30 minutes otherwise
+
+
+def _youtube_mode() -> str:
+    """Current operational mode for the ad leaderboard."""
     now = datetime.now(timezone.utc)
     if GAME_START_UTC <= now <= GAME_END_UTC:
-        return 420  # 7 minutes during game
-    return 1800  # 30 minutes otherwise
+        return "game"
+    if PREGAME_START_UTC <= now < GAME_START_UTC:
+        return "pregame"
+    return "idle"
 
 # Hardcoded Super Bowl LX ads — always available even without YouTube API.
 # When the YouTube API is configured, live view counts replace these.
@@ -2326,11 +2348,15 @@ SB_AD_BRANDS = [ad["brand"].split("/")[0] for ad in SB_ADS_CURATED] + [
 async def _fetch_youtube_ads() -> list[dict]:
     """Fetch Super Bowl LX ad leaderboard.
 
-    One broad YouTube search (100 quota units) + batch stats (1 unit per video).
-    Matches results to curated brands. NO per-brand targeted searches.
-    Cached for 10 minutes. ~150 units per cache miss = ~2,200 units/day.
+    Strategy:
+    1. Broad searches with varied queries (100 quota units each)
+    2. Targeted per-brand searches for curated ads not found (100 units each)
+    3. Batch stats fetch for all discovered videos (1 unit per video)
 
-    This is the same approach that worked yesterday on ~2.5K quota.
+    Quota budget varies by mode:
+    - idle:    1 broad search only (~100 units per cache miss)
+    - pregame: 1 broad search only (~100 units per miss, 45 min cache)
+    - game:    2 broad + up to 10 targeted (~1,200 units per miss, 7 min cache)
     """
     cache_key = f"{REDIS_KEY_PREFIX}youtube_ads"
 
@@ -2345,35 +2371,79 @@ async def _fetch_youtube_ads() -> list[dict]:
 
     ads: list[dict] = []
     found_brands: set[str] = set()
+    mode = _youtube_mode()
 
     if YOUTUBE_API_KEY:
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                # One broad search (100 quota units)
                 all_video_ids: list[str] = []
                 video_snippets: dict[str, dict] = {}
 
-                search_url = "https://www.googleapis.com/youtube/v3/search"
-                search_params = {
-                    "key": YOUTUBE_API_KEY,
-                    "q": "Super Bowl LX 2026 commercial ad",
-                    "type": "video",
-                    "part": "snippet",
-                    "maxResults": 50,
-                    "order": "viewCount",
-                    "publishedAfter": "2025-11-01T00:00:00Z",
-                }
-                resp = await client.get(search_url, params=search_params)
-                if resp.status_code == 200:
-                    for item in resp.json().get("items", []):
-                        vid_id = item.get("id", {}).get("videoId", "")
-                        if vid_id and vid_id not in video_snippets:
-                            all_video_ids.append(vid_id)
-                            video_snippets[vid_id] = item.get("snippet", {})
-                elif resp.status_code == 403:
-                    logger.error("YouTube quota exceeded")
+                # --- Phase 1: Broad searches ---
+                broad_queries = ["Super Bowl LX 2026 commercial ad"]
+                if mode == "game":
+                    broad_queries.append("Super Bowl 2026 ad official")
 
-                # Batch fetch stats (1 unit per video, not per request)
+                search_url = "https://www.googleapis.com/youtube/v3/search"
+                for query in broad_queries:
+                    search_params = {
+                        "key": YOUTUBE_API_KEY,
+                        "q": query,
+                        "type": "video",
+                        "part": "snippet",
+                        "maxResults": 50,
+                        "order": "viewCount",
+                        "publishedAfter": "2025-11-01T00:00:00Z",
+                    }
+                    resp = await client.get(search_url, params=search_params)
+                    if resp.status_code == 200:
+                        for item in resp.json().get("items", []):
+                            vid_id = item.get("id", {}).get("videoId", "")
+                            if vid_id and vid_id not in video_snippets:
+                                all_video_ids.append(vid_id)
+                                video_snippets[vid_id] = item.get("snippet", {})
+                    elif resp.status_code == 403:
+                        logger.error("YouTube quota exceeded during broad search")
+                        break  # stop searching, use what we have
+
+                # --- Phase 2: Identify which brands we found so far ---
+                preliminary_brands: set[str] = set()
+                for vid_id in all_video_ids:
+                    snippet = video_snippets.get(vid_id, {})
+                    title = snippet.get("title", "")
+                    channel = snippet.get("channelTitle", "")
+                    brand = _identify_brand(title, channel)
+                    if brand:
+                        preliminary_brands.add(brand)
+
+                # --- Phase 3: Targeted searches for missing curated brands ---
+                if mode == "game":
+                    missing = [
+                        c for c in SB_ADS_CURATED
+                        if c["brand"] not in preliminary_brands and c.get("search")
+                    ]
+                    # Limit targeted searches to save quota (10 max = 1,000 units)
+                    for curated in missing[:10]:
+                        resp = await client.get(search_url, params={
+                            "key": YOUTUBE_API_KEY,
+                            "q": curated["search"],
+                            "type": "video",
+                            "part": "snippet",
+                            "maxResults": 3,
+                            "order": "relevance",
+                            "publishedAfter": "2025-11-01T00:00:00Z",
+                        })
+                        if resp.status_code == 200:
+                            for item in resp.json().get("items", []):
+                                vid_id = item.get("id", {}).get("videoId", "")
+                                if vid_id and vid_id not in video_snippets:
+                                    all_video_ids.append(vid_id)
+                                    video_snippets[vid_id] = item.get("snippet", {})
+                        elif resp.status_code == 403:
+                            logger.error("YouTube quota exceeded during targeted search")
+                            break
+
+                # --- Phase 4: Batch fetch stats ---
                 stats_map: dict[str, dict] = {}
                 for i in range(0, len(all_video_ids), 50):
                     batch = all_video_ids[i:i+50]
@@ -2388,7 +2458,7 @@ async def _fetch_youtube_ads() -> list[dict]:
                         for item in resp.json().get("items", []):
                             stats_map[item["id"]] = item.get("statistics", {})
 
-                # Build ad list: match to curated brands, or use title/channel
+                # --- Phase 5: Build ad list ---
                 for vid_id in all_video_ids:
                     snippet = video_snippets.get(vid_id, {})
                     stats = stats_map.get(vid_id, {})
@@ -2396,7 +2466,6 @@ async def _fetch_youtube_ads() -> list[dict]:
                     channel = snippet.get("channelTitle", "")
                     brand = _identify_brand(title, channel)
 
-                    # Use brand from matching, or fall back to channel/title
                     if not brand:
                         brand = channel or title.split(" - ")[0][:30] or "Unknown"
 
@@ -2419,6 +2488,11 @@ async def _fetch_youtube_ads() -> list[dict]:
                         })
 
                 ads.sort(key=lambda x: -x["views"])
+                logger.info(
+                    f"YouTube ads: {len(ads)} found via API, "
+                    f"{len(found_brands & {c['brand'] for c in SB_ADS_CURATED})} curated matched, "
+                    f"mode={mode}"
+                )
         except Exception as e:
             logger.error(f"YouTube API error: {e}")
 
@@ -2493,12 +2567,27 @@ def _format_view_count(views: int) -> str:
 async def get_ad_leaderboard():
     """Get Super Bowl ad leaderboard ranked by YouTube views."""
     ads = await _fetch_youtube_ads()
+    mode = _youtube_mode()
 
-    # Baseline snapshot: store initial view counts so we can show growth during game
+    # --- Auto-reset baseline at 2PM Pacific (game start) ---
+    # Automatically reset the baseline so view deltas track game-time growth.
     baseline_key = f"{REDIS_KEY_PREFIX}ad_baseline"
+    auto_reset_key = f"{REDIS_KEY_PREFIX}ad_auto_reset:game"
     baseline: dict[str, int] = {}
     try:
         r = _redis()
+
+        # Check if we need to auto-reset for game mode transition
+        if mode == "game" and not r.get(auto_reset_key):
+            # First request in this mode — reset baseline
+            r.delete(baseline_key)
+            r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")  # clear cache too
+            # Mark that we've reset for this mode (expires in 12 hours)
+            r.setex(auto_reset_key, 43200, "1")
+            logger.info(f"Auto-reset ad baseline for mode={mode}")
+            # Re-fetch with fresh cache
+            ads = await _fetch_youtube_ads()
+
         cached_baseline = r.get(baseline_key)
         if cached_baseline:
             baseline = json.loads(cached_baseline)
@@ -2521,7 +2610,7 @@ async def get_ad_leaderboard():
         if delta > 0:
             has_any_delta = True
 
-    # Once the game starts (deltas exist), rank by views gained during the game
+    # Once deltas exist, rank by views gained
     if has_any_delta:
         ads.sort(key=lambda x: -x["views_delta"])
 
@@ -2536,8 +2625,54 @@ async def get_ad_leaderboard():
         "with_video": with_video,
         "youtube_configured": bool(YOUTUBE_API_KEY),
         "cache_ttl_seconds": ttl,
-        "mode": "game" if ttl < 600 else "idle",
+        "mode": mode,
     }
+
+
+@router.get("/ads/status")
+async def get_ad_status():
+    """Debug: show ad leaderboard status without fetching YouTube."""
+    mode = _youtube_mode()
+    ttl = _youtube_cache_ttl()
+    now = datetime.now(timezone.utc)
+
+    status: dict = {
+        "mode": mode,
+        "cache_ttl_seconds": ttl,
+        "youtube_configured": bool(YOUTUBE_API_KEY),
+        "utc_now": now.isoformat(),
+        "time_windows": {
+            "pregame": f"{PREGAME_START_UTC.isoformat()} to {GAME_START_UTC.isoformat()}",
+            "game": f"{GAME_START_UTC.isoformat()} to {GAME_END_UTC.isoformat()}",
+        },
+    }
+
+    try:
+        r = _redis()
+        cache_exists = r.exists(f"{REDIS_KEY_PREFIX}youtube_ads")
+        cache_ttl_remaining = r.ttl(f"{REDIS_KEY_PREFIX}youtube_ads")
+        baseline_exists = r.exists(f"{REDIS_KEY_PREFIX}ad_baseline")
+        game_reset = r.exists(f"{REDIS_KEY_PREFIX}ad_auto_reset:game")
+
+        status["redis"] = {
+            "cache_exists": bool(cache_exists),
+            "cache_ttl_remaining": cache_ttl_remaining,
+            "baseline_exists": bool(baseline_exists),
+            "auto_reset_game_done": bool(game_reset),
+        }
+
+        if cache_exists:
+            cached = json.loads(r.get(f"{REDIS_KEY_PREFIX}youtube_ads"))
+            with_video = sum(1 for ad in cached if ad.get("video_id"))
+            status["cached_ads"] = {
+                "total": len(cached),
+                "with_video": with_video,
+                "brands_with_video": [ad["brand"] for ad in cached if ad.get("video_id")][:15],
+            }
+    except Exception as e:
+        status["redis_error"] = str(e)
+
+    return status
 
 
 @router.post("/reset-ad-baseline")
