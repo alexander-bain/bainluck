@@ -1202,12 +1202,12 @@ export default function TVPage({ params }: TVPageProps) {
       const newMode = data.mode || "idle";
       if (newMode !== adModeRef.current) {
         adModeRef.current = newMode;
-        // Game/rehearsal: poll every 3 min (backend cache is 7-15 min)
-        // Dry run: poll every 10 min (backend cache is 45 min)
+        // Game: poll every 3 min (backend cache is 7 min)
+        // Pregame: poll every 10 min (backend cache is 45 min)
         // Idle: poll every 5 min (backend cache is 30 min)
         const interval =
-          newMode === "game" || newMode === "rehearsal" ? 180000 :
-          newMode === "dry_run" ? 600000 :
+          newMode === "game" ? 180000 :
+          newMode === "pregame" ? 600000 :
           300000;
         if (adPollRef.current) clearInterval(adPollRef.current);
         adPollRef.current = setInterval(fetchAds, interval);

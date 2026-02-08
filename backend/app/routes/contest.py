@@ -2262,28 +2262,19 @@ async def capture_bitcoin_start(secret: str = Query("", description="Admin secre
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
-# Game day: Feb 9, 2026. 2PM Pacific = 22:00 UTC. Game ends ~8PM Pacific = 04:00 UTC Feb 10.
-# Dynamic cache TTL to maximize freshness during the game while staying under 10K quota.
+# Game day: Feb 8, 2026 (Super Bowl LX).
+# Schedule:
+#   Morning-2PM Pacific: 45 min cache, budget quota (~600 units)
+#   2PM Pacific: auto-reset baseline so view deltas track game-time growth
+#   2PM-8PM Pacific: 7 min cache, maximize freshness (~7.7K units)
+#   Post-game: 30 min cache
+#   Total worst case: ~8.3K / 10K quota budget
 #
-# Dry run (Feb 8):
-#   Morning-2PM Pacific: 45 min cache (~600 quota units for the morning)
-#   2PM-8PM Pacific:     15 min cache (~2,400 quota units for the afternoon)
-#   Baseline auto-resets at 2PM Pacific so deltas restart fresh.
-#
-# Game day (Feb 9):
-#   Pre-game:            30 min cache → ~1K quota units
-#   Game (2PM-8PM Pac):  7 min cache  → ~7.7K quota units
-#   Post-game:           30 min cache
-#   Total worst case: ~8.7K / 10K budget
+# 2PM Pacific = 22:00 UTC.  8PM Pacific = 04:00 UTC next day.
 
-# Dry run: Feb 8, 2026
-DRY_RUN_MORNING_UTC = datetime(2026, 2, 8, 16, 0, 0, tzinfo=timezone.utc)  # 8 AM Pacific
-DRY_RUN_ACTIVE_UTC = datetime(2026, 2, 8, 22, 0, 0, tzinfo=timezone.utc)   # 2 PM Pacific
-DRY_RUN_END_UTC = datetime(2026, 2, 9, 4, 0, 0, tzinfo=timezone.utc)       # 8 PM Pacific
-
-# Game day: Feb 9, 2026
-GAME_START_UTC = datetime(2026, 2, 9, 22, 0, 0, tzinfo=timezone.utc)
-GAME_END_UTC = datetime(2026, 2, 10, 4, 0, 0, tzinfo=timezone.utc)
+PREGAME_START_UTC = datetime(2026, 2, 8, 16, 0, 0, tzinfo=timezone.utc)  # 8 AM Pacific
+GAME_START_UTC = datetime(2026, 2, 8, 22, 0, 0, tzinfo=timezone.utc)     # 2 PM Pacific
+GAME_END_UTC = datetime(2026, 2, 9, 4, 0, 0, tzinfo=timezone.utc)        # 8 PM Pacific
 
 
 def _youtube_cache_ttl() -> int:
@@ -2292,14 +2283,11 @@ def _youtube_cache_ttl() -> int:
     Returns (ttl_seconds).  Mode is derived separately in _youtube_mode().
     """
     now = datetime.now(timezone.utc)
-    # Game day — most aggressive
+    # Game window (2PM-8PM Pacific) — most aggressive
     if GAME_START_UTC <= now <= GAME_END_UTC:
-        return 420   # 7 minutes during game
-    # Dry run afternoon (2PM-8PM Pacific Feb 8) — moderately aggressive
-    if DRY_RUN_ACTIVE_UTC <= now <= DRY_RUN_END_UTC:
-        return 900   # 15 minutes
-    # Dry run morning (before 2PM Pacific Feb 8) — conservative
-    if DRY_RUN_MORNING_UTC <= now < DRY_RUN_ACTIVE_UTC:
+        return 420   # 7 minutes
+    # Pre-game morning (8AM-2PM Pacific) — conservative, save quota
+    if PREGAME_START_UTC <= now < GAME_START_UTC:
         return 2700  # 45 minutes
     return 1800      # 30 minutes otherwise
 
@@ -2309,10 +2297,8 @@ def _youtube_mode() -> str:
     now = datetime.now(timezone.utc)
     if GAME_START_UTC <= now <= GAME_END_UTC:
         return "game"
-    if DRY_RUN_ACTIVE_UTC <= now <= DRY_RUN_END_UTC:
-        return "rehearsal"
-    if DRY_RUN_MORNING_UTC <= now < DRY_RUN_ACTIVE_UTC:
-        return "dry_run"
+    if PREGAME_START_UTC <= now < GAME_START_UTC:
+        return "pregame"
     return "idle"
 
 # Hardcoded Super Bowl LX ads — always available even without YouTube API.
@@ -2368,9 +2354,9 @@ async def _fetch_youtube_ads() -> list[dict]:
     3. Batch stats fetch for all discovered videos (1 unit per video)
 
     Quota budget varies by mode:
-    - idle/dry_run: 1 broad search only (~100 units per cache miss)
-    - rehearsal:    2 broad + up to 10 targeted (~1,200 units per miss)
-    - game:         2 broad + up to 10 targeted (~1,200 units per miss)
+    - idle:    1 broad search only (~100 units per cache miss)
+    - pregame: 1 broad search only (~100 units per miss, 45 min cache)
+    - game:    2 broad + up to 10 targeted (~1,200 units per miss, 7 min cache)
     """
     cache_key = f"{REDIS_KEY_PREFIX}youtube_ads"
 
@@ -2395,7 +2381,7 @@ async def _fetch_youtube_ads() -> list[dict]:
 
                 # --- Phase 1: Broad searches ---
                 broad_queries = ["Super Bowl LX 2026 commercial ad"]
-                if mode in ("rehearsal", "game"):
+                if mode == "game":
                     broad_queries.append("Super Bowl 2026 ad official")
 
                 search_url = "https://www.googleapis.com/youtube/v3/search"
@@ -2431,7 +2417,7 @@ async def _fetch_youtube_ads() -> list[dict]:
                         preliminary_brands.add(brand)
 
                 # --- Phase 3: Targeted searches for missing curated brands ---
-                if mode in ("rehearsal", "game"):
+                if mode == "game":
                     missing = [
                         c for c in SB_ADS_CURATED
                         if c["brand"] not in preliminary_brands and c.get("search")
@@ -2583,17 +2569,16 @@ async def get_ad_leaderboard():
     ads = await _fetch_youtube_ads()
     mode = _youtube_mode()
 
-    # --- Auto-reset baseline at scheduled times ---
-    # At the start of "rehearsal" (2PM Pacific today) and "game" (2PM Pacific tomorrow),
-    # automatically reset the baseline so deltas track fresh growth.
+    # --- Auto-reset baseline at 2PM Pacific (game start) ---
+    # Automatically reset the baseline so view deltas track game-time growth.
     baseline_key = f"{REDIS_KEY_PREFIX}ad_baseline"
-    auto_reset_key = f"{REDIS_KEY_PREFIX}ad_auto_reset:{mode}"
+    auto_reset_key = f"{REDIS_KEY_PREFIX}ad_auto_reset:game"
     baseline: dict[str, int] = {}
     try:
         r = _redis()
 
-        # Check if we need to auto-reset for this mode transition
-        if mode in ("rehearsal", "game") and not r.get(auto_reset_key):
+        # Check if we need to auto-reset for game mode transition
+        if mode == "game" and not r.get(auto_reset_key):
             # First request in this mode — reset baseline
             r.delete(baseline_key)
             r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")  # clear cache too
@@ -2657,8 +2642,7 @@ async def get_ad_status():
         "youtube_configured": bool(YOUTUBE_API_KEY),
         "utc_now": now.isoformat(),
         "time_windows": {
-            "dry_run_morning": f"{DRY_RUN_MORNING_UTC.isoformat()} to {DRY_RUN_ACTIVE_UTC.isoformat()}",
-            "dry_run_active": f"{DRY_RUN_ACTIVE_UTC.isoformat()} to {DRY_RUN_END_UTC.isoformat()}",
+            "pregame": f"{PREGAME_START_UTC.isoformat()} to {GAME_START_UTC.isoformat()}",
             "game": f"{GAME_START_UTC.isoformat()} to {GAME_END_UTC.isoformat()}",
         },
     }
@@ -2668,14 +2652,12 @@ async def get_ad_status():
         cache_exists = r.exists(f"{REDIS_KEY_PREFIX}youtube_ads")
         cache_ttl_remaining = r.ttl(f"{REDIS_KEY_PREFIX}youtube_ads")
         baseline_exists = r.exists(f"{REDIS_KEY_PREFIX}ad_baseline")
-        rehearsal_reset = r.exists(f"{REDIS_KEY_PREFIX}ad_auto_reset:rehearsal")
         game_reset = r.exists(f"{REDIS_KEY_PREFIX}ad_auto_reset:game")
 
         status["redis"] = {
             "cache_exists": bool(cache_exists),
             "cache_ttl_remaining": cache_ttl_remaining,
             "baseline_exists": bool(baseline_exists),
-            "auto_reset_rehearsal_done": bool(rehearsal_reset),
             "auto_reset_game_done": bool(game_reset),
         }
 
