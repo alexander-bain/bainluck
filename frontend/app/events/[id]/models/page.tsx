@@ -109,10 +109,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
   if (hasApiSources) {
     for (const [key, meta] of Object.entries(apiSources)) {
       if (key === "betting") continue;
-      const currentVal =
-        (event as Record<string, unknown>).win_probability_sources
-          ? ((event as Record<string, unknown>).win_probability_sources as Record<string, { value: number }>)?.[key]?.value ?? null
-          : null;
+      const currentVal = event.win_probability_sources?.[key]?.value ?? null;
       displaySources.push({ key, meta, currentValue: currentVal });
     }
   } else {

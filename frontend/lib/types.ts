@@ -126,6 +126,7 @@ export interface Event {
   espn?: ESPNData;
   home_team_data?: TeamData;
   away_team_data?: TeamData;
+  win_probability_sources?: Record<string, { value: number; display_name: string; type: string; color: string }>;
 }
 
 export interface EventsResponse {
