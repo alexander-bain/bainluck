@@ -90,6 +90,7 @@ interface YouTubeAd {
   title: string;
   video_id: string;
   channel: string;
+  celebrity: string;
   thumbnail: string;
   views: number;
   likes: number;
@@ -412,21 +413,29 @@ const AD_MEDAL_EMOJIS = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"]; // gol
 function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
   const [playingId, setPlayingId] = useState<string | null>(null);
 
+  // --- Inline video player ---
   if (playingId) {
     const ad = ads.find((a) => a.video_id === playingId);
     return (
       <div className="flex flex-col h-full">
-        <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
+        {/* Prominent back button */}
+        <div className="shrink-0 mb-[1vh]">
           <button
             onClick={() => setPlayingId(null)}
-            className="text-blue-400 text-[1.2vh] hover:text-blue-300 flex items-center gap-[0.3vw]"
+            className="flex items-center gap-[0.5vw] px-[0.8vw] py-[0.6vh] rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-white text-[1.4vh] font-semibold"
           >
-            &larr; Back
+            <span className="text-[1.6vh]">&larr;</span>
+            Back to Leaderboard
           </button>
-          <span className="text-white/50 text-[1.1vh] font-semibold truncate">
-            {ad?.brand}
-          </span>
         </div>
+        {/* Brand info */}
+        <div className="shrink-0 mb-[0.8vh] text-center">
+          <div className="text-white font-bold text-[2vh]">{ad?.brand}</div>
+          {ad?.celebrity && (
+            <div className="text-white/40 text-[1.1vh]">ft. {ad.celebrity}</div>
+          )}
+        </div>
+        {/* Video */}
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <iframe
             src={`https://www.youtube.com/embed/${playingId}?autoplay=1&controls=1`}
@@ -440,6 +449,7 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
     );
   }
 
+  // --- Scrolling leaderboard ---
   return (
     <div className="flex flex-col h-full">
       <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
@@ -452,73 +462,75 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
       </div>
 
       <AutoScrollContainer className="flex-1 min-h-0" speed={0.2}>
-        <div className="space-y-[0.3vh]">
+        <div className="space-y-[0.2vh]">
           {ads.map((ad, i) => {
             const isTop3 = i < 3;
             const hasVideo = !!ad.video_id;
             const hasViews = ad.views > 0;
+            const subtitle = ad.celebrity || ad.title;
             return (
               <div
                 key={`${ad.brand}-${i}`}
-                className={`flex items-center gap-[0.4vw] px-[0.3vw] py-[0.3vh] rounded-lg ${
+                className={`flex items-center gap-[0.3vw] px-[0.3vw] py-[0.4vh] rounded-lg ${
                   isTop3 ? "bg-white/5" : ""
-                }`}
+                } ${hasVideo ? "cursor-pointer hover:bg-white/8" : ""}`}
+                onClick={hasVideo ? () => setPlayingId(ad.video_id) : undefined}
               >
                 {/* Rank */}
-                <div className="w-[1.5vw] text-center shrink-0">
+                <div className="w-[1.2vw] text-center shrink-0">
                   {isTop3 ? (
                     <span className="text-[1.6vh]">{AD_MEDAL_EMOJIS[i]}</span>
                   ) : (
-                    <span className="text-white/30 font-mono text-[1.2vh]">
+                    <span className="text-white/30 font-mono text-[1.1vh]">
                       {ad.rank}
                     </span>
                   )}
                 </div>
 
-                {/* Brand + title + celebrity */}
+                {/* Play icon */}
+                <div className="w-[1.4vw] shrink-0 flex items-center justify-center">
+                  {hasVideo ? (
+                    <span className="text-red-400 text-[1.4vh]">&#9654;</span>
+                  ) : (
+                    <span className="text-white/10 text-[1.4vh]">&#9654;</span>
+                  )}
+                </div>
+
+                {/* Brand + subtitle */}
                 <div className="flex-1 min-w-0">
                   <span
-                    className={`text-[1.3vh] font-semibold truncate block ${
+                    className={`text-[1.2vh] font-semibold truncate block ${
                       isTop3 ? "text-white" : "text-white/70"
                     }`}
                   >
                     {ad.brand}
                   </span>
-                  <div className="text-white/30 text-[0.85vh] truncate leading-tight">
-                    {ad.channel && !hasViews ? ad.channel : ad.title}
-                  </div>
+                  {subtitle && (
+                    <div className="text-white/30 text-[0.8vh] truncate leading-tight">
+                      {subtitle}
+                    </div>
+                  )}
                 </div>
 
-                {/* Play button (only if we have a YouTube video ID) */}
-                {hasVideo && (
-                  <button
-                    onClick={() => setPlayingId(ad.video_id)}
-                    className="shrink-0 text-blue-400 hover:text-blue-300 text-[1.5vh] w-[1.8vw] h-[2.5vh] flex items-center justify-center rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
-                    title={`Play ${ad.brand}`}
-                  >
-                    &#9654;
-                  </button>
-                )}
-
-                {/* Views: delta is primary when available, total views secondary */}
-                <div className="text-right shrink-0 w-[3.5vw]">
+                {/* Views — big and bold */}
+                <div className="text-right shrink-0 min-w-[3vw]">
                   {hasViews ? (
                     ad.views_delta > 0 ? (
                       <>
-                        <div className="text-emerald-400 font-mono font-bold text-[1.3vh]">
+                        <div className={`font-mono font-bold ${isTop3 ? "text-[1.8vh]" : "text-[1.5vh]"} text-emerald-400`}>
                           {ad.views_delta_formatted}
                         </div>
-                        <div className="text-white/25 font-mono text-[0.7vh] leading-tight">
+                        <div className="text-white/20 font-mono text-[0.7vh] leading-tight">
                           {ad.views_formatted} total
                         </div>
                       </>
                     ) : (
-                      <div className="text-white/40 font-mono font-bold text-[1.2vh]">
+                      <div className={`font-mono font-bold ${isTop3 ? "text-[1.8vh]" : "text-[1.5vh]"} text-white/60`}>
                         {ad.views_formatted}
                       </div>
                     )
                   ) : (
-                    <span className="text-white/10 text-[0.9vh]">TBD</span>
+                    <span className="text-white/15 font-mono text-[1vh]">--</span>
                   )}
                 </div>
               </div>
