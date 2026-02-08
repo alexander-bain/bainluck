@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
+import { fetchEvent, fetchEventHistory, formatProbability, getBestProbability } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
 import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
@@ -325,8 +325,13 @@ export default function EventPage({ params }: EventPageProps) {
   }
 
   const odds = event.current_odds;
-  const homeProb = odds?.home_probability;
-  const awayProb = odds?.away_probability;
+  // For live games, use the best available probability source (model or betting).
+  // Models (ESPN, stat model) update on every play, while betting odds from some
+  // bookmakers may lag behind or stop updating during blowouts.
+  const bestProb = getBestProbability(event);
+  const homeProb = bestProb.homeProb;
+  const awayProb = bestProb.awayProb;
+  const usingModelSource = bestProb.source === "model";
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
   const gameIsBlowout = isLive && isBlowout(homeProb);
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
@@ -761,6 +766,15 @@ export default function EventPage({ params }: EventPageProps) {
             </span>
           </div>
         </div>
+
+        {/* Model source indicator when using non-betting probability */}
+        {usingModelSource && bestProb.sourceName && (
+          <div className="mt-2 text-center">
+            <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full">
+              Probabilities from {bestProb.sourceName} (betting odds lagging)
+            </span>
+          </div>
+        )}
 
         {/* Data freshness strip */}
         {odds?.captured_at && (

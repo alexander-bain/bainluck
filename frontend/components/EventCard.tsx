@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Event } from "@/lib/types";
-import { formatProbability } from "@/lib/api";
+import { formatProbability, getBestProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import PulseBadge from "./PulseBadge";
@@ -54,8 +54,10 @@ export default function EventCard({
     }
   };
   const odds = event.current_odds;
-  const homeProb = odds?.home_probability;
-  const awayProb = odds?.away_probability;
+  // For live games, prefer model probabilities (ESPN/stat model) when betting odds lag
+  const bestProb = getBestProbability(event);
+  const homeProb = bestProb.homeProb;
+  const awayProb = bestProb.awayProb;
 
   // Handle card click with analytics
   const handleCardClick = () => {
