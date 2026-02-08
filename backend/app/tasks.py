@@ -2580,6 +2580,68 @@ async def _sync_espn_live_events():
                                     session.add(snapshot)
                                     stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
 
+                                    # Also write ESPN to generic win_prob_snapshots table
+                                    try:
+                                        from app.models.models import WinProbSnapshot
+                                        espn_wp_snap = WinProbSnapshot(
+                                            event_id=event.id,
+                                            source="espn",
+                                            home_win_probability=ee.home_win_probability,
+                                            away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
+                                            game_state={
+                                                "clock": ee.clock,
+                                                "period": ee.status_detail,
+                                                "home_score": ee.home_score,
+                                                "away_score": ee.away_score,
+                                            },
+                                        )
+                                        session.add(espn_wp_snap)
+                                    except Exception:
+                                        pass  # Table may not exist yet
+
+                                # Compute statistical model win probability
+                                if ee.home_score is not None and ee.away_score is not None and ee.clock:
+                                    try:
+                                        from app.utils.win_probability import compute_statistical_win_prob
+                                        from app.models.models import WinProbSnapshot
+
+                                        # Use opening spread if available
+                                        pregame_spread = None
+                                        if event.opening_home_spread is not None:
+                                            pregame_spread = float(event.opening_home_spread)
+
+                                        stat_wp = compute_statistical_win_prob(
+                                            home_score=ee.home_score,
+                                            away_score=ee.away_score,
+                                            clock=ee.clock,
+                                            period=ee.status_detail,
+                                            sport_key=sport_key,
+                                            pregame_spread=pregame_spread,
+                                        )
+                                        if stat_wp is not None:
+                                            sources = event.win_probability_sources or {}
+                                            sources["stat_model"] = round(stat_wp, 4)
+                                            event.win_probability_sources = sources
+                                            changed = True
+
+                                            stat_snap = WinProbSnapshot(
+                                                event_id=event.id,
+                                                source="stat_model",
+                                                home_win_probability=round(stat_wp, 4),
+                                                away_win_probability=round(1.0 - stat_wp, 4),
+                                                game_state={
+                                                    "clock": ee.clock,
+                                                    "period": ee.status_detail,
+                                                    "home_score": ee.home_score,
+                                                    "away_score": ee.away_score,
+                                                    "pregame_spread": pregame_spread,
+                                                },
+                                            )
+                                            session.add(stat_snap)
+                                            stats["stat_model_computed"] = stats.get("stat_model_computed", 0) + 1
+                                    except Exception:
+                                        pass  # Model or table not available
+
                                 if changed:
                                     stats["events_updated"] += 1
 

@@ -1415,6 +1415,8 @@ export default function TVPage({ params }: TVPageProps) {
                   isLive={isLive}
                   bookmakerHistory={historyData?.bookmaker_history}
                   espnHistory={historyData?.espn_history}
+                  winProbHistory={historyData?.win_prob_history}
+                  winProbSources={historyData?.win_prob_sources}
                   eventStatus={event.status}
                   fillContainer
                 />

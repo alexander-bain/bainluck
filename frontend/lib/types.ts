@@ -191,6 +191,23 @@ export interface ESPNHistoryPoint {
   period: string | null;
 }
 
+export interface WinProbHistoryPoint {
+  timestamp: string;
+  home_probability: number | null;
+  away_probability: number | null;
+  draw_probability?: number | null;
+  game_state?: Record<string, unknown>;
+}
+
+export interface WinProbSourceMeta {
+  display_name: string;
+  type: "model" | "market";
+  color: string;
+  dash_pattern?: string | null;
+  description?: string;
+  snapshot_count: number;
+}
+
 export interface EventHistoryResponse {
   event_id: number;
   home_team: string;
@@ -199,6 +216,8 @@ export interface EventHistoryResponse {
   bookmaker_history?: Record<string, BookmakerHistoryPoint[]>;
   score_history?: ScoreHistoryPoint[];
   espn_history?: ESPNHistoryPoint[];
+  win_prob_history?: Record<string, WinProbHistoryPoint[]>;
+  win_prob_sources?: Record<string, WinProbSourceMeta>;
   points: number;
   espn_snapshot_count?: number;
 }

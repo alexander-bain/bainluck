@@ -872,6 +872,8 @@ export default function EventPage({ params }: EventPageProps) {
             isLive={effectivelyLive}
             bookmakerHistory={historyData?.bookmaker_history}
             espnHistory={historyData?.espn_history}
+            winProbHistory={historyData?.win_prob_history}
+            winProbSources={historyData?.win_prob_sources}
             eventStatus={event.status}
           />
         )}

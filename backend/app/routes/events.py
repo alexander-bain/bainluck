@@ -1598,7 +1598,7 @@ async def get_event_odds_history(
         # Table may not exist yet - return empty history
         pass
 
-    # Build ESPN win probability history
+    # Build ESPN win probability history (legacy, for backwards compatibility)
     espn_history = []
     try:
         from app.models import ESPNSnapshot
@@ -1628,6 +1628,51 @@ async def get_event_odds_history(
         # Table may not exist yet - return empty history
         pass
 
+    # Build multi-source win probability history from generic table
+    win_prob_history = {}
+    win_prob_sources_meta = {}
+    try:
+        from app.models.models import WinProbSnapshot
+        from app.config.win_prob_sources import WIN_PROB_SOURCES
+
+        wp_query = select(WinProbSnapshot).where(
+            WinProbSnapshot.event_id == event_id,
+        )
+        if cutoff is not None:
+            wp_query = wp_query.where(WinProbSnapshot.captured_at >= cutoff)
+        wp_result = await db.execute(
+            wp_query.order_by(WinProbSnapshot.captured_at)
+        )
+        wp_snapshots = wp_result.scalars().all()
+
+        # Group by source
+        for snap in wp_snapshots:
+            source = snap.source
+            if source not in win_prob_history:
+                win_prob_history[source] = []
+            win_prob_history[source].append({
+                "timestamp": snap.captured_at.isoformat(),
+                "home_probability": float(snap.home_win_probability) if snap.home_win_probability is not None else None,
+                "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
+                "draw_probability": float(snap.draw_probability) if snap.draw_probability is not None else None,
+                "game_state": snap.game_state,
+            })
+
+        # Build source metadata for sources that have data
+        for source_key in win_prob_history:
+            source_config = WIN_PROB_SOURCES.get(source_key, {})
+            win_prob_sources_meta[source_key] = {
+                "display_name": source_config.get("display_name", source_key),
+                "type": source_config.get("source_type", "model"),
+                "color": source_config.get("color", "#6b7280"),
+                "dash_pattern": source_config.get("dash_pattern"),
+                "description": source_config.get("description", ""),
+                "snapshot_count": len(win_prob_history[source_key]),
+            }
+    except Exception:
+        # Table may not exist yet
+        pass
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -1636,6 +1681,8 @@ async def get_event_odds_history(
         "bookmaker_history": bookmaker_history,
         "score_history": score_history,
         "espn_history": espn_history,
+        "win_prob_history": win_prob_history,
+        "win_prob_sources": win_prob_sources_meta,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),
@@ -1819,6 +1866,26 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
 
         if espn_data:
             response["espn"] = espn_data
+
+        # Also expose win_probability_sources at top level with source metadata
+        if event.win_probability_sources:
+            try:
+                from app.config.win_prob_sources import WIN_PROB_SOURCES
+                wp_sources = {}
+                for src_key, src_value in event.win_probability_sources.items():
+                    if src_key.startswith("_"):
+                        continue
+                    source_config = WIN_PROB_SOURCES.get(src_key, {})
+                    wp_sources[src_key] = {
+                        "value": src_value,
+                        "display_name": source_config.get("display_name", src_key),
+                        "type": source_config.get("source_type", "model"),
+                        "color": source_config.get("color", "#6b7280"),
+                    }
+                if wp_sources:
+                    response["win_probability_sources"] = wp_sources
+            except Exception:
+                pass
     except AttributeError:
         pass  # Columns may not exist yet
 
