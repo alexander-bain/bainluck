@@ -660,7 +660,7 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 
 13. **The Odds API per-event props: fetch markets individually**: Requesting multiple prop markets in one call returns 422 if ANY single market is unavailable. The props endpoint fetches each market in its own API call and aggregates results.
 
-14. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Important:** `tasks.py` uses `print()` for logging, not `logging.getLogger()` — there is no `logger` variable in that file.
+14. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** `tasks.py` now has `import logging` and `logger = logging.getLogger(__name__)` (added Feb 2026). Some older code in the file still uses `print()` instead.
 
 ---
 
