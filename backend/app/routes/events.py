@@ -1666,6 +1666,9 @@ async def get_event_odds_history(
                 "color": source_config.get("color", "#6b7280"),
                 "dash_pattern": source_config.get("dash_pattern"),
                 "description": source_config.get("description", ""),
+                "methodology": source_config.get("methodology", ""),
+                "attribution_url": source_config.get("attribution_url"),
+                "attribution_name": source_config.get("attribution_name"),
                 "snapshot_count": len(win_prob_history[source_key]),
             }
     except Exception:

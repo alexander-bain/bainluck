@@ -874,6 +874,7 @@ export default function EventPage({ params }: EventPageProps) {
             espnHistory={historyData?.espn_history}
             winProbHistory={historyData?.win_prob_history}
             winProbSources={historyData?.win_prob_sources}
+            eventId={eventId}
             eventStatus={event.status}
           />
         )}

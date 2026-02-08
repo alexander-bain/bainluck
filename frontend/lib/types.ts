@@ -205,6 +205,9 @@ export interface WinProbSourceMeta {
   color: string;
   dash_pattern?: string | null;
   description?: string;
+  methodology?: string;
+  attribution_url?: string | null;
+  attribution_name?: string | null;
   snapshot_count: number;
 }
 
