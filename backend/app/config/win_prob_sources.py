@@ -9,12 +9,15 @@ Source type determines visual treatment:
 
 WIN_PROB_SOURCES = {
     "betting": {
-        "display_name": "Betting Consensus",
+        "display_name": "Betting Odds",
         "source_type": "market",
         "sports": ["*"],
         "color": "#374151",
         "dash_pattern": None,
-        "description": "Consensus probability from sportsbook odds",
+        "description": "Consensus win probability derived from sportsbook moneyline odds, aggregated across multiple bookmakers by The Odds API.",
+        "methodology": "Moneyline odds from each bookmaker are converted to implied probabilities, then the vig (overround) is removed. The median probability across all reporting bookmakers is used as the consensus.",
+        "attribution_url": "https://the-odds-api.com",
+        "attribution_name": "The Odds API",
     },
     "espn": {
         "display_name": "ESPN",
@@ -27,10 +30,13 @@ WIN_PROB_SOURCES = {
         ],
         "color": "#f97316",
         "dash_pattern": "6 3",
-        "description": "ESPN's predictive win probability model",
+        "description": "ESPN's proprietary predictive model that updates on every play during live games. Uses game situation data including score, field position, down, distance, and time remaining.",
+        "methodology": "ESPN's internal win probability model, same data shown on ESPN.com game pages. Methodology is not publicly documented.",
+        "attribution_url": "https://www.espn.com",
+        "attribution_name": "ESPN",
     },
     "stat_model": {
-        "display_name": "Statistical Model",
+        "display_name": "OddsTracker Model",
         "source_type": "model",
         "sports": [
             "football_nfl", "football_ncaaf",
@@ -38,7 +44,10 @@ WIN_PROB_SOURCES = {
         ],
         "color": "#8b5cf6",
         "dash_pattern": "4 4",
-        "description": "Score + time + spread based win probability (nflfastR-inspired)",
+        "description": "An open win probability model inspired by nflfastR and Pro-Football-Reference. Uses current score, time remaining, and the pregame Vegas spread to estimate win probability via a normal distribution model.",
+        "methodology": "Based on the methodology from Hal Stern's research and Wayne Winston's Mathletics. The final margin of victory is modeled as a normal distribution where: (1) the mean equals the current score differential plus the pregame spread scaled by remaining game fraction, and (2) the standard deviation equals a sport-specific base value (NFL: 13.45 points) multiplied by the square root of the remaining game fraction. Win probability is then P(final margin > 0) using the normal CDF. Sport-specific parameters: NFL/NCAAF base_std=13.45, NBA/NCAAB=12.0.",
+        "attribution_url": "https://www.pro-football-reference.com/about/win_prob.htm",
+        "attribution_name": "nflfastR / PFR methodology",
     },
 }
 

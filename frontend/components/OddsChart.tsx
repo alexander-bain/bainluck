@@ -12,6 +12,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
+import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import type {
   OddsHistoryPoint,
@@ -25,7 +26,7 @@ import type {
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
   betting: { display_name: "Betting Odds", color: "#374151", dash_pattern: null, type: "market" },
   espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3", type: "model" },
-  stat_model: { display_name: "Statistical Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
+  stat_model: { display_name: "OddsTracker Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
   moneypuck: { display_name: "MoneyPuck", color: "#10b981", dash_pattern: "4 4", type: "model" },
   fangraphs: { display_name: "FanGraphs", color: "#06b6d4", dash_pattern: "4 4", type: "model" },
 };
@@ -96,6 +97,7 @@ export default function OddsChart({
   espnHistory,
   winProbHistory,
   winProbSources,
+  eventId,
   eventStatus,
   fillContainer = false,
 }: OddsChartProps) {
@@ -609,25 +611,40 @@ export default function OddsChart({
         </ResponsiveContainer>
       </div>
 
-      {/* Source legend — always shown, all sources labeled */}
+      {/* Source legend — always shown, all sources labeled, links to models page */}
       {resolvedSources.length > 0 && (
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
-          {resolvedSources.map((source) => (
-            <div key={source.key} className="flex items-center gap-1.5">
-              <svg width="20" height="4" className="shrink-0">
-                <line
-                  x1="0" y1="2" x2="20" y2="2"
-                  stroke={source.color}
-                  strokeWidth="2.5"
-                  strokeDasharray={source.dashPattern ?? undefined}
-                />
-              </svg>
-              <span className="text-xs text-gray-500">
-                {source.displayName}
-                <span className="text-gray-400 ml-0.5">({source.type})</span>
-              </span>
-            </div>
-          ))}
+          {resolvedSources.map((source) => {
+            const inner = (
+              <>
+                <svg width="20" height="4" className="shrink-0">
+                  <line
+                    x1="0" y1="2" x2="20" y2="2"
+                    stroke={source.color}
+                    strokeWidth="2.5"
+                    strokeDasharray={source.dashPattern ?? undefined}
+                  />
+                </svg>
+                <span className="text-xs text-gray-500 hover:text-gray-700">
+                  {source.displayName}
+                  <span className="text-gray-400 ml-0.5">({source.type})</span>
+                </span>
+              </>
+            );
+            return eventId ? (
+              <Link
+                key={source.key}
+                href={`/events/${eventId}/models`}
+                className="flex items-center gap-1.5 hover:underline"
+              >
+                {inner}
+              </Link>
+            ) : (
+              <div key={source.key} className="flex items-center gap-1.5">
+                {inner}
+              </div>
+            );
+          })}
           {bookmakers.length > 0 && (
             <div className="flex items-center gap-1.5">
               <svg width="20" height="4" className="shrink-0">

@@ -126,6 +126,7 @@ export interface Event {
   espn?: ESPNData;
   home_team_data?: TeamData;
   away_team_data?: TeamData;
+  win_probability_sources?: Record<string, { value: number; display_name: string; type: string; color: string }>;
 }
 
 export interface EventsResponse {
@@ -205,6 +206,9 @@ export interface WinProbSourceMeta {
   color: string;
   dash_pattern?: string | null;
   description?: string;
+  methodology?: string;
+  attribution_url?: string | null;
+  attribution_name?: string | null;
   snapshot_count: number;
 }
 
