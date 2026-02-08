@@ -122,6 +122,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_team_logos",
         "schedule": crontab(minute=15, hour="*/6"),  # Every 6 hours at :15
     },
+    "reset-ad-baseline-kickoff": {
+        "task": "app.tasks.reset_ad_baseline",
+        "schedule": crontab(minute=0, hour=22, day_of_month=9, month_of_year=2),  # Feb 9 @ 2PM Pacific (22:00 UTC)
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -2745,3 +2749,29 @@ async def _backfill_team_logos():
         print(f"Team logo backfill error: {e}\n{traceback.format_exc()}")
 
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Ad Baseline Reset — scheduled at kickoff so view deltas track game-day growth
+# ---------------------------------------------------------------------------
+@celery_app.task(bind=True)
+def reset_ad_baseline(self):
+    """Clear the Super Bowl ad view baseline in Redis.
+
+    Scheduled to run at 2 PM Pacific (22:00 UTC) on Feb 9, 2026 — kickoff.
+    The next /api/contest/ads fetch will snapshot fresh view counts,
+    so all +/- deltas reflect views gained during the game.
+    """
+    import ssl as _ssl
+    try:
+        if REDIS_URL.startswith("rediss://"):
+            r = redis.from_url(REDIS_URL, ssl_cert_reqs=_ssl.CERT_NONE)
+        else:
+            r = redis.from_url(REDIS_URL)
+        r.delete("sb_contest:ad_baseline")
+        r.delete("sb_contest:youtube_ads")
+        print("Ad baseline reset — next fetch will snapshot fresh view counts")
+        return {"status": "reset", "message": "Ad baseline cleared at kickoff"}
+    except Exception as e:
+        print(f"Ad baseline reset error: {e}")
+        return {"status": "error", "error": str(e)}

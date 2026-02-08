@@ -2095,7 +2095,7 @@ async def get_commentary(db: AsyncSession = Depends(get_db)):
     try:
         r = _redis()
         counter = int(r.get(f"{REDIS_KEY_PREFIX}commentary_counter") or 0)
-        show_fun_fact = counter % 2 == 1  # odd = fun fact, even = roast
+        show_fun_fact = counter % 3 != 0  # 2 out of 3 = fun fact/trivia, every 3rd = roast
         r.set(f"{REDIS_KEY_PREFIX}commentary_counter", counter + 1)
     except Exception:
         pass
@@ -2452,17 +2452,24 @@ async def get_ad_leaderboard():
     except Exception:
         pass
 
-    # Add rank, formatted views, and delta from baseline
-    for i, ad in enumerate(ads):
-        ad["rank"] = i + 1
+    # Compute deltas from baseline
+    has_any_delta = False
+    for ad in ads:
         ad["views_formatted"] = _format_view_count(ad["views"])
         ad["likes_formatted"] = _format_view_count(ad["likes"])
-
-        # Views gained since baseline snapshot (during the game)
         base_views = baseline.get(ad["video_id"], ad["views"])
         delta = max(0, ad["views"] - base_views)
         ad["views_delta"] = delta
         ad["views_delta_formatted"] = f"+{_format_view_count(delta)}" if delta > 0 else ""
+        if delta > 0:
+            has_any_delta = True
+
+    # Once the game starts (deltas exist), rank by views gained during the game
+    if has_any_delta:
+        ads.sort(key=lambda x: -x["views_delta"])
+
+    for i, ad in enumerate(ads):
+        ad["rank"] = i + 1
 
     return {
         "ads": ads,

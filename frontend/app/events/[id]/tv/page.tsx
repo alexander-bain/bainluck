@@ -141,7 +141,7 @@ interface TVPageProps {
 const LIVE_REFRESH_INTERVAL = 32000;
 const SCHEDULED_REFRESH_INTERVAL = 60000;
 const CONTEST_REFRESH_INTERVAL = 20000;
-const COMMENTARY_REFRESH_INTERVAL = 32000;
+const COMMENTARY_REFRESH_INTERVAL = 24000;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -832,7 +832,7 @@ function TVCommentaryPanel({
 
   // Countdown progress bar (32s for roast/fact, 6s for trivia question phase)
   const showCountdown = !isTrivia || triviaPhase === "question";
-  const countdownDuration = isTrivia ? 6 : 32;
+  const countdownDuration = isTrivia ? 6 : 24;
   const countdownBar = showCountdown && (
     <div className="shrink-0 mt-auto pt-[0.4vh]">
       <div className="w-full bg-white/5 rounded-full overflow-hidden" style={{ height: "0.35vh" }}>
@@ -1564,10 +1564,15 @@ export default function TVPage({ params }: TVPageProps) {
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-white/20 text-[1.3vh] gap-[0.5vh]">
                 <span className="text-[2vh]">{"\uD83D\uDCFA"}</span>
-                {adData && !adData.youtube_configured ? (
+                {!adData ? (
+                  <span>Loading ad leaderboard...</span>
+                ) : !adData.youtube_configured ? (
                   <span>YouTube API key not configured</span>
                 ) : (
-                  <span>Loading ad leaderboard...</span>
+                  <>
+                    <span>Ad Leaderboard</span>
+                    <span className="text-[1vh] text-white/10">Ads will appear once they go live</span>
+                  </>
                 )}
               </div>
             )}
