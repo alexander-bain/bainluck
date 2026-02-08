@@ -520,7 +520,7 @@ async def search_events(
             ev = event_info_map.get(event_id)
             snaps = _filter_stale_bookmaker_snapshots(
                 snaps,
-                is_live=(ev.status == "live" if ev else False),
+                event_status=(ev.status if ev else "scheduled"),
                 commence_time=(ev.commence_time if ev else None),
             )
             latest_time = max(s.captured_at for s in snaps) if snaps else None
@@ -1031,7 +1031,7 @@ async def list_events(
             ev = event_info_map.get(event_id)
             snaps = _filter_stale_bookmaker_snapshots(
                 snaps,
-                is_live=(ev.status == "live" if ev else False),
+                event_status=(ev.status if ev else "scheduled"),
                 commence_time=(ev.commence_time if ev else None),
             )
             latest_time = max(s.captured_at for s in snaps) if snaps else None
@@ -1396,7 +1396,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         latest_snapshots = list(latest_by_bookmaker.values())
         latest_snapshots = _filter_stale_bookmaker_snapshots(
             latest_snapshots,
-            is_live=(event.status == "live"),
+            event_status=event.status,
             commence_time=event.commence_time,
         )
         latest_time = max(s.captured_at for s in latest_snapshots)
@@ -1790,22 +1790,23 @@ async def debug_event_snapshots(
 
 
 def _filter_stale_bookmaker_snapshots(
-    snapshots: list, is_live: bool, commence_time: datetime = None
+    snapshots: list, event_status: str, commence_time: datetime = None
 ) -> list:
-    """Filter out pregame-only bookmaker snapshots for live events.
+    """Filter out pregame-only bookmaker snapshots for games that have started.
 
-    During live games, some bookmakers stop updating their moneyline odds or
-    keep returning unchanged pregame values. Including these pregame values
-    contaminates the aggregate (e.g., showing 59% when live books show 2%).
+    During and after live games, some bookmakers stop updating their moneyline
+    odds or keep returning unchanged pregame values. Including these pregame
+    values contaminates the aggregate (e.g., showing 59% when live books show 2%).
 
     We include bookmakers whose odds VALUE changed after the game started
     (captured_at >= commence_time), meaning they've posted at least one live
     update. Bookmakers whose last distinct odds value was set before kickoff
     are excluded — they're just echoing pregame lines.
 
-    For non-live events or when commence_time is unavailable, returns unchanged.
+    Runs for live, completed, and closed games. For scheduled events or when
+    commence_time is unavailable, returns unchanged.
     """
-    if not is_live or not snapshots or commence_time is None:
+    if event_status == "scheduled" or not snapshots or commence_time is None:
         return snapshots
 
     live_snapshots = [s for s in snapshots if s.captured_at >= commence_time]
