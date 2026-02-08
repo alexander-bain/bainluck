@@ -739,22 +739,175 @@ function TVPropCarousel({ eventId }: { eventId: number }) {
 
 // ---------------------------------------------------------------------------
 // AI Commentary Panel (middle row, large readable font)
+// Handles: roasts, fun facts, and interactive trivia with reveal animation
 // ---------------------------------------------------------------------------
 function TVCommentaryPanel({
   commentary,
+  commentaryType,
   resolvedProps,
+  triviaData,
 }: {
   commentary: string;
+  commentaryType: "roast" | "fun_fact" | "trivia";
   resolvedProps: ContestProp[];
+  triviaData: { question: string; answer: string; wrong: string; fact: string } | null;
 }) {
+  const isFunFact = commentaryType === "fun_fact";
+  const isTrivia = commentaryType === "trivia" && triviaData;
+
+  // Trivia state machine: "question" → "reveal"
+  const [triviaPhase, setTriviaPhase] = useState<"question" | "reveal">("question");
+  const [shuffledOptions, setShuffledOptions] = useState<string[]>([]);
+  const triviaKeyRef = useRef<string>("");
+
+  // When new trivia arrives, reset to question phase and shuffle options
+  useEffect(() => {
+    if (isTrivia && triviaData) {
+      const key = triviaData.question + triviaData.answer;
+      if (key !== triviaKeyRef.current) {
+        triviaKeyRef.current = key;
+        setTriviaPhase("question");
+        // Randomly shuffle the two options
+        const opts = [triviaData.answer, triviaData.wrong];
+        if (Math.random() > 0.5) opts.reverse();
+        setShuffledOptions(opts);
+      }
+    }
+  }, [isTrivia, triviaData]);
+
+  // Auto-reveal after 6 seconds
+  useEffect(() => {
+    if (isTrivia && triviaPhase === "question") {
+      const timer = setTimeout(() => setTriviaPhase("reveal"), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [isTrivia, triviaPhase]);
+
+  // Trivia UI
+  if (isTrivia && triviaData) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex flex-col justify-center px-[0.5vw]">
+          {/* Header */}
+          <div className="flex items-center gap-[0.3vw] mb-[0.8vh]">
+            <span className="text-[1.3vh]">{triviaPhase === "question" ? "\u2753" : "\u2728"}</span>
+            <span
+              className="text-[0.9vh] uppercase tracking-widest font-bold"
+              style={{ color: "#f59e0b" }}
+            >
+              {triviaPhase === "question" ? "Trivia Time!" : "Answer Revealed!"}
+            </span>
+            {/* Countdown bar during question phase */}
+            {triviaPhase === "question" && (
+              <div className="flex-1 ml-[0.5vw] h-[0.4vh] bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-amber-400/60 rounded-full"
+                  style={{
+                    animation: "triviaCountdown 6s linear forwards",
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Question */}
+          <div className="text-[1.8vh] leading-snug font-semibold text-amber-50 mb-[1.2vh]">
+            {triviaData.question}
+          </div>
+
+          {/* Options */}
+          <div className="flex flex-col gap-[0.6vh]">
+            {shuffledOptions.map((option, i) => {
+              const isCorrect = option === triviaData.answer;
+              const letter = i === 0 ? "A" : "B";
+
+              let bgStyle: React.CSSProperties = {};
+              let textClass = "text-white/90";
+              let letterBg = "bg-white/10";
+              let borderClass = "border-white/10";
+
+              if (triviaPhase === "reveal") {
+                if (isCorrect) {
+                  bgStyle = { background: "linear-gradient(90deg, rgba(16,185,129,0.25) 0%, rgba(16,185,129,0.08) 100%)" };
+                  textClass = "text-emerald-300 font-bold";
+                  letterBg = "bg-emerald-500/30";
+                  borderClass = "border-emerald-500/40";
+                } else {
+                  bgStyle = { background: "rgba(239,68,68,0.08)" };
+                  textClass = "text-red-400/60 line-through";
+                  letterBg = "bg-red-500/20";
+                  borderClass = "border-red-500/20";
+                }
+              }
+
+              return (
+                <div
+                  key={option}
+                  className={`flex items-center gap-[0.5vw] p-[0.6vh] rounded-xl border ${borderClass} transition-all duration-700`}
+                  style={bgStyle}
+                >
+                  <span className={`${letterBg} text-[1vh] font-bold w-[2vh] h-[2vh] rounded-lg flex items-center justify-center shrink-0 transition-colors duration-700`}>
+                    {triviaPhase === "reveal" && isCorrect ? "\u2713" : letter}
+                  </span>
+                  <span className={`text-[1.4vh] ${textClass} transition-all duration-700`}>
+                    {option}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Fact reveal (shown after answer) */}
+          {triviaPhase === "reveal" && (
+            <div
+              className="mt-[1vh] text-[1.1vh] text-blue-200/70 leading-relaxed"
+              style={{ animation: "triviaFadeIn 0.6s ease-out" }}
+            >
+              {triviaData.fact}
+            </div>
+          )}
+        </div>
+
+        {/* Recently resolved (compact) */}
+        {resolvedProps.length > 0 && (
+          <div className="shrink-0 border-t border-white/5 pt-[0.5vh] mt-[0.5vh]">
+            <div className="text-white/20 text-[0.8vh] uppercase tracking-widest font-bold mb-[0.3vh]">
+              Resolved ({resolvedProps.length})
+            </div>
+            <div className="space-y-[0.15vh]">
+              {resolvedProps.slice(-3).reverse().map((p) => (
+                <div key={p.id} className="flex items-center gap-[0.3vw] text-[0.9vh]">
+                  <span className="text-emerald-400 shrink-0">&#10003;</span>
+                  <span className="text-white/30 truncate flex-1">{p.question}</span>
+                  <span className="text-emerald-400 font-medium shrink-0">{p.correct_answer}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Regular commentary / fun fact UI
   return (
     <div className="flex flex-col h-full">
-      {/* Commentary */}
+      {/* Commentary / Fun Fact */}
       <div className="flex-1 flex flex-col justify-center px-[0.5vw]">
-        <div className="text-white/30 text-[0.9vh] uppercase tracking-widest font-bold mb-[0.5vh]">
-          AI Commentary
+        <div className="flex items-center gap-[0.3vw] mb-[0.5vh]">
+          <span className="text-[1.1vh]">{isFunFact ? "\uD83C\uDFC8" : "\uD83C\uDF99\uFE0F"}</span>
+          <span
+            className="text-[0.9vh] uppercase tracking-widest font-bold"
+            style={{ color: isFunFact ? "#60a5fa" : "rgba(255,255,255,0.3)" }}
+          >
+            {isFunFact ? "Did You Know?" : "AI Commentary"}
+          </span>
         </div>
-        <div className="text-white/90 text-[1.6vh] leading-relaxed font-medium">
+        <div
+          className={`text-[1.6vh] leading-relaxed font-medium ${
+            isFunFact ? "text-blue-100/90" : "text-white/90"
+          }`}
+        >
           {commentary || "Warming up the hot takes..."}
         </div>
       </div>
@@ -794,6 +947,13 @@ export default function TVPage({ params }: TVPageProps) {
   // Contest state
   const [contestData, setContestData] = useState<ContestData | null>(null);
   const [commentary, setCommentary] = useState("");
+  const [commentaryType, setCommentaryType] = useState<"roast" | "fun_fact" | "trivia">("roast");
+  const [triviaData, setTriviaData] = useState<{
+    question: string;
+    answer: string;
+    wrong: string;
+    fact: string;
+  } | null>(null);
   const [adData, setAdData] = useState<AdLeaderboardData | null>(null);
 
   // Resolution notification queue — full-screen, shown one at a time
@@ -918,6 +1078,18 @@ export default function TVPage({ params }: TVPageProps) {
       if (!resp.ok) return;
       const data = await resp.json();
       setCommentary(data.commentary);
+      if (data.type === "trivia") {
+        setCommentaryType("trivia");
+        setTriviaData({
+          question: data.trivia_question,
+          answer: data.trivia_answer,
+          wrong: data.trivia_wrong,
+          fact: data.commentary,
+        });
+      } else {
+        setCommentaryType(data.type === "fun_fact" ? "fun_fact" : "roast");
+        setTriviaData(null);
+      }
     } catch {
       // Silently ignore
     }
@@ -1304,7 +1476,9 @@ export default function TVPage({ params }: TVPageProps) {
           <div className="bg-gradient-to-br from-[#111118] to-[#16162a] rounded-2xl p-[1vw] border border-white/5 flex flex-col min-h-0 overflow-hidden">
             <TVCommentaryPanel
               commentary={commentary}
+              commentaryType={commentaryType}
               resolvedProps={contestData?.props.filter((p) => p.resolved && !p.is_tiebreaker) || []}
+              triviaData={triviaData}
             />
           </div>
         </div>
@@ -1505,6 +1679,14 @@ export default function TVPage({ params }: TVPageProps) {
         @keyframes propTimer {
           from { width: 0%; }
           to { width: 100%; }
+        }
+        @keyframes triviaCountdown {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+        @keyframes triviaFadeIn {
+          from { opacity: 0; transform: translateY(0.5vh); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
 
