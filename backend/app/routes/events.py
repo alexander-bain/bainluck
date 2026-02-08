@@ -1784,10 +1784,14 @@ async def debug_event_snapshots(
 def _filter_stale_bookmaker_snapshots(snapshots: list, is_live: bool) -> list:
     """Filter out stale bookmaker snapshots for live events.
 
-    During live games, many bookmakers stop updating odds. Their last snapshot
-    from pregame would contaminate the aggregate (e.g., showing 43% when active
-    bookmakers show 2%). We filter to only include bookmakers that have been
-    recently active (within 15 minutes of the most recent snapshot).
+    During live games, many bookmakers stop updating their moneyline odds or
+    keep returning unchanged pregame values. Including these stale values
+    contaminates the aggregate (e.g., showing 59% when active books show 2%).
+
+    We only include bookmakers whose odds VALUE has actually changed within
+    15 minutes of the most recent change across all bookmakers. This uses
+    captured_at (when the current odds value was first seen), NOT valid_until
+    (which updates every poll even when odds haven't changed due to dedup).
 
     For non-live events, returns the original list unchanged.
     """
@@ -1797,11 +1801,7 @@ def _filter_stale_bookmaker_snapshots(snapshots: list, is_live: bool) -> list:
     latest_time = max(s.captured_at for s in snapshots)
     staleness_threshold = latest_time - timedelta(minutes=15)
 
-    fresh = [
-        s for s in snapshots
-        if s.captured_at >= staleness_threshold
-        or (s.valid_until is not None and s.valid_until >= staleness_threshold)
-    ]
+    fresh = [s for s in snapshots if s.captured_at >= staleness_threshold]
 
     # Only use filtered list if we still have at least one with valid probability
     if any(s.home_win_probability is not None for s in fresh):

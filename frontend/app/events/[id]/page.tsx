@@ -325,13 +325,42 @@ export default function EventPage({ params }: EventPageProps) {
   }
 
   const odds = event.current_odds;
-  // For live games, use the best available probability source (model or betting).
-  // Models (ESPN, stat model) update on every play, while betting odds from some
-  // bookmakers may lag behind or stop updating during blowouts.
-  const bestProb = getBestProbability(event);
-  const homeProb = bestProb.homeProb;
-  const awayProb = bestProb.awayProb;
-  const usingModelSource = bestProb.source === "model";
+
+  // For live games, the chart's latest data point is the most reliable source
+  // because the history endpoint only includes currently active bookmakers.
+  // The event detail endpoint's current_odds can be contaminated by stale
+  // bookmakers that keep returning unchanged pregame values.
+  let homeProb = odds?.home_probability ?? null;
+  let awayProb = odds?.away_probability ?? null;
+  let probSource: string | null = null;
+
+  if (isLive) {
+    // Layer 1: Use history data's latest consensus (most reliable, matches the chart)
+    if (historyData?.history && historyData.history.length > 0) {
+      const latestHistory = historyData.history[historyData.history.length - 1];
+      if (latestHistory.home_probability !== null && latestHistory.home_probability !== undefined) {
+        const historyHome = latestHistory.home_probability;
+        // If history diverges significantly from current_odds, history is more accurate
+        if (homeProb === null || Math.abs(historyHome - homeProb) > 0.10) {
+          homeProb = historyHome;
+          awayProb = latestHistory.away_probability ?? (1 - historyHome);
+          probSource = "chart";
+        }
+      }
+    }
+
+    // Layer 2: Model fallback (ESPN/stat model) if still divergent
+    const bestProb = getBestProbability(event);
+    if (bestProb.source === "model" && bestProb.homeProb !== null) {
+      // Model says something very different from what we have — use it
+      if (homeProb === null || Math.abs(bestProb.homeProb - homeProb) > 0.15) {
+        homeProb = bestProb.homeProb;
+        awayProb = bestProb.awayProb;
+        probSource = bestProb.sourceName;
+      }
+    }
+  }
+
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
   const gameIsBlowout = isLive && isBlowout(homeProb);
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
@@ -767,11 +796,11 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         </div>
 
-        {/* Model source indicator when using non-betting probability */}
-        {usingModelSource && bestProb.sourceName && (
+        {/* Source indicator when using non-current_odds probability */}
+        {probSource && (
           <div className="mt-2 text-center">
-            <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full">
-              Probabilities from {bestProb.sourceName} (betting odds lagging)
+            <span className="text-xs text-slate bg-mist/50 px-2 py-1 rounded-full">
+              Using latest active bookmaker consensus
             </span>
           </div>
         )}
