@@ -2526,8 +2526,8 @@ async def _sync_espn_live_events():
                                 if ee.date and event.commence_time:
                                     time_diff = abs((ee.date - event.commence_time).total_seconds())
                                     if time_diff > 300:  # > 5 minutes difference
-                                        logger.warning(
-                                            f"Correcting commence_time for event {event.id} "
+                                        print(
+                                            f"ESPN: Correcting commence_time for event {event.id} "
                                             f"({event.home_team_name} vs {event.away_team_name}): "
                                             f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
                                             f"(diff: {time_diff/3600:.1f}h)"
@@ -2687,8 +2687,8 @@ async def _sync_espn_live_events():
                                 if ee.date and event.commence_time:
                                     time_diff = abs((ee.date - event.commence_time).total_seconds())
                                     if time_diff > 300:  # > 5 minutes
-                                        logger.warning(
-                                            f"Correcting commence_time for scheduled event {event.id} "
+                                        print(
+                                            f"ESPN: Correcting commence_time for scheduled event {event.id} "
                                             f"({event.home_team_name} vs {event.away_team_name}): "
                                             f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
                                             f"(diff: {time_diff/3600:.1f}h)"
@@ -2902,10 +2902,18 @@ async def _fix_commence_times_from_espn(limit: int):
 
             # Group events by (sport_key, date) for efficient ESPN API calls
             # ESPN scoreboard accepts date in YYYYMMDD format
+            # Only check events within last 30 days and next 7 days —
+            # far-future events often have placeholder times on ESPN
+            now = datetime.now(timezone.utc)
+            min_date = now - timedelta(days=30)
+            max_date = now + timedelta(days=7)
+
             sport_date_events = {}
             for event in events:
                 sport_key = event.sport.key if event.sport else None
                 if not sport_key or sport_key not in ESPN_SPORT_MAPPING:
+                    continue
+                if event.commence_time < min_date or event.commence_time > max_date:
                     continue
 
                 # Use the stored commence_time date for the scoreboard query
@@ -2944,8 +2952,8 @@ async def _fix_commence_times_from_espn(limit: int):
                                     "diff_hours": round(time_diff / 3600, 1),
                                 }
                                 stats["corrections"].append(correction)
-                                logger.warning(
-                                    f"Correcting commence_time for event {event.id} "
+                                print(
+                                    f"ESPN: Correcting commence_time for event {event.id} "
                                     f"({event.away_team_name} @ {event.home_team_name}): "
                                     f"{event.commence_time.isoformat()} -> {espn_event.date.isoformat()} "
                                     f"(diff: {time_diff/3600:.1f}h)"
