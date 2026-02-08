@@ -455,9 +455,11 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
         <div className="space-y-[0.3vh]">
           {ads.map((ad, i) => {
             const isTop3 = i < 3;
+            const hasVideo = !!ad.video_id;
+            const hasViews = ad.views > 0;
             return (
               <div
-                key={ad.video_id}
+                key={`${ad.brand}-${i}`}
                 className={`flex items-center gap-[0.4vw] px-[0.3vw] py-[0.3vh] rounded-lg ${
                   isTop3 ? "bg-white/5" : ""
                 }`}
@@ -473,7 +475,7 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
                   )}
                 </div>
 
-                {/* Brand + title */}
+                {/* Brand + title + celebrity */}
                 <div className="flex-1 min-w-0">
                   <span
                     className={`text-[1.3vh] font-semibold truncate block ${
@@ -483,28 +485,36 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
                     {ad.brand}
                   </span>
                   <div className="text-white/30 text-[0.85vh] truncate leading-tight">
-                    {ad.title}
+                    {ad.channel && !hasViews ? ad.channel : ad.title}
                   </div>
                 </div>
 
-                {/* Play button */}
-                <button
-                  onClick={() => setPlayingId(ad.video_id)}
-                  className="shrink-0 text-blue-400 hover:text-blue-300 text-[1.5vh] w-[1.8vw] h-[2.5vh] flex items-center justify-center rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
-                  title={`Play ${ad.brand}`}
-                >
-                  &#9654;
-                </button>
+                {/* Play button (only if we have a YouTube video ID) */}
+                {hasVideo && (
+                  <button
+                    onClick={() => setPlayingId(ad.video_id)}
+                    className="shrink-0 text-blue-400 hover:text-blue-300 text-[1.5vh] w-[1.8vw] h-[2.5vh] flex items-center justify-center rounded bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
+                    title={`Play ${ad.brand}`}
+                  >
+                    &#9654;
+                  </button>
+                )}
 
-                {/* Views + delta */}
+                {/* Views + delta (show views if available, otherwise nothing) */}
                 <div className="text-right shrink-0 w-[3.5vw]">
-                  <div className="text-white font-mono font-bold text-[1.2vh]">
-                    {ad.views_formatted}
-                  </div>
-                  {ad.views_delta > 0 && (
-                    <div className="text-emerald-400 font-mono text-[0.8vh] leading-tight">
-                      {ad.views_delta_formatted}
-                    </div>
+                  {hasViews ? (
+                    <>
+                      <div className="text-white font-mono font-bold text-[1.2vh]">
+                        {ad.views_formatted}
+                      </div>
+                      {ad.views_delta > 0 && (
+                        <div className="text-emerald-400 font-mono text-[0.8vh] leading-tight">
+                          {ad.views_delta_formatted}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-white/10 text-[0.9vh]">TBD</span>
                   )}
                 </div>
               </div>
