@@ -2349,7 +2349,8 @@ async def _fetch_youtube_ads() -> list[dict]:
                 # Try to identify the brand from the title or channel
                 brand = _identify_brand(title, channel)
                 if not brand:
-                    continue  # Skip non-brand/non-ad videos
+                    # Fall back to channel name for any video that matched the search
+                    brand = channel or title.split(" - ")[0][:30] or "Unknown"
 
                 views = int(stats.get("viewCount", 0))
                 likes = int(stats.get("likeCount", 0))
