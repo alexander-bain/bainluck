@@ -500,19 +500,23 @@ function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
                   </button>
                 )}
 
-                {/* Views + delta (show views if available, otherwise nothing) */}
+                {/* Views: delta is primary when available, total views secondary */}
                 <div className="text-right shrink-0 w-[3.5vw]">
                   {hasViews ? (
-                    <>
-                      <div className="text-white font-mono font-bold text-[1.2vh]">
-                        {ad.views_formatted}
-                      </div>
-                      {ad.views_delta > 0 && (
-                        <div className="text-emerald-400 font-mono text-[0.8vh] leading-tight">
+                    ad.views_delta > 0 ? (
+                      <>
+                        <div className="text-emerald-400 font-mono font-bold text-[1.3vh]">
                           {ad.views_delta_formatted}
                         </div>
-                      )}
-                    </>
+                        <div className="text-white/25 font-mono text-[0.7vh] leading-tight">
+                          {ad.views_formatted} total
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-white/40 font-mono font-bold text-[1.2vh]">
+                        {ad.views_formatted}
+                      </div>
+                    )
                   ) : (
                     <span className="text-white/10 text-[0.9vh]">TBD</span>
                   )}

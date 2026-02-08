@@ -2310,10 +2310,8 @@ SB_AD_BRANDS = [ad["brand"].split("/")[0] for ad in SB_ADS_CURATED] + [
 async def _fetch_youtube_ads() -> list[dict]:
     """Fetch Super Bowl LX ad leaderboard.
 
-    Always returns the curated list of confirmed SB LX ads.
-    When YOUTUBE_API_KEY is configured, enriches with live view counts
-    from the YouTube Data API. Without it, shows ads with 0 views
-    (the curated info — brand, title, celebrities — is still useful).
+    Primary: YouTube Data API search for SB LX ads (when API key configured).
+    Fallback: Hardcoded curated list of 30 confirmed ads (brand + celeb info).
     """
     cache_key = f"{REDIS_KEY_PREFIX}youtube_ads"
 
@@ -2326,22 +2324,8 @@ async def _fetch_youtube_ads() -> list[dict]:
     except Exception:
         pass
 
-    # Start with curated list — always available
-    ads = []
-    for i, curated in enumerate(SB_ADS_CURATED):
-        ads.append({
-            "brand": curated["brand"],
-            "title": curated["title"],
-            "video_id": "",  # filled by YouTube API if available
-            "channel": curated.get("celebrity", ""),
-            "thumbnail": "",
-            "views": 0,
-            "likes": 0,
-            "comments": 0,
-            "published_at": "",
-        })
-
-    # Try to enrich with YouTube API live stats
+    # Try YouTube API first (this was working — primary data source)
+    ads: list[dict] = []
     if YOUTUBE_API_KEY:
         try:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -2370,12 +2354,10 @@ async def _fetch_youtube_ads() -> list[dict]:
                         stats_params = {
                             "key": YOUTUBE_API_KEY,
                             "id": ",".join(video_ids),
-                            "part": "statistics,snippet",
+                            "part": "statistics,snippet,contentDetails",
                         }
                         resp = await client.get(stats_url, params=stats_params)
                         if resp.status_code == 200:
-                            # Build a brand → YouTube data lookup
-                            yt_by_brand: dict[str, dict] = {}
                             for item in resp.json().get("items", []):
                                 snippet = item.get("snippet", {})
                                 stats = item.get("statistics", {})
@@ -2383,33 +2365,46 @@ async def _fetch_youtube_ads() -> list[dict]:
                                 channel = snippet.get("channelTitle", "")
                                 brand = _identify_brand(title, channel)
                                 if not brand:
-                                    brand = channel or title.split(" - ")[0][:30]
-                                if not brand:
-                                    continue
-                                views = int(stats.get("viewCount", 0))
-                                if brand not in yt_by_brand or views > yt_by_brand[brand]["views"]:
-                                    yt_by_brand[brand] = {
-                                        "video_id": item["id"],
-                                        "views": views,
-                                        "likes": int(stats.get("likeCount", 0)),
-                                        "comments": int(stats.get("commentCount", 0)),
-                                        "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
-                                    }
-
-                            # Merge YouTube data into curated list
-                            for ad in ads:
-                                yt = yt_by_brand.get(ad["brand"])
-                                if yt:
-                                    ad["video_id"] = yt["video_id"]
-                                    ad["views"] = yt["views"]
-                                    ad["likes"] = yt["likes"]
-                                    ad["comments"] = yt["comments"]
-                                    ad["thumbnail"] = yt["thumbnail"]
+                                    brand = channel or title.split(" - ")[0][:30] or "Unknown"
+                                ads.append({
+                                    "brand": brand,
+                                    "title": title,
+                                    "video_id": item["id"],
+                                    "channel": channel,
+                                    "thumbnail": snippet.get("thumbnails", {}).get("medium", {}).get("url", ""),
+                                    "views": int(stats.get("viewCount", 0)),
+                                    "likes": int(stats.get("likeCount", 0)),
+                                    "comments": int(stats.get("commentCount", 0)),
+                                    "published_at": snippet.get("publishedAt", ""),
+                                })
+                else:
+                    logger.error(f"YouTube search API error: {resp.status_code} {resp.text[:200]}")
         except Exception as e:
-            logger.error(f"YouTube API enrichment error: {e}")
+            logger.error(f"YouTube API error: {e}")
 
-    # Sort by views descending (ads with YouTube data float to top)
-    ads.sort(key=lambda x: -x["views"])
+    # Deduplicate YouTube results by brand (keep highest-viewed per brand)
+    if ads:
+        brand_best: dict[str, dict] = {}
+        for ad in ads:
+            b = ad["brand"]
+            if b not in brand_best or ad["views"] > brand_best[b]["views"]:
+                brand_best[b] = ad
+        ads = sorted(brand_best.values(), key=lambda x: -x["views"])
+
+    # Fallback: curated list if YouTube returned nothing
+    if not ads:
+        for curated in SB_ADS_CURATED:
+            ads.append({
+                "brand": curated["brand"],
+                "title": curated["title"],
+                "video_id": "",
+                "channel": curated.get("celebrity", ""),
+                "thumbnail": "",
+                "views": 0,
+                "likes": 0,
+                "comments": 0,
+                "published_at": "",
+            })
 
     # Cache result
     try:
