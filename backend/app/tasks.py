@@ -676,6 +676,7 @@ async def _poll_all_odds():
         sports_polled = 0
         sports_skipped = 0
         scores_updated = 0
+        stat_model_from_poll = 0
 
         # Get Redis client for per-sport poll tracking
         try:
@@ -955,6 +956,64 @@ async def _poll_all_odds():
                             )
                             scores_updated += 1
 
+                            # Compute stat model for live events with score + clock data
+                            # This runs independently of ESPN sync, so games that
+                            # ESPN name-matching misses still get stat model WP
+                            if (
+                                event_obj
+                                and event_status == "live"
+                                and home_score is not None
+                                and away_score is not None
+                                and event_obj.game_clock
+                                and event_obj.period
+                            ):
+                                try:
+                                    from app.utils.win_probability import compute_statistical_win_prob
+                                    from app.models.models import WinProbSnapshot
+
+                                    pregame_spread = None
+                                    if event_obj.opening_home_spread is not None:
+                                        pregame_spread = float(event_obj.opening_home_spread)
+
+                                    stat_wp = compute_statistical_win_prob(
+                                        home_score=home_score,
+                                        away_score=away_score,
+                                        clock=event_obj.game_clock,
+                                        period=event_obj.period,
+                                        sport_key=sport_key,
+                                        pregame_spread=pregame_spread,
+                                    )
+                                    if stat_wp is not None:
+                                        # Update event's win_probability_sources
+                                        # Need to re-fetch to get current JSONB
+                                        fresh = await session.execute(
+                                            select(Event).where(Event.id == event_obj.id)
+                                        )
+                                        fresh_event = fresh.scalar_one_or_none()
+                                        if fresh_event:
+                                            sources = fresh_event.win_probability_sources or {}
+                                            sources["stat_model"] = round(stat_wp, 4)
+                                            fresh_event.win_probability_sources = sources
+
+                                            stat_snap = WinProbSnapshot(
+                                                event_id=event_obj.id,
+                                                source="stat_model",
+                                                home_win_probability=round(stat_wp, 4),
+                                                away_win_probability=round(1.0 - stat_wp, 4),
+                                                game_state={
+                                                    "clock": event_obj.game_clock,
+                                                    "period": event_obj.period,
+                                                    "home_score": home_score,
+                                                    "away_score": away_score,
+                                                    "pregame_spread": pregame_spread,
+                                                    "source": "odds_poll",
+                                                },
+                                            )
+                                            session.add(stat_snap)
+                                            stat_model_from_poll += 1
+                                except Exception as e:
+                                    logger.warning(f"stat_model in odds poll failed for event {event_obj.id}: {e}")
+
                         except Exception as e:
                             print(f"Error updating score for event {score_event.get('id')}: {e}")
                             continue
@@ -996,6 +1055,7 @@ async def _poll_all_odds():
             "sports_polled": sports_polled,
             "sports_skipped": sports_skipped,
             "scores_updated": scores_updated,
+            "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,
             "live_gei_updated": live_gei_updated,
             "data_changed": data_changed,
@@ -2358,11 +2418,22 @@ async def _sync_espn_live_events():
         "errors": [],
     }
 
+    def _normalize_name(name: str) -> str:
+        """Normalize team name for matching — strip accents, unify quotes/apostrophes."""
+        import unicodedata
+        # Normalize unicode (NFD decomposition) then strip combining marks (accents)
+        normalized = unicodedata.normalize("NFD", name)
+        normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+        # Unify all apostrophe/quote variants to standard ASCII apostrophe
+        for ch in ("\u2018", "\u2019", "\u02BB", "\u02BC", "\u0060", "\u00B4", "\u2032"):
+            normalized = normalized.replace(ch, "'")
+        return normalized.lower().strip()
+
     def names_match(our_names: list, espn_name: str) -> bool:
-        """Simple name matching — check if any name is a substring of the other."""
-        espn_lower = (espn_name or "").lower()
+        """Name matching with unicode normalization — check if any name is a substring of the other."""
+        espn_lower = _normalize_name(espn_name or "")
         for name in our_names:
-            name_lower = name.lower()
+            name_lower = _normalize_name(name)
             if name_lower in espn_lower or espn_lower in name_lower:
                 return True
         return False
