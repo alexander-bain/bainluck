@@ -106,6 +106,9 @@ interface AdLeaderboardData {
   ads: YouTubeAd[];
   count: number;
   youtube_configured: boolean;
+  with_video?: number;
+  cache_ttl_seconds?: number;
+  mode?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,17 +1195,20 @@ export default function TVPage({ params }: TVPageProps) {
     try {
       const resp = await fetch(`${API_URL}/api/contest/ads`);
       if (!resp.ok) return;
-      const data = await resp.json() as AdLeaderboardData & { mode?: string };
+      const data = await resp.json() as AdLeaderboardData;
       setAdData(data);
 
       // Switch polling rate when backend switches mode
       const newMode = data.mode || "idle";
       if (newMode !== adModeRef.current) {
         adModeRef.current = newMode;
-        // Game mode: poll every 3 min. Idle: poll every 5 min.
-        // Backend cache is 7 min / 30 min respectively, so we'll
-        // hit cache most of the time but catch refreshes quickly.
-        const interval = newMode === "game" ? 180000 : 300000;
+        // Game/rehearsal: poll every 3 min (backend cache is 7-15 min)
+        // Dry run: poll every 10 min (backend cache is 45 min)
+        // Idle: poll every 5 min (backend cache is 30 min)
+        const interval =
+          newMode === "game" || newMode === "rehearsal" ? 180000 :
+          newMode === "dry_run" ? 600000 :
+          300000;
         if (adPollRef.current) clearInterval(adPollRef.current);
         adPollRef.current = setInterval(fetchAds, interval);
       }
