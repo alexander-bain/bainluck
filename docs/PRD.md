@@ -1870,9 +1870,12 @@ These are product experiments, not blockers.
 
 ### Immediate — Infrastructure First (February-March 2026)
 **Focus: Make the system observable and sustainable before building new features.**
-- Add Sentry error tracking to FastAPI + Celery worker (prevents silent failures)
-- Write test suites for `pulse.py` and `highlights.py` (reduces fix-commit cycle)
-- Implement data retention policy for `odds_snapshots` (prevents DB growth issues)
+- ✅ Add Sentry error tracking to FastAPI + Celery worker (shipped Feb 2026)
+- ✅ Write test suites for `pulse.py`, `highlights.py`, `win_probability.py` (390 tests as of Feb 2026)
+- ✅ Multi-source win probability infrastructure + OddsTracker statistical model (shipped Feb 2026)
+- Refactor `tasks.py` (2900+ lines) into separate modules — ESPN sync, odds polling, win probability, Pulse. Every bug in Feb 2026 traced to this file's complexity (missing imports, wrong status checks, silent exception swallowing).
+- Implement data retention policy for `odds_snapshots` + `win_prob_snapshots` (prevents DB growth issues — win_prob_snapshots adds ~1,800 rows/hour during live games)
+- Reduce stat model dependency on ESPN team name matching — college sports have hundreds of teams and name mismatches are common. Consider: ESPN ID matching, direct scoreboard fetch, or time estimation fallbacks.
 - Clean up Super Bowl one-off code (dead routes, services, components, Celery tasks)
 - Pass Kalshi event category through as sport_key for better disambiguation
 - Deploy analytics and observe user behavior
