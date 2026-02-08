@@ -250,6 +250,32 @@ class ESPNSnapshot(Base):
     event: Mapped["Event"] = relationship(back_populates="espn_snapshots")
 
 
+class WinProbSnapshot(Base):
+    """Win probability history from any source (ESPN, statistical model, etc.)."""
+
+    __tablename__ = "win_prob_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(30))  # "espn", "stat_model", "moneypuck", etc.
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True
+    )
+
+    # Win probabilities
+    home_win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    away_win_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+    draw_probability: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))
+
+    # Source-specific game state (clock, period, score, etc.)
+    game_state: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    # Relationships
+    event: Mapped["Event"] = relationship()
+
+
 class User(Base):
     """Users (optional auth for personalization)."""
     

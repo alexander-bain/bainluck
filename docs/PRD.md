@@ -774,11 +774,15 @@ CREATE INDEX ix_events_commence_status ON events (commence_time, status);
 - [x] Chart interaction analytics
 
 ### Phase 3: Reliability & Data Quality 🔄 In Progress
-**Ensuring all sports are tracked properly.**
+**Ensuring the system is observable, resilient, and sustainable.**
 
 - [x] Event discovery task (polls ALL sports, not just those with existing events)
 - [x] Stale data detection and auto-closing of stuck events
 - [x] Per-sport polling intervals based on game proximity
+- [ ] **Error tracking (Sentry)** — Add to FastAPI backend + Celery worker. Currently, background task failures (e.g., ESPN sync, Kalshi polling) go undetected until manually noticed. Free tier is sufficient.
+- [ ] **Test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that have caused the most rework (6+ fix commits each). Target: 15+ test cases each covering edge cases (empty snapshots, single bookmaker, no lead changes, maximum lead changes). Only `test_odds_math.py` exists today.
+- [ ] **Data retention policy** — Implement `odds_snapshots` pruning for completed events (keep aggregated data, prune raw snapshots after 7 days per PRD spec). Polling every 30s with 5-11 bookmakers generates massive row counts. Audit current Heroku Postgres usage.
+- [ ] **Super Bowl one-off cleanup** — Remove dead code: `routes/superbowl.py`, `routes/contest.py`, `services/youtube_api.py`, `CommercialLeaderboard.tsx`, related Celery beat entries. These are event-specific features that won't serve future users.
 - [ ] Improved error handling and retry logic
 - [ ] Monitoring dashboard for poll health
 
@@ -1732,13 +1736,15 @@ Unknown sports automatically fall into the "Other" category and are displayed wi
 
 ### Data Retention
 
-| Data Type | Retention |
-|-----------|-----------|
-| Raw snapshots | 7 days after event completion |
-| Aggregated data | Indefinite |
-| Event metadata | Indefinite |
-| Futures history | Indefinite |
-| Prediction market history | Indefinite |
+| Data Type | Retention | Status |
+|-----------|-----------|--------|
+| Raw snapshots | 7 days after event completion | **NOT YET IMPLEMENTED** — snapshots accumulate indefinitely. Need a Celery task to prune `odds_snapshots` for completed events older than 7 days. |
+| Aggregated data | Indefinite | OK |
+| Event metadata | Indefinite | OK |
+| Futures history | Indefinite | OK |
+| Prediction market history | Indefinite | OK |
+
+**Action needed:** Implement a scheduled Celery task to prune raw snapshots. At current polling rates (30s intervals, 5-11 bookmakers per event), a single NFL Sunday can generate 50,000+ snapshot rows. Without pruning, Heroku Postgres will hit row/storage limits.
 
 ---
 
@@ -1851,17 +1857,20 @@ These are product experiments, not blockers.
 - ✅ Pinned events and futures (localStorage-based)
 - ✅ Futures categorization hardened: 90+ regex patterns, 22 sport categories, LLM fallback always returns a result, 0 uncategorized markets
 
-### Immediate (February-March 2026)
-- Pass Kalshi event category through as sport_key to improve disambiguation of ambiguous market names (e.g., "MVP Winner?" currently lands in "other")
+### Immediate — Infrastructure First (February-March 2026)
+**Focus: Make the system observable and sustainable before building new features.**
+- Add Sentry error tracking to FastAPI + Celery worker (prevents silent failures)
+- Write test suites for `pulse.py` and `highlights.py` (reduces fix-commit cycle)
+- Implement data retention policy for `odds_snapshots` (prevents DB growth issues)
+- Clean up Super Bowl one-off code (dead routes, services, components, Celery tasks)
+- Pass Kalshi event category through as sport_key for better disambiguation
 - Deploy analytics and observe user behavior
-- Monitor polling health across all sports
-- Gather feedback on pinned events feature
 
 ### Near-term (March-April 2026)
+- Ranking Level 2: time-series aware scoring (pre-compute summary stats from odds_snapshots, pass to `compute_highlight`). Highest-leverage feature for the north star.
 - Firebase Auth integration
-- Migrate pinned items to database for cross-device sync
+- Migrate pinned items to database for cross-device sync (avoid adding new localStorage features until this is done)
 - Favorite teams with cloud sync
-- Ranking Level 2: time-series aware scoring (pre-compute summary stats from odds_snapshots, pass to `compute_highlight`)
 
 ### Mid-term (May-June 2026)
 - LLM-powered explanations for odds movements

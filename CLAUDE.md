@@ -116,6 +116,11 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Backend** and **frontend** auto-deploy from `master` via Heroku and Vercel respectively
 - **Database migrations**: Create with `alembic revision --autogenerate -m "description"`, applied automatically on Heroku release (`alembic upgrade head`)
 - **Testing changes**: Push to master and verify on production, or use Heroku/Vercel preview deployments
+- **Running tests**:
+  - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
+  - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
+  - Backend tests cover: Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked)
+  - Frontend tests cover: sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
 
 ### Querying the Production API
 
@@ -141,6 +146,8 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `DATABASE_URL` - PostgreSQL connection string (managed by Heroku Postgres)
 - `REDIS_URL` - Redis for Celery (managed by Heroku Redis)
 - `ADMIN_SECRET` - Optional: protect admin endpoints
+- `SENTRY_DSN` - From sentry.io (optional - enables error tracking + performance monitoring)
+- `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
 
 ### Frontend (Vercel Environment Variables)
 - `NEXT_PUBLIC_API_URL` = `https://what-are-the-odds-0283511a7d93.herokuapp.com`
@@ -381,6 +388,12 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/esp
 
 # Test team name matching
 curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
+
+# Fix incorrect commence_time values using ESPN as source of truth
+# (backfills completed events — the live sync task handles new ones automatically)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/fix-commence-times?secret=any&limit=500"
+# Check task status:
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/task/{task_id}?secret=any"
 ```
 
 ### TV Mode (Party Display)
@@ -510,27 +523,71 @@ Both backend and frontend auto-deploy from `master` branch.
 
 ## Current Priorities (February 2026)
 
-1. ✅ Pulse feature complete and deployed
-2. ✅ Kalshi prediction market integration
-3. ✅ Futures UI improvements (sportsbooks, start times, categorization)
-4. ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
-5. ✅ Pulse Hall of Fame page
-6. ✅ Pinned Events & Futures (localStorage-based tracking)
-7. ✅ Futures categorization hardened (0 uncategorized markets)
-8. ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
-9. ✅ TV/Party mode with player props, confetti, ECG, momentum (4K-optimized)
-10. 🔄 Monitoring and reliability improvements
-11. 📋 Next: Pass Kalshi event category as sport_key for better disambiguation
-11. 📋 Next: Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`)
-12. 📋 Next: Firebase Auth for user accounts
-13. 📋 Next: Migrate pinned items to database (after auth)
-14. 📋 Next: LLM-powered odds movement explanations
-15. 📋 Next: Sport-specific Pulse normalization (different ceilings per sport)
-16. 📋 Next: TV mode — live prop resolution tracking (show which props hit/missed during game)
+### Active — Infrastructure & Reliability
+These are the current focus. Resist the urge to build new features until these are addressed.
 
-**LLM categorization is robust** — `classify()` always returns a result, with expanded pattern matching (90+ rules) and LLM response normalization covering edge cases. See `backend/app/services/llm.py`.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Currently only `test_odds_math.py` exists (240 lines). Zero frontend tests.
+3. 🟡 **Data retention policy** — DB is at 571MB / 1GB (56%), ~2M rows in `odds_snapshots`, ~1M in `futures_odds_snapshots`. Heroku plan: essential-0 (1GB cap, no row limit). Growing daily — estimated 1-2 months before hitting the cap. Raw snapshots are still read by OddsChart (history endpoint), Pulse recalculation, and Hall of Fame, so they can't be blindly deleted. Pre-game snapshots (before `commence_time`) are low-value candidates for pruning. An `odds_aggregated` table exists in the schema but has never been populated. Need to design a retention policy that balances storage savings against feature dependencies.
+4. 🟡 **Clean up Super Bowl one-offs** — Remove or disable dead code from the Super Bowl party: `backend/app/routes/superbowl.py`, `backend/app/routes/contest.py`, `backend/app/services/youtube_api.py`, `frontend/components/party/CommercialLeaderboard.tsx`. Check if any related Celery beat tasks are still scheduled.
+5. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
+
+### Next — Features (in priority order)
+6. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
+7. 📋 Pass Kalshi event category as sport_key for better disambiguation
+8. 📋 Firebase Auth for user accounts
+9. 📋 Migrate pinned items to database (after auth). **Note:** Stop adding new localStorage features until auth is in place — each one makes the migration harder.
+10. 📋 LLM-powered odds movement explanations
+11. 📋 Sport-specific Pulse normalization (different ceilings per sport)
+12. 📋 TV mode — live prop resolution tracking (show which props hit/missed during game)
+
+### Completed
+<details>
+<summary>Shipped features (click to expand)</summary>
+
+- ✅ Pulse feature complete and deployed
+- ✅ Kalshi prediction market integration
+- ✅ Futures UI improvements (sportsbooks, start times, categorization)
+- ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
+- ✅ Pulse Hall of Fame page
+- ✅ Pinned Events & Futures (localStorage-based tracking)
+- ✅ Futures categorization hardened (0 uncategorized markets)
+- ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
+- ✅ TV/Party mode with player props, confetti, ECG, momentum (4K-optimized)
+- ✅ Sentry error tracking (FastAPI + Celery worker, controlled by SENTRY_DSN env var)
+- ✅ Commence_time timezone fix (ESPN cross-validation, stopped Odds API overwrites)
+</details>
 
 See `docs/PRD.md` for full roadmap.
+
+---
+
+## Development Process & Lessons Learned
+
+### Fix-Commit Problem
+~34% of recent commits are bug fixes, often for issues that could have been caught before deploy. Root causes:
+- No test suite beyond `test_odds_math.py` (240 lines)
+- Direct deploy to production without staging verification
+- Background task failures (Celery) — now mitigated by Sentry error tracking
+
+**Rule of thumb:** Before shipping changes to `pulse.py`, `highlights.py`, or `tasks.py`, write or run tests first. These three files account for the majority of fix-commit cycles.
+
+### God File: `tasks.py` (2,747 lines)
+All Celery tasks live in a single file. This increases coupling and makes changes riskier. Not urgent to refactor, but be aware that every change to this file has a larger blast radius than it should.
+
+### Super Bowl One-Offs
+The Super Bowl party features (commercial leaderboard, prop contests, Bitcoin tracking, YouTube API) were fun demos but are now dead code. Files to audit/remove:
+- `backend/app/routes/superbowl.py`
+- `backend/app/routes/contest.py`
+- `backend/app/services/youtube_api.py`
+- `frontend/components/party/CommercialLeaderboard.tsx`
+- `frontend/public/sb-contest-qr.png`
+- Any related Celery beat schedule entries in `tasks.py`
+
+### localStorage Debt
+Pinned events/futures use localStorage. Every new localStorage feature increases the complexity of the eventual auth migration. Avoid adding new localStorage-dependent features until Firebase Auth is in place.
+
+### Session-End Feedback Prompt
+At the end of long working sessions, run the feedback prompt (saved in `docs/feedback-prompt.md`) to get process feedback on priority alignment, prompting effectiveness, and blind spots.
 
 ---
 
@@ -544,33 +601,35 @@ See `docs/PRD.md` for full roadmap.
 
 4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-3. **Pulse data quality gating**: `calculate_pulse()` returns `None` for < 3 aggregated time buckets. For completed events, Pulse is only stored when `data_quality` is `"limited"` (10-29 buckets) or `"good"` (30+). Events with `"minimal"` data (3-9 buckets) get no stored score. Hall of Fame rankings additionally require 20+ distinct minute-level time buckets. Note: live games still show Pulse with any data quality for real-time feedback.
+5. **Pulse data quality gating**: `calculate_pulse()` returns `None` for < 3 aggregated time buckets. For completed events, Pulse is only stored when `data_quality` is `"limited"` (10-29 buckets) or `"good"` (30+). Events with `"minimal"` data (3-9 buckets) get no stored score. Hall of Fame rankings additionally require 20+ distinct minute-level time buckets. Note: live games still show Pulse with any data quality for real-time feedback.
 
-7. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
+6. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
-8. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
+7. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
 
-6. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
+8. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
 
-7. **Pulse percentiles use completed games only**: The `gei_percentiles` table is computed from completed/closed events with `raw_gei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
+9. **Pulse percentiles use completed games only**: The `gei_percentiles` table is computed from completed/closed events with `raw_gei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
 
-6. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New Celery tasks must follow this pattern:
-   ```python
-   @celery_app.task(bind=True)
-   def my_task(self):
-       return run_async(_my_task_impl())
+10. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New Celery tasks must follow this pattern:
+    ```python
+    @celery_app.task(bind=True)
+    def my_task(self):
+        return run_async(_my_task_impl())
 
-   async def _my_task_impl():
-       async with get_task_session() as session:
-           result = await session.execute(...)
-   ```
-   Never use `SessionLocal` or synchronous `session.execute()` — it will raise `ImportError` silently in the worker.
+    async def _my_task_impl():
+        async with get_task_session() as session:
+            result = await session.execute(...)
+    ```
+    Never use `SessionLocal` or synchronous `session.execute()` — it will raise `ImportError` silently in the worker.
 
-7. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
+11. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
-8. **TV mode uses `fixed inset-0` overlay**: The root layout (`app/layout.tsx`) wraps ALL pages with a header/footer. TV mode can't opt out of this in Next.js app router, so it uses `fixed inset-0 z-[9999]` to cover the root layout entirely. Don't change this to `h-screen` — it will render inside the root layout chrome and break.
+12. **TV mode uses `fixed inset-0` overlay**: The root layout (`app/layout.tsx`) wraps ALL pages with a header/footer. TV mode can't opt out of this in Next.js app router, so it uses `fixed inset-0 z-[9999]` to cover the root layout entirely. Don't change this to `h-screen` — it will render inside the root layout chrome and break.
 
-9. **The Odds API per-event props: fetch markets individually**: Requesting multiple prop markets in one call returns 422 if ANY single market is unavailable. The props endpoint fetches each market in its own API call and aggregates results.
+13. **The Odds API per-event props: fetch markets individually**: Requesting multiple prop markets in one call returns 422 if ANY single market is unavailable. The props endpoint fetches each market in its own API call and aggregates results.
+
+14. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Important:** `tasks.py` uses `print()` for logging, not `logging.getLogger()` — there is no `logger` variable in that file.
 
 ---
 

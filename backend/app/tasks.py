@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import redis
+import sentry_sdk
 from contextlib import asynccontextmanager
 
 from celery import Celery
@@ -77,6 +78,17 @@ if broker_use_ssl:
     celery_config["redis_backend_use_ssl"] = broker_use_ssl
 
 celery_app.conf.update(**celery_config)
+
+# Initialize Sentry for Celery workers
+# Set SENTRY_DSN env var in Heroku to enable
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        traces_sample_rate=0.05,  # 5% of tasks for performance monitoring
+        send_default_pii=False,
+    )
 
 # Beat schedule for periodic tasks
 celery_app.conf.beat_schedule = {
@@ -568,7 +580,8 @@ async def _discover_events():
                             set_={
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
-                                "commence_time": commence_time,
+                                # Don't overwrite commence_time — The Odds API occasionally
+                                # returns local times as UTC. ESPN sync corrects these.
                                 "status": case(
                                     (Event.status == "scheduled", event_status),
                                     else_=Event.status
@@ -800,7 +813,8 @@ async def _poll_all_odds():
                             set_={
                                 "home_team_name": event_data["home_team"],
                                 "away_team_name": event_data["away_team"],
-                                "commence_time": commence_time,
+                                # Don't overwrite commence_time — The Odds API occasionally
+                                # returns local times as UTC. ESPN sync corrects these.
                                 # Only update status if currently "scheduled"
                                 # This allows scheduled->live but preserves completed
                                 "status": case(
@@ -1249,7 +1263,8 @@ async def _poll_sport_odds(sport_key: str):
                     set_={
                         "home_team_name": event_data["home_team"],
                         "away_team_name": event_data["away_team"],
-                        "commence_time": commence_time,
+                        # Don't overwrite commence_time — The Odds API occasionally
+                        # returns local times as UTC. ESPN sync corrects these.
                         # Only update status if currently "scheduled"
                         "status": case(
                             (Event.status == "scheduled", event_status),
@@ -2510,6 +2525,20 @@ async def _sync_espn_live_events():
                                     event.espn_id = ee.espn_id
                                     changed = True
 
+                                # Correct commence_time from ESPN if significantly different
+                                # The Odds API occasionally returns local times as UTC
+                                if ee.date and event.commence_time:
+                                    time_diff = abs((ee.date - event.commence_time).total_seconds())
+                                    if time_diff > 300:  # > 5 minutes difference
+                                        print(
+                                            f"ESPN: Correcting commence_time for event {event.id} "
+                                            f"({event.home_team_name} vs {event.away_team_name}): "
+                                            f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
+                                            f"(diff: {time_diff/3600:.1f}h)"
+                                        )
+                                        event.commence_time = ee.date
+                                        changed = True
+
                                 # Update game clock
                                 if ee.clock and event.game_clock != ee.clock:
                                     event.game_clock = ee.clock
@@ -2555,6 +2584,68 @@ async def _sync_espn_live_events():
                                     session.add(snapshot)
                                     stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
 
+                                    # Also write ESPN to generic win_prob_snapshots table
+                                    try:
+                                        from app.models.models import WinProbSnapshot
+                                        espn_wp_snap = WinProbSnapshot(
+                                            event_id=event.id,
+                                            source="espn",
+                                            home_win_probability=ee.home_win_probability,
+                                            away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
+                                            game_state={
+                                                "clock": ee.clock,
+                                                "period": ee.status_detail,
+                                                "home_score": ee.home_score,
+                                                "away_score": ee.away_score,
+                                            },
+                                        )
+                                        session.add(espn_wp_snap)
+                                    except Exception:
+                                        pass  # Table may not exist yet
+
+                                # Compute statistical model win probability
+                                if ee.home_score is not None and ee.away_score is not None and ee.clock:
+                                    try:
+                                        from app.utils.win_probability import compute_statistical_win_prob
+                                        from app.models.models import WinProbSnapshot
+
+                                        # Use opening spread if available
+                                        pregame_spread = None
+                                        if event.opening_home_spread is not None:
+                                            pregame_spread = float(event.opening_home_spread)
+
+                                        stat_wp = compute_statistical_win_prob(
+                                            home_score=ee.home_score,
+                                            away_score=ee.away_score,
+                                            clock=ee.clock,
+                                            period=ee.status_detail,
+                                            sport_key=sport_key,
+                                            pregame_spread=pregame_spread,
+                                        )
+                                        if stat_wp is not None:
+                                            sources = event.win_probability_sources or {}
+                                            sources["stat_model"] = round(stat_wp, 4)
+                                            event.win_probability_sources = sources
+                                            changed = True
+
+                                            stat_snap = WinProbSnapshot(
+                                                event_id=event.id,
+                                                source="stat_model",
+                                                home_win_probability=round(stat_wp, 4),
+                                                away_win_probability=round(1.0 - stat_wp, 4),
+                                                game_state={
+                                                    "clock": ee.clock,
+                                                    "period": ee.status_detail,
+                                                    "home_score": ee.home_score,
+                                                    "away_score": ee.away_score,
+                                                    "pregame_spread": pregame_spread,
+                                                },
+                                            )
+                                            session.add(stat_snap)
+                                            stats["stat_model_computed"] = stats.get("stat_model_computed", 0) + 1
+                                    except Exception:
+                                        pass  # Model or table not available
+
                                 if changed:
                                     stats["events_updated"] += 1
 
@@ -2596,6 +2687,17 @@ async def _sync_espn_live_events():
                             if names_match(home_names, espn_home) and names_match(away_names, espn_away):
                                 await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
                                 await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                                # Correct commence_time from ESPN if significantly different
+                                if ee.date and event.commence_time:
+                                    time_diff = abs((ee.date - event.commence_time).total_seconds())
+                                    if time_diff > 300:  # > 5 minutes
+                                        print(
+                                            f"ESPN: Correcting commence_time for scheduled event {event.id} "
+                                            f"({event.home_team_name} vs {event.away_team_name}): "
+                                            f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
+                                            f"(diff: {time_diff/3600:.1f}h)"
+                                        )
+                                        event.commence_time = ee.date
                                 if ee.broadcasts and not event.broadcast_info:
                                     event.broadcast_info = ", ".join(ee.broadcasts)
                                 if ee.espn_id and not event.espn_id:
