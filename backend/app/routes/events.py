@@ -111,7 +111,8 @@ async def discover_all_events(
                         set_={
                             "home_team_name": event_data["home_team"],
                             "away_team_name": event_data["away_team"],
-                            "commence_time": commence_time,
+                            # Don't overwrite commence_time — The Odds API occasionally
+                            # returns local times as UTC. ESPN sync corrects these.
                             "status": case(
                                 (Event.status == "scheduled", event_status),
                                 else_=Event.status
