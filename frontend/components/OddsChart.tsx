@@ -97,6 +97,7 @@ export default function OddsChart({
   espnHistory,
   winProbHistory,
   winProbSources,
+  eventId,
   eventStatus,
   fillContainer = false,
 }: OddsChartProps) {
