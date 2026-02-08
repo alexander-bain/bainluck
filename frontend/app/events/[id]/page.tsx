@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, formatProbability, getBestProbability } from "@/lib/api";
+import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
 import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
@@ -326,39 +326,43 @@ export default function EventPage({ params }: EventPageProps) {
 
   const odds = event.current_odds;
 
-  // For live games, the chart's latest data point is the most reliable source
-  // because the history endpoint only includes currently active bookmakers.
-  // The event detail endpoint's current_odds can be contaminated by stale
-  // bookmakers that keep returning unchanged pregame values.
+  // Determine the probability to display and its source label.
+  // Primary source: current_odds from the event detail endpoint (betting markets).
+  // For live games, cross-check against the history endpoint's latest consensus
+  // (same data the chart uses) to catch any aggregation discrepancies.
   let homeProb = odds?.home_probability ?? null;
   let awayProb = odds?.away_probability ?? null;
-  let probSource: string | null = null;
+  let probSourceLabel: string | null = null;
+  const bookmakerCount = odds?.bookmaker_count ?? 0;
 
-  if (isLive) {
-    // Layer 1: Use history data's latest consensus (most reliable, matches the chart)
-    if (historyData?.history && historyData.history.length > 0) {
-      const latestHistory = historyData.history[historyData.history.length - 1];
-      if (latestHistory.home_probability !== null && latestHistory.home_probability !== undefined) {
-        const historyHome = latestHistory.home_probability;
-        // If history diverges significantly from current_odds, history is more accurate
-        if (homeProb === null || Math.abs(historyHome - homeProb) > 0.10) {
-          homeProb = historyHome;
-          awayProb = latestHistory.away_probability ?? (1 - historyHome);
-          probSource = "chart";
+  if (isLive && historyData?.history && historyData.history.length > 0) {
+    // Find the last history point with a valid probability (skip trailing nulls)
+    let latestValidHistory: typeof historyData.history[0] | null = null;
+    for (let i = historyData.history.length - 1; i >= 0; i--) {
+      if (historyData.history[i].home_probability !== null && historyData.history[i].home_probability !== undefined) {
+        latestValidHistory = historyData.history[i];
+        break;
+      }
+    }
+
+    if (latestValidHistory) {
+      const historyHome = latestValidHistory.home_probability!;
+      const historyBookmakers = latestValidHistory.bookmaker_count ?? 0;
+      // If the history consensus diverges from current_odds, trust history —
+      // it uses time-bucketed aggregation that only includes active bookmakers
+      if (homeProb === null || Math.abs(historyHome - homeProb) > 0.05) {
+        homeProb = historyHome;
+        awayProb = latestValidHistory.away_probability ?? (1 - historyHome);
+        if (historyBookmakers > 0) {
+          probSourceLabel = `${historyBookmakers} sportsbook${historyBookmakers !== 1 ? "s" : ""}`;
         }
       }
     }
+  }
 
-    // Layer 2: Model fallback (ESPN/stat model) if still divergent
-    const bestProb = getBestProbability(event);
-    if (bestProb.source === "model" && bestProb.homeProb !== null) {
-      // Model says something very different from what we have — use it
-      if (homeProb === null || Math.abs(bestProb.homeProb - homeProb) > 0.15) {
-        homeProb = bestProb.homeProb;
-        awayProb = bestProb.awayProb;
-        probSource = bestProb.sourceName;
-      }
-    }
+  // Build source label for display
+  if (!probSourceLabel && bookmakerCount > 0) {
+    probSourceLabel = `${bookmakerCount} sportsbook${bookmakerCount !== 1 ? "s" : ""}`;
   }
 
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
@@ -796,11 +800,11 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         </div>
 
-        {/* Source indicator when using non-current_odds probability */}
-        {probSource && (
-          <div className="mt-2 text-center">
-            <span className="text-xs text-slate bg-mist/50 px-2 py-1 rounded-full">
-              Using latest active bookmaker consensus
+        {/* Source label under probability */}
+        {probSourceLabel && (
+          <div className="mt-1 text-center">
+            <span className="text-[11px] text-silver tracking-wide">
+              Betting odds consensus · {probSourceLabel}
             </span>
           </div>
         )}

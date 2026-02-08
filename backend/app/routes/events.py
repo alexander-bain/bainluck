@@ -513,12 +513,15 @@ async def search_events(
         for snap in all_snapshots:
             snapshots_by_event[snap.event_id].append(snap)
 
-        # Build event status lookup for stale bookmaker filtering
-        event_status_map = {e.id: e.status for e in events}
+        # Build event lookups for stale bookmaker filtering
+        event_info_map = {e.id: e for e in events}
 
         for event_id, snaps in snapshots_by_event.items():
+            ev = event_info_map.get(event_id)
             snaps = _filter_stale_bookmaker_snapshots(
-                snaps, is_live=(event_status_map.get(event_id) == "live")
+                snaps,
+                is_live=(ev.status == "live" if ev else False),
+                commence_time=(ev.commence_time if ev else None),
             )
             latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
@@ -1021,12 +1024,15 @@ async def list_events(
         for snap in all_snapshots:
             snapshots_by_event[snap.event_id].append(snap)
 
-        # Build event status lookup for stale bookmaker filtering
-        event_status_map = {e.id: e.status for e in events}
+        # Build event lookups for stale bookmaker filtering
+        event_info_map = {e.id: e for e in events}
 
         for event_id, snaps in snapshots_by_event.items():
+            ev = event_info_map.get(event_id)
             snaps = _filter_stale_bookmaker_snapshots(
-                snaps, is_live=(event_status_map.get(event_id) == "live")
+                snaps,
+                is_live=(ev.status == "live" if ev else False),
+                commence_time=(ev.commence_time if ev else None),
             )
             latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
@@ -1389,7 +1395,9 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
         latest_snapshots = list(latest_by_bookmaker.values())
         latest_snapshots = _filter_stale_bookmaker_snapshots(
-            latest_snapshots, is_live=(event.status == "live")
+            latest_snapshots,
+            is_live=(event.status == "live"),
+            commence_time=event.commence_time,
         )
         latest_time = max(s.captured_at for s in latest_snapshots)
 
@@ -1781,31 +1789,30 @@ async def debug_event_snapshots(
     }
 
 
-def _filter_stale_bookmaker_snapshots(snapshots: list, is_live: bool) -> list:
-    """Filter out stale bookmaker snapshots for live events.
+def _filter_stale_bookmaker_snapshots(
+    snapshots: list, is_live: bool, commence_time: datetime = None
+) -> list:
+    """Filter out pregame-only bookmaker snapshots for live events.
 
-    During live games, many bookmakers stop updating their moneyline odds or
-    keep returning unchanged pregame values. Including these stale values
-    contaminates the aggregate (e.g., showing 59% when active books show 2%).
+    During live games, some bookmakers stop updating their moneyline odds or
+    keep returning unchanged pregame values. Including these pregame values
+    contaminates the aggregate (e.g., showing 59% when live books show 2%).
 
-    We only include bookmakers whose odds VALUE has actually changed within
-    15 minutes of the most recent change across all bookmakers. This uses
-    captured_at (when the current odds value was first seen), NOT valid_until
-    (which updates every poll even when odds haven't changed due to dedup).
+    We include bookmakers whose odds VALUE changed after the game started
+    (captured_at >= commence_time), meaning they've posted at least one live
+    update. Bookmakers whose last distinct odds value was set before kickoff
+    are excluded — they're just echoing pregame lines.
 
-    For non-live events, returns the original list unchanged.
+    For non-live events or when commence_time is unavailable, returns unchanged.
     """
-    if not is_live or not snapshots:
+    if not is_live or not snapshots or commence_time is None:
         return snapshots
 
-    latest_time = max(s.captured_at for s in snapshots)
-    staleness_threshold = latest_time - timedelta(minutes=15)
+    live_snapshots = [s for s in snapshots if s.captured_at >= commence_time]
 
-    fresh = [s for s in snapshots if s.captured_at >= staleness_threshold]
-
-    # Only use filtered list if we still have at least one with valid probability
-    if any(s.home_win_probability is not None for s in fresh):
-        return fresh
+    # Only use filtered list if we have at least one with valid probability
+    if any(s.home_win_probability is not None for s in live_snapshots):
+        return live_snapshots
 
     return snapshots
 
