@@ -328,14 +328,18 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Determine the probability to display and its source label.
   // Primary source: current_odds from the event detail endpoint (betting markets).
-  // For live games, cross-check against the history endpoint's latest consensus
-  // (same data the chart uses) to catch any aggregation discrepancies.
+  // For any game that has started (live/completed/closed), cross-check against the
+  // history endpoint's latest consensus (same data the chart uses). The history
+  // endpoint uses time-bucketed aggregation that naturally excludes stale pregame
+  // bookmakers, so it's always reliable. This ensures the big probability number
+  // at the top of the page matches the chart.
+  const gameHasStarted = isLive || isFinished;
   let homeProb = odds?.home_probability ?? null;
   let awayProb = odds?.away_probability ?? null;
   let probSourceLabel: string | null = null;
   const bookmakerCount = odds?.bookmaker_count ?? 0;
 
-  if (isLive && historyData?.history && historyData.history.length > 0) {
+  if (gameHasStarted && historyData?.history && historyData.history.length > 0) {
     // Find the last history point with a valid probability (skip trailing nulls)
     let latestValidHistory: typeof historyData.history[0] | null = null;
     for (let i = historyData.history.length - 1; i >= 0; i--) {
