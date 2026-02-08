@@ -134,6 +134,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_team_logos",
         "schedule": crontab(minute=15, hour="*/6"),  # Every 6 hours at :15
     },
+    "reset-ad-baseline-kickoff": {
+        "task": "app.tasks.reset_ad_baseline",
+        "schedule": crontab(minute=0, hour=22, day_of_month=9, month_of_year=2),  # Feb 9 @ 2PM Pacific (22:00 UTC)
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -2849,126 +2853,27 @@ async def _backfill_team_logos():
     return stats
 
 
-# ============================================================================
-# ESPN Commence Time Correction
-# ============================================================================
-
-
+# ---------------------------------------------------------------------------
+# Ad Baseline Reset — scheduled at kickoff so view deltas track game-day growth
+# ---------------------------------------------------------------------------
 @celery_app.task(bind=True)
-def fix_commence_times_from_espn(self, limit=200):
+def reset_ad_baseline(self):
+    """Clear the Super Bowl ad view baseline in Redis.
+
+    Scheduled to run at 2 PM Pacific (22:00 UTC) on Feb 9, 2026 — kickoff.
+    The next /api/contest/ads fetch will snapshot fresh view counts,
+    so all +/- deltas reflect views gained during the game.
     """
-    Backfill/correct commence_time for events using ESPN scoreboard data.
-
-    Finds events with espn_id, fetches ESPN scoreboards for the relevant
-    sport+date combinations, and corrects commence_time where it differs
-    by more than 5 minutes from ESPN's date.
-
-    Returns:
-        Dict with correction statistics
-    """
-    return run_async(_fix_commence_times_from_espn(limit))
-
-
-async def _fix_commence_times_from_espn(limit: int):
-    """Async implementation of fix_commence_times_from_espn."""
-    from datetime import timedelta
-    from app.services.espn_api import ESPNAPIService
-    from app.models.models import Event, Sport
-    from sqlalchemy import select, distinct
-    from sqlalchemy.orm import selectinload
-
-    stats = {
-        "events_checked": 0,
-        "events_corrected": 0,
-        "corrections": [],
-        "dates_fetched": 0,
-        "errors": [],
-    }
-
+    import ssl as _ssl
     try:
-        async with get_task_session() as session:
-            # Find all events with espn_id, grouped by sport
-            result = await session.execute(
-                select(Event)
-                .options(selectinload(Event.sport))
-                .where(Event.espn_id.isnot(None))
-                .order_by(Event.commence_time.desc())
-                .limit(limit)
-            )
-            events = result.scalars().all()
-
-            if not events:
-                return {"status": "no_events_with_espn_id", **stats}
-
-            # Group events by (sport_key, date) for efficient ESPN API calls
-            # ESPN scoreboard accepts date in YYYYMMDD format
-            # Only check events within last 30 days and next 7 days —
-            # far-future events often have placeholder times on ESPN
-            now = datetime.now(timezone.utc)
-            min_date = now - timedelta(days=30)
-            max_date = now + timedelta(days=7)
-
-            sport_date_events = {}
-            for event in events:
-                sport_key = event.sport.key if event.sport else None
-                if not sport_key or sport_key not in ESPN_SPORT_MAPPING:
-                    continue
-                if event.commence_time < min_date or event.commence_time > max_date:
-                    continue
-
-                # Use the stored commence_time date for the scoreboard query
-                event_date = event.commence_time.strftime("%Y%m%d")
-                key = (sport_key, event_date)
-                sport_date_events.setdefault(key, []).append(event)
-
-            # Fetch ESPN scoreboards and match
-            espn = ESPNAPIService()
-            try:
-                for (sport_key, date_str), events_for_date in sport_date_events.items():
-                    try:
-                        espn_events = await espn.get_scoreboard(sport_key, date=date_str)
-                        stats["dates_fetched"] += 1
-
-                        if not espn_events:
-                            continue
-
-                        # Build lookup by ESPN ID
-                        espn_by_id = {ee.espn_id: ee for ee in espn_events}
-
-                        for event in events_for_date:
-                            stats["events_checked"] += 1
-                            espn_event = espn_by_id.get(event.espn_id)
-
-                            if not espn_event or not espn_event.date:
-                                continue
-
-                            time_diff = abs((espn_event.date - event.commence_time).total_seconds())
-                            if time_diff > 300:  # > 5 minutes
-                                correction = {
-                                    "event_id": event.id,
-                                    "teams": f"{event.away_team_name} @ {event.home_team_name}",
-                                    "old_time": event.commence_time.isoformat(),
-                                    "new_time": espn_event.date.isoformat(),
-                                    "diff_hours": round(time_diff / 3600, 1),
-                                }
-                                stats["corrections"].append(correction)
-                                print(
-                                    f"ESPN: Correcting commence_time for event {event.id} "
-                                    f"({event.away_team_name} @ {event.home_team_name}): "
-                                    f"{event.commence_time.isoformat()} -> {espn_event.date.isoformat()} "
-                                    f"(diff: {time_diff/3600:.1f}h)"
-                                )
-                                event.commence_time = espn_event.date
-                                stats["events_corrected"] += 1
-
-                    except Exception as e:
-                        stats["errors"].append(f"{sport_key}/{date_str}: {str(e)}")
-            finally:
-                await espn.close()
-
+        if REDIS_URL.startswith("rediss://"):
+            r = redis.from_url(REDIS_URL, ssl_cert_reqs=_ssl.CERT_NONE)
+        else:
+            r = redis.from_url(REDIS_URL)
+        r.delete("sb_contest:ad_baseline")
+        r.delete("sb_contest:youtube_ads")
+        print("Ad baseline reset — next fetch will snapshot fresh view counts")
+        return {"status": "reset", "message": "Ad baseline cleared at kickoff"}
     except Exception as e:
-        stats["errors"].append(f"Task error: {str(e)}")
-        import traceback
-        print(f"ESPN commence time fix error: {e}\n{traceback.format_exc()}")
-
-    return stats
+        print(f"Ad baseline reset error: {e}")
+        return {"status": "error", "error": str(e)}
