@@ -17,7 +17,17 @@ import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
   ESPNHistoryPoint,
+  WinProbHistoryPoint,
+  WinProbSourceMeta,
 } from "@/lib/types";
+
+/** Fallback source configs when win_prob_sources metadata isn't available */
+const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string }> = {
+  espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3" },
+  stat_model: { display_name: "Statistical Model", color: "#8b5cf6", dash_pattern: "4 4" },
+  moneypuck: { display_name: "MoneyPuck", color: "#10b981", dash_pattern: "4 4" },
+  fangraphs: { display_name: "FanGraphs", color: "#06b6d4", dash_pattern: "4 4" },
+};
 
 interface OddsChartProps {
   history: OddsHistoryPoint[];
@@ -26,8 +36,12 @@ interface OddsChartProps {
   commenceTime?: string;
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
-  /** ESPN win probability history */
+  /** ESPN win probability history (legacy, used as fallback) */
   espnHistory?: ESPNHistoryPoint[];
+  /** Multi-source win probability history */
+  winProbHistory?: Record<string, WinProbHistoryPoint[]>;
+  /** Source metadata (display names, colors, types) */
+  winProbSources?: Record<string, WinProbSourceMeta>;
   /** Event ID for analytics tracking */
   eventId?: number;
   /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
@@ -48,15 +62,29 @@ interface ChartDataPoint {
   time: string;
   /** Home probability delta from 50% (range: -50 to +50) */
   homeDelta: number | null;
-  /** ESPN home probability delta from 50% */
+  /** ESPN home probability delta from 50% (legacy) */
   espnDelta: number | null;
   [key: string]: string | number | null | undefined;
+}
+
+/** Resolved source info used for rendering */
+interface ResolvedSource {
+  key: string;
+  dataKey: string;
+  displayName: string;
+  color: string;
+  dashPattern: string | null;
+  type: "model" | "market";
+  snapshotCount: number;
 }
 
 /**
  * ESPN-style win probability chart.
  * Single line showing home team win probability, with area fill between the line
  * and the 50% midpoint. Y-axis: 100% home at top, 100% away at bottom.
+ *
+ * Supports multiple win probability sources (ESPN, statistical model, etc.)
+ * rendered as additional lines with distinct colors/styles.
  */
 export default function OddsChart({
   history,
@@ -66,6 +94,8 @@ export default function OddsChart({
   isLive = false,
   bookmakerHistory,
   espnHistory,
+  winProbHistory,
+  winProbSources,
   eventStatus,
   fillContainer = false,
 }: OddsChartProps) {
@@ -104,7 +134,57 @@ export default function OddsChart({
     return filtered;
   }, [bookmakerHistory, timeRange, commenceTime]);
 
-  // Filter ESPN history
+  // Resolve win probability sources: prefer winProbHistory, fall back to espnHistory
+  const resolvedSources = useMemo((): ResolvedSource[] => {
+    const sources: ResolvedSource[] = [];
+
+    if (winProbHistory && Object.keys(winProbHistory).length > 0) {
+      // Use the new multi-source data
+      for (const [key, points] of Object.entries(winProbHistory)) {
+        if (points.length === 0) continue;
+        const meta = winProbSources?.[key];
+        const fallback = FALLBACK_SOURCE_CONFIG[key];
+        sources.push({
+          key,
+          dataKey: `wp_${key}_delta`,
+          displayName: meta?.display_name ?? fallback?.display_name ?? key,
+          color: meta?.color ?? fallback?.color ?? "#6b7280",
+          dashPattern: meta?.dash_pattern ?? fallback?.dash_pattern ?? "4 4",
+          type: meta?.type ?? "model",
+          snapshotCount: points.length,
+        });
+      }
+    } else if (espnHistory && espnHistory.length > 0) {
+      // Legacy: use espnHistory directly
+      sources.push({
+        key: "espn",
+        dataKey: "espnDelta",
+        displayName: "ESPN",
+        color: "#f97316",
+        dashPattern: "6 3",
+        type: "model",
+        snapshotCount: espnHistory.length,
+      });
+    }
+
+    return sources;
+  }, [winProbHistory, winProbSources, espnHistory]);
+
+  // Filter win prob history based on time range
+  const filteredWinProbHistory = useMemo(() => {
+    if (!winProbHistory || Object.keys(winProbHistory).length === 0) return {};
+    if (timeRange === "all") return winProbHistory;
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
+    const filtered: Record<string, WinProbHistoryPoint[]> = {};
+    for (const [source, points] of Object.entries(winProbHistory)) {
+      filtered[source] = points.filter(
+        (point) => parseISO(point.timestamp) >= cutoffTime
+      );
+    }
+    return filtered;
+  }, [winProbHistory, timeRange, commenceTime]);
+
+  // Filter ESPN history (legacy fallback)
   const filteredEspnHistory = useMemo(() => {
     if (!espnHistory || espnHistory.length === 0) return [];
     if (timeRange === "all") return espnHistory;
@@ -114,7 +194,8 @@ export default function OddsChart({
     );
   }, [espnHistory, timeRange, commenceTime]);
 
-  const hasEspnData = filteredEspnHistory.length > 0;
+  const useNewWinProbData = Object.keys(filteredWinProbHistory).length > 0;
+  const hasModelData = resolvedSources.length > 0;
   const bookmakers = useMemo(
     () => Object.keys(filteredBookmakerHistory),
     [filteredBookmakerHistory]
@@ -124,33 +205,36 @@ export default function OddsChart({
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
 
+    const ensurePoint = (timestamp: string): ChartDataPoint => {
+      let point = dataMap.get(timestamp);
+      if (!point) {
+        point = {
+          timestamp,
+          time: format(parseISO(timestamp), "h:mm a"),
+          homeDelta: null,
+          espnDelta: null,
+        };
+        dataMap.set(timestamp, point);
+      }
+      return point;
+    };
+
     // Add aggregate data points
     for (const point of filteredHistory) {
       const homeProb =
         point.home_probability !== null ? point.home_probability * 100 : null;
       const delta = homeProb !== null ? homeProb - 50 : null;
 
-      const dp: ChartDataPoint = {
-        timestamp: point.timestamp,
-        time: format(parseISO(point.timestamp), "h:mm a"),
-        homeDelta: delta,
-        espnDelta: null,
-      };
-      dataMap.set(point.timestamp, dp);
+      const dp = ensurePoint(point.timestamp);
+      dp.homeDelta = delta;
 
       // Expand valid_until
       if (point.valid_until) {
         const endTime = parseISO(point.valid_until);
         const startTime = parseISO(point.timestamp);
         if (endTime.getTime() - startTime.getTime() > 60000) {
-          if (!dataMap.has(point.valid_until)) {
-            dataMap.set(point.valid_until, {
-              timestamp: point.valid_until,
-              time: format(endTime, "h:mm a"),
-              homeDelta: delta,
-              espnDelta: null,
-            });
-          }
+          const endDp = ensurePoint(point.valid_until);
+          if (endDp.homeDelta === null) endDp.homeDelta = delta;
         }
       }
     }
@@ -166,36 +250,17 @@ export default function OddsChart({
             : null;
         const delta = homeProb !== null ? homeProb - 50 : null;
 
-        const existing = dataMap.get(point.timestamp);
-        if (existing) {
-          existing[`${bookmaker}_delta`] = delta;
-        } else {
-          const newPoint: ChartDataPoint = {
-            timestamp: point.timestamp,
-            time: format(parseISO(point.timestamp), "h:mm a"),
-            homeDelta: null,
-            espnDelta: null,
-            [`${bookmaker}_delta`]: delta,
-          };
-          dataMap.set(point.timestamp, newPoint);
-        }
+        const dp = ensurePoint(point.timestamp);
+        dp[`${bookmaker}_delta`] = delta;
 
         // Expand valid_until
         if (point.valid_until) {
           const endTime = parseISO(point.valid_until);
           const startTime = parseISO(point.timestamp);
           if (endTime.getTime() - startTime.getTime() > 60000) {
-            const existingEnd = dataMap.get(point.valid_until);
-            if (existingEnd) {
-              existingEnd[`${bookmaker}_delta`] = delta;
-            } else {
-              dataMap.set(point.valid_until, {
-                timestamp: point.valid_until,
-                time: format(endTime, "h:mm a"),
-                homeDelta: null,
-                espnDelta: null,
-                [`${bookmaker}_delta`]: delta,
-              });
+            const endDp = ensurePoint(point.valid_until);
+            if (endDp[`${bookmaker}_delta`] === undefined) {
+              endDp[`${bookmaker}_delta`] = delta;
             }
           }
         }
@@ -204,8 +269,7 @@ export default function OddsChart({
 
     // Ensure all bookmaker keys exist on all data points
     const allBookmakers = Object.keys(filteredBookmakerHistory);
-    const allPoints = Array.from(dataMap.values());
-    for (const point of allPoints) {
+    for (const point of dataMap.values()) {
       for (const bookmaker of allBookmakers) {
         if (point[`${bookmaker}_delta`] === undefined) {
           point[`${bookmaker}_delta`] = null;
@@ -213,26 +277,37 @@ export default function OddsChart({
       }
     }
 
-    // Add ESPN data
-    for (const point of filteredEspnHistory) {
-      const espnHome =
-        point.home_probability !== null ? point.home_probability * 100 : null;
-      const delta = espnHome !== null ? espnHome - 50 : null;
+    // Add win probability source data (new multi-source or legacy ESPN)
+    if (useNewWinProbData) {
+      for (const [sourceKey, points] of Object.entries(filteredWinProbHistory)) {
+        const dataKey = `wp_${sourceKey}_delta`;
+        for (const point of points) {
+          const homeProb =
+            point.home_probability !== null ? point.home_probability * 100 : null;
+          const delta = homeProb !== null ? homeProb - 50 : null;
 
-      const existing = dataMap.get(point.timestamp);
-      if (existing) {
-        existing.espnDelta = delta;
-      } else {
-        const newPoint: ChartDataPoint = {
-          timestamp: point.timestamp,
-          time: format(parseISO(point.timestamp), "h:mm a"),
-          homeDelta: null,
-          espnDelta: delta,
-        };
-        for (const bookmaker of allBookmakers) {
-          newPoint[`${bookmaker}_delta`] = null;
+          const dp = ensurePoint(point.timestamp);
+          dp[dataKey] = delta;
         }
-        dataMap.set(point.timestamp, newPoint);
+      }
+
+      // Ensure all source keys exist on all data points
+      for (const point of dataMap.values()) {
+        for (const source of resolvedSources) {
+          if (point[source.dataKey] === undefined) {
+            point[source.dataKey] = null;
+          }
+        }
+      }
+    } else {
+      // Legacy ESPN data
+      for (const point of filteredEspnHistory) {
+        const espnHome =
+          point.home_probability !== null ? point.home_probability * 100 : null;
+        const delta = espnHome !== null ? espnHome - 50 : null;
+
+        const dp = ensurePoint(point.timestamp);
+        dp.espnDelta = delta;
       }
     }
 
@@ -240,7 +315,7 @@ export default function OddsChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredEspnHistory]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, resolvedSources]);
 
   // Early return for empty history
   if (!history || history.length === 0) {
@@ -252,7 +327,6 @@ export default function OddsChart({
   }
 
   // Compute gradient offset for area fill-by-value
-  // This determines where in the gradient the color switches (at the y=0 crossing)
   const gradientOffset = (() => {
     const deltas = chartData
       .map((d) => d.homeDelta)
@@ -270,7 +344,6 @@ export default function OddsChart({
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
   // Custom Y-axis tick formatter: shows probability for each team
-  // +50 = 100% home, 0 = 50%, -50 = 100% away
   const formatYTick = (value: number): string => {
     const prob = 50 + Math.abs(value);
     return `${prob}%`;
@@ -295,15 +368,28 @@ export default function OddsChart({
       const aggregateEntry = payload.find(
         (e) => e.dataKey === "homeDelta" && e.value !== null
       );
-      const espnEntry = payload.find(
-        (e) => e.dataKey === "espnDelta" && e.value !== null
-      );
       const bookmakerEntries = payload.filter(
         (e) =>
           e.dataKey !== "homeDelta" &&
+          !e.dataKey.startsWith("wp_") &&
           e.dataKey !== "espnDelta" &&
           e.value !== null
       );
+
+      // Find model source entries
+      const modelEntries = resolvedSources
+        .map((source) => {
+          const entry = payload.find(
+            (e) => e.dataKey === source.dataKey && e.value !== null
+          );
+          return entry ? { ...source, value: entry.value } : null;
+        })
+        .filter((e): e is ResolvedSource & { value: number } => e !== null);
+
+      // Legacy ESPN fallback
+      const legacyEspnEntry = !useNewWinProbData
+        ? payload.find((e) => e.dataKey === "espnDelta" && e.value !== null)
+        : null;
 
       const formatProb = (delta: number) => {
         const homeProb = delta + 50;
@@ -319,11 +405,34 @@ export default function OddsChart({
               {formatProb(aggregateEntry.value)}
             </p>
           )}
-          {espnEntry && (
+          {/* Model sources */}
+          {modelEntries.length > 0 && (
+            <div className="mt-1 pt-1 border-t border-gray-100">
+              {modelEntries.map((source) => (
+                <div key={source.key} className="mb-0.5">
+                  <p className="text-xs text-gray-400 mb-0.5">
+                    {source.displayName}
+                    <span className="text-gray-300 ml-1">
+                      ({source.type})
+                    </span>
+                    :
+                  </p>
+                  <p
+                    className="text-xs font-medium"
+                    style={{ color: source.color }}
+                  >
+                    {formatProb(source.value)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Legacy ESPN fallback */}
+          {legacyEspnEntry && (
             <div className="mt-1 pt-1 border-t border-gray-100">
               <p className="text-xs text-gray-400 mb-0.5">ESPN model:</p>
               <p className="text-xs font-medium text-orange-600">
-                {formatProb(espnEntry.value)}
+                {formatProb(legacyEspnEntry.value)}
               </p>
             </div>
           )}
@@ -348,6 +457,23 @@ export default function OddsChart({
     }
     return null;
   };
+
+  // Build legend text
+  const legendParts: string[] = [];
+  if (bookmakers.length > 0) {
+    legendParts.push("Gray lines show individual sportsbooks");
+  }
+  if (resolvedSources.length > 0) {
+    for (const source of resolvedSources) {
+      const style = source.dashPattern ? "dashed" : "solid";
+      legendParts.push(
+        `${source.displayName} (${source.type}) = ${style} line`
+      );
+    }
+  } else if (!useNewWinProbData && filteredEspnHistory.length > 0) {
+    legendParts.push("Orange dashed line shows ESPN predictive model");
+  }
+  legendParts.push("Tap/hover for details");
 
   return (
     <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}>
@@ -443,8 +569,24 @@ export default function OddsChart({
               />
             ))}
 
-            {/* ESPN model line - orange dashed */}
-            {hasEspnData && (
+            {/* Win probability source lines (dynamic) */}
+            {resolvedSources.map((source) => (
+              <Line
+                key={source.dataKey}
+                type="monotone"
+                dataKey={source.dataKey}
+                name={source.displayName}
+                stroke={source.color}
+                strokeWidth={2.5}
+                strokeDasharray={source.dashPattern ?? undefined}
+                dot={false}
+                activeDot={{ r: 4, fill: source.color }}
+                connectNulls
+              />
+            ))}
+
+            {/* Legacy ESPN line (when winProbHistory not available) */}
+            {!useNewWinProbData && filteredEspnHistory.length > 0 && (
               <Line
                 type="monotone"
                 dataKey="espnDelta"
@@ -484,13 +626,31 @@ export default function OddsChart({
         </ResponsiveContainer>
       </div>
 
+      {/* Source legend */}
+      {hasModelData && (
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
+          {resolvedSources.map((source) => (
+            <div key={source.key} className="flex items-center gap-1.5">
+              <svg width="20" height="2" className="shrink-0">
+                <line
+                  x1="0" y1="1" x2="20" y2="1"
+                  stroke={source.color}
+                  strokeWidth="2.5"
+                  strokeDasharray={source.dashPattern ?? undefined}
+                />
+              </svg>
+              <span className="text-xs text-gray-500">
+                {source.displayName}
+                <span className="text-gray-400 ml-0.5">({source.type})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Info strip */}
       <p className="text-xs text-gray-400 text-center shrink-0">
-        {bookmakers.length > 0 && "Gray lines show individual sportsbooks"}
-        {bookmakers.length > 0 && hasEspnData && " · "}
-        {hasEspnData && "Orange dashed line shows ESPN predictive model"}
-        {(bookmakers.length > 0 || hasEspnData) && " · "}
-        Tap/hover for details
+        {legendParts.join(" · ")}
       </p>
     </div>
   );
