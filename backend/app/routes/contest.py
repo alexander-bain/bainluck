@@ -2568,13 +2568,24 @@ async def _fetch_youtube_ads() -> list[dict]:
             })
 
     # Cache result — only cache with full TTL if we got real YouTube data.
-    # If YouTube API failed (all ads have views=0), use a short TTL so the
-    # next request retries quickly instead of serving stale zero-view data.
+    # If YouTube API failed (quota exceeded, etc.), serve last known good data
+    # instead of caching zeros that show "--" in the UI.
     has_real_data = any(ad.get("video_id") for ad in ads)
     try:
         r = _redis()
-        ttl = _youtube_cache_ttl() if has_real_data else 30  # 30s retry on failure
-        r.setex(cache_key, ttl, json.dumps(ads))
+        if has_real_data:
+            # Good data — cache normally and save as fallback for API failures
+            r.setex(cache_key, _youtube_cache_ttl(), json.dumps(ads))
+            r.setex(f"{cache_key}:good", 86400, json.dumps(ads))  # 24h fallback
+        else:
+            # YouTube API failed — serve last known good data if available
+            good_data = r.get(f"{cache_key}:good")
+            if good_data:
+                logger.info("YouTube API failed, serving last known good data")
+                ads = json.loads(good_data)
+                r.setex(cache_key, 60, json.dumps(ads))  # serve old data, retry in 60s
+            else:
+                r.setex(cache_key, 30, json.dumps(ads))  # no fallback, retry in 30s
     except Exception:
         pass
 
@@ -2790,27 +2801,14 @@ async def get_ad_leaderboard():
     try:
         r = _redis()
 
-        # Check if we need to auto-reset for game mode transition
+        # Check if we need to auto-reset for game mode transition.
+        # Only reset the baseline — keep the YouTube data cache intact.
+        # The cache will refresh naturally when its TTL expires (7 min in game mode).
+        # This avoids burning YouTube API quota on a forced re-fetch.
         if mode == "game" and not r.get(auto_reset_key):
-            # Save old data as fallback before clearing cache
-            old_cache = r.get(f"{REDIS_KEY_PREFIX}youtube_ads")
-            r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")  # clear cache to force fresh fetch
+            r.delete(baseline_key)
+            r.setex(auto_reset_key, 43200, "1")
             logger.info(f"Auto-reset ad baseline for mode={mode}")
-            # Re-fetch with fresh cache
-            ads = await _fetch_youtube_ads()
-
-            has_real_data = any(ad.get("video_id") for ad in ads)
-            if has_real_data:
-                # Fresh fetch succeeded — reset baseline and mark reset done
-                r.delete(baseline_key)
-                r.setex(auto_reset_key, 43200, "1")
-            else:
-                # YouTube API failed — restore old cache so we don't lose data.
-                # Don't set auto_reset_key so we retry on next request.
-                logger.warning("Auto-reset: YouTube fetch returned no real data, restoring old cache")
-                if old_cache:
-                    r.setex(f"{REDIS_KEY_PREFIX}youtube_ads", _youtube_cache_ttl(), old_cache)
-                    ads = json.loads(old_cache)
 
         cached_baseline = r.get(baseline_key)
         if cached_baseline:
@@ -2864,10 +2862,11 @@ async def reset_ad_baseline(secret: str = Query("", description="Admin secret"))
     """
     try:
         r = _redis()
-        # Delete baseline AND cache so next fetch snapshots fresh counts
+        # Delete baseline, cache, and auto-reset flag so everything starts fresh
         r.delete(f"{REDIS_KEY_PREFIX}ad_baseline")
         r.delete(f"{REDIS_KEY_PREFIX}youtube_ads")
-        return {"status": "reset", "message": "Ad baseline cleared — next fetch will snapshot new baseline"}
+        r.delete(f"{REDIS_KEY_PREFIX}ad_auto_reset:game")
+        return {"status": "reset", "message": "Ad baseline, cache, and auto-reset flag cleared — next fetch will snapshot new baseline"}
     except Exception as e:
         return {"error": str(e)}
 
