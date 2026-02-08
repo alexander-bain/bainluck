@@ -162,6 +162,7 @@ export interface OddsHistoryPoint {
   projected_home_score: number | null;
   projected_away_score: number | null;
   bookmaker: string;
+  bookmaker_count?: number; // Number of bookmakers in the aggregate
   // Deduplication fields - for drawing flat lines between data points
   valid_until?: string; // If set, value was constant from timestamp to valid_until
   reading_count?: number; // How many times this value was confirmed
