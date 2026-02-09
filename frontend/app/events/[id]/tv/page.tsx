@@ -14,6 +14,7 @@ import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
 // CommercialLeaderboard removed — replaced by TVAdLeaderboard with YouTube API
+// TVAdLeaderboard removed — Super Bowl LX is over
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
@@ -79,36 +80,6 @@ interface ContestData {
   leaderboard: ContestEntrant[];
   props: ContestProp[];
   summary: ContestSummary;
-}
-
-// ---------------------------------------------------------------------------
-// Ad Leaderboard Types
-// ---------------------------------------------------------------------------
-interface YouTubeAd {
-  rank: number;
-  brand: string;
-  title: string;
-  video_id: string;
-  channel: string;
-  celebrity: string;
-  thumbnail: string;
-  views: number;
-  likes: number;
-  comments: number;
-  views_formatted: string;
-  likes_formatted: string;
-  views_delta: number;
-  views_delta_formatted: string;
-  published_at: string;
-}
-
-interface AdLeaderboardData {
-  ads: YouTubeAd[];
-  count: number;
-  youtube_configured: boolean;
-  with_video?: number;
-  cache_ttl_seconds?: number;
-  mode?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,147 +368,6 @@ function TVLeaderboard({
                     </div>
                   ) : (
                     <span className="text-[1.1vh] text-white/20">-</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </AutoScrollContainer>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Ad Leaderboard (YouTube Super Bowl commercials ranked by views)
-// ---------------------------------------------------------------------------
-const AD_MEDAL_EMOJIS = ["\uD83E\uDD47", "\uD83E\uDD48", "\uD83E\uDD49"]; // gold, silver, bronze
-
-const AD_SCROLL_LIMIT = 32;
-
-function TVAdLeaderboard({ ads }: { ads: YouTubeAd[] }) {
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  // Show all ranks but only scroll through the top entries
-  const displayAds = ads.slice(0, AD_SCROLL_LIMIT);
-
-  // --- Inline video player ---
-  if (playingId) {
-    const ad = ads.find((a) => a.video_id === playingId);
-    return (
-      <div className="flex flex-col h-full">
-        {/* Prominent back button */}
-        <div className="shrink-0 mb-[1vh]">
-          <button
-            onClick={() => setPlayingId(null)}
-            className="flex items-center gap-[0.5vw] px-[0.8vw] py-[0.6vh] rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-white text-[1.4vh] font-semibold"
-          >
-            <span className="text-[1.6vh]">&larr;</span>
-            Back to Leaderboard
-          </button>
-        </div>
-        {/* Brand info */}
-        <div className="shrink-0 mb-[0.8vh] text-center">
-          <div className="text-white font-bold text-[2vh]">{ad?.brand}</div>
-          {ad?.celebrity && (
-            <div className="text-white/40 text-[1.1vh]">ft. {ad.celebrity}</div>
-          )}
-        </div>
-        {/* Video */}
-        <div className="flex-1 min-h-0 flex items-center justify-center">
-          <iframe
-            src={`https://www.youtube.com/embed/${playingId}?autoplay=1&controls=1`}
-            className="w-full rounded-xl"
-            style={{ aspectRatio: "16/9", maxHeight: "100%" }}
-            allow="autoplay; encrypted-media"
-            allowFullScreen
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // --- Scrolling leaderboard ---
-  return (
-    <div className="flex flex-col h-full">
-      <div className="shrink-0 flex items-center justify-between mb-[0.5vh]">
-        <h3 className="text-white/50 text-[1.3vh] uppercase tracking-wider font-semibold">
-          Ad Leaderboard
-        </h3>
-        <span className="text-white/30 text-[1.1vh]">
-          Top {displayAds.length} of {ads.length} ads
-        </span>
-      </div>
-
-      <AutoScrollContainer className="flex-1 min-h-0" speed={0.2}>
-        <div className="space-y-[0.2vh]">
-          {displayAds.map((ad, i) => {
-            const isTop3 = i < 3;
-            const hasVideo = !!ad.video_id;
-            const hasViews = ad.views > 0;
-            const subtitle = ad.celebrity || ad.title;
-            return (
-              <div
-                key={`${ad.brand}-${i}`}
-                className={`flex items-center gap-[0.3vw] px-[0.3vw] py-[0.4vh] rounded-lg ${
-                  isTop3 ? "bg-white/5" : ""
-                } ${hasVideo ? "cursor-pointer hover:bg-white/8" : ""}`}
-                onClick={hasVideo ? () => setPlayingId(ad.video_id) : undefined}
-              >
-                {/* Rank */}
-                <div className="w-[1.2vw] text-center shrink-0">
-                  {isTop3 ? (
-                    <span className="text-[1.6vh]">{AD_MEDAL_EMOJIS[i]}</span>
-                  ) : (
-                    <span className="text-white/30 font-mono text-[1.1vh]">
-                      {ad.rank}
-                    </span>
-                  )}
-                </div>
-
-                {/* Play icon */}
-                <div className="w-[1.4vw] shrink-0 flex items-center justify-center">
-                  {hasVideo ? (
-                    <span className="text-red-400 text-[1.4vh]">&#9654;</span>
-                  ) : (
-                    <span className="text-white/10 text-[1.4vh]">&#9654;</span>
-                  )}
-                </div>
-
-                {/* Brand + subtitle */}
-                <div className="flex-1 min-w-0">
-                  <span
-                    className={`text-[1.2vh] font-semibold truncate block ${
-                      isTop3 ? "text-white" : "text-white/70"
-                    }`}
-                  >
-                    {ad.brand}
-                  </span>
-                  {subtitle && (
-                    <div className="text-white/30 text-[0.8vh] truncate leading-tight">
-                      {subtitle}
-                    </div>
-                  )}
-                </div>
-
-                {/* Views — big and bold */}
-                <div className="text-right shrink-0 min-w-[3vw]">
-                  {hasViews ? (
-                    ad.views_delta > 0 ? (
-                      <>
-                        <div className={`font-mono font-bold ${isTop3 ? "text-[1.8vh]" : "text-[1.5vh]"} text-emerald-400`}>
-                          {ad.views_delta_formatted}
-                        </div>
-                        <div className="text-white/20 font-mono text-[0.7vh] leading-tight">
-                          {ad.views_formatted} total
-                        </div>
-                      </>
-                    ) : (
-                      <div className={`font-mono font-bold ${isTop3 ? "text-[1.8vh]" : "text-[1.5vh]"} text-white/60`}>
-                        {ad.views_formatted}
-                      </div>
-                    )
-                  ) : (
-                    <span className="text-white/15 font-mono text-[1vh]">--</span>
                   )}
                 </div>
               </div>
@@ -1037,7 +867,6 @@ export default function TVPage({ params }: TVPageProps) {
     wrong: string;
     fact: string;
   } | null>(null);
-  const [adData, setAdData] = useState<AdLeaderboardData | null>(null);
 
   // Resolution notification queue — full-screen, shown one at a time
   const [resolutionQueue, setResolutionQueue] = useState<
@@ -1190,42 +1019,6 @@ export default function TVPage({ params }: TVPageProps) {
     const interval = setInterval(fetchContestCommentary, COMMENTARY_REFRESH_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchContestCommentary]);
-
-  // ---- Ad Leaderboard polling (adapts to backend game/idle mode) ----
-  const adPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const adModeRef = useRef<string>("idle");
-
-  const fetchAds = useCallback(async () => {
-    try {
-      const resp = await fetch(`${API_URL}/api/contest/ads`);
-      if (!resp.ok) return;
-      const data = await resp.json() as AdLeaderboardData;
-      setAdData(data);
-
-      // Switch polling rate when backend switches mode
-      const newMode = data.mode || "idle";
-      if (newMode !== adModeRef.current) {
-        adModeRef.current = newMode;
-        // Game: poll every 3 min (backend cache is 7 min)
-        // Pregame: poll every 10 min (backend cache is 45 min)
-        // Idle: poll every 5 min (backend cache is 30 min)
-        const interval =
-          newMode === "game" ? 180000 :
-          newMode === "pregame" ? 600000 :
-          300000;
-        if (adPollRef.current) clearInterval(adPollRef.current);
-        adPollRef.current = setInterval(fetchAds, interval);
-      }
-    } catch {
-      // Silently ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchAds();
-    adPollRef.current = setInterval(fetchAds, 300000); // start at 5 min
-    return () => { if (adPollRef.current) clearInterval(adPollRef.current); };
-  }, [fetchAds]);
 
   // Process resolution queue: show one at a time for 8 seconds each
   useEffect(() => {
@@ -1589,8 +1382,8 @@ export default function TVPage({ params }: TVPageProps) {
           </div>
         </div>
 
-        {/* === CONTEST LEADERBOARD + PROP CAROUSEL + ADS === */}
-        <div className="flex-[3] min-h-0 grid grid-cols-1 lg:grid-cols-4 gap-[0.8vw]">
+        {/* === CONTEST LEADERBOARD + PROP CAROUSEL === */}
+        <div className="flex-[3] min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-[0.8vw]">
           {/* Leaderboard (2 columns) */}
           <div className="lg:col-span-2 bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
             {contestData ? (
@@ -1609,27 +1402,6 @@ export default function TVPage({ params }: TVPageProps) {
           {/* Prop Odds Carousel (1 column) */}
           <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
             <TVPropCarousel eventId={eventId} />
-          </div>
-
-          {/* Ad Leaderboard (1 column) */}
-          <div className="bg-[#111118] rounded-2xl p-[1vw] border border-white/5 min-h-0 overflow-hidden">
-            {adData && adData.ads.length > 0 ? (
-              <TVAdLeaderboard ads={adData.ads} />
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-white/20 text-[1.3vh] gap-[0.5vh]">
-                <span className="text-[2vh]">{"\uD83D\uDCFA"}</span>
-                {!adData ? (
-                  <span>Loading ad leaderboard...</span>
-                ) : !adData.youtube_configured ? (
-                  <span>YouTube API key not configured</span>
-                ) : (
-                  <>
-                    <span>Ad Leaderboard</span>
-                    <span className="text-[1vh] text-white/10">Ads will appear once they go live</span>
-                  </>
-                )}
-              </div>
-            )}
           </div>
 
         </div>
