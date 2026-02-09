@@ -325,48 +325,66 @@ export default function EventPage({ params }: EventPageProps) {
   }
 
   const odds = event.current_odds;
+  const opening = event.opening_odds;
 
-  // Determine the probability to display and its source label.
-  // Primary source: current_odds from the event detail endpoint (betting markets).
-  // For any game that has started (live/completed/closed), cross-check against the
-  // history endpoint's latest consensus (same data the chart uses). The history
-  // endpoint uses time-bucketed aggregation that naturally excludes stale pregame
-  // bookmakers, so it's always reliable. This ensures the big probability number
-  // at the top of the page matches the chart.
-  const gameHasStarted = isLive || isFinished;
-  let homeProb = odds?.home_probability ?? null;
-  let awayProb = odds?.away_probability ?? null;
+  // Determine the probability to display based on game status:
+  // - Scheduled: current betting consensus
+  // - Live: current live odds (from history cross-check for reliability) + opening reference
+  // - Completed/Closed: opening odds (what was expected before the game)
+  let homeProb: number | null = null;
+  let awayProb: number | null = null;
   let probSourceLabel: string | null = null;
-  const bookmakerCount = odds?.bookmaker_count ?? 0;
+  let openingHomeProb = opening?.home_probability ?? null;
+  let openingAwayProb = opening?.away_probability ?? null;
 
-  if (gameHasStarted && historyData?.history && historyData.history.length > 0) {
-    // Find the last history point with a valid probability (skip trailing nulls)
-    let latestValidHistory: typeof historyData.history[0] | null = null;
-    for (let i = historyData.history.length - 1; i >= 0; i--) {
-      if (historyData.history[i].home_probability !== null && historyData.history[i].home_probability !== undefined) {
-        latestValidHistory = historyData.history[i];
-        break;
-      }
+  if (isFinished) {
+    // Completed/closed: show opening odds — "what was expected"
+    homeProb = openingHomeProb;
+    awayProb = openingAwayProb;
+    if (homeProb !== null) {
+      probSourceLabel = "Pre-game odds";
+    } else {
+      // Fallback if no opening odds stored (old events)
+      homeProb = odds?.home_probability ?? null;
+      awayProb = odds?.away_probability ?? null;
     }
+  } else if (isLive) {
+    // Live: show current odds, cross-checked against history for accuracy
+    homeProb = odds?.home_probability ?? null;
+    awayProb = odds?.away_probability ?? null;
+    const count = odds?.bookmaker_count ?? 0;
 
-    if (latestValidHistory) {
-      const historyHome = latestValidHistory.home_probability!;
-      const historyBookmakers = latestValidHistory.bookmaker_count ?? 0;
-      // If the history consensus diverges from current_odds, trust history —
-      // it uses time-bucketed aggregation that only includes active bookmakers
-      if (homeProb === null || Math.abs(historyHome - homeProb) > 0.05) {
-        homeProb = historyHome;
-        awayProb = latestValidHistory.away_probability ?? (1 - historyHome);
-        if (historyBookmakers > 0) {
-          probSourceLabel = `${historyBookmakers} sportsbook${historyBookmakers !== 1 ? "s" : ""}`;
+    if (historyData?.history && historyData.history.length > 0) {
+      let latestValidHistory: typeof historyData.history[0] | null = null;
+      for (let i = historyData.history.length - 1; i >= 0; i--) {
+        if (historyData.history[i].home_probability !== null && historyData.history[i].home_probability !== undefined) {
+          latestValidHistory = historyData.history[i];
+          break;
+        }
+      }
+      if (latestValidHistory) {
+        const historyHome = latestValidHistory.home_probability!;
+        const historyBookmakers = latestValidHistory.bookmaker_count ?? 0;
+        if (homeProb === null || Math.abs(historyHome - homeProb) > 0.05) {
+          homeProb = historyHome;
+          awayProb = latestValidHistory.away_probability ?? (1 - historyHome);
+          if (historyBookmakers > 0) {
+            probSourceLabel = `Live · ${historyBookmakers} sportsbook${historyBookmakers !== 1 ? "s" : ""}`;
+          }
         }
       }
     }
-  }
-
-  // Build source label for display
-  if (!probSourceLabel && bookmakerCount > 0) {
-    probSourceLabel = `${bookmakerCount} sportsbook${bookmakerCount !== 1 ? "s" : ""}`;
+    if (!probSourceLabel && count > 0) {
+      probSourceLabel = `Live · ${count} sportsbook${count !== 1 ? "s" : ""}`;
+    }
+  } else {
+    // Scheduled: current betting consensus
+    homeProb = odds?.home_probability ?? null;
+    awayProb = odds?.away_probability ?? null;
+    const count = odds?.bookmaker_count ?? 0;
+    if (count > 0) {
+      probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
+    }
   }
 
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
@@ -804,14 +822,23 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         </div>
 
-        {/* Source label under probability */}
-        {probSourceLabel && (
-          <div className="mt-1 text-center">
-            <span className="text-[11px] text-silver tracking-wide">
-              Betting odds consensus · {probSourceLabel}
-            </span>
-          </div>
-        )}
+        {/* Source label + opening odds reference */}
+        <div className="mt-2 text-center space-y-1">
+          {probSourceLabel && (
+            <div>
+              <span className="text-[11px] text-silver tracking-wide">
+                {isFinished ? probSourceLabel : `Betting odds consensus · ${probSourceLabel}`}
+              </span>
+            </div>
+          )}
+          {isLive && openingHomeProb !== null && (
+            <div>
+              <span className="text-[11px] text-silver tracking-wide">
+                Opened {formatProbability(openingHomeProb)} / {formatProbability(openingAwayProb)}
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Data freshness strip */}
         {odds?.captured_at && (

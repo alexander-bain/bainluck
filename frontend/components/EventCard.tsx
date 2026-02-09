@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Event } from "@/lib/types";
-import { formatProbability, getBestProbability } from "@/lib/api";
+import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import PulseBadge from "./PulseBadge";
@@ -54,10 +54,22 @@ export default function EventCard({
     }
   };
   const odds = event.current_odds;
-  // For live games, prefer model probabilities (ESPN/stat model) when betting odds lag
-  const bestProb = getBestProbability(event);
-  const homeProb = bestProb.homeProb;
-  const awayProb = bestProb.awayProb;
+  const opening = event.opening_odds;
+
+  // Determine which probability to display based on game status:
+  // - Scheduled: current betting consensus
+  // - Live: current odds (best available)
+  // - Completed/Closed: opening odds (what was expected before the game)
+  let homeProb: number | null;
+  let awayProb: number | null;
+
+  if ((event.status === "completed" || event.status === "closed") && opening) {
+    homeProb = opening.home_probability;
+    awayProb = opening.away_probability;
+  } else {
+    homeProb = odds?.home_probability ?? null;
+    awayProb = odds?.away_probability ?? null;
+  }
 
   // Handle card click with analytics
   const handleCardClick = () => {
@@ -315,9 +327,13 @@ export default function EventCard({
                   {Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}
                 </span>
               </>
-            ) : (isLive || isFinished) ? (
+            ) : isLive ? (
               <span className="text-xs text-slate">
-                {effectivelyLive ? "🔄 Live updates" : `Played ${timeStr}`}
+                {opening ? `Opened ${Math.round(opening.home_probability * 100)}/${Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}` : "🔄 Live updates"}
+              </span>
+            ) : isFinished ? (
+              <span className="text-xs text-slate">
+                Pre-game odds
               </span>
             ) : null}
             {/* Broadcast info from ESPN */}
