@@ -399,7 +399,7 @@ export default function EventPage({ params }: EventPageProps) {
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Navigation */}
       <div className="flex items-center justify-between">
         <Link
@@ -479,15 +479,15 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       {/* Hero Section */}
-      <div className={`rounded-card shadow-card p-6 ${
+      <div className={`rounded-card shadow-card p-4 sm:p-5 ${
         effectivelyLive
           ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
           : isFinished
           ? "bg-slate-50 border border-slate-200"
           : "bg-white"
       }`}>
-        {/* Sport badge with emoji */}
-        <div className="flex items-center justify-between mb-4">
+        {/* Top bar: sport badge, status, pin */}
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             {/* Pin button */}
             <button
@@ -521,38 +521,58 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Status badge */}
           {isCompleted && (
             <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
-              ✅ Closed
+              Closed
             </span>
           )}
           {isClosed && (
             <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
-              ✅ Closed
+              Closed
             </span>
           )}
         </div>
 
-        {/* Game time/status */}
-        <div className="text-center mb-6">
+        {/* Game time/status - compact for live */}
+        <div className="text-center mb-3">
           {effectivelyLive ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-2xl font-bold text-emerald-600">🔴 LIVE</span>
-              </div>
-              <div className="text-sm text-slate">
-                Started {formatStartTime(event.commence_time)}
-              </div>
+            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+              <span className="flex items-center gap-1.5 text-emerald-600 font-bold">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                LIVE
+              </span>
+              {event.espn?.game_clock && event.espn?.period && (
+                <>
+                  <span className="text-slate/40">·</span>
+                  <span className="font-medium text-emerald-700">
+                    {event.espn.period} · {event.espn.game_clock}
+                  </span>
+                </>
+              )}
+              {event.espn?.broadcast && (
+                <>
+                  <span className="text-slate/40">·</span>
+                  <span className="text-slate">
+                    {event.espn.broadcast}
+                  </span>
+                </>
+              )}
+              {!event.espn?.game_clock && (
+                <>
+                  <span className="text-slate/40">·</span>
+                  <span className="text-slate">
+                    Started {formatStartTime(event.commence_time)}
+                  </span>
+                </>
+              )}
               {gameIsBlowout && (
-                <div className="flex items-center justify-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-sm mx-auto w-fit">
-                  <span>⚠️</span>
-                  <span>Blowout — odds may update less frequently</span>
-                </div>
+                <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full text-xs">
+                  Blowout — odds less frequent
+                </span>
               )}
             </div>
           ) : isFinished ? (
-            <div className="text-slate space-y-1">
-              <div className="text-lg font-medium">
-                📅 {new Date(event.commence_time).toLocaleDateString("en-US", {
+            <div className="text-slate space-y-0.5">
+              <div className="text-base font-medium">
+                {new Date(event.commence_time).toLocaleDateString("en-US", {
                   weekday: "short",
                   month: "short",
                   day: "numeric",
@@ -562,18 +582,17 @@ export default function EventPage({ params }: EventPageProps) {
                   timeZoneName: "short",
                 })}
               </div>
-              <div className="text-caption">Game finished • Books closed</div>
+              <div className="text-caption">Game finished</div>
             </div>
           ) : (
-            <div className="space-y-2">
-              {/* Clean start time display with countdown */}
+            <div className="space-y-1">
               {gameCountdown && (
                 <div className="text-2xl font-bold text-graphite">
-                  ⏱️ Starts in {gameCountdown}
+                  Starts in {gameCountdown}
                 </div>
               )}
-              <div className="text-lg text-graphite">
-                📅 {new Date(event.commence_time).toLocaleDateString("en-US", {
+              <div className="text-base text-graphite">
+                {new Date(event.commence_time).toLocaleDateString("en-US", {
                   weekday: "short",
                   month: "short",
                   day: "numeric",
@@ -583,35 +602,16 @@ export default function EventPage({ params }: EventPageProps) {
                   timeZoneName: "short",
                 })}
               </div>
+              {event.espn?.broadcast && (
+                <div className="text-sm text-slate">{event.espn.broadcast}</div>
+              )}
             </div>
           )}
         </div>
 
-        {/* ESPN info: broadcast, game clock */}
-        {event.espn && (
-          <div className="flex flex-wrap items-center justify-center gap-3 mb-4 text-sm">
-            {event.espn.broadcast && (
-              <span className="flex items-center gap-1.5 bg-slate/5 px-3 py-1 rounded-full text-slate">
-                📺 {event.espn.broadcast}
-              </span>
-            )}
-            {effectivelyLive && event.espn.game_clock && event.espn.period && (
-              <span className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1 rounded-full text-emerald-700 font-medium">
-                {event.espn.period} &middot; {event.espn.game_clock}
-              </span>
-            )}
-            {effectivelyLive && event.espn.win_probability != null && (
-              <span className="flex items-center gap-1.5 bg-orange-50 px-3 py-1 rounded-full text-orange-700 text-xs font-medium"
-                    title="ESPN predictive model win probability">
-                ESPN: {(event.espn.win_probability * 100).toFixed(0)}% {event.home_team.split(" ").pop()}
-              </span>
-            )}
-          </div>
-        )}
-
         {/* Score display for live/finished games */}
         {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
-          <div className="mb-6 py-4 bg-white/50 rounded-lg">
+          <div className="mb-3 py-3 bg-white/50 rounded-lg">
             <div className="flex items-center justify-center gap-6">
               <div className="text-center">
                 <div className={`text-4xl font-bold font-mono ${
@@ -619,7 +619,7 @@ export default function EventPage({ params }: EventPageProps) {
                 }`}>
                   {event.home_score}
                 </div>
-                <div className="text-sm text-slate mt-1">
+                <div className="text-sm text-slate mt-0.5">
                   {event.home_team.split(" ").pop()}
                 </div>
               </div>
@@ -630,118 +630,21 @@ export default function EventPage({ params }: EventPageProps) {
                 }`}>
                   {event.away_score}
                 </div>
-                <div className="text-sm text-slate mt-1">
+                <div className="text-sm text-slate mt-0.5">
                   {event.away_team.split(" ").pop()}
                 </div>
               </div>
             </div>
             {isFinished && (
-              <div className="text-center mt-2 text-xs text-slate">
+              <div className="text-center mt-1.5 text-xs text-slate">
                 Score when books closed (may not be final)
               </div>
             )}
           </div>
         )}
 
-        {/* Pulse - Game Excitement Metric */}
-        {(isFinished || isLive) && event.pulse && (
-          <div className={`mb-6 py-4 px-5 rounded-lg border ${
-            event.pulse.score >= 81
-              ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-200"
-              : event.pulse.score >= 61
-              ? "bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200"
-              : event.pulse.score >= 41
-              ? "bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200"
-              : "bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200"
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className={`text-sm font-semibold flex items-center gap-2 ${
-                event.pulse.score >= 81
-                  ? "text-red-800"
-                  : event.pulse.score >= 61
-                  ? "text-orange-800"
-                  : event.pulse.score >= 41
-                  ? "text-amber-800"
-                  : "text-slate-700"
-              }`}>
-                {event.pulse.emoji} {isLive ? "Live Pulse" : "Game Pulse"}
-                {isLive && (
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                )}
-              </h3>
-              <span className={`px-3 py-1 rounded-full text-sm font-bold ${
-                event.pulse.score >= 81
-                  ? "bg-red-200 text-red-800"
-                  : event.pulse.score >= 61
-                  ? "bg-orange-200 text-orange-800"
-                  : event.pulse.score >= 41
-                  ? "bg-amber-200 text-amber-800"
-                  : "bg-slate-200 text-slate-700"
-              }`}>
-                {event.pulse.score} / 100
-              </span>
-            </div>
-
-            <div className="text-center mb-4">
-              <div className={`text-2xl font-bold ${
-                event.pulse.score >= 81
-                  ? "text-red-700"
-                  : event.pulse.score >= 61
-                  ? "text-orange-700"
-                  : event.pulse.score >= 41
-                  ? "text-amber-700"
-                  : "text-slate-600"
-              }`}>
-                {event.pulse.label}
-              </div>
-              <div className={`text-sm mt-1 ${
-                event.pulse.score >= 61 ? "text-orange-600" : "text-slate-500"
-              }`}>
-                {isLive ? "Pulse strength so far" : `Status: ${event.pulse.status}`}
-              </div>
-            </div>
-
-            {/* Pulse Components Breakdown */}
-            {event.pulse.components && (
-              <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-200">
-                <div className="text-center">
-                  <Tooltip content="How often odds shifted significantly during the game" position="top">
-                    <div className="text-xs text-slate-500 uppercase tracking-wide cursor-help">Heart Rate</div>
-                  </Tooltip>
-                  <div className="text-lg font-mono font-semibold text-slate-700">
-                    {Math.round(event.pulse.components.heart_rate * 100)}%
-                  </div>
-                </div>
-                <div className="text-center">
-                  <Tooltip content="How large the probability swings were" position="top">
-                    <div className="text-xs text-slate-500 uppercase tracking-wide cursor-help">Amplitude</div>
-                  </Tooltip>
-                  <div className="text-lg font-mono font-semibold text-slate-700">
-                    {Math.round(event.pulse.components.amplitude * 100)}%
-                  </div>
-                </div>
-                <div className="text-center">
-                  <Tooltip content="How close the matchup was — 100% means a coin flip" position="top">
-                    <div className="text-xs text-slate-500 uppercase tracking-wide cursor-help">Vitals</div>
-                  </Tooltip>
-                  <div className="text-lg font-mono font-semibold text-slate-700">
-                    {Math.round(event.pulse.components.vitals * 100)}%
-                  </div>
-                </div>
-                {event.pulse.components.lead_changes > 0 && (
-                  <div className="col-span-3 text-center pt-2 border-t border-slate-200">
-                    <span className="inline-flex items-center gap-1 text-sm text-orange-700 bg-orange-100 px-2 py-0.5 rounded">
-                      🔄 {event.pulse.components.lead_changes} Lead Change{event.pulse.components.lead_changes > 1 ? 's' : ''}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Teams with probabilities */}
-        <div className="space-y-4">
+        {/* Teams with probabilities — most important live info */}
+        <div className="space-y-3">
           {/* Home Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -822,12 +725,22 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         </div>
 
-        {/* Source label + opening odds reference */}
+        {/* Source label + ESPN model comparison + opening odds */}
         <div className="mt-2 text-center space-y-1">
           {probSourceLabel && (
             <div>
               <span className="text-[11px] text-silver tracking-wide">
                 {isFinished ? probSourceLabel : `Betting odds consensus · ${probSourceLabel}`}
+              </span>
+            </div>
+          )}
+          {effectivelyLive && event.espn?.win_probability != null && (
+            <div>
+              <span
+                className="text-[11px] text-orange-600 tracking-wide cursor-help"
+                title="ESPN's predictive model calculates win probability independently from betting odds, using their own game simulation"
+              >
+                ESPN model: {(event.espn.win_probability * 100).toFixed(0)}% {event.home_team.split(" ").pop()}
               </span>
             </div>
           )}
@@ -840,9 +753,89 @@ export default function EventPage({ params }: EventPageProps) {
           )}
         </div>
 
+        {/* Pulse - Game Excitement Metric (compact) */}
+        {(isFinished || isLive) && event.pulse && (
+          <div className={`mt-4 py-3 px-4 rounded-lg border ${
+            event.pulse.score >= 81
+              ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-200"
+              : event.pulse.score >= 61
+              ? "bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200"
+              : event.pulse.score >= 41
+              ? "bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200"
+              : "bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200"
+          }`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className={`text-sm font-semibold flex items-center gap-2 ${
+                  event.pulse.score >= 81
+                    ? "text-red-800"
+                    : event.pulse.score >= 61
+                    ? "text-orange-800"
+                    : event.pulse.score >= 41
+                    ? "text-amber-800"
+                    : "text-slate-700"
+                }`}>
+                  {event.pulse.emoji} {isLive ? "Live Pulse" : "Game Pulse"}
+                  {isLive && (
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  )}
+                </h3>
+                <span className={`text-sm font-medium ${
+                  event.pulse.score >= 81
+                    ? "text-red-700"
+                    : event.pulse.score >= 61
+                    ? "text-orange-700"
+                    : event.pulse.score >= 41
+                    ? "text-amber-700"
+                    : "text-slate-600"
+                }`}>
+                  — {event.pulse.label}
+                </span>
+              </div>
+              <span className={`px-2.5 py-0.5 rounded-full text-sm font-bold ${
+                event.pulse.score >= 81
+                  ? "bg-red-200 text-red-800"
+                  : event.pulse.score >= 61
+                  ? "bg-orange-200 text-orange-800"
+                  : event.pulse.score >= 41
+                  ? "bg-amber-200 text-amber-800"
+                  : "bg-slate-200 text-slate-700"
+              }`}>
+                {event.pulse.score} / 100
+              </span>
+            </div>
+
+            {/* Pulse Components Breakdown - inline */}
+            {event.pulse.components && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 pt-2 border-t border-slate-200/60 text-xs">
+                <Tooltip content="How often odds shifted significantly during the game" position="top">
+                  <span className="text-slate-500 cursor-help">
+                    HR <span className="font-mono font-semibold text-slate-700">{Math.round(event.pulse.components.heart_rate * 100)}%</span>
+                  </span>
+                </Tooltip>
+                <Tooltip content="How large the probability swings were" position="top">
+                  <span className="text-slate-500 cursor-help">
+                    Amp <span className="font-mono font-semibold text-slate-700">{Math.round(event.pulse.components.amplitude * 100)}%</span>
+                  </span>
+                </Tooltip>
+                <Tooltip content="How close the matchup was — 100% means a coin flip" position="top">
+                  <span className="text-slate-500 cursor-help">
+                    Vitals <span className="font-mono font-semibold text-slate-700">{Math.round(event.pulse.components.vitals * 100)}%</span>
+                  </span>
+                </Tooltip>
+                {event.pulse.components.lead_changes > 0 && (
+                  <span className="text-orange-700">
+                    {event.pulse.components.lead_changes} lead change{event.pulse.components.lead_changes > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Data freshness strip */}
         {odds?.captured_at && (
-          <div className="mt-6 pt-4 border-t border-mist/50 space-y-2">
+          <div className="mt-4 pt-3 border-t border-mist/50 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-slate">
               <span className="flex items-center gap-1">
                 🕐 Updated {new Date(odds.captured_at).toLocaleDateString("en-US", {
@@ -896,9 +889,9 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData?.history && historyData.history.length > 0 && (
-        <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            📊 Score Differential
+        <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
+          <h3 className="text-sm font-semibold text-slate mb-3 flex items-center gap-2">
+            Score Differential
           </h3>
           <ScoreDifferentialChart
             history={historyData.history}
@@ -916,9 +909,9 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Trend Chart */}
-      <div className="bg-white rounded-card shadow-card p-6">
-        <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-          📉 Win Probability
+      <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
+        <h3 className="text-sm font-semibold text-slate mb-3 flex items-center gap-2">
+          Win Probability
         </h3>
         {historyLoading ? (
           <div className="h-48 flex items-center justify-center">
@@ -960,9 +953,9 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Win Probabilities by Sportsbook */}
       {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
-        <div className="bg-white rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-slate mb-4 flex items-center gap-2">
-            📊 Win Probabilities by Sportsbook
+        <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
+          <h3 className="text-sm font-semibold text-slate mb-3 flex items-center gap-2">
+            Win Probabilities by Sportsbook
           </h3>
           <BookmakerTable
             bookmakerOdds={event.bookmaker_odds}
