@@ -708,3 +708,80 @@ def normalize_team_name_cached(team_name: str, sport_key: Optional[str] = None) 
     """
     result = normalize_team_name(team_name, sport_key)
     return (result["normalized"], tuple(result["variations"]))
+
+
+def classify_player_team(
+    player_name: str,
+    sport_category: Optional[str] = None,
+    market_name: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Determine which team a player belongs to using LLM.
+
+    Used to link player-specific futures outcomes (e.g., "Jaylen Brown" in
+    an MVP market) to the correct Team record.
+
+    Args:
+        player_name: The player's name (e.g., "Jaylen Brown")
+        sport_category: Sport category for context (e.g., "basketball")
+        market_name: Market name for context (e.g., "NBA MVP 2025-26")
+
+    Returns:
+        Team name string (e.g., "Boston Celtics"), or None if unable to determine
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    context_parts = []
+    if sport_category:
+        context_parts.append(f"Sport: {sport_category}")
+    if market_name:
+        context_parts.append(f"Market: {market_name}")
+    context = ". ".join(context_parts)
+
+    prompt = f"""What professional sports team does this person currently play for (2025-26 season)?
+
+Name: {player_name}
+{context}
+
+Rules:
+- Respond with ONLY the full official team name (e.g., "Boston Celtics", "Los Angeles Lakers")
+- If this is not a recognizable athlete or you're unsure, respond with "UNKNOWN"
+- Use the current season's roster (account for trades, free agency)
+- For retired players, respond with "UNKNOWN"
+
+Team name:"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=50,
+            temperature=0,
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        if result.upper() == "UNKNOWN" or not result:
+            return None
+
+        # Clean up common LLM formatting artifacts
+        result = result.strip('"').strip("'").strip(".")
+        return result
+
+    except Exception as e:
+        logger.error(f"Player team classification error for '{player_name}': {e}")
+        return None
+
+
+@lru_cache(maxsize=2000)
+def classify_player_team_cached(
+    player_name: str,
+    sport_category: Optional[str] = None,
+    market_name: Optional[str] = None,
+) -> Optional[str]:
+    """Cached version of classify_player_team."""
+    return classify_player_team(player_name, sport_category, market_name)

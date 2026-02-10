@@ -179,13 +179,19 @@ async def _poll_futures_odds():
                     base_sport_key = _infer_base_sport(sport_key)
                     sport_id = sport_map.get(base_sport_key)
 
+                    # Compute market tier for relevance ranking
+                    from app.utils.team_linking import compute_market_tier
+                    inferred_category = _infer_category(sport_key)
+                    market_tier = compute_market_tier(market_name, inferred_category)
+
                     # Upsert the market
                     market_stmt = pg_insert(FuturesMarket).values(
                         source="odds_api",
                         external_id=sport_key,
                         sport_id=sport_id,
                         name=market_name,
-                        category=_infer_category(sport_key),
+                        category=inferred_category,
+                        market_tier=market_tier,
                         mutually_exclusive=True,
                         status="open",
                     ).on_conflict_do_update(
@@ -193,6 +199,7 @@ async def _poll_futures_odds():
                         set_={
                             "name": market_name,
                             "sport_id": sport_id,  # Update sport link on every sync
+                            "market_tier": market_tier,
                             "updated_at": func.now(),
                         }
                     ).returning(FuturesMarket.id)
