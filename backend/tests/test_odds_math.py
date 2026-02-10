@@ -4,6 +4,7 @@ import pytest
 from app.utils.odds_math import (
     aggregate_probabilities,
     aggregate_bookmaker_odds,
+    detect_reversed_bookmakers,
     moneyline_to_probability,
     american_to_probability,
     remove_vig,
@@ -237,3 +238,150 @@ class TestRemoveVig:
         # Original ratio: 0.60 / 0.50 = 1.2
         # Normalized ratio should be the same
         assert abs(home_prob / away_prob - 1.2) < 0.001
+
+
+class TestDetectReversedBookmakers:
+    """Tests for detect_reversed_bookmakers function."""
+
+    def test_detects_reversed_bookmakers(self):
+        """Detects bookmakers with clearly reversed home/away probabilities."""
+        # 4 reversed books (~73% home) among 12 correct books (~33% home)
+        snapshots = [
+            {"bookmaker": "betus", "home_win_probability": 0.743},
+            {"bookmaker": "lowvig", "home_win_probability": 0.737},
+            {"bookmaker": "betonlineag", "home_win_probability": 0.735},
+            {"bookmaker": "betanysports", "home_win_probability": 0.734},
+            {"bookmaker": "fanduel", "home_win_probability": 0.330},
+            {"bookmaker": "draftkings", "home_win_probability": 0.326},
+            {"bookmaker": "betmgm", "home_win_probability": 0.326},
+            {"bookmaker": "espnbet", "home_win_probability": 0.336},
+            {"bookmaker": "fanatics", "home_win_probability": 0.353},
+            {"bookmaker": "fliff", "home_win_probability": 0.331},
+            {"bookmaker": "williamhill_us", "home_win_probability": 0.322},
+            {"bookmaker": "hardrockbet", "home_win_probability": 0.301},
+            {"bookmaker": "betrivers", "home_win_probability": 0.298},
+            {"bookmaker": "ballybet", "home_win_probability": 0.296},
+            {"bookmaker": "betparx", "home_win_probability": 0.292},
+            {"bookmaker": "mybookieag", "home_win_probability": 0.375},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == {"betus", "lowvig", "betonlineag", "betanysports"}
+
+    def test_no_reversal_when_consistent(self):
+        """No bookmakers flagged when all probabilities are consistent."""
+        snapshots = [
+            {"bookmaker": "fanduel", "home_win_probability": 0.55},
+            {"bookmaker": "draftkings", "home_win_probability": 0.53},
+            {"bookmaker": "betmgm", "home_win_probability": 0.54},
+            {"bookmaker": "espnbet", "home_win_probability": 0.56},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == set()
+
+    def test_no_detection_near_fifty_fifty(self):
+        """Skip detection when median is close to 50% (can't reliably detect)."""
+        snapshots = [
+            {"bookmaker": "a", "home_win_probability": 0.52},
+            {"bookmaker": "b", "home_win_probability": 0.48},
+            {"bookmaker": "c", "home_win_probability": 0.50},
+            {"bookmaker": "d", "home_win_probability": 0.51},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == set()
+
+    def test_too_few_bookmakers(self):
+        """Need at least 3 bookmakers for detection."""
+        snapshots = [
+            {"bookmaker": "a", "home_win_probability": 0.30},
+            {"bookmaker": "b", "home_win_probability": 0.70},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == set()
+
+    def test_empty_list(self):
+        """Empty list returns empty set."""
+        assert detect_reversed_bookmakers([]) == set()
+
+    def test_none_probabilities_ignored(self):
+        """Snapshots with None probabilities are skipped."""
+        snapshots = [
+            {"bookmaker": "a", "home_win_probability": 0.33},
+            {"bookmaker": "b", "home_win_probability": None},
+            {"bookmaker": "c", "home_win_probability": 0.35},
+            {"bookmaker": "d", "home_win_probability": 0.32},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == set()
+
+    def test_safety_majority_reversed(self):
+        """Don't flag if majority would be flagged (median is unreliable)."""
+        # 4 out of 7 would be flagged — that's a majority, so suppress all flags
+        snapshots = [
+            {"bookmaker": "a", "home_win_probability": 0.70},
+            {"bookmaker": "b", "home_win_probability": 0.72},
+            {"bookmaker": "c", "home_win_probability": 0.68},
+            {"bookmaker": "d", "home_win_probability": 0.30},
+            {"bookmaker": "e", "home_win_probability": 0.32},
+            {"bookmaker": "f", "home_win_probability": 0.28},
+            {"bookmaker": "g", "home_win_probability": 0.31},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == set()
+
+    def test_minority_correctly_flagged(self):
+        """Minority of reversed books are flagged when majority agrees."""
+        # 5 books agree on ~70%, 2 show ~30% — the 2 are reversed
+        snapshots = [
+            {"bookmaker": "a", "home_win_probability": 0.70},
+            {"bookmaker": "b", "home_win_probability": 0.72},
+            {"bookmaker": "c", "home_win_probability": 0.68},
+            {"bookmaker": "d", "home_win_probability": 0.30},
+            {"bookmaker": "e", "home_win_probability": 0.32},
+            {"bookmaker": "f", "home_win_probability": 0.71},
+            {"bookmaker": "g", "home_win_probability": 0.69},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == {"d", "e"}
+
+    def test_works_with_objects(self):
+        """Works with ORM-like objects (attribute access)."""
+        class MockSnap:
+            def __init__(self, bk, prob):
+                self.bookmaker = bk
+                self.home_win_probability = prob
+
+        snapshots = [
+            MockSnap("betus", 0.74),
+            MockSnap("fanduel", 0.33),
+            MockSnap("draftkings", 0.32),
+            MockSnap("betmgm", 0.34),
+            MockSnap("espnbet", 0.33),
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == {"betus"}
+
+    def test_away_team_favored_reversal(self):
+        """Detects reversals when away team is the favorite (median > 0.62)."""
+        snapshots = [
+            {"bookmaker": "reversed1", "home_win_probability": 0.25},
+            {"bookmaker": "correct1", "home_win_probability": 0.72},
+            {"bookmaker": "correct2", "home_win_probability": 0.74},
+            {"bookmaker": "correct3", "home_win_probability": 0.70},
+            {"bookmaker": "correct4", "home_win_probability": 0.73},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == {"reversed1"}
+
+    def test_single_reversed_among_many(self):
+        """Detects a single reversed bookmaker among many correct ones."""
+        snapshots = [
+            {"bookmaker": "reversed", "home_win_probability": 0.75},
+            {"bookmaker": "c1", "home_win_probability": 0.28},
+            {"bookmaker": "c2", "home_win_probability": 0.30},
+            {"bookmaker": "c3", "home_win_probability": 0.27},
+            {"bookmaker": "c4", "home_win_probability": 0.29},
+            {"bookmaker": "c5", "home_win_probability": 0.31},
+            {"bookmaker": "c6", "home_win_probability": 0.28},
+        ]
+        reversed_bks = detect_reversed_bookmakers(snapshots)
+        assert reversed_bks == {"reversed"}

@@ -27,6 +27,20 @@ def _norm_cdf(x: float) -> float:
     return 0.5 * math.erfc(-x / math.sqrt(2))
 
 
+# The Odds API uses different sport key prefixes than our internal convention.
+# Normalize to our canonical keys before lookup.
+_SPORT_KEY_ALIASES = {
+    "americanfootball_nfl": "football_nfl",
+    "americanfootball_ncaaf": "football_ncaaf",
+    "icehockey_nhl": "hockey_nhl",
+}
+
+
+def _normalize_sport_key(sport_key: str) -> str:
+    """Map Odds API sport keys to canonical keys used in SPORT_PARAMS."""
+    return _SPORT_KEY_ALIASES.get(sport_key, sport_key)
+
+
 # Sport-specific parameters
 SPORT_PARAMS = {
     # (base_std_dev, total_game_seconds)
@@ -48,6 +62,7 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
     if not clock_str or not period:
         return None
 
+    sport_key = _normalize_sport_key(sport_key)
     params = SPORT_PARAMS.get(sport_key)
     if not params:
         return None
@@ -181,6 +196,7 @@ def compute_statistical_win_prob(
     Returns:
         Home win probability (0.0-1.0) or None if game state can't be parsed.
     """
+    sport_key = _normalize_sport_key(sport_key)
     params = SPORT_PARAMS.get(sport_key)
     if not params:
         return None

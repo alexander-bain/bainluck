@@ -162,6 +162,7 @@ export interface OddsHistoryPoint {
   projected_home_score: number | null;
   projected_away_score: number | null;
   bookmaker: string;
+  bookmaker_count?: number; // Number of bookmakers in the aggregate
   // Deduplication fields - for drawing flat lines between data points
   valid_until?: string; // If set, value was constant from timestamp to valid_until
   reading_count?: number; // How many times this value was confirmed
@@ -350,54 +351,6 @@ export interface PulseRankingsResponse {
     sport: string | null;
     limit: number;
   };
-}
-
-// Player prop types
-export interface PropBet {
-  player: string;
-  type: string;
-  market_key: string;
-  line: number | null;
-  over_probability?: number;
-  under_probability?: number;
-  over_odds?: number;
-  under_odds?: number;
-  probability?: number;       // For yes/no props (anytime TD, first TD)
-  american_odds?: number;     // For yes/no props
-  bookmaker_count?: number;
-}
-
-export interface PropCategory {
-  category: string;
-  props: PropBet[];
-}
-
-export interface EventPropsResponse {
-  event_id: number;
-  home_team: string;
-  away_team: string;
-  categories: PropCategory[];
-  total_props: number;
-}
-
-// Super Bowl commercial types
-export interface Commercial {
-  rank: number;
-  video_id: string;
-  title: string;
-  brand: string;
-  thumbnail: string;
-  view_count: number;
-  view_count_display: string;
-  like_count: number;
-  published_at: string;
-  youtube_url: string;
-}
-
-export interface CommercialLeaderboardResponse {
-  query: string;
-  total: number;
-  commercials: Commercial[];
 }
 
 // Search types
