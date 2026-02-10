@@ -19,10 +19,68 @@ import type {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /**
- * Base fetch wrapper with error handling
+ * Auth token getter — set by AuthProvider when user signs in.
+ * This avoids a circular dependency between api.ts and useAuth.ts.
  */
-async function apiFetch<T>(endpoint: string): Promise<T> {
-  const res = await fetch(`${API_URL}${endpoint}`);
+let _getAuthToken: (() => Promise<string | null>) | null = null;
+
+export function setAuthTokenGetter(getter: (() => Promise<string | null>) | null) {
+  _getAuthToken = getter;
+}
+
+/**
+ * Base fetch wrapper with error handling and optional auth
+ */
+async function apiFetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(options?.headers as Record<string, string> || {}),
+  };
+
+  // Attach auth token if available
+  if (_getAuthToken) {
+    const token = await _getAuthToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    ...options,
+    headers,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+    throw new Error(error.detail || `API error: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Authenticated fetch wrapper for POST/PUT/DELETE with JSON body
+ */
+async function apiMutate<T>(
+  endpoint: string,
+  method: string,
+  body?: unknown,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (_getAuthToken) {
+    const token = await _getAuthToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Unknown error" }));
@@ -306,4 +364,53 @@ export async function fetchFuturesMovers(
 export function formatAmericanOdds(odds: number | null | undefined): string {
   if (odds === null || odds === undefined) return "-";
   return odds > 0 ? `+${odds}` : `${odds}`;
+}
+
+// ============================================================================
+// User & Pins API (authenticated endpoints)
+// ============================================================================
+
+export interface PinsResponse {
+  events: number[];
+  futures: number[];
+}
+
+/**
+ * Fetch the current user's pinned event and futures IDs
+ */
+export async function fetchUserPins(): Promise<PinsResponse> {
+  return apiFetch<PinsResponse>("/api/me/pins");
+}
+
+/**
+ * Bulk sync pins to the server (used for localStorage migration on first login)
+ */
+export async function syncPins(pins: {
+  events: number[];
+  futures: number[];
+}): Promise<PinsResponse> {
+  return apiMutate<PinsResponse>("/api/me/pins", "PUT", pins);
+}
+
+/**
+ * Add a single pin
+ */
+export async function addPin(
+  pinType: "event" | "future",
+  targetId: number
+): Promise<void> {
+  await apiMutate("/api/me/pins", "POST", {
+    pin_type: pinType,
+    target_id: targetId,
+  });
+}
+
+/**
+ * Remove a single pin
+ */
+export async function removePin(
+  pinType: "event" | "future",
+  targetId: number
+): Promise<void> {
+  await apiMutate(`/api/me/pins/${pinType}/${targetId}`, "DELETE");
 }
