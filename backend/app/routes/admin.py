@@ -1726,36 +1726,6 @@ async def get_team_task_status(
     return response
 
 
-@router.post("/espn/fix-commence-times")
-async def fix_commence_times(
-    secret: str = Query(..., description="Admin secret for authorization"),
-    limit: int = Query(200, description="Max events to check"),
-):
-    """
-    Fix incorrect commence_time values using ESPN as authoritative source.
-
-    Finds events with espn_id, fetches ESPN scoreboard data for the relevant
-    dates, and corrects any commence_time that differs by more than 5 minutes.
-
-    Queues as a background Celery task to avoid HTTP timeout.
-    Use /api/admin/espn/task/{task_id} to check results.
-    """
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
-
-    from app.tasks import fix_commence_times_from_espn
-
-    try:
-        task = fix_commence_times_from_espn.delay(limit=limit)
-        return {
-            "status": "queued",
-            "task_id": task.id,
-            "message": f"Checking up to {limit} events with ESPN IDs. Use /api/admin/espn/task/{task.id} for results.",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
-
-
 @router.get("/espn/task/{task_id}")
 async def get_espn_task_status(
     task_id: str,
@@ -1780,6 +1750,37 @@ async def get_espn_task_status(
             response["error"] = str(result.result)
 
     return response
+
+
+@router.get("/celery/health")
+async def celery_health():
+    """Check Celery worker health via heartbeat timestamp in Redis."""
+    from app.tasks.redis_state import get_redis_client
+
+    try:
+        r = get_redis_client()
+        heartbeat = r.get("odds_tracker:heartbeat")
+        if not heartbeat:
+            return {"status": "unknown", "message": "No heartbeat found — worker may not have started yet"}
+
+        heartbeat_time = datetime.fromisoformat(heartbeat.decode())
+        age_seconds = (datetime.now(timezone.utc) - heartbeat_time).total_seconds()
+
+        if age_seconds > 180:  # 3 minutes
+            return {
+                "status": "unhealthy",
+                "last_heartbeat": heartbeat_time.isoformat(),
+                "age_seconds": round(age_seconds),
+                "message": "Heartbeat is stale — Celery worker may be down",
+            }
+
+        return {
+            "status": "healthy",
+            "last_heartbeat": heartbeat_time.isoformat(),
+            "age_seconds": round(age_seconds),
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Redis error: {str(e)}"}
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,911 @@
+"""
+Main odds polling tasks: poll_all_odds, poll_sport_odds, and snapshot helpers.
+"""
+
+import logging
+from datetime import datetime, timezone, timedelta
+
+from sqlalchemy import select, func, case, or_, and_
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import selectinload
+
+from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
+from app.services.odds_api import OddsAPIService
+from app.utils.odds_math import moneyline_to_probability, project_scores
+from app.tasks.base import get_task_session, run_async
+from app.tasks.config import (
+    LIVE_POLL_INTERVAL,
+    SOON_POLL_INTERVAL,
+    LATER_POLL_INTERVAL,
+    ODDS_STALE_MINUTES,
+    MIN_HOURS_BEFORE_STALENESS_CHECK,
+    SPORT_MAX_DURATIONS,
+)
+from app.tasks.redis_state import (
+    get_redis_client,
+    compute_odds_hash,
+    should_poll_now,
+    update_poll_state,
+    POLL_STATE_KEY,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def get_max_duration_for_sport(sport_key: str) -> float:
+    """
+    Get the maximum expected duration (in hours) for a sport.
+
+    Used for staleness detection - we only mark events as "closed"
+    if they've been live longer than this duration AND odds are stale.
+    """
+    # Check for exact match first
+    for sport_prefix, duration in SPORT_MAX_DURATIONS.items():
+        if sport_prefix == "default":
+            continue
+        if sport_key.startswith(sport_prefix):
+            return duration
+
+    return SPORT_MAX_DURATIONS["default"]
+
+
+async def detect_and_close_stale_events(session) -> int:
+    """
+    Detect live events with stale odds and mark them as "closed".
+
+    This provides a fallback when the Scores API doesn't report completion,
+    which can happen with tennis and other sports.
+
+    An event is marked as "closed" when:
+    1. It's currently "live" status
+    2. It started at least MIN_HOURS_BEFORE_STALENESS_CHECK hours ago
+    3. Either:
+       a. It has no odds snapshots at all (bookmakers stopped offering odds), OR
+       b. The latest odds snapshot is older than ODDS_STALE_MINUTES
+
+    Returns the number of events marked as closed.
+    """
+    now = datetime.now(timezone.utc)
+    closed_count = 0
+
+    # Find all live events that started more than MIN_HOURS ago
+    min_start_time = now - timedelta(hours=MIN_HOURS_BEFORE_STALENESS_CHECK)
+
+    result = await session.execute(
+        select(Event)
+        .join(Sport)
+        .where(
+            Event.status == "live",
+            Event.commence_time <= min_start_time,
+        )
+        .options(selectinload(Event.sport))
+    )
+    live_events = result.scalars().all()
+
+    for event in live_events:
+        try:
+            hours_since_start = (now - event.commence_time).total_seconds() / 3600
+
+            # Check if ANY bookmaker has provided odds recently
+            # We need to find the most recently updated snapshot across all bookmakers
+            # valid_until is updated when we see the same odds again; captured_at is when odds changed
+            stale_threshold = now - timedelta(minutes=ODDS_STALE_MINUTES)
+
+            # Count snapshots that have been updated recently
+            recent_snapshot_count = await session.execute(
+                select(func.count())
+                .select_from(OddsSnapshot)
+                .where(
+                    OddsSnapshot.event_id == event.id,
+                    or_(
+                        OddsSnapshot.valid_until >= stale_threshold,
+                        and_(
+                            OddsSnapshot.valid_until == None,
+                            OddsSnapshot.captured_at >= stale_threshold
+                        )
+                    )
+                )
+            )
+            recent_count = recent_snapshot_count.scalar()
+
+            should_close = False
+            close_reason = ""
+
+            if recent_count == 0:
+                # No bookmaker has updated odds recently - check if we ever had odds
+                any_snapshot = await session.execute(
+                    select(func.count())
+                    .select_from(OddsSnapshot)
+                    .where(OddsSnapshot.event_id == event.id)
+                )
+                total_snapshots = any_snapshot.scalar()
+
+                if total_snapshots == 0:
+                    should_close = True
+                    close_reason = "no_odds_data"
+                else:
+                    # Had odds but all bookmakers stopped updating
+                    should_close = True
+                    close_reason = "all_bookmakers_stale"
+
+            if should_close:
+                await session.execute(
+                    Event.__table__.update()
+                    .where(Event.id == event.id)
+                    .values(status="closed")
+                )
+                closed_count += 1
+                print(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
+                      f"as closed: {close_reason}, {hours_since_start:.1f}h since start")
+
+        except Exception as e:
+            print(f"Error checking staleness for event {event.id}: {e}")
+            continue
+
+    return closed_count
+
+
+def _snapshots_are_equal(existing: OddsSnapshot, new_values: dict) -> bool:
+    """Check if the key odds values are the same."""
+    # Compare the fields that matter for deduplication
+    # Using rough equality for decimals
+    def eq(a, b):
+        if a is None and b is None:
+            return True
+        if a is None or b is None:
+            return False
+        # For numeric types, compare values
+        return float(a) == float(b) if isinstance(a, (int, float)) or hasattr(a, '__float__') else a == b
+
+    return (
+        eq(existing.home_moneyline, new_values.get("home_moneyline")) and
+        eq(existing.away_moneyline, new_values.get("away_moneyline")) and
+        eq(existing.home_spread, new_values.get("home_spread")) and
+        eq(existing.over_under, new_values.get("over_under")) and
+        eq(existing.home_win_probability, new_values.get("home_win_probability"))
+    )
+
+
+def _parse_snapshot_values(bookmaker: dict, event_data: dict) -> dict:
+    """Parse bookmaker data into snapshot field values."""
+    values = {
+        "home_moneyline": None,
+        "away_moneyline": None,
+        "home_spread": None,
+        "home_spread_odds": None,
+        "away_spread_odds": None,
+        "over_under": None,
+        "over_odds": None,
+        "under_odds": None,
+        "home_win_probability": None,
+        "away_win_probability": None,
+        "projected_home_score": None,
+        "projected_away_score": None,
+    }
+
+    home_team = event_data["home_team"]
+    away_team = event_data["away_team"]
+
+    for market in bookmaker.get("markets", []):
+        market_key = market["key"]
+        outcomes = {o["name"]: o for o in market["outcomes"]}
+
+        if market_key == "h2h":
+            home_outcome = outcomes.get(home_team, {})
+            away_outcome = outcomes.get(away_team, {})
+            values["home_moneyline"] = home_outcome.get("price")
+            values["away_moneyline"] = away_outcome.get("price")
+
+            if values["home_moneyline"] and values["away_moneyline"]:
+                home_prob, away_prob = moneyline_to_probability(
+                    values["home_moneyline"],
+                    values["away_moneyline"],
+                )
+                values["home_win_probability"] = round(home_prob, 4)
+                values["away_win_probability"] = round(away_prob, 4)
+
+        elif market_key == "spreads":
+            home_outcome = outcomes.get(home_team, {})
+            away_outcome = outcomes.get(away_team, {})
+            values["home_spread"] = home_outcome.get("point")
+            values["home_spread_odds"] = home_outcome.get("price")
+            values["away_spread_odds"] = away_outcome.get("price")
+
+        elif market_key == "totals":
+            over_outcome = outcomes.get("Over", {})
+            under_outcome = outcomes.get("Under", {})
+            values["over_under"] = over_outcome.get("point")
+            values["over_odds"] = over_outcome.get("price")
+            values["under_odds"] = under_outcome.get("price")
+
+    # Calculate projected scores
+    if values["home_spread"] is not None and values["over_under"]:
+        home_score, away_score = project_scores(
+            float(values["home_spread"]),
+            float(values["over_under"]),
+        )
+        values["projected_home_score"] = home_score
+        values["projected_away_score"] = away_score
+
+    return values
+
+
+async def _maybe_set_opening_odds(
+    session,
+    event_id: int,
+    home_prob: float | None,
+    away_prob: float | None,
+    home_spread: float | None,
+    over_under: float | None,
+    commence_time: datetime | None = None,
+):
+    """
+    Update opening odds for a scheduled event.
+
+    Opening odds represent the last pregame consensus — they keep updating
+    on every poll while the game is still scheduled. Once the game starts,
+    they freeze, capturing what the market thought right before kickoff.
+
+    If commence_time is not provided, falls back to checking the event status.
+    """
+    if home_prob is None:
+        return
+
+    now = datetime.now(timezone.utc)
+
+    # Only update if the game hasn't started yet
+    if commence_time is not None and commence_time <= now:
+        return
+
+    # Also check event status as a fallback
+    result = await session.execute(
+        select(Event.status)
+        .where(Event.id == event_id)
+    )
+    status = result.scalar_one_or_none()
+    if status and status != "scheduled":
+        return
+
+    # Determine opening favorite
+    if home_prob > 0.52:
+        opening_favorite = "home"
+    elif home_prob < 0.48:
+        opening_favorite = "away"
+    else:
+        opening_favorite = "even"
+
+    # Update opening odds (keeps updating until game starts)
+    await session.execute(
+        Event.__table__.update()
+        .where(Event.id == event_id)
+        .values(
+            opening_home_probability=home_prob,
+            opening_away_probability=away_prob,
+            opening_home_spread=home_spread,
+            opening_over_under=over_under,
+            opening_favorite=opening_favorite,
+        )
+    )
+
+
+async def _create_or_update_snapshot(
+    session,
+    event_id: int,
+    bookmaker: dict,
+    event_data: dict
+) -> tuple[OddsSnapshot, bool]:
+    """
+    Create a new snapshot or update existing if values unchanged.
+
+    Returns (snapshot, is_new) tuple.
+    - If values changed: creates new snapshot, returns (new_snapshot, True)
+    - If values same: updates existing snapshot's reading_count/valid_until, returns (existing, False)
+    """
+    now = datetime.now(timezone.utc)
+    bookmaker_key = bookmaker["key"]
+
+    # Parse the new values
+    new_values = _parse_snapshot_values(bookmaker, event_data)
+
+    # Find the most recent snapshot for this event+bookmaker
+    result = await session.execute(
+        select(OddsSnapshot)
+        .where(
+            OddsSnapshot.event_id == event_id,
+            OddsSnapshot.bookmaker == bookmaker_key
+        )
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+
+    # If no existing snapshot or values changed, create new one
+    if existing is None or not _snapshots_are_equal(existing, new_values):
+        # If there was an existing one, set its valid_until
+        if existing is not None:
+            existing.valid_until = now
+
+        # Create new snapshot
+        snapshot = OddsSnapshot(
+            event_id=event_id,
+            bookmaker=bookmaker_key,
+            captured_at=now,
+            reading_count=1,
+            **new_values
+        )
+        return snapshot, True
+    else:
+        # Values are the same - just update the existing snapshot
+        existing.reading_count += 1
+        existing.valid_until = now
+        return existing, False
+
+
+async def _create_or_update_win_prob_snapshot(
+    session,
+    event_id: int,
+    source: str,
+    home_win_probability: float,
+    away_win_probability: float,
+    game_state: dict = None,
+) -> tuple:
+    """
+    Create a new WinProbSnapshot or update existing if value unchanged.
+
+    Returns (snapshot, is_new) tuple.
+    - If value changed: creates new snapshot, returns (new_snapshot, True)
+    - If value same: updates existing snapshot's reading_count/valid_until, returns (existing, False)
+    """
+    from app.models.models import WinProbSnapshot
+
+    now = datetime.now(timezone.utc)
+
+    # Find the most recent snapshot for this event+source
+    result = await session.execute(
+        select(WinProbSnapshot)
+        .where(
+            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.source == source,
+        )
+        .order_by(WinProbSnapshot.captured_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+
+    # Compare home_win_probability (the primary value)
+    is_same = False
+    if existing is not None and existing.home_win_probability is not None and home_win_probability is not None:
+        is_same = float(existing.home_win_probability) == float(home_win_probability)
+
+    if existing is None or not is_same:
+        # Value changed — close out the old row and create a new one
+        if existing is not None:
+            existing.valid_until = now
+
+        snapshot = WinProbSnapshot(
+            event_id=event_id,
+            source=source,
+            home_win_probability=home_win_probability,
+            away_win_probability=away_win_probability,
+            game_state=game_state,
+            reading_count=1,
+        )
+        return snapshot, True
+    else:
+        # Same value — bump the counter
+        existing.reading_count += 1
+        existing.valid_until = now
+        return existing, False
+
+
+async def _create_snapshot(
+    event_id: int,
+    bookmaker: dict,
+    event_data: dict
+) -> OddsSnapshot:
+    """Create an OddsSnapshot from API data. (Legacy - used by poll_sport_odds)"""
+    values = _parse_snapshot_values(bookmaker, event_data)
+    snapshot = OddsSnapshot(
+        event_id=event_id,
+        bookmaker=bookmaker["key"],
+        captured_at=datetime.now(timezone.utc),
+        reading_count=1,
+        **values
+    )
+    return snapshot
+
+
+async def _poll_all_odds():
+    """
+    Async implementation of poll_all_odds with tiered per-sport polling.
+
+    Tiered polling based on game proximity:
+    - Live games (in progress): Poll every 60 seconds
+    - Starting soon (0-2 hours): Poll every 5 minutes
+    - Starting later (2-6 hours): Poll every 15 minutes
+    - No games in 6 hours: Don't poll that sport
+
+    Uses per-sport last poll times stored in Redis.
+    Also fetches scores for live/completed games.
+    """
+    from app.tasks.pulse import update_live_gei
+
+    service = OddsAPIService()
+
+    try:
+        total_events = 0
+        total_snapshots = 0
+        all_events_data = []
+        has_live_games = False
+        sports_polled = 0
+        sports_skipped = 0
+        scores_updated = 0
+        stat_model_from_poll = 0
+
+        # Get Redis client for per-sport poll tracking
+        try:
+            r = get_redis_client()
+        except Exception:
+            r = None
+
+        async with get_task_session() as session:
+            now = datetime.now(timezone.utc)
+
+            # Get all sports with upcoming/live games in the next 6 hours
+            lookahead_6h = now + timedelta(hours=6)
+
+            # Query to get sports with their soonest game time
+            result = await session.execute(
+                select(
+                    Sport.key,
+                    func.min(Event.commence_time).label("soonest_game"),
+                    func.bool_or(Event.status == "live").label("has_live")
+                )
+                .join(Event)
+                .where(
+                    Sport.active == True,
+                    Event.status.in_(["scheduled", "live"]),
+                    Event.commence_time <= lookahead_6h,
+                    Event.commence_time >= now - timedelta(hours=6)
+                )
+                .group_by(Sport.key)
+            )
+            sport_data = result.all()
+
+            # Even if no sports need odds polling, we should still check for stale events
+            # and update scores for recently started games
+            if not sport_data:
+                # Still run staleness detection for any live events that may have ended
+                events_closed = await detect_and_close_stale_events(session)
+                await session.commit()
+                return {
+                    "events": 0,
+                    "snapshots": 0,
+                    "sports": 0,
+                    "sports_skipped": 0,
+                    "events_closed": events_closed,
+                    "message": "No sports with games in the next 6 hours.",
+                    "skipped": True,
+                }
+
+            for row in sport_data:
+                sport_key = row[0]
+                soonest_game = row[1]
+                is_live = row[2]
+
+                # Determine poll interval for this sport
+                if is_live or (soonest_game and soonest_game <= now):
+                    # Live game - poll every 60 seconds
+                    poll_interval = LIVE_POLL_INTERVAL
+                    tier = "live"
+                    has_live_games = True
+                elif soonest_game and soonest_game <= now + timedelta(hours=2):
+                    # Starting soon (0-2 hours) - poll every 5 minutes
+                    poll_interval = SOON_POLL_INTERVAL
+                    tier = "soon"
+                else:
+                    # Starting later (2-6 hours) - poll every 15 minutes
+                    poll_interval = LATER_POLL_INTERVAL
+                    tier = "later"
+
+                # Check if enough time has elapsed since last poll for this sport
+                should_poll_sport = True
+                if r:
+                    try:
+                        last_poll_key = f"odds_tracker:last_poll:{sport_key}"
+                        last_poll = r.get(last_poll_key)
+                        if last_poll:
+                            last_poll_time = float(last_poll.decode())
+                            elapsed = now.timestamp() - last_poll_time
+                            if elapsed < poll_interval:
+                                # Not enough time elapsed, skip this sport
+                                should_poll_sport = False
+                                sports_skipped += 1
+                    except Exception:
+                        pass  # If Redis fails, just poll
+
+                if not should_poll_sport:
+                    continue
+
+                try:
+                    events_data = await service.get_odds(sport_key)
+                    all_events_data.extend(events_data)
+                    sports_polled += 1
+
+                    # Update last poll time in Redis
+                    if r:
+                        try:
+                            last_poll_key = f"odds_tracker:last_poll:{sport_key}"
+                            r.set(last_poll_key, str(now.timestamp()), ex=3600)
+                        except Exception:
+                            pass
+
+                    for event_data in events_data:
+                        commence_time = datetime.fromisoformat(
+                            event_data["commence_time"].replace("Z", "+00:00")
+                        )
+
+                        # Get or create sport
+                        sport_result = await session.execute(
+                            select(Sport).where(Sport.key == sport_key)
+                        )
+                        sport = sport_result.scalar_one_or_none()
+
+                        if not sport:
+                            sport = Sport(
+                                key=sport_key,
+                                name=sport_key.replace("_", " ").title(),
+                                active=True,
+                            )
+                            session.add(sport)
+                            await session.flush()
+
+                        # Upsert event with conditional status update
+                        # - New events: set status based on commence_time
+                        # - Existing "scheduled" events: update to "live" if started
+                        # - Existing "live"/"completed" events: don't change status
+                        event_status = "scheduled" if commence_time > now else "live"
+                        stmt = insert(Event).values(
+                            external_id=event_data["id"],
+                            sport_id=sport.id,
+                            home_team_name=event_data["home_team"],
+                            away_team_name=event_data["away_team"],
+                            commence_time=commence_time,
+                            status=event_status,
+                        ).on_conflict_do_update(
+                            index_elements=["external_id"],
+                            set_={
+                                "home_team_name": event_data["home_team"],
+                                "away_team_name": event_data["away_team"],
+                                # Don't overwrite commence_time — The Odds API occasionally
+                                # returns local times as UTC. ESPN sync corrects these.
+                                # Only update status if currently "scheduled"
+                                # This allows scheduled->live but preserves completed
+                                "status": case(
+                                    (Event.status == "scheduled", event_status),
+                                    else_=Event.status
+                                ),
+                            }
+                        ).returning(Event.id)
+
+                        result = await session.execute(stmt)
+                        event_id = result.scalar_one()
+                        total_events += 1
+
+                        # Create odds snapshots (with deduplication)
+                        # Collect all bookmaker values for opening odds consensus
+                        all_home_probs = []
+                        all_away_probs = []
+                        all_spreads = []
+                        all_ous = []
+
+                        for bookmaker in event_data.get("bookmakers", []):
+                            snapshot, is_new = await _create_or_update_snapshot(
+                                session,
+                                event_id,
+                                bookmaker,
+                                event_data
+                            )
+                            if is_new:
+                                session.add(snapshot)
+                            # Collect values from ALL bookmakers (new or existing)
+                            # for computing opening odds consensus
+                            if snapshot.home_win_probability:
+                                all_home_probs.append(float(snapshot.home_win_probability))
+                                if snapshot.away_win_probability:
+                                    all_away_probs.append(float(snapshot.away_win_probability))
+                                if snapshot.home_spread is not None:
+                                    all_spreads.append(float(snapshot.home_spread))
+                                if snapshot.over_under is not None:
+                                    all_ous.append(float(snapshot.over_under))
+                            total_snapshots += 1
+
+                        # Update opening odds with consensus across all bookmakers
+                        # (keeps updating on every poll while game is scheduled)
+                        if all_home_probs:
+                            avg_home = sum(all_home_probs) / len(all_home_probs)
+                            avg_away = sum(all_away_probs) / len(all_away_probs) if all_away_probs else (1 - avg_home)
+                            avg_spread = sum(all_spreads) / len(all_spreads) if all_spreads else None
+                            avg_ou = sum(all_ous) / len(all_ous) if all_ous else None
+                            await _maybe_set_opening_odds(
+                                session, event_id,
+                                avg_home, avg_away,
+                                avg_spread, avg_ou,
+                                commence_time=commence_time,
+                            )
+
+                except Exception as e:
+                    print(f"Error polling {sport_key}: {e}")
+                    continue
+
+            # Fetch scores for sports with events that have started
+            # Use a 3-day window to capture longer events like tennis matches
+            # that may start one day and finish the next
+            # Include "scheduled" events that have started - the scores API will
+            # update their status to "live" or "completed" as appropriate
+            sports_needing_scores = await session.execute(
+                select(Sport.key)
+                .join(Event)
+                .where(
+                    Sport.active == True,
+                    Event.commence_time <= now,  # Event has started
+                    Event.commence_time >= now - timedelta(days=3),  # Within last 3 days
+                    Event.status.in_(["scheduled", "live", "completed"]),  # Include scheduled events that started
+                )
+                .distinct()
+            )
+            sports_for_scores = [row[0] for row in sports_needing_scores.all()]
+
+            for sport_key in sports_for_scores:
+                try:
+                    # Request scores from last 3 days to match the query window
+                    scores_data = await service.get_scores(sport_key, days_from=3)
+
+                    for score_event in scores_data:
+                        try:
+                            external_id = score_event.get("id")
+                            is_completed = score_event.get("completed", False)
+
+                            # Parse scores from the API response
+                            event_scores = score_event.get("scores")
+                            home_team = score_event.get("home_team")
+                            away_team = score_event.get("away_team")
+
+                            # Find scores for home and away teams
+                            home_score = None
+                            away_score = None
+
+                            if event_scores is not None and len(event_scores) > 0:
+                                for team_score in event_scores:
+                                    score_str = team_score.get("score")
+                                    # Safely parse score - handles empty strings, None, non-numeric
+                                    # Note: score of 0 is valid and should be stored
+                                    try:
+                                        if score_str is not None and score_str != "":
+                                            score_val = int(score_str)
+                                        else:
+                                            score_val = None
+                                    except (ValueError, TypeError):
+                                        score_val = None
+
+                                    team_name = team_score.get("name")
+                                    if team_name == home_team:
+                                        home_score = score_val
+                                    elif team_name == away_team:
+                                        away_score = score_val
+
+                            # Always update status, and update scores if available
+                            event_status = "completed" if is_completed else "live"
+                            update_values = {"status": event_status}
+
+                            if home_score is not None:
+                                update_values["home_score"] = home_score
+                            if away_score is not None:
+                                update_values["away_score"] = away_score
+
+                            # Get current event to check if score changed
+                            event_result = await session.execute(
+                                select(Event).where(Event.external_id == external_id)
+                            )
+                            event_obj = event_result.scalar_one_or_none()
+
+                            # Record score snapshot if scores changed
+                            if event_obj and home_score is not None and away_score is not None:
+                                old_home = event_obj.home_score
+                                old_away = event_obj.away_score
+                                if old_home != home_score or old_away != away_score:
+                                    # Score changed - record a snapshot
+                                    score_snap = ScoreSnapshot(
+                                        event_id=event_obj.id,
+                                        home_score=home_score,
+                                        away_score=away_score,
+                                    )
+                                    session.add(score_snap)
+
+                            await session.execute(
+                                Event.__table__.update()
+                                .where(Event.external_id == external_id)
+                                .values(**update_values)
+                            )
+                            scores_updated += 1
+
+                            # Compute stat model for live events with score + clock data
+                            # This runs independently of ESPN sync, so games that
+                            # ESPN name-matching misses still get stat model WP
+                            if (
+                                event_obj
+                                and event_status == "live"
+                                and home_score is not None
+                                and away_score is not None
+                                and event_obj.game_clock
+                                and event_obj.period
+                            ):
+                                try:
+                                    from app.utils.win_probability import compute_statistical_win_prob
+
+                                    pregame_spread = None
+                                    if event_obj.opening_home_spread is not None:
+                                        pregame_spread = float(event_obj.opening_home_spread)
+
+                                    stat_wp = compute_statistical_win_prob(
+                                        home_score=home_score,
+                                        away_score=away_score,
+                                        clock=event_obj.game_clock,
+                                        period=event_obj.period,
+                                        sport_key=sport_key,
+                                        pregame_spread=pregame_spread,
+                                    )
+                                    if stat_wp is not None:
+                                        # Update event's win_probability_sources
+                                        # Need to re-fetch to get current JSONB
+                                        fresh = await session.execute(
+                                            select(Event).where(Event.id == event_obj.id)
+                                        )
+                                        fresh_event = fresh.scalar_one_or_none()
+                                        if fresh_event:
+                                            sources = fresh_event.win_probability_sources or {}
+                                            sources["stat_model"] = round(stat_wp, 4)
+                                            fresh_event.win_probability_sources = sources
+
+                                            stat_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                                session,
+                                                event_id=event_obj.id,
+                                                source="stat_model",
+                                                home_win_probability=round(stat_wp, 4),
+                                                away_win_probability=round(1.0 - stat_wp, 4),
+                                                game_state={
+                                                    "clock": event_obj.game_clock,
+                                                    "period": event_obj.period,
+                                                    "home_score": home_score,
+                                                    "away_score": away_score,
+                                                    "pregame_spread": pregame_spread,
+                                                    "source": "odds_poll",
+                                                },
+                                            )
+                                            if is_new:
+                                                session.add(stat_snap)
+                                            stat_model_from_poll += 1
+                                except Exception as e:
+                                    logger.warning(f"stat_model in odds poll failed for event {event_obj.id}: {e}")
+
+                        except Exception as e:
+                            print(f"Error updating score for event {score_event.get('id')}: {e}")
+                            continue
+
+                except Exception as e:
+                    print(f"Error fetching scores for {sport_key}: {e}")
+                    continue
+
+            # Detect and mark stale events as "closed"
+            # This catches matches that the Scores API didn't report as completed
+            events_closed = await detect_and_close_stale_events(session)
+
+            # Update GEI for all live events (real-time excitement scores)
+            live_gei_updated = 0
+            if has_live_games:
+                live_gei_updated = await update_live_gei(session)
+
+            await session.commit()
+
+        # Compute hash and check for changes
+        new_hash = compute_odds_hash(all_events_data)
+
+        # Get previous hash to detect changes
+        try:
+            r = get_redis_client()
+            prev_hash = r.hget(POLL_STATE_KEY, "last_hash")
+            prev_hash = prev_hash.decode() if prev_hash else None
+        except Exception:
+            prev_hash = None
+
+        data_changed = prev_hash is None or prev_hash != new_hash
+
+        # Update adaptive polling state
+        update_poll_state(data_changed, has_live_games, new_hash)
+
+        return {
+            "events": total_events,
+            "snapshots": total_snapshots,
+            "sports_polled": sports_polled,
+            "sports_skipped": sports_skipped,
+            "scores_updated": scores_updated,
+            "stat_model_from_poll": stat_model_from_poll,
+            "events_closed": events_closed,
+            "live_gei_updated": live_gei_updated,
+            "data_changed": data_changed,
+            "has_live_games": has_live_games,
+        }
+    finally:
+        await service.close()
+
+
+async def _poll_sport_odds(sport_key: str):
+    """Async implementation of poll_sport_odds."""
+    service = OddsAPIService()
+
+    try:
+        events_data = await service.get_odds(sport_key)
+
+        async with get_task_session() as session:
+            # Get or create sport
+            result = await session.execute(
+                select(Sport).where(Sport.key == sport_key)
+            )
+            sport = result.scalar_one_or_none()
+
+            if not sport:
+                sport = Sport(
+                    key=sport_key,
+                    name=sport_key.replace("_", " ").title(),
+                    active=True,
+                )
+                session.add(sport)
+                await session.flush()
+
+            total_snapshots = 0
+
+            for event_data in events_data:
+                commence_time = datetime.fromisoformat(
+                    event_data["commence_time"].replace("Z", "+00:00")
+                )
+
+                event_status = "scheduled" if commence_time > datetime.now(timezone.utc) else "live"
+                stmt = insert(Event).values(
+                    external_id=event_data["id"],
+                    sport_id=sport.id,
+                    home_team_name=event_data["home_team"],
+                    away_team_name=event_data["away_team"],
+                    commence_time=commence_time,
+                    status=event_status,
+                ).on_conflict_do_update(
+                    index_elements=["external_id"],
+                    set_={
+                        "home_team_name": event_data["home_team"],
+                        "away_team_name": event_data["away_team"],
+                        # Don't overwrite commence_time — The Odds API occasionally
+                        # returns local times as UTC. ESPN sync corrects these.
+                        # Only update status if currently "scheduled"
+                        "status": case(
+                            (Event.status == "scheduled", event_status),
+                            else_=Event.status
+                        ),
+                    }
+                ).returning(Event.id)
+
+                result = await session.execute(stmt)
+                event_id = result.scalar_one()
+
+                for bookmaker in event_data.get("bookmakers", []):
+                    snapshot = await _create_snapshot(event_id, bookmaker, event_data)
+                    session.add(snapshot)
+                    total_snapshots += 1
+
+            await session.commit()
+
+        return {
+            "sport": sport_key,
+            "events": len(events_data),
+            "snapshots": total_snapshots,
+        }
+    finally:
+        await service.close()
