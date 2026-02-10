@@ -1284,6 +1284,163 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     return response
 
 
+@router.get("/{event_id}/related-futures")
+async def get_related_futures(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get futures markets related to the teams in this event.
+
+    Returns championship, award, and other futures outcomes linked
+    to either team, ranked by contextual relevance.
+    """
+    from datetime import datetime, timezone
+    from app.utils.team_linking import compute_relevance_score
+
+    # Load the event with sport info
+    result = await db.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.id == event_id)
+    )
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    # Find team_ids for both teams
+    home_team_result = await db.execute(
+        select(Team.id, Team.name).where(
+            Team.name == event.home_team_name
+        )
+    )
+    away_team_result = await db.execute(
+        select(Team.id, Team.name).where(
+            Team.name == event.away_team_name
+        )
+    )
+    home_team = home_team_result.first()
+    away_team = away_team_result.first()
+
+    if not home_team and not away_team:
+        return {"event_id": event_id, "home_team_futures": [], "away_team_futures": []}
+
+    team_ids = []
+    team_id_to_side = {}  # team_id → "home" or "away"
+    if home_team:
+        team_ids.append(home_team.id)
+        team_id_to_side[home_team.id] = "home"
+    if away_team:
+        team_ids.append(away_team.id)
+        team_id_to_side[away_team.id] = "away"
+
+    # Query all outcomes linked to these teams in open markets
+    outcomes_result = await db.execute(
+        select(FuturesOutcome)
+        .options(selectinload(FuturesOutcome.market).selectinload(FuturesMarket.sport))
+        .where(
+            FuturesOutcome.team_id.in_(team_ids),
+            FuturesOutcome.market.has(FuturesMarket.status == "open"),
+        )
+    )
+    outcomes = outcomes_result.scalars().all()
+
+    # Count bookmakers per market for liquidity scoring
+    market_ids = list({o.market_id for o in outcomes})
+    bookmaker_counts = {}
+    if market_ids:
+        from app.models import FuturesOddsSnapshot
+        bm_result = await db.execute(
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                func.count(func.distinct(FuturesOddsSnapshot.bookmaker)).label("bm_count"),
+            )
+            .where(FuturesOddsSnapshot.outcome_id.in_([o.id for o in outcomes]))
+            .group_by(FuturesOddsSnapshot.outcome_id)
+        )
+        for row in bm_result.all():
+            bookmaker_counts[row.outcome_id] = row.bm_count
+
+    now = datetime.now(timezone.utc)
+
+    # Format and score each outcome
+    home_futures = []
+    away_futures = []
+
+    for outcome in outcomes:
+        market = outcome.market
+        side = team_id_to_side.get(outcome.team_id)
+        if not side:
+            continue
+
+        # Compute days to resolution
+        days_to_resolution = None
+        if market.resolution_date:
+            delta = (market.resolution_date - now).total_seconds() / 86400
+            days_to_resolution = max(0, delta)
+
+        # Compute relevance score
+        relevance_score, relevance_reason = compute_relevance_score(
+            market_tier=market.market_tier,
+            probability=float(outcome.current_probability) if outcome.current_probability else None,
+            probability_change_24h=float(outcome.probability_change_24h) if outcome.probability_change_24h else None,
+            days_to_resolution=days_to_resolution,
+            bookmaker_count=bookmaker_counts.get(outcome.id, 1),
+        )
+
+        # Compute next update time based on source
+        # Odds API futures poll at :30, Kalshi at :45
+        current_minute = now.minute
+        if market.source == "kalshi":
+            next_poll_minute = 45
+        else:
+            next_poll_minute = 30
+
+        if current_minute >= next_poll_minute:
+            # Next poll is in the next hour
+            next_update = now.replace(minute=next_poll_minute, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_update = now.replace(minute=next_poll_minute, second=0, microsecond=0)
+
+        entry = {
+            "market_id": market.id,
+            "market_name": market.name,
+            "market_tier": market.market_tier,
+            "category": market.category,
+            "source": market.source,
+            "outcome_id": outcome.id,
+            "outcome_name": outcome.name,
+            "probability": float(outcome.current_probability) if outcome.current_probability else None,
+            "american_odds": outcome.current_american_odds,
+            "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h else None,
+            "opening_probability": float(outcome.opening_probability) if outcome.opening_probability else None,
+            "rank": outcome.rank,
+            "relevance_score": relevance_score,
+            "relevance_reason": relevance_reason,
+            "last_updated": outcome.last_updated.isoformat() if outcome.last_updated else None,
+            "next_update_expected": next_update.isoformat(),
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+        }
+
+        if side == "home":
+            home_futures.append(entry)
+        else:
+            away_futures.append(entry)
+
+    # Sort each side by relevance score descending
+    home_futures.sort(key=lambda x: x["relevance_score"], reverse=True)
+    away_futures.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+    return {
+        "event_id": event_id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "home_team_futures": home_futures,
+        "away_team_futures": away_futures,
+        "total_count": len(home_futures) + len(away_futures),
+    }
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history(
     event_id: int,
