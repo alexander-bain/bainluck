@@ -6,7 +6,6 @@ import type {
   EventsResponse,
   EventDetailResponse,
   EventHistoryResponse,
-  EventPropsResponse,
   SportsResponse,
   LiveOddsResponse,
   FuturesMarketsResponse,
@@ -15,7 +14,6 @@ import type {
   FuturesMoversResponse,
   SearchResponse,
   PulseRankingsResponse,
-  CommercialLeaderboardResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -83,20 +81,6 @@ export async function fetchEventHistory(
   return apiFetch<EventHistoryResponse>(
     `/api/events/${id}/history?hours=${hours}`
   );
-}
-
-/**
- * Fetch player prop bets for an event
- */
-export async function fetchEventProps(id: number): Promise<EventPropsResponse> {
-  return apiFetch<EventPropsResponse>(`/api/events/${id}/props`);
-}
-
-/**
- * Fetch Super Bowl commercial leaderboard from YouTube
- */
-export async function fetchSuperBowlCommercials(): Promise<CommercialLeaderboardResponse> {
-  return apiFetch<CommercialLeaderboardResponse>("/api/superbowl/commercials");
 }
 
 /**

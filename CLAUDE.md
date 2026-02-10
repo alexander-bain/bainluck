@@ -101,10 +101,6 @@ odds-tracker/
 | `frontend/hooks/usePinnedEvents.ts` | Hook for managing pinned events (localStorage) |
 | `frontend/hooks/usePinnedFutures.ts` | Hook for managing pinned futures (localStorage) |
 | `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
-| `frontend/app/events/[id]/tv/page.tsx` | TV/Party mode — fullscreen event display for monitors |
-| `frontend/components/party/PropBets.tsx` | Dual-panel auto-scrolling player props display |
-| `frontend/components/party/Confetti.tsx` | Canvas confetti animation (triggers on lead changes) |
-| `frontend/components/party/PulseECG.tsx` | Canvas ECG heartbeat animation synced to Pulse |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
 ---
@@ -437,37 +433,6 @@ The chart can display win probabilities from multiple independent sources, each 
 
 **Files:** `backend/app/config/win_prob_sources.py`, `backend/app/utils/win_probability.py`, `backend/tests/test_win_probability.py` (29 tests), `frontend/components/OddsChart.tsx`, `frontend/app/events/[id]/models/page.tsx`
 
-### TV Mode (Party Display)
-Fullscreen display optimized for showing an event on a TV/monitor during watch parties.
-
-**URL:** `/events/{id}/tv` (also accessible via "TV Mode" button on event detail page)
-
-**Architecture:**
-- Uses `fixed inset-0 z-[9999]` to overlay the root layout (which adds OddsTracker header/footer to all pages). This is intentional — Next.js app router doesn't support opting out of parent layouts.
-- All sizing uses **viewport-relative units** (`vh`/`vw`) so the layout scales to any display resolution. Designed for 4K monitors (3840x2160) at 2x Retina (1920x1080 logical).
-- Layout: Header bar → Hero (logos, score, probability) → Chart + Key Moments (flex-[2]) → Props panels (flex-[3])
-
-**Features:**
-- Giant score and win probability numbers (7.5vh / 5.5vh)
-- Team-colored probability bar
-- Lead change confetti (canvas animation with team colors)
-- Pulse ECG heartbeat animation (speed proportional to excitement)
-- Momentum indicator (last 5 min trend)
-- Key moments feed (detects 3%+ probability shifts)
-- Dual-panel auto-scrolling player props (stats panel + scoring panel)
-
-**Player Props:**
-- Backend endpoint: `GET /api/events/{id}/props`
-- Fetches from The Odds API per-event endpoint (`/v4/sports/{sport}/events/{eventId}/odds`)
-- Markets: `player_pass_tds`, `player_pass_yds`, `player_pass_completions`, `player_pass_interceptions`, `player_rush_yds`, `player_reception_yds`, `player_receptions`, `player_anytime_td`, `player_kicking_points`
-- Each market fetched individually (The Odds API returns 422 if ANY requested market is unavailable)
-- Deduplication: keeps only the most popular line per player+market
-- FanDuel/DraftKings data included via The Odds API aggregator (no separate API needed)
-
-**Props auto-scroll:** Uses `requestAnimationFrame` with duplicated content for seamless infinite looping. Pauses on hover. Content split into "Player Stats" (O/U props) and "Touchdown & Scoring" (yes/no props).
-
-**Files:** `frontend/app/events/[id]/tv/page.tsx`, `frontend/components/party/PropBets.tsx`, `frontend/components/party/Confetti.tsx`, `frontend/components/party/PulseECG.tsx`
-
 ---
 
 ## API Patterns
@@ -571,8 +536,7 @@ These are the current focus. Resist the urge to build new features until these a
 2. 🔴 **Refactor `tasks.py`** — At 2900+ lines, every change has a large blast radius. ESPN sync, odds polling, win probability computation, Pulse calculation, and Kalshi polling should be separate modules. This is the root cause of most fix-commit cycles (missing imports, wrong variable names, status check gaps). Extract at minimum: `tasks/espn_sync.py`, `tasks/odds_poll.py`, `tasks/win_probability.py`.
 3. 🟡 **Data retention policy** — Implement snapshot pruning. `odds_snapshots` + `win_prob_snapshots` together generate tens of thousands of rows per game day. No retention policy exists. Check Heroku Postgres row count and storage usage.
 4. 🟡 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
-5. 🟡 **Clean up Super Bowl one-offs** — Remove or disable dead code from the Super Bowl party: `backend/app/routes/superbowl.py`, `backend/app/routes/contest.py`, `backend/app/services/youtube_api.py`, `frontend/components/party/CommercialLeaderboard.tsx`. Check if any related Celery beat tasks are still scheduled.
-6. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
+5. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
 
 ### Next — Features (in priority order)
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
@@ -582,10 +546,7 @@ These are the current focus. Resist the urge to build new features until these a
 11. 📋 Migrate pinned items to database (after auth). **Note:** Stop adding new localStorage features until auth is in place — each one makes the migration harder.
 12. 📋 LLM-powered odds movement explanations
 13. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-14. 📋 TV mode — update probability display to match new status-based pattern (currently uses raw `current_odds`)
-15. 📋 Fix `opening_odds` to store *last pregame consensus* instead of *first odds received* — current implementation diverges from user intent when lines move significantly before kickoff
-16. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
-17. 📋 TV mode — live prop resolution tracking (show which props hit/missed during game)
+14. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
 
 ### Completed
 <details>
@@ -599,7 +560,7 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Pinned Events & Futures (localStorage-based tracking)
 - ✅ Futures categorization hardened (0 uncategorized markets)
 - ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
-- ✅ TV/Party mode with player props, confetti, ECG, momentum (4K-optimized)
+- ✅ ~~TV/Party mode~~ (shipped for Super Bowl LX, removed post-event — see future priority #14 for v2)
 - ✅ Sentry error tracking (FastAPI + Celery worker, controlled by SENTRY_DSN env var)
 - ✅ Multi-source win probability infrastructure (generic `win_prob_snapshots` table, source config, N-source chart)
 - ✅ OddsTracker statistical win probability model (nflfastR-inspired, NFL/NCAAF/NBA/NCAAB/WNCAAB/NHL)
@@ -626,14 +587,8 @@ See `docs/PRD.md` for full roadmap.
 ### God File: `tasks.py` (2,747 lines)
 All Celery tasks live in a single file. This increases coupling and makes changes riskier. Not urgent to refactor, but be aware that every change to this file has a larger blast radius than it should.
 
-### Super Bowl One-Offs
-The Super Bowl party features (commercial leaderboard, prop contests, Bitcoin tracking, YouTube API) were fun demos but are now dead code. Files to audit/remove:
-- `backend/app/routes/superbowl.py`
-- `backend/app/routes/contest.py`
-- `backend/app/services/youtube_api.py`
-- `frontend/components/party/CommercialLeaderboard.tsx`
-- `frontend/public/sb-contest-qr.png`
-- Any related Celery beat schedule entries in `tasks.py`
+### Super Bowl One-Offs (Removed)
+All Super Bowl LX party features have been removed: commercial/ad leaderboard, prop contest system, AI commentary/roasting, trivia, YouTube API integration, TV/Party mode page, player props endpoint, confetti/ECG animations. Code was deleted across ~15 files totaling ~7,000+ lines.
 
 ### localStorage Debt
 Pinned events/futures use localStorage. Every new localStorage feature increases the complexity of the eventual auth migration. Avoid adding new localStorage-dependent features until Firebase Auth is in place.
@@ -677,11 +632,7 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 
 11. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
-12. **TV mode uses `fixed inset-0` overlay**: The root layout (`app/layout.tsx`) wraps ALL pages with a header/footer. TV mode can't opt out of this in Next.js app router, so it uses `fixed inset-0 z-[9999]` to cover the root layout entirely. Don't change this to `h-screen` — it will render inside the root layout chrome and break.
-
-13. **The Odds API per-event props: fetch markets individually**: Requesting multiple prop markets in one call returns 422 if ANY single market is unavailable. The props endpoint fetches each market in its own API call and aggregates results.
-
-14. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** `tasks.py` now has `import logging` and `logger = logging.getLogger(__name__)` (added Feb 2026). Some older code in the file still uses `print()` instead.
+12. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** `tasks.py` now has `import logging` and `logger = logging.getLogger(__name__)` (added Feb 2026). Some older code in the file still uses `print()` instead.
 
 ---
 
@@ -694,7 +645,5 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 | Pulse Hall of Fame | https://odds.alexbain.com/pulse/hall-of-fame |
 | Search | https://odds.alexbain.com/search?q=celtics |
 | PRD | `docs/PRD.md` |
-| TV Mode (example) | https://odds.alexbain.com/events/1/tv |
-| Player props API | `/api/events/{id}/props` |
 | Debug endpoints | `/api/events/debug/*` |
 | Admin endpoints | `/api/admin/*` |
