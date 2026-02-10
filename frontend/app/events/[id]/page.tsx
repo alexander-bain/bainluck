@@ -8,6 +8,7 @@ import ProbabilityBar from "@/components/ProbabilityBar";
 import OddsChart from "@/components/OddsChart";
 import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import BookmakerTable from "@/components/BookmakerTable";
+import RelatedFutures from "@/components/RelatedFutures";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
@@ -874,6 +875,13 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         )}
       </div>
+
+      {/* Related Futures — bigger picture context */}
+      <RelatedFutures
+        eventId={eventId}
+        homeTeam={event.home_team}
+        awayTeam={event.away_team}
+      />
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData?.history && historyData.history.length > 0 && (

@@ -14,6 +14,7 @@ import type {
   FuturesMoversResponse,
   SearchResponse,
   PulseRankingsResponse,
+  RelatedFuturesResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -297,6 +298,17 @@ export async function fetchFuturesMovers(
 ): Promise<FuturesMoversResponse> {
   return apiFetch<FuturesMoversResponse>(
     `/api/futures/movers?hours=${hours}&limit=${limit}`
+  );
+}
+
+/**
+ * Fetch related futures for an event (team-linked championship/award markets)
+ */
+export async function fetchRelatedFutures(
+  eventId: number
+): Promise<RelatedFuturesResponse> {
+  return apiFetch<RelatedFuturesResponse>(
+    `/api/events/${eventId}/related-futures`
   );
 }
 
