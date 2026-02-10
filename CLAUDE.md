@@ -429,9 +429,12 @@ The chart can display win probabilities from multiple independent sources, each 
 
 **Known issues (Feb 2026):**
 - Stat model depends on `game_clock` and `period` from ESPN sync. If ESPN team name matching fails for an event, the stat model can't compute (no time remaining data). Name normalization helps but some college teams may still mismatch.
+- Stat model can only compute during live games — it cannot be backfilled after a game ends (requires real-time clock/period/score data from ESPN sync).
 - PFR is NOT viable as a live data source (no API, ToS blocks scraping, not real-time)
 
-**Files:** `backend/app/config/win_prob_sources.py`, `backend/app/utils/win_probability.py`, `backend/tests/test_win_probability.py` (29 tests), `frontend/components/OddsChart.tsx`, `frontend/app/events/[id]/models/page.tsx`
+**Sport key aliasing:** The Odds API uses `americanfootball_nfl`/`americanfootball_ncaaf`/`icehockey_nhl` as sport keys, but the stat model's `SPORT_PARAMS` uses `football_nfl`/`football_ncaaf`/`hockey_nhl`. The `_normalize_sport_key()` function in `win_probability.py` handles this mapping. Basketball keys match natively. If you add a new sport, make sure to test with the actual database sport key.
+
+**Files:** `backend/app/config/win_prob_sources.py`, `backend/app/utils/win_probability.py`, `backend/tests/test_win_probability.py` (39 tests), `frontend/components/OddsChart.tsx`, `frontend/app/events/[id]/models/page.tsx`
 
 ---
 
