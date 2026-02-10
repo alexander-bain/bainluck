@@ -1780,3 +1780,81 @@ async def get_espn_task_status(
             response["error"] = str(result.result)
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# Snapshot Retention
+# ---------------------------------------------------------------------------
+
+@router.post("/snapshots/collapse")
+async def trigger_snapshot_collapse(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    min_age_hours: int = Query(48, description="Only collapse snapshots older than this many hours"),
+):
+    """Trigger retroactive snapshot collapsing (runs as background Celery task).
+
+    Collapses consecutive identical snapshot rows across odds_snapshots,
+    win_prob_snapshots, and futures_odds_snapshots. Lossless — original
+    time series can be reconstructed from collapsed rows.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import collapse_snapshots
+
+    task = collapse_snapshots.delay(min_age_hours=min_age_hours)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": f"Snapshot collapse queued (min_age_hours={min_age_hours}). Use /api/admin/snapshots/task/{task.id} to check status.",
+    }
+
+
+@router.get("/snapshots/task/{task_id}")
+async def get_snapshot_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of a snapshot collapse task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
+
+
+@router.get("/snapshots/stats")
+async def get_snapshot_stats(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current snapshot table row counts."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func
+    from app.models import OddsSnapshot, WinProbSnapshot, FuturesOddsSnapshot
+
+    odds_count = (await db.execute(select(func.count(OddsSnapshot.id)))).scalar()
+    winprob_count = (await db.execute(select(func.count(WinProbSnapshot.id)))).scalar()
+    futures_count = (await db.execute(select(func.count(FuturesOddsSnapshot.id)))).scalar()
+
+    return {
+        "odds_snapshots": odds_count,
+        "win_prob_snapshots": winprob_count,
+        "futures_odds_snapshots": futures_count,
+        "total": odds_count + winprob_count + futures_count,
+    }

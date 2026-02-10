@@ -137,6 +137,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_team_logos",
         "schedule": crontab(minute=15, hour="*/6"),  # Every 6 hours at :15
     },
+    "reset-ad-baseline-kickoff": {
+        "task": "app.tasks.reset_ad_baseline",
+        "schedule": crontab(minute=0, hour=22, day_of_month=9, month_of_year=2),  # Feb 9 @ 2PM Pacific (22:00 UTC)
+    },
+    "collapse-snapshots-daily": {
+        "task": "app.tasks.collapse_snapshots",
+        "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC (low-traffic window)
+        "kwargs": {"min_age_hours": 48},
+    },
 }
 
 # Adaptive polling state keys in Redis
@@ -1004,7 +1013,8 @@ async def _poll_all_odds():
                                             sources["stat_model"] = round(stat_wp, 4)
                                             fresh_event.win_probability_sources = sources
 
-                                            stat_snap = WinProbSnapshot(
+                                            stat_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                                session,
                                                 event_id=event_obj.id,
                                                 source="stat_model",
                                                 home_win_probability=round(stat_wp, 4),
@@ -1018,7 +1028,8 @@ async def _poll_all_odds():
                                                     "source": "odds_poll",
                                                 },
                                             )
-                                            session.add(stat_snap)
+                                            if is_new:
+                                                session.add(stat_snap)
                                             stat_model_from_poll += 1
                                 except Exception as e:
                                     logger.warning(f"stat_model in odds poll failed for event {event_obj.id}: {e}")
@@ -1093,6 +1104,63 @@ def _snapshots_are_equal(existing: OddsSnapshot, new_values: dict) -> bool:
         eq(existing.over_under, new_values.get("over_under")) and
         eq(existing.home_win_probability, new_values.get("home_win_probability"))
     )
+
+
+async def _create_or_update_win_prob_snapshot(
+    session,
+    event_id: int,
+    source: str,
+    home_win_probability: float,
+    away_win_probability: float,
+    game_state: dict = None,
+) -> tuple:
+    """
+    Create a new WinProbSnapshot or update existing if value unchanged.
+
+    Returns (snapshot, is_new) tuple.
+    - If value changed: creates new snapshot, returns (new_snapshot, True)
+    - If value same: updates existing snapshot's reading_count/valid_until, returns (existing, False)
+    """
+    from app.models.models import WinProbSnapshot
+
+    now = datetime.now(timezone.utc)
+
+    # Find the most recent snapshot for this event+source
+    result = await session.execute(
+        select(WinProbSnapshot)
+        .where(
+            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.source == source,
+        )
+        .order_by(WinProbSnapshot.captured_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+
+    # Compare home_win_probability (the primary value)
+    is_same = False
+    if existing is not None and existing.home_win_probability is not None and home_win_probability is not None:
+        is_same = float(existing.home_win_probability) == float(home_win_probability)
+
+    if existing is None or not is_same:
+        # Value changed — close out the old row and create a new one
+        if existing is not None:
+            existing.valid_until = now
+
+        snapshot = WinProbSnapshot(
+            event_id=event_id,
+            source=source,
+            home_win_probability=home_win_probability,
+            away_win_probability=away_win_probability,
+            game_state=game_state,
+            reading_count=1,
+        )
+        return snapshot, True
+    else:
+        # Same value — bump the counter
+        existing.reading_count += 1
+        existing.valid_until = now
+        return existing, False
 
 
 def _parse_snapshot_values(bookmaker: dict, event_data: dict) -> dict:
@@ -2674,8 +2742,8 @@ async def _sync_espn_live_events():
 
                                     # Also write ESPN to generic win_prob_snapshots table
                                     try:
-                                        from app.models.models import WinProbSnapshot
-                                        espn_wp_snap = WinProbSnapshot(
+                                        espn_wp_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                            session,
                                             event_id=event.id,
                                             source="espn",
                                             home_win_probability=ee.home_win_probability,
@@ -2687,7 +2755,8 @@ async def _sync_espn_live_events():
                                                 "away_score": ee.away_score,
                                             },
                                         )
-                                        session.add(espn_wp_snap)
+                                        if is_new:
+                                            session.add(espn_wp_snap)
                                     except Exception:
                                         pass  # Table may not exist yet
 
@@ -2721,7 +2790,8 @@ async def _sync_espn_live_events():
                                             event.win_probability_sources = sources
                                             changed = True
 
-                                            stat_snap = WinProbSnapshot(
+                                            stat_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                                session,
                                                 event_id=event.id,
                                                 source="stat_model",
                                                 home_win_probability=round(stat_wp, 4),
@@ -2734,7 +2804,8 @@ async def _sync_espn_live_events():
                                                     "pregame_spread": pregame_spread,
                                                 },
                                             )
-                                            session.add(stat_snap)
+                                            if is_new:
+                                                session.add(stat_snap)
                                             stats["stat_model_computed"] = stats.get("stat_model_computed", 0) + 1
                                         else:
                                             logger.warning(
@@ -2956,3 +3027,241 @@ async def _backfill_team_logos():
         print(f"Team logo backfill error: {e}\n{traceback.format_exc()}")
 
     return stats
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Snapshot Retention — collapse consecutive identical rows to save DB space
+# ---------------------------------------------------------------------------
+@celery_app.task(bind=True)
+def collapse_snapshots(self, min_age_hours: int = 48):
+    """Collapse consecutive identical snapshot rows across all snapshot tables.
+
+    For each (event, bookmaker/source) partition, consecutive rows with the same
+    value are merged into a single row: captured_at = first seen, valid_until = last seen,
+    reading_count = total confirmations. This is lossless — the original time series
+    can be reconstructed from the collapsed rows.
+
+    Only processes snapshots older than min_age_hours (default 48h) to avoid
+    interfering with live data.
+    """
+    return run_async(_collapse_snapshots_impl(min_age_hours))
+
+
+async def _collapse_snapshots_impl(min_age_hours: int = 48):
+    from app.models import (
+        OddsSnapshot, WinProbSnapshot, FuturesOddsSnapshot,
+        FuturesOutcome, Event,
+    )
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
+    stats = {
+        "odds_snapshots_deleted": 0,
+        "win_prob_snapshots_deleted": 0,
+        "futures_snapshots_deleted": 0,
+    }
+
+    CHUNK_SIZE = 5000
+
+    async with get_task_session() as session:
+        # === 1. Collapse odds_snapshots ===
+        # Find completed/closed events with snapshots older than cutoff
+        result = await session.execute(
+            select(Event.id).where(
+                Event.status.in_(["completed", "closed"]),
+            )
+        )
+        completed_event_ids = [r[0] for r in result.fetchall()]
+
+        for event_id in completed_event_ids:
+            deleted = await _collapse_table_for_partition(
+                session,
+                table_class=OddsSnapshot,
+                partition_cols=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                value_cols=[OddsSnapshot.home_win_probability],
+                partition_values={"event_id": event_id},
+                cutoff=cutoff,
+                chunk_size=CHUNK_SIZE,
+            )
+            stats["odds_snapshots_deleted"] += deleted
+
+        # Also collapse pre-game snapshots for scheduled/live events
+        result = await session.execute(
+            select(Event.id).where(
+                Event.status.in_(["scheduled", "live"]),
+            )
+        )
+        active_event_ids = [r[0] for r in result.fetchall()]
+
+        for event_id in active_event_ids:
+            deleted = await _collapse_table_for_partition(
+                session,
+                table_class=OddsSnapshot,
+                partition_cols=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                value_cols=[OddsSnapshot.home_win_probability],
+                partition_values={"event_id": event_id},
+                cutoff=cutoff,
+                chunk_size=CHUNK_SIZE,
+            )
+            stats["odds_snapshots_deleted"] += deleted
+
+        # === 2. Collapse win_prob_snapshots ===
+        all_event_ids = completed_event_ids + active_event_ids
+        for event_id in all_event_ids:
+            deleted = await _collapse_table_for_partition(
+                session,
+                table_class=WinProbSnapshot,
+                partition_cols=[WinProbSnapshot.event_id, WinProbSnapshot.source],
+                value_cols=[WinProbSnapshot.home_win_probability],
+                partition_values={"event_id": event_id},
+                cutoff=cutoff,
+                chunk_size=CHUNK_SIZE,
+            )
+            stats["win_prob_snapshots_deleted"] += deleted
+
+        # === 3. Collapse futures_odds_snapshots ===
+        result = await session.execute(
+            select(FuturesOutcome.id).join(
+                FuturesOddsSnapshot,
+                FuturesOddsSnapshot.outcome_id == FuturesOutcome.id,
+            ).where(
+                FuturesOddsSnapshot.captured_at < cutoff,
+            ).distinct()
+        )
+        outcome_ids = [r[0] for r in result.fetchall()]
+
+        for outcome_id in outcome_ids:
+            deleted = await _collapse_table_for_partition(
+                session,
+                table_class=FuturesOddsSnapshot,
+                partition_cols=[FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.bookmaker],
+                value_cols=[FuturesOddsSnapshot.probability],
+                partition_values={"outcome_id": outcome_id},
+                cutoff=cutoff,
+                chunk_size=CHUNK_SIZE,
+            )
+            stats["futures_snapshots_deleted"] += deleted
+
+    total = sum(stats.values())
+    logger.info(f"Snapshot collapse complete: {total} rows deleted — {stats}")
+    return stats
+
+
+async def _collapse_table_for_partition(
+    session,
+    table_class,
+    partition_cols: list,
+    value_cols: list,
+    partition_values: dict,
+    cutoff,
+    chunk_size: int = 5000,
+) -> int:
+    """Collapse consecutive identical rows within a single partition key (e.g., one event).
+
+    Iterates over all distinct sub-partitions (e.g., per-bookmaker within an event),
+    finds consecutive rows with identical values, and merges them by:
+    - Keeping the first row (earliest captured_at)
+    - Setting its valid_until to the last row's captured_at (or valid_until)
+    - Summing reading_counts
+    - Deleting the duplicate rows
+
+    Returns total rows deleted.
+    """
+    from sqlalchemy import delete
+
+    total_deleted = 0
+
+    # Get distinct sub-partition values (e.g., all bookmakers for this event)
+    # partition_cols[0] is the main partition (event_id/outcome_id) — filtered by partition_values
+    # partition_cols[1] is the sub-partition (bookmaker/source) — we iterate over these
+    main_col = partition_cols[0]
+    sub_col = partition_cols[1]
+
+    main_filter = main_col == list(partition_values.values())[0]
+
+    result = await session.execute(
+        select(sub_col).where(
+            main_filter,
+            table_class.captured_at < cutoff,
+        ).distinct()
+    )
+    sub_keys = [r[0] for r in result.fetchall()]
+
+    for sub_key in sub_keys:
+        # Fetch all rows for this partition, ordered by time
+        result = await session.execute(
+            select(table_class).where(
+                main_filter,
+                sub_col == sub_key,
+                table_class.captured_at < cutoff,
+            ).order_by(table_class.captured_at.asc())
+        )
+        rows = result.scalars().all()
+
+        if len(rows) <= 1:
+            continue
+
+        # Walk through rows, finding runs of identical values
+        ids_to_delete = []
+        keeper = rows[0]
+        value_col = value_cols[0]
+
+        for row in rows[1:]:
+            keeper_val = getattr(keeper, value_col.key)
+            row_val = getattr(row, value_col.key)
+
+            # Exact match comparison
+            vals_equal = False
+            if keeper_val is None and row_val is None:
+                vals_equal = True
+            elif keeper_val is not None and row_val is not None:
+                vals_equal = float(keeper_val) == float(row_val)
+
+            if vals_equal:
+                # Same value — absorb into keeper
+                last_time = row.valid_until or row.captured_at
+                keeper.valid_until = last_time
+                keeper.reading_count = (keeper.reading_count or 1) + (row.reading_count or 1)
+                ids_to_delete.append(row.id)
+            else:
+                # Value changed — this row becomes the new keeper
+                if keeper.valid_until is None:
+                    keeper.valid_until = row.captured_at
+                keeper = row
+
+        # Delete absorbed rows in chunks
+        for i in range(0, len(ids_to_delete), chunk_size):
+            chunk = ids_to_delete[i:i + chunk_size]
+            await session.execute(
+                delete(table_class).where(table_class.id.in_(chunk))
+            )
+            await session.flush()
+
+        total_deleted += len(ids_to_delete)
+
+    return total_deleted
+
+
+# Ad Baseline Reset — scheduled at kickoff so view deltas track game-day growth
+# ---------------------------------------------------------------------------
+@celery_app.task(bind=True)
+def reset_ad_baseline(self):
+    """Clear the Super Bowl ad view baseline in Redis.
+
+    Scheduled to run at 2 PM Pacific (22:00 UTC) on Feb 9, 2026 — kickoff.
+    The next /api/contest/ads fetch will snapshot fresh view counts,
+    so all +/- deltas reflect views gained during the game.
+    """
+    import ssl as _ssl
+    try:
+        if REDIS_URL.startswith("rediss://"):
+            r = redis.from_url(REDIS_URL, ssl_cert_reqs=_ssl.CERT_NONE)
+        else:
+            r = redis.from_url(REDIS_URL)
+        r.delete("sb_contest:ad_baseline")
+        r.delete("sb_contest:youtube_ads")
+        print("Ad baseline reset — next fetch will snapshot fresh view counts")
+        return {"status": "reset", "message": "Ad baseline cleared at kickoff"}
+    except Exception as e:
+        print(f"Ad baseline reset error: {e}")
+        return {"status": "error", "error": str(e)}
