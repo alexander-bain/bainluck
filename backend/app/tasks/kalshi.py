@@ -111,12 +111,17 @@ async def _poll_kalshi_markets():
                         expiration_times = [m.expiration_time for m in event.markets if m.expiration_time]
                         expiration_time = max(expiration_times) if expiration_times else None
 
+                    # Compute market tier for relevance ranking
+                    from app.utils.team_linking import compute_market_tier
+                    market_tier = compute_market_tier(market_name, category)
+
                     # Upsert the FuturesMarket
                     market_stmt = pg_insert(FuturesMarket).values(
                         source="kalshi",
                         external_id=event.event_ticker,
                         name=market_name,
                         category=category,
+                        market_tier=market_tier,
                         mutually_exclusive=event.mutually_exclusive,
                         commence_time=commence_time,
                         resolution_date=expiration_time,
@@ -125,6 +130,7 @@ async def _poll_kalshi_markets():
                         index_elements=["source", "external_id"],
                         set_={
                             "name": market_name,
+                            "market_tier": market_tier,
                             "commence_time": commence_time,
                             "resolution_date": expiration_time,
                             "updated_at": func.now(),

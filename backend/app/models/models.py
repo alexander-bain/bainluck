@@ -429,6 +429,7 @@ class FuturesMarket(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(50), default="championship")  # championship, mvp, division, prop
     llm_sport_category: Mapped[Optional[str]] = mapped_column(String(50))  # LLM-assigned sport category
+    market_tier: Mapped[Optional[int]] = mapped_column(Integer)  # 1=championship, 2=conference, 3=awards, 4=division, 5=props/other
 
     # LLM metadata enrichment
     llm_gender: Mapped[Optional[str]] = mapped_column(String(20))  # men/women/mixed/unknown
