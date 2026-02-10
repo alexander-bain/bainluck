@@ -49,7 +49,18 @@ odds-tracker/
 │   │   │   ├── odds_api.py      # The Odds API client
 │   │   │   ├── kalshi_api.py    # Kalshi prediction market client
 │   │   │   └── database.py      # DB connection
-│   │   ├── tasks.py             # Celery tasks (polling, Pulse calc)
+│   │   ├── tasks/               # Celery tasks (modular package)
+│   │   │   ├── __init__.py      # Celery app, task definitions, beat schedule
+│   │   │   ├── config.py        # Shared constants (intervals, sport mapping)
+│   │   │   ├── base.py          # DB session helpers, run_async()
+│   │   │   ├── redis_state.py   # Adaptive polling state, heartbeat
+│   │   │   ├── odds_polling.py  # Odds polling, snapshot dedup, opening odds
+│   │   │   ├── pulse.py         # Pulse/GEI computation
+│   │   │   ├── futures.py       # Futures polling from The Odds API
+│   │   │   ├── kalshi.py        # Kalshi prediction market polling
+│   │   │   ├── espn_sync.py     # ESPN live sync, team enrichment
+│   │   │   ├── sports.py        # Sport sync, event discovery
+│   │   │   └── retention.py     # Snapshot collapse/retention
 │   │   └── utils/
 │   │       ├── odds_math.py     # Probability conversions
 │   │       ├── pulse.py         # Game excitement algorithm
@@ -88,7 +99,7 @@ odds-tracker/
 
 | File | Purpose |
 |------|---------|
-| `backend/app/tasks.py` | Celery tasks: odds polling, Pulse calculation, event discovery |
+| `backend/app/tasks/` | Celery tasks package: odds polling, Pulse, ESPN sync, retention |
 | `backend/app/utils/highlights.py` | Highlight scoring, flags, and labels |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
@@ -207,7 +218,7 @@ Scores events 0–100 to decide what appears in the homepage Highlights section.
 - Upcoming games: Every 2-5 minutes based on proximity
 - Event discovery: Every 15 minutes (finds new games)
 
-**Key task:** `poll_all_odds` in `backend/app/tasks.py`
+**Key task:** `poll_all_odds` in `backend/app/tasks/odds_polling.py`
 
 ### Probability Display by Game Status
 Different game statuses show different probability data to users:
@@ -215,7 +226,7 @@ Different game statuses show different probability data to users:
 - **Live**: Current live odds (big) + "Opened X/Y" reference from `opening_odds` (small)
 - **Completed/Closed**: Opening odds (pre-game consensus) + Pulse excitement score
 
-**Opening odds** are the last pregame consensus — `_maybe_set_opening_odds` in `tasks.py` updates them with the cross-bookmaker average on every poll while the event is scheduled, then freezes when the game starts. Stored on the `Event` model.
+**Opening odds** are the last pregame consensus — `_maybe_set_opening_odds` in `tasks/odds_polling.py` updates them with the cross-bookmaker average on every poll while the event is scheduled, then freezes when the game starts. Stored on the `Event` model.
 
 **Stale bookmaker filtering**: `filter_stale_bookmaker_snapshots()` in `app/utils/odds_filtering.py` excludes bookmakers whose last distinct odds value was captured before `commence_time`. Runs for ALL non-scheduled statuses (live, completed, closed). Has 14 regression tests in `tests/test_stale_bookmaker_filter.py`.
 
@@ -239,13 +250,13 @@ Kalshi is a prediction market that provides structured event data including timi
 
 **Files:**
 - `backend/app/services/kalshi_api.py` - API client
-- `backend/app/tasks.py` - `poll_kalshi_markets` task (runs hourly at :45)
+- `backend/app/tasks/kalshi.py` - `poll_kalshi_markets` task (runs hourly at :45)
 
 **Category Filter (IMPORTANT):**
 Kalshi has thousands of markets (politics, economics, etc.) but we only want sports.
 To stay within rate limits, we filter to specific categories.
 
-**To change which categories are fetched**, edit this line in `backend/app/tasks.py` around line 1948:
+**To change which categories are fetched**, edit this line in `backend/app/tasks/kalshi.py`:
 ```python
 sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis"]
 ```
@@ -371,11 +382,11 @@ ESPN's undocumented API provides team data (colors, logos) and live game info (c
 - Also pre-populates team data for scheduled events (so colors/logos appear before games go live)
 - ESPN win probability is **only available during live games** — cannot be backfilled after a game ends
 - Team colors/logos persist in the `teams` table and apply to all events (past and present) via name lookup
-- Mapped sports: NBA, NCAAB, WNCAAB, NFL, NCAAF, NHL, MLB, MLS, EPL (see `ESPN_SPORT_MAPPING` in tasks.py)
+- Mapped sports: NBA, NCAAB, WNCAAB, NFL, NCAAF, NHL, MLB, MLS, EPL (see `ESPN_SPORT_MAPPING` in `tasks/config.py`)
 
 **Files:**
 - ESPN client: `backend/app/services/espn_api.py`
-- Celery sync task: `backend/app/tasks.py` (`sync_espn_live_events` / `_sync_espn_live_events`)
+- Celery sync task: `backend/app/tasks/espn_sync.py` (`_sync_espn_live_events`)
 - Team lookup in API: `backend/app/routes/events.py` (`_build_team_lookup`)
 - Model columns on teams: `espn_id`, `primary_color`, `secondary_color`, `logo_url_small`, `logo_url_large`, `alternate_names`, `current_record`
 - Model columns on events: `espn_id`, `venue_id`, `broadcast_info`, `game_clock`, `period`, `espn_win_prob_home`, `win_probability_sources`
@@ -429,7 +440,7 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/t
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/stats?secret=any"
 ```
 
-**Files:** `backend/app/tasks.py` (`collapse_snapshots`, `_collapse_snapshots_impl`, `_collapse_table_for_partition`), `backend/app/routes/admin.py` (snapshot endpoints), `backend/tests/test_snapshot_collapse.py` (13 tests)
+**Files:** `backend/app/tasks/retention.py` (`_collapse_snapshots_impl`, `_collapse_table_for_partition`), `backend/app/routes/admin.py` (snapshot endpoints), `backend/tests/test_snapshot_collapse.py` (13 tests)
 
 ### Multi-Source Win Probability
 The chart can display win probabilities from multiple independent sources, each as a labeled line with its own color and dash pattern.
@@ -558,11 +569,11 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Refactor `tasks.py`** — At 3100+ lines, every change has a large blast radius. ESPN sync, odds polling, win probability computation, Pulse calculation, Kalshi polling, and snapshot collapsing should be separate modules. This is the root cause of most fix-commit cycles (missing imports, wrong variable names, status check gaps). **Incremental approach:** extract one module per session — start with `tasks/snapshot_retention.py` (smallest, newest), then `tasks/espn_sync.py` (most independent), then `tasks/odds_poll.py`, then the rest. Each extraction reduces risk for everything that follows.
-2. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 464 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, and `test_snapshot_collapse.py`. Zero frontend tests.
-3. 🔴 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. **Worse than expected:** Super Bowl (event 1) had only 4 score_snapshots — if the highest-profile game has unreliable coverage, college sports are likely much worse. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
-4. 🟡 **Data retention policy — Phase 1 complete, Phase 2 pending** — Snapshot collapsing implemented: consecutive identical rows are merged into single rows with `captured_at`/`valid_until` spans (lossless). Write-time dedup added to `win_prob_snapshots`. Daily Celery beat tasks run at 6:30/6:35/6:40 UTC. Initial run deleted ~740K rows (19% of total). **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet. **Performance note:** current collapse task loads all snapshots per (event, bookmaker) into Python memory — a pure SQL approach (window functions to identify collapsible rows, batch delete) would be 10-50x faster and use constant memory. Also: daily job processes up to 500 partitions per table — as event count grows over months, may need to increase limit or switch to SQL.
-5. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 497 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, and `test_snapshot_collapse.py`. Zero frontend tests.
+2. 🔴 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. **Worse than expected:** Super Bowl (event 1) had only 4 score_snapshots — if the highest-profile game has unreliable coverage, college sports are likely much worse. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
+3. 🟡 **Data retention policy — Phase 1 complete, Phase 2 pending** — Snapshot collapsing implemented: consecutive identical rows are merged into single rows with `captured_at`/`valid_until` spans (lossless). Write-time dedup added to `win_prob_snapshots`. Daily Celery beat tasks run at 6:30/6:35/6:40 UTC. Initial run deleted ~740K rows (19% of total). **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet. **Performance note (urgent):** current collapse task loads all snapshots per (event, bookmaker) into Python memory — a pure SQL approach (window functions to identify collapsible rows, batch delete) would be 10-50x faster and use constant memory. As event count grows over months, this **will** OOM the Heroku dyno. Rewrite to SQL before adding new data sources.
+4. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic. Celery heartbeat task + `GET /api/admin/celery/health` endpoint now provide basic worker health monitoring. **Gap:** No monitoring for task *correctness*, only *liveness*. Heartbeat confirms the worker is running but doesn't detect silent failures (e.g., `poll_all_odds` returning empty results, ESPN sync matching 0 events). Sentry catches exceptions but not degraded output. Need task-level success metrics.
+5. 🟡 **Move `_create_or_update_win_prob_snapshot` to shared module** — Currently in `odds_polling.py` but imported by `espn_sync.py`. It's a shared utility, not specific to odds polling. Should live in `base.py` or a new `tasks/snapshots.py` to avoid confusing cross-module dependencies as the package grows.
 
 ### Next — Features (in priority order)
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
@@ -597,6 +608,8 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 14 regression tests (including commence_time sanity check)
 - ✅ Opening odds now stores last pregame consensus (cross-bookmaker average, continuously updated while scheduled)
 - ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`
+- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 11 modules: `__init__.py`, `config.py`, `base.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
+- ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -606,15 +619,20 @@ See `docs/PRD.md` for full roadmap.
 ## Development Process & Lessons Learned
 
 ### Fix-Commit Problem
-~34% of recent commits are bug fixes, often for issues that could have been caught before deploy. Root causes:
-- No test suite beyond `test_odds_math.py` (240 lines)
+~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
+- Test suite now has 497 tests but initially had very few
 - Direct deploy to production without staging verification
-- Background task failures (Celery) — now mitigated by Sentry error tracking
+- Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
-**Rule of thumb:** Before shipping changes to `pulse.py`, `highlights.py`, or `tasks.py`, write or run tests first. These three files account for the majority of fix-commit cycles.
+**Rule of thumb:** Before shipping changes to `pulse.py`, `highlights.py`, or the `tasks/` modules, write or run tests first.
 
-### God File: `tasks.py` (2,747 lines)
-All Celery tasks live in a single file. This increases coupling and makes changes riskier. Not urgent to refactor, but be aware that every change to this file has a larger blast radius than it should.
+### Tasks Package Architecture
+The former monolithic `tasks.py` was refactored into `backend/app/tasks/` (11 modules). Key architectural decisions:
+- All task names pinned with `name="app.tasks.*"` — beat schedule uses string task names that must match
+- `__init__.py` has thin task wrappers that call `run_async()` on async implementations from submodules
+- `from app.tasks import celery_app` and other existing imports work via re-exports in `__init__.py`
+- Cross-module imports: `sports.py` imports from `odds_polling.py`, `espn_sync.py` imports from `odds_polling.py`
+- Celery worker command `celery -A app.tasks worker` resolves to `tasks/__init__.py` automatically
 
 ### Super Bowl One-Offs (Removed)
 All Super Bowl LX party features have been removed: commercial/ad leaderboard, prop contest system, AI commentary/roasting, trivia, YouTube API integration, TV/Party mode page, player props endpoint, confetti/ECG animations. Code was deleted across ~15 files totaling ~7,000+ lines.
@@ -647,12 +665,15 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 
 9. **Pulse percentiles use completed games only**: The `gei_percentiles` table is computed from completed/closed events with `raw_gei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
 
-10. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New Celery tasks must follow this pattern:
+10. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New tasks go in the appropriate `tasks/` submodule with an async implementation, and get a thin wrapper in `tasks/__init__.py`:
     ```python
-    @celery_app.task(bind=True)
+    # In tasks/__init__.py:
+    @celery_app.task(bind=True, name="app.tasks.my_task")
     def my_task(self):
+        from app.tasks.my_module import _my_task_impl
         return run_async(_my_task_impl())
 
+    # In tasks/my_module.py:
     async def _my_task_impl():
         async with get_task_session() as session:
             result = await session.execute(...)
@@ -661,7 +682,7 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 
 11. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
-12. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** `tasks.py` now has `import logging` and `logger = logging.getLogger(__name__)` (added Feb 2026). Some older code in the file still uses `print()` instead.
+12. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** Task modules use `logging.getLogger(__name__)`. Some older code still uses `print()` instead — migrate to logger when touching those sections.
 
 ---
 
