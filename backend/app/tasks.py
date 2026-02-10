@@ -141,10 +141,20 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.reset_ad_baseline",
         "schedule": crontab(minute=0, hour=22, day_of_month=9, month_of_year=2),  # Feb 9 @ 2PM Pacific (22:00 UTC)
     },
-    "collapse-snapshots-daily": {
+    "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC (low-traffic window)
-        "kwargs": {"min_age_hours": 48},
+        "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC
+        "kwargs": {"table": "odds", "limit": 500},
+    },
+    "collapse-winprob-snapshots-daily": {
+        "task": "app.tasks.collapse_snapshots",
+        "schedule": crontab(minute=35, hour=6),  # Daily at 6:35 AM UTC
+        "kwargs": {"table": "winprob", "limit": 500},
+    },
+    "collapse-futures-snapshots-daily": {
+        "task": "app.tasks.collapse_snapshots",
+        "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
+        "kwargs": {"table": "futures", "limit": 500},
     },
 }
 
@@ -3033,118 +3043,125 @@ async def _backfill_team_logos():
 # ---------------------------------------------------------------------------
 # Snapshot Retention — collapse consecutive identical rows to save DB space
 # ---------------------------------------------------------------------------
-@celery_app.task(bind=True)
-def collapse_snapshots(self, min_age_hours: int = 48):
-    """Collapse consecutive identical snapshot rows across all snapshot tables.
+@celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800)
+def collapse_snapshots(self, min_age_hours: int = 48, table: str = "odds", limit: int = 200):
+    """Collapse consecutive identical snapshot rows for one table at a time.
+
+    Args:
+        min_age_hours: Only process snapshots older than this (default 48h)
+        table: Which table to process — "odds", "winprob", or "futures"
+        limit: Max number of events/outcomes to process per run
 
     For each (event, bookmaker/source) partition, consecutive rows with the same
     value are merged into a single row: captured_at = first seen, valid_until = last seen,
     reading_count = total confirmations. This is lossless — the original time series
     can be reconstructed from the collapsed rows.
 
-    Only processes snapshots older than min_age_hours (default 48h) to avoid
-    interfering with live data.
+    Designed to be called multiple times: once per table, with reasonable limits.
+    The daily beat schedule calls it 3 times (once per table).
     """
-    return run_async(_collapse_snapshots_impl(min_age_hours))
+    return run_async(_collapse_snapshots_impl(min_age_hours, table, limit))
 
 
-async def _collapse_snapshots_impl(min_age_hours: int = 48):
+async def _collapse_snapshots_impl(min_age_hours: int = 48, table: str = "odds", limit: int = 200):
     from app.models import (
         OddsSnapshot, WinProbSnapshot, FuturesOddsSnapshot,
         FuturesOutcome, Event,
     )
     from datetime import timedelta
+
     cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
-    stats = {
-        "odds_snapshots_deleted": 0,
-        "win_prob_snapshots_deleted": 0,
-        "futures_snapshots_deleted": 0,
-    }
+    total_deleted = 0
+    partitions_processed = 0
 
     CHUNK_SIZE = 5000
 
-    async with get_task_session() as session:
-        # === 1. Collapse odds_snapshots ===
-        # Find completed/closed events with snapshots older than cutoff
-        result = await session.execute(
-            select(Event.id).where(
-                Event.status.in_(["completed", "closed"]),
+    if table == "odds":
+        # Find events with old snapshots, process in batches
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(OddsSnapshot.event_id)
+                .where(OddsSnapshot.captured_at < cutoff)
+                .group_by(OddsSnapshot.event_id)
+                .limit(limit)
             )
-        )
-        completed_event_ids = [r[0] for r in result.fetchall()]
+            event_ids = [r[0] for r in result.fetchall()]
 
-        for event_id in completed_event_ids:
-            deleted = await _collapse_table_for_partition(
-                session,
-                table_class=OddsSnapshot,
-                partition_cols=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
-                value_cols=[OddsSnapshot.home_win_probability],
-                partition_values={"event_id": event_id},
-                cutoff=cutoff,
-                chunk_size=CHUNK_SIZE,
+        for event_id in event_ids:
+            # Each event gets its own session/transaction
+            async with get_task_session() as session:
+                deleted = await _collapse_table_for_partition(
+                    session,
+                    table_class=OddsSnapshot,
+                    partition_cols=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
+                    value_cols=[OddsSnapshot.home_win_probability],
+                    partition_values={"event_id": event_id},
+                    cutoff=cutoff,
+                    chunk_size=CHUNK_SIZE,
+                )
+                total_deleted += deleted
+            partitions_processed += 1
+
+    elif table == "winprob":
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(WinProbSnapshot.event_id)
+                .where(WinProbSnapshot.captured_at < cutoff)
+                .group_by(WinProbSnapshot.event_id)
+                .limit(limit)
             )
-            stats["odds_snapshots_deleted"] += deleted
+            event_ids = [r[0] for r in result.fetchall()]
 
-        # Also collapse pre-game snapshots for scheduled/live events
-        result = await session.execute(
-            select(Event.id).where(
-                Event.status.in_(["scheduled", "live"]),
+        for event_id in event_ids:
+            async with get_task_session() as session:
+                deleted = await _collapse_table_for_partition(
+                    session,
+                    table_class=WinProbSnapshot,
+                    partition_cols=[WinProbSnapshot.event_id, WinProbSnapshot.source],
+                    value_cols=[WinProbSnapshot.home_win_probability],
+                    partition_values={"event_id": event_id},
+                    cutoff=cutoff,
+                    chunk_size=CHUNK_SIZE,
+                )
+                total_deleted += deleted
+            partitions_processed += 1
+
+    elif table == "futures":
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(FuturesOddsSnapshot.outcome_id)
+                .where(FuturesOddsSnapshot.captured_at < cutoff)
+                .group_by(FuturesOddsSnapshot.outcome_id)
+                .limit(limit)
             )
-        )
-        active_event_ids = [r[0] for r in result.fetchall()]
-
-        for event_id in active_event_ids:
-            deleted = await _collapse_table_for_partition(
-                session,
-                table_class=OddsSnapshot,
-                partition_cols=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
-                value_cols=[OddsSnapshot.home_win_probability],
-                partition_values={"event_id": event_id},
-                cutoff=cutoff,
-                chunk_size=CHUNK_SIZE,
-            )
-            stats["odds_snapshots_deleted"] += deleted
-
-        # === 2. Collapse win_prob_snapshots ===
-        all_event_ids = completed_event_ids + active_event_ids
-        for event_id in all_event_ids:
-            deleted = await _collapse_table_for_partition(
-                session,
-                table_class=WinProbSnapshot,
-                partition_cols=[WinProbSnapshot.event_id, WinProbSnapshot.source],
-                value_cols=[WinProbSnapshot.home_win_probability],
-                partition_values={"event_id": event_id},
-                cutoff=cutoff,
-                chunk_size=CHUNK_SIZE,
-            )
-            stats["win_prob_snapshots_deleted"] += deleted
-
-        # === 3. Collapse futures_odds_snapshots ===
-        result = await session.execute(
-            select(FuturesOutcome.id).join(
-                FuturesOddsSnapshot,
-                FuturesOddsSnapshot.outcome_id == FuturesOutcome.id,
-            ).where(
-                FuturesOddsSnapshot.captured_at < cutoff,
-            ).distinct()
-        )
-        outcome_ids = [r[0] for r in result.fetchall()]
+            outcome_ids = [r[0] for r in result.fetchall()]
 
         for outcome_id in outcome_ids:
-            deleted = await _collapse_table_for_partition(
-                session,
-                table_class=FuturesOddsSnapshot,
-                partition_cols=[FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.bookmaker],
-                value_cols=[FuturesOddsSnapshot.probability],
-                partition_values={"outcome_id": outcome_id},
-                cutoff=cutoff,
-                chunk_size=CHUNK_SIZE,
-            )
-            stats["futures_snapshots_deleted"] += deleted
+            async with get_task_session() as session:
+                deleted = await _collapse_table_for_partition(
+                    session,
+                    table_class=FuturesOddsSnapshot,
+                    partition_cols=[FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.bookmaker],
+                    value_cols=[FuturesOddsSnapshot.probability],
+                    partition_values={"outcome_id": outcome_id},
+                    cutoff=cutoff,
+                    chunk_size=CHUNK_SIZE,
+                )
+                total_deleted += deleted
+            partitions_processed += 1
 
-    total = sum(stats.values())
-    logger.info(f"Snapshot collapse complete: {total} rows deleted — {stats}")
-    return stats
+    else:
+        return {"error": f"Unknown table: {table}. Use 'odds', 'winprob', or 'futures'."}
+
+    logger.info(
+        f"Snapshot collapse [{table}]: {total_deleted} rows deleted "
+        f"across {partitions_processed} partitions"
+    )
+    return {
+        "table": table,
+        "rows_deleted": total_deleted,
+        "partitions_processed": partitions_processed,
+    }
 
 
 async def _collapse_table_for_partition(
