@@ -1784,6 +1784,105 @@ async def celery_health():
 
 
 # ---------------------------------------------------------------------------
+# Team Linking (Futures → Teams)
+# ---------------------------------------------------------------------------
+
+@router.post("/futures/link-teams")
+async def trigger_team_linking(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(200, description="Max outcomes to process per run"),
+    use_llm: bool = Query(True, description="Use LLM for player-team classification"),
+):
+    """Trigger team linking backfill for futures outcomes.
+
+    Populates team_id on FuturesOutcome records (matching outcome names
+    to Team records) and market_tier on FuturesMarket records.
+
+    Runs as a background Celery task to avoid HTTP timeouts.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_team_links
+
+    task = backfill_team_links.delay(limit=limit, use_llm=use_llm)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "limit": limit,
+        "use_llm": use_llm,
+        "message": f"Team linking queued (limit={limit}). Use /api/admin/futures/link-teams/task/{task.id} to check status.",
+    }
+
+
+@router.get("/futures/link-teams/task/{task_id}")
+async def get_team_linking_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of a team linking backfill task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
+
+
+@router.get("/futures/team-links-status")
+async def get_team_links_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check the status of team linking across futures outcomes."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func
+
+    # Count outcomes with/without team_id
+    total = (await db.execute(
+        select(func.count(FuturesOutcome.id))
+    )).scalar()
+    linked = (await db.execute(
+        select(func.count(FuturesOutcome.id))
+        .where(FuturesOutcome.team_id.is_not(None))
+    )).scalar()
+    unlinked = total - linked
+
+    # Count markets with/without market_tier
+    markets_total = (await db.execute(
+        select(func.count(FuturesMarket.id))
+    )).scalar()
+    markets_tiered = (await db.execute(
+        select(func.count(FuturesMarket.id))
+        .where(FuturesMarket.market_tier.is_not(None))
+    )).scalar()
+
+    return {
+        "outcomes_total": total,
+        "outcomes_linked": linked,
+        "outcomes_unlinked": unlinked,
+        "link_percentage": round(linked / total * 100, 1) if total else 0,
+        "markets_total": markets_total,
+        "markets_tiered": markets_tiered,
+        "markets_untiered": markets_total - markets_tiered,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Snapshot Retention
 # ---------------------------------------------------------------------------
 

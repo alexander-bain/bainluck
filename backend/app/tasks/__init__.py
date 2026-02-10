@@ -196,6 +196,15 @@ def backfill_team_logos(self):
     return run_async(_backfill_team_logos())
 
 
+# --- Team Linking (Futures → Teams) ---
+
+@celery_app.task(bind=True, name="app.tasks.backfill_team_links")
+def backfill_team_links(self, limit: int = 200, use_llm: bool = True):
+    """Backfill team_id on futures outcomes and market_tier on futures markets."""
+    from app.tasks.team_linking import _backfill_team_links
+    return run_async(_backfill_team_links(limit, use_llm))
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")
@@ -270,6 +279,11 @@ celery_app.conf.beat_schedule = {
     "heartbeat": {
         "task": "app.tasks.heartbeat",
         "schedule": 60.0,
+    },
+    "backfill-team-links": {
+        "task": "app.tasks.backfill_team_links",
+        "schedule": crontab(minute=50),  # Hourly at :50, after futures (:30) and Kalshi (:45)
+        "kwargs": {"limit": 200, "use_llm": True},
     },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
