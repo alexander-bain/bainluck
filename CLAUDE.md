@@ -408,6 +408,29 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/esp
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/task/{task_id}?secret=any"
 ```
 
+### Snapshot Data Retention
+Consecutive identical snapshot rows are collapsed into single rows with `captured_at` (first seen) and `valid_until` (last confirmed) timestamps. Lossless — original time series is fully reconstructable.
+
+**Tables covered:** `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots`
+
+**Write-time dedup:** `odds_snapshots` and `futures_odds_snapshots` had this since Jan 2026. `win_prob_snapshots` gained it in Feb 2026. Checks last row per (event, bookmaker/source) before inserting; bumps `reading_count` if value unchanged.
+
+**Retroactive collapse:** Celery task `collapse_snapshots` processes one table per invocation. Runs daily via beat schedule (6:30/6:35/6:40 UTC for odds/winprob/futures respectively).
+
+**Admin endpoints:**
+```bash
+# Trigger collapse for one table (table: odds, winprob, futures)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/collapse?secret=any&table=odds&limit=500"
+
+# Check task status
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/task/{task_id}?secret=any"
+
+# View current row counts
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/stats?secret=any"
+```
+
+**Files:** `backend/app/tasks.py` (`collapse_snapshots`, `_collapse_snapshots_impl`, `_collapse_table_for_partition`), `backend/app/routes/admin.py` (snapshot endpoints), `backend/tests/test_snapshot_collapse.py` (13 tests)
+
 ### Multi-Source Win Probability
 The chart can display win probabilities from multiple independent sources, each as a labeled line with its own color and dash pattern.
 
@@ -535,9 +558,9 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 451 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, and `test_stale_bookmaker_filter.py`. Zero frontend tests.
-2. 🔴 **Refactor `tasks.py`** — At 2900+ lines, every change has a large blast radius. ESPN sync, odds polling, win probability computation, Pulse calculation, and Kalshi polling should be separate modules. This is the root cause of most fix-commit cycles (missing imports, wrong variable names, status check gaps). Extract at minimum: `tasks/espn_sync.py`, `tasks/odds_poll.py`, `tasks/win_probability.py`.
-3. 🟡 **Data retention policy** — Implement snapshot pruning. `odds_snapshots` + `win_prob_snapshots` together generate tens of thousands of rows per game day. No retention policy exists. Check Heroku Postgres row count and storage usage.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 464 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, and `test_snapshot_collapse.py`. Zero frontend tests.
+2. 🔴 **Refactor `tasks.py`** — At 3100+ lines, every change has a large blast radius. ESPN sync, odds polling, win probability computation, Pulse calculation, Kalshi polling, and snapshot collapsing should be separate modules. This is the root cause of most fix-commit cycles (missing imports, wrong variable names, status check gaps). Extract at minimum: `tasks/espn_sync.py`, `tasks/odds_poll.py`, `tasks/win_probability.py`.
+3. 🟡 **Data retention policy — Phase 1 complete, Phase 2 pending** — Snapshot collapsing implemented: consecutive identical rows are merged into single rows with `captured_at`/`valid_until` spans (lossless). Write-time dedup added to `win_prob_snapshots`. Daily Celery beat tasks run at 6:30/6:35/6:40 UTC. Initial run deleted ~740K rows (19% of total). **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet.
 4. 🟡 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
 5. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic.
 
@@ -573,6 +596,7 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Status-based probability display (opening odds for finished games, current odds for live, with stale bookmaker filtering)
 - ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 14 regression tests (including commence_time sanity check)
 - ✅ Opening odds now stores last pregame consensus (cross-bookmaker average, continuously updated while scheduled)
+- ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`
 </details>
 
 See `docs/PRD.md` for full roadmap.
