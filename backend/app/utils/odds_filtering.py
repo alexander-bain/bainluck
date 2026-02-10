@@ -4,7 +4,7 @@ Pure functions for filtering odds snapshots before aggregation.
 Extracted from routes/events.py for testability (no FastAPI dependency).
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def filter_stale_bookmaker_snapshots(
@@ -23,8 +23,19 @@ def filter_stale_bookmaker_snapshots(
 
     Runs for live, completed, and closed games. For scheduled events or when
     commence_time is unavailable, returns unchanged.
+
+    Sanity check: if the event has started (status != scheduled) but
+    commence_time is in the future, commence_time is likely wrong (known
+    Odds API bug where local times are returned as UTC). In this case,
+    skip filtering to avoid excluding all snapshots.
     """
     if event_status == "scheduled" or not snapshots or commence_time is None:
+        return snapshots
+
+    # Sanity check: commence_time should be in the past for started events.
+    # If it's in the future, it's likely a bad value from the Odds API.
+    now = datetime.now(timezone.utc)
+    if commence_time > now:
         return snapshots
 
     live_snapshots = [s for s in snapshots if s.captured_at >= commence_time]
