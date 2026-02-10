@@ -23,9 +23,9 @@ WIN_PROB_SOURCES = {
         "display_name": "ESPN",
         "source_type": "model",
         "sports": [
-            "basketball_nba", "basketball_ncaab", "basketball_wncaab", "basketball_wncaab",
-            "football_nfl", "football_ncaaf",
-            "hockey_nhl", "baseball_mlb", "soccer_usa_mls",
+            "basketball_nba", "basketball_ncaab", "basketball_wncaab",
+            "americanfootball_nfl", "americanfootball_ncaaf",
+            "icehockey_nhl", "baseball_mlb", "soccer_usa_mls",
             "soccer_epl",
         ],
         "color": "#f97316",
@@ -39,8 +39,9 @@ WIN_PROB_SOURCES = {
         "display_name": "OddsTracker Model",
         "source_type": "model",
         "sports": [
-            "football_nfl", "football_ncaaf",
+            "americanfootball_nfl", "americanfootball_ncaaf",
             "basketball_nba", "basketball_ncaab", "basketball_wncaab",
+            "icehockey_nhl",
         ],
         "color": "#8b5cf6",
         "dash_pattern": "4 4",
