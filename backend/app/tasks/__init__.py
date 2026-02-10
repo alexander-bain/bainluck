@@ -196,6 +196,15 @@ def backfill_team_logos(self):
     return run_async(_backfill_team_logos())
 
 
+# --- Snapshot Retention ---
+
+@celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")
+def collapse_snapshots(self, min_age_hours: int = 48, table: str = "odds", limit: int = 200):
+    """Collapse consecutive identical snapshot rows for one table at a time."""
+    from app.tasks.retention import _collapse_snapshots_impl
+    return run_async(_collapse_snapshots_impl(min_age_hours, table, limit))
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
@@ -262,6 +271,21 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.heartbeat",
         "schedule": 60.0,
     },
+    "collapse-odds-snapshots-daily": {
+        "task": "app.tasks.collapse_snapshots",
+        "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC
+        "kwargs": {"table": "odds", "limit": 500},
+    },
+    "collapse-winprob-snapshots-daily": {
+        "task": "app.tasks.collapse_snapshots",
+        "schedule": crontab(minute=35, hour=6),  # Daily at 6:35 AM UTC
+        "kwargs": {"table": "winprob", "limit": 500},
+    },
+    "collapse-futures-snapshots-daily": {
+        "task": "app.tasks.collapse_snapshots",
+        "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
+        "kwargs": {"table": "futures", "limit": 500},
+    },
 }
 
 
@@ -273,3 +297,4 @@ celery_app.conf.beat_schedule = {
 # =============================================================================
 
 from app.tasks.futures import _infer_base_sport  # noqa: E402, F401 (used by routes/futures.py)
+from app.tasks.odds_polling import _create_or_update_win_prob_snapshot  # noqa: E402, F401

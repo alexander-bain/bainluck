@@ -6,7 +6,6 @@ import type {
   EventsResponse,
   EventDetailResponse,
   EventHistoryResponse,
-  EventPropsResponse,
   SportsResponse,
   LiveOddsResponse,
   FuturesMarketsResponse,
@@ -85,13 +84,6 @@ export async function fetchEventHistory(
 }
 
 /**
- * Fetch player prop bets for an event
- */
-export async function fetchEventProps(id: number): Promise<EventPropsResponse> {
-  return apiFetch<EventPropsResponse>(`/api/events/${id}/props`);
-}
-
-/**
  * Fetch list of supported sports
  */
 export async function fetchSports(): Promise<SportsResponse> {
@@ -145,6 +137,63 @@ export async function fetchPulseRankings(params?: {
 export function formatProbability(prob: number | null | undefined): string {
   if (prob === null || prob === undefined) return "-";
   return `${Math.round(prob * 100)}%`;
+}
+
+/**
+ * For live games, returns the best available probability by checking model sources
+ * (ESPN, stat model) against betting odds. When models significantly diverge from
+ * stale betting odds (>15%), the model probability is used instead.
+ *
+ * For non-live games, always returns betting odds.
+ */
+export interface BestProbability {
+  homeProb: number | null;
+  awayProb: number | null;
+  /** Whether we're using betting odds or a model source */
+  source: "betting" | "model";
+  /** Display name of the source when using a model (e.g., "ESPN") */
+  sourceName: string | null;
+}
+
+export function getBestProbability(event: {
+  status: string;
+  current_odds?: { home_probability: number | null; away_probability: number | null } | null;
+  win_probability_sources?: Record<string, { value: number; display_name: string; type: string; color: string }> | null;
+}): BestProbability {
+  const bettingHome = event.current_odds?.home_probability ?? null;
+  const bettingAway = event.current_odds?.away_probability ?? null;
+
+  // For non-live games, always use betting odds
+  if (event.status !== "live") {
+    return { homeProb: bettingHome, awayProb: bettingAway, source: "betting", sourceName: null };
+  }
+
+  // For live games, check model sources
+  const sources = event.win_probability_sources;
+  if (!sources) {
+    return { homeProb: bettingHome, awayProb: bettingAway, source: "betting", sourceName: null };
+  }
+
+  // Prefer ESPN (gold standard during live games), then stat model
+  const modelEntry = sources.espn || sources.stat_model;
+  if (!modelEntry || modelEntry.value === undefined || modelEntry.value === null) {
+    return { homeProb: bettingHome, awayProb: bettingAway, source: "betting", sourceName: null };
+  }
+
+  const modelHome = modelEntry.value;
+
+  // If model and betting odds diverge significantly (>15%), betting odds are stale
+  if (bettingHome !== null && Math.abs(modelHome - bettingHome) > 0.15) {
+    return {
+      homeProb: modelHome,
+      awayProb: 1 - modelHome,
+      source: "model",
+      sourceName: modelEntry.display_name,
+    };
+  }
+
+  // Betting odds are fresh enough, use them
+  return { homeProb: bettingHome, awayProb: bettingAway, source: "betting", sourceName: null };
 }
 
 /**

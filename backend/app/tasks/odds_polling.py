@@ -237,25 +237,33 @@ async def _maybe_set_opening_odds(
     away_prob: float | None,
     home_spread: float | None,
     over_under: float | None,
+    commence_time: datetime | None = None,
 ):
     """
-    Set opening odds on an event if they haven't been set yet.
+    Update opening odds for a scheduled event.
 
-    Opening odds are only set once (first time we receive odds for an event).
-    They're used to detect favorite switches, line movement, etc.
+    Opening odds represent the last pregame consensus — they keep updating
+    on every poll while the game is still scheduled. Once the game starts,
+    they freeze, capturing what the market thought right before kickoff.
+
+    If commence_time is not provided, falls back to checking the event status.
     """
     if home_prob is None:
         return
 
-    # Check if opening odds already set
+    now = datetime.now(timezone.utc)
+
+    # Only update if the game hasn't started yet
+    if commence_time is not None and commence_time <= now:
+        return
+
+    # Also check event status as a fallback
     result = await session.execute(
-        select(Event.opening_home_probability)
+        select(Event.status)
         .where(Event.id == event_id)
     )
-    current_opening = result.scalar_one_or_none()
-
-    if current_opening is not None:
-        # Already set, don't update
+    status = result.scalar_one_or_none()
+    if status and status != "scheduled":
         return
 
     # Determine opening favorite
@@ -266,7 +274,7 @@ async def _maybe_set_opening_odds(
     else:
         opening_favorite = "even"
 
-    # Set opening odds
+    # Update opening odds (keeps updating until game starts)
     await session.execute(
         Event.__table__.update()
         .where(Event.id == event_id)
@@ -328,6 +336,63 @@ async def _create_or_update_snapshot(
         return snapshot, True
     else:
         # Values are the same - just update the existing snapshot
+        existing.reading_count += 1
+        existing.valid_until = now
+        return existing, False
+
+
+async def _create_or_update_win_prob_snapshot(
+    session,
+    event_id: int,
+    source: str,
+    home_win_probability: float,
+    away_win_probability: float,
+    game_state: dict = None,
+) -> tuple:
+    """
+    Create a new WinProbSnapshot or update existing if value unchanged.
+
+    Returns (snapshot, is_new) tuple.
+    - If value changed: creates new snapshot, returns (new_snapshot, True)
+    - If value same: updates existing snapshot's reading_count/valid_until, returns (existing, False)
+    """
+    from app.models.models import WinProbSnapshot
+
+    now = datetime.now(timezone.utc)
+
+    # Find the most recent snapshot for this event+source
+    result = await session.execute(
+        select(WinProbSnapshot)
+        .where(
+            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.source == source,
+        )
+        .order_by(WinProbSnapshot.captured_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+
+    # Compare home_win_probability (the primary value)
+    is_same = False
+    if existing is not None and existing.home_win_probability is not None and home_win_probability is not None:
+        is_same = float(existing.home_win_probability) == float(home_win_probability)
+
+    if existing is None or not is_same:
+        # Value changed — close out the old row and create a new one
+        if existing is not None:
+            existing.valid_until = now
+
+        snapshot = WinProbSnapshot(
+            event_id=event_id,
+            source=source,
+            home_win_probability=home_win_probability,
+            away_win_probability=away_win_probability,
+            game_state=game_state,
+            reading_count=1,
+        )
+        return snapshot, True
+    else:
+        # Same value — bump the counter
         existing.reading_count += 1
         existing.valid_until = now
         return existing, False
@@ -528,11 +593,11 @@ async def _poll_all_odds():
                         total_events += 1
 
                         # Create odds snapshots (with deduplication)
-                        # Track values for setting opening odds
-                        first_home_prob = None
-                        first_away_prob = None
-                        first_spread = None
-                        first_ou = None
+                        # Collect all bookmaker values for opening odds consensus
+                        all_home_probs = []
+                        all_away_probs = []
+                        all_spreads = []
+                        all_ous = []
 
                         for bookmaker in event_data.get("bookmakers", []):
                             snapshot, is_new = await _create_or_update_snapshot(
@@ -543,20 +608,30 @@ async def _poll_all_odds():
                             )
                             if is_new:
                                 session.add(snapshot)
-                                # Capture first valid odds for opening odds
-                                if first_home_prob is None and snapshot.home_win_probability:
-                                    first_home_prob = float(snapshot.home_win_probability)
-                                    first_away_prob = float(snapshot.away_win_probability) if snapshot.away_win_probability else None
-                                    first_spread = float(snapshot.home_spread) if snapshot.home_spread else None
-                                    first_ou = float(snapshot.over_under) if snapshot.over_under else None
+                            # Collect values from ALL bookmakers (new or existing)
+                            # for computing opening odds consensus
+                            if snapshot.home_win_probability:
+                                all_home_probs.append(float(snapshot.home_win_probability))
+                                if snapshot.away_win_probability:
+                                    all_away_probs.append(float(snapshot.away_win_probability))
+                                if snapshot.home_spread is not None:
+                                    all_spreads.append(float(snapshot.home_spread))
+                                if snapshot.over_under is not None:
+                                    all_ous.append(float(snapshot.over_under))
                             total_snapshots += 1
 
-                        # Set opening odds if this is the first time we have odds
-                        if first_home_prob is not None:
+                        # Update opening odds with consensus across all bookmakers
+                        # (keeps updating on every poll while game is scheduled)
+                        if all_home_probs:
+                            avg_home = sum(all_home_probs) / len(all_home_probs)
+                            avg_away = sum(all_away_probs) / len(all_away_probs) if all_away_probs else (1 - avg_home)
+                            avg_spread = sum(all_spreads) / len(all_spreads) if all_spreads else None
+                            avg_ou = sum(all_ous) / len(all_ous) if all_ous else None
                             await _maybe_set_opening_odds(
                                 session, event_id,
-                                first_home_prob, first_away_prob,
-                                first_spread, first_ou
+                                avg_home, avg_away,
+                                avg_spread, avg_ou,
+                                commence_time=commence_time,
                             )
 
                 except Exception as e:
@@ -667,7 +742,6 @@ async def _poll_all_odds():
                             ):
                                 try:
                                     from app.utils.win_probability import compute_statistical_win_prob
-                                    from app.models.models import WinProbSnapshot
 
                                     pregame_spread = None
                                     if event_obj.opening_home_spread is not None:
@@ -693,7 +767,8 @@ async def _poll_all_odds():
                                             sources["stat_model"] = round(stat_wp, 4)
                                             fresh_event.win_probability_sources = sources
 
-                                            stat_snap = WinProbSnapshot(
+                                            stat_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                                session,
                                                 event_id=event_obj.id,
                                                 source="stat_model",
                                                 home_win_probability=round(stat_wp, 4),
@@ -707,7 +782,8 @@ async def _poll_all_odds():
                                                     "source": "odds_poll",
                                                 },
                                             )
-                                            session.add(stat_snap)
+                                            if is_new:
+                                                session.add(stat_snap)
                                             stat_model_from_poll += 1
                                 except Exception as e:
                                     logger.warning(f"stat_model in odds poll failed for event {event_obj.id}: {e}")

@@ -2,6 +2,7 @@
 
 import pytest
 from app.utils.win_probability import (
+    _normalize_sport_key,
     compute_statistical_win_prob,
     parse_game_clock,
 )
@@ -260,3 +261,131 @@ class TestSuperBowlScenarios:
         )
         assert result is not None
         assert result > 0.99  # Game is over
+
+
+class TestSportKeyAliases:
+    """Test that Odds API sport key aliases work identically to canonical keys.
+
+    The database stores sport keys using The Odds API convention
+    (americanfootball_nfl, icehockey_nhl) but the model uses canonical
+    keys (football_nfl, hockey_nhl). The alias mapping must be transparent.
+    """
+
+    def test_normalize_nfl(self):
+        assert _normalize_sport_key("americanfootball_nfl") == "football_nfl"
+
+    def test_normalize_ncaaf(self):
+        assert _normalize_sport_key("americanfootball_ncaaf") == "football_ncaaf"
+
+    def test_normalize_nhl(self):
+        assert _normalize_sport_key("icehockey_nhl") == "hockey_nhl"
+
+    def test_normalize_passthrough(self):
+        """Keys that don't need aliasing should pass through unchanged."""
+        assert _normalize_sport_key("basketball_nba") == "basketball_nba"
+        assert _normalize_sport_key("football_nfl") == "football_nfl"
+
+    def test_parse_clock_americanfootball_nfl(self):
+        """parse_game_clock should work with americanfootball_nfl."""
+        canonical = parse_game_clock("7:30", "Q3", "football_nfl")
+        aliased = parse_game_clock("7:30", "Q3", "americanfootball_nfl")
+        assert canonical is not None
+        assert aliased == canonical
+
+    def test_parse_clock_americanfootball_ncaaf(self):
+        """parse_game_clock should work with americanfootball_ncaaf."""
+        canonical = parse_game_clock("10:00", "Q2", "football_ncaaf")
+        aliased = parse_game_clock("10:00", "Q2", "americanfootball_ncaaf")
+        assert canonical is not None
+        assert aliased == canonical
+
+    def test_parse_clock_icehockey_nhl(self):
+        """parse_game_clock should work with icehockey_nhl."""
+        canonical = parse_game_clock("15:00", "1st Period", "hockey_nhl")
+        aliased = parse_game_clock("15:00", "1st Period", "icehockey_nhl")
+        assert canonical is not None
+        assert aliased == canonical
+
+    def test_compute_win_prob_americanfootball_nfl(self):
+        """compute_statistical_win_prob should work with americanfootball_nfl."""
+        canonical = compute_statistical_win_prob(
+            home_score=21, away_score=14,
+            clock="7:30", period="Q3",
+            sport_key="football_nfl",
+            pregame_spread=-3,
+        )
+        aliased = compute_statistical_win_prob(
+            home_score=21, away_score=14,
+            clock="7:30", period="Q3",
+            sport_key="americanfootball_nfl",
+            pregame_spread=-3,
+        )
+        assert canonical is not None
+        assert aliased == canonical
+
+    def test_compute_win_prob_icehockey_nhl(self):
+        """compute_statistical_win_prob should work with icehockey_nhl."""
+        canonical = compute_statistical_win_prob(
+            home_score=3, away_score=1,
+            clock="10:00", period="3rd Period",
+            sport_key="hockey_nhl",
+            pregame_spread=0,
+        )
+        aliased = compute_statistical_win_prob(
+            home_score=3, away_score=1,
+            clock="10:00", period="3rd Period",
+            sport_key="icehockey_nhl",
+            pregame_spread=0,
+        )
+        assert canonical is not None
+        assert aliased == canonical
+
+    def test_super_bowl_with_odds_api_key(self):
+        """Simulate exactly how tasks.py calls the model for a Super Bowl game."""
+        result = compute_statistical_win_prob(
+            home_score=14, away_score=10,
+            clock="5:00", period="Q3",
+            sport_key="americanfootball_nfl",  # This is what tasks.py passes
+            pregame_spread=-1.5,
+        )
+        assert result is not None
+        assert result > 0.5  # Home team leading
+
+
+# All sport keys that tasks.py actually passes (The Odds API convention).
+# Every supported sport must work with both its canonical key AND its database key.
+ALL_DB_SPORT_KEYS = [
+    ("americanfootball_nfl", "7:30", "Q3", 21, 14),
+    ("americanfootball_ncaaf", "7:30", "Q3", 21, 14),
+    ("basketball_nba", "5:00", "Q4", 100, 95),
+    ("basketball_ncaab", "5:00", "2nd Half", 60, 55),
+    ("basketball_wncaab", "5:00", "Q4", 60, 55),
+    ("icehockey_nhl", "10:00", "3rd Period", 3, 1),
+]
+
+
+class TestAllSportsWithDatabaseKeys:
+    """Ensure every supported sport works when called with the actual database key.
+
+    This is the critical integration-style test: tasks.py always passes
+    The Odds API sport keys (e.g. americanfootball_nfl, icehockey_nhl),
+    never canonical keys. If a sport silently returns None here, it means
+    the stat model is broken for that sport in production.
+    """
+
+    @pytest.mark.parametrize("sport_key,clock,period,home,away", ALL_DB_SPORT_KEYS)
+    def test_parse_game_clock_with_db_key(self, sport_key, clock, period, home, away):
+        result = parse_game_clock(clock, period, sport_key)
+        assert result is not None, f"parse_game_clock returned None for db key {sport_key!r}"
+        assert result > 0
+
+    @pytest.mark.parametrize("sport_key,clock,period,home,away", ALL_DB_SPORT_KEYS)
+    def test_compute_win_prob_with_db_key(self, sport_key, clock, period, home, away):
+        result = compute_statistical_win_prob(
+            home_score=home, away_score=away,
+            clock=clock, period=period,
+            sport_key=sport_key,
+            pregame_spread=-3,
+        )
+        assert result is not None, f"compute_statistical_win_prob returned None for db key {sport_key!r}"
+        assert 0.001 <= result <= 0.999

@@ -343,8 +343,9 @@ async def _sync_espn_live_events():
 
                                     # Also write ESPN to generic win_prob_snapshots table
                                     try:
-                                        from app.models.models import WinProbSnapshot
-                                        espn_wp_snap = WinProbSnapshot(
+                                        from app.tasks.odds_polling import _create_or_update_win_prob_snapshot
+                                        espn_wp_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                            session,
                                             event_id=event.id,
                                             source="espn",
                                             home_win_probability=ee.home_win_probability,
@@ -356,7 +357,8 @@ async def _sync_espn_live_events():
                                                 "away_score": ee.away_score,
                                             },
                                         )
-                                        session.add(espn_wp_snap)
+                                        if is_new:
+                                            session.add(espn_wp_snap)
                                     except Exception:
                                         pass  # Table may not exist yet
 
@@ -364,7 +366,6 @@ async def _sync_espn_live_events():
                                 if ee.status == "in" and ee.home_score is not None and ee.away_score is not None and ee.clock:
                                     try:
                                         from app.utils.win_probability import compute_statistical_win_prob
-                                        from app.models.models import WinProbSnapshot
 
                                         # Use opening spread if available
                                         pregame_spread = None
@@ -390,7 +391,9 @@ async def _sync_espn_live_events():
                                             event.win_probability_sources = sources
                                             changed = True
 
-                                            stat_snap = WinProbSnapshot(
+                                            from app.tasks.odds_polling import _create_or_update_win_prob_snapshot
+                                            stat_snap, is_new = await _create_or_update_win_prob_snapshot(
+                                                session,
                                                 event_id=event.id,
                                                 source="stat_model",
                                                 home_win_probability=round(stat_wp, 4),
@@ -403,7 +406,8 @@ async def _sync_espn_live_events():
                                                     "pregame_spread": pregame_spread,
                                                 },
                                             )
-                                            session.add(stat_snap)
+                                            if is_new:
+                                                session.add(stat_snap)
                                             stats["stat_model_computed"] = stats.get("stat_model_computed", 0) + 1
                                         else:
                                             logger.warning(

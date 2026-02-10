@@ -16,10 +16,12 @@ from app.utils import (
     project_scores,
     calculate_gei,
     aggregate_bookmaker_odds,
+    detect_reversed_bookmakers,
     compute_highlight,
     get_highlight_label,
     should_highlight,
 )
+from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 
 router = APIRouter()
 
@@ -513,11 +515,25 @@ async def search_events(
         for snap in all_snapshots:
             snapshots_by_event[snap.event_id].append(snap)
 
+        # Build event lookups for stale bookmaker filtering
+        event_info_map = {e.id: e for e in events}
+
         for event_id, snaps in snapshots_by_event.items():
-            latest_time = max(s.captured_at for s in snaps) if snaps else None
+            ev = event_info_map.get(event_id)
+            all_snaps = snaps  # Keep unfiltered for bookmaker table
+            filtered_snaps = _filter_stale_bookmaker_snapshots(
+                snaps,
+                event_status=(ev.status if ev else "scheduled"),
+                commence_time=(ev.commence_time if ev else None),
+            )
+            # Exclude bookmakers with reversed home/away odds from aggregation
+            reversed_bks = detect_reversed_bookmakers(filtered_snaps)
+            agg_snaps = [s for s in filtered_snaps if s.bookmaker not in reversed_bks] if reversed_bks else filtered_snaps
+            latest_time = max(s.captured_at for s in filtered_snaps) if filtered_snaps else None
             aggregated_odds_map[event_id] = {
-                "snapshots": snaps,
-                "aggregated": aggregate_bookmaker_odds(snaps),
+                "snapshots": filtered_snaps,
+                "all_snapshots": all_snaps,
+                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
 
@@ -1015,11 +1031,25 @@ async def list_events(
         for snap in all_snapshots:
             snapshots_by_event[snap.event_id].append(snap)
 
+        # Build event lookups for stale bookmaker filtering
+        event_info_map = {e.id: e for e in events}
+
         for event_id, snaps in snapshots_by_event.items():
-            latest_time = max(s.captured_at for s in snaps) if snaps else None
+            ev = event_info_map.get(event_id)
+            all_snaps = snaps  # Keep unfiltered for bookmaker table
+            filtered_snaps = _filter_stale_bookmaker_snapshots(
+                snaps,
+                event_status=(ev.status if ev else "scheduled"),
+                commence_time=(ev.commence_time if ev else None),
+            )
+            # Exclude bookmakers with reversed home/away odds from aggregation
+            reversed_bks = detect_reversed_bookmakers(filtered_snaps)
+            agg_snaps = [s for s in filtered_snaps if s.bookmaker not in reversed_bks] if reversed_bks else filtered_snaps
+            latest_time = max(s.captured_at for s in filtered_snaps) if filtered_snaps else None
             aggregated_odds_map[event_id] = {
-                "snapshots": snaps,
-                "aggregated": aggregate_bookmaker_odds(snaps),
+                "snapshots": filtered_snaps,
+                "all_snapshots": all_snaps,
+                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
 
@@ -1144,206 +1174,6 @@ async def get_live_odds(sport_key: str):
         )
 
 
-@router.get("/{event_id}/props")
-async def get_event_props(event_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Fetch player prop bets for an event from The Odds API, converted to probabilities.
-
-    Returns props grouped by category (Passing, Rushing, Receiving, Scoring, Kicking)
-    with vig-removed implied probabilities for each outcome.
-    """
-    from app.utils.odds_math import american_to_probability, remove_vig
-
-    # Look up event to get external_id and sport
-    result = await db.execute(
-        select(Event)
-        .options(selectinload(Event.sport))
-        .where(Event.id == event_id)
-    )
-    event = result.scalar_one_or_none()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    if not event.external_id or not event.sport:
-        raise HTTPException(
-            status_code=400,
-            detail="Event missing external ID or sport data"
-        )
-
-    sport_key = event.sport.key if event.sport else event.sport_key
-
-    # Map market keys to human-readable names and categories
-    PROP_MARKET_INFO = {
-        "player_pass_tds": {"name": "Pass TDs", "category": "Passing"},
-        "player_pass_yds": {"name": "Pass Yards", "category": "Passing"},
-        "player_pass_completions": {"name": "Completions", "category": "Passing"},
-        "player_pass_interceptions": {"name": "Interceptions", "category": "Passing"},
-        "player_rush_yds": {"name": "Rush Yards", "category": "Rushing"},
-        "player_reception_yds": {"name": "Rec Yards", "category": "Receiving"},
-        "player_receptions": {"name": "Receptions", "category": "Receiving"},
-        "player_anytime_td": {"name": "Anytime TD", "category": "Scoring"},
-        "player_first_td": {"name": "First TD", "category": "Scoring"},
-        "player_kicking_points": {"name": "Kicker Points", "category": "Kicking"},
-    }
-
-    service = OddsAPIService()
-
-    # Try each market individually — The Odds API returns 422 if ANY requested
-    # market isn't available, so we fetch one at a time and skip failures.
-    all_bookmakers_data = []
-    available_markets = []
-    errors = []
-
-    try:
-        for market_key in PROP_MARKET_INFO.keys():
-            try:
-                api_data = await service.get_event_odds(
-                    sport_key=sport_key,
-                    event_id=event.external_id,
-                    markets=market_key,
-                )
-                for bookmaker in api_data.get("bookmakers", []):
-                    all_bookmakers_data.append(bookmaker)
-                available_markets.append(market_key)
-            except Exception:
-                errors.append(market_key)
-                continue
-    except Exception as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Unable to fetch props: {str(e)}"
-        )
-    finally:
-        await service.close()
-
-    if not all_bookmakers_data:
-        return {
-            "event_id": event_id,
-            "home_team": event.home_team_name,
-            "away_team": event.away_team_name,
-            "categories": [],
-            "total_props": 0,
-            "available_markets": available_markets,
-            "unavailable_markets": errors,
-        }
-
-    # Parse and aggregate props across bookmakers
-    # Key: (player, market_key, line) -> list of {over_odds, under_odds} or {yes_odds}
-    from collections import defaultdict
-    prop_aggregator = defaultdict(lambda: {"over_odds": [], "under_odds": [], "yes_odds": [], "no_odds": []})
-
-    TD_MARKETS = ("player_anytime_td", "player_first_td")
-
-    for bookmaker in all_bookmakers_data:
-        for market in bookmaker.get("markets", []):
-            market_key = market["key"]
-            if market_key not in PROP_MARKET_INFO:
-                continue
-
-            for outcome in market.get("outcomes", []):
-                price = outcome.get("price")
-                if price is None:
-                    continue
-
-                name = outcome.get("name", "")
-                description = outcome.get("description", "")
-                line = outcome.get("point")
-
-                if market_key in TD_MARKETS:
-                    # For TD markets: name=player, description=player (or empty)
-                    # Each outcome is a different player with yes/no implied
-                    player = description or name
-                    if player in ("Yes", "No"):
-                        continue  # Skip generic yes/no, we want player-specific
-                    key = (player, market_key, line)
-                    prop_aggregator[key]["yes_odds"].append(price)
-                else:
-                    # Standard over/under prop
-                    player = description or name
-                    key = (player, market_key, line)
-                    if name == "Over":
-                        prop_aggregator[key]["over_odds"].append(price)
-                    elif name == "Under":
-                        prop_aggregator[key]["under_odds"].append(price)
-
-    # Build response grouped by category
-    from statistics import median
-    categories = defaultdict(list)
-
-    for (player, market_key, line), odds_data in prop_aggregator.items():
-        info = PROP_MARKET_INFO[market_key]
-
-        prop_entry = {
-            "player": player,
-            "type": info["name"],
-            "market_key": market_key,
-            "line": line,
-        }
-
-        if odds_data["over_odds"] and odds_data["under_odds"]:
-            # Over/Under prop - aggregate via median
-            med_over = int(median(odds_data["over_odds"]))
-            med_under = int(median(odds_data["under_odds"]))
-            over_prob = american_to_probability(med_over)
-            under_prob = american_to_probability(med_under)
-            # Remove vig
-            over_fair, under_fair = remove_vig(over_prob, under_prob)
-            prop_entry["over_probability"] = round(over_fair, 4)
-            prop_entry["under_probability"] = round(under_fair, 4)
-            prop_entry["over_odds"] = med_over
-            prop_entry["under_odds"] = med_under
-            prop_entry["bookmaker_count"] = min(len(odds_data["over_odds"]), len(odds_data["under_odds"]))
-        elif odds_data["yes_odds"]:
-            # Yes/No prop (anytime TD, first TD)
-            med_yes = int(median(odds_data["yes_odds"]))
-            yes_prob = american_to_probability(med_yes)
-            # For TD props, estimate no probability from yes
-            yes_fair = min(yes_prob, 0.99)  # Cap to avoid division issues
-            prop_entry["probability"] = round(yes_fair, 4)
-            prop_entry["american_odds"] = med_yes
-            prop_entry["bookmaker_count"] = len(odds_data["yes_odds"])
-        else:
-            continue
-
-        categories[info["category"]].append(prop_entry)
-
-    # Deduplicate: for over/under props, keep only the most popular line
-    # per player+type (the one with the most bookmakers)
-    for cat in categories:
-        deduped = {}
-        for prop in categories[cat]:
-            dedup_key = (prop["player"], prop["market_key"])
-            existing = deduped.get(dedup_key)
-            if existing is None or prop.get("bookmaker_count", 0) > existing.get("bookmaker_count", 0):
-                deduped[dedup_key] = prop
-        categories[cat] = list(deduped.values())
-
-    # Sort: TD props by probability descending, others by player name
-    for cat in categories:
-        if cat == "Scoring":
-            categories[cat].sort(key=lambda p: -(p.get("probability", 0)))
-
-    # Order categories
-    category_order = ["Passing", "Rushing", "Receiving", "Scoring", "Kicking"]
-    ordered_categories = []
-    for cat in category_order:
-        if cat in categories:
-            ordered_categories.append({
-                "category": cat,
-                "props": categories[cat],
-            })
-
-    return {
-        "event_id": event_id,
-        "home_team": event.home_team_name,
-        "away_team": event.away_team_name,
-        "categories": ordered_categories,
-        "total_props": sum(len(c["props"]) for c in ordered_categories),
-        "available_markets": available_markets,
-        "unavailable_markets": errors,
-    }
-
-
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
@@ -1375,11 +1205,24 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             if s.bookmaker not in latest_by_bookmaker or s.captured_at > latest_by_bookmaker[s.bookmaker].captured_at:
                 latest_by_bookmaker[s.bookmaker] = s
 
-        latest_snapshots = list(latest_by_bookmaker.values())
-        latest_time = max(s.captured_at for s in latest_snapshots)
+        all_latest_snapshots = list(latest_by_bookmaker.values())
 
-        # Aggregate across bookmakers
-        aggregated = aggregate_bookmaker_odds(latest_snapshots)
+        # Filter for aggregation: exclude pre-game-only bookmakers from consensus
+        filtered_snapshots = _filter_stale_bookmaker_snapshots(
+            all_latest_snapshots,
+            event_status=event.status,
+            commence_time=event.commence_time,
+        )
+        latest_time = max(s.captured_at for s in filtered_snapshots)
+
+        # Detect bookmakers with reversed home/away odds
+        reversed_bookmakers = detect_reversed_bookmakers(filtered_snapshots)
+
+        # Aggregate across bookmakers (exclude reversed ones)
+        agg_snapshots = [s for s in filtered_snapshots if s.bookmaker not in reversed_bookmakers]
+        if not agg_snapshots:
+            agg_snapshots = filtered_snapshots  # fallback: use all if all were flagged
+        aggregated = aggregate_bookmaker_odds(agg_snapshots)
 
         response["current_odds"] = {
             "captured_at": latest_time.isoformat(),
@@ -1396,27 +1239,47 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             },
         }
 
-        # Also include individual bookmaker odds for transparency
-        # Include captured_at so users can see when each book last updated
-        response["bookmaker_odds"] = [
-            {
-                "bookmaker": s.bookmaker,
-                "home_moneyline": s.home_moneyline,
-                "away_moneyline": s.away_moneyline,
-                "home_probability": float(s.home_win_probability)
-                    if s.home_win_probability else None,
-                "away_probability": float(s.away_win_probability)
-                    if s.away_win_probability else None,
-                "captured_at": s.captured_at.isoformat(),
-                "spread": float(s.home_spread) if s.home_spread else None,
-                "over_under": float(s.over_under) if s.over_under else None,
-                "projected_home_score": float(s.projected_home_score)
-                    if s.projected_home_score else None,
-                "projected_away_score": float(s.projected_away_score)
-                    if s.projected_away_score else None,
-            }
-            for s in latest_snapshots
-        ]
+        # Show ALL bookmakers in the table (not just filtered ones)
+        # so users see every book we ever had odds from.
+        # Detect reversed bookmakers across all snapshots for display correction.
+        all_reversed = detect_reversed_bookmakers(all_latest_snapshots)
+        bookmaker_odds_list = []
+        for s in all_latest_snapshots:
+            if s.bookmaker in all_reversed:
+                bookmaker_odds_list.append({
+                    "bookmaker": s.bookmaker,
+                    "home_moneyline": s.away_moneyline,
+                    "away_moneyline": s.home_moneyline,
+                    "home_probability": float(s.away_win_probability)
+                        if s.away_win_probability else None,
+                    "away_probability": float(s.home_win_probability)
+                        if s.home_win_probability else None,
+                    "captured_at": s.captured_at.isoformat(),
+                    "spread": -float(s.home_spread) if s.home_spread else None,
+                    "over_under": float(s.over_under) if s.over_under else None,
+                    "projected_home_score": float(s.projected_away_score)
+                        if s.projected_away_score else None,
+                    "projected_away_score": float(s.projected_home_score)
+                        if s.projected_home_score else None,
+                })
+            else:
+                bookmaker_odds_list.append({
+                    "bookmaker": s.bookmaker,
+                    "home_moneyline": s.home_moneyline,
+                    "away_moneyline": s.away_moneyline,
+                    "home_probability": float(s.home_win_probability)
+                        if s.home_win_probability else None,
+                    "away_probability": float(s.away_win_probability)
+                        if s.away_win_probability else None,
+                    "captured_at": s.captured_at.isoformat(),
+                    "spread": float(s.home_spread) if s.home_spread else None,
+                    "over_under": float(s.over_under) if s.over_under else None,
+                    "projected_home_score": float(s.projected_home_score)
+                        if s.projected_home_score else None,
+                    "projected_away_score": float(s.projected_away_score)
+                        if s.projected_away_score else None,
+                })
+        response["bookmaker_odds"] = bookmaker_odds_list
 
     return response
 
@@ -1514,11 +1377,13 @@ async def get_event_odds_history(
             if end_key != time_key:
                 snapshots_by_time[end_key].append(snap)
 
-    # Aggregate each time bucket
+    # Aggregate each time bucket (excluding reversed bookmakers)
     history = []
     for timestamp in sorted(snapshots_by_time.keys()):
         snaps = snapshots_by_time[timestamp]
-        aggregated = aggregate_bookmaker_odds(snaps)
+        reversed_bks = detect_reversed_bookmakers(snaps)
+        agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
+        aggregated = aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps)
 
         history.append({
             "timestamp": timestamp.isoformat(),
@@ -2044,27 +1909,48 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             },
         }
 
-        # Include individual bookmaker odds for transparency
-        if snapshots:
-            response["bookmaker_odds"] = [
-                {
-                    "bookmaker": s.bookmaker,
-                    "home_moneyline": s.home_moneyline,
-                    "away_moneyline": s.away_moneyline,
-                    "home_probability": float(s.home_win_probability)
-                        if s.home_win_probability else None,
-                    "away_probability": float(s.away_win_probability)
-                        if s.away_win_probability else None,
-                    "captured_at": s.captured_at.isoformat(),
-                    "spread": float(s.home_spread) if s.home_spread else None,
-                    "over_under": float(s.over_under) if s.over_under else None,
-                    "projected_home_score": float(s.projected_home_score)
-                        if s.projected_home_score else None,
-                    "projected_away_score": float(s.projected_away_score)
-                        if s.projected_away_score else None,
-                }
-                for s in snapshots
-            ]
+        # Include ALL bookmakers in the table (not just filtered ones)
+        # so users see every book we ever had odds from
+        all_snapshots = odds_data.get("all_snapshots", snapshots)
+        if all_snapshots:
+            reversed_bks = detect_reversed_bookmakers(all_snapshots)
+            bookmaker_odds_list = []
+            for s in all_snapshots:
+                if s.bookmaker in reversed_bks:
+                    bookmaker_odds_list.append({
+                        "bookmaker": s.bookmaker,
+                        "home_moneyline": s.away_moneyline,
+                        "away_moneyline": s.home_moneyline,
+                        "home_probability": float(s.away_win_probability)
+                            if s.away_win_probability else None,
+                        "away_probability": float(s.home_win_probability)
+                            if s.home_win_probability else None,
+                        "captured_at": s.captured_at.isoformat(),
+                        "spread": -float(s.home_spread) if s.home_spread else None,
+                        "over_under": float(s.over_under) if s.over_under else None,
+                        "projected_home_score": float(s.projected_away_score)
+                            if s.projected_away_score else None,
+                        "projected_away_score": float(s.projected_home_score)
+                            if s.projected_home_score else None,
+                    })
+                else:
+                    bookmaker_odds_list.append({
+                        "bookmaker": s.bookmaker,
+                        "home_moneyline": s.home_moneyline,
+                        "away_moneyline": s.away_moneyline,
+                        "home_probability": float(s.home_win_probability)
+                            if s.home_win_probability else None,
+                        "away_probability": float(s.away_win_probability)
+                            if s.away_win_probability else None,
+                        "captured_at": s.captured_at.isoformat(),
+                        "spread": float(s.home_spread) if s.home_spread else None,
+                        "over_under": float(s.over_under) if s.over_under else None,
+                        "projected_home_score": float(s.projected_home_score)
+                            if s.projected_home_score else None,
+                        "projected_away_score": float(s.projected_away_score)
+                            if s.projected_away_score else None,
+                    })
+            response["bookmaker_odds"] = bookmaker_odds_list
 
     # Compute highlight data
     highlight_result = compute_highlight(

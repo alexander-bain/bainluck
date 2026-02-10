@@ -10,6 +10,7 @@ from app.utils.odds_math import (
     probability_to_american,
     aggregate_probabilities,
     aggregate_bookmaker_odds,
+    detect_reversed_bookmakers,
 )
 from app.utils.highlights import (
     compute_highlight,
@@ -44,6 +45,7 @@ __all__ = [
     "probability_to_american",
     "aggregate_probabilities",
     "aggregate_bookmaker_odds",
+    "detect_reversed_bookmakers",
     "compute_highlight",
     "get_highlight_label",
     "should_highlight",
