@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from app.utils.team_linking import (
     compute_market_tier,
+    compute_relevance_score,
     _normalize_name,
     _names_match,
     match_outcome_to_team,
@@ -331,3 +332,141 @@ class TestMarketTierEdgeCases:
 
     def test_nba_finals_is_championship(self):
         assert compute_market_tier("NBA Finals Winner") == 1
+
+
+# =============================================================================
+# Relevance Scoring
+# =============================================================================
+class TestComputeRelevanceScore:
+    """Test the contextual relevance scoring formula."""
+
+    def test_returns_score_and_reason(self):
+        score, reason = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.01, days_to_resolution=60,
+        )
+        assert isinstance(score, float)
+        assert isinstance(reason, str)
+        assert 0 <= score <= 100
+
+    def test_championship_scores_higher_than_prop(self):
+        """Tier 1 (championship) should score higher than tier 5 (prop), all else equal."""
+        champ_score, _ = compute_relevance_score(
+            market_tier=1, probability=0.25,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        prop_score, _ = compute_relevance_score(
+            market_tier=5, probability=0.25,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        assert champ_score > prop_score
+
+    def test_moving_market_scores_higher(self):
+        """A market moving 3% today should score higher than one that's flat."""
+        moving_score, moving_reason = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.03, days_to_resolution=90,
+        )
+        flat_score, flat_reason = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        assert moving_score > flat_score
+        assert moving_reason == "moving today"
+
+    def test_near_threshold_bonus(self):
+        """49% probability (near 50%) should score higher than 37%."""
+        near_50, reason_50 = compute_relevance_score(
+            market_tier=1, probability=0.49,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        at_37, _ = compute_relevance_score(
+            market_tier=1, probability=0.37,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        assert near_50 > at_37
+
+    def test_very_low_probability_scores_low(self):
+        """< 1% probability should contribute nothing to prob score."""
+        low_score, _ = compute_relevance_score(
+            market_tier=1, probability=0.005,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        moderate_score, _ = compute_relevance_score(
+            market_tier=1, probability=0.25,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        assert moderate_score > low_score
+
+    def test_urgency_resolves_soon(self):
+        """Market resolving in 7 days should score higher than one in 180 days."""
+        soon_score, soon_reason = compute_relevance_score(
+            market_tier=3, probability=0.15,
+            probability_change_24h=0.0, days_to_resolution=7,
+        )
+        far_score, _ = compute_relevance_score(
+            market_tier=3, probability=0.15,
+            probability_change_24h=0.0, days_to_resolution=180,
+        )
+        assert soon_score > far_score
+        assert soon_reason == "resolves soon"
+
+    def test_reason_moving_today(self):
+        _, reason = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.025, days_to_resolution=90,
+        )
+        assert reason == "moving today"
+
+    def test_reason_shifting(self):
+        _, reason = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.008, days_to_resolution=90,
+        )
+        assert reason == "shifting"
+
+    def test_reason_championship_context(self):
+        """Flat championship market should say 'championship context'."""
+        _, reason = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        assert reason == "championship context"
+
+    def test_reason_award_watch(self):
+        _, reason = compute_relevance_score(
+            market_tier=3, probability=0.15,
+            probability_change_24h=0.0, days_to_resolution=90,
+        )
+        assert reason == "award watch"
+
+    def test_none_values_handled(self):
+        """All None values should not crash."""
+        score, reason = compute_relevance_score(
+            market_tier=None, probability=None,
+            probability_change_24h=None, days_to_resolution=None,
+        )
+        assert score >= 0
+        assert isinstance(reason, str)
+
+    def test_high_liquidity_bonus(self):
+        """More bookmakers should give slightly higher score."""
+        high_liq, _ = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.0, days_to_resolution=90,
+            bookmaker_count=10,
+        )
+        low_liq, _ = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=0.0, days_to_resolution=90,
+            bookmaker_count=1,
+        )
+        assert high_liq > low_liq
+
+    def test_negative_change_treated_as_movement(self):
+        """Negative probability change should still count as movement."""
+        score, reason = compute_relevance_score(
+            market_tier=1, probability=0.30,
+            probability_change_24h=-0.03, days_to_resolution=90,
+        )
+        assert reason == "moving today"

@@ -6,7 +6,7 @@ from statistics import mean
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -311,6 +311,110 @@ async def get_futures_market(
         bookmakers = [row[0] for row in bookmakers_result.all()]
 
     return _format_market_detail(market, bookmakers)
+
+
+@router.get("/{market_id}/related-events")
+async def get_related_events(
+    market_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get upcoming and live events related to a futures market.
+
+    Finds events where home or away team has a linked outcome in this market.
+    Returns events sorted: live first, then upcoming by commence_time.
+    """
+    from app.models import Event, Team
+
+    # Load market with outcomes (need team_ids)
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.id == market_id)
+    )
+    market = result.scalar_one_or_none()
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+
+    # Get all team_ids from linked outcomes
+    team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
+    if not team_ids:
+        return {
+            "market_id": market_id,
+            "market_name": market.name,
+            "events": [],
+        }
+
+    # Build team_id → outcome mapping for context
+    team_outcome_map = {}
+    for o in market.outcomes:
+        if o.team_id:
+            team_outcome_map[o.team_id] = {
+                "outcome_name": o.name,
+                "probability": float(o.current_probability) if o.current_probability else None,
+                "american_odds": o.current_american_odds,
+                "rank": o.rank,
+            }
+
+    # Find events where either team is linked
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=1)  # Include recently completed games
+    week_ahead = now + timedelta(days=7)
+
+    events_result = await db.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            or_(
+                Event.home_team_id.in_(team_ids),
+                Event.away_team_id.in_(team_ids),
+            ),
+            Event.commence_time.between(week_ago, week_ahead),
+        )
+        .order_by(
+            # Live first, then upcoming, then completed
+            case(
+                (Event.status == "live", 0),
+                (Event.status == "scheduled", 1),
+                else_=2,
+            ),
+            Event.commence_time.asc(),
+        )
+        .limit(20)
+    )
+    events = events_result.scalars().all()
+
+    formatted_events = []
+    for event in events:
+        # Determine which team in this event is linked to the market
+        linked_teams = []
+        for team_id in [event.home_team_id, event.away_team_id]:
+            if team_id in team_outcome_map:
+                side = "home" if team_id == event.home_team_id else "away"
+                linked_teams.append({
+                    "side": side,
+                    "team_name": event.home_team_name if side == "home" else event.away_team_name,
+                    **team_outcome_map[team_id],
+                })
+
+        formatted_events.append({
+            "event_id": event.id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            "commence_time": event.commence_time.isoformat(),
+            "status": event.status,
+            "sport": event.sport.key if event.sport else None,
+            "home_score": event.home_score,
+            "away_score": event.away_score,
+            "linked_teams": linked_teams,
+        })
+
+    return {
+        "market_id": market_id,
+        "market_name": market.name,
+        "events": formatted_events,
+        "total_count": len(formatted_events),
+    }
 
 
 @router.get("/{market_id}/history")
