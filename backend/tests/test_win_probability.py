@@ -350,3 +350,42 @@ class TestSportKeyAliases:
         )
         assert result is not None
         assert result > 0.5  # Home team leading
+
+
+# All sport keys that tasks.py actually passes (The Odds API convention).
+# Every supported sport must work with both its canonical key AND its database key.
+ALL_DB_SPORT_KEYS = [
+    ("americanfootball_nfl", "7:30", "Q3", 21, 14),
+    ("americanfootball_ncaaf", "7:30", "Q3", 21, 14),
+    ("basketball_nba", "5:00", "Q4", 100, 95),
+    ("basketball_ncaab", "5:00", "2nd Half", 60, 55),
+    ("basketball_wncaab", "5:00", "Q4", 60, 55),
+    ("icehockey_nhl", "10:00", "3rd Period", 3, 1),
+]
+
+
+class TestAllSportsWithDatabaseKeys:
+    """Ensure every supported sport works when called with the actual database key.
+
+    This is the critical integration-style test: tasks.py always passes
+    The Odds API sport keys (e.g. americanfootball_nfl, icehockey_nhl),
+    never canonical keys. If a sport silently returns None here, it means
+    the stat model is broken for that sport in production.
+    """
+
+    @pytest.mark.parametrize("sport_key,clock,period,home,away", ALL_DB_SPORT_KEYS)
+    def test_parse_game_clock_with_db_key(self, sport_key, clock, period, home, away):
+        result = parse_game_clock(clock, period, sport_key)
+        assert result is not None, f"parse_game_clock returned None for db key {sport_key!r}"
+        assert result > 0
+
+    @pytest.mark.parametrize("sport_key,clock,period,home,away", ALL_DB_SPORT_KEYS)
+    def test_compute_win_prob_with_db_key(self, sport_key, clock, period, home, away):
+        result = compute_statistical_win_prob(
+            home_score=home, away_score=away,
+            clock=clock, period=period,
+            sport_key=sport_key,
+            pregame_spread=-3,
+        )
+        assert result is not None, f"compute_statistical_win_prob returned None for db key {sport_key!r}"
+        assert 0.001 <= result <= 0.999
