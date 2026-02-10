@@ -380,26 +380,6 @@ export interface EventPropsResponse {
   total_props: number;
 }
 
-// Super Bowl commercial types
-export interface Commercial {
-  rank: number;
-  video_id: string;
-  title: string;
-  brand: string;
-  thumbnail: string;
-  view_count: number;
-  view_count_display: string;
-  like_count: number;
-  published_at: string;
-  youtube_url: string;
-}
-
-export interface CommercialLeaderboardResponse {
-  query: string;
-  total: number;
-  commercials: Commercial[];
-}
-
 // Search types
 export interface SearchPagination {
   total_results: number;

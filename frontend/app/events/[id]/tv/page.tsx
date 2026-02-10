@@ -13,7 +13,6 @@ import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import ProbabilityBar from "@/components/ProbabilityBar";
 import Confetti from "@/components/party/Confetti";
 import PulseECG from "@/components/party/PulseECG";
-// CommercialLeaderboard removed — replaced by TVAdLeaderboard with YouTube API
 import type {
   OddsHistoryPoint,
   ESPNHistoryPoint,
