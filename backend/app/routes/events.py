@@ -520,18 +520,20 @@ async def search_events(
 
         for event_id, snaps in snapshots_by_event.items():
             ev = event_info_map.get(event_id)
-            snaps = _filter_stale_bookmaker_snapshots(
+            all_snaps = snaps  # Keep unfiltered for bookmaker table
+            filtered_snaps = _filter_stale_bookmaker_snapshots(
                 snaps,
                 event_status=(ev.status if ev else "scheduled"),
                 commence_time=(ev.commence_time if ev else None),
             )
             # Exclude bookmakers with reversed home/away odds from aggregation
-            reversed_bks = detect_reversed_bookmakers(snaps)
-            agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
-            latest_time = max(s.captured_at for s in snaps) if snaps else None
+            reversed_bks = detect_reversed_bookmakers(filtered_snaps)
+            agg_snaps = [s for s in filtered_snaps if s.bookmaker not in reversed_bks] if reversed_bks else filtered_snaps
+            latest_time = max(s.captured_at for s in filtered_snaps) if filtered_snaps else None
             aggregated_odds_map[event_id] = {
-                "snapshots": snaps,
-                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps),
+                "snapshots": filtered_snaps,
+                "all_snapshots": all_snaps,
+                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
 
@@ -1034,18 +1036,20 @@ async def list_events(
 
         for event_id, snaps in snapshots_by_event.items():
             ev = event_info_map.get(event_id)
-            snaps = _filter_stale_bookmaker_snapshots(
+            all_snaps = snaps  # Keep unfiltered for bookmaker table
+            filtered_snaps = _filter_stale_bookmaker_snapshots(
                 snaps,
                 event_status=(ev.status if ev else "scheduled"),
                 commence_time=(ev.commence_time if ev else None),
             )
             # Exclude bookmakers with reversed home/away odds from aggregation
-            reversed_bks = detect_reversed_bookmakers(snaps)
-            agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
-            latest_time = max(s.captured_at for s in snaps) if snaps else None
+            reversed_bks = detect_reversed_bookmakers(filtered_snaps)
+            agg_snaps = [s for s in filtered_snaps if s.bookmaker not in reversed_bks] if reversed_bks else filtered_snaps
+            latest_time = max(s.captured_at for s in filtered_snaps) if filtered_snaps else None
             aggregated_odds_map[event_id] = {
-                "snapshots": snaps,
-                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps),
+                "snapshots": filtered_snaps,
+                "all_snapshots": all_snaps,
+                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
 
@@ -1401,21 +1405,23 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             if s.bookmaker not in latest_by_bookmaker or s.captured_at > latest_by_bookmaker[s.bookmaker].captured_at:
                 latest_by_bookmaker[s.bookmaker] = s
 
-        latest_snapshots = list(latest_by_bookmaker.values())
-        latest_snapshots = _filter_stale_bookmaker_snapshots(
-            latest_snapshots,
+        all_latest_snapshots = list(latest_by_bookmaker.values())
+
+        # Filter for aggregation: exclude pre-game-only bookmakers from consensus
+        filtered_snapshots = _filter_stale_bookmaker_snapshots(
+            all_latest_snapshots,
             event_status=event.status,
             commence_time=event.commence_time,
         )
-        latest_time = max(s.captured_at for s in latest_snapshots)
+        latest_time = max(s.captured_at for s in filtered_snapshots)
 
         # Detect bookmakers with reversed home/away odds
-        reversed_bookmakers = detect_reversed_bookmakers(latest_snapshots)
+        reversed_bookmakers = detect_reversed_bookmakers(filtered_snapshots)
 
         # Aggregate across bookmakers (exclude reversed ones)
-        agg_snapshots = [s for s in latest_snapshots if s.bookmaker not in reversed_bookmakers]
+        agg_snapshots = [s for s in filtered_snapshots if s.bookmaker not in reversed_bookmakers]
         if not agg_snapshots:
-            agg_snapshots = latest_snapshots  # fallback: use all if all were flagged
+            agg_snapshots = filtered_snapshots  # fallback: use all if all were flagged
         aggregated = aggregate_bookmaker_odds(agg_snapshots)
 
         response["current_odds"] = {
@@ -1433,12 +1439,13 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             },
         }
 
-        # Also include individual bookmaker odds for transparency
-        # Include captured_at so users can see when each book last updated
-        # Correct reversed bookmakers by swapping their home/away values
+        # Show ALL bookmakers in the table (not just filtered ones)
+        # so users see every book we ever had odds from.
+        # Detect reversed bookmakers across all snapshots for display correction.
+        all_reversed = detect_reversed_bookmakers(all_latest_snapshots)
         bookmaker_odds_list = []
-        for s in latest_snapshots:
-            if s.bookmaker in reversed_bookmakers:
+        for s in all_latest_snapshots:
+            if s.bookmaker in all_reversed:
                 bookmaker_odds_list.append({
                     "bookmaker": s.bookmaker,
                     "home_moneyline": s.away_moneyline,
@@ -2102,12 +2109,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             },
         }
 
-        # Include individual bookmaker odds for transparency
-        # Correct reversed bookmakers by swapping their home/away values
-        if snapshots:
-            reversed_bks = detect_reversed_bookmakers(snapshots)
+        # Include ALL bookmakers in the table (not just filtered ones)
+        # so users see every book we ever had odds from
+        all_snapshots = odds_data.get("all_snapshots", snapshots)
+        if all_snapshots:
+            reversed_bks = detect_reversed_bookmakers(all_snapshots)
             bookmaker_odds_list = []
-            for s in snapshots:
+            for s in all_snapshots:
                 if s.bookmaker in reversed_bks:
                     bookmaker_odds_list.append({
                         "bookmaker": s.bookmaker,
