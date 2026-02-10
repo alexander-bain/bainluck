@@ -1789,24 +1789,33 @@ async def get_espn_task_status(
 @router.post("/snapshots/collapse")
 async def trigger_snapshot_collapse(
     secret: str = Query(..., description="Admin secret for authorization"),
+    table: str = Query("odds", description="Table to collapse: 'odds', 'winprob', or 'futures'"),
+    limit: int = Query(200, description="Max events/outcomes to process per run"),
     min_age_hours: int = Query(48, description="Only collapse snapshots older than this many hours"),
 ):
-    """Trigger retroactive snapshot collapsing (runs as background Celery task).
+    """Trigger retroactive snapshot collapsing for one table (runs as background Celery task).
 
-    Collapses consecutive identical snapshot rows across odds_snapshots,
-    win_prob_snapshots, and futures_odds_snapshots. Lossless — original
+    Collapses consecutive identical snapshot rows. Lossless — original
     time series can be reconstructed from collapsed rows.
+
+    Run once per table: table=odds, table=winprob, table=futures.
+    Use limit to control batch size (default 200 events/outcomes per run).
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
+    if table not in ("odds", "winprob", "futures"):
+        raise HTTPException(status_code=400, detail="table must be 'odds', 'winprob', or 'futures'")
+
     from app.tasks import collapse_snapshots
 
-    task = collapse_snapshots.delay(min_age_hours=min_age_hours)
+    task = collapse_snapshots.delay(min_age_hours=min_age_hours, table=table, limit=limit)
     return {
         "status": "queued",
         "task_id": task.id,
-        "message": f"Snapshot collapse queued (min_age_hours={min_age_hours}). Use /api/admin/snapshots/task/{task.id} to check status.",
+        "table": table,
+        "limit": limit,
+        "message": f"Collapse [{table}] queued (limit={limit}). Use /api/admin/snapshots/task/{task.id} to check status.",
     }
 
 
