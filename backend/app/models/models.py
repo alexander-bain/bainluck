@@ -315,7 +315,7 @@ class UserFavorite(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
-    relationship: Mapped[str] = mapped_column(String(20), default="follow")  # follow, local, alma_mater, rival
+    relation_type: Mapped[str] = mapped_column(String(20), default="follow")  # follow, local, alma_mater, rival
     source: Mapped[str] = mapped_column(String(20), default="manual")  # manual, onboarding, inferred
     weight: Mapped[float] = mapped_column(Numeric(3, 2), default=1.0)
     created_at: Mapped[datetime] = mapped_column(

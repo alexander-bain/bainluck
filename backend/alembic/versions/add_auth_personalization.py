@@ -26,9 +26,9 @@ def upgrade() -> None:
     op.add_column('users',
         sa.Column('photo_url', sa.String(512), nullable=True))
 
-    # --- user_favorites: add relationship, source, weight columns ---
+    # --- user_favorites: add relation_type, source, weight columns ---
     op.add_column('user_favorites',
-        sa.Column('relationship', sa.String(20), nullable=False, server_default='follow'))
+        sa.Column('relation_type', sa.String(20), nullable=False, server_default='follow'))
     op.add_column('user_favorites',
         sa.Column('source', sa.String(20), nullable=False, server_default='manual'))
     op.add_column('user_favorites',
@@ -66,7 +66,7 @@ def downgrade() -> None:
 
     op.drop_column('user_favorites', 'weight')
     op.drop_column('user_favorites', 'source')
-    op.drop_column('user_favorites', 'relationship')
+    op.drop_column('user_favorites', 'relation_type')
 
     op.drop_column('users', 'photo_url')
     op.drop_column('teams', 'location')
