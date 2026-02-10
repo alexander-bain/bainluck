@@ -16,6 +16,7 @@ from app.utils import (
     project_scores,
     calculate_gei,
     aggregate_bookmaker_odds,
+    detect_reversed_bookmakers,
     compute_highlight,
     get_highlight_label,
     should_highlight,
@@ -524,10 +525,13 @@ async def search_events(
                 event_status=(ev.status if ev else "scheduled"),
                 commence_time=(ev.commence_time if ev else None),
             )
+            # Exclude bookmakers with reversed home/away odds from aggregation
+            reversed_bks = detect_reversed_bookmakers(snaps)
+            agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
             latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
                 "snapshots": snaps,
-                "aggregated": aggregate_bookmaker_odds(snaps),
+                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps),
                 "captured_at": latest_time,
             }
 
@@ -1035,10 +1039,13 @@ async def list_events(
                 event_status=(ev.status if ev else "scheduled"),
                 commence_time=(ev.commence_time if ev else None),
             )
+            # Exclude bookmakers with reversed home/away odds from aggregation
+            reversed_bks = detect_reversed_bookmakers(snaps)
+            agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
             latest_time = max(s.captured_at for s in snaps) if snaps else None
             aggregated_odds_map[event_id] = {
                 "snapshots": snaps,
-                "aggregated": aggregate_bookmaker_odds(snaps),
+                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps),
                 "captured_at": latest_time,
             }
 
@@ -1402,8 +1409,14 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         )
         latest_time = max(s.captured_at for s in latest_snapshots)
 
-        # Aggregate across bookmakers
-        aggregated = aggregate_bookmaker_odds(latest_snapshots)
+        # Detect bookmakers with reversed home/away odds
+        reversed_bookmakers = detect_reversed_bookmakers(latest_snapshots)
+
+        # Aggregate across bookmakers (exclude reversed ones)
+        agg_snapshots = [s for s in latest_snapshots if s.bookmaker not in reversed_bookmakers]
+        if not agg_snapshots:
+            agg_snapshots = latest_snapshots  # fallback: use all if all were flagged
+        aggregated = aggregate_bookmaker_odds(agg_snapshots)
 
         response["current_odds"] = {
             "captured_at": latest_time.isoformat(),
@@ -1422,25 +1435,44 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
         # Also include individual bookmaker odds for transparency
         # Include captured_at so users can see when each book last updated
-        response["bookmaker_odds"] = [
-            {
-                "bookmaker": s.bookmaker,
-                "home_moneyline": s.home_moneyline,
-                "away_moneyline": s.away_moneyline,
-                "home_probability": float(s.home_win_probability)
-                    if s.home_win_probability else None,
-                "away_probability": float(s.away_win_probability)
-                    if s.away_win_probability else None,
-                "captured_at": s.captured_at.isoformat(),
-                "spread": float(s.home_spread) if s.home_spread else None,
-                "over_under": float(s.over_under) if s.over_under else None,
-                "projected_home_score": float(s.projected_home_score)
-                    if s.projected_home_score else None,
-                "projected_away_score": float(s.projected_away_score)
-                    if s.projected_away_score else None,
-            }
-            for s in latest_snapshots
-        ]
+        # Correct reversed bookmakers by swapping their home/away values
+        bookmaker_odds_list = []
+        for s in latest_snapshots:
+            if s.bookmaker in reversed_bookmakers:
+                bookmaker_odds_list.append({
+                    "bookmaker": s.bookmaker,
+                    "home_moneyline": s.away_moneyline,
+                    "away_moneyline": s.home_moneyline,
+                    "home_probability": float(s.away_win_probability)
+                        if s.away_win_probability else None,
+                    "away_probability": float(s.home_win_probability)
+                        if s.home_win_probability else None,
+                    "captured_at": s.captured_at.isoformat(),
+                    "spread": -float(s.home_spread) if s.home_spread else None,
+                    "over_under": float(s.over_under) if s.over_under else None,
+                    "projected_home_score": float(s.projected_away_score)
+                        if s.projected_away_score else None,
+                    "projected_away_score": float(s.projected_home_score)
+                        if s.projected_home_score else None,
+                })
+            else:
+                bookmaker_odds_list.append({
+                    "bookmaker": s.bookmaker,
+                    "home_moneyline": s.home_moneyline,
+                    "away_moneyline": s.away_moneyline,
+                    "home_probability": float(s.home_win_probability)
+                        if s.home_win_probability else None,
+                    "away_probability": float(s.away_win_probability)
+                        if s.away_win_probability else None,
+                    "captured_at": s.captured_at.isoformat(),
+                    "spread": float(s.home_spread) if s.home_spread else None,
+                    "over_under": float(s.over_under) if s.over_under else None,
+                    "projected_home_score": float(s.projected_home_score)
+                        if s.projected_home_score else None,
+                    "projected_away_score": float(s.projected_away_score)
+                        if s.projected_away_score else None,
+                })
+        response["bookmaker_odds"] = bookmaker_odds_list
 
     return response
 
@@ -1538,11 +1570,13 @@ async def get_event_odds_history(
             if end_key != time_key:
                 snapshots_by_time[end_key].append(snap)
 
-    # Aggregate each time bucket
+    # Aggregate each time bucket (excluding reversed bookmakers)
     history = []
     for timestamp in sorted(snapshots_by_time.keys()):
         snaps = snapshots_by_time[timestamp]
-        aggregated = aggregate_bookmaker_odds(snaps)
+        reversed_bks = detect_reversed_bookmakers(snaps)
+        agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
+        aggregated = aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps)
 
         history.append({
             "timestamp": timestamp.isoformat(),
@@ -2069,26 +2103,46 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         }
 
         # Include individual bookmaker odds for transparency
+        # Correct reversed bookmakers by swapping their home/away values
         if snapshots:
-            response["bookmaker_odds"] = [
-                {
-                    "bookmaker": s.bookmaker,
-                    "home_moneyline": s.home_moneyline,
-                    "away_moneyline": s.away_moneyline,
-                    "home_probability": float(s.home_win_probability)
-                        if s.home_win_probability else None,
-                    "away_probability": float(s.away_win_probability)
-                        if s.away_win_probability else None,
-                    "captured_at": s.captured_at.isoformat(),
-                    "spread": float(s.home_spread) if s.home_spread else None,
-                    "over_under": float(s.over_under) if s.over_under else None,
-                    "projected_home_score": float(s.projected_home_score)
-                        if s.projected_home_score else None,
-                    "projected_away_score": float(s.projected_away_score)
-                        if s.projected_away_score else None,
-                }
-                for s in snapshots
-            ]
+            reversed_bks = detect_reversed_bookmakers(snapshots)
+            bookmaker_odds_list = []
+            for s in snapshots:
+                if s.bookmaker in reversed_bks:
+                    bookmaker_odds_list.append({
+                        "bookmaker": s.bookmaker,
+                        "home_moneyline": s.away_moneyline,
+                        "away_moneyline": s.home_moneyline,
+                        "home_probability": float(s.away_win_probability)
+                            if s.away_win_probability else None,
+                        "away_probability": float(s.home_win_probability)
+                            if s.home_win_probability else None,
+                        "captured_at": s.captured_at.isoformat(),
+                        "spread": -float(s.home_spread) if s.home_spread else None,
+                        "over_under": float(s.over_under) if s.over_under else None,
+                        "projected_home_score": float(s.projected_away_score)
+                            if s.projected_away_score else None,
+                        "projected_away_score": float(s.projected_home_score)
+                            if s.projected_home_score else None,
+                    })
+                else:
+                    bookmaker_odds_list.append({
+                        "bookmaker": s.bookmaker,
+                        "home_moneyline": s.home_moneyline,
+                        "away_moneyline": s.away_moneyline,
+                        "home_probability": float(s.home_win_probability)
+                            if s.home_win_probability else None,
+                        "away_probability": float(s.away_win_probability)
+                            if s.away_win_probability else None,
+                        "captured_at": s.captured_at.isoformat(),
+                        "spread": float(s.home_spread) if s.home_spread else None,
+                        "over_under": float(s.over_under) if s.over_under else None,
+                        "projected_home_score": float(s.projected_home_score)
+                            if s.projected_home_score else None,
+                        "projected_away_score": float(s.projected_away_score)
+                            if s.projected_away_score else None,
+                    })
+            response["bookmaker_odds"] = bookmaker_odds_list
 
     # Compute highlight data
     highlight_result = compute_highlight(

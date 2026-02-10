@@ -263,6 +263,68 @@ def aggregate_probabilities(
         return mean(valid_probs)
 
 
+def detect_reversed_bookmakers(snapshots) -> set:
+    """
+    Detect bookmakers whose home/away odds appear to be swapped.
+
+    Some bookmakers in The Odds API occasionally return h2h outcomes
+    with the moneyline prices assigned to the wrong team. This detects
+    those cases by comparing each bookmaker's home probability against
+    the median consensus.
+
+    A bookmaker is flagged as reversed if:
+    - Its home probability is close to (1 - median) rather than the median
+    - The median is far enough from 50% to make detection reliable
+    - At least 3 bookmakers have probability data
+
+    Args:
+        snapshots: List of OddsSnapshot objects or dicts with
+            home_win_probability and bookmaker fields.
+
+    Returns:
+        Set of bookmaker keys whose odds appear reversed.
+    """
+    def get_val(item, key):
+        if isinstance(item, dict):
+            return item.get(key)
+        return getattr(item, key, None)
+
+    # Collect (bookmaker, home_prob) pairs
+    entries = []
+    for s in snapshots:
+        prob = get_val(s, "home_win_probability")
+        bk = get_val(s, "bookmaker")
+        if prob is not None and bk is not None:
+            entries.append((bk, float(prob)))
+
+    if len(entries) < 3:
+        return set()
+
+    probs = [p for _, p in entries]
+    med = median(probs)
+
+    # Don't attempt detection when odds are close to 50/50
+    if 0.38 <= med <= 0.62:
+        return set()
+
+    reversed_keys = set()
+    for bk, prob in entries:
+        mirror = 1.0 - med
+        dist_to_median = abs(prob - med)
+        dist_to_mirror = abs(prob - mirror)
+        # Reversed if much closer to the mirror than to the median,
+        # and meaningfully far from the median
+        if dist_to_mirror < 0.10 and dist_to_median > 0.20:
+            reversed_keys.add(bk)
+
+    # Safety: don't "correct" if too many would be flagged —
+    # requires a clear consensus (>2/3 of bookmakers agree)
+    if len(reversed_keys) > len(entries) // 3:
+        return set()
+
+    return reversed_keys
+
+
 def aggregate_bookmaker_odds(
     bookmaker_snapshots: List[dict],
     method: str = "mean"
