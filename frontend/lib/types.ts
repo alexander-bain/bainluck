@@ -339,6 +339,36 @@ export interface FuturesMoversResponse {
   timeframe_hours: number;
 }
 
+// Related futures types
+export interface RelatedFuture {
+  market_id: number;
+  market_name: string;
+  market_tier: number | null;
+  category: string | null;
+  source: string | null;
+  outcome_id: number;
+  outcome_name: string;
+  probability: number | null;
+  american_odds: number | null;
+  probability_change_24h: number | null;
+  opening_probability: number | null;
+  rank: number | null;
+  relevance_score: number;
+  relevance_reason: string;
+  last_updated: string | null;
+  next_update_expected: string;
+  resolution_date: string | null;
+}
+
+export interface RelatedFuturesResponse {
+  event_id: number;
+  home_team: string;
+  away_team: string;
+  home_team_futures: RelatedFuture[];
+  away_team_futures: RelatedFuture[];
+  total_count: number;
+}
+
 // Pulse rankings types
 export interface RankedEvent extends Event {
   rank: number;
