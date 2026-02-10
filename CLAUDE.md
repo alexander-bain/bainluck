@@ -28,7 +28,7 @@
 - **ESPN** (undocumented API) - Team colors, logos, live game data, win probability
 - **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification
 - **Google Analytics 4** - User analytics
-- **Firebase Auth** - Planned for user accounts
+- **Firebase Auth** - Google Sign-In (Apple planned), user accounts and personalization
 
 ---
 
@@ -112,6 +112,14 @@ odds-tracker/
 | `frontend/hooks/usePinnedEvents.ts` | Hook for managing pinned events (localStorage) |
 | `frontend/hooks/usePinnedFutures.ts` | Hook for managing pinned futures (localStorage) |
 | `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
+| `backend/app/services/firebase_auth.py` | Firebase Admin SDK init and token verification |
+| `backend/app/dependencies/auth.py` | `get_current_user` / `get_optional_user` FastAPI deps |
+| `backend/app/routes/auth.py` | Auth endpoints (Google sign-in, profile) |
+| `backend/app/routes/user.py` | User data endpoints (pins, team search) |
+| `frontend/lib/firebase.ts` | Firebase config, sign-in/sign-out functions |
+| `frontend/hooks/useAuth.ts` | Auth state hook |
+| `frontend/components/AuthProvider.tsx` | Auth context provider |
+| `docs/auth-personalization-plan.md` | Full auth + personalization implementation plan |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
 ---
@@ -155,9 +163,14 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `ADMIN_SECRET` - Optional: protect admin endpoints
 - `SENTRY_DSN` - From sentry.io (optional - enables error tracking + performance monitoring)
 - `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
+- `FIREBASE_PROJECT_ID` - Firebase project ID (optional - enables auth)
+- `FIREBASE_SERVICE_ACCOUNT_JSON` - Full service account JSON string (optional - for admin operations)
 
 ### Frontend (Vercel Environment Variables)
 - `NEXT_PUBLIC_API_URL` = `https://what-are-the-odds-0283511a7d93.herokuapp.com`
+- `NEXT_PUBLIC_FIREBASE_API_KEY` - Firebase web API key (optional - enables auth UI)
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` - Firebase auth domain (e.g., `project-id.firebaseapp.com`)
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID` - Firebase project ID
 - `NEXT_PUBLIC_GA_MEASUREMENT_ID` - Google Analytics
 
 ---
@@ -419,6 +432,41 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/esp
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/task/{task_id}?secret=any"
 ```
 
+### Authentication & Personalization
+Firebase Auth provides Google (and later Apple) Sign-In. The app works fully without login; auth unlocks personalization features.
+
+**Architecture:**
+- **Frontend**: Firebase JS SDK for Google Sign-In popup → sends Firebase ID token to backend
+- **Backend**: `firebase-admin` verifies ID tokens → upserts user in `users` table → returns profile
+- **Auth dependencies**: `get_current_user` (required auth) and `get_optional_user` (optional auth) FastAPI dependencies
+- **Anonymous-first**: All existing endpoints work without auth. Personalization is an overlay, not a gate.
+- **Pin sync**: Pins migrate from localStorage to `user_pins` table on first login. localStorage continues as fallback for anonymous users.
+
+**Key files:**
+- `backend/app/services/firebase_auth.py` — Firebase Admin SDK initialization and token verification
+- `backend/app/dependencies/auth.py` — `get_current_user` / `get_optional_user` FastAPI dependencies
+- `backend/app/routes/auth.py` — `POST /api/auth/google`, `GET /api/auth/me`, profile management
+- `backend/app/routes/user.py` — Pin CRUD (`/api/me/pins`), team search (`/api/me/teams/search`)
+- `frontend/lib/firebase.ts` — Firebase app config, sign-in/sign-out functions
+- `frontend/hooks/useAuth.ts` — Reactive auth state, token management
+- `frontend/components/AuthProvider.tsx` — Auth context provider, wires token to API client
+- `frontend/components/UserMenu.tsx` — Header sign-in button / user avatar dropdown
+- `frontend/hooks/usePinSync.ts` — One-way localStorage → server pin migration on first login
+
+**Database tables:**
+- `users` — Firebase UID, email, display name, photo URL
+- `user_preferences` — Home location, sport affinities (JSONB), onboarding state, raw onboarding responses
+- `user_favorites` — Team relationships with type (follow/local/alma_mater/rival), source, and weight
+- `user_pins` — Server-side pin storage (events + futures)
+
+**Environment variables:**
+- Backend: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (optional)
+- Frontend: `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+
+**City → Teams mapping:** ESPN's `location` field on team objects maps cities/regions/schools to teams. The `Team.location` column stores this. A static metro alias map (~25 entries) groups brand names to metro areas ("New England" → "Boston", "Golden State" → "Bay Area").
+
+**Full plan:** `docs/auth-personalization-plan.md`
+
 ### Snapshot Data Retention
 Consecutive identical snapshot rows are collapsed into single rows with `captured_at` (first seen) and `valid_until` (last confirmed) timestamps. Lossless — original time series is fully reconstructable.
 
@@ -576,15 +624,17 @@ These are the current focus. Resist the urge to build new features until these a
 5. 🟡 **Move `_create_or_update_win_prob_snapshot` to shared module** — Currently in `odds_polling.py` but imported by `espn_sync.py`. It's a shared utility, not specific to odds polling. Should live in `base.py` or a new `tasks/snapshots.py` to avoid confusing cross-module dependencies as the package grows.
 
 ### Next — Features (in priority order)
-7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
-8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
-9. 📋 Pass Kalshi event category as sport_key for better disambiguation
-10. 📋 Firebase Auth for user accounts
-11. 📋 Migrate pinned items to database (after auth). **Note:** Stop adding new localStorage features until auth is in place — each one makes the migration harder.
-12. 📋 LLM-powered odds movement explanations
-13. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-14. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
-15. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
+6. 🟢 **Auth & Personalization Phase 1 (in progress)** — Firebase Auth (Google Sign-In), backend auth middleware, pin sync endpoints, frontend auth context + sign-in UI. Foundation for personalization. See `docs/auth-personalization-plan.md` for full plan.
+7. 📋 **Auth & Personalization Phase 2** — Onboarding flow (city→teams, alma maters, sport affinities, rivals), preference storage, LLM-parsed free-text inputs
+8. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
+9. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
+10. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
+11. 📋 Pass Kalshi event category as sport_key for better disambiguation
+12. 📋 Apple Sign-In (after Google auth is working)
+13. 📋 LLM-powered odds movement explanations
+14. 📋 Sport-specific Pulse normalization (different ceilings per sport)
+15. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
+16. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
 
 ### Completed
 <details>
@@ -638,7 +688,7 @@ The former monolithic `tasks.py` was refactored into `backend/app/tasks/` (11 mo
 All Super Bowl LX party features have been removed: commercial/ad leaderboard, prop contest system, AI commentary/roasting, trivia, YouTube API integration, TV/Party mode page, player props endpoint, confetti/ECG animations. Code was deleted across ~15 files totaling ~7,000+ lines.
 
 ### localStorage Debt
-Pinned events/futures use localStorage. Every new localStorage feature increases the complexity of the eventual auth migration. Avoid adding new localStorage-dependent features until Firebase Auth is in place.
+Pinned events/futures use localStorage for anonymous users and sync to `user_pins` table on first login (via `usePinSync` hook). The existing localStorage hooks (`usePinnedEvents`, `usePinnedFutures`) still work for anonymous users. A future phase will replace them with server-backed hooks that read/write via the API when authenticated. Avoid adding new localStorage-dependent features — use the `user_preferences` JSONB columns or `user_favorites` table instead.
 
 ### Session-End Feedback Prompt
 At the end of long working sessions, run the feedback prompt (saved in `docs/feedback-prompt.md`) to get process feedback on priority alignment, prompting effectiveness, and blind spots.

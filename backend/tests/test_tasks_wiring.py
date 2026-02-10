@@ -150,6 +150,7 @@ class TestBeatScheduleCompleteness:
         "enrich-events-hourly",
         "sync-espn-live",
         "backfill-team-logos",
+        "backfill-team-links",
         "heartbeat",
         "collapse-odds-snapshots-daily",
         "collapse-winprob-snapshots-daily",

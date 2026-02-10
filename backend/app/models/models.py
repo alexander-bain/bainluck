@@ -58,6 +58,7 @@ class Team(Base):
     logo_url_large: Mapped[Optional[str]] = mapped_column(String(512))
     alternate_names: Mapped[Optional[dict]] = mapped_column(JSONB)  # ["Lakers", "LA Lakers"]
     current_record: Mapped[Optional[str]] = mapped_column(String(20))  # "34-18"
+    location: Mapped[Optional[str]] = mapped_column(String(100))  # ESPN "location" field (city/region/school)
 
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="teams")
@@ -282,42 +283,95 @@ class WinProbSnapshot(Base):
 
 class User(Base):
     """Users (optional auth for personalization)."""
-    
+
     __tablename__ = "users"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     firebase_uid: Mapped[Optional[str]] = mapped_column(String(128), unique=True)
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[Optional[str]] = mapped_column(String(100))
+    photo_url: Mapped[Optional[str]] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
-    
+
     # Relationships
     favorites: Mapped[list["UserFavorite"]] = relationship(
+        back_populates="user"
+    )
+    preferences: Mapped[Optional["UserPreference"]] = relationship(
+        back_populates="user", uselist=False
+    )
+    pins: Mapped[list["UserPin"]] = relationship(
         back_populates="user"
     )
 
 
 class UserFavorite(Base):
-    """User's favorite teams."""
-    
+    """User's team relationships (follow, local, alma_mater, rival)."""
+
     __tablename__ = "user_favorites"
-    
+
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    relation_type: Mapped[str] = mapped_column(String(20), default="follow")  # follow, local, alma_mater, rival
+    source: Mapped[str] = mapped_column(String(20), default="manual")  # manual, onboarding, inferred
+    weight: Mapped[float] = mapped_column(Numeric(3, 2), default=1.0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
-    
+
     __table_args__ = (
         UniqueConstraint("user_id", "team_id", name="uq_user_team"),
     )
-    
+
     # Relationships
     user: Mapped["User"] = relationship(back_populates="favorites")
     team: Mapped["Team"] = relationship(back_populates="favorited_by")
+
+
+class UserPreference(Base):
+    """User preferences from onboarding and settings."""
+
+    __tablename__ = "user_preferences"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    home_location: Mapped[Optional[str]] = mapped_column(String(100))
+    sport_affinities: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
+    onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    onboarding_raw: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="preferences")
+
+
+class UserPin(Base):
+    """User's pinned events and futures (replaces localStorage for authenticated users)."""
+
+    __tablename__ = "user_pins"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    pin_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'event' or 'future'
+    target_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "pin_type", "target_id", name="uq_user_pin"),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="pins")
 
 
 class Tournament(Base):

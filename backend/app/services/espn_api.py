@@ -64,6 +64,7 @@ class ESPNTeam:
     logo_url: Optional[str]
     logo_url_dark: Optional[str]
     record: Optional[str]  # e.g., "34-18"
+    location: Optional[str] = None  # ESPN "location" field: city, region, or school name
 
 
 @dataclass
@@ -210,6 +211,7 @@ class ESPNAPIService:
                 logo_url=logo_url,
                 logo_url_dark=logo_url_dark,
                 record=record,
+                location=team.get("location"),
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN team: {e}")

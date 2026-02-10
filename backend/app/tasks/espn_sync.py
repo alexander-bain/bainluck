@@ -162,6 +162,8 @@ async def _sync_espn_live_events():
             team.logo_url_large = espn_team.logo_url
         if espn_team.record:
             team.current_record = espn_team.record
+        if espn_team.location:
+            team.location = espn_team.location
 
         # Store alternate names for lookup
         alt_names = set()
