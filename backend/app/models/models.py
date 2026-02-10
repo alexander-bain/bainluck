@@ -272,6 +272,10 @@ class WinProbSnapshot(Base):
     # Source-specific game state (clock, period, score, etc.)
     game_state: Mapped[Optional[dict]] = mapped_column(JSONB)
 
+    # Deduplication (same pattern as OddsSnapshot)
+    reading_count: Mapped[int] = mapped_column(Integer, default=1)
+    valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
     # Relationships
     event: Mapped["Event"] = relationship()
 
