@@ -132,3 +132,35 @@ class TestEdgeCases:
         snaps = [_snap("bookA", commence_time, 0.50)]
         result = _filter_stale_bookmaker_snapshots(snaps, "live", commence_time)
         assert len(result) == 1
+
+
+class TestCommenceTimeSanityCheck:
+    """When commence_time is wrong (in the future), skip filtering entirely."""
+
+    def test_future_commence_time_skips_filter(self, pregame):
+        """If event is 'live' but commence_time is in the future, return all."""
+        future_commence = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        snaps = [
+            _snap("bookA", pregame, 0.59),
+            _snap("bookB", pregame, 0.02),
+        ]
+        result = _filter_stale_bookmaker_snapshots(snaps, "live", future_commence)
+        # Should NOT filter — commence_time is clearly wrong
+        assert result == snaps
+
+    def test_future_commence_time_completed(self, pregame):
+        """Same sanity check for completed events."""
+        future_commence = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        snaps = [_snap("bookA", pregame, 0.59)]
+        result = _filter_stale_bookmaker_snapshots(snaps, "completed", future_commence)
+        assert result == snaps
+
+    def test_past_commence_time_still_filters(self, commence_time, pregame, live):
+        """Normal case: past commence_time still filters as expected."""
+        snaps = [
+            _snap("stale_book", pregame, 0.59),
+            _snap("live_book", live, 0.02),
+        ]
+        result = _filter_stale_bookmaker_snapshots(snaps, "live", commence_time)
+        assert len(result) == 1
+        assert result[0].bookmaker == "live_book"

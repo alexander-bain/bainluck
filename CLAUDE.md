@@ -215,9 +215,9 @@ Different game statuses show different probability data to users:
 - **Live**: Current live odds (big) + "Opened X/Y" reference from `opening_odds` (small)
 - **Completed/Closed**: Opening odds (pre-game consensus) + Pulse excitement score
 
-**Opening odds** are set once per event (first odds received) via `_maybe_set_opening_odds` in `tasks.py` and stored on the `Event` model. **Note:** This captures the *first* odds, not the *last pregame* odds — if the line moves significantly before kickoff, the stored value may differ from the final pregame consensus.
+**Opening odds** are the last pregame consensus — `_maybe_set_opening_odds` in `tasks.py` updates them with the cross-bookmaker average on every poll while the event is scheduled, then freezes when the game starts. Stored on the `Event` model.
 
-**Stale bookmaker filtering**: `filter_stale_bookmaker_snapshots()` in `app/utils/odds_filtering.py` excludes bookmakers whose last distinct odds value was captured before `commence_time`. Runs for ALL non-scheduled statuses (live, completed, closed). Has 11 regression tests in `tests/test_stale_bookmaker_filter.py`.
+**Stale bookmaker filtering**: `filter_stale_bookmaker_snapshots()` in `app/utils/odds_filtering.py` excludes bookmakers whose last distinct odds value was captured before `commence_time`. Runs for ALL non-scheduled statuses (live, completed, closed). Has 14 regression tests in `tests/test_stale_bookmaker_filter.py`.
 
 **Frontend cross-check** (event detail page only): Compares `current_odds` against the history endpoint's latest time-bucketed consensus. If they diverge >5% for live games, trusts history. This catches cases where the backend filter doesn't fully solve the stale bookmaker problem.
 
@@ -532,7 +532,7 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 448 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, and `test_stale_bookmaker_filter.py`. Zero frontend tests.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 451 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, and `test_stale_bookmaker_filter.py`. Zero frontend tests.
 2. 🔴 **Refactor `tasks.py`** — At 2900+ lines, every change has a large blast radius. ESPN sync, odds polling, win probability computation, Pulse calculation, and Kalshi polling should be separate modules. This is the root cause of most fix-commit cycles (missing imports, wrong variable names, status check gaps). Extract at minimum: `tasks/espn_sync.py`, `tasks/odds_poll.py`, `tasks/win_probability.py`.
 3. 🟡 **Data retention policy** — Implement snapshot pruning. `odds_snapshots` + `win_prob_snapshots` together generate tens of thousands of rows per game day. No retention policy exists. Check Heroku Postgres row count and storage usage.
 4. 🟡 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
@@ -547,6 +547,7 @@ These are the current focus. Resist the urge to build new features until these a
 12. 📋 LLM-powered odds movement explanations
 13. 📋 Sport-specific Pulse normalization (different ceilings per sport)
 14. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
+15. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
 
 ### Completed
 <details>
@@ -567,7 +568,8 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Win probability source detail page (`/events/[id]/models`) with methodology + attribution
 - ✅ ESPN team name matching normalization (unicode/accent handling for college teams)
 - ✅ Status-based probability display (opening odds for finished games, current odds for live, with stale bookmaker filtering)
-- ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 11 regression tests
+- ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 14 regression tests (including commence_time sanity check)
+- ✅ Opening odds now stores last pregame consensus (cross-bookmaker average, continuously updated while scheduled)
 </details>
 
 See `docs/PRD.md` for full roadmap.
