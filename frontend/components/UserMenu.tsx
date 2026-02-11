@@ -34,14 +34,7 @@ export default function UserMenu() {
   // Don't render anything if auth is not configured
   if (!isAuthAvailable) return null;
 
-  // Show loading skeleton while checking auth state
-  if (isLoading) {
-    return (
-      <div className="w-8 h-8 rounded-full bg-mist animate-pulse" />
-    );
-  }
-
-  // Not authenticated — show sign-in button
+  // Not authenticated (or still loading) — show sign-in button
   if (!isAuthenticated) {
     return (
       <button
