@@ -5,14 +5,15 @@
  * The app works fully without Firebase configured — auth features
  * are hidden when env vars are not set.
  *
- * Uses signInWithRedirect (not popup) to avoid Safari's ITP
- * blocking cross-origin popup communication.
+ * Uses signInWithPopup with signInWithRedirect as fallback
+ * for browsers that block cross-origin popup communication (Safari ITP).
  */
 
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signOut as firebaseSignOut,
@@ -66,22 +67,59 @@ export function getFirebaseAuth(): Auth | null {
 }
 
 /**
- * Start Google sign-in via redirect.
- * The page navigates to Google, then redirects back.
- * Use checkRedirectResult() on page load to get the result.
+ * Sign in with Google. Tries popup first, falls back to redirect
+ * if popup is blocked (Safari ITP).
+ *
+ * Returns the Firebase ID token on popup success, or null if
+ * falling back to redirect (page navigates away).
  */
-export async function signInWithGoogle(): Promise<void> {
+export async function signInWithGoogle(): Promise<string | null> {
   const authInstance = getFirebaseAuth();
-  if (!authInstance) return;
+  if (!authInstance) {
+    console.error("[Firebase] Auth not initialized");
+    return null;
+  }
 
   const provider = new GoogleAuthProvider();
-  await signInWithRedirect(authInstance, provider);
+
+  // Try popup first
+  try {
+    console.log("[Firebase] Attempting signInWithPopup...");
+    const result = await signInWithPopup(authInstance, provider);
+    const idToken = await result.user.getIdToken();
+    console.log("[Firebase] Popup sign-in succeeded");
+    return idToken;
+  } catch (error: unknown) {
+    const firebaseError = error as { code?: string };
+    const code = firebaseError.code || "";
+
+    // User closed the popup — not an error
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+      console.log("[Firebase] User cancelled popup");
+      return null;
+    }
+
+    // Popup blocked — fall back to redirect
+    if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
+      console.log("[Firebase] Popup blocked, falling back to redirect...");
+      try {
+        await signInWithRedirect(authInstance, provider);
+        // Page navigates away — this line won't execute
+      } catch (redirectError) {
+        console.error("[Firebase] Redirect also failed:", redirectError);
+      }
+      return null;
+    }
+
+    // Some other error
+    console.error("[Firebase] Sign-in error:", code, error);
+    throw error;
+  }
 }
 
 /**
  * Check for a redirect result after returning from Google sign-in.
  * Returns the Firebase ID token if a redirect sign-in just completed.
- * Returns null if no redirect happened or user was already signed in.
  */
 export async function checkRedirectResult(): Promise<string | null> {
   const authInstance = getFirebaseAuth();
@@ -91,11 +129,12 @@ export async function checkRedirectResult(): Promise<string | null> {
     const result = await getRedirectResult(authInstance);
     if (result?.user) {
       const idToken = await result.user.getIdToken();
+      console.log("[Firebase] Redirect result: signed in as", result.user.email);
       return idToken;
     }
     return null;
   } catch (error: unknown) {
-    console.error("Redirect sign-in error:", error);
+    console.error("[Firebase] Redirect result error:", error);
     return null;
   }
 }

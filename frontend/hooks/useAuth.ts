@@ -4,9 +4,8 @@
  * Provides reactive auth state, sign-in/sign-out methods,
  * and a getToken() function for authenticated API calls.
  *
- * Uses redirect-based sign-in (not popup) to avoid Safari ITP issues.
- * On page load after redirect, checks for redirect result and
- * registers the user with the backend.
+ * Uses popup-first auth with redirect fallback for Safari.
+ * On page load, checks for redirect result and registers with backend.
  *
  * When Firebase is not configured, all values indicate
  * "not authenticated" and auth methods are no-ops.
@@ -43,7 +42,7 @@ interface UseAuthResult {
   isAuthenticated: boolean;
   /** Whether Firebase Auth is configured (env vars set) */
   isAuthAvailable: boolean;
-  /** Sign in with Google (redirects to Google, then back). */
+  /** Sign in with Google (popup, with redirect fallback). */
   signInWithGoogle: () => Promise<void>;
   /** Sign out. */
   signOut: () => Promise<void>;
@@ -75,10 +74,12 @@ async function registerWithBackend(idToken: string): Promise<void> {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      console.warn(`Backend auth registration failed (${response.status}): ${text}`);
+      console.warn(`[Auth] Backend registration failed (${response.status}): ${text}`);
+    } else {
+      console.log("[Auth] Backend registration succeeded");
     }
   } catch (backendError) {
-    console.warn("Backend auth registration unreachable:", backendError);
+    console.warn("[Auth] Backend unreachable:", backendError);
   }
 }
 
@@ -119,10 +120,22 @@ export function useAuth(): UseAuthResult {
     });
   }, [isAuthAvailable]);
 
-  // Sign in with Google (redirect — page navigates away)
+  // Sign in with Google (popup with redirect fallback)
   const signInWithGoogle = useCallback(async (): Promise<void> => {
     if (!isAuthAvailable) return;
-    await firebaseSignInWithGoogle();
+
+    try {
+      const idToken = await firebaseSignInWithGoogle();
+
+      // If popup succeeded (idToken returned), register with backend
+      if (idToken) {
+        tokenRef.current = idToken;
+        await registerWithBackend(idToken);
+      }
+      // If null, either user cancelled or redirect is happening
+    } catch (error) {
+      console.error("[Auth] Sign-in error:", error);
+    }
   }, [isAuthAvailable]);
 
   // Sign out
