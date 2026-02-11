@@ -1,7 +1,7 @@
 /**
- * UserMenu - Google Sign-In button or user avatar with dropdown.
+ * UserMenu - Sign-in button or user avatar with dropdown.
  *
- * When not authenticated: renders Google's Sign-In button (via GIS renderButton).
+ * When not authenticated: shows a clickable "Sign in" button.
  * When authenticated: shows user avatar/initial with dropdown menu.
  * When auth is not configured: renders nothing.
  */
@@ -13,13 +13,12 @@ import Link from "next/link";
 import { useAuthContext } from "@/components/AuthProvider";
 
 export default function UserMenu() {
-  const { user, isLoading, isAuthenticated, isAuthAvailable, initGoogleButton, signOut } =
+  const { user, isAuthenticated, isAuthAvailable, signInWithGoogle, signOut } =
     useAuthContext();
   const [isOpen, setIsOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const [googleBtnReady, setGoogleBtnReady] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const googleBtnRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -32,39 +31,27 @@ export default function UserMenu() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Render Google Sign-In button when not authenticated
-  useEffect(() => {
-    if (!isAuthAvailable || isAuthenticated || isLoading) return;
-    if (!googleBtnRef.current) return;
-    console.log("[UserMenu] Initializing Google Sign-In button...");
-    initGoogleButton(googleBtnRef.current);
-
-    // Watch for Google button to be injected into the container
-    const container = googleBtnRef.current;
-    const observer = new MutationObserver(() => {
-      if (container.childElementCount > 0) {
-        console.log("[UserMenu] Google button rendered");
-        setGoogleBtnReady(true);
-        observer.disconnect();
-      }
-    });
-    observer.observe(container, { childList: true });
-
-    return () => observer.disconnect();
-  }, [isAuthAvailable, isAuthenticated, isLoading, initGoogleButton]);
-
   // Don't render anything if auth is not configured
   if (!isAuthAvailable) return null;
 
-  // Not authenticated — show Google Sign-In button with fallback text
+  // Not authenticated — show Sign in button
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center">
-        <div ref={googleBtnRef} />
-        {!googleBtnReady && (
-          <span className="text-sm text-slate">Sign in</span>
-        )}
-      </div>
+      <button
+        onClick={async () => {
+          if (signingIn) return;
+          setSigningIn(true);
+          try {
+            await signInWithGoogle();
+          } finally {
+            setSigningIn(false);
+          }
+        }}
+        disabled={signingIn}
+        className="text-sm text-slate hover:text-graphite transition-colors"
+      >
+        {signingIn ? "Signing in..." : "Sign in"}
+      </button>
     );
   }
 
