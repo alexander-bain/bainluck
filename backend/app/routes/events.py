@@ -1284,6 +1284,52 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     return response
 
 
+# Sport key prefix → LLM sport category mapping for futures market filtering
+_SPORT_PREFIX_TO_LLM_CATEGORY = {
+    "americanfootball": "football",
+    "basketball": "basketball",
+    "icehockey": "hockey",
+    "baseball": "baseball",
+    "soccer": "soccer",
+    "mma": "mma",
+    "golf": "golf",
+    "tennis": "tennis",
+    "cricket": "cricket",
+    "rugby": "rugby",
+    "boxing": "boxing",
+}
+
+
+def _escape_like(s: str) -> str:
+    """Escape special LIKE/ILIKE characters for safe pattern matching."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _team_name_patterns(full_name: str) -> list[str]:
+    """Build ILIKE-safe patterns for matching a team in outcome names.
+
+    Returns escaped patterns suitable for use in ILIKE '%pattern%' queries.
+    Includes full team name and short name (last word, if >= 4 chars).
+    """
+    if not full_name:
+        return []
+
+    patterns = []
+    escaped_full = _escape_like(full_name.strip())
+    patterns.append(escaped_full)
+
+    # Short name: last word (e.g., "Celtics" from "Boston Celtics")
+    parts = full_name.strip().split()
+    if len(parts) > 1:
+        short = parts[-1]
+        if len(short) >= 4:
+            escaped_short = _escape_like(short)
+            if escaped_short.lower() != escaped_full.lower():
+                patterns.append(escaped_short)
+
+    return patterns
+
+
 @router.get("/{event_id}/related-futures")
 async def get_related_futures(
     event_id: int,
@@ -1292,13 +1338,13 @@ async def get_related_futures(
     """
     Get futures markets related to the teams in this event.
 
-    Returns championship, award, and other futures outcomes linked
-    to either team, ranked by contextual relevance.
+    Uses direct name matching on outcome names within sport-matching markets,
+    eliminating dependency on pre-computed team_id links. Sport matching uses
+    three strategies (OR): external_id prefix, llm_sport_category, and sport_id.
     """
-    from datetime import datetime, timezone
     from app.utils.team_linking import compute_relevance_score
 
-    # Load the event with sport info
+    # 1. Load event with sport
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.sport))
@@ -1308,90 +1354,140 @@ async def get_related_futures(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # Determine the sport family for filtering (e.g., "americanfootball" from "americanfootball_nfl")
-    # This prevents cross-sport matches (e.g., NFL "Patriots" matching NCAAB "Patriots")
+    empty = {
+        "event_id": event_id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "home_team_futures": [],
+        "away_team_futures": [],
+        "total_count": 0,
+    }
+
+    # 2. Determine sport family for filtering
     event_sport_key = event.sport.key if event.sport else None
-    compatible_sport_ids = set()
-    if event_sport_key:
-        # Extract the sport family prefix (e.g., "americanfootball", "basketball", "icehockey")
-        sport_prefix = event_sport_key.split("_")[0]
-        prefix_result = await db.execute(
-            select(Sport.id).where(Sport.key.like(f"{sport_prefix}%"))
-        )
-        compatible_sport_ids = {row.id for row in prefix_result.all()}
+    if not event_sport_key:
+        return empty
 
-    # Find team_ids for both teams, scoped to the event's sport
-    team_query_filter = [Team.name == event.home_team_name]
-    if event.sport_id:
-        team_query_filter.append(Team.sport_id == event.sport_id)
-    home_team_result = await db.execute(
-        select(Team.id, Team.name).where(*team_query_filter)
+    sport_prefix = event_sport_key.split("_")[0]  # e.g., "basketball", "americanfootball"
+    llm_category = _SPORT_PREFIX_TO_LLM_CATEGORY.get(sport_prefix, sport_prefix)
+
+    # Find compatible sport IDs (for markets that have sport_id populated)
+    prefix_result = await db.execute(
+        select(Sport.id).where(Sport.key.like(f"{sport_prefix}%"))
     )
+    compatible_sport_ids = [row.id for row in prefix_result.all()]
 
-    team_query_filter = [Team.name == event.away_team_name]
-    if event.sport_id:
-        team_query_filter.append(Team.sport_id == event.sport_id)
-    away_team_result = await db.execute(
-        select(Team.id, Team.name).where(*team_query_filter)
-    )
-    home_team = home_team_result.first()
-    away_team = away_team_result.first()
-
-    if not home_team and not away_team:
-        return {"event_id": event_id, "home_team_futures": [], "away_team_futures": []}
-
-    team_ids = []
-    team_id_to_side = {}  # team_id → "home" or "away"
-    if home_team:
-        team_ids.append(home_team.id)
-        team_id_to_side[home_team.id] = "home"
-    if away_team:
-        team_ids.append(away_team.id)
-        team_id_to_side[away_team.id] = "away"
-
-    # Query all outcomes linked to these teams in open markets
-    # Filter by sport family to prevent cross-sport contamination
-    market_filters = [FuturesMarket.status == "open"]
+    # 3. Find sport-matching open markets using multiple strategies (OR)
+    #    This is the key improvement: instead of requiring sport_id (often NULL),
+    #    we also match on external_id prefix (OddsAPI sport key) and
+    #    llm_sport_category (works for Kalshi and LLM-categorized markets).
+    sport_filters = [
+        FuturesMarket.external_id.like(f"{sport_prefix}%"),
+        FuturesMarket.llm_sport_category == llm_category,
+    ]
     if compatible_sport_ids:
-        market_filters.append(FuturesMarket.sport_id.in_(compatible_sport_ids))
+        sport_filters.append(FuturesMarket.sport_id.in_(compatible_sport_ids))
 
+    market_result = await db.execute(
+        select(FuturesMarket.id).where(
+            FuturesMarket.status == "open",
+            or_(*sport_filters),
+        )
+    )
+    sport_market_ids = [row.id for row in market_result.all()]
+    if not sport_market_ids:
+        return empty
+
+    # 4. Build name patterns for both teams
+    home_patterns = _team_name_patterns(event.home_team_name)
+    away_patterns = _team_name_patterns(event.away_team_name)
+
+    # Enrich with alternate names from Team records (scoped by sport)
+    for team_name, patterns in [
+        (event.home_team_name, home_patterns),
+        (event.away_team_name, away_patterns),
+    ]:
+        team_filters = [Team.name == team_name]
+        if event.sport_id:
+            team_filters.append(Team.sport_id == event.sport_id)
+        team_result = await db.execute(
+            select(Team.alternate_names).where(*team_filters)
+        )
+        alt_names = team_result.scalar_one_or_none()
+        if alt_names and isinstance(alt_names, list):
+            for alt in alt_names:
+                if isinstance(alt, str) and len(alt) >= 4:
+                    escaped = _escape_like(alt)
+                    if escaped.lower() not in [p.lower() for p in patterns]:
+                        patterns.append(escaped)
+
+    # Build ILIKE conditions for outcome name matching
+    home_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in home_patterns]
+    away_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in away_patterns]
+    all_name_conditions = home_ilike + away_ilike
+    if not all_name_conditions:
+        return empty
+
+    # 5. Query matching outcomes with their markets
     outcomes_result = await db.execute(
         select(FuturesOutcome)
-        .options(selectinload(FuturesOutcome.market).selectinload(FuturesMarket.sport))
+        .options(selectinload(FuturesOutcome.market))
         .where(
-            FuturesOutcome.team_id.in_(team_ids),
-            FuturesOutcome.market.has(*market_filters),
+            FuturesOutcome.market_id.in_(sport_market_ids),
+            or_(*all_name_conditions),
         )
     )
     outcomes = outcomes_result.scalars().all()
 
-    # Count bookmakers per market for liquidity scoring
-    market_ids = list({o.market_id for o in outcomes})
+    if not outcomes:
+        return empty
+
+    # 6. Classify each outcome as home or away using Python substring matching
+    def _matches_any(name: str, patterns: list[str]) -> bool:
+        name_lower = name.lower()
+        for p in patterns:
+            clean = p.replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\")
+            if clean.lower() in name_lower:
+                return True
+        return False
+
+    # 7. Count bookmakers per outcome for liquidity scoring
+    outcome_ids = [o.id for o in outcomes]
     bookmaker_counts = {}
-    if market_ids:
+    if outcome_ids:
         from app.models import FuturesOddsSnapshot
         bm_result = await db.execute(
             select(
                 FuturesOddsSnapshot.outcome_id,
                 func.count(func.distinct(FuturesOddsSnapshot.bookmaker)).label("bm_count"),
             )
-            .where(FuturesOddsSnapshot.outcome_id.in_([o.id for o in outcomes]))
+            .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
             .group_by(FuturesOddsSnapshot.outcome_id)
         )
         for row in bm_result.all():
             bookmaker_counts[row.outcome_id] = row.bm_count
 
     now = datetime.now(timezone.utc)
-
-    # Format and score each outcome
     home_futures = []
     away_futures = []
+    seen_ids = set()
 
     for outcome in outcomes:
-        market = outcome.market
-        side = team_id_to_side.get(outcome.team_id)
-        if not side:
+        if outcome.id in seen_ids:
             continue
+        seen_ids.add(outcome.id)
+
+        market = outcome.market
+
+        # Classify: check home patterns first, then away
+        is_home = _matches_any(outcome.name, home_patterns)
+        is_away = _matches_any(outcome.name, away_patterns)
+
+        if not is_home and not is_away:
+            continue
+
+        # If matches both teams, prefer home (rare edge case)
+        side = "home" if is_home else "away"
 
         # Compute days to resolution
         days_to_resolution = None
@@ -1409,15 +1505,9 @@ async def get_related_futures(
         )
 
         # Compute next update time based on source
-        # Odds API futures poll at :30, Kalshi at :45
         current_minute = now.minute
-        if market.source == "kalshi":
-            next_poll_minute = 45
-        else:
-            next_poll_minute = 30
-
+        next_poll_minute = 45 if market.source == "kalshi" else 30
         if current_minute >= next_poll_minute:
-            # Next poll is in the next hour
             next_update = now.replace(minute=next_poll_minute, second=0, microsecond=0) + timedelta(hours=1)
         else:
             next_update = now.replace(minute=next_poll_minute, second=0, microsecond=0)
