@@ -70,6 +70,7 @@ export function useAuth(): UseAuthResult {
     }
 
     const unsubscribe = onAuthChange((fbUser) => {
+      console.log("[Auth]", fbUser ? `signed in as ${fbUser.email}` : "not signed in");
       setUser(mapFirebaseUser(fbUser));
       setIsLoading(false);
     });
@@ -85,23 +86,27 @@ export function useAuth(): UseAuthResult {
       const idToken = await firebaseSignInWithGoogle();
       if (!idToken) return false; // User cancelled
 
-      // Verify with backend and create/update user
-      const response = await fetch(`${API_URL}/api/auth/google`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: idToken }),
-      });
+      // Register/update user on backend (best-effort — don't undo Firebase auth on failure)
+      try {
+        const response = await fetch(`${API_URL}/api/auth/google`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id_token: idToken }),
+        });
 
-      if (!response.ok) {
-        console.error("Backend auth verification failed:", response.status);
-        await firebaseSignOut();
-        return false;
+        if (!response.ok) {
+          const text = await response.text().catch(() => "");
+          console.warn(`Backend auth registration failed (${response.status}): ${text}`);
+        }
+      } catch (backendError) {
+        // Network/CORS error reaching backend — user is still signed in via Firebase
+        console.warn("Backend auth registration unreachable:", backendError);
       }
 
       tokenRef.current = idToken;
       return true;
     } catch (error) {
-      console.error("Sign-in error:", error);
+      console.error("Google sign-in failed:", error);
       return false;
     }
   }, [isAuthAvailable]);
