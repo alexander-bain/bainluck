@@ -84,14 +84,22 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 continue
             sport_id = sport_row.id
 
+            # Build SportsDataIO team name lookup for fallback matching
+            sd_teams = await service.fetch_teams(sd_sport)
+            abbrev_to_fullname: dict[str, str] = {}
+            for t in sd_teams:
+                if t.get("key") and t.get("full_name"):
+                    abbrev_to_fullname[t["key"]] = t["full_name"]
+
             # Update each team's roster_players
             from app.models import Team
             sport_updated = 0
+            unmatched = []
             for abbrev, player_names in team_players.items():
                 # Deduplicate and sort
                 unique_names = sorted(set(player_names))
 
-                # Find matching team by abbreviation + sport
+                # Try 1: Match by abbreviation + sport
                 team_result = await session.execute(
                     select(Team.id).where(
                         Team.abbreviation == abbrev,
@@ -99,7 +107,21 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     )
                 )
                 team_row = team_result.first()
+
+                # Try 2: Match by full team name (e.g., "Kansas City Chiefs")
                 if not team_row:
+                    full_name = abbrev_to_fullname.get(abbrev)
+                    if full_name:
+                        team_result = await session.execute(
+                            select(Team.id).where(
+                                Team.name == full_name,
+                                Team.sport_id == sport_id,
+                            )
+                        )
+                        team_row = team_result.first()
+
+                if not team_row:
+                    unmatched.append(abbrev)
                     continue
 
                 await session.execute(
@@ -111,14 +133,18 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 total_players += len(unique_names)
 
             total_updated += sport_updated
-            details.append({
+            sport_detail = {
                 "sport": our_key,
                 "teams_updated": sport_updated,
                 "total_teams_in_api": len(team_players),
                 "players_synced": sum(len(v) for v in team_players.values()),
-            })
+            }
+            if unmatched:
+                sport_detail["unmatched_abbreviations"] = unmatched
+                logger.warning(f"  {our_key}: {len(unmatched)} unmatched teams: {unmatched}")
+            details.append(sport_detail)
             logger.info(
-                f"  {our_key}: updated {sport_updated} teams, "
+                f"  {our_key}: updated {sport_updated}/{len(team_players)} teams, "
                 f"{sum(len(v) for v in team_players.values())} player names"
             )
 

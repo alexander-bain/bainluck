@@ -23,12 +23,13 @@
 | iOS App | SwiftUI | Planned |
 
 **Key External Services:**
-- **The Odds API** (the-odds-api.com) - Sports odds data
-- **Kalshi** (kalshi.com) - Prediction market data (futures with timing info)
-- **ESPN** (undocumented API) - Team colors, logos, live game data, win probability
-- **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification
-- **Google Analytics 4** - User analytics
-- **Firebase Auth** - Google Sign-In (Apple planned), user accounts and personalization
+- **The Odds API** (the-odds-api.com) - Sports odds data (~$119/mo)
+- **Kalshi** (kalshi.com) - Prediction market data (futures with timing info, free)
+- **SportsDataIO** (sportsdata.io) - Rosters, injuries, standings, schedules (~$50-75/mo)
+- **ESPN** (undocumented API) - Team colors, logos, live game data, win probability (free, unreliable)
+- **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification (~$5/mo)
+- **Google Analytics 4** - User analytics (free)
+- **Firebase Auth** - Google Sign-In (Apple planned), user accounts and personalization (free tier)
 
 ---
 
@@ -163,6 +164,7 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `ADMIN_SECRET` - Optional: protect admin endpoints
 - `SENTRY_DSN` - From sentry.io (optional - enables error tracking + performance monitoring)
 - `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
+- `SPORTSDATA_API_KEY` - From sportsdata.io (optional - enables roster sync for player matching)
 - `FIREBASE_PROJECT_ID` - Firebase project ID (optional - enables auth)
 - `FIREBASE_SERVICE_ACCOUNT_JSON` - Full service account JSON string (optional - for admin operations)
 
@@ -379,6 +381,65 @@ Currently uses localStorage (no auth required). When Firebase Auth is added, thi
 oddsTracker_pinnedEvents    // Array of event IDs
 oddsTracker_pinnedFutures   // Array of futures market IDs
 ```
+
+### SportsDataIO Integration
+SportsDataIO provides structured sports data: rosters, injuries (trial tier scrambled), standings, schedules.
+
+**Purpose:** Player name matching for related-futures. Stored on `Team.roster_players` JSONB column.
+
+**API Client:** `backend/app/services/sportsdata_api.py`
+- Auth: `SPORTSDATA_API_KEY` env var → `Ocp-Apim-Subscription-Key` header
+- Sport mapping: `SPORTSDATA_SPORT_MAPPING` (NBA, NFL, NHL, MLB, NCAAB, NCAAF, WNCAAB, MLS)
+- Base URL: `https://api.sportsdata.io/{version}/{sport}/scores/json/{path}`
+
+**Roster Sync:** `backend/app/tasks/roster_sync.py` (`_sync_rosters`)
+- Beat schedule: daily at 7:00 AM UTC (`sync-rosters-daily`)
+- Fetches all active players per sport, groups by team abbreviation
+- Stores deduplicated, sorted player name list (including ASCII variants from DraftKingsName)
+- Current coverage: NBA 26/30 teams, NHL 20/32, NFL 2/32 (abbreviation mismatch issue)
+
+**Admin endpoints:**
+```bash
+# Trigger roster sync (all sports or specific)
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/rosters/sync?secret=any"
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/rosters/sync?secret=any&sport_key=basketball_nba"
+
+# Check task status
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/rosters/task/{task_id}?secret=any"
+```
+
+**Known issues:**
+- NFL matches only 2/32 teams — SportsDataIO abbreviations likely differ from our `teams.abbreviation` values. Needs investigation.
+- College sports return no data on trial tier
+- MLB returns "sport_not_found" (may be offseason or requires different API version)
+
+### Related Futures (Event → Futures Linking)
+Shows championship odds, MVP odds, and award futures relevant to teams playing in a specific game.
+
+**Endpoint:** `GET /api/events/{id}/related-futures`
+
+**Matching strategy (hybrid):**
+1. **Name ILIKE** — Team names, short names (≥4 chars), alternate names, and roster player names matched against `FuturesOutcome.name`
+2. **team_id lookup** — Supplementary matching via `FuturesOutcome.team_id` (populated by backfill task)
+3. Combined via OR for maximum recall
+
+**Sport filtering (triple strategy via OR):**
+- `FuturesMarket.external_id LIKE prefix%` (e.g., "basketball%")
+- `FuturesMarket.llm_sport_category` matches mapped category
+- `FuturesMarket.sport_id` matches compatible sport IDs
+
+**Key helpers** (in `events.py`):
+- `_SPORT_PREFIX_TO_LLM_CATEGORY` — Maps sport key prefixes to LLM categories
+- `_team_name_patterns()` — Builds ILIKE-safe patterns from team names
+- `_escape_like()` — Escapes `%`, `_`, `\` for safe ILIKE patterns
+
+**Frontend:** `RelatedFutures.tsx` — "Bigger Picture" section on event detail page with team-colored borders, logos, probability bars, tier icons, player name display
+
+**Files:**
+- Backend endpoint: `backend/app/routes/events.py` (related-futures section)
+- Frontend component: `frontend/components/RelatedFutures.tsx`
+- Team linking utility: `backend/app/utils/team_linking.py`
+- Tests: `backend/tests/test_team_linking.py` (11 tests for helpers)
 
 ### ESPN Integration
 ESPN's undocumented API provides team data (colors, logos) and live game info (clock, period, win probability).
@@ -617,9 +678,9 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 497 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, and `test_snapshot_collapse.py`. Zero frontend tests.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 594 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, `test_snapshot_collapse.py`, `test_team_linking.py`, and `test_tasks_wiring.py`. Frontend has 107 tests.
 2. 🔴 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. **Worse than expected:** Super Bowl (event 1) had only 4 score_snapshots — if the highest-profile game has unreliable coverage, college sports are likely much worse. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
-3. 🟡 **Data retention policy — Phase 1 complete, Phase 2 pending** — Snapshot collapsing implemented: consecutive identical rows are merged into single rows with `captured_at`/`valid_until` spans (lossless). Write-time dedup added to `win_prob_snapshots`. Daily Celery beat tasks run at 6:30/6:35/6:40 UTC. Initial run deleted ~740K rows (19% of total). **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet. **Performance note (urgent):** current collapse task loads all snapshots per (event, bookmaker) into Python memory — a pure SQL approach (window functions to identify collapsible rows, batch delete) would be 10-50x faster and use constant memory. As event count grows over months, this **will** OOM the Heroku dyno. Rewrite to SQL before adding new data sources.
+3. 🔴 **Data retention / worker memory — ACTIVELY OOMing** — Heroku worker is hitting R14 (Memory quota exceeded) as of Feb 2026. Snapshot collapsing (Phase 1) implemented but the Python-based collapse task loads all snapshots into memory. **Immediate fix needed:** rewrite collapse to pure SQL (window functions + batch delete) for constant memory. **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet.
 4. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic. Celery heartbeat task + `GET /api/admin/celery/health` endpoint now provide basic worker health monitoring. **Gap:** No monitoring for task *correctness*, only *liveness*. Heartbeat confirms the worker is running but doesn't detect silent failures (e.g., `poll_all_odds` returning empty results, ESPN sync matching 0 events). Sentry catches exceptions but not degraded output. Need task-level success metrics.
 5. 🟡 **Move `_create_or_update_win_prob_snapshot` to shared module** — Currently in `odds_polling.py` but imported by `espn_sync.py`. It's a shared utility, not specific to odds polling. Should live in `base.py` or a new `tasks/snapshots.py` to avoid confusing cross-module dependencies as the package grows.
 
@@ -635,6 +696,23 @@ These are the current focus. Resist the urge to build new features until these a
 14. 📋 Sport-specific Pulse normalization (different ceilings per sport)
 15. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
 16. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
+17. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
+18. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
+19. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
+
+### Horizon — AI-Native Sports Intelligence (SportsDataIO + The Odds API + AI)
+These are differentiated features that can't be built with odds data alone. They require SportsDataIO enrichment (rosters, injuries, standings, schedules) combined with AI interpretation. Ordered by estimated impact and feasibility.
+
+1. 📋 **"The Market Was Wrong"** — After games finish, analyze which futures moved most. Surface when a team's championship odds shift significantly after a win/loss. "After tonight's upset loss, the Celtics' title odds dropped from 8% to 5.5%." Uses: odds snapshots + game results + AI narrative.
+2. 📋 **"Why Did the Line Move?"** — Detect significant odds movements (>3% in <1hr) and generate explanations by cross-referencing injury reports, lineup changes, and news from SportsDataIO. "Lakers line moved from -3 to +1 after LeBron was listed as questionable."
+3. 📋 **"Your Team's Season at a Glance"** — Dashboard view: championship odds trajectory over the season, win/loss record overlaid on odds chart, key inflection points annotated. Needs: team favorites (auth), futures odds history, game results.
+4. 📋 **Injury Impact Score** — When a player is injured, show historical impact on team's odds. "When Steph Curry has been out this season, Warriors odds shift -4.2% on average." Needs: SportsDataIO injury data + odds snapshots correlation.
+5. 📋 **Game Context Card** — Rich pre-game card: standings implications, head-to-head record, streak info, playoff scenario impact. "If the Celtics win tonight, they clinch the #1 seed." Needs: SportsDataIO standings + schedule + AI reasoning.
+6. 📋 **Overreaction Index** — Compare a team's current championship odds trajectory against historical base rates. "The Lions are +400 to win the Super Bowl. Only 3 teams with these regular season stats have ever won." Needs: historical odds data + AI analysis.
+7. 📋 **Momentum Tracker** — Rolling 10-game odds trend visualization. Show which teams are on hot/cold streaks based on how the market is repricing them, not just W/L record. Needs: futures odds time series.
+8. 📋 **"What's Actually at Stake"** — For each game, show concrete implications: "Win and they're 2 games up in the division. Lose and they drop to 4th." Needs: SportsDataIO standings + schedule + playoff math.
+9. 📋 **Sharps vs Public** — If SportsDataIO provides line movement + betting splits, surface when sharp money disagrees with public sentiment. Differentiated from existing tools by visual-first presentation.
+10. 📋 **Futures Postmortem** — At season end, show who "won" the futures market: early bettors on the champion, worst value bets, biggest surprises. Needs: full futures odds history + AI narrative generation.
 
 ### Completed
 <details>
@@ -660,6 +738,8 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`
 - ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 11 modules: `__init__.py`, `config.py`, `base.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
+- ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
+- ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
 </details>
 
 See `docs/PRD.md` for full roadmap.
