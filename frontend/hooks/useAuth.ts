@@ -1,8 +1,8 @@
 /**
  * useAuth - Hook for Firebase authentication state management.
  *
- * Provides reactive auth state, sign-in/sign-out methods,
- * and a getToken() function for authenticated API calls.
+ * Provides reactive auth state, a function to initialize the Google
+ * Sign-In button, sign-out, and a getToken() function for API calls.
  *
  * When Firebase is not configured, all values indicate
  * "not authenticated" and auth methods are no-ops.
@@ -13,7 +13,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   isFirebaseConfigured,
-  signInWithGoogle as firebaseSignInWithGoogle,
+  initGoogleSignInButton,
   signOut as firebaseSignOut,
   getIdToken,
   onAuthChange,
@@ -34,7 +34,7 @@ interface UseAuthResult {
   isLoading: boolean;
   isAuthenticated: boolean;
   isAuthAvailable: boolean;
-  signInWithGoogle: () => Promise<void>;
+  initGoogleButton: (container: HTMLElement) => void;
   signOut: () => Promise<void>;
   getToken: () => Promise<string | null>;
 }
@@ -94,20 +94,21 @@ export function useAuth(): UseAuthResult {
     return unsubscribe;
   }, [isAuthAvailable]);
 
-  // Sign in with Google popup, then register with backend
-  const signInWithGoogle = useCallback(async (): Promise<void> => {
-    if (!isAuthAvailable) return;
+  // Callback for when Google sign-in returns a Firebase token
+  const handleGoogleToken = useCallback(async (idToken: string) => {
+    tokenRef.current = idToken;
+    await registerWithBackend(idToken);
+  }, []);
 
-    try {
-      const idToken = await firebaseSignInWithGoogle();
-      if (idToken) {
-        tokenRef.current = idToken;
-        await registerWithBackend(idToken);
-      }
-    } catch (error) {
-      console.error("[Auth] Sign-in error:", error);
-    }
-  }, [isAuthAvailable]);
+  // Initialize Google Sign-In button in a container element.
+  // Call this with a DOM element ref to render Google's button.
+  const initGoogleButton = useCallback(
+    (container: HTMLElement) => {
+      if (!isAuthAvailable) return;
+      initGoogleSignInButton(container, handleGoogleToken);
+    },
+    [isAuthAvailable, handleGoogleToken]
+  );
 
   // Sign out
   const signOut = useCallback(async (): Promise<void> => {
@@ -129,7 +130,7 @@ export function useAuth(): UseAuthResult {
     isLoading,
     isAuthenticated: !!user,
     isAuthAvailable,
-    signInWithGoogle,
+    initGoogleButton,
     signOut,
     getToken,
   };
