@@ -105,7 +105,9 @@ export function useAuth(): UseAuthResult {
   const initGoogleButton = useCallback(
     (container: HTMLElement) => {
       if (!isAuthAvailable) return;
-      initGoogleSignInButton(container, handleGoogleToken);
+      initGoogleSignInButton(container, handleGoogleToken).catch((err) => {
+        console.error("[Auth] Failed to initialize Google button:", err);
+      });
     },
     [isAuthAvailable, handleGoogleToken]
   );

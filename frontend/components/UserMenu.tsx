@@ -17,6 +17,7 @@ export default function UserMenu() {
     useAuthContext();
   const [isOpen, setIsOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [googleBtnReady, setGoogleBtnReady] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
@@ -35,15 +36,36 @@ export default function UserMenu() {
   useEffect(() => {
     if (!isAuthAvailable || isAuthenticated || isLoading) return;
     if (!googleBtnRef.current) return;
+    console.log("[UserMenu] Initializing Google Sign-In button...");
     initGoogleButton(googleBtnRef.current);
+
+    // Watch for Google button to be injected into the container
+    const container = googleBtnRef.current;
+    const observer = new MutationObserver(() => {
+      if (container.childElementCount > 0) {
+        console.log("[UserMenu] Google button rendered");
+        setGoogleBtnReady(true);
+        observer.disconnect();
+      }
+    });
+    observer.observe(container, { childList: true });
+
+    return () => observer.disconnect();
   }, [isAuthAvailable, isAuthenticated, isLoading, initGoogleButton]);
 
   // Don't render anything if auth is not configured
   if (!isAuthAvailable) return null;
 
-  // Not authenticated — show Google Sign-In button
+  // Not authenticated — show Google Sign-In button with fallback text
   if (!isAuthenticated) {
-    return <div ref={googleBtnRef} />;
+    return (
+      <div className="flex items-center">
+        <div ref={googleBtnRef} />
+        {!googleBtnReady && (
+          <span className="text-sm text-slate">Sign in</span>
+        )}
+      </div>
+    );
   }
 
   // Authenticated — show avatar with dropdown
