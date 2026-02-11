@@ -1402,7 +1402,7 @@ async def get_related_futures(
     home_patterns = _team_name_patterns(event.home_team_name)
     away_patterns = _team_name_patterns(event.away_team_name)
 
-    # Look up Team records for alternate names AND team_ids (for player outcomes)
+    # Look up Team records for alternate names, roster players, AND team_ids
     home_team_ids = set()
     away_team_ids = set()
     for team_name, patterns, id_set in [
@@ -1413,16 +1413,25 @@ async def get_related_futures(
         if event.sport_id:
             team_filters.append(Team.sport_id == event.sport_id)
         team_result = await db.execute(
-            select(Team.id, Team.alternate_names).where(*team_filters)
+            select(Team.id, Team.alternate_names, Team.roster_players).where(*team_filters)
         )
         team_row = team_result.first()
         if team_row:
             id_set.add(team_row.id)
+            # Add alternate team names (e.g., "Celtics", "BOS")
             alt_names = team_row.alternate_names
             if alt_names and isinstance(alt_names, list):
                 for alt in alt_names:
                     if isinstance(alt, str) and len(alt) >= 4:
                         escaped = _escape_like(alt)
+                        if escaped.lower() not in [p.lower() for p in patterns]:
+                            patterns.append(escaped)
+            # Add roster player names from SportsDataIO (e.g., "Jayson Tatum")
+            roster = team_row.roster_players
+            if roster and isinstance(roster, list):
+                for player_name in roster:
+                    if isinstance(player_name, str) and len(player_name) >= 4:
+                        escaped = _escape_like(player_name)
                         if escaped.lower() not in [p.lower() for p in patterns]:
                             patterns.append(escaped)
 

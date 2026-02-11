@@ -59,6 +59,7 @@ class Team(Base):
     alternate_names: Mapped[Optional[dict]] = mapped_column(JSONB)  # ["Lakers", "LA Lakers"]
     current_record: Mapped[Optional[str]] = mapped_column(String(20))  # "34-18"
     location: Mapped[Optional[str]] = mapped_column(String(100))  # ESPN "location" field (city/region/school)
+    roster_players: Mapped[Optional[dict]] = mapped_column(JSONB)  # ["Jayson Tatum", "Jaylen Brown", ...]
 
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="teams")
