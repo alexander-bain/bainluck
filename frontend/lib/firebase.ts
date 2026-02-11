@@ -5,8 +5,9 @@
  * The app works fully without Firebase configured — auth features
  * are hidden when env vars are not set.
  *
- * Uses signInWithPopup first. If popup fails for any reason
- * (Safari ITP, blocked, etc.), falls back to signInWithRedirect.
+ * Uses signInWithPopup with authDomain set to our own domain.
+ * The Next.js rewrite in next.config.mjs proxies /__/auth/* to
+ * Firebase, making the popup same-origin and avoiding Safari ITP.
  */
 
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
@@ -14,18 +15,19 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   type Auth,
   type User as FirebaseUser,
 } from "firebase/auth";
 
-// Firebase config from environment variables
+// Firebase config from environment variables.
+// authDomain uses our own domain (not *.firebaseapp.com) to avoid
+// Safari ITP cross-origin issues. The /__/auth/* path is proxied
+// to Firebase via Next.js rewrites.
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  authDomain: typeof window !== "undefined" ? window.location.host : process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
 };
 
@@ -35,9 +37,9 @@ const firebaseConfig = {
  */
 export function isFirebaseConfigured(): boolean {
   return Boolean(
-    firebaseConfig.apiKey &&
-    firebaseConfig.authDomain &&
-    firebaseConfig.projectId
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN &&
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
   );
 }
 
@@ -67,72 +69,34 @@ export function getFirebaseAuth(): Auth | null {
 }
 
 /**
- * Sign in with Google. Tries popup first. If popup fails for ANY reason
- * (Safari ITP reports failures as "popup-closed-by-user"), checks if
- * Firebase auth succeeded anyway, then falls back to redirect.
- *
- * Returns: "popup" if popup succeeded, "redirect" if falling back,
- * "cancelled" if user explicitly closed, or null on error.
+ * Sign in with Google via popup.
+ * Returns the Firebase ID token for backend verification.
+ * With authDomain set to our own domain, popup is same-origin
+ * and works in Safari without ITP issues.
  */
-export async function signInWithGoogle(): Promise<"popup" | "redirect" | "cancelled" | null> {
+export async function signInWithGoogle(): Promise<string | null> {
   const authInstance = getFirebaseAuth();
   if (!authInstance) {
     console.error("[Firebase] Auth not initialized");
     return null;
   }
 
-  const provider = new GoogleAuthProvider();
-
   try {
-    console.log("[Firebase] Attempting signInWithPopup...");
+    const provider = new GoogleAuthProvider();
+    console.log("[Firebase] Opening sign-in popup (same-origin)...");
     const result = await signInWithPopup(authInstance, provider);
-    console.log("[Firebase] Popup succeeded for", result.user.email);
-    return "popup";
+    console.log("[Firebase] Sign-in succeeded for", result.user.email);
+    const idToken = await result.user.getIdToken();
+    return idToken;
   } catch (error: unknown) {
     const firebaseError = error as { code?: string };
-    const code = firebaseError.code || "";
-    console.log("[Firebase] Popup error:", code);
-
-    // Check if Firebase auth actually succeeded despite the popup error
-    // (Safari ITP can kill popup communication after auth completes)
-    if (authInstance.currentUser) {
-      console.log("[Firebase] Auth succeeded despite popup error, user:", authInstance.currentUser.email);
-      return "popup";
-    }
-
-    // Popup failed and user is not signed in — fall back to redirect
-    // Don't try to distinguish "user cancelled" from "Safari killed it"
-    // because Safari reports ITP failures as popup-closed-by-user
-    console.log("[Firebase] Falling back to signInWithRedirect...");
-    try {
-      await signInWithRedirect(authInstance, provider);
-      return "redirect"; // Page navigates away, this may not execute
-    } catch (redirectError) {
-      console.error("[Firebase] Redirect also failed:", redirectError);
+    if (firebaseError.code === "auth/popup-closed-by-user" ||
+        firebaseError.code === "auth/cancelled-popup-request") {
+      console.log("[Firebase] User cancelled sign-in");
       return null;
     }
-  }
-}
-
-/**
- * Check for a redirect result after returning from Google sign-in.
- * Returns the Firebase ID token if a redirect sign-in just completed.
- */
-export async function checkRedirectResult(): Promise<string | null> {
-  const authInstance = getFirebaseAuth();
-  if (!authInstance) return null;
-
-  try {
-    const result = await getRedirectResult(authInstance);
-    if (result?.user) {
-      const idToken = await result.user.getIdToken();
-      console.log("[Firebase] Redirect result: signed in as", result.user.email);
-      return idToken;
-    }
-    return null;
-  } catch (error: unknown) {
-    console.error("[Firebase] Redirect result error:", error);
-    return null;
+    console.error("[Firebase] Sign-in error:", firebaseError.code, error);
+    throw error;
   }
 }
 
@@ -169,7 +133,6 @@ export function onAuthChange(
 ): () => void {
   const authInstance = getFirebaseAuth();
   if (!authInstance) {
-    // Not configured — immediately call with null and return no-op unsubscribe
     callback(null);
     return () => {};
   }

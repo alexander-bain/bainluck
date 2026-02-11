@@ -4,9 +4,6 @@
  * Provides reactive auth state, sign-in/sign-out methods,
  * and a getToken() function for authenticated API calls.
  *
- * Uses popup-first auth with redirect fallback for Safari.
- * On page load, checks for redirect result and registers with backend.
- *
  * When Firebase is not configured, all values indicate
  * "not authenticated" and auth methods are no-ops.
  */
@@ -17,7 +14,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   isFirebaseConfigured,
   signInWithGoogle as firebaseSignInWithGoogle,
-  checkRedirectResult,
   signOut as firebaseSignOut,
   getIdToken,
   onAuthChange,
@@ -34,19 +30,12 @@ export interface AuthUser {
 }
 
 interface UseAuthResult {
-  /** Current authenticated user (null if not signed in) */
   user: AuthUser | null;
-  /** Whether auth state is still loading */
   isLoading: boolean;
-  /** Whether the user is authenticated */
   isAuthenticated: boolean;
-  /** Whether Firebase Auth is configured (env vars set) */
   isAuthAvailable: boolean;
-  /** Sign in with Google (popup, with redirect fallback). */
   signInWithGoogle: () => Promise<void>;
-  /** Sign out. */
   signOut: () => Promise<void>;
-  /** Get a fresh ID token for API calls. Returns null if not authenticated. */
   getToken: () => Promise<string | null>;
 }
 
@@ -88,7 +77,6 @@ export function useAuth(): UseAuthResult {
   const [isLoading, setIsLoading] = useState(true);
   const isAuthAvailable = isFirebaseConfigured();
   const tokenRef = useRef<string | null>(null);
-  const redirectChecked = useRef(false);
 
   // Subscribe to Firebase auth state
   useEffect(() => {
@@ -106,37 +94,16 @@ export function useAuth(): UseAuthResult {
     return unsubscribe;
   }, [isAuthAvailable]);
 
-  // Check for redirect result on page load (after returning from Google)
-  useEffect(() => {
-    if (!isAuthAvailable || redirectChecked.current) return;
-    redirectChecked.current = true;
-
-    checkRedirectResult().then(async (idToken) => {
-      if (idToken) {
-        console.log("[Auth] Redirect sign-in completed, registering with backend");
-        tokenRef.current = idToken;
-        await registerWithBackend(idToken);
-      }
-    });
-  }, [isAuthAvailable]);
-
-  // Sign in with Google (popup with redirect fallback)
+  // Sign in with Google popup, then register with backend
   const signInWithGoogle = useCallback(async (): Promise<void> => {
     if (!isAuthAvailable) return;
 
     try {
-      const result = await firebaseSignInWithGoogle();
-
-      if (result === "popup") {
-        // Popup succeeded — user is now signed in, get token for backend
-        const token = await getIdToken();
-        if (token) {
-          tokenRef.current = token;
-          await registerWithBackend(token);
-        }
+      const idToken = await firebaseSignInWithGoogle();
+      if (idToken) {
+        tokenRef.current = idToken;
+        await registerWithBackend(idToken);
       }
-      // "redirect" = page is navigating away, nothing to do
-      // "cancelled" / null = user cancelled or error, nothing to do
     } catch (error) {
       console.error("[Auth] Sign-in error:", error);
     }
