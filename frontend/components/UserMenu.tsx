@@ -38,18 +38,10 @@ export default function UserMenu() {
   if (!isAuthenticated) {
     return (
       <button
-        onClick={async () => {
-          setIsSigningIn(true);
-          try {
-            await signInWithGoogle();
-          } finally {
-            setIsSigningIn(false);
-          }
-        }}
-        disabled={isSigningIn}
-        className="text-sm font-medium text-slate hover:text-graphite transition-colors disabled:opacity-50"
+        onClick={() => signInWithGoogle()}
+        className="text-sm font-medium text-slate hover:text-graphite transition-colors"
       >
-        {isSigningIn ? "Signing in..." : "Sign in"}
+        Sign in
       </button>
     );
   }

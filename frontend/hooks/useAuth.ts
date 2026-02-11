@@ -4,6 +4,10 @@
  * Provides reactive auth state, sign-in/sign-out methods,
  * and a getToken() function for authenticated API calls.
  *
+ * Uses redirect-based sign-in (not popup) to avoid Safari ITP issues.
+ * On page load after redirect, checks for redirect result and
+ * registers the user with the backend.
+ *
  * When Firebase is not configured, all values indicate
  * "not authenticated" and auth methods are no-ops.
  */
@@ -14,6 +18,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   isFirebaseConfigured,
   signInWithGoogle as firebaseSignInWithGoogle,
+  checkRedirectResult,
   signOut as firebaseSignOut,
   getIdToken,
   onAuthChange,
@@ -38,8 +43,8 @@ interface UseAuthResult {
   isAuthenticated: boolean;
   /** Whether Firebase Auth is configured (env vars set) */
   isAuthAvailable: boolean;
-  /** Sign in with Google. Returns true on success. */
-  signInWithGoogle: () => Promise<boolean>;
+  /** Sign in with Google (redirects to Google, then back). */
+  signInWithGoogle: () => Promise<void>;
   /** Sign out. */
   signOut: () => Promise<void>;
   /** Get a fresh ID token for API calls. Returns null if not authenticated. */
@@ -56,11 +61,33 @@ function mapFirebaseUser(fbUser: FirebaseUser | null): AuthUser | null {
   };
 }
 
+/**
+ * Register or update user on backend. Best-effort — doesn't affect
+ * client-side auth state if it fails.
+ */
+async function registerWithBackend(idToken: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_URL}/api/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      console.warn(`Backend auth registration failed (${response.status}): ${text}`);
+    }
+  } catch (backendError) {
+    console.warn("Backend auth registration unreachable:", backendError);
+  }
+}
+
 export function useAuth(): UseAuthResult {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const isAuthAvailable = isFirebaseConfigured();
   const tokenRef = useRef<string | null>(null);
+  const redirectChecked = useRef(false);
 
   // Subscribe to Firebase auth state
   useEffect(() => {
@@ -78,37 +105,24 @@ export function useAuth(): UseAuthResult {
     return unsubscribe;
   }, [isAuthAvailable]);
 
-  // Sign in with Google
-  const signInWithGoogle = useCallback(async (): Promise<boolean> => {
-    if (!isAuthAvailable) return false;
+  // Check for redirect result on page load (after returning from Google)
+  useEffect(() => {
+    if (!isAuthAvailable || redirectChecked.current) return;
+    redirectChecked.current = true;
 
-    try {
-      const idToken = await firebaseSignInWithGoogle();
-      if (!idToken) return false; // User cancelled
-
-      // Register/update user on backend (best-effort — don't undo Firebase auth on failure)
-      try {
-        const response = await fetch(`${API_URL}/api/auth/google`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id_token: idToken }),
-        });
-
-        if (!response.ok) {
-          const text = await response.text().catch(() => "");
-          console.warn(`Backend auth registration failed (${response.status}): ${text}`);
-        }
-      } catch (backendError) {
-        // Network/CORS error reaching backend — user is still signed in via Firebase
-        console.warn("Backend auth registration unreachable:", backendError);
+    checkRedirectResult().then(async (idToken) => {
+      if (idToken) {
+        console.log("[Auth] Redirect sign-in completed, registering with backend");
+        tokenRef.current = idToken;
+        await registerWithBackend(idToken);
       }
+    });
+  }, [isAuthAvailable]);
 
-      tokenRef.current = idToken;
-      return true;
-    } catch (error) {
-      console.error("Google sign-in failed:", error);
-      return false;
-    }
+  // Sign in with Google (redirect — page navigates away)
+  const signInWithGoogle = useCallback(async (): Promise<void> => {
+    if (!isAuthAvailable) return;
+    await firebaseSignInWithGoogle();
   }, [isAuthAvailable]);
 
   // Sign out
