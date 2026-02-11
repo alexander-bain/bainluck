@@ -4,13 +4,17 @@
  * Firebase Auth is used for Google (and later Apple) Sign-In.
  * The app works fully without Firebase configured — auth features
  * are hidden when env vars are not set.
+ *
+ * Uses signInWithRedirect (not popup) to avoid Safari's ITP
+ * blocking cross-origin popup communication.
  */
 
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   type Auth,
@@ -62,26 +66,37 @@ export function getFirebaseAuth(): Auth | null {
 }
 
 /**
- * Sign in with Google via popup.
- * Returns the Firebase ID token for backend verification.
+ * Start Google sign-in via redirect.
+ * The page navigates to Google, then redirects back.
+ * Use checkRedirectResult() on page load to get the result.
  */
-export async function signInWithGoogle(): Promise<string | null> {
+export async function signInWithGoogle(): Promise<void> {
+  const authInstance = getFirebaseAuth();
+  if (!authInstance) return;
+
+  const provider = new GoogleAuthProvider();
+  await signInWithRedirect(authInstance, provider);
+}
+
+/**
+ * Check for a redirect result after returning from Google sign-in.
+ * Returns the Firebase ID token if a redirect sign-in just completed.
+ * Returns null if no redirect happened or user was already signed in.
+ */
+export async function checkRedirectResult(): Promise<string | null> {
   const authInstance = getFirebaseAuth();
   if (!authInstance) return null;
 
   try {
-    const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(authInstance, provider);
-    const idToken = await result.user.getIdToken();
-    return idToken;
-  } catch (error: unknown) {
-    // User cancelled the popup or other error
-    const firebaseError = error as { code?: string };
-    if (firebaseError.code === "auth/popup-closed-by-user") {
-      return null; // User cancelled — not an error
+    const result = await getRedirectResult(authInstance);
+    if (result?.user) {
+      const idToken = await result.user.getIdToken();
+      return idToken;
     }
-    console.error("Google sign-in failed:", error);
-    throw error;
+    return null;
+  } catch (error: unknown) {
+    console.error("Redirect sign-in error:", error);
+    return null;
   }
 }
 
