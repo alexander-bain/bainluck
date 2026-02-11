@@ -1,7 +1,7 @@
 /**
- * UserMenu - Sign-in button or user avatar with dropdown.
+ * UserMenu - Google Sign-In button or user avatar with dropdown.
  *
- * When not authenticated: shows "Sign in" text button.
+ * When not authenticated: renders Google's Sign-In button (via GIS renderButton).
  * When authenticated: shows user avatar/initial with dropdown menu.
  * When auth is not configured: renders nothing.
  */
@@ -13,12 +13,12 @@ import Link from "next/link";
 import { useAuthContext } from "@/components/AuthProvider";
 
 export default function UserMenu() {
-  const { user, isLoading, isAuthenticated, isAuthAvailable, signInWithGoogle, signOut } =
+  const { user, isLoading, isAuthenticated, isAuthAvailable, initGoogleButton, signOut } =
     useAuthContext();
   const [isOpen, setIsOpen] = useState(false);
-  const [isSigningIn, setIsSigningIn] = useState(false);
   const [imgError, setImgError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const googleBtnRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -31,19 +31,19 @@ export default function UserMenu() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Render Google Sign-In button when not authenticated
+  useEffect(() => {
+    if (!isAuthAvailable || isAuthenticated || isLoading) return;
+    if (!googleBtnRef.current) return;
+    initGoogleButton(googleBtnRef.current);
+  }, [isAuthAvailable, isAuthenticated, isLoading, initGoogleButton]);
+
   // Don't render anything if auth is not configured
   if (!isAuthAvailable) return null;
 
-  // Not authenticated (or still loading) — show sign-in button
+  // Not authenticated — show Google Sign-In button
   if (!isAuthenticated) {
-    return (
-      <button
-        onClick={() => signInWithGoogle()}
-        className="text-sm font-medium text-slate hover:text-graphite transition-colors"
-      >
-        Sign in
-      </button>
-    );
+    return <div ref={googleBtnRef} />;
   }
 
   // Authenticated — show avatar with dropdown

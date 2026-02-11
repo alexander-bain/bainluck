@@ -18,7 +18,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   isAuthAvailable: boolean;
-  signInWithGoogle: () => Promise<void>;
+  initGoogleButton: (container: HTMLElement) => void;
   signOut: () => Promise<void>;
   getToken: () => Promise<string | null>;
 }
