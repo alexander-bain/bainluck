@@ -205,6 +205,15 @@ def backfill_team_links(self, limit: int = 200, use_llm: bool = True):
     return run_async(_backfill_team_links(limit, use_llm))
 
 
+# --- Roster Sync (SportsDataIO) ---
+
+@celery_app.task(bind=True, name="app.tasks.sync_rosters")
+def sync_rosters(self, sport_key: str = None):
+    """Sync player rosters from SportsDataIO to Team.roster_players."""
+    from app.tasks.roster_sync import _sync_rosters
+    return run_async(_sync_rosters(sport_key))
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")
@@ -284,6 +293,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_team_links",
         "schedule": crontab(minute=50),  # Hourly at :50, after futures (:30) and Kalshi (:45)
         "kwargs": {"limit": 200, "use_llm": True},
+    },
+    "sync-rosters-daily": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=0, hour=7),  # Daily at 7:00 AM UTC
     },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",

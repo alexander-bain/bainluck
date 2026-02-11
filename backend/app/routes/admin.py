@@ -1883,6 +1883,60 @@ async def get_team_links_status(
 
 
 # ---------------------------------------------------------------------------
+# Roster Sync (SportsDataIO)
+# ---------------------------------------------------------------------------
+
+@router.post("/rosters/sync")
+async def trigger_roster_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: Optional[str] = Query(None, description="Sport key (e.g., 'basketball_nba'). If omitted, syncs all supported sports."),
+):
+    """Trigger roster sync from SportsDataIO (runs as background Celery task).
+
+    Fetches player rosters and stores them on Team.roster_players for use
+    in related-futures player name matching.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_rosters
+
+    task = sync_rosters.delay(sport_key=sport_key)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "sport_key": sport_key or "all",
+        "message": f"Roster sync queued. Use /api/admin/rosters/task/{task.id} to check status.",
+    }
+
+
+@router.get("/rosters/task/{task_id}")
+async def get_roster_sync_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of a roster sync task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Snapshot Retention
 # ---------------------------------------------------------------------------
 
