@@ -13,7 +13,11 @@ from typing import Optional
 from sqlalchemy import select, update
 
 from app.tasks.base import get_task_session
-from app.services.sportsdata_api import SportsDataIOService, SPORTSDATA_SPORT_MAPPING
+from app.services.sportsdata_api import (
+    SportsDataIOService,
+    SPORTSDATA_SPORT_MAPPING,
+    SPORTSDATA_ABBREV_OVERRIDES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +107,14 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 # Deduplicate and sort
                 unique_names = sorted(set(player_names))
 
+                # Resolve abbreviation via override map, then try DB match
+                overrides = SPORTSDATA_ABBREV_OVERRIDES.get(sd_sport, {})
+                db_abbrev = overrides.get(abbrev, abbrev)
+
                 # Try 1: Match by abbreviation + sport
                 team_result = await session.execute(
                     select(Team.id).where(
-                        Team.abbreviation == abbrev,
+                        Team.abbreviation == db_abbrev,
                         Team.sport_id == sport_id,
                     )
                 )
