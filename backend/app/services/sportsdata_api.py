@@ -10,6 +10,19 @@ logger = logging.getLogger(__name__)
 
 # SportsDataIO sport key → API path segment mapping
 # Our sport keys use format "basketball_nba", SportsDataIO uses "nba"
+# Static abbreviation overrides: SportsDataIO abbrev → our DB abbreviation.
+# Only entries where the abbreviations DIFFER need to be listed here.
+# If a SportsDataIO abbrev isn't in the override map, it's used as-is.
+# Update this if teams move, rebrand, or new expansion teams are added.
+SPORTSDATA_ABBREV_OVERRIDES: dict[str, dict[str, str]] = {
+    "nfl": {
+        "ARI": "AZ",     # Arizona Cardinals
+        "JAX": "JAC",    # Jacksonville Jaguars
+        "LAR": "LA",     # Los Angeles Rams
+        "WAS": "WSH",    # Washington Commanders
+    },
+}
+
 SPORTSDATA_SPORT_MAPPING = {
     "basketball_nba": "nba",
     "basketball_ncaab": "cbb",

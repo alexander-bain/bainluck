@@ -13,7 +13,11 @@ from typing import Optional
 from sqlalchemy import select, update
 
 from app.tasks.base import get_task_session
-from app.services.sportsdata_api import SportsDataIOService, SPORTSDATA_SPORT_MAPPING
+from app.services.sportsdata_api import (
+    SportsDataIOService,
+    SPORTSDATA_SPORT_MAPPING,
+    SPORTSDATA_ABBREV_OVERRIDES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +88,16 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 continue
             sport_id = sport_row.id
 
-            # Build SportsDataIO team name lookup for fallback matching
+            # Build SportsDataIO team name lookups for fallback matching
             sd_teams = await service.fetch_teams(sd_sport)
-            abbrev_to_fullname: dict[str, str] = {}
+            abbrev_to_info: dict[str, dict] = {}
             for t in sd_teams:
-                if t.get("key") and t.get("full_name"):
-                    abbrev_to_fullname[t["key"]] = t["full_name"]
+                if t.get("key"):
+                    abbrev_to_info[t["key"]] = {
+                        "full_name": t.get("full_name", ""),
+                        "city": t.get("city", ""),
+                        "name": t.get("name", ""),
+                    }
 
             # Update each team's roster_players
             from app.models import Team
@@ -99,29 +107,55 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 # Deduplicate and sort
                 unique_names = sorted(set(player_names))
 
+                # Resolve abbreviation via override map, then try DB match
+                overrides = SPORTSDATA_ABBREV_OVERRIDES.get(sd_sport, {})
+                db_abbrev = overrides.get(abbrev, abbrev)
+
                 # Try 1: Match by abbreviation + sport
                 team_result = await session.execute(
                     select(Team.id).where(
-                        Team.abbreviation == abbrev,
+                        Team.abbreviation == db_abbrev,
                         Team.sport_id == sport_id,
                     )
                 )
                 team_row = team_result.first()
 
-                # Try 2: Match by full team name (e.g., "Kansas City Chiefs")
-                if not team_row:
-                    full_name = abbrev_to_fullname.get(abbrev)
-                    if full_name:
-                        team_result = await session.execute(
-                            select(Team.id).where(
-                                Team.name == full_name,
-                                Team.sport_id == sport_id,
-                            )
+                sd_info = abbrev_to_info.get(abbrev, {})
+
+                # Try 2: Exact full name match (e.g., "Kansas City Chiefs")
+                if not team_row and sd_info.get("full_name"):
+                    team_result = await session.execute(
+                        select(Team.id).where(
+                            Team.name == sd_info["full_name"],
+                            Team.sport_id == sport_id,
                         )
-                        team_row = team_result.first()
+                    )
+                    team_row = team_result.first()
+
+                # Try 3: ILIKE on full name (handles minor formatting differences)
+                if not team_row and sd_info.get("full_name"):
+                    team_result = await session.execute(
+                        select(Team.id).where(
+                            Team.name.ilike(f"%{sd_info['full_name']}%"),
+                            Team.sport_id == sport_id,
+                        )
+                    )
+                    team_row = team_result.first()
+
+                # Try 4: ILIKE on mascot name (e.g., "%Chiefs%")
+                if not team_row and sd_info.get("name") and len(sd_info["name"]) >= 4:
+                    team_result = await session.execute(
+                        select(Team.id).where(
+                            Team.name.ilike(f"%{sd_info['name']}%"),
+                            Team.sport_id == sport_id,
+                        )
+                    )
+                    rows = team_result.all()
+                    if len(rows) == 1:
+                        team_row = rows[0]
 
                 if not team_row:
-                    unmatched.append(abbrev)
+                    unmatched.append(f"{abbrev}={sd_info.get('full_name', '?')}")
                     continue
 
                 await session.execute(
