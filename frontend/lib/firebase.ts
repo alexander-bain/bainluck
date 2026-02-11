@@ -90,8 +90,9 @@ function loadGIS(): Promise<void> {
 }
 
 /**
- * Sign in with Google using Google Identity Services.
- * Opens Google's own sign-in UI, then passes the credential to Firebase.
+ * Sign in with Google using Google Identity Services OAuth flow.
+ * Opens Google's consent popup directly (skips One Tap which is unreliable
+ * for button clicks due to cooldown, FedCM, and lost gesture context).
  * Returns the Firebase ID token on success.
  */
 export async function signInWithGoogle(): Promise<string | null> {
@@ -103,57 +104,9 @@ export async function signInWithGoogle(): Promise<string | null> {
 
   try {
     await loadGIS();
-    console.log("[Firebase] GIS loaded, requesting Google credential...");
-
-    // Use Google's token client to get an ID token
-    const idToken = await new Promise<string>((resolve, reject) => {
-      // @ts-expect-error - google.accounts is loaded dynamically
-      const google = window.google;
-      if (!google?.accounts?.id) {
-        reject(new Error("Google Identity Services not available"));
-        return;
-      }
-
-      google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: (response: { credential: string }) => {
-          if (response.credential) {
-            resolve(response.credential);
-          } else {
-            reject(new Error("No credential in Google response"));
-          }
-        },
-        cancel_on_tap_outside: false,
-      });
-
-      // Prompt the user (shows One Tap or account chooser)
-      google.accounts.id.prompt((notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean }) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          // One Tap didn't display — fall back to button-based flow
-          // This can happen if the user previously dismissed One Tap
-          console.log("[Firebase] One Tap not available, using manual prompt...");
-          reject(new Error("ONE_TAP_UNAVAILABLE"));
-        }
-      });
-    });
-
-    console.log("[Firebase] Got Google credential, signing in to Firebase...");
-
-    // Create Firebase credential from Google ID token
-    const credential = GoogleAuthProvider.credential(idToken);
-    const result = await signInWithCredential(authInstance, credential);
-    console.log("[Firebase] Sign-in succeeded for", result.user.email);
-
-    const firebaseToken = await result.user.getIdToken();
-    return firebaseToken;
-  } catch (error: unknown) {
-    const err = error as Error;
-
-    // If One Tap isn't available, try the OAuth popup flow via GIS
-    if (err.message === "ONE_TAP_UNAVAILABLE") {
-      return signInWithGoogleOAuth();
-    }
-
+    console.log("[Firebase] GIS loaded, opening Google sign-in...");
+    return await signInWithGoogleOAuth();
+  } catch (error) {
     console.error("[Firebase] Sign-in error:", error);
     return null;
   }
