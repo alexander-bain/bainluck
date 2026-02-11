@@ -17,6 +17,7 @@ export default function UserMenu() {
     useAuthContext();
   const [isOpen, setIsOpen] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -33,29 +34,14 @@ export default function UserMenu() {
   // Don't render anything if auth is not configured
   if (!isAuthAvailable) return null;
 
-  // Show loading skeleton while checking auth state
-  if (isLoading) {
-    return (
-      <div className="w-8 h-8 rounded-full bg-mist animate-pulse" />
-    );
-  }
-
-  // Not authenticated — show sign-in button
+  // Not authenticated (or still loading) — show sign-in button
   if (!isAuthenticated) {
     return (
       <button
-        onClick={async () => {
-          setIsSigningIn(true);
-          try {
-            await signInWithGoogle();
-          } finally {
-            setIsSigningIn(false);
-          }
-        }}
-        disabled={isSigningIn}
-        className="text-sm font-medium text-slate hover:text-graphite transition-colors disabled:opacity-50"
+        onClick={() => signInWithGoogle()}
+        className="text-sm font-medium text-slate hover:text-graphite transition-colors"
       >
-        {isSigningIn ? "Signing in..." : "Sign in"}
+        Sign in
       </button>
     );
   }
@@ -70,12 +56,13 @@ export default function UserMenu() {
         className="flex items-center gap-2"
         aria-label="User menu"
       >
-        {user?.photoURL ? (
+        {user?.photoURL && !imgError ? (
           <img
             src={user.photoURL}
             alt=""
-            className="w-8 h-8 rounded-full"
+            className="w-8 h-8 rounded-full border border-mist"
             referrerPolicy="no-referrer"
+            onError={() => setImgError(true)}
           />
         ) : (
           <div className="w-8 h-8 rounded-full bg-graphite text-white flex items-center justify-center text-sm font-medium">

@@ -141,9 +141,11 @@ final_score = base_highlight_score × relevance_multiplier
 
 - Apple Developer Service ID configuration
 - Firebase Apple provider setup
-- Frontend Apple Sign-In button
+- Frontend Apple Sign-In button (required by App Store if Google Sign-In is offered)
 - Settings/preferences page for editing onboarding responses
 - "Manage account" page (change display name, delete account)
+- Change Firebase support email from personal email to support@bainluck.com (after domain setup)
+- Link Firebase project to Google Analytics for cross-platform reporting (web + iOS)
 
 ---
 

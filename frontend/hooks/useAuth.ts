@@ -30,19 +30,12 @@ export interface AuthUser {
 }
 
 interface UseAuthResult {
-  /** Current authenticated user (null if not signed in) */
   user: AuthUser | null;
-  /** Whether auth state is still loading */
   isLoading: boolean;
-  /** Whether the user is authenticated */
   isAuthenticated: boolean;
-  /** Whether Firebase Auth is configured (env vars set) */
   isAuthAvailable: boolean;
-  /** Sign in with Google. Returns true on success. */
-  signInWithGoogle: () => Promise<boolean>;
-  /** Sign out. */
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
-  /** Get a fresh ID token for API calls. Returns null if not authenticated. */
   getToken: () => Promise<string | null>;
 }
 
@@ -54,6 +47,29 @@ function mapFirebaseUser(fbUser: FirebaseUser | null): AuthUser | null {
     displayName: fbUser.displayName,
     photoURL: fbUser.photoURL,
   };
+}
+
+/**
+ * Register or update user on backend. Best-effort — doesn't affect
+ * client-side auth state if it fails.
+ */
+async function registerWithBackend(idToken: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_URL}/api/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      console.warn(`[Auth] Backend registration failed (${response.status}): ${text}`);
+    } else {
+      console.log("[Auth] Backend registration succeeded");
+    }
+  } catch (backendError) {
+    console.warn("[Auth] Backend unreachable:", backendError);
+  }
 }
 
 export function useAuth(): UseAuthResult {
@@ -70,6 +86,7 @@ export function useAuth(): UseAuthResult {
     }
 
     const unsubscribe = onAuthChange((fbUser) => {
+      console.log("[Auth]", fbUser ? `signed in as ${fbUser.email}` : "not signed in");
       setUser(mapFirebaseUser(fbUser));
       setIsLoading(false);
     });
@@ -77,32 +94,18 @@ export function useAuth(): UseAuthResult {
     return unsubscribe;
   }, [isAuthAvailable]);
 
-  // Sign in with Google
-  const signInWithGoogle = useCallback(async (): Promise<boolean> => {
-    if (!isAuthAvailable) return false;
+  // Sign in with Google popup, then register with backend
+  const signInWithGoogle = useCallback(async (): Promise<void> => {
+    if (!isAuthAvailable) return;
 
     try {
       const idToken = await firebaseSignInWithGoogle();
-      if (!idToken) return false; // User cancelled
-
-      // Verify with backend and create/update user
-      const response = await fetch(`${API_URL}/api/auth/google`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: idToken }),
-      });
-
-      if (!response.ok) {
-        console.error("Backend auth verification failed:", response.status);
-        await firebaseSignOut();
-        return false;
+      if (idToken) {
+        tokenRef.current = idToken;
+        await registerWithBackend(idToken);
       }
-
-      tokenRef.current = idToken;
-      return true;
     } catch (error) {
-      console.error("Sign-in error:", error);
-      return false;
+      console.error("[Auth] Sign-in error:", error);
     }
   }, [isAuthAvailable]);
 
