@@ -5,8 +5,8 @@
  * The app works fully without Firebase configured — auth features
  * are hidden when env vars are not set.
  *
- * Uses signInWithPopup with signInWithRedirect as fallback
- * for browsers that block cross-origin popup communication (Safari ITP).
+ * Uses signInWithPopup first. If popup fails for any reason
+ * (Safari ITP, blocked, etc.), falls back to signInWithRedirect.
  */
 
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
@@ -67,13 +67,14 @@ export function getFirebaseAuth(): Auth | null {
 }
 
 /**
- * Sign in with Google. Tries popup first, falls back to redirect
- * if popup is blocked (Safari ITP).
+ * Sign in with Google. Tries popup first. If popup fails for ANY reason
+ * (Safari ITP reports failures as "popup-closed-by-user"), checks if
+ * Firebase auth succeeded anyway, then falls back to redirect.
  *
- * Returns the Firebase ID token on popup success, or null if
- * falling back to redirect (page navigates away).
+ * Returns: "popup" if popup succeeded, "redirect" if falling back,
+ * "cancelled" if user explicitly closed, or null on error.
  */
-export async function signInWithGoogle(): Promise<string | null> {
+export async function signInWithGoogle(): Promise<"popup" | "redirect" | "cancelled" | null> {
   const authInstance = getFirebaseAuth();
   if (!authInstance) {
     console.error("[Firebase] Auth not initialized");
@@ -82,38 +83,34 @@ export async function signInWithGoogle(): Promise<string | null> {
 
   const provider = new GoogleAuthProvider();
 
-  // Try popup first
   try {
     console.log("[Firebase] Attempting signInWithPopup...");
     const result = await signInWithPopup(authInstance, provider);
-    const idToken = await result.user.getIdToken();
-    console.log("[Firebase] Popup sign-in succeeded");
-    return idToken;
+    console.log("[Firebase] Popup succeeded for", result.user.email);
+    return "popup";
   } catch (error: unknown) {
     const firebaseError = error as { code?: string };
     const code = firebaseError.code || "";
+    console.log("[Firebase] Popup error:", code);
 
-    // User closed the popup — not an error
-    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
-      console.log("[Firebase] User cancelled popup");
-      return null;
+    // Check if Firebase auth actually succeeded despite the popup error
+    // (Safari ITP can kill popup communication after auth completes)
+    if (authInstance.currentUser) {
+      console.log("[Firebase] Auth succeeded despite popup error, user:", authInstance.currentUser.email);
+      return "popup";
     }
 
-    // Popup blocked — fall back to redirect
-    if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
-      console.log("[Firebase] Popup blocked, falling back to redirect...");
-      try {
-        await signInWithRedirect(authInstance, provider);
-        // Page navigates away — this line won't execute
-      } catch (redirectError) {
-        console.error("[Firebase] Redirect also failed:", redirectError);
-      }
+    // Popup failed and user is not signed in — fall back to redirect
+    // Don't try to distinguish "user cancelled" from "Safari killed it"
+    // because Safari reports ITP failures as popup-closed-by-user
+    console.log("[Firebase] Falling back to signInWithRedirect...");
+    try {
+      await signInWithRedirect(authInstance, provider);
+      return "redirect"; // Page navigates away, this may not execute
+    } catch (redirectError) {
+      console.error("[Firebase] Redirect also failed:", redirectError);
       return null;
     }
-
-    // Some other error
-    console.error("[Firebase] Sign-in error:", code, error);
-    throw error;
   }
 }
 

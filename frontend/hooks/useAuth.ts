@@ -125,14 +125,18 @@ export function useAuth(): UseAuthResult {
     if (!isAuthAvailable) return;
 
     try {
-      const idToken = await firebaseSignInWithGoogle();
+      const result = await firebaseSignInWithGoogle();
 
-      // If popup succeeded (idToken returned), register with backend
-      if (idToken) {
-        tokenRef.current = idToken;
-        await registerWithBackend(idToken);
+      if (result === "popup") {
+        // Popup succeeded — user is now signed in, get token for backend
+        const token = await getIdToken();
+        if (token) {
+          tokenRef.current = token;
+          await registerWithBackend(token);
+        }
       }
-      // If null, either user cancelled or redirect is happening
+      // "redirect" = page is navigating away, nothing to do
+      // "cancelled" / null = user cancelled or error, nothing to do
     } catch (error) {
       console.error("[Auth] Sign-in error:", error);
     }
