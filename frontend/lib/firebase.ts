@@ -79,14 +79,19 @@ function loadGIS(): Promise<void> {
   if (gisLoadPromise) return gisLoadPromise;
 
   gisLoadPromise = new Promise((resolve, reject) => {
+    console.log("[Firebase] Loading Google Identity Services script...");
     const script = document.createElement("script");
     script.src = "https://accounts.google.com/gsi/client";
     script.async = true;
     script.onload = () => {
       gisLoaded = true;
+      console.log("[Firebase] GIS script loaded successfully");
       resolve();
     };
-    script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+    script.onerror = () => {
+      console.error("[Firebase] GIS script failed to load");
+      reject(new Error("Failed to load Google Identity Services"));
+    };
     document.head.appendChild(script);
   });
 
