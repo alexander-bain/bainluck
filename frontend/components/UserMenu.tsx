@@ -62,6 +62,7 @@ export default function UserMenu() {
 
   // Authenticated — show avatar with dropdown
   const initial = user?.displayName?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || "?";
+  const [imgError, setImgError] = useState(false);
 
   return (
     <div className="relative" ref={menuRef}>
@@ -70,12 +71,13 @@ export default function UserMenu() {
         className="flex items-center gap-2"
         aria-label="User menu"
       >
-        {user?.photoURL ? (
+        {user?.photoURL && !imgError ? (
           <img
             src={user.photoURL}
             alt=""
-            className="w-8 h-8 rounded-full"
+            className="w-8 h-8 rounded-full border border-mist"
             referrerPolicy="no-referrer"
+            onError={() => setImgError(true)}
           />
         ) : (
           <div className="w-8 h-8 rounded-full bg-graphite text-white flex items-center justify-center text-sm font-medium">
