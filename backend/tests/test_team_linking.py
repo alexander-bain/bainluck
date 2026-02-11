@@ -470,3 +470,71 @@ class TestComputeRelevanceScore:
             probability_change_24h=-0.03, days_to_resolution=90,
         )
         assert reason == "moving today"
+
+
+# =============================================================================
+# Related Futures Name Matching Helpers
+# =============================================================================
+class TestRelatedFuturesHelpers:
+    """Test the name matching helpers used by the related-futures endpoint."""
+
+    def test_escape_like_plain_text(self):
+        from app.routes.events import _escape_like
+        assert _escape_like("Boston Celtics") == "Boston Celtics"
+
+    def test_escape_like_underscore(self):
+        from app.routes.events import _escape_like
+        assert _escape_like("Team_A") == "Team\\_A"
+
+    def test_escape_like_percent(self):
+        from app.routes.events import _escape_like
+        assert _escape_like("100%") == "100\\%"
+
+    def test_team_name_patterns_basic(self):
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("Boston Celtics")
+        assert "Boston Celtics" in patterns
+        assert "Celtics" in patterns
+        assert len(patterns) == 2
+
+    def test_team_name_patterns_short_last_word(self):
+        """Short last words (< 4 chars) should be excluded."""
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("Phoenix Sun")
+        # "Sun" is only 3 chars, should not be included as separate pattern
+        assert "Phoenix Sun" in patterns
+        assert len(patterns) == 1
+
+    def test_team_name_patterns_single_word(self):
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("Arsenal")
+        assert "Arsenal" in patterns
+        assert len(patterns) == 1
+
+    def test_team_name_patterns_empty(self):
+        from app.routes.events import _team_name_patterns
+        assert _team_name_patterns("") == []
+        assert _team_name_patterns(None) == []
+
+    def test_team_name_patterns_three_word_name(self):
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("New England Patriots")
+        assert "New England Patriots" in patterns
+        assert "Patriots" in patterns
+        assert len(patterns) == 2
+
+    def test_sport_prefix_to_llm_category(self):
+        from app.routes.events import _SPORT_PREFIX_TO_LLM_CATEGORY
+        assert _SPORT_PREFIX_TO_LLM_CATEGORY["americanfootball"] == "football"
+        assert _SPORT_PREFIX_TO_LLM_CATEGORY["icehockey"] == "hockey"
+        assert _SPORT_PREFIX_TO_LLM_CATEGORY["basketball"] == "basketball"
+        assert _SPORT_PREFIX_TO_LLM_CATEGORY["baseball"] == "baseball"
+
+    def test_team_name_patterns_la_clippers(self):
+        """Verify multi-word city names don't produce short patterns."""
+        from app.routes.events import _team_name_patterns
+        patterns = _team_name_patterns("LA Clippers")
+        assert "LA Clippers" in patterns
+        assert "Clippers" in patterns
+        # "LA" should NOT be a separate pattern (< 4 chars)
+        assert len(patterns) == 2
