@@ -17,6 +17,7 @@ export default function UserMenu() {
     useAuthContext();
   const [isOpen, setIsOpen] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -62,7 +63,6 @@ export default function UserMenu() {
 
   // Authenticated — show avatar with dropdown
   const initial = user?.displayName?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || "?";
-  const [imgError, setImgError] = useState(false);
 
   return (
     <div className="relative" ref={menuRef}>
