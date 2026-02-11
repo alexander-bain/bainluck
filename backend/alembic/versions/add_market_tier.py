@@ -4,7 +4,7 @@ Tier values: 1=championship, 2=conference, 3=awards/mvp, 4=division, 5=props/oth
 Used to rank related futures on event detail pages.
 
 Revision ID: add_market_tier
-Revises: add_winprob_dedup_cols
+Revises: add_auth_personalization
 Create Date: 2026-02-10
 """
 from typing import Union
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'add_market_tier'
-down_revision: Union[str, None] = 'add_winprob_dedup_cols'
+down_revision: Union[str, None] = 'add_auth_personalization'
 branch_labels: Union[str, None] = None
 depends_on: Union[str, None] = None
 
