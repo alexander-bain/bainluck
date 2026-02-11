@@ -1402,30 +1402,43 @@ async def get_related_futures(
     home_patterns = _team_name_patterns(event.home_team_name)
     away_patterns = _team_name_patterns(event.away_team_name)
 
-    # Enrich with alternate names from Team records (scoped by sport)
-    for team_name, patterns in [
-        (event.home_team_name, home_patterns),
-        (event.away_team_name, away_patterns),
+    # Look up Team records for alternate names AND team_ids (for player outcomes)
+    home_team_ids = set()
+    away_team_ids = set()
+    for team_name, patterns, id_set in [
+        (event.home_team_name, home_patterns, home_team_ids),
+        (event.away_team_name, away_patterns, away_team_ids),
     ]:
         team_filters = [Team.name == team_name]
         if event.sport_id:
             team_filters.append(Team.sport_id == event.sport_id)
         team_result = await db.execute(
-            select(Team.alternate_names).where(*team_filters)
+            select(Team.id, Team.alternate_names).where(*team_filters)
         )
-        alt_names = team_result.scalar_one_or_none()
-        if alt_names and isinstance(alt_names, list):
-            for alt in alt_names:
-                if isinstance(alt, str) and len(alt) >= 4:
-                    escaped = _escape_like(alt)
-                    if escaped.lower() not in [p.lower() for p in patterns]:
-                        patterns.append(escaped)
+        team_row = team_result.first()
+        if team_row:
+            id_set.add(team_row.id)
+            alt_names = team_row.alternate_names
+            if alt_names and isinstance(alt_names, list):
+                for alt in alt_names:
+                    if isinstance(alt, str) and len(alt) >= 4:
+                        escaped = _escape_like(alt)
+                        if escaped.lower() not in [p.lower() for p in patterns]:
+                            patterns.append(escaped)
+
+    all_team_ids = home_team_ids | away_team_ids
 
     # Build ILIKE conditions for outcome name matching
     home_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in home_patterns]
     away_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in away_patterns]
     all_name_conditions = home_ilike + away_ilike
-    if not all_name_conditions:
+
+    # Combine name matching + team_id matching (catches player outcomes from backfill)
+    match_conditions = list(all_name_conditions)
+    if all_team_ids:
+        match_conditions.append(FuturesOutcome.team_id.in_(list(all_team_ids)))
+
+    if not match_conditions:
         return empty
 
     # 5. Query matching outcomes with their markets
@@ -1434,7 +1447,7 @@ async def get_related_futures(
         .options(selectinload(FuturesOutcome.market))
         .where(
             FuturesOutcome.market_id.in_(sport_market_ids),
-            or_(*all_name_conditions),
+            or_(*match_conditions),
         )
     )
     outcomes = outcomes_result.scalars().all()
@@ -1442,7 +1455,8 @@ async def get_related_futures(
     if not outcomes:
         return empty
 
-    # 6. Classify each outcome as home or away using Python substring matching
+    # 6. Classify each outcome as home or away
+    # Priority: team_id (reliable for player outcomes) > name matching (team outcomes)
     def _matches_any(name: str, patterns: list[str]) -> bool:
         name_lower = name.lower()
         for p in patterns:
@@ -1479,9 +1493,14 @@ async def get_related_futures(
 
         market = outcome.market
 
-        # Classify: check home patterns first, then away
-        is_home = _matches_any(outcome.name, home_patterns)
-        is_away = _matches_any(outcome.name, away_patterns)
+        # Classify: team_id first (reliable for player outcomes), then name matching
+        is_home = outcome.team_id in home_team_ids if outcome.team_id else False
+        is_away = outcome.team_id in away_team_ids if outcome.team_id else False
+
+        if not is_home and not is_away:
+            # Fall back to name matching (team outcomes)
+            is_home = _matches_any(outcome.name, home_patterns)
+            is_away = _matches_any(outcome.name, away_patterns)
 
         if not is_home and not is_away:
             continue
