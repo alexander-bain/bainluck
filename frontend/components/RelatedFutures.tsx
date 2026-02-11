@@ -73,7 +73,7 @@ function FutureRow({ future }: { future: RelatedFuture }) {
   return (
     <Link
       href={`/futures/${future.market_id}`}
-      className="block hover:bg-slate-50 -mx-3 px-3 py-2 rounded-lg transition-colors"
+      className="block hover:bg-slate-50 -mx-2 px-2 py-1.5 rounded-lg transition-colors"
     >
       <div className="flex items-start justify-between gap-3">
         {/* Left: market info */}
@@ -179,18 +179,9 @@ export default function RelatedFutures({
     }
   );
 
-  // Don't render anything if loading, error, or no data
+  // Don't render anything while loading or if no data
   if (isLoading) {
-    return (
-      <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
-        <h3 className="text-sm font-semibold text-slate mb-3">
-          Bigger Picture
-        </h3>
-        <div className="py-4">
-          <LoadingSpinner size="sm" text="Loading related markets..." />
-        </div>
-      </div>
-    );
+    return null; // Don't show loading state at the bottom of the page
   }
 
   if (error || !data || data.total_count === 0) {
@@ -207,8 +198,8 @@ export default function RelatedFutures({
 
   return (
     <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate flex items-center gap-2">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-slate">
           Bigger Picture
         </h3>
         {lastUpdated?.last_updated && (
@@ -218,11 +209,7 @@ export default function RelatedFutures({
         )}
       </div>
 
-      <p className="text-xs text-silver mb-3">
-        How today&apos;s game fits into the season — championship odds, awards, and more.
-      </p>
-
-      <div className="space-y-4">
+      <div className="space-y-3">
         <TeamFuturesSection
           teamName={homeTeam}
           futures={home_team_futures}

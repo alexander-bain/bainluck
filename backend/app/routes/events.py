@@ -1308,16 +1308,31 @@ async def get_related_futures(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # Find team_ids for both teams
+    # Determine the sport family for filtering (e.g., "americanfootball" from "americanfootball_nfl")
+    # This prevents cross-sport matches (e.g., NFL "Patriots" matching NCAAB "Patriots")
+    event_sport_key = event.sport.key if event.sport else None
+    compatible_sport_ids = set()
+    if event_sport_key:
+        # Extract the sport family prefix (e.g., "americanfootball", "basketball", "icehockey")
+        sport_prefix = event_sport_key.split("_")[0]
+        prefix_result = await db.execute(
+            select(Sport.id).where(Sport.key.like(f"{sport_prefix}%"))
+        )
+        compatible_sport_ids = {row.id for row in prefix_result.all()}
+
+    # Find team_ids for both teams, scoped to the event's sport
+    team_query_filter = [Team.name == event.home_team_name]
+    if event.sport_id:
+        team_query_filter.append(Team.sport_id == event.sport_id)
     home_team_result = await db.execute(
-        select(Team.id, Team.name).where(
-            Team.name == event.home_team_name
-        )
+        select(Team.id, Team.name).where(*team_query_filter)
     )
+
+    team_query_filter = [Team.name == event.away_team_name]
+    if event.sport_id:
+        team_query_filter.append(Team.sport_id == event.sport_id)
     away_team_result = await db.execute(
-        select(Team.id, Team.name).where(
-            Team.name == event.away_team_name
-        )
+        select(Team.id, Team.name).where(*team_query_filter)
     )
     home_team = home_team_result.first()
     away_team = away_team_result.first()
@@ -1335,12 +1350,17 @@ async def get_related_futures(
         team_id_to_side[away_team.id] = "away"
 
     # Query all outcomes linked to these teams in open markets
+    # Filter by sport family to prevent cross-sport contamination
+    market_filters = [FuturesMarket.status == "open"]
+    if compatible_sport_ids:
+        market_filters.append(FuturesMarket.sport_id.in_(compatible_sport_ids))
+
     outcomes_result = await db.execute(
         select(FuturesOutcome)
         .options(selectinload(FuturesOutcome.market).selectinload(FuturesMarket.sport))
         .where(
             FuturesOutcome.team_id.in_(team_ids),
-            FuturesOutcome.market.has(FuturesMarket.status == "open"),
+            FuturesOutcome.market.has(*market_filters),
         )
     )
     outcomes = outcomes_result.scalars().all()
