@@ -72,6 +72,55 @@ def verify_id_token(id_token: str) -> Optional[dict]:
         return None
 
 
+def get_or_create_firebase_user(email: str, display_name: Optional[str] = None, photo_url: Optional[str] = None) -> Optional[str]:
+    """
+    Look up a Firebase user by email, or create one if not found.
+    Returns the Firebase UID, or None if Firebase is not configured.
+    """
+    if not _init_firebase():
+        return None
+
+    try:
+        from firebase_admin import auth
+
+        try:
+            user_record = auth.get_user_by_email(email)
+            return user_record.uid
+        except auth.UserNotFoundError:
+            user_record = auth.create_user(
+                email=email,
+                display_name=display_name,
+                photo_url=photo_url,
+            )
+            logger.info(f"Created Firebase user: {user_record.uid}")
+            return user_record.uid
+    except Exception as e:
+        logger.warning(f"Failed to get/create Firebase user: {e}")
+        return None
+
+
+def create_custom_token(uid: str) -> Optional[str]:
+    """
+    Create a Firebase custom token for the given UID.
+    Requires Firebase Admin SDK initialized with a service account.
+    Returns None if not available.
+    """
+    if not _init_firebase():
+        return None
+
+    try:
+        from firebase_admin import auth
+
+        custom_token = auth.create_custom_token(uid)
+        # create_custom_token returns bytes in some SDK versions
+        if isinstance(custom_token, bytes):
+            return custom_token.decode("utf-8")
+        return custom_token
+    except Exception as e:
+        logger.warning(f"Failed to create custom token: {e}")
+        return None
+
+
 def is_configured() -> bool:
     """Check if Firebase Auth is configured and initialized."""
     return _init_firebase()

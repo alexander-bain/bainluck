@@ -1,14 +1,10 @@
 /**
  * Firebase configuration and initialization.
  *
- * Firebase Auth is used for session management.
- * Google sign-in uses Google Identity Services (GIS) rendered button,
- * which returns a Google ID token (JWT). This is passed to Firebase
- * via signInWithCredential using GoogleAuthProvider.credential(idToken).
- *
- * The ID token flow avoids the auth/network-request-failed error that
- * occurs with the access token flow on Safari, because Firebase can
- * process ID tokens without making additional network calls to Google.
+ * Google sign-in uses Google Identity Services (GIS) to get an access token
+ * via OAuth popup. Then tries Firebase signInWithCredential. If that fails
+ * (e.g., Safari ITP blocking Identity Platform), falls back to exchanging
+ * the access token through our backend for a Firebase custom token.
  */
 
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
@@ -16,6 +12,7 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithCredential,
+  signInWithCustomToken,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   type Auth,
@@ -30,6 +27,7 @@ const firebaseConfig = {
 };
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /**
  * Check if Firebase is configured (env vars are set).
@@ -79,19 +77,14 @@ function loadGIS(): Promise<void> {
   if (gisLoadPromise) return gisLoadPromise;
 
   gisLoadPromise = new Promise((resolve, reject) => {
-    console.log("[Firebase] Loading Google Identity Services script...");
     const script = document.createElement("script");
     script.src = "https://accounts.google.com/gsi/client";
     script.async = true;
     script.onload = () => {
       gisLoaded = true;
-      console.log("[Firebase] GIS script loaded successfully");
       resolve();
     };
-    script.onerror = () => {
-      console.error("[Firebase] GIS script failed to load");
-      reject(new Error("Failed to load Google Identity Services"));
-    };
+    script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
     document.head.appendChild(script);
   });
 
@@ -99,73 +92,107 @@ function loadGIS(): Promise<void> {
 }
 
 /**
- * Initialize Google Sign-In and render the button in a container element.
- *
- * Uses google.accounts.id (Sign In With Google) which returns a Google
- * ID token (JWT) instead of an access token. The ID token is passed to
- * Firebase via GoogleAuthProvider.credential(idToken), which avoids the
- * additional network round-trip that access tokens require.
- *
- * @param container - DOM element to render the Google button into
- * @param onFirebaseToken - Called with the Firebase ID token on successful sign-in
+ * Get a Google access token via GIS OAuth popup.
  */
-export async function initGoogleSignInButton(
-  container: HTMLElement,
-  onFirebaseToken: (token: string) => void
-): Promise<void> {
+async function getGoogleAccessToken(): Promise<string> {
+  await loadGIS();
+
+  return new Promise<string>((resolve, reject) => {
+    // @ts-expect-error - google.accounts is loaded dynamically
+    const google = window.google;
+    if (!google?.accounts?.oauth2) {
+      reject(new Error("Google OAuth2 not available"));
+      return;
+    }
+
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: "email profile",
+      callback: (response: { access_token?: string; error?: string }) => {
+        if (response.error) {
+          reject(new Error(response.error));
+        } else if (response.access_token) {
+          resolve(response.access_token);
+        } else {
+          reject(new Error("No access token"));
+        }
+      },
+    });
+
+    client.requestAccessToken();
+  });
+}
+
+/**
+ * Sign in with Google.
+ *
+ * Opens the Google OAuth consent popup via GIS, then:
+ * 1. Tries signInWithCredential (standard Firebase approach)
+ * 2. If that fails, exchanges the access token through our backend
+ *    for a Firebase custom token, then uses signInWithCustomToken
+ *
+ * Returns the Firebase ID token on success, null on failure.
+ */
+export async function signInWithGoogle(): Promise<string | null> {
   const authInstance = getFirebaseAuth();
   if (!authInstance || !GOOGLE_CLIENT_ID) {
     console.error("[Firebase] Auth not initialized or missing GOOGLE_CLIENT_ID");
-    return;
+    return null;
   }
 
-  await loadGIS();
+  try {
+    console.log("[Firebase] Opening Google sign-in popup...");
+    const accessToken = await getGoogleAccessToken();
+    console.log("[Firebase] Got Google access token");
 
-  // @ts-expect-error - google.accounts is loaded dynamically
-  const google = window.google;
-  if (!google?.accounts?.id) {
-    console.error("[Firebase] Google Identity Services not available");
-    return;
+    // Attempt 1: Try signInWithCredential directly
+    try {
+      const credential = GoogleAuthProvider.credential(null, accessToken);
+      const result = await signInWithCredential(authInstance, credential);
+      console.log("[Firebase] signInWithCredential succeeded for", result.user.email);
+      return await result.user.getIdToken();
+    } catch (credError: unknown) {
+      const authError = credError as { code?: string; message?: string };
+      console.warn(
+        "[Firebase] signInWithCredential failed:",
+        authError.code,
+        "- trying backend exchange..."
+      );
+    }
+
+    // Attempt 2: Exchange access token via backend for custom token
+    try {
+      const resp = await fetch(`${API_URL}/api/auth/google-access-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: accessToken }),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        console.error("[Firebase] Backend token exchange failed:", resp.status, text);
+        return null;
+      }
+
+      const data = await resp.json();
+      const customToken = data.custom_token;
+
+      if (!customToken) {
+        console.error("[Firebase] No custom token in backend response");
+        return null;
+      }
+
+      const result = await signInWithCustomToken(authInstance, customToken);
+      console.log("[Firebase] signInWithCustomToken succeeded for", result.user.email || result.user.uid);
+      return await result.user.getIdToken();
+    } catch (backendError) {
+      console.error("[Firebase] Backend exchange fallback failed:", backendError);
+      return null;
+    }
+  } catch (error) {
+    console.error("[Firebase] Sign-in error:", error);
+    return null;
   }
-
-  // Initialize GIS with ID token callback
-  google.accounts.id.initialize({
-    client_id: GOOGLE_CLIENT_ID,
-    callback: async (response: { credential?: string; select_by?: string }) => {
-      if (!response.credential) {
-        console.error("[Firebase] No credential in Google response");
-        return;
-      }
-
-      try {
-        console.log("[Firebase] Got Google ID token, signing into Firebase...");
-        const credential = GoogleAuthProvider.credential(response.credential);
-        const result = await signInWithCredential(authInstance, credential);
-        console.log("[Firebase] Sign-in succeeded for", result.user.email);
-        const firebaseToken = await result.user.getIdToken();
-        onFirebaseToken(firebaseToken);
-      } catch (error: unknown) {
-        const authError = error as { code?: string; message?: string };
-        console.error(
-          "[Firebase] signInWithCredential failed:",
-          authError.code,
-          authError.message
-        );
-      }
-    },
-    ux_mode: "popup",
-  });
-
-  // Render Google's Sign-In button in the container
-  google.accounts.id.renderButton(container, {
-    type: "standard",
-    theme: "outline",
-    size: "medium",
-    text: "signin",
-    shape: "pill",
-  });
-
-  console.log("[Firebase] Google Sign-In button rendered");
 }
 
 /**
