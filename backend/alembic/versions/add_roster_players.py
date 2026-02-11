@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers
 revision = "add_roster_players"
-down_revision = "add_auth_personalization"
+down_revision = "add_market_tier"
 branch_labels = None
 depends_on = None
 
