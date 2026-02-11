@@ -96,6 +96,10 @@ class TestModuleImports:
         )
         assert callable(_collapse_snapshots_impl)
 
+    def test_import_roster_sync(self):
+        from app.tasks.roster_sync import _sync_rosters
+        assert callable(_sync_rosters)
+
 
 class TestReExports:
     """Symbols re-exported from app.tasks must be importable."""
@@ -129,11 +133,13 @@ class TestReExports:
             backfill_team_logos,
             collapse_snapshots,
             heartbeat,
+            sync_rosters,
         )
         # All should be Celery task objects
         assert hasattr(sync_sports, 'delay')
         assert hasattr(collapse_snapshots, 'delay')
         assert hasattr(heartbeat, 'delay')
+        assert hasattr(sync_rosters, 'delay')
 
 
 class TestBeatScheduleCompleteness:
@@ -155,6 +161,7 @@ class TestBeatScheduleCompleteness:
         "collapse-odds-snapshots-daily",
         "collapse-winprob-snapshots-daily",
         "collapse-futures-snapshots-daily",
+        "sync-rosters-daily",
     }
 
     def test_no_missing_entries(self):
