@@ -876,13 +876,6 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {/* Related Futures — bigger picture context */}
-      <RelatedFutures
-        eventId={eventId}
-        homeTeam={event.home_team}
-        awayTeam={event.away_team}
-      />
-
       {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData?.history && historyData.history.length > 0 && (
         <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
@@ -960,6 +953,13 @@ export default function EventPage({ params }: EventPageProps) {
           />
         </div>
       )}
+
+      {/* Related Futures — bigger picture context (below charts) */}
+      <RelatedFutures
+        eventId={eventId}
+        homeTeam={event.home_team}
+        awayTeam={event.away_team}
+      />
     </div>
   );
 }
