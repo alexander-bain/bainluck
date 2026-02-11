@@ -1,7 +1,7 @@
 """Add auth and personalization tables: user_preferences, user_pins, extend user_favorites and teams.
 
 Revision ID: add_auth_personalization
-Revises: add_winprob_dedup_cols
+Revises: add_market_tier
 Create Date: 2026-02-10
 """
 from typing import Union
@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
 revision = 'add_auth_personalization'
-down_revision: Union[str, None] = 'add_winprob_dedup_cols'
+down_revision: Union[str, None] = 'add_market_tier'
 branch_labels: Union[str, None] = None
 depends_on: Union[str, None] = None
 
