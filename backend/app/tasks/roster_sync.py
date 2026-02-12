@@ -118,6 +118,18 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     )
                     team_row = team_result.first()
 
+                # Try 3: Create Team record if we have a name mapping but no DB record
+                if not team_row and abbrev in name_map:
+                    new_team = Team(
+                        name=name_map[abbrev],
+                        abbreviation=abbrev,
+                        sport_id=sport_id,
+                    )
+                    session.add(new_team)
+                    await session.flush()  # Get the ID
+                    team_row = (new_team.id,)
+                    logger.info(f"  Created new Team record: {name_map[abbrev]} ({abbrev})")
+
                 if not team_row:
                     unmatched.append(abbrev)
                     continue
