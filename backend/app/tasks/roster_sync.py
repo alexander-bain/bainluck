@@ -107,9 +107,10 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     )
                 )
                 team_row = team_result.first()
+                team_id = team_row[0] if team_row else None
 
                 # Try 2: Static name map (hardcoded SportsDataIO abbrev → team name)
-                if not team_row and abbrev in name_map:
+                if not team_id and abbrev in name_map:
                     team_result = await session.execute(
                         select(Team.id).where(
                             Team.name == name_map[abbrev],
@@ -117,26 +118,27 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                         )
                     )
                     team_row = team_result.first()
+                    team_id = team_row[0] if team_row else None
 
                 # Try 3: Create Team record if we have a name mapping but no DB record
-                if not team_row and abbrev in name_map:
+                if not team_id and abbrev in name_map:
                     new_team = Team(
                         name=name_map[abbrev],
                         abbreviation=abbrev,
                         sport_id=sport_id,
                     )
                     session.add(new_team)
-                    await session.flush()  # Get the ID
-                    team_row = (new_team.id,)
+                    await session.flush()
+                    team_id = new_team.id
                     logger.info(f"  Created new Team record: {name_map[abbrev]} ({abbrev})")
 
-                if not team_row:
+                if not team_id:
                     unmatched.append(abbrev)
                     continue
 
                 await session.execute(
                     update(Team)
-                    .where(Team.id == team_row.id)
+                    .where(Team.id == team_id)
                     .values(roster_players=unique_names)
                 )
                 sport_updated += 1
