@@ -10,16 +10,45 @@ logger = logging.getLogger(__name__)
 
 # SportsDataIO sport key → API path segment mapping
 # Our sport keys use format "basketball_nba", SportsDataIO uses "nba"
-# Static abbreviation overrides: SportsDataIO abbrev → our DB abbreviation.
-# Only entries where the abbreviations DIFFER need to be listed here.
-# If a SportsDataIO abbrev isn't in the override map, it's used as-is.
-# Update this if teams move, rebrand, or new expansion teams are added.
-SPORTSDATA_ABBREV_OVERRIDES: dict[str, dict[str, str]] = {
+
+# Static name mapping: SportsDataIO abbrev → team name as stored in our DB.
+# Used when abbreviation matching fails (e.g., our DB has no abbreviation for the team).
+# Key = (sportsdata_sport, sportsdata_abbrev), Value = our DB team name.
+# Update when teams move, rebrand, or expansion teams are added.
+SPORTSDATA_ABBREV_TO_NAME: dict[str, dict[str, str]] = {
     "nfl": {
-        "ARI": "AZ",     # Arizona Cardinals
-        "JAX": "JAC",    # Jacksonville Jaguars
-        "LAR": "LA",     # Los Angeles Rams
-        "WAS": "WSH",    # Washington Commanders
+        "ARI": "Arizona Cardinals",
+        "ATL": "Atlanta Falcons",
+        "BAL": "Baltimore Ravens",
+        "BUF": "Buffalo Bills",
+        "CAR": "Carolina Panthers",
+        "CHI": "Chicago Bears",
+        "CIN": "Cincinnati Bengals",
+        "CLE": "Cleveland Browns",
+        "DAL": "Dallas Cowboys",
+        "DEN": "Denver Broncos",
+        "DET": "Detroit Lions",
+        "GB": "Green Bay Packers",
+        "HOU": "Houston Texans",
+        "IND": "Indianapolis Colts",
+        "JAX": "Jacksonville Jaguars",
+        "KC": "Kansas City Chiefs",
+        "LAC": "Los Angeles Chargers",
+        "LAR": "Los Angeles Rams",
+        "LV": "Las Vegas Raiders",
+        "MIA": "Miami Dolphins",
+        "MIN": "Minnesota Vikings",
+        "NE": "New England Patriots",
+        "NO": "New Orleans Saints",
+        "NYG": "New York Giants",
+        "NYJ": "New York Jets",
+        "PHI": "Philadelphia Eagles",
+        "PIT": "Pittsburgh Steelers",
+        "SEA": "Seattle Seahawks",
+        "SF": "San Francisco 49ers",
+        "TB": "Tampa Bay Buccaneers",
+        "TEN": "Tennessee Titans",
+        "WAS": "Washington Commanders",
     },
 }
 
