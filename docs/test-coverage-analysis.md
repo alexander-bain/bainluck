@@ -1,47 +1,48 @@
 # Test Coverage Analysis
 
 **Date:** February 2026
-**Total tests:** 603 backend + 106 frontend = 709 total
+**Total tests:** 613 backend + 107 frontend = 720 total
 
 ---
 
 ## Current Coverage Summary
 
-### Backend (603 tests across 11 test files)
+### Backend (613 tests across 11 test files)
 
-| Module | Tests | Coverage Level |
-|--------|-------|----------------|
-| `utils/futures_categorization.py` | 116 | Excellent — all 22 categories, LLM fallback |
-| `utils/team_linking.py` | 97 | Excellent — tier classification, name matching, relevance scoring |
-| `utils/highlights.py` | 88 | Excellent — all statuses, labels, exact score regression pins |
-| `utils/pulse.py` | 85 | Excellent — algorithm, normalization constants, aggregation |
-| `utils/odds_math.py` | 70 | Excellent — all conversion functions, reversed bookmaker detection |
-| `services/llm.py` | 60 | Excellent — all classify functions, mocked OpenAI |
-| `utils/win_probability.py` | 41 | Excellent — stat model, sport key aliases, all 6 sports |
-| `tasks/` (wiring only) | 19 | Good — beat schedule, imports, re-exports |
-| `utils/odds_filtering.py` | 14 | Good — stale bookmaker filter, all statuses |
-| `tasks/retention.py` | 13 | Good — collapse algorithm, edge cases |
-| **routes/** | **0** | **None** |
-| **services/** (except llm) | **0** | **None** |
-| **tasks/** (implementations) | **0** | **None** |
-| **dependencies/** | **0** | **None** |
+| Test File | Module Under Test | Tests | Coverage Level |
+|-----------|-------------------|-------|----------------|
+| `test_futures_categorization.py` | `utils/futures_categorization.py` | 116 | Excellent — all 22 categories, LLM fallback |
+| `test_team_linking.py` | `utils/team_linking.py` | 97 | Excellent — tier classification, name matching, relevance scoring |
+| `test_highlights.py` | `utils/highlights.py` | 88 | Excellent — all statuses, labels, exact score regression pins |
+| `test_pulse.py` | `utils/pulse.py` | 85 | Excellent — algorithm, normalization constants, aggregation |
+| `test_llm.py` | `services/llm.py` | 60 | Excellent — all classify functions, mocked OpenAI |
+| `test_win_probability.py` | `utils/win_probability.py` | 51 | Excellent — stat model, sport key aliases, database key mapping, all 6 sports |
+| `test_odds_math.py` | `utils/odds_math.py` | 35 | Excellent — core conversions, reversed bookmaker detection |
+| `test_odds_math_extended.py` | `utils/odds_math.py` | 35 | Excellent — project_scores, calculate_gei, format_probability, round-trips |
+| `test_tasks_wiring.py` | `tasks/` (wiring only) | 19 | Good — beat schedule, imports, re-exports |
+| `test_stale_bookmaker_filter.py` | `utils/odds_filtering.py` | 14 | Good — stale bookmaker filter, all statuses |
+| `test_snapshot_collapse.py` | `tasks/retention.py` | 13 | Good — collapse algorithm, edge cases |
+| | **routes/** | **0** | **None** |
+| | **services/** (except llm) | **0** | **None** |
+| | **tasks/** (implementations) | **0** | **None** |
+| | **dependencies/** | **0** | **None** |
 
-### Frontend (106 tests across 2 test files)
+### Frontend (107 tests across 2 test files)
 
-| Module | Tests | Coverage Level |
-|--------|-------|----------------|
-| `lib/sportCategories.ts` | 85 | Excellent — categorization, tiers, excitement scoring |
-| `hooks/usePinnedEvents.ts` + `usePinnedFutures.ts` | 21 | Good — localStorage operations, pin limits |
-| **components/** (21 files) | **0** | **None** |
-| **app/** pages (12 files) | **0** | **None** |
-| **hooks/** (7 of 9 untested) | **0** | **None** |
-| **lib/api.ts** | **0** | **None** |
+| Test File | Module Under Test | Tests | Coverage Level |
+|-----------|-------------------|-------|----------------|
+| `sportCategories.test.ts` | `lib/sportCategories.ts` | 85 | Excellent — categorization, tiers, excitement scoring |
+| `pinnedStorage.test.ts` | `hooks/usePinnedEvents.ts` + `usePinnedFutures.ts` | 22 | Good — localStorage operations, pin limits, storage independence |
+| | **components/** (21 files) | **0** | **None** |
+| | **app/** pages (12 files) | **0** | **None** |
+| | **hooks/** (7 of 9 untested) | **0** | **None** |
+| | **lib/api.ts** | **0** | **None** |
 
 ---
 
 ## Strengths
 
-1. **Core algorithms are thoroughly tested.** Pulse, Highlights, odds math, and futures categorization have 350+ tests with exact score regression pins that prevent accidental changes to weights or normalization constants.
+1. **Core algorithms are thoroughly tested.** Pulse, Highlights, odds math, and futures categorization have 390+ tests with exact score regression pins that prevent accidental changes to weights or normalization constants.
 
 2. **Pure function testing strategy works well.** 85% of backend tests cover `utils/` — functions with no I/O dependencies that are easy to test and have historically caused the most rework.
 
