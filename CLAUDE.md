@@ -44,13 +44,24 @@ odds-tracker/
 │   │   ├── routes/
 │   │   │   ├── events.py        # Main events API
 │   │   │   ├── admin.py         # Admin/debug endpoints
+│   │   │   ├── auth.py          # Auth endpoints (Google sign-in, profile)
 │   │   │   ├── sports.py        # Sports listing
-│   │   │   └── futures.py       # Championship odds
+│   │   │   ├── futures.py       # Championship odds
+│   │   │   ├── user.py          # User data endpoints (pins, teams)
+│   │   │   └── health.py        # Health check endpoint
 │   │   ├── services/
 │   │   │   ├── odds_api.py      # The Odds API client
 │   │   │   ├── kalshi_api.py    # Kalshi prediction market client
+│   │   │   ├── espn_api.py      # ESPN API client
+│   │   │   ├── sportsdata_api.py # SportsDataIO API client
+│   │   │   ├── firebase_auth.py # Firebase Admin SDK
+│   │   │   ├── llm.py           # OpenAI GPT-4o-mini integration
 │   │   │   └── database.py      # DB connection
-│   │   ├── tasks/               # Celery tasks (modular package)
+│   │   ├── config/
+│   │   │   └── win_prob_sources.py # Win probability source registry
+│   │   ├── dependencies/
+│   │   │   └── auth.py          # FastAPI auth dependencies
+│   │   ├── tasks/               # Celery tasks (modular package, 14 modules)
 │   │   │   ├── __init__.py      # Celery app, task definitions, beat schedule
 │   │   │   ├── config.py        # Shared constants (intervals, sport mapping)
 │   │   │   ├── base.py          # DB session helpers, run_async()
@@ -62,11 +73,17 @@ odds-tracker/
 │   │   │   ├── kalshi.py        # Kalshi prediction market polling
 │   │   │   ├── espn_sync.py     # ESPN live sync, team enrichment
 │   │   │   ├── sports.py        # Sport sync, event discovery
-│   │   │   └── retention.py     # Snapshot collapse/retention
+│   │   │   ├── retention.py     # Snapshot collapse/retention
+│   │   │   ├── roster_sync.py   # SportsDataIO roster sync
+│   │   │   └── team_linking.py  # Futures outcome → team linking
 │   │   └── utils/
 │   │       ├── odds_math.py     # Probability conversions
 │   │       ├── pulse.py         # Game excitement algorithm
-│   │       └── highlights.py    # Event ranking
+│   │       ├── highlights.py    # Event ranking
+│   │       ├── win_probability.py # Statistical win prob model
+│   │       ├── odds_filtering.py  # Stale bookmaker filter
+│   │       ├── futures_categorization.py # Rules + LLM categorization
+│   │       └── team_linking.py  # Team name matching utilities
 │   ├── alembic/                 # Database migrations
 │   └── requirements.txt
 ├── frontend/
@@ -137,7 +154,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (693 pytest items across 15 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse, task wiring, odds polling helpers, ESPN API parsing, redis state hashing, win prob source config. See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (719 pytest items across 15 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse, task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config. See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (107 tests across 2 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
 
 ### Querying the Production API
@@ -744,11 +761,11 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 14 regression tests (including commence_time sanity check)
 - ✅ Opening odds now stores last pregame consensus (cross-bookmaker average, continuously updated while scheduled)
 - ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`
-- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 12 modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
+- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 14 modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`, `roster_sync.py`, `team_linking.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
-- ✅ Test coverage for core algorithms: 693 backend (pytest items) + 107 frontend = 800 total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), team linking (97), LLM classification (60), odds polling helpers (27), win prob sources (24), ESPN API parsing (20), stale bookmaker filter (14), snapshot collapse (13), task wiring (19), redis state (9). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 719 backend (pytest items) + 107 frontend = 826 total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), odds polling helpers (27), win prob sources (24), task wiring (19), stale bookmaker filter (14), snapshot collapse (13), redis state (9). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 </details>
 
@@ -760,14 +777,14 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 719 tests (613 backend + 106 frontend) but initially had very few
+- Test suite now has 800+ tests (693 backend + 107 frontend) but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
 **Rule of thumb:** Before shipping changes to `pulse.py`, `highlights.py`, or the `tasks/` modules, write or run tests first.
 
 ### Tasks Package Architecture
-The former monolithic `tasks.py` was refactored into `backend/app/tasks/` (11 modules). Key architectural decisions:
+The former monolithic `tasks.py` was refactored into `backend/app/tasks/` (14 modules). Key architectural decisions:
 - All task names pinned with `name="app.tasks.*"` — beat schedule uses string task names that must match
 - `__init__.py` has thin task wrappers that call `run_async()` on async implementations from submodules
 - `from app.tasks import celery_app` and other existing imports work via re-exports in `__init__.py`
