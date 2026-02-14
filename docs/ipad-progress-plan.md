@@ -154,3 +154,63 @@ At end of each week, answer:
 3. What shipped that reduces future engineering risk?
 
 If a task doesn’t help one of those three, de-prioritize it.
+
+
+---
+
+## 9) Now What? (Do These 3 Things This Week)
+
+If you only remember one section, use this one.
+
+### Step 1 (Today, 20 minutes): Create one GitHub issue from Item 1
+Use this title:
+- `Clarify probability source labels on event views`
+
+Use this body template:
+
+```md
+## Problem
+Users may not understand whether displayed values are live consensus odds or opening odds.
+
+## Why this matters
+This is a trust/comprehension issue for non-bettor users.
+
+## Acceptance Criteria
+- [ ] Explicit source label appears next to displayed percentages
+- [ ] Tooltip explains source switching by game status (scheduled/live/completed)
+- [ ] Copy reviewed for plain-language clarity
+- [ ] Screenshot added in PR
+
+## Notes
+Reference: docs/ipad-progress-plan.md (Item 1)
+```
+
+### Step 2 (This week, 45 minutes x2): Run two no-terminal sprints
+In each sprint:
+1. Review one real game flow on production
+2. Log P0/P1/P2 friction
+3. Convert one friction point into a GitHub issue
+4. Draft the copy change in the issue
+
+Target output by end of week:
+- 2–3 high-quality issues with acceptance criteria
+- 1 prioritized P0/P1 candidate for the next coding PR
+
+### Step 3 (End of week, 15 minutes): Decide next coding PR scope
+Pick exactly one engineering task for the next code session:
+- Frontend API client tests (`frontend/lib/api.ts`)
+- Route helper/contract tests (`backend/app/routes/events.py`)
+- UX trust fix (probability source labeling)
+
+Use this rule: choose the item that most improves **10-second understanding** and **trust in live data**.
+
+---
+
+## 10) Definition of Progress (So You Know You’re Winning)
+
+A week counts as successful if you can point to:
+- At least **2 shipped or ready-to-ship issues** with clear acceptance criteria
+- At least **1 UX clarity improvement** drafted in plain language
+- A **single next PR scope** selected (not a broad theme)
+
+This prevents “planning drift” and keeps momentum even without terminal access.
