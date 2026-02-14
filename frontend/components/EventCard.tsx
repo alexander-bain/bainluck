@@ -26,13 +26,6 @@ interface EventCardProps {
   pinDisabled?: boolean;
 }
 
-/**
- * Redesigned Event card with:
- * - Information density: state, time, score, projected score
- * - Color for importance: live games green, close games amber border
- * - Emoji throughout
- * - Compact probability display
- */
 export default function EventCard({
   event,
   showSport = true,
@@ -117,6 +110,8 @@ export default function EventCard({
     ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
     : isFeaturedHighlight
     ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
+    : isFinished
+    ? "bg-slate-50/50 border border-mist"
     : isCloseGame
     ? "bg-white border-2 border-amber-200"
     : "bg-white border border-mist";
@@ -126,10 +121,10 @@ export default function EventCard({
       <div
         className={`h-full flex flex-col rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer group/card ${cardClasses}`}
       >
-        {/* Header: Sport, League, Status */}
+        {/* Header: Sport, Status, Time */}
         <div className="flex justify-between items-start mb-3">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Pin button - always visible but subtle, more prominent on hover */}
+            {/* Pin button */}
             {onPinToggle && (
               <button
                 onClick={handlePinClick}
@@ -159,15 +154,13 @@ export default function EventCard({
             )}
           </div>
 
-          {/* Status Badge and Time */}
+          {/* Right: Status + Pulse */}
           <div className="flex items-center gap-1.5">
-            {/* Start time for scheduled games - always show in this location */}
             {!isLive && !isFinished && (
               <span className="text-xs text-slate">
                 {timeStr}
               </span>
             )}
-            {/* Highlight label from backend (e.g., "Upset brewing", "Close game") */}
             {highlightLabel && !effectivelyLive && (
               <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                 {highlightLabel}
@@ -179,29 +172,17 @@ export default function EventCard({
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   {highlightLabel || "LIVE"}
                 </span>
-                {/* Show live Pulse score with tooltip */}
                 {event.pulse && (
                   <PulseBadge pulse={event.pulse} size="sm" />
                 )}
               </>
             )}
-            {isCompleted && (
+            {/* Unified "Final" badge for both completed and closed games */}
+            {isFinished && (
               <>
-                <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
-                  ✅ Final
+                <span className="text-xs text-silver">
+                  Final
                 </span>
-                {/* Show Pulse badge for all completed games */}
-                {event.pulse && (
-                  <PulseBadge pulse={event.pulse} size="sm" />
-                )}
-              </>
-            )}
-            {isClosed && (
-              <>
-                <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
-                  🔒 Closed
-                </span>
-                {/* Show Pulse badge for closed games too */}
                 {event.pulse && (
                   <PulseBadge pulse={event.pulse} size="sm" />
                 )}
@@ -210,12 +191,16 @@ export default function EventCard({
           </div>
         </div>
 
-        {/* Prominent Score Display for live/finished games */}
+        {/* Score Display — prominent for finished games, live-styled for live */}
         {(isLive || isFinished) && event.home_score !== null && event.away_score !== null ? (
-          <div className="flex items-center justify-center gap-4 py-2 mb-2 bg-white/60 rounded-lg">
+          <div className={`flex items-center justify-center gap-4 py-2 mb-2 rounded-lg ${
+            isFinished ? "bg-slate-100/80" : "bg-white/60"
+          }`}>
             <div className="text-center">
               <div className={`text-2xl font-bold font-mono ${
-                effectivelyLive ? "text-emerald-600" : "text-graphite"
+                isFinished
+                  ? (event.home_score! > event.away_score! ? "text-graphite" : "text-silver")
+                  : "text-emerald-600"
               }`}>
                 {event.home_score}
               </div>
@@ -226,7 +211,9 @@ export default function EventCard({
             <div className="text-lg text-slate font-medium">—</div>
             <div className="text-center">
               <div className={`text-2xl font-bold font-mono ${
-                effectivelyLive ? "text-emerald-600" : "text-graphite"
+                isFinished
+                  ? (event.away_score! > event.home_score! ? "text-graphite" : "text-silver")
+                  : "text-emerald-600"
               }`}>
                 {event.away_score}
               </div>
@@ -237,7 +224,7 @@ export default function EventCard({
           </div>
         ) : null}
 
-        {/* Main Content: Teams, Scores, Probabilities */}
+        {/* Main Content: Teams + Probabilities */}
         <div className="space-y-2 flex-grow">
           {/* Home Team Row */}
           <div className="flex items-center justify-between gap-2">
@@ -260,7 +247,6 @@ export default function EventCard({
                 {event.home_team}
               </span>
             </div>
-            {/* Probability */}
             <span
               className={`font-mono text-xl font-bold tabular-nums ${
                 homeFavorite ? "text-graphite" : "text-silver"
@@ -270,7 +256,7 @@ export default function EventCard({
             </span>
           </div>
 
-          {/* Probability Bar - slim and subtle */}
+          {/* Probability Bar */}
           <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-slate/10">
             <div
               className={`transition-all duration-300 ${
@@ -311,7 +297,6 @@ export default function EventCard({
                 {event.away_team}
               </span>
             </div>
-            {/* Probability */}
             <span
               className={`font-mono text-xl font-bold tabular-nums ${
                 !homeFavorite ? "text-graphite" : "text-silver"
@@ -322,52 +307,27 @@ export default function EventCard({
           </div>
         </div>
 
-        {/* Footer: Projected Score for future games, bookmaker count */}
-        <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center">
-          {/* Left side: Projected Score or broadcast info */}
-          <div className="flex items-center gap-1.5 text-sm">
-            {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
-              <>
-                <span className="text-slate">Projected:</span>
-                <span className="font-mono font-medium text-graphite">
-                  {Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}
-                </span>
-              </>
-            ) : isLive ? (
-              <span className="text-xs text-slate">
-                {opening ? `Opened ${Math.round(opening.home_probability * 100)}/${Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}` : "🔄 Live updates"}
-              </span>
-            ) : isFinished ? (
-              <span className="text-xs text-slate">
-                Pre-game odds
-              </span>
-            ) : null}
-            {/* Broadcast info from ESPN */}
-            {event.espn?.broadcast && (
-              <span className="text-xs text-silver ml-1" title={event.espn.broadcast}>
-                📺 {event.espn.broadcast.split(",")[0].trim()}
-              </span>
-            )}
-          </div>
-
-          {/* Right side: Bookmaker count and Close game indicator */}
-          <div className="flex items-center gap-2">
-            {/* Bookmaker count indicator */}
-            {odds?.bookmaker_count && odds.bookmaker_count > 1 && (
-              <span
-                className="text-xs text-silver cursor-help border-b border-dotted border-silver/50 hover:text-slate hover:border-slate transition-colors px-1 py-0.5 -mx-1"
-                title={event.bookmaker_odds?.map(b => b.bookmaker).join(", ")}
-              >
-                {odds.bookmaker_count} books
-              </span>
-            )}
-            {/* Close game indicator */}
-            {isCloseGame && (
-              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
-                🔥 Close
-              </span>
-            )}
-          </div>
+        {/* Footer — contextual, one line */}
+        <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center text-xs">
+          {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
+            <span className="text-slate">
+              Projected: <span className="font-mono font-medium text-graphite">{Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}</span>
+            </span>
+          ) : isLive && opening ? (
+            <span className="text-slate">
+              Opened {Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}
+            </span>
+          ) : isFinished ? (
+            <span className="text-silver">
+              Pre-game: {formatProbability(homeProb)} / {formatProbability(awayProb)}
+            </span>
+          ) : null}
+          {/* Broadcast info */}
+          {event.espn?.broadcast && (
+            <span className="text-silver truncate ml-auto" title={event.espn.broadcast}>
+              📺 {event.espn.broadcast.split(",")[0].trim()}
+            </span>
+          )}
         </div>
       </div>
     </Link>
