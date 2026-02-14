@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import useSWR from "swr";
 import { fetchEvents, fetchSports, fetchFuturesMarkets, fetchEventsByIds, fetchFuturesByIds } from "@/lib/api";
 import type { Event, FuturesMarket } from "@/lib/types";
@@ -422,6 +422,30 @@ export default function HomePage() {
     });
   }, [trackSectionToggle]);
 
+  // Auto-expand sports with live games on first meaningful data load
+  const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
+  useEffect(() => {
+    if (hasAutoExpanded || sportGroups.length === 0) return;
+
+    const sportsWithLive = new Set<string>();
+    const leaguesWithLive = new Set<string>();
+
+    for (const group of sportGroups) {
+      for (const league of group.leagues) {
+        if (league.events.some(e => e.status === "live")) {
+          sportsWithLive.add(group.categoryKey);
+          leaguesWithLive.add(league.leagueKey);
+        }
+      }
+    }
+
+    if (sportsWithLive.size > 0) {
+      setExpandedSports(sportsWithLive);
+      setExpandedLeagues(leaguesWithLive);
+    }
+    setHasAutoExpanded(true);
+  }, [sportGroups, hasAutoExpanded]);
+
   const sports = sportsData?.sports ?? [];
 
   return (
@@ -489,8 +513,8 @@ export default function HomePage() {
           ) : (
             /* Smart View: Pinned + Featured + Sport Groups */
             <div className="space-y-8">
-              {/* Pinned Events Section */}
-              {pinnedEvents.length > 0 && (
+              {/* Pinned Section (events + futures combined) */}
+              {(pinnedEvents.length > 0 || pinnedFutures.length > 0) && (
                 <section>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
                     <div className="flex items-center gap-2">
@@ -500,7 +524,7 @@ export default function HomePage() {
                       </h2>
                     </div>
                     <span className="text-caption text-slate">
-                      {pinnedEvents.length} event{pinnedEvents.length !== 1 ? "s" : ""} you&apos;re tracking
+                      {pinnedEvents.length + pinnedFutures.length} item{pinnedEvents.length + pinnedFutures.length !== 1 ? "s" : ""} you&apos;re tracking
                     </span>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
@@ -517,25 +541,6 @@ export default function HomePage() {
                         pinDisabled={isMaxReached}
                       />
                     ))}
-                  </div>
-                </section>
-              )}
-
-              {/* Pinned Futures Section */}
-              {pinnedFutures.length > 0 && (
-                <section>
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">📌</span>
-                      <h2 className="text-title-3 font-semibold text-graphite">
-                        Pinned Futures
-                      </h2>
-                    </div>
-                    <span className="text-caption text-slate">
-                      {pinnedFutures.length} market{pinnedFutures.length !== 1 ? "s" : ""} you&apos;re tracking
-                    </span>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
                     {pinnedFutures.map((market) => (
                       <FuturesCard
                         key={`pinned-futures-${market.id}`}
@@ -610,6 +615,12 @@ export default function HomePage() {
                 const totalItems = sportGroup.totalEvents + sportGroup.totalFutures;
                 const futuresKey = `${sportGroup.categoryKey}-futures`;
                 const isFuturesExpanded = expandedLeagues.has(futuresKey);
+                const liveCount = sportGroup.leagues.reduce(
+                  (sum, league) => sum + league.events.filter(e => e.status === "live").length, 0
+                );
+                const isSportExpanded = expandedSports.has(sportGroup.categoryKey);
+                // Flatten: skip league sub-header when only one league and no futures
+                const isFlatLeague = sportGroup.leagues.length === 1 && sportGroup.totalFutures === 0;
 
                 return (
                   <section key={sportGroup.categoryKey}>
@@ -629,8 +640,13 @@ export default function HomePage() {
                           ? `${sportGroup.totalFutures} futures`
                           : sportGroup.totalEvents}
                       </span>
+                      {liveCount > 0 && !isSportExpanded && (
+                        <span className="text-micro bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-semibold animate-pulse">
+                          {liveCount} live
+                        </span>
+                      )}
                       <span className="ml-auto text-slate group-hover:text-graphite transition-colors">
-                        {expandedSports.has(sportGroup.categoryKey) ? (
+                        {isSportExpanded ? (
                           <ChevronDown className="w-5 h-5" />
                         ) : (
                           <ChevronRight className="w-5 h-5" />
@@ -639,44 +655,44 @@ export default function HomePage() {
                     </button>
 
                     {/* Sport Content */}
-                    {expandedSports.has(sportGroup.categoryKey) && (
+                    {isSportExpanded && (
                       <div className="space-y-4">
                         {/* League sections */}
                         {sportGroup.leagues.map((league) => {
-                          // Auto-expand if only one league in this sport (and no futures)
-                          const isSingleLeague = sportGroup.leagues.length === 1 && sportGroup.totalFutures === 0;
-                          const isExpanded = isSingleLeague || expandedLeagues.has(league.leagueKey);
+                          const isExpanded = isFlatLeague || expandedLeagues.has(league.leagueKey);
 
                           return (
                             <div key={league.leagueKey}>
-                              {/* League Header - clickable toggle */}
-                              <button
-                                onClick={() => toggleLeagueExpand(league.leagueKey, league.leagueName, league.events.length)}
-                                className="flex items-center gap-2 mb-2 w-full text-left group"
-                              >
-                                <span className="text-slate group-hover:text-graphite transition-colors">
-                                  {isExpanded ? (
-                                    <ChevronDown className="w-4 h-4" />
-                                  ) : (
-                                    <ChevronRight className="w-4 h-4" />
-                                  )}
-                                </span>
-                                <h3 className="text-body font-medium text-graphite">
-                                  {league.leagueName}
-                                </h3>
-                                {league.tier === 1 && (
-                                  <span className="text-micro bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
-                                    Major
+                              {/* League Header - hidden for single-league sports (no point clicking twice) */}
+                              {!isFlatLeague && (
+                                <button
+                                  onClick={() => toggleLeagueExpand(league.leagueKey, league.leagueName, league.events.length)}
+                                  className="flex items-center gap-2 mb-2 w-full text-left group"
+                                >
+                                  <span className="text-slate group-hover:text-graphite transition-colors">
+                                    {isExpanded ? (
+                                      <ChevronDown className="w-4 h-4" />
+                                    ) : (
+                                      <ChevronRight className="w-4 h-4" />
+                                    )}
                                   </span>
-                                )}
-                                <span className="text-caption text-silver">
-                                  {league.events.length} event{league.events.length !== 1 ? "s" : ""}
-                                </span>
-                              </button>
+                                  <h3 className="text-body font-medium text-graphite">
+                                    {league.leagueName}
+                                  </h3>
+                                  {league.tier === 1 && (
+                                    <span className="text-micro bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                                      Major
+                                    </span>
+                                  )}
+                                  <span className="text-caption text-silver">
+                                    {league.events.length} event{league.events.length !== 1 ? "s" : ""}
+                                  </span>
+                                </button>
+                              )}
 
                               {/* League Events */}
                               {isExpanded && (
-                                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
+                                <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ${isFlatLeague ? "" : "ml-6"}`}>
                                   {league.events.map((event, index) => (
                                     <EventCard
                                       key={event.id}
