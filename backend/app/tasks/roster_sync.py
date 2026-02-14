@@ -13,7 +13,11 @@ from typing import Optional
 from sqlalchemy import select, update
 
 from app.tasks.base import get_task_session
-from app.services.sportsdata_api import SportsDataIOService, SPORTSDATA_SPORT_MAPPING
+from app.services.sportsdata_api import (
+    SportsDataIOService,
+    SPORTSDATA_SPORT_MAPPING,
+    SPORTSDATA_ABBREV_TO_NAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +88,18 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 continue
             sport_id = sport_row.id
 
+            # Static name map for this sport (SportsDataIO abbrev → our team name)
+            name_map = SPORTSDATA_ABBREV_TO_NAME.get(sd_sport, {})
+
             # Update each team's roster_players
             from app.models import Team
             sport_updated = 0
+            unmatched = []
             for abbrev, player_names in team_players.items():
                 # Deduplicate and sort
                 unique_names = sorted(set(player_names))
 
-                # Find matching team by abbreviation + sport
+                # Try 1: Match by abbreviation + sport
                 team_result = await session.execute(
                     select(Team.id).where(
                         Team.abbreviation == abbrev,
@@ -99,26 +107,56 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     )
                 )
                 team_row = team_result.first()
-                if not team_row:
+                team_id = team_row[0] if team_row else None
+
+                # Try 2: Static name map (hardcoded SportsDataIO abbrev → team name)
+                if not team_id and abbrev in name_map:
+                    team_result = await session.execute(
+                        select(Team.id).where(
+                            Team.name == name_map[abbrev],
+                            Team.sport_id == sport_id,
+                        )
+                    )
+                    team_row = team_result.first()
+                    team_id = team_row[0] if team_row else None
+
+                # Try 3: Create Team record if we have a name mapping but no DB record
+                if not team_id and abbrev in name_map:
+                    new_team = Team(
+                        name=name_map[abbrev],
+                        abbreviation=abbrev,
+                        sport_id=sport_id,
+                    )
+                    session.add(new_team)
+                    await session.flush()
+                    team_id = new_team.id
+                    logger.info(f"  Created new Team record: {name_map[abbrev]} ({abbrev})")
+
+                if not team_id:
+                    unmatched.append(abbrev)
                     continue
 
                 await session.execute(
                     update(Team)
-                    .where(Team.id == team_row.id)
+                    .where(Team.id == team_id)
                     .values(roster_players=unique_names)
                 )
                 sport_updated += 1
                 total_players += len(unique_names)
 
             total_updated += sport_updated
-            details.append({
+            sport_detail = {
                 "sport": our_key,
                 "teams_updated": sport_updated,
                 "total_teams_in_api": len(team_players),
                 "players_synced": sum(len(v) for v in team_players.values()),
-            })
+            }
+            if unmatched:
+                sport_detail["unmatched_abbreviations"] = unmatched
+                logger.warning(f"  {our_key}: {len(unmatched)} unmatched teams: {unmatched}")
+            details.append(sport_detail)
             logger.info(
-                f"  {our_key}: updated {sport_updated} teams, "
+                f"  {our_key}: updated {sport_updated}/{len(team_players)} teams, "
                 f"{sum(len(v) for v in team_players.values())} player names"
             )
 

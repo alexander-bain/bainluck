@@ -1237,6 +1237,44 @@ async def espn_teams_status(
     }
 
 
+@router.get("/rosters/teams-debug")
+async def rosters_teams_debug(
+    sport_key: str = Query(..., description="Sport key (e.g., 'americanfootball_nfl')"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug: show team names, abbreviations, and roster status for a sport."""
+    from app.models import Team, Sport
+
+    sport_result = await db.execute(
+        select(Sport.id, Sport.key).where(Sport.key == sport_key)
+    )
+    sport_row = sport_result.first()
+    if not sport_row:
+        return {"error": f"Sport '{sport_key}' not found"}
+
+    result = await db.execute(
+        select(
+            Team.id, Team.name, Team.abbreviation, Team.roster_players
+        ).where(Team.sport_id == sport_row.id).order_by(Team.name)
+    )
+    teams = result.all()
+
+    return {
+        "sport_key": sport_key,
+        "sport_id": sport_row.id,
+        "team_count": len(teams),
+        "teams": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "abbreviation": t.abbreviation,
+                "roster_count": len(t.roster_players) if t.roster_players else 0,
+            }
+            for t in teams
+        ],
+    }
+
+
 @router.post("/espn/sync-live-events")
 async def sync_espn_live_events(
     secret: str = Query(..., description="Admin secret for authorization"),
