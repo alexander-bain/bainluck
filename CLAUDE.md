@@ -436,22 +436,30 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/task/{
 Firebase Auth provides Google (and later Apple) Sign-In. The app works fully without login; auth unlocks personalization features.
 
 **Architecture:**
-- **Frontend**: Firebase JS SDK for Google Sign-In popup → sends Firebase ID token to backend
+- **Frontend**: Google Identity Services (GIS) OAuth popup → access token → Firebase `signInWithCredential` or backend custom token exchange
 - **Backend**: `firebase-admin` verifies ID tokens → upserts user in `users` table → returns profile
 - **Auth dependencies**: `get_current_user` (required auth) and `get_optional_user` (optional auth) FastAPI dependencies
 - **Anonymous-first**: All existing endpoints work without auth. Personalization is an overlay, not a gate.
 - **Pin sync**: Pins migrate from localStorage to `user_pins` table on first login. localStorage continues as fallback for anonymous users.
 
+**Safari compatibility (critical):**
+Firebase's `signInWithPopup` and `signInWithRedirect` are broken on Safari due to ITP (Intelligent Tracking Prevention). The `signInWithCredential` approach also fails with `auth/network-request-failed` because Safari blocks requests to `identitytoolkit.googleapis.com`. The solution is a two-step fallback:
+1. **Try `signInWithCredential`** — works on Chrome/Firefox
+2. **If that fails, backend token exchange** — send Google access token to `POST /api/auth/google-access-token`, backend verifies with Google, creates/finds Firebase user via Admin SDK, returns a Firebase custom token, frontend calls `signInWithCustomToken`
+
+This requires `FIREBASE_SERVICE_ACCOUNT_JSON` on the backend (not optional for auth to work on Safari).
+
 **Key files:**
-- `backend/app/services/firebase_auth.py` — Firebase Admin SDK initialization and token verification
+- `backend/app/services/firebase_auth.py` — Firebase Admin SDK init, token verification, `get_or_create_firebase_user`, `create_custom_token`
 - `backend/app/dependencies/auth.py` — `get_current_user` / `get_optional_user` FastAPI dependencies
-- `backend/app/routes/auth.py` — `POST /api/auth/google`, `GET /api/auth/me`, profile management
+- `backend/app/routes/auth.py` — `POST /api/auth/google`, `POST /api/auth/google-access-token` (Safari fallback), `GET /api/auth/me`, profile management
 - `backend/app/routes/user.py` — Pin CRUD (`/api/me/pins`), team search (`/api/me/teams/search`)
-- `frontend/lib/firebase.ts` — Firebase app config, sign-in/sign-out functions
+- `frontend/lib/firebase.ts` — Firebase app config, GIS OAuth flow, two-step sign-in with backend fallback
 - `frontend/hooks/useAuth.ts` — Reactive auth state, token management
 - `frontend/components/AuthProvider.tsx` — Auth context provider, wires token to API client
 - `frontend/components/UserMenu.tsx` — Header sign-in button / user avatar dropdown
 - `frontend/hooks/usePinSync.ts` — One-way localStorage → server pin migration on first login
+- `frontend/app/preferences/page.tsx` — User preferences page (placeholder, shows account info)
 
 **Database tables:**
 - `users` — Firebase UID, email, display name, photo URL
@@ -460,8 +468,8 @@ Firebase Auth provides Google (and later Apple) Sign-In. The app works fully wit
 - `user_pins` — Server-side pin storage (events + futures)
 
 **Environment variables:**
-- Backend: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (optional)
-- Frontend: `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+- Backend: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (**required** for Safari sign-in — enables `create_custom_token` and `get_user_by_email`)
+- Frontend: `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
 
 **City → Teams mapping:** ESPN's `location` field on team objects maps cities/regions/schools to teams. The `Team.location` column stores this. A static metro alias map (~25 entries) groups brand names to metro areas ("New England" → "Boston", "Golden State" → "Bay Area").
 
@@ -617,14 +625,14 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 497 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, and `test_snapshot_collapse.py`. Zero frontend tests.
+1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 613 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, and `test_snapshot_collapse.py`. Zero frontend tests.
 2. 🔴 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. **Worse than expected:** Super Bowl (event 1) had only 4 score_snapshots — if the highest-profile game has unreliable coverage, college sports are likely much worse. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
 3. 🟡 **Data retention policy — Phase 1 complete, Phase 2 pending** — Snapshot collapsing implemented: consecutive identical rows are merged into single rows with `captured_at`/`valid_until` spans (lossless). Write-time dedup added to `win_prob_snapshots`. Daily Celery beat tasks run at 6:30/6:35/6:40 UTC. Initial run deleted ~740K rows (19% of total). **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet. **Performance note (urgent):** current collapse task loads all snapshots per (event, bookmaker) into Python memory — a pure SQL approach (window functions to identify collapsible rows, batch delete) would be 10-50x faster and use constant memory. As event count grows over months, this **will** OOM the Heroku dyno. Rewrite to SQL before adding new data sources.
 4. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic. Celery heartbeat task + `GET /api/admin/celery/health` endpoint now provide basic worker health monitoring. **Gap:** No monitoring for task *correctness*, only *liveness*. Heartbeat confirms the worker is running but doesn't detect silent failures (e.g., `poll_all_odds` returning empty results, ESPN sync matching 0 events). Sentry catches exceptions but not degraded output. Need task-level success metrics.
 5. 🟡 **Move `_create_or_update_win_prob_snapshot` to shared module** — Currently in `odds_polling.py` but imported by `espn_sync.py`. It's a shared utility, not specific to odds polling. Should live in `base.py` or a new `tasks/snapshots.py` to avoid confusing cross-module dependencies as the package grows.
 
 ### Next — Features (in priority order)
-6. 🟢 **Auth & Personalization Phase 1 (in progress)** — Firebase Auth (Google Sign-In), backend auth middleware, pin sync endpoints, frontend auth context + sign-in UI. Foundation for personalization. See `docs/auth-personalization-plan.md` for full plan.
+6. 🟢 **Auth & Personalization Phase 1 (shipped)** — Google Sign-In working on Safari and Chrome via GIS + backend custom token fallback. Backend auth middleware, pin sync endpoints, frontend auth context + sign-in UI, preferences page placeholder. Still needs desktop Safari verification. See `docs/auth-personalization-plan.md` for full plan.
 7. 📋 **Auth & Personalization Phase 2** — Onboarding flow (city→teams, alma maters, sport affinities, rivals), preference storage, LLM-parsed free-text inputs
 8. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
 9. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
@@ -660,6 +668,7 @@ These are the current focus. Resist the urge to build new features until these a
 - ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`
 - ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 11 modules: `__init__.py`, `config.py`, `base.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
+- ✅ Auth & Personalization Phase 1: Google Sign-In (GIS OAuth + backend custom token fallback for Safari), user profile, preferences page, pin sync infrastructure
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -670,7 +679,7 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 497 tests but initially had very few
+- Test suite now has 613 tests but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
@@ -732,7 +741,9 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 
 11. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
-12. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** Task modules use `logging.getLogger(__name__)`. Some older code still uses `print()` instead — migrate to logger when touching those sections.
+12. **Safari breaks Firebase Auth** — `signInWithPopup`, `signInWithRedirect`, and `signInWithCredential` all fail on Safari due to ITP. The working solution is GIS `initTokenClient` (opens OAuth popup, returns access token) → backend exchanges for custom Firebase token → `signInWithCustomToken`. Do NOT attempt to use Firebase's native Google sign-in methods on Safari. The backend fallback endpoint `POST /api/auth/google-access-token` handles this. Requires `FIREBASE_SERVICE_ACCOUNT_JSON` to be set.
+
+13. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** Task modules use `logging.getLogger(__name__)`. Some older code still uses `print()` instead — migrate to logger when touching those sections.
 
 ---
 
