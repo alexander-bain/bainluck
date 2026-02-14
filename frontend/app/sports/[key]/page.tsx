@@ -27,7 +27,7 @@ export default function SportPage({ params }: SportPageProps) {
   } = useSWR(
     ["events", sportKey],
     () => fetchEvents({ sport: sportKey, days: 14 }),
-    { refreshInterval: 30000 }
+    { refreshInterval: 30000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
   const events = eventsData?.events ?? [];

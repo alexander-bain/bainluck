@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { GoogleAnalytics, AnalyticsProvider, ConsentBanner } from "@/components/Analytics";
 import { AuthProvider } from "@/components/AuthProvider";
@@ -7,6 +8,13 @@ import PinSyncEffect from "@/components/PinSyncEffect";
 import UserMenu from "@/components/UserMenu";
 import SearchBox from "@/components/SearchBox";
 import { Analytics } from "@vercel/analytics/next";
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["500", "700"],
+  variable: "--font-jetbrains-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "OddsTracker - Win Probabilities",
@@ -19,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={jetbrainsMono.variable}>
       <body className="font-sans">
         <GoogleAnalytics />
         <AnalyticsProvider>

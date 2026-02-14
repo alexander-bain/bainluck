@@ -26,7 +26,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["Inter", ...defaultTheme.fontFamily.sans],
-        mono: ["JetBrains Mono", "SF Mono", ...defaultTheme.fontFamily.mono],
+        mono: ["var(--font-jetbrains-mono)", "SF Mono", ...defaultTheme.fontFamily.mono],
       },
       fontSize: {
         // Custom type scale from design brief

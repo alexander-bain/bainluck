@@ -55,7 +55,7 @@ export default function FuturesPage() {
   } = useSWR(
     ["futures", statusFilter],
     () => fetchFuturesMarkets({ status: statusFilter, limit: 100 }),
-    { refreshInterval: 60000 }
+    { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
   const {
