@@ -54,6 +54,7 @@ odds-tracker/
 │   │   │   ├── __init__.py      # Celery app, task definitions, beat schedule
 │   │   │   ├── config.py        # Shared constants (intervals, sport mapping)
 │   │   │   ├── base.py          # DB session helpers, run_async()
+│   │   │   ├── snapshots.py     # Shared snapshot write-time dedup helpers
 │   │   │   ├── redis_state.py   # Adaptive polling state, heartbeat
 │   │   │   ├── odds_polling.py  # Odds polling, snapshot dedup, opening odds
 │   │   │   ├── pulse.py         # Pulse/GEI computation
@@ -135,8 +136,8 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover: Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), stale bookmaker filtering
-  - Frontend tests cover: sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
+  - Backend tests cover (613 pytest items across 11 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse, task wiring. See `docs/test-coverage-analysis.md` for full breakdown.
+  - Frontend tests cover (106 tests across 2 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
 
 ### Querying the Production API
 
@@ -686,27 +687,25 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Add test coverage for core algorithms** — `pulse.py` and `highlights.py` are pure functions that are easy to test and have caused the most rework. Target: 15+ test cases each. Backend has grown to 594 tests across `test_odds_math.py`, `test_pulse.py`, `test_highlights.py`, `test_futures_categorization.py`, `test_win_probability.py`, `test_stale_bookmaker_filter.py`, `test_snapshot_collapse.py`, `test_team_linking.py`, and `test_tasks_wiring.py`. Frontend has 107 tests.
-2. 🔴 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. **Worse than expected:** Super Bowl (event 1) had only 4 score_snapshots — if the highest-profile game has unreliable coverage, college sports are likely much worse. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
-3. 🔴 **Data retention / worker memory — ACTIVELY OOMing** — Heroku worker is hitting R14 (Memory quota exceeded) as of Feb 2026. Snapshot collapsing (Phase 1) implemented but the Python-based collapse task loads all snapshots into memory. **Immediate fix needed:** rewrite collapse to pure SQL (window functions + batch delete) for constant memory. **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet.
-4. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic. Celery heartbeat task + `GET /api/admin/celery/health` endpoint now provide basic worker health monitoring. **Gap:** No monitoring for task *correctness*, only *liveness*. Heartbeat confirms the worker is running but doesn't detect silent failures (e.g., `poll_all_odds` returning empty results, ESPN sync matching 0 events). Sentry catches exceptions but not degraded output. Need task-level success metrics.
-5. 🟡 **Move `_create_or_update_win_prob_snapshot` to shared module** — Currently in `odds_polling.py` but imported by `espn_sync.py`. It's a shared utility, not specific to odds polling. Should live in `base.py` or a new `tasks/snapshots.py` to avoid confusing cross-module dependencies as the package grows.
+1. 🔴 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. **Worse than expected:** Super Bowl (event 1) had only 4 score_snapshots — if the highest-profile game has unreliable coverage, college sports are likely much worse. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
+2. 🔴 **Data retention / worker memory — ACTIVELY OOMing** — Heroku worker is hitting R14 (Memory quota exceeded) as of Feb 2026. Snapshot collapsing (Phase 1) implemented but the Python-based collapse task loads all snapshots into memory. **Immediate fix needed:** rewrite collapse to pure SQL (window functions + batch delete) for constant memory. **Phase 2 opportunities:** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet.
+3. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic. Celery heartbeat task + `GET /api/admin/celery/health` endpoint now provide basic worker health monitoring. **Gap:** No monitoring for task *correctness*, only *liveness*. Heartbeat confirms the worker is running but doesn't detect silent failures (e.g., `poll_all_odds` returning empty results, ESPN sync matching 0 events). Sentry catches exceptions but not degraded output. Need task-level success metrics.
 
 ### Next — Features (in priority order)
-6. 🟢 **Auth & Personalization Phase 1 (shipped)** — Google Sign-In working on Safari and Chrome via GIS + backend custom token fallback. Backend auth middleware, pin sync endpoints, frontend auth context + sign-in UI, preferences page placeholder. Still needs desktop Safari verification. See `docs/auth-personalization-plan.md` for full plan.
-7. 📋 **Auth & Personalization Phase 2** — Onboarding flow (city→teams, alma maters, sport affinities, rivals), preference storage, LLM-parsed free-text inputs
-8. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
-9. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
-10. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
-11. 📋 Pass Kalshi event category as sport_key for better disambiguation
-12. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
-13. 📋 LLM-powered odds movement explanations
-14. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-15. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
-16. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
-17. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
-18. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
-19. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
+4. 🟢 **Auth & Personalization Phase 1 (shipped)** — Google Sign-In working on Safari and Chrome via GIS + backend custom token fallback. Backend auth middleware, pin sync endpoints, frontend auth context + sign-in UI, preferences page placeholder. Still needs desktop Safari verification. See `docs/auth-personalization-plan.md` for full plan.
+5. 📋 **Auth & Personalization Phase 2** — Onboarding flow (city→teams, alma maters, sport affinities, rivals), preference storage, LLM-parsed free-text inputs
+6. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
+7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
+8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
+9. 📋 Pass Kalshi event category as sport_key for better disambiguation
+10. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
+11. 📋 LLM-powered odds movement explanations
+12. 📋 Sport-specific Pulse normalization (different ceilings per sport)
+13. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
+14. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
+15. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
+16. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
+17. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
 
 ### Horizon — AI-Native Sports Intelligence (SportsDataIO + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require SportsDataIO enrichment (rosters, injuries, standings, schedules) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -744,10 +743,12 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 14 regression tests (including commence_time sanity check)
 - ✅ Opening odds now stores last pregame consensus (cross-bookmaker average, continuously updated while scheduled)
 - ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`
-- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 11 modules: `__init__.py`, `config.py`, `base.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
+- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 12 modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
+- ✅ Test coverage for core algorithms: 613 backend (pytest items) + 106 frontend = 719 total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (70), futures categorization (116), win probability (41), team linking (97), LLM classification (60), stale bookmaker filter (14), snapshot collapse (13), task wiring (19). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -758,7 +759,7 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 613 tests but initially had very few
+- Test suite now has 719 tests (613 backend + 106 frontend) but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
@@ -769,7 +770,8 @@ The former monolithic `tasks.py` was refactored into `backend/app/tasks/` (11 mo
 - All task names pinned with `name="app.tasks.*"` — beat schedule uses string task names that must match
 - `__init__.py` has thin task wrappers that call `run_async()` on async implementations from submodules
 - `from app.tasks import celery_app` and other existing imports work via re-exports in `__init__.py`
-- Cross-module imports: `sports.py` imports from `odds_polling.py`, `espn_sync.py` imports from `odds_polling.py`
+- Cross-module imports: `sports.py` imports from `odds_polling.py`, `espn_sync.py` imports from `snapshots.py`
+- Shared utilities: `snapshots.py` contains write-time dedup helpers used by both `odds_polling.py` and `espn_sync.py`
 - Celery worker command `celery -A app.tasks worker` resolves to `tasks/__init__.py` automatically
 
 ### Super Bowl One-Offs (Removed)

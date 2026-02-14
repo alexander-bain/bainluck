@@ -324,4 +324,4 @@ celery_app.conf.beat_schedule = {
 # =============================================================================
 
 from app.tasks.futures import _infer_base_sport  # noqa: E402, F401 (used by routes/futures.py)
-from app.tasks.odds_polling import _create_or_update_win_prob_snapshot  # noqa: E402, F401
+from app.tasks.snapshots import _create_or_update_win_prob_snapshot  # noqa: E402, F401

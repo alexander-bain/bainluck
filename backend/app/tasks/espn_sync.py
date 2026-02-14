@@ -345,7 +345,7 @@ async def _sync_espn_live_events():
 
                                     # Also write ESPN to generic win_prob_snapshots table
                                     try:
-                                        from app.tasks.odds_polling import _create_or_update_win_prob_snapshot
+                                        from app.tasks.snapshots import _create_or_update_win_prob_snapshot
                                         espn_wp_snap, is_new = await _create_or_update_win_prob_snapshot(
                                             session,
                                             event_id=event.id,
@@ -393,7 +393,7 @@ async def _sync_espn_live_events():
                                             event.win_probability_sources = sources
                                             changed = True
 
-                                            from app.tasks.odds_polling import _create_or_update_win_prob_snapshot
+                                            from app.tasks.snapshots import _create_or_update_win_prob_snapshot
                                             stat_snap, is_new = await _create_or_update_win_prob_snapshot(
                                                 session,
                                                 event_id=event.id,
