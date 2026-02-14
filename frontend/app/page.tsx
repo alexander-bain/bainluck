@@ -102,7 +102,7 @@ export default function HomePage() {
   } = useSWR(
     ["events", selectedSport],
     () => fetchEvents({ sport: selectedSport ?? undefined, days: 7 }),
-    { refreshInterval: 30000 }
+    { refreshInterval: 30000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
   // Fetch futures markets
@@ -116,7 +116,7 @@ export default function HomePage() {
   } = useSWR(
     ["futures", selectedSport, futuresStatus],
     () => fetchFuturesMarkets({ sport: selectedSport ?? undefined, status: futuresStatus }),
-    { refreshInterval: 60000 }
+    { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
   // Helper to check if a date is today, recent (last 7 days), or upcoming

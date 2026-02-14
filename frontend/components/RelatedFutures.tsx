@@ -168,6 +168,9 @@ function TeamSection({
             <img
               src={teamLogo}
               alt=""
+              width={20}
+              height={20}
+              loading="lazy"
               className="w-5 h-5 object-contain"
             />
           )}

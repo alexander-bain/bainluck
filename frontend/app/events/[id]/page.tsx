@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
 import ProbabilityBar from "@/components/ProbabilityBar";
-import OddsChart from "@/components/OddsChart";
-import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
+const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false });
+const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false });
 import BookmakerTable from "@/components/BookmakerTable";
 import RelatedFutures from "@/components/RelatedFutures";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -641,6 +642,9 @@ export default function EventPage({ params }: EventPageProps) {
                 <img
                   src={event.home_team_data!.logo_large!}
                   alt=""
+                  width={32}
+                  height={32}
+                  loading="lazy"
                   className="w-8 h-8 object-contain"
                 />
               )}
@@ -687,6 +691,9 @@ export default function EventPage({ params }: EventPageProps) {
                 <img
                   src={event.away_team_data!.logo_large!}
                   alt=""
+                  width={32}
+                  height={32}
+                  loading="lazy"
                   className="w-8 h-8 object-contain"
                 />
               )}

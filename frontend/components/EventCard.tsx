@@ -246,6 +246,9 @@ export default function EventCard({
                 <img
                   src={event.home_team_data!.logo_small!}
                   alt=""
+                  width={20}
+                  height={20}
+                  loading="lazy"
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
               )}
@@ -294,6 +297,9 @@ export default function EventCard({
                 <img
                   src={event.away_team_data!.logo_small!}
                   alt=""
+                  width={20}
+                  height={20}
+                  loading="lazy"
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
               )}

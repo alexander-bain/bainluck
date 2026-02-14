@@ -84,7 +84,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   } = useSWR(
     ["futures-market", marketId],
     () => fetchFuturesMarket(marketId),
-    { refreshInterval: 60000 }
+    { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
   const {
