@@ -1,13 +1,13 @@
 # Test Coverage Analysis
 
 **Date:** February 2026
-**Total tests:** 613 backend + 107 frontend = 720 total
+**Total tests:** 693 backend + 107 frontend = 800 total
 
 ---
 
 ## Current Coverage Summary
 
-### Backend (613 tests across 11 test files)
+### Backend (693 tests across 15 test files)
 
 | Test File | Module Under Test | Tests | Coverage Level |
 |-----------|-------------------|-------|----------------|
@@ -19,12 +19,14 @@
 | `test_win_probability.py` | `utils/win_probability.py` | 51 | Excellent — stat model, sport key aliases, database key mapping, all 6 sports |
 | `test_odds_math.py` | `utils/odds_math.py` | 35 | Excellent — core conversions, reversed bookmaker detection |
 | `test_odds_math_extended.py` | `utils/odds_math.py` | 35 | Excellent — project_scores, calculate_gei, format_probability, round-trips |
+| `test_odds_polling_helpers.py` | `tasks/odds_polling.py` | 27 | Good — get_max_duration_for_sport prefix matching, _snapshots_are_equal dedup |
+| `test_win_prob_sources.py` | `config/win_prob_sources.py` | 24 | Good — structural validation, required fields, hex colors, source types |
 | `test_tasks_wiring.py` | `tasks/` (wiring only) | 19 | Good — beat schedule, imports, re-exports |
+| `test_espn_api_parsing.py` | `services/espn_api.py` | 20 | Good — _parse_color, SPORT_LEAGUE_MAP completeness, _get_espn_path |
 | `test_stale_bookmaker_filter.py` | `utils/odds_filtering.py` | 14 | Good — stale bookmaker filter, all statuses |
 | `test_snapshot_collapse.py` | `tasks/retention.py` | 13 | Good — collapse algorithm, edge cases |
+| `test_redis_state.py` | `tasks/redis_state.py` | 9 | Good — compute_odds_hash determinism, ordering, edge cases |
 | | **routes/** | **0** | **None** |
-| | **services/** (except llm) | **0** | **None** |
-| | **tasks/** (implementations) | **0** | **None** |
 | | **dependencies/** | **0** | **None** |
 
 ### Frontend (107 tests across 2 test files)
@@ -173,25 +175,23 @@
 
 ---
 
-## Quick Wins (< 1 hour each)
+## Quick Wins — ✅ Completed
 
-1. **`get_max_duration_for_sport`** — 5 tests, pure function, prevents staleness detection bugs
-2. **`_snapshots_are_equal`** — 5 tests, pure function, prevents duplicate snapshot storage
-3. **`_parse_color`** — 3 tests, pure function, prevents broken team colors
-4. **`_get_espn_path`** — 2 tests, pure lookup, verifies all 17 sport mappings
-5. **`compute_odds_hash`** — 3 tests, pure function, prevents adaptive polling bugs
-6. **`win_prob_sources.py` validation** — 5 tests, structural check, prevents misconfig
+All 6 quick wins were implemented, adding 80 tests across 4 new test files:
 
-These 6 quick wins add ~23 tests and cover functions that have caused production issues or are in the critical data path.
+1. ✅ **`get_max_duration_for_sport`** — 15 tests in `test_odds_polling_helpers.py` (all prefixes, default fallback, edge cases)
+2. ✅ **`_snapshots_are_equal`** — 12 tests in `test_odds_polling_helpers.py` (equal/different per field, None handling, int/float coercion)
+3. ✅ **`_parse_color`** — 6 tests in `test_espn_api_parsing.py` (None, empty, with/without #, lowercase)
+4. ✅ **`_get_espn_path` + SPORT_LEAGUE_MAP** — 14 tests in `test_espn_api_parsing.py` (10 specific mappings, unknown key, structural validation)
+5. ✅ **`compute_odds_hash`** — 9 tests in `test_redis_state.py` (determinism, different inputs, ordering independence, edge cases)
+6. ✅ **`win_prob_sources.py` validation** — 24 tests in `test_win_prob_sources.py` (required fields, hex colors, source types, helper functions)
 
 ---
 
 ## Summary
 
-The codebase has strong coverage for pure algorithms (~85% of backend tests) but zero coverage for:
+The codebase has strong coverage for pure algorithms (~80% of backend tests) but zero coverage for:
 - API routes (7 files)
-- External service clients (5 files, except LLM)
-- Task implementations (10 files, only wiring tested)
 - Frontend components (21 files)
 - Frontend hooks (7 of 9 untested)
 
