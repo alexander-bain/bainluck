@@ -1,13 +1,13 @@
 # Test Coverage Analysis
 
 **Date:** February 2026
-**Total tests:** 693 backend + 107 frontend = 800 total
+**Total tests:** 719 backend + 107 frontend = 826 total
 
 ---
 
 ## Current Coverage Summary
 
-### Backend (693 tests across 15 test files)
+### Backend (719 tests across 15 test files)
 
 | Test File | Module Under Test | Tests | Coverage Level |
 |-----------|-------------------|-------|----------------|
@@ -22,7 +22,7 @@
 | `test_odds_polling_helpers.py` | `tasks/odds_polling.py` | 27 | Good — get_max_duration_for_sport prefix matching, _snapshots_are_equal dedup |
 | `test_win_prob_sources.py` | `config/win_prob_sources.py` | 24 | Good — structural validation, required fields, hex colors, source types |
 | `test_tasks_wiring.py` | `tasks/` (wiring only) | 19 | Good — beat schedule, imports, re-exports |
-| `test_espn_api_parsing.py` | `services/espn_api.py` | 20 | Good — _parse_color, SPORT_LEAGUE_MAP completeness, _get_espn_path |
+| `test_espn_api_parsing.py` | `services/espn_api.py` | 46 | Excellent — _parse_color, SPORT_LEAGUE_MAP, _parse_team (both formats), _parse_event (3 statuses), _parse_venue |
 | `test_stale_bookmaker_filter.py` | `utils/odds_filtering.py` | 14 | Good — stale bookmaker filter, all statuses |
 | `test_snapshot_collapse.py` | `tasks/retention.py` | 13 | Good — collapse algorithm, edge cases |
 | `test_redis_state.py` | `tasks/redis_state.py` | 9 | Good — compute_odds_hash determinism, ordering, edge cases |
@@ -35,8 +35,8 @@
 |-----------|-------------------|-------|----------------|
 | `sportCategories.test.ts` | `lib/sportCategories.ts` | 85 | Excellent — categorization, tiers, excitement scoring |
 | `pinnedStorage.test.ts` | `hooks/usePinnedEvents.ts` + `usePinnedFutures.ts` | 22 | Good — localStorage operations, pin limits, storage independence |
-| | **components/** (21 files) | **0** | **None** |
-| | **app/** pages (12 files) | **0** | **None** |
+| | **components/** (18 files) | **0** | **None** |
+| | **app/** pages (11 files) | **0** | **None** |
 | | **hooks/** (7 of 9 untested) | **0** | **None** |
 | | **lib/api.ts** | **0** | **None** |
 
