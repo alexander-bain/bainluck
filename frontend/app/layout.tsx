@@ -5,8 +5,10 @@ import "./globals.css";
 import { GoogleAnalytics, AnalyticsProvider, ConsentBanner } from "@/components/Analytics";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
+import dynamic from "next/dynamic";
 import UserMenu from "@/components/UserMenu";
-import SearchBox from "@/components/SearchBox";
+const SearchBox = dynamic(() => import("@/components/SearchBox"), { ssr: false });
+import SWRProvider from "@/components/SWRProvider";
 import { Analytics } from "@vercel/analytics/next";
 
 const jetbrainsMono = JetBrains_Mono({
@@ -26,10 +28,21 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   return (
     <html lang="en" className={jetbrainsMono.variable}>
+      <head>
+        {/* Preconnect to API origin — saves DNS + TLS roundtrip on first fetch */}
+        <link rel="preconnect" href={apiUrl} crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href={apiUrl} />
+        {/* ESPN CDN for team logos */}
+        <link rel="preconnect" href="https://a.espncdn.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://a.espncdn.com" />
+      </head>
       <body className="font-sans">
         <GoogleAnalytics />
+        <SWRProvider>
         <AnalyticsProvider>
           <AuthProvider>
             <PinSyncEffect />
@@ -94,6 +107,7 @@ export default function RootLayout({
             <ConsentBanner />
           </AuthProvider>
         </AnalyticsProvider>
+        </SWRProvider>
         <Analytics />
       </body>
     </html>

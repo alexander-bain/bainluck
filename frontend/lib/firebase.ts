@@ -5,19 +5,15 @@
  * via OAuth popup. Then tries Firebase signInWithCredential. If that fails
  * (e.g., Safari ITP blocking Identity Platform), falls back to exchanging
  * the access token through our backend for a Firebase custom token.
+ *
+ * PERFORMANCE: Firebase SDK (~200KB) is loaded lazily via dynamic import()
+ * so it doesn't block initial page render. The SDK loads on first auth
+ * interaction (sign-in click or auth state check).
  */
 
-import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithCredential,
-  signInWithCustomToken,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  type Auth,
-  type User as FirebaseUser,
-} from "firebase/auth";
+// Type-only imports — erased at compile time, zero bundle cost
+import type { FirebaseApp } from "firebase/app";
+import type { Auth, User as FirebaseUser } from "firebase/auth";
 
 // Firebase config from environment variables
 const firebaseConfig = {
@@ -31,6 +27,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /**
  * Check if Firebase is configured (env vars are set).
+ * Pure env-var check — no SDK needed.
  */
 export function isFirebaseConfigured(): boolean {
   return Boolean(
@@ -41,14 +38,18 @@ export function isFirebaseConfigured(): boolean {
   );
 }
 
-// Initialize Firebase app (singleton)
+// Lazy-initialized singletons
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 
-function getFirebaseApp(): FirebaseApp | null {
+/**
+ * Lazily load and initialize Firebase app.
+ */
+async function getFirebaseApp(): Promise<FirebaseApp | null> {
   if (!isFirebaseConfigured()) return null;
   if (app) return app;
 
+  const { initializeApp, getApps } = await import("firebase/app");
   const existingApps = getApps();
   if (existingApps.length > 0) {
     app = existingApps[0];
@@ -58,10 +59,14 @@ function getFirebaseApp(): FirebaseApp | null {
   return app;
 }
 
-export function getFirebaseAuth(): Auth | null {
+/**
+ * Lazily load and initialize Firebase Auth.
+ */
+async function getFirebaseAuth(): Promise<Auth | null> {
   if (auth) return auth;
-  const firebaseApp = getFirebaseApp();
+  const firebaseApp = await getFirebaseApp();
   if (!firebaseApp) return null;
+  const { getAuth } = await import("firebase/auth");
   auth = getAuth(firebaseApp);
   return auth;
 }
@@ -134,11 +139,17 @@ async function getGoogleAccessToken(): Promise<string> {
  * Returns the Firebase ID token on success, null on failure.
  */
 export async function signInWithGoogle(): Promise<string | null> {
-  const authInstance = getFirebaseAuth();
+  const authInstance = await getFirebaseAuth();
   if (!authInstance || !GOOGLE_CLIENT_ID) {
     console.error("[Firebase] Auth not initialized or missing GOOGLE_CLIENT_ID");
     return null;
   }
+
+  const {
+    GoogleAuthProvider,
+    signInWithCredential,
+    signInWithCustomToken,
+  } = await import("firebase/auth");
 
   try {
     console.log("[Firebase] Opening Google sign-in popup...");
@@ -199,8 +210,9 @@ export async function signInWithGoogle(): Promise<string | null> {
  * Sign out the current user.
  */
 export async function signOut(): Promise<void> {
-  const authInstance = getFirebaseAuth();
+  const authInstance = await getFirebaseAuth();
   if (!authInstance) return;
+  const { signOut: firebaseSignOut } = await import("firebase/auth");
   await firebaseSignOut(authInstance);
 
   // Also revoke Google's session
@@ -216,7 +228,7 @@ export async function signOut(): Promise<void> {
  * Get the current user's ID token (for API calls).
  */
 export async function getIdToken(): Promise<string | null> {
-  const authInstance = getFirebaseAuth();
+  const authInstance = await getFirebaseAuth();
   if (!authInstance?.currentUser) return null;
 
   try {
@@ -228,15 +240,18 @@ export async function getIdToken(): Promise<string | null> {
 
 /**
  * Subscribe to auth state changes.
+ * Returns a Promise that resolves to an unsubscribe function.
+ * The callback fires once Firebase SDK is loaded and auth state is known.
  */
-export function onAuthChange(
+export async function onAuthChange(
   callback: (user: FirebaseUser | null) => void
-): () => void {
-  const authInstance = getFirebaseAuth();
+): Promise<() => void> {
+  const authInstance = await getFirebaseAuth();
   if (!authInstance) {
     callback(null);
     return () => {};
   }
+  const { onAuthStateChanged } = await import("firebase/auth");
   return onAuthStateChanged(authInstance, callback);
 }
 
