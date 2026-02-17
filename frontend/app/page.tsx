@@ -8,6 +8,7 @@ import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SportFilter from "@/components/SportFilter";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import {
   SPORT_CATEGORIES,
@@ -102,7 +103,7 @@ export default function HomePage() {
   } = useSWR(
     ["events", selectedSport],
     () => fetchEvents({ sport: selectedSport ?? undefined, days: 7 }),
-    { refreshInterval: 30000, keepPreviousData: true, revalidateOnFocus: false }
+    { refreshInterval: 30000 }
   );
 
   // Fetch futures markets
@@ -116,7 +117,7 @@ export default function HomePage() {
   } = useSWR(
     ["futures", selectedSport, futuresStatus],
     () => fetchFuturesMarkets({ sport: selectedSport ?? undefined, status: futuresStatus }),
-    { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
+    { refreshInterval: 60000 }
   );
 
   // Helper to check if a date is today, recent (last 7 days), or upcoming
@@ -246,7 +247,6 @@ export default function HomePage() {
   const { data: fetchedPinnedEvents } = useSWR(
     missingPinnedIds.length > 0 ? ["pinned-events", ...missingPinnedIds] : null,
     () => fetchEventsByIds(missingPinnedIds),
-    { revalidateOnFocus: false }
   );
 
   // Combine pinned events from main list + separately fetched
@@ -269,7 +269,6 @@ export default function HomePage() {
   const { data: fetchedPinnedFutures } = useSWR(
     missingPinnedFuturesIds.length > 0 ? ["pinned-futures", ...missingPinnedFuturesIds] : null,
     () => fetchFuturesByIds(missingPinnedFuturesIds),
-    { revalidateOnFocus: false }
   );
 
   // Combine pinned futures from main list + separately fetched
@@ -489,12 +488,8 @@ export default function HomePage() {
         />
       )}
 
-      {/* Loading State */}
-      {eventsLoading && (
-        <div className="py-12">
-          <LoadingSpinner text="Loading events..." />
-        </div>
-      )}
+      {/* Loading State — skeleton cards instead of a spinner */}
+      {eventsLoading && <SkeletonGrid count={6} />}
 
       {/* Events Display */}
       {!eventsLoading && !eventsError && (

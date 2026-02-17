@@ -78,20 +78,33 @@ export function useAuth(): UseAuthResult {
   const isAuthAvailable = isFirebaseConfigured();
   const tokenRef = useRef<string | null>(null);
 
-  // Subscribe to Firebase auth state
+  // Subscribe to Firebase auth state (onAuthChange is async — SDK loads lazily)
   useEffect(() => {
     if (!isAuthAvailable) {
       setIsLoading(false);
       return;
     }
 
-    const unsubscribe = onAuthChange((fbUser) => {
+    let unsubscribe: (() => void) | null = null;
+    let cancelled = false;
+
+    onAuthChange((fbUser) => {
+      if (cancelled) return;
       console.log("[Auth]", fbUser ? `signed in as ${fbUser.email}` : "not signed in");
       setUser(mapFirebaseUser(fbUser));
       setIsLoading(false);
+    }).then((unsub) => {
+      if (cancelled) {
+        unsub();
+      } else {
+        unsubscribe = unsub;
+      }
     });
 
-    return unsubscribe;
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, [isAuthAvailable]);
 
   // Sign in with Google popup, then register with backend
