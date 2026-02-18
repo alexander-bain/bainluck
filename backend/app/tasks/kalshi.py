@@ -38,7 +38,11 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     category_lower = kalshi_category.lower()
 
     # Sports categories
-    if any(s in category_lower for s in ["sports", "golf", "football", "basketball", "baseball", "hockey", "soccer"]):
+    if any(s in category_lower for s in ["sports", "golf", "football", "basketball", "baseball", "hockey", "soccer", "tennis"]):
+        return "championship"
+
+    # Olympics
+    if "olympic" in category_lower:
         return "championship"
 
     # Other categories
@@ -78,7 +82,7 @@ async def _poll_kalshi_markets():
     try:
         # Only fetch sports-related categories to stay within rate limits
         # Kalshi has thousands of politics/economics markets we don't need
-        sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis"]
+        sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis", "Olympics"]
         events = await service.get_all_events(categories=sports_categories)
 
         async with get_task_session() as session:
