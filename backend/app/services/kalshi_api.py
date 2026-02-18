@@ -96,7 +96,7 @@ class KalshiAPIService:
     async def get_events(
         self,
         status: Optional[str] = "open",
-        category: Optional[str] = None,
+        series_ticker: Optional[str] = None,
         with_nested_markets: bool = True,
         limit: int = 200,
         cursor: Optional[str] = None,
@@ -104,9 +104,12 @@ class KalshiAPIService:
         """
         Get events from Kalshi.
 
+        Note: The events endpoint does NOT support category filtering.
+        Use series_ticker to filter events by series instead.
+
         Args:
             status: Filter by status ('open', 'closed', 'settled')
-            category: Filter by category
+            series_ticker: Filter to events in a specific series
             with_nested_markets: Include nested market data
             limit: Max results per page (1-200)
             cursor: Pagination cursor
@@ -120,8 +123,8 @@ class KalshiAPIService:
         }
         if status:
             params["status"] = status
-        if category:
-            params["category"] = category
+        if series_ticker:
+            params["series_ticker"] = series_ticker
         if cursor:
             params["cursor"] = cursor
 
@@ -136,6 +139,41 @@ class KalshiAPIService:
         next_cursor = data.get("cursor")
 
         return events, next_cursor
+
+    async def get_series(
+        self,
+        category: Optional[str] = None,
+        limit: int = 200,
+        cursor: Optional[str] = None,
+    ) -> tuple[list[dict], Optional[str]]:
+        """
+        Get series from Kalshi. Series support category filtering.
+
+        Args:
+            category: Filter by category (e.g., "Sports", "Olympics")
+            limit: Max results per page
+            cursor: Pagination cursor
+
+        Returns:
+            Tuple of (series list, next cursor or None)
+        """
+        params = {"limit": min(limit, 200)}
+        if category:
+            params["category"] = category
+        if cursor:
+            params["cursor"] = cursor
+
+        response = await self.client.get(
+            f"{self.BASE_URL}/series",
+            params=params,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        series = data.get("series", [])
+        next_cursor = data.get("cursor")
+
+        return series, next_cursor
 
     async def get_markets(
         self,
@@ -178,39 +216,59 @@ class KalshiAPIService:
 
         return markets, next_cursor
 
-    async def get_all_sports_events(self) -> list[KalshiEvent]:
+    async def _discover_series_tickers(
+        self,
+        categories: list[str],
+    ) -> list[str]:
         """
-        Fetch all open sports-related events with their markets.
+        Discover all series tickers for the given categories.
+
+        The Kalshi series endpoint supports category filtering, unlike
+        the events endpoint. We use this to find which series belong
+        to sports categories, then fetch events by series_ticker.
+
+        Args:
+            categories: List of Kalshi category names
 
         Returns:
-            List of KalshiEvent objects with nested markets
+            Deduplicated list of series tickers
         """
-        all_events = []
+        import asyncio
 
-        for category in self.SPORTS_CATEGORIES:
+        tickers: set[str] = set()
+        request_count = 0
+
+        for category in categories:
+            cursor = None
+            page_count = 0
+            max_pages = 10
+
             try:
-                cursor = None
-                while True:
-                    events, cursor = await self.get_events(
-                        status="open",
+                while page_count < max_pages:
+                    if request_count > 0:
+                        await asyncio.sleep(0.5)
+
+                    series_list, cursor = await self.get_series(
                         category=category,
-                        with_nested_markets=True,
                         cursor=cursor,
                     )
+                    request_count += 1
 
-                    for event_data in events:
-                        parsed_event = self._parse_event(event_data)
-                        if parsed_event and parsed_event.markets:
-                            all_events.append(parsed_event)
+                    for s in series_list:
+                        ticker = s.get("ticker")
+                        if ticker:
+                            tickers.add(ticker)
 
+                    page_count += 1
                     if not cursor:
                         break
 
             except httpx.HTTPStatusError as e:
-                print(f"Error fetching Kalshi category {category}: {e}")
+                logger.warning("Error fetching Kalshi series for category %s: %s", category, e)
                 continue
 
-        return all_events
+        logger.info("Discovered %d series tickers across %d categories", len(tickers), len(categories))
+        return sorted(tickers)
 
     async def get_all_events(
         self,
@@ -219,36 +277,46 @@ class KalshiAPIService:
         """
         Fetch all open events across specified categories.
 
-        Iterates per-category with server-side filtering to avoid missing
-        sports events buried under thousands of politics/economics markets.
+        Strategy: The events endpoint does NOT support category filtering.
+        Instead, we first discover series tickers via the series endpoint
+        (which does support category), then fetch events per series_ticker.
 
         Args:
-            categories: List of categories to fetch, or None for all
+            categories: List of Kalshi category names to fetch, or None for all
 
         Returns:
-            List of KalshiEvent objects
+            List of KalshiEvent objects (deduplicated by event_ticker)
         """
         import asyncio
 
-        all_events = []
-        max_pages_per_category = 10  # Safety limit per category
+        # If no categories specified, fetch all events without filtering
+        if not categories:
+            return await self._fetch_all_events_unfiltered()
+
+        # Step 1: Discover series tickers for these categories
+        series_tickers = await self._discover_series_tickers(categories)
+
+        if not series_tickers:
+            logger.warning("No series tickers found for categories: %s", categories)
+            return []
+
+        # Step 2: Fetch events per series_ticker
+        all_events: dict[str, KalshiEvent] = {}  # Dedup by event_ticker
         request_count = 0
+        max_pages_per_series = 5
 
-        categories_to_fetch = categories or [None]  # None = no filter
-
-        for category in categories_to_fetch:
+        for series_ticker in series_tickers:
             cursor = None
             page_count = 0
 
             try:
-                while page_count < max_pages_per_category:
-                    # Rate limit: delay between requests
+                while page_count < max_pages_per_series:
                     if request_count > 0:
                         await asyncio.sleep(0.5)
 
                     events, cursor = await self.get_events(
                         status="open",
-                        category=category,
+                        series_ticker=series_ticker,
                         with_nested_markets=True,
                         cursor=cursor,
                     )
@@ -257,16 +325,49 @@ class KalshiAPIService:
                     for event_data in events:
                         parsed_event = self._parse_event(event_data)
                         if parsed_event:
-                            all_events.append(parsed_event)
+                            all_events[parsed_event.event_ticker] = parsed_event
 
                     page_count += 1
-
                     if not cursor:
                         break
 
             except httpx.HTTPStatusError as e:
-                logger.warning("Error fetching Kalshi category %s: %s", category, e)
+                logger.warning("Error fetching Kalshi events for series %s: %s", series_ticker, e)
                 continue
+
+        logger.info(
+            "Fetched %d unique events from %d series (%d API requests)",
+            len(all_events), len(series_tickers), request_count,
+        )
+        return list(all_events.values())
+
+    async def _fetch_all_events_unfiltered(self) -> list[KalshiEvent]:
+        """Fetch all events without category filtering (paginated)."""
+        import asyncio
+
+        all_events = []
+        cursor = None
+        page_count = 0
+        max_pages = 50
+
+        while page_count < max_pages:
+            if page_count > 0:
+                await asyncio.sleep(0.5)
+
+            events, cursor = await self.get_events(
+                status="open",
+                with_nested_markets=True,
+                cursor=cursor,
+            )
+
+            for event_data in events:
+                parsed_event = self._parse_event(event_data)
+                if parsed_event:
+                    all_events.append(parsed_event)
+
+            page_count += 1
+            if not cursor:
+                break
 
         return all_events
 
