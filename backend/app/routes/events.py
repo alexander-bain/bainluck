@@ -217,12 +217,30 @@ async def discover_all_events(
         await service.close()
 
 
+# In-memory cache for GEI percentiles (rarely changes, queried on every request)
+_gei_cache: dict = {}
+_gei_cache_time: float = 0
+_GEI_CACHE_TTL = 300  # 5 minutes
+
+
 async def _load_gei_percentiles(db: AsyncSession) -> dict:
     """Load GEI percentile thresholds from database.
+
+    Returns cached data if available (TTL 5 min). Percentiles change
+    only when recalculate is triggered, so per-request DB queries are
+    wasteful.
 
     Returns empty dict if table doesn't exist or query fails,
     allowing the API to function without GEI data.
     """
+    import time
+
+    global _gei_cache, _gei_cache_time
+
+    now = time.monotonic()
+    if _gei_cache and (now - _gei_cache_time) < _GEI_CACHE_TTL:
+        return _gei_cache
+
     try:
         result = await db.execute(
             select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
@@ -235,6 +253,8 @@ async def _load_gei_percentiles(db: AsyncSession) -> dict:
                 percentiles[scope] = {}
             percentiles[scope][percentile] = float(threshold) if threshold else 0
 
+        _gei_cache = percentiles
+        _gei_cache_time = now
         return percentiles
     except Exception:
         # Table may not exist yet - return empty dict
@@ -1926,39 +1946,57 @@ async def debug_event_snapshots(
     }
 
 
+# In-memory cache for team lookup data (colors/logos change very rarely)
+_team_cache: dict = {}
+_team_cache_time: float = 0
+_TEAM_CACHE_TTL = 300  # 5 minutes
+
+
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     """Build a mapping of team names to Team objects for color/logo data.
 
     Matches on exact name or alternate_names JSONB array.
     Only returns teams that have ESPN enrichment (color or logo).
+
+    Uses an in-memory cache since the teams table is small (~500 rows)
+    and team colors/logos change very rarely. This avoids N JSONB ?
+    conditions per request (previously one per team name).
     """
+    import time
+
+    global _team_cache, _team_cache_time
+
     if not team_names:
         return {}
 
-    # Query teams that match by name or alternate names, and have ESPN data
-    conditions = [Team.name.in_(team_names)]
-    for name in team_names:
-        conditions.append(Team.alternate_names.op('?')(name))
+    now = time.monotonic()
+    if _team_cache and (now - _team_cache_time) < _TEAM_CACHE_TTL:
+        # Fast path: filter cached lookup by requested names
+        names_set = set(team_names)
+        return {k: v for k, v in _team_cache.items() if k in names_set}
 
+    # Load all teams with ESPN data (small table) — single simple query
     result = await db.execute(
         select(Team).where(
-            and_(
-                or_(*conditions),
-                or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None)),
-            )
+            or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None))
         )
     )
     teams = result.scalars().all()
 
-    # Build lookup: map all known names to team objects
-    lookup = {}
+    # Build full lookup: map all known names to team objects
+    full_lookup = {}
     for team in teams:
-        lookup[team.name] = team
+        full_lookup[team.name] = team
         if team.alternate_names:
             for alt_name in team.alternate_names:
-                lookup[alt_name] = team
+                full_lookup[alt_name] = team
 
-    return lookup
+    _team_cache = full_lookup
+    _team_cache_time = now
+
+    # Return only the subset matching requested names
+    names_set = set(team_names)
+    return {k: v for k, v in full_lookup.items() if k in names_set}
 
 
 def _format_team_data(team: Team) -> dict:
