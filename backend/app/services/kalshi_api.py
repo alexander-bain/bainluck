@@ -5,12 +5,15 @@ Handles fetching prediction market data from Kalshi's trading API.
 Kalshi markets provide bid/ask spreads and last traded prices.
 """
 
+import logging
 import os
 from datetime import datetime
 from typing import Optional
 
 import httpx
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class KalshiMarket(BaseModel):
@@ -216,6 +219,9 @@ class KalshiAPIService:
         """
         Fetch all open events across specified categories.
 
+        Iterates per-category with server-side filtering to avoid missing
+        sports events buried under thousands of politics/economics markets.
+
         Args:
             categories: List of categories to fetch, or None for all
 
@@ -225,36 +231,42 @@ class KalshiAPIService:
         import asyncio
 
         all_events = []
-        cursor = None
-        page_count = 0
-        max_pages = 10  # Limit to avoid rate limits
+        max_pages_per_category = 10  # Safety limit per category
+        request_count = 0
 
-        while page_count < max_pages:
-            # Add delay between requests to avoid rate limiting
-            if page_count > 0:
-                await asyncio.sleep(0.5)
+        categories_to_fetch = categories or [None]  # None = no filter
 
-            events, cursor = await self.get_events(
-                status="open",
-                with_nested_markets=True,
-                cursor=cursor,
-            )
+        for category in categories_to_fetch:
+            cursor = None
+            page_count = 0
 
-            for event_data in events:
-                # Filter by category if specified
-                if categories:
-                    event_category = event_data.get("category", "")
-                    if not any(cat.lower() in event_category.lower() for cat in categories):
-                        continue
+            try:
+                while page_count < max_pages_per_category:
+                    # Rate limit: delay between requests
+                    if request_count > 0:
+                        await asyncio.sleep(0.5)
 
-                parsed_event = self._parse_event(event_data)
-                if parsed_event:
-                    all_events.append(parsed_event)
+                    events, cursor = await self.get_events(
+                        status="open",
+                        category=category,
+                        with_nested_markets=True,
+                        cursor=cursor,
+                    )
+                    request_count += 1
 
-            page_count += 1
+                    for event_data in events:
+                        parsed_event = self._parse_event(event_data)
+                        if parsed_event:
+                            all_events.append(parsed_event)
 
-            if not cursor:
-                break
+                    page_count += 1
+
+                    if not cursor:
+                        break
+
+            except httpx.HTTPStatusError as e:
+                logger.warning("Error fetching Kalshi category %s: %s", category, e)
+                continue
 
         return all_events
 
