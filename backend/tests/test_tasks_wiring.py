@@ -77,6 +77,10 @@ class TestModuleImports:
         from app.tasks.kalshi import _poll_kalshi_markets
         assert callable(_poll_kalshi_markets)
 
+    def test_import_polymarket(self):
+        from app.tasks.polymarket import _poll_polymarket_markets
+        assert callable(_poll_polymarket_markets)
+
     def test_import_espn_sync(self):
         from app.tasks.espn_sync import (
             _enrich_events_metadata,
@@ -128,6 +132,7 @@ class TestReExports:
             compute_gei_percentiles,
             poll_futures_odds,
             poll_kalshi_markets,
+            poll_polymarket_markets,
             enrich_events_metadata,
             sync_espn_live_events,
             backfill_team_logos,
@@ -153,6 +158,7 @@ class TestBeatScheduleCompleteness:
         "compute-gei-percentiles-hourly",
         "poll-futures-hourly",
         "poll-kalshi-hourly",
+        "poll-polymarket-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
         "backfill-team-logos",

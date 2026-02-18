@@ -173,6 +173,15 @@ def poll_kalshi_markets(self):
     return run_async(_poll_kalshi_markets())
 
 
+# --- Polymarket ---
+
+@celery_app.task(bind=True, name="app.tasks.poll_polymarket_markets")
+def poll_polymarket_markets(self):
+    """Poll prediction markets from Polymarket (no API key needed)."""
+    from app.tasks.polymarket import _poll_polymarket_markets
+    return run_async(_poll_polymarket_markets())
+
+
 # --- ESPN ---
 
 @celery_app.task(bind=True, name="app.tasks.enrich_events_metadata")
@@ -271,6 +280,10 @@ celery_app.conf.beat_schedule = {
     "poll-kalshi-hourly": {
         "task": "app.tasks.poll_kalshi_markets",
         "schedule": crontab(minute=45),
+    },
+    "poll-polymarket-hourly": {
+        "task": "app.tasks.poll_polymarket_markets",
+        "schedule": crontab(minute=15),
     },
     "enrich-events-hourly": {
         "task": "app.tasks.enrich_events_metadata",

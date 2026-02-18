@@ -1362,6 +1362,28 @@ NegRisk events (multi-outcome, e.g., "NBA Championship Winner") have one binary 
 - [ ] International sportsbooks for broader odds coverage
 - [ ] Real-time sports data (play-by-play) for richer context
 
+#### Phase 15d: Prediction Market Game-Level Odds (Future)
+**Show Kalshi and Polymarket individual game outcomes as win probability sources alongside sportsbooks and models.**
+
+Both Kalshi and Polymarket have moneyline-style game outcome markets ("Will the Lakers beat the Celtics?"). These represent a fundamentally different probability source — prediction market consensus vs. sportsbook consensus vs. statistical models. Showing them side-by-side on the event detail page is the ultimate expression of **"all possible win probabilities aggregated into one place."**
+
+**Implementation plan:**
+- [ ] Match prediction market game events to our Event records (team names + commence_time fuzzy matching)
+- [ ] Write matched game-level odds to `win_prob_snapshots` with source="polymarket" / source="kalshi"
+- [ ] Add source registry entries in `win_prob_sources.py` (e.g., green dashed line for Polymarket, blue dashed for Kalshi)
+- [ ] Higher polling frequency for live game markets (every 2-5 min vs 30-60 min for futures)
+- [ ] OddsChart already renders N sources dynamically — no frontend changes needed for the chart itself
+
+**Divergence detection and explanation:**
+- [ ] When prediction market odds diverge from sportsbook consensus by >5%, surface a badge/callout on the event card
+- [ ] Use LLM (GPT-4o-mini) to generate a brief explanation of why the markets might disagree (e.g., "Polymarket has the Lakers at 62% vs sportsbooks at 55% — prediction market traders may be pricing in the return of [player] not yet reflected in betting lines")
+- [ ] Cache explanations to avoid redundant LLM calls (re-generate only when divergence changes significantly)
+
+**Why this matters:**
+Sportsbooks set lines to balance action (minimize risk). Prediction markets set prices based on collective belief (maximize accuracy). When they disagree, something interesting is happening — and explaining that divergence is a unique insight no other site provides.
+
+**Depends on:** Phase 15a (Polymarket integration) and Kalshi game-level market identification
+
 ### Phase 16: Probability Comparisons ("Comparable Odds")
 **Make win probabilities viscerally relatable by comparing them to real-world likelihoods.**
 
