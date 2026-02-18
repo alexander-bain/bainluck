@@ -37,6 +37,9 @@ engine = create_async_engine(
     DATABASE_URL,
     echo=os.getenv("DEBUG", "false").lower() == "true",
     pool_pre_ping=True,
+    pool_size=10,        # Concurrent connections kept open (default was 5)
+    max_overflow=15,     # Extra connections under burst load
+    pool_recycle=1800,   # Recycle connections after 30 min (Heroku PG timeout)
     connect_args=connect_args,
 )
 

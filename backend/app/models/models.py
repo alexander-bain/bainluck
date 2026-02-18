@@ -82,7 +82,7 @@ class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"))
+    sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"), index=True)
     external_id: Mapped[str] = mapped_column(String(100), unique=True)
     home_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
     away_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
@@ -91,8 +91,8 @@ class Event(Base):
     home_team_name: Mapped[str] = mapped_column(String(200))
     away_team_name: Mapped[str] = mapped_column(String(200))
 
-    commence_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(20), default="scheduled")
+    commence_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="scheduled", index=True)
 
     home_score: Mapped[Optional[int]] = mapped_column(Integer)
     away_score: Mapped[Optional[int]] = mapped_column(Integer)
@@ -476,9 +476,9 @@ class FuturesMarket(Base):
     __tablename__ = "futures_markets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    source: Mapped[str] = mapped_column(String(50), nullable=False)  # 'odds_api', 'kalshi'
+    source: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # 'odds_api', 'kalshi'
     external_id: Mapped[str] = mapped_column(String(200), nullable=False)  # sport_key or event_ticker
-    sport_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sports.id"))
+    sport_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sports.id"), index=True)
 
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -498,7 +498,7 @@ class FuturesMarket(Base):
     commence_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     # When the market resolves (e.g., when the champion is crowned)
     resolution_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(20), default="open")  # open, suspended, resolved
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)  # open, suspended, resolved
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
