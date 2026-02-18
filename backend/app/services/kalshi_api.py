@@ -63,7 +63,7 @@ class KalshiAPIService:
     BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
     # Categories we're interested in
-    SPORTS_CATEGORIES = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Soccer"]
+    SPORTS_CATEGORIES = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Soccer", "Tennis", "Olympics"]
 
     def __init__(self, api_key: Optional[str] = None):
         """
