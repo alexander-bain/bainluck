@@ -265,6 +265,63 @@ async def get_kalshi_task_status(
     return response
 
 
+@router.post("/polymarket/poll")
+async def trigger_polymarket_poll(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Manually trigger Polymarket polling.
+
+    Queues the polling task to run in the background via Celery.
+    Returns immediately with task ID - check Celery logs for results.
+    No API key required (Polymarket is fully public).
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import poll_polymarket_markets
+
+    try:
+        task = poll_polymarket_markets.delay()
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": "Polymarket polling task queued. Use /api/admin/polymarket/task/{task_id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/polymarket/task/{task_id}")
+async def get_polymarket_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Check the status of a Polymarket polling task.
+
+    Returns the task state and result (if complete).
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+
+    return response
+
+
 @router.post("/futures/poll")
 async def trigger_futures_poll(
     secret: str = Query(..., description="Admin secret for authorization"),
