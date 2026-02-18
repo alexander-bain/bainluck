@@ -8,6 +8,8 @@ The product is designed primarily as a **second screen for casual sports fans**:
 
 OddsTracker is not a sportsbook, not a pick-selling tool, and not a stats-heavy analytics platform. It is the cleanest, fastest way to visualize expectation shifts in live sports.
 
+**Expanding vision:** OddsTracker aggregates probabilities from sportsbooks (The Odds API), prediction markets (Kalshi, Polymarket), proprietary models (ESPN, OddsTracker stat model), and more — aspiring to be the **easiest place to see the probability of anything happening, computed any way possible**. Non-sports prediction markets (politics, entertainment, crypto) extend this into a broader "probability of everything" experience.
+
 ---
 
 ## Vision & North Star
@@ -1243,13 +1245,120 @@ Completed: February 2026
 - [ ] Aggregate completed games into `odds_aggregated` then delete raw rows
 - [ ] Cap futures snapshot retention post-resolution
 
-### Phase 15: Additional Data Sources
-**Expanding coverage and depth.**
+### Phase 15: Polymarket Integration & Additional Data Sources
+**Expanding coverage beyond sportsbooks into prediction markets, and adding new probability sources.**
 
-Target: 2027
+Target: Q2 2026
 
-- [ ] Additional win probability sources (MoneyPuck for NHL, FanGraphs for MLB)
-- [ ] Polymarket integration (if legally viable)
+This phase moves OddsTracker toward the broader vision: **"The easiest place to see the probability of anything happening, computed any way possible."** Polymarket adds both deeper sports coverage and wildcard non-sports categories (politics, entertainment, crypto, weather) that make the feed more interesting and differentiated.
+
+#### Phase 15a: Polymarket Integration
+
+**Why Polymarket?**
+- World's largest prediction market (~$9B valuation, $1.1B+ sports volume)
+- **No API key required** for read-only access (unlike Kalshi)
+- 3,294+ active sports markets with official NHL and UFC partnerships
+- Built-in historical price data via `/prices-history` endpoint
+- Generous rate limits (~1,000 calls/hour vs Kalshi's ~10 req/sec)
+- Non-sports categories unlock "probability of anything" content for the feed
+
+**API Architecture:**
+
+Polymarket splits its API into four services. We only need two (both free, no auth):
+
+| Service | Base URL | Purpose |
+|---------|----------|---------|
+| Gamma API | `https://gamma-api.polymarket.com` | Market discovery, metadata, tags, sports |
+| CLOB API | `https://clob.polymarket.com` | Current prices, order book, price history |
+
+Key Gamma endpoints:
+- `GET /events` — List events (filterable by tag_id, series_id, active, closed, volume, liquidity, date range)
+- `GET /sports` — Discover supported sports/leagues with series_id and tag_id metadata
+- `GET /markets` — List individual markets
+- `GET /tags` — Discover all categories/tags
+
+Key CLOB endpoints:
+- `GET /prices-history?market={token_id}&interval=max&fidelity=60` — Historical price time series
+- `GET /midpoint?token_id=X` — Mid-market price
+- `GET /price?token_id=X&side=buy` — Best bid/ask
+
+**Data Model Mapping:**
+
+| Polymarket | OddsTracker DB |
+|------------|----------------|
+| Event | `futures_markets` (source="polymarket") |
+| Event.id | `futures_markets.external_id` |
+| Event.title | `futures_markets.name` |
+| Event.tags | Used for `llm_sport_category` / sport categorization |
+| Event.startDate/endDate | `commence_time` / `resolution_date` |
+| Market (per outcome) | `futures_outcomes` |
+| Market.conditionId | `futures_outcomes.external_id` |
+| Market.outcomePrices[0] | `futures_outcomes.current_probability` |
+| Market.lastTradePrice | Snapshot `last_price` |
+| CLOB bid/ask | `current_yes_bid` / `current_yes_ask` |
+| Market.volume | For liquidity-based ranking |
+
+NegRisk events (multi-outcome, e.g., "NBA Championship Winner") have one binary Yes/No market per team. Maps naturally to our FuturesOutcome model.
+
+**Implementation checklist:**
+- [ ] API client: `backend/app/services/polymarket_api.py` (httpx.AsyncClient, no auth)
+- [ ] Pydantic models: `PolymarketEvent`, `PolymarketMarket` (handle stringified JSON arrays for outcomes/prices/tokenIds)
+- [ ] Polling task: `backend/app/tasks/polymarket.py` (similar structure to `tasks/kalshi.py`)
+- [ ] Sport discovery: Use `GET /sports` for structured league-by-league polling
+- [ ] Non-sports categories: Use `GET /tags` to discover and map politics, entertainment, crypto, etc.
+- [ ] Category mapping: Map Polymarket tags to our `llm_sport_category` values
+- [ ] Beat schedule: Poll every 30-60 minutes (same cadence as Kalshi)
+- [ ] Admin endpoints: `POST /api/admin/polymarket/poll`, task status check
+- [ ] Task registration in `tasks/__init__.py` with `name="app.tasks.poll_polymarket"` wrapper
+- [ ] Frontend: Update debug sources endpoint to include polymarket
+- [ ] Write-time dedup: Reuse existing `futures_odds_snapshots` dedup pattern
+
+**Parsing gotcha:** Gamma API returns `outcomes`, `outcomePrices`, and `clobTokenIds` as stringified JSON arrays (e.g., `"[\"Yes\", \"No\"]"`). Must use `json.loads()` to parse.
+
+**Rate limit strategy:** ~1,000 calls/hour is generous. Unlike Kalshi (0.5s delay between pages), we can paginate freely. Still add modest delays (0.2s) between league-level fetches to be a good API citizen.
+
+**Sports coverage (confirmed):**
+| Sport | Coverage |
+|-------|----------|
+| NFL/CFB | Full (games, futures, props) |
+| NBA/NCAAB | Full |
+| NHL | Full (official partnership) |
+| MLB | Full |
+| UFC/MMA | Full (official partnership) |
+| Soccer | Extensive (EPL, La Liga, UCL, Bundesliga, Serie A, MLS, etc.) |
+| Golf (PGA) | Available |
+| Tennis (ATP, WTA) | Available |
+
+**Non-sports categories to enable:**
+| Category | Examples | Feed Value |
+|----------|---------|------------|
+| Politics | Elections, approval ratings, policy | "Will X win the election?" — 73% |
+| Entertainment | Oscars, box office, Nobel Prize | Fun wildcard content |
+| Crypto | Bitcoin targets, ETF approvals | "BTC above $100K by June?" — 45% |
+| Economy | Fed rate cuts, inflation, GDP | Macro context |
+| Tech/AI | AI benchmarks, SpaceX | Forward-looking |
+| Weather | Daily temperatures, disasters | Relatable probabilities |
+
+**Legal note:** Polymarket's ToS prohibits US persons from *trading*, but the read-only API is globally accessible. Our integration only reads and displays probabilities — no trading functionality. The "(if legally viable)" caveat from the original roadmap is resolved: read-only display is unambiguously fine.
+
+**Comparison to existing Kalshi integration:**
+| Dimension | Kalshi (current) | Polymarket (planned) |
+|-----------|------------------|---------------------|
+| Auth required | Yes (`KALSHI_API_KEY`) | None |
+| Rate limits | Strict (~10 req/sec) | Generous (~1,000/hr) |
+| Sports markets | Hundreds | 3,294+ |
+| Price format | Cents (0-100), convert | Decimal (0.00-1.00) native |
+| Historical prices | None (we must poll) | Built-in `/prices-history` |
+| Non-sports content | Limited (we filter to sports) | Extensive |
+| Liquidity | Lower | Highest in prediction markets |
+
+#### Phase 15b: Additional Win Probability Sources
+
+- [ ] MoneyPuck for NHL (free JSON API with live game win probability)
+- [ ] FanGraphs for MLB (free JSON endpoints for live win probability)
+
+#### Phase 15c: Additional Data Sources
+
 - [ ] International sportsbooks for broader odds coverage
 - [ ] Real-time sports data (play-by-play) for richer context
 

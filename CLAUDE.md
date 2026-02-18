@@ -25,6 +25,7 @@
 **Key External Services:**
 - **The Odds API** (the-odds-api.com) - Sports odds data (~$119/mo)
 - **Kalshi** (kalshi.com) - Prediction market data (futures with timing info, free)
+- **Polymarket** (polymarket.com) - Prediction market data (sports + politics/entertainment/crypto, free, no API key)
 - **SportsDataIO** (sportsdata.io) - Rosters, injuries, standings, schedules (~$50-75/mo)
 - **ESPN** (undocumented API) - Team colors, logos, live game data, win probability (free, unreliable)
 - **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification (~$5/mo)
@@ -320,6 +321,79 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/task
 - Stores bid/ask spreads: `yes_bid`, `yes_ask`, `last_price`
 - Populates `commence_time` (event start) and `resolution_date` (market close)
 
+### Polymarket Integration (Planned)
+Polymarket is the world's largest prediction market (~$9B valuation). Unlike Kalshi, it requires **no API key** for read access and has significantly better rate limits and sports coverage.
+
+**Why Polymarket?** Three strategic reasons:
+1. **More sports markets** — 3,294+ active sports markets with NHL and UFC partnerships, extensive soccer coverage (EPL, La Liga, UCL, Bundesliga, Serie A, MLS, etc.)
+2. **Wildcard categories** — Politics, entertainment, crypto, weather, and geopolitics markets that expand OddsTracker beyond sports into "probability of anything"
+3. **Built-in historical data** — `/prices-history` endpoint provides time-series data (configurable granularity) without requiring us to poll and store every snapshot
+
+**API Architecture (4 services, only 2 needed):**
+| Service | Base URL | Purpose | Auth |
+|---------|----------|---------|------|
+| **Gamma API** | `https://gamma-api.polymarket.com` | Market discovery, metadata, tags, sports | **None** |
+| **CLOB API** | `https://clob.polymarket.com` | Prices, order book, price history | **None** (read) |
+| Data API | `https://data-api.polymarket.com` | User positions (not needed) | Yes |
+| WebSocket | `wss://ws-subscriptions-clob.polymarket.com` | Real-time updates (not needed for polling) | Varies |
+
+**Key Gamma API endpoints:**
+- `GET /events` — List events with filtering (tag_id, series_id, active, closed, volume, liquidity)
+- `GET /sports` — Discover supported sports/leagues with series_id and tag_id metadata
+- `GET /markets` — List markets with filtering
+- `GET /tags` — Discover all categories
+
+**Key CLOB API endpoints:**
+- `GET /prices-history?market={token_id}&interval=max&fidelity=60` — Historical price time series
+- `GET /midpoint?token_id=X` — Mid-market price
+- `GET /price?token_id=X&side=buy` — Best bid/ask
+
+**Rate Limits:** ~1,000 calls/hour (Cloudflare throttling, much more generous than Kalshi's ~10 req/sec)
+
+**Data Model Mapping:**
+| Polymarket | OddsTracker DB |
+|------------|----------------|
+| Event | `FuturesMarket` (source="polymarket") |
+| Event.id | `FuturesMarket.external_id` |
+| Event.title | `FuturesMarket.name` |
+| Event.tags | Used for `llm_sport_category` / categorization |
+| Market (per outcome) | `FuturesOutcome` |
+| Market.conditionId | `FuturesOutcome.external_id` |
+| Market.outcomePrices[0] | `FuturesOutcome.current_probability` |
+| Market.lastTradePrice | Snapshot `last_price` |
+| CLOB bid/ask | `current_yes_bid` / `current_yes_ask` |
+
+**Parsing gotcha:** `outcomes`, `outcomePrices`, and `clobTokenIds` are returned as **stringified JSON arrays** (e.g., `"[\"Yes\", \"No\"]"`) and must be parsed with `json.loads()`.
+
+**NegRisk events:** Multi-outcome events (e.g., "NBA Championship Winner") have one binary market per team, each with Yes/No shares. Maps naturally to our FuturesOutcome model (same as Kalshi multi-market events).
+
+**Planned files:**
+- `backend/app/services/polymarket_api.py` — API client (no API key needed)
+- `backend/app/tasks/polymarket.py` — Polling task (similar to `tasks/kalshi.py`)
+
+**Non-sports categories to enable:**
+| Category | Examples |
+|----------|---------|
+| Politics | Elections, approval ratings, policy decisions |
+| Entertainment | Oscars, box office, Nobel Prize, reality TV |
+| Crypto | Bitcoin price targets, ETF approvals |
+| Economy | Fed rate cuts, inflation, GDP |
+| Tech/AI | AI benchmarks, SpaceX launches |
+| Weather | Daily temperatures, natural disasters |
+
+**Legal note:** Polymarket's ToS prohibits US persons from *trading*, but the read-only API is globally accessible. Our integration only displays probabilities — no trading functionality.
+
+**Comparison to Kalshi:**
+| Dimension | Kalshi | Polymarket |
+|-----------|--------|------------|
+| Auth | API key required | None (fully public) |
+| Rate limits | Strict (~10 req/sec) | Generous (~1,000/hr) |
+| Sports markets | Hundreds | 3,294+ |
+| Price format | Cents (0-100) | Decimal (0.00-1.00) native |
+| Historical prices | None (must poll) | Built-in `/prices-history` |
+| Non-sports | Limited | Extensive (politics, crypto, weather, etc.) |
+| Liquidity | Lower | Highest in market |
+
 ### Sport Categorization (Futures)
 Futures markets are categorized using a hybrid approach: pattern matching rules + LLM fallback.
 
@@ -374,7 +448,7 @@ curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/fut
 
 **Debug endpoints:**
 ```bash
-# See futures count by source (odds_api vs kalshi)
+# See futures count by source (odds_api vs kalshi vs polymarket)
 curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sources"
 
 # See sport linking for futures
@@ -715,15 +789,16 @@ These are the current focus. Resist the urge to build new features until these a
 6. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
 8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
-9. 📋 Pass Kalshi event category as sport_key for better disambiguation
-10. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
-11. 📋 LLM-powered odds movement explanations
-12. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-13. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
-14. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
-15. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
-16. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
-17. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
+9. 📋 **Polymarket integration** — Prediction market with 3,294+ sports markets and non-sports categories (politics, entertainment, crypto, weather). No API key needed, generous rate limits, built-in price history. Expands vision toward "easiest place to see the probability of anything happening, computed any way possible." Implementation: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`), category mapping for non-sports feed content. See Polymarket Integration section above for full API details.
+10. 📋 Pass Kalshi event category as sport_key for better disambiguation
+11. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
+12. 📋 LLM-powered odds movement explanations
+13. 📋 Sport-specific Pulse normalization (different ceilings per sport)
+14. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Previous version (Super Bowl LX) had: giant score + win probability, team-colored probability bar, win prob + score diff charts, Pulse ECG heartbeat, momentum indicator, lead change confetti, auto-scrolling player props carousel, AI commentary, trivia, contest leaderboard. All code was removed post-Super Bowl. Rebuild from scratch when prioritized — focus on big charts + clean visualization, skip the contest/trivia features.
+15. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest, so all API consumers get correct data without frontend cross-checks
+16. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
+17. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
+18. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
 
 ### Horizon — AI-Native Sports Intelligence (SportsDataIO + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require SportsDataIO enrichment (rosters, injuries, standings, schedules) combined with AI interpretation. Ordered by estimated impact and feasibility.
