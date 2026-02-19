@@ -198,6 +198,13 @@ def recategorize_other_task(self, limit: int = 500, from_category: str = None):
     return run_async(_recategorize_other_impl(limit, from_category=from_category))
 
 
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.regenerate_tags")
+def regenerate_tags_task(self, limit: int = 5000, category: str = None):
+    """Regenerate category_tags for existing markets using current patterns."""
+    from app.tasks.futures import _regenerate_tags_impl
+    return run_async(_regenerate_tags_impl(limit, category=category))
+
+
 # --- ESPN ---
 
 @celery_app.task(bind=True, name="app.tasks.enrich_events_metadata")

@@ -581,6 +581,36 @@ async def recategorize_other_futures(
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
+@router.post("/futures/regenerate-tags")
+async def regenerate_tags(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(5000, description="Max markets to process"),
+    category: str = Query(None, description="Only regenerate tags for this category (e.g., 'crypto', 'politics')"),
+):
+    """
+    Regenerate category_tags for existing markets using current keyword patterns.
+
+    Use after adding new entity patterns to _TAG_KEYWORDS. Does NOT change
+    llm_sport_category — only updates the subcategory tags used for grouping.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import regenerate_tags_task
+
+    try:
+        task = regenerate_tags_task.delay(limit=limit, category=category)
+        target = category or "all"
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Regenerate-tags task queued (category={target}, limit={limit}). "
+                       f"Use /api/admin/futures/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
 @router.get("/futures/categorization-status")
 async def futures_categorization_status(
     db: AsyncSession = Depends(get_db),

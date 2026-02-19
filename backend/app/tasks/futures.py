@@ -804,3 +804,102 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
         novel or "none",
     )
     return stats
+
+
+async def _regenerate_tags_impl(limit: int = 5000, category: str = None):
+    """
+    Regenerate category_tags for existing markets using current patterns.
+
+    This is useful after adding new entity patterns to _TAG_KEYWORDS.
+    Does NOT change llm_sport_category — only updates category_tags.
+    """
+    from sqlalchemy import select
+    from app.models import FuturesMarket
+    from app.utils.futures_categorization import generate_category_tags
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    stats = {
+        "processed": 0,
+        "updated": 0,
+        "by_category": {},
+        "errors": [],
+    }
+
+    batch_size = 200
+    remaining = limit
+    offset = 0
+
+    try:
+        while remaining > 0:
+            batch = min(batch_size, remaining)
+
+            async with get_task_session() as session:
+                query = (
+                    select(FuturesMarket)
+                    .order_by(FuturesMarket.id)
+                    .offset(offset)
+                    .limit(batch)
+                )
+                if category:
+                    query = query.where(
+                        FuturesMarket.llm_sport_category == category
+                    )
+
+                result = await session.execute(query)
+                markets = result.scalars().all()
+
+                if not markets:
+                    break
+
+                for market in markets:
+                    stats["processed"] += 1
+                    try:
+                        old_tags = sorted(market.category_tags or [])
+                        new_tags = generate_category_tags(
+                            market.name,
+                            llm_sport_category=market.llm_sport_category,
+                            llm_league=getattr(market, "llm_league", None),
+                            category=getattr(market, "category", None),
+                        )
+
+                        if new_tags != old_tags:
+                            market.category_tags = new_tags
+                            stats["updated"] += 1
+
+                            # Track by category
+                            cat = market.llm_sport_category or "unknown"
+                            stats["by_category"][cat] = (
+                                stats["by_category"].get(cat, 0) + 1
+                            )
+                    except Exception as e:
+                        stats["errors"].append(
+                            f"Market {market.id}: {str(e)}"
+                        )
+
+                await session.commit()
+
+            remaining -= len(markets)
+            offset += len(markets)
+
+            logger.info(
+                "Regenerate-tags batch: processed=%d/%d, updated=%d",
+                stats["processed"], limit, stats["updated"],
+            )
+
+    except SoftTimeLimitExceeded:
+        stats["errors"].append(
+            f"Soft time limit reached after {stats['processed']} markets. "
+            "Re-run to continue."
+        )
+
+    stats["message"] = (
+        f"Regenerated tags for {stats['processed']} markets, "
+        f"updated {stats['updated']}. "
+        f"By category: {stats['by_category']}"
+    )
+
+    logger.info(
+        "Regenerate-tags complete: %d processed, %d updated, by_cat=%s",
+        stats["processed"], stats["updated"], stats["by_category"],
+    )
+    return stats
