@@ -16,7 +16,7 @@ from sqlalchemy.orm import DeclarativeBase
 # Get database URL from environment
 DATABASE_URL = os.getenv(
     "DATABASE_URL", 
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/odds_tracker"
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/bainluck"
 )
 
 # Convert postgres:// to postgresql+asyncpg:// if needed
