@@ -64,15 +64,26 @@ def classify(
 
     categories_str = ", ".join(categories)
 
-    system_prompt = f"""You are a sports classification assistant. Classify the given text into exactly one of these categories: {categories_str}
+    system_prompt = f"""You are a classification assistant for a prediction market aggregator. Classify the given text into exactly one of these categories: {categories_str}
 
 Rules:
-- Respond with ONLY the category name, nothing else (e.g., "football" or "basketball")
-- If it mentions an athlete, classify by their sport (e.g., "Kyler Murray" → football, "LeBron James" → basketball)
+- Respond with ONLY the category name, nothing else (e.g., "football" or "crypto")
+- If it mentions an athlete, classify by their sport (e.g., "Kyler Murray" → football, "LeBron James" → basketball, "Shai Gilgeous-Alexander" → basketball, "Josh Allen" → football)
 - If it mentions a team, classify by their sport (e.g., "Manchester United" → soccer, "Boston Celtics" → basketball)
 - "american football" and "NFL" → football
-- If it's about celebrities, TV, movies, YouTube, or non-sport entertainment → entertainment
-- If truly ambiguous or unrelated to any sport, use "other"
+- Bitcoin, Ethereum, Solana, crypto prices/tokens → crypto
+- Fed rate, inflation, GDP, tariffs, recession → economics
+- AI, SpaceX, autonomous vehicles → tech
+- Elections, Trump, Congress, legislation → politics
+- TV shows, movies, Oscars, Grammys, reality TV, celebrities → entertainment
+- Hurricanes, temperature, natural disasters → weather
+- Pandemic, FDA, virus outbreaks → health
+- War, sanctions, treaties, international relations → geopolitics
+- Supreme Court, indictments, lawsuits → legal
+- Nobel Prize, social media culture → culture
+- Winter sports like curling, figure skating, skiing → olympics
+- If outcomes list player names, use those to determine the sport
+- If truly ambiguous or unrelated to any category, use "other"
 - You MUST choose one of the provided categories
 {f"Context: {context}" if context else ""}"""
 
@@ -116,6 +127,9 @@ Rules:
             "auto racing": "motorsports",
             "motor sports": "motorsports",
             "motorsport": "motorsports",
+            "nascar": "motorsports",
+            "formula 1": "motorsports",
+            "f1": "motorsports",
             "australian rules": "aussierules",
             "australian rules football": "aussierules",
             "aussie rules": "aussierules",
@@ -128,6 +142,24 @@ Rules:
             "film": "entertainment",
             "music": "entertainment",
             "awards": "entertainment",
+            "reality tv": "entertainment",
+            "television": "entertainment",
+            "cryptocurrency": "crypto",
+            "bitcoin": "crypto",
+            "finance": "economics",
+            "economy": "economics",
+            "financial": "economics",
+            "science": "tech",
+            "technology": "tech",
+            "space": "tech",
+            "international relations": "geopolitics",
+            "foreign policy": "geopolitics",
+            "law": "legal",
+            "court": "legal",
+            "medical": "health",
+            "pandemic": "health",
+            "climate": "weather",
+            "social": "culture",
         }
         if result in mappings:
             mapped = mappings[result]
@@ -165,6 +197,14 @@ SPORT_CATEGORIES = [
     "lacrosse",
     "chess",
     "poker",
+    "crypto",
+    "economics",
+    "tech",
+    "weather",
+    "health",
+    "geopolitics",
+    "legal",
+    "culture",
     "other",
 ]
 
@@ -228,6 +268,46 @@ def classify_futures_market(market_name: str) -> str:
         fallback="other",  # Always return a category
     )
     # Extra safety: never return None
+    return result if result else "other"
+
+
+def classify_futures_market_with_outcomes(
+    market_name: str,
+    outcome_names: Optional[list[str]] = None,
+) -> str:
+    """
+    Classify a futures market with optional outcome context.
+
+    When outcome names are provided (e.g., player names like
+    "Shai Gilgeous-Alexander"), the LLM can use them to disambiguate
+    markets like "MVP Winner?" that are impossible to categorize by
+    title alone.
+
+    Args:
+        market_name: The name of the futures market
+        outcome_names: Optional list of outcome names for context
+
+    Returns:
+        Sport category string (never None - defaults to "other")
+    """
+    context_text = market_name
+    if outcome_names:
+        # Include top outcomes for context (limit to avoid token waste)
+        top_outcomes = outcome_names[:15]
+        context_text = f"{market_name}\nOutcomes: {', '.join(top_outcomes)}"
+
+    result = classify(
+        text=context_text,
+        categories=SPORT_CATEGORIES,
+        context=(
+            "This is a betting/prediction market. Classify by the sport or topic. "
+            "Use outcome names (player/team names) as clues to determine the sport. "
+            "For example, if outcomes include NBA players like Shai Gilgeous-Alexander "
+            "or Nikola Jokic, classify as basketball. If outcomes include NFL players "
+            "like Josh Allen or Lamar Jackson, classify as football."
+        ),
+        fallback="other",
+    )
     return result if result else "other"
 
 

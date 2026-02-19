@@ -217,12 +217,222 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(twitter|x\.com|tiktok\s+ban|social\s+media|meta\s+stock|elon\s+musk)\b", re.I), "culture"),
     (re.compile(r"\b(nobel\s+prize|pulitzer|time\s+person)\b", re.I), "culture"),
 
+    # NASCAR numbered races (e.g., "Autotrader 400 Winner?", "Bennett 250 Winner?")
+    (re.compile(r"\b(250|300|350|400|500)\s+winner\b", re.I), "motorsports"),
+    (re.compile(r"\b(xfinity|craftsman|cup\s+series|talladega|bristol\s+motor|charlotte\s+motor|pocono|martinsville|sonoma|watkins\s+glen|richmond|dover|phoenix\s+raceway)\b", re.I), "motorsports"),
+
+    # TV shows / Reality TV
+    (re.compile(r"\b(love\s+is\s+blind|survivor|big\s+brother|amazing\s+race|dancing\s+with\s+the\s+stars|american\s+idol|the\s+voice|masked\s+singer|jeopardy|wheel\s+of\s+fortune|90\s+day\s+fianc|below\s+deck|real\s+housewives|the\s+traitors|squid\s+game|love\s+island|married\s+at\s+first)\b", re.I), "entertainment"),
+
+    # Additional NFL Draft patterns
+    (re.compile(r"\b(overall\s+pick|#\d+\s+pick|1st\s+pick|first\s+pick|draft\s+class)\b", re.I), "football"),
+
+    # Economics - Powell / Fed chair
+    (re.compile(r"\bpowell\b", re.I), "economics"),
+
+    # Crypto tickers with price context
+    (re.compile(r"\b(sol|ada|dot|link|avax|matic|atom|bnb|luna)\s+(price|above|below|over|under|at)\b", re.I), "crypto"),
+    (re.compile(r"\bprice\s+of\s+(sol|ada|dot|link|avax|matic|atom|bnb)\b", re.I), "crypto"),
+
+    # Engaged / relationship markets (reality TV context)
+    (re.compile(r"\b(get\s+engaged|propose|engaged\s+on|wedding|married|couple)\b.*\b(show|season|episode|finale|bachelor|love)\b", re.I), "entertainment"),
+    (re.compile(r"\b(show|season|episode|finale|bachelor|love)\b.*\b(get\s+engaged|propose|engaged\s+on|wedding|married|couple)\b", re.I), "entertainment"),
+
     # Known athletes for ambiguous markets (e.g., "US Open" disambiguation)
     # Top golfers
     (re.compile(r"\b(bryson.dechambeau|scottie.scheffler|rory.mcilroy|jon.rahm|xander.schauffele|collin.morikawa|viktor.hovland|jordan.spieth|brooks.koepka|tiger.woods|phil.mickelson|dustin.johnson|cameron.smith|hideki.matsuyama|patrick.cantlay|justin.thomas|tony.finau|max.homa|wyndham.clark|ludvig.aberg)\b", re.I), "golf"),
     # Top tennis players
     (re.compile(r"\b(novak.djokovic|carlos.alcaraz|jannik.sinner|daniil.medvedev|alexander.zverev|stefanos.tsitsipas|holger.rune|taylor.fritz|coco.gauff|iga.swiatek|aryna.sabalenka|emma.raducanu|naomi.osaka|rafael.nadal|roger.federer|serena.williams)\b", re.I), "tennis"),
 ]
+
+
+# =============================================================================
+# Game prop detection
+# =============================================================================
+
+# Pattern: "Team at/vs Team: Stat" (Kalshi game prop format)
+_GAME_PROP_RE = re.compile(
+    r'^(.+?)\s+(?:at|vs\.?|@)\s+(.+?):\s+(.+)$', re.IGNORECASE,
+)
+
+# Stats that uniquely identify a sport
+_STAT_TO_SPORT: dict[str, str] = {
+    # Basketball
+    "rebounds": "basketball",
+    "assists": "basketball",
+    "3-pointers": "basketball",
+    "three-pointers": "basketball",
+    "threes": "basketball",
+    "blocks": "basketball",
+    "steals": "basketball",
+    "turnovers": "basketball",
+    "free throws": "basketball",
+    "points": "basketball",
+    "double-double": "basketball",
+    "triple-double": "basketball",
+    "dunks": "basketball",
+    # Football
+    "passing yards": "football",
+    "rushing yards": "football",
+    "receiving yards": "football",
+    "touchdowns": "football",
+    "interceptions": "football",
+    "sacks": "football",
+    "completions": "football",
+    "carries": "football",
+    "pass attempts": "football",
+    "passing touchdowns": "football",
+    "rushing touchdowns": "football",
+    # Hockey
+    "saves": "hockey",
+    "shots on goal": "hockey",
+    "power play": "hockey",
+    "penalty minutes": "hockey",
+    # Baseball
+    "home runs": "baseball",
+    "strikeouts": "baseball",
+    "rbis": "baseball",
+    "earned runs": "baseball",
+    "walks": "baseball",
+    "at-bats": "baseball",
+    "innings": "baseball",
+    # Soccer
+    "corners": "soccer",
+    "shots on target": "soccer",
+    "cards": "soccer",
+    "fouls": "soccer",
+}
+
+
+def detect_game_prop_sport(market_name: str) -> Optional[str]:
+    """
+    Detect sport from game prop market names like 'Boston at Golden State: Rebounds'.
+
+    Returns the sport category if a game prop pattern is detected with a
+    sport-specific stat, or None if not a game prop or stat is ambiguous.
+    """
+    match = _GAME_PROP_RE.match(market_name)
+    if not match:
+        return None
+
+    stat = match.group(3).strip().lower()
+
+    # Check stat against sport mapping
+    for stat_keyword, sport in _STAT_TO_SPORT.items():
+        if stat_keyword in stat:
+            return sport
+
+    # For ambiguous stats (spread, total, winner, moneyline, field goals),
+    # we still return None — the Kalshi category or LLM can handle these
+    return None
+
+
+def is_game_prop(market_name: str) -> bool:
+    """Check if a market name looks like a game prop (Team at Team: Stat)."""
+    return _GAME_PROP_RE.match(market_name) is not None
+
+
+# =============================================================================
+# Category tag generation
+# =============================================================================
+
+# Entity/topic keywords to extract as tags from market names
+_TAG_KEYWORDS: list[tuple[re.Pattern, str]] = [
+    # Politicians / public figures
+    (re.compile(r"\btrump\b", re.I), "trump"),
+    (re.compile(r"\bbiden\b", re.I), "biden"),
+    (re.compile(r"\bharris\b", re.I), "harris"),
+    (re.compile(r"\belon\s*musk\b", re.I), "elon_musk"),
+    (re.compile(r"\bdesantis\b", re.I), "desantis"),
+    (re.compile(r"\bnewsom\b", re.I), "newsom"),
+    (re.compile(r"\bpowell\b", re.I), "powell"),
+    # Crypto assets
+    (re.compile(r"\b(bitcoin|btc)\b", re.I), "bitcoin"),
+    (re.compile(r"\b(ethereum|etherium|eth)\b", re.I), "ethereum"),
+    (re.compile(r"\b(solana|sol\s+price)\b", re.I), "solana"),
+    (re.compile(r"\b(dogecoin|doge)\b", re.I), "dogecoin"),
+    (re.compile(r"\bxrp\b", re.I), "xrp"),
+    # Major sports events
+    (re.compile(r"\bsuper\s+bowl\b", re.I), "super_bowl"),
+    (re.compile(r"\bworld\s+series\b", re.I), "world_series"),
+    (re.compile(r"\bmarch\s+madness\b", re.I), "march_madness"),
+    (re.compile(r"\bstanley\s+cup\b", re.I), "stanley_cup"),
+    (re.compile(r"\bnba\s+finals\b", re.I), "nba_finals"),
+    (re.compile(r"\bolympic\b", re.I), "olympics"),
+    # Entertainment properties
+    (re.compile(r"\blove\s+is\s+blind\b", re.I), "love_is_blind"),
+    (re.compile(r"\boscar\b", re.I), "oscars"),
+    (re.compile(r"\bgrammy\b", re.I), "grammys"),
+    # Companies / tech
+    (re.compile(r"\btesla\b", re.I), "tesla"),
+    (re.compile(r"\bspacex\b", re.I), "spacex"),
+    (re.compile(r"\bopenai\b", re.I), "openai"),
+    # Market types
+    (re.compile(r"\bmvp\b", re.I), "mvp"),
+    (re.compile(r"\brookie\s+of\s+the\s+year\b", re.I), "rookie_of_year"),
+    (re.compile(r"\bcoach\s+of\s+the\s+year\b", re.I), "coach_of_year"),
+]
+
+# Non-sport categories for cross-referencing
+_CROSS_CATEGORY_KEYWORDS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b(bitcoin|btc|ethereum|etherium|crypto|blockchain|solana|dogecoin)\b", re.I), "crypto"),
+    (re.compile(r"\b(trump|biden|harris|election|congress|senate|president)\b", re.I), "politics"),
+    (re.compile(r"\b(fed\s+rate|inflation|gdp|recession|tariff|interest\s+rate)\b", re.I), "economics"),
+    (re.compile(r"\b(ai|artificial\s+intelligence|chatgpt|openai|spacex)\b", re.I), "tech"),
+]
+
+
+def generate_category_tags(
+    market_name: str,
+    llm_sport_category: Optional[str] = None,
+    llm_league: Optional[str] = None,
+    category: Optional[str] = None,
+) -> list[str]:
+    """
+    Generate tags for multi-category support.
+
+    Tags enable markets to appear in multiple categories (e.g., a market
+    about Trump's Bitcoin policy gets tags for both "politics" and "crypto").
+
+    Args:
+        market_name: The market name
+        llm_sport_category: Primary category
+        llm_league: League abbreviation
+        category: Market type (championship, mvp, etc.)
+
+    Returns:
+        Sorted list of unique tags
+    """
+    tags: set[str] = set()
+
+    # Add primary category
+    if llm_sport_category and llm_sport_category != "other":
+        tags.add(llm_sport_category)
+
+    # Add league as tag
+    if llm_league:
+        tags.add(llm_league.lower())
+
+    # Add market type
+    if category and category not in ("other", "championship"):
+        tags.add(category)
+
+    # Extract entity/topic tags from market name
+    for pattern, tag in _TAG_KEYWORDS:
+        if pattern.search(market_name):
+            tags.add(tag)
+
+    # Detect cross-category relevance
+    # (e.g., a sports market mentioning crypto should also get "crypto" tag)
+    for pattern, cross_cat in _CROSS_CATEGORY_KEYWORDS:
+        if pattern.search(market_name):
+            tags.add(cross_cat)
+
+    # Mark game props
+    if is_game_prop(market_name):
+        tags.add("game_prop")
+
+    return sorted(tags)
 
 
 def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Optional[str]:
@@ -264,6 +474,11 @@ def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Op
         for prefix, category in prefixes.items():
             if sport_key.startswith(prefix):
                 return category
+
+    # Try game prop detection (Team at Team: Stat)
+    game_prop_sport = detect_game_prop_sport(market_name)
+    if game_prop_sport:
+        return game_prop_sport
 
     # Try regex pattern matching
     for pattern, category in SPORT_PATTERNS:

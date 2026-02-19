@@ -682,6 +682,7 @@ def _format_market_summary(market: FuturesMarket) -> dict:
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "top_outcomes": top_outcomes,
         "outcome_count": len(market.outcomes),
+        "category_tags": market.category_tags or [],
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }
 
@@ -728,6 +729,7 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         "outcomes": outcomes,
         "outcome_count": len(outcomes),
         "bookmakers": bookmakers or [],
+        "category_tags": market.category_tags or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }

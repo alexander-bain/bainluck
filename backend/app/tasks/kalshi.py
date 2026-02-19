@@ -196,6 +196,8 @@ async def _poll_kalshi_markets():
                         detect_league, detect_season,
                         compute_canonical_market_key,
                         extract_olympic_discipline,
+                        generate_category_tags,
+                        is_game_prop,
                     )
                     market_tier = compute_market_tier(market_name, category)
 
@@ -215,6 +217,15 @@ async def _poll_kalshi_markets():
                         sport_category, league, canon_category, season,
                     )
 
+                    # Generate category tags
+                    tags = generate_category_tags(
+                        market_name, sport_category, league, category,
+                    )
+
+                    # For game props, set category to "game_prop"
+                    if is_game_prop(market_name):
+                        category = "game_prop"
+
                     # Upsert the FuturesMarket
                     upsert_values = {
                         "source": "kalshi",
@@ -227,6 +238,7 @@ async def _poll_kalshi_markets():
                         "commence_time": commence_time,
                         "resolution_date": expiration_time,
                         "status": "open",
+                        "category_tags": tags,
                     }
                     update_set = {
                         "name": market_name,
@@ -234,6 +246,7 @@ async def _poll_kalshi_markets():
                         "market_tier": market_tier,
                         "commence_time": commence_time,
                         "resolution_date": expiration_time,
+                        "category_tags": tags,
                         "updated_at": func.now(),
                     }
                     # Always update llm_sport_category unless new value is "other"

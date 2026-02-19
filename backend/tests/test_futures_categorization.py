@@ -8,6 +8,7 @@ from app.utils.futures_categorization import (
     categorize_by_rules, categorize_market,
     detect_league, detect_season, compute_canonical_market_key,
     infer_sport_from_league, extract_olympic_discipline,
+    detect_game_prop_sport, is_game_prop, generate_category_tags,
     LEAGUE_TO_SPORT_CATEGORY,
 )
 
@@ -1152,3 +1153,195 @@ class TestAdditionalSportsPatterns:
 
     def test_stanley_cup_still_works(self):
         assert categorize_by_rules("Stanley Cup Champion") == "hockey"
+
+
+# =============================================================================
+# Game Prop Detection
+# =============================================================================
+class TestGamePropDetection:
+    """Test detection of game prop markets (Team at Team: Stat)."""
+
+    def test_basketball_rebounds(self):
+        assert detect_game_prop_sport("Boston at Golden State: Rebounds") == "basketball"
+
+    def test_basketball_points(self):
+        assert detect_game_prop_sport("Detroit at New York: Points") == "basketball"
+
+    def test_basketball_assists(self):
+        assert detect_game_prop_sport("Lakers at Celtics: Assists") == "basketball"
+
+    def test_basketball_3pointers(self):
+        assert detect_game_prop_sport("Miami at Chicago: 3-Pointers") == "basketball"
+
+    def test_basketball_blocks(self):
+        assert detect_game_prop_sport("Denver at Portland: Blocks") == "basketball"
+
+    def test_basketball_steals(self):
+        assert detect_game_prop_sport("Phoenix at Dallas: Steals") == "basketball"
+
+    def test_basketball_free_throws(self):
+        assert detect_game_prop_sport("Milwaukee at Indiana: Free Throws") == "basketball"
+
+    def test_football_passing_yards(self):
+        assert detect_game_prop_sport("Kansas City at Buffalo: Passing Yards") == "football"
+
+    def test_football_rushing_yards(self):
+        assert detect_game_prop_sport("Dallas at Philadelphia: Rushing Yards") == "football"
+
+    def test_football_touchdowns(self):
+        assert detect_game_prop_sport("Green Bay at Chicago: Touchdowns") == "football"
+
+    def test_football_sacks(self):
+        assert detect_game_prop_sport("Pittsburgh at Baltimore: Sacks") == "football"
+
+    def test_hockey_saves(self):
+        assert detect_game_prop_sport("Montreal at Toronto: Saves") == "hockey"
+
+    def test_hockey_shots_on_goal(self):
+        assert detect_game_prop_sport("Edmonton at Vancouver: Shots on Goal") == "hockey"
+
+    def test_baseball_strikeouts(self):
+        assert detect_game_prop_sport("Yankees at Red Sox: Strikeouts") == "baseball"
+
+    def test_baseball_home_runs(self):
+        assert detect_game_prop_sport("Dodgers at Giants: Home Runs") == "baseball"
+
+    def test_soccer_corners(self):
+        assert detect_game_prop_sport("Arsenal at Chelsea: Corners") == "soccer"
+
+    def test_ambiguous_spread_returns_none(self):
+        """Spread is ambiguous — could be any sport."""
+        assert detect_game_prop_sport("Orlando at Sacramento: Spread") is None
+
+    def test_ambiguous_total_returns_none(self):
+        assert detect_game_prop_sport("Phoenix at San Antonio: Total") is None
+
+    def test_not_a_game_prop(self):
+        assert detect_game_prop_sport("NBA Championship 2025-26") is None
+
+    def test_is_game_prop_true(self):
+        assert is_game_prop("Boston at Golden State: Rebounds") is True
+
+    def test_is_game_prop_false(self):
+        assert is_game_prop("NBA MVP 2025-26") is False
+
+    def test_vs_format(self):
+        assert detect_game_prop_sport("Boston vs Golden State: Rebounds") == "basketball"
+
+    def test_game_prop_flows_through_categorize_by_rules(self):
+        """Game prop detection should be used by categorize_by_rules."""
+        assert categorize_by_rules("Boston at Golden State: Rebounds") == "basketball"
+        assert categorize_by_rules("Detroit at New York: Points") == "basketball"
+        assert categorize_by_rules("Kansas City at Buffalo: Passing Yards") == "football"
+
+
+# =============================================================================
+# Category Tag Generation
+# =============================================================================
+class TestCategoryTagGeneration:
+    """Test multi-category tag generation."""
+
+    def test_basic_sport_tag(self):
+        tags = generate_category_tags("NBA Championship", "basketball", "NBA", "championship")
+        assert "basketball" in tags
+        assert "nba" in tags
+
+    def test_crypto_tags(self):
+        tags = generate_category_tags("Bitcoin price above $100K", "crypto", None, None)
+        assert "crypto" in tags
+        assert "bitcoin" in tags
+
+    def test_cross_category_politics_crypto(self):
+        """Market about Trump + Bitcoin gets both tags."""
+        tags = generate_category_tags("Will Trump create a Bitcoin reserve?", "politics", None, None)
+        assert "politics" in tags
+        assert "trump" in tags
+        assert "bitcoin" in tags
+        assert "crypto" in tags
+
+    def test_game_prop_tag(self):
+        tags = generate_category_tags("Boston at Golden State: Rebounds", "basketball", "NBA", "game_prop")
+        assert "game_prop" in tags
+        assert "basketball" in tags
+
+    def test_super_bowl_tag(self):
+        tags = generate_category_tags("Super Bowl LXI Winner", "football", "NFL", "championship")
+        assert "super_bowl" in tags
+        assert "football" in tags
+
+    def test_mvp_tag(self):
+        tags = generate_category_tags("NBA MVP Winner", "basketball", "NBA", "mvp")
+        assert "mvp" in tags
+        assert "basketball" in tags
+
+    def test_love_is_blind_tag(self):
+        tags = generate_category_tags("Love Is Blind Season 9 winner", "entertainment", None, None)
+        assert "entertainment" in tags
+        assert "love_is_blind" in tags
+
+    def test_other_category_not_tagged(self):
+        """Primary category 'other' should NOT be added as a tag."""
+        tags = generate_category_tags("Unknown Market XYZ", "other", None, None)
+        assert "other" not in tags
+
+    def test_sorted_output(self):
+        """Tags should be sorted alphabetically."""
+        tags = generate_category_tags("Super Bowl Bitcoin bet", "football", "NFL", "championship")
+        assert tags == sorted(tags)
+
+    def test_elon_musk_tag(self):
+        tags = generate_category_tags("Will Elon Musk buy TikTok?", "tech", None, None)
+        assert "elon_musk" in tags
+
+
+# =============================================================================
+# New Pattern Tests
+# =============================================================================
+class TestNewPatterns:
+    """Test newly added categorization patterns."""
+
+    def test_nascar_400_winner(self):
+        assert categorize_by_rules("Autotrader 400 Winner?") == "motorsports"
+
+    def test_nascar_250_winner(self):
+        assert categorize_by_rules("Bennett Transportation & Logistics 250 Winner?") == "motorsports"
+
+    def test_nascar_500_winner(self):
+        assert categorize_by_rules("Daytona 500 Winner?") == "motorsports"
+
+    def test_love_is_blind(self):
+        assert categorize_by_rules("Love Is Blind Season 9: Who gets engaged?") == "entertainment"
+
+    def test_survivor(self):
+        assert categorize_by_rules("Survivor Season 50 winner") == "entertainment"
+
+    def test_overall_pick(self):
+        assert categorize_by_rules("#1 overall pick in 2026?") == "football"
+
+    def test_first_pick(self):
+        assert categorize_by_rules("Who is the first pick?") == "football"
+
+    def test_powell(self):
+        assert categorize_by_rules("What will Powell say at the press conference?") == "economics"
+
+    def test_sol_price(self):
+        assert categorize_by_rules("SOL price above $200?") == "crypto"
+
+    def test_ada_price(self):
+        assert categorize_by_rules("ADA price above $1?") == "crypto"
+
+    def test_xfinity_series(self):
+        assert categorize_by_rules("Xfinity Series race winner") == "motorsports"
+
+    def test_big_brother(self):
+        assert categorize_by_rules("Big Brother Season 28 winner") == "entertainment"
+
+    def test_the_voice(self):
+        assert categorize_by_rules("The Voice Season 30 winner") == "entertainment"
+
+    def test_love_island(self):
+        assert categorize_by_rules("Love Island UK winner") == "entertainment"
+
+    def test_engagement_on_show(self):
+        """Reality TV engagement markets should be entertainment."""
+        assert categorize_by_rules("Will they get engaged on Love Is Blind Season 9?") == "entertainment"
