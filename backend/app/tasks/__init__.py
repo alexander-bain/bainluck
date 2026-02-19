@@ -192,10 +192,10 @@ def categorize_futures_task(self, limit: int = 100, force_llm: bool = False):
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.recategorize_other")
-def recategorize_other_task(self, limit: int = 500):
-    """Re-run rules on 'other' markets to fix miscategorizations."""
+def recategorize_other_task(self, limit: int = 500, from_category: str = None):
+    """Re-run rules on 'other' (or specified category) markets to fix miscategorizations."""
     from app.tasks.futures import _recategorize_other_impl
-    return run_async(_recategorize_other_impl(limit))
+    return run_async(_recategorize_other_impl(limit, from_category=from_category))
 
 
 # --- ESPN ---

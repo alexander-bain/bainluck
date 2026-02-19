@@ -553,14 +553,15 @@ async def categorize_futures(
 @router.post("/futures/recategorize-other")
 async def recategorize_other_futures(
     secret: str = Query(..., description="Admin secret for authorization"),
-    limit: int = Query(500, description="Max 'other' markets to re-check"),
+    limit: int = Query(500, description="Max markets to re-check"),
+    from_category: str = Query(None, description="Target a specific category instead of 'other'/NULL (e.g., 'basketball')"),
 ):
     """
-    Re-run rules on markets tagged 'other' to fix miscategorizations.
+    Re-run rules on markets to fix miscategorizations.
 
-    After adding new patterns to the rules engine, run this to reclassify
-    markets that were previously sent to the LLM and returned 'other'.
-    Only updates if a non-'other' category is found by rules.
+    By default targets 'other' and NULL markets. Use from_category to
+    re-evaluate markets in a specific category (e.g., after adding new
+    patterns that would reclassify some basketball markets as soccer).
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
@@ -568,11 +569,12 @@ async def recategorize_other_futures(
     from app.tasks import recategorize_other_task
 
     try:
-        task = recategorize_other_task.delay(limit=limit)
+        task = recategorize_other_task.delay(limit=limit, from_category=from_category)
+        target = from_category or "other/NULL"
         return {
             "status": "queued",
             "task_id": task.id,
-            "message": f"Recategorize-other task queued (limit={limit}). "
+            "message": f"Recategorize task queued (target={target}, limit={limit}). "
                        f"Use /api/admin/futures/task/{task.id} to check status.",
         }
     except Exception as e:
