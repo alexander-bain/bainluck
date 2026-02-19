@@ -385,11 +385,18 @@ async def _categorize_futures_impl(limit: int = 100, force_llm: bool = False):
 
             for market in markets:
                 try:
+                    sport_key = (
+                        market.external_id
+                        if market.source == "odds_api"
+                        else None
+                    )
                     if force_llm and llm_available:
                         category = llm.classify_futures_market(market.name)
                     else:
                         category = categorize_market(
-                            market.name, use_llm=llm_available
+                            market.name,
+                            sport_key=sport_key,
+                            use_llm=llm_available,
                         )
 
                     if category:
@@ -440,7 +447,7 @@ async def _categorize_futures_impl(limit: int = 100, force_llm: bool = False):
 
 async def _recategorize_other_impl(limit: int = 500):
     """
-    Multi-phase recategorization for markets currently tagged 'other'.
+    Multi-phase recategorization for markets tagged 'other' OR uncategorized (NULL).
 
     Phase 1: Pattern matching (fast, free, deterministic)
     Phase 2: League inference (fast, free)
@@ -453,7 +460,7 @@ async def _recategorize_other_impl(limit: int = 500):
     before the next batch starts.
     """
     from celery.exceptions import SoftTimeLimitExceeded
-    from sqlalchemy import select
+    from sqlalchemy import select, or_
     from sqlalchemy.orm import selectinload
     from app.models import FuturesMarket, FuturesOutcome
     from app.utils.futures_categorization import (
@@ -496,7 +503,12 @@ async def _recategorize_other_impl(limit: int = 500):
                 result = await session.execute(
                     select(FuturesMarket)
                     .options(selectinload(FuturesMarket.outcomes))
-                    .where(FuturesMarket.llm_sport_category == "other")
+                    .where(
+                        or_(
+                            FuturesMarket.llm_sport_category == "other",
+                            FuturesMarket.llm_sport_category.is_(None),
+                        )
+                    )
                     .limit(batch_size)
                 )
                 markets = result.scalars().all()
@@ -509,6 +521,7 @@ async def _recategorize_other_impl(limit: int = 500):
 
                 # ── Phase 1 & 2: Rules + league inference (fast) ──
                 for market in markets:
+                    old_category = market.llm_sport_category or "NULL"
                     stats["processed"] += 1
                     try:
                         sport_key = (
@@ -532,7 +545,7 @@ async def _recategorize_other_impl(limit: int = 500):
                                 stats["sample_results"].append({
                                     "id": market.id,
                                     "name": market.name,
-                                    "old": "other",
+                                    "old": old_category,
                                     "new": category,
                                     "method": "rules",
                                 })
@@ -562,7 +575,7 @@ async def _recategorize_other_impl(limit: int = 500):
                                     stats["sample_results"].append({
                                         "id": market.id,
                                         "name": market.name,
-                                        "old": "other",
+                                        "old": old_category,
                                         "new": sport,
                                         "method": f"league:{league}",
                                     })
@@ -614,7 +627,7 @@ async def _recategorize_other_impl(limit: int = 500):
                 # ── Phase 4: Open-ended classification ──
                 still_other = [
                     m for m in batch_llm
-                    if m.llm_sport_category == "other"
+                    if m.llm_sport_category in ("other", None)
                 ]
 
                 for market in still_other:
@@ -703,11 +716,16 @@ async def _recategorize_other_impl(limit: int = 500):
                 len(stats["errors"]),
             )
 
-        # Final count of remaining 'other' markets
+        # Final count of remaining 'other' or uncategorized markets
         async with get_task_session() as session:
             remaining_result = await session.execute(
                 select(func.count(FuturesMarket.id))
-                .where(FuturesMarket.llm_sport_category == "other")
+                .where(
+                    or_(
+                        FuturesMarket.llm_sport_category == "other",
+                        FuturesMarket.llm_sport_category.is_(None),
+                    )
+                )
             )
             stats["remaining_other"] = remaining_result.scalar_one()
 
