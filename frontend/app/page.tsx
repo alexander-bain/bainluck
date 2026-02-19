@@ -618,6 +618,8 @@ export default function HomePage() {
                 const isSportExpanded = expandedSports.has(sportGroup.categoryKey);
                 // Flatten: skip league sub-header when only one league and no futures
                 const isFlatLeague = sportGroup.leagues.length === 1 && sportGroup.totalFutures === 0;
+                // Futures-only: skip the "Futures" toggle when there are no events
+                const isFuturesOnly = sportGroup.totalEvents === 0 && sportGroup.totalFutures > 0;
 
                 return (
                   <section key={sportGroup.categoryKey}>
@@ -709,101 +711,109 @@ export default function HomePage() {
                         })}
 
                         {/* Futures section within sport */}
-                        {sportGroup.futures.length > 0 && (
-                          <div>
-                            {/* Futures Header - clickable toggle */}
-                            <button
-                              onClick={() => toggleLeagueExpand(futuresKey, "Futures", sportGroup.futures.length)}
-                              className="flex items-center gap-2 mb-2 w-full text-left group"
-                            >
-                              <span className="text-slate group-hover:text-graphite transition-colors">
-                                {isFuturesExpanded ? (
-                                  <ChevronDown className="w-4 h-4" />
-                                ) : (
-                                  <ChevronRight className="w-4 h-4" />
-                                )}
-                              </span>
-                              <h3 className="text-body font-medium text-graphite">
-                                Futures
-                              </h3>
-                              <span className="text-micro bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
-                                Outrights
-                              </span>
-                              <span className="text-caption text-silver">
-                                {sportGroup.futures.length} market{sportGroup.futures.length !== 1 ? "s" : ""}
-                              </span>
-                            </button>
+                        {sportGroup.futures.length > 0 && (() => {
+                          const subcategories = groupBySubcategory(sportGroup.futures, sportGroup.categoryKey);
+                          const useSubcategories = sportGroup.futures.length >= SUBCATEGORY_THRESHOLD && subcategories.length > 1;
 
-                            {/* Futures Markets */}
-                            {isFuturesExpanded && (() => {
-                              const subcategories = groupBySubcategory(sportGroup.futures, sportGroup.categoryKey);
-                              const useSubcategories = sportGroup.futures.length >= SUBCATEGORY_THRESHOLD && subcategories.length > 1;
+                          // For futures-only categories, show content directly (no "Futures" toggle)
+                          const showFuturesDirectly = isFuturesOnly;
+                          const futuresVisible = showFuturesDirectly || isFuturesExpanded;
 
-                              if (!useSubcategories) {
+                          return (
+                            <div>
+                              {/* Futures Header - hidden for futures-only categories */}
+                              {!showFuturesDirectly && (
+                                <button
+                                  onClick={() => toggleLeagueExpand(futuresKey, "Futures", sportGroup.futures.length)}
+                                  className="flex items-center gap-2 mb-2 w-full text-left group"
+                                >
+                                  <span className="text-slate group-hover:text-graphite transition-colors">
+                                    {isFuturesExpanded ? (
+                                      <ChevronDown className="w-4 h-4" />
+                                    ) : (
+                                      <ChevronRight className="w-4 h-4" />
+                                    )}
+                                  </span>
+                                  <h3 className="text-body font-medium text-graphite">
+                                    Futures
+                                  </h3>
+                                  <span className="text-micro bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                                    Outrights
+                                  </span>
+                                  <span className="text-caption text-silver">
+                                    {sportGroup.futures.length} market{sportGroup.futures.length !== 1 ? "s" : ""}
+                                  </span>
+                                </button>
+                              )}
+
+                              {/* Futures Markets */}
+                              {futuresVisible && (() => {
+                                if (!useSubcategories) {
+                                  return (
+                                    <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ${showFuturesDirectly ? "" : "ml-6"}`}>
+                                      {sportGroup.futures.map((market) => (
+                                        <FuturesCard
+                                          key={`futures-${market.id}`}
+                                          market={market}
+                                          showSport={false}
+                                          isPinned={isFuturesPinned(market.id)}
+                                          onPinToggle={toggleFuturesPin}
+                                          pinDisabled={isFuturesMaxReached}
+                                        />
+                                      ))}
+                                    </div>
+                                  );
+                                }
+
                                 return (
-                                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
-                                    {sportGroup.futures.map((market) => (
-                                      <FuturesCard
-                                        key={`futures-${market.id}`}
-                                        market={market}
-                                        showSport={false}
-                                        isPinned={isFuturesPinned(market.id)}
-                                        onPinToggle={toggleFuturesPin}
-                                        pinDisabled={isFuturesMaxReached}
-                                      />
-                                    ))}
+                                  <div className={`space-y-2 ${showFuturesDirectly ? "" : "ml-6"}`}>
+                                    {subcategories.map((sub) => {
+                                      const subKey = `${futuresKey}:${sub.key}`;
+                                      const isSubExpanded = expandedLeagues.has(subKey);
+
+                                      return (
+                                        <div key={subKey}>
+                                          <button
+                                            onClick={() => toggleLeagueExpand(subKey, sub.displayName, sub.markets.length)}
+                                            className="flex items-center gap-2 mb-2 w-full text-left group"
+                                          >
+                                            <span className="text-slate group-hover:text-graphite transition-colors">
+                                              {isSubExpanded ? (
+                                                <ChevronDown className="w-4 h-4" />
+                                              ) : (
+                                                <ChevronRight className="w-4 h-4" />
+                                              )}
+                                            </span>
+                                            <span className="text-sm font-medium text-graphite">
+                                              {sub.displayName}
+                                            </span>
+                                            <span className="text-caption text-silver">
+                                              {sub.markets.length}
+                                            </span>
+                                          </button>
+                                          {isSubExpanded && (
+                                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
+                                              {sub.markets.map((market) => (
+                                                <FuturesCard
+                                                  key={`futures-${market.id}`}
+                                                  market={market}
+                                                  showSport={false}
+                                                  isPinned={isFuturesPinned(market.id)}
+                                                  onPinToggle={toggleFuturesPin}
+                                                  pinDisabled={isFuturesMaxReached}
+                                                />
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 );
-                              }
-
-                              return (
-                                <div className="space-y-2 ml-6">
-                                  {subcategories.map((sub) => {
-                                    const subKey = `${futuresKey}:${sub.key}`;
-                                    const isSubExpanded = expandedLeagues.has(subKey);
-
-                                    return (
-                                      <div key={subKey}>
-                                        <button
-                                          onClick={() => toggleLeagueExpand(subKey, sub.displayName, sub.markets.length)}
-                                          className="flex items-center gap-2 mb-2 w-full text-left group"
-                                        >
-                                          <span className="text-slate group-hover:text-graphite transition-colors">
-                                            {isSubExpanded ? (
-                                              <ChevronDown className="w-3.5 h-3.5" />
-                                            ) : (
-                                              <ChevronRight className="w-3.5 h-3.5" />
-                                            )}
-                                          </span>
-                                          <span className="text-sm font-medium text-graphite">
-                                            {sub.displayName}
-                                          </span>
-                                          <span className="text-caption text-silver">
-                                            {sub.markets.length}
-                                          </span>
-                                        </button>
-                                        {isSubExpanded && (
-                                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
-                                            {sub.markets.map((market) => (
-                                              <FuturesCard
-                                                key={`futures-${market.id}`}
-                                                market={market}
-                                                showSport={false}
-                                                isPinned={isFuturesPinned(market.id)}
-                                                onPinToggle={toggleFuturesPin}
-                                                pinDisabled={isFuturesMaxReached}
-                                              />
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        )}
+                              })()}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </section>
