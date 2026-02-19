@@ -135,7 +135,7 @@ class KalshiAPIService:
         response.raise_for_status()
         data = response.json()
 
-        events = data.get("events", [])
+        events = data.get("events") or []
         next_cursor = data.get("cursor")
 
         return events, next_cursor
@@ -170,7 +170,7 @@ class KalshiAPIService:
         response.raise_for_status()
         data = response.json()
 
-        series = data.get("series", [])
+        series = data.get("series") or []
         next_cursor = data.get("cursor")
 
         return series, next_cursor
@@ -211,7 +211,7 @@ class KalshiAPIService:
         response.raise_for_status()
         data = response.json()
 
-        markets = data.get("markets", [])
+        markets = data.get("markets") or []
         next_cursor = data.get("cursor")
 
         return markets, next_cursor
@@ -263,7 +263,7 @@ class KalshiAPIService:
                     if not cursor:
                         break
 
-            except httpx.HTTPStatusError as e:
+            except Exception as e:
                 logger.warning("Error fetching Kalshi series for category %s: %s", category, e)
                 continue
 
@@ -331,7 +331,7 @@ class KalshiAPIService:
                     if not cursor:
                         break
 
-            except httpx.HTTPStatusError as e:
+            except Exception as e:
                 logger.warning("Error fetching Kalshi events for series %s: %s", series_ticker, e)
                 continue
 
