@@ -123,9 +123,70 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "climate": "weather",
     "hurricane": "weather",
     "temperature": "weather",
+    # Geopolitics / International
+    "geopolitics": "geopolitics",
+    "war": "geopolitics",
+    "ukraine": "geopolitics",
+    "russia": "geopolitics",
+    "china": "geopolitics",
+    "nato": "geopolitics",
+    "middle east": "geopolitics",
+    "israel": "geopolitics",
+    "iran": "geopolitics",
+    "north korea": "geopolitics",
+    "nuclear": "geopolitics",
+    "sanctions": "geopolitics",
+    "diplomacy": "geopolitics",
+    "conflict": "geopolitics",
+    # Legal / Regulatory
+    "legal": "legal",
+    "supreme court": "legal",
+    "scotus": "legal",
+    "regulation": "legal",
+    "lawsuit": "legal",
+    "trial": "legal",
+    "indictment": "legal",
+    # Health / Science
+    "health": "health",
+    "pandemic": "health",
+    "covid": "health",
+    "vaccine": "health",
+    "fda": "health",
+    "bird flu": "health",
+    "virus": "health",
+    # Space / Science
+    "space": "tech",
+    "nasa": "tech",
+    "mars": "tech",
+    "rocket": "tech",
+    # Finance (more specific)
+    "finance": "economics",
+    "markets": "economics",
+    "wall street": "economics",
+    "ipo": "economics",
+    "earnings": "economics",
+    "bonds": "economics",
+    "commodities": "economics",
+    "real estate": "economics",
+    "housing": "economics",
+    "tariffs": "economics",
+    "trade war": "economics",
+    # Education / Academic
+    "education": "culture",
+    "university": "culture",
+    "nobel": "culture",
+    # Social / Culture
+    "social media": "culture",
+    "tiktok": "culture",
+    "twitter": "culture",
+    "celebrity": "entertainment",
+    "pop culture": "entertainment",
     # Broad catch-alls
     "culture": "entertainment",
     "world": "politics",
+    "news": "politics",
+    "global": "geopolitics",
+    "environment": "weather",
     # Note: "sports" is NOT in this dict — it's handled specially in
     # _tags_to_category() as a fallback that returns ("championship", None)
 }
@@ -267,6 +328,22 @@ async def _process_event_batch(
     pg_insert, probability_to_american, compute_market_tier,
 ):
     """Process and commit a batch of Polymarket events."""
+    from app.utils.futures_categorization import (
+        categorize_by_rules, detect_league as _detect_league,
+        infer_sport_from_league as _infer,
+        detect_league, detect_season,
+        compute_canonical_market_key,
+        extract_olympic_discipline,
+        generate_category_tags,
+    )
+
+    # Non-sport categories that shouldn't flip to "championship"
+    _NON_SPORT_CATEGORIES = {
+        "other", "politics", "economics", "tech", "crypto",
+        "weather", "health", "geopolitics", "legal",
+        "culture", "entertainment",
+    }
+
     async with get_task_session() as session:
         now = datetime.now(timezone.utc)
 
@@ -278,12 +355,63 @@ async def _process_event_batch(
                 # Determine category from tags
                 category, llm_sport_category = _tags_to_category(event.tags)
 
+                # Fall back to pattern matching + league inference if tags didn't help
+                if not llm_sport_category or llm_sport_category == "other":
+                    rules_result = categorize_by_rules(event.title)
+                    if rules_result:
+                        llm_sport_category = rules_result
+                    else:
+                        _league = _detect_league(event.title)
+                        if _league:
+                            _sport = _infer(_league)
+                            if _sport:
+                                llm_sport_category = _sport
+
+                    # If we found a sport category, ensure category is "championship"
+                    if llm_sport_category and llm_sport_category not in _NON_SPORT_CATEGORIES:
+                        category = "championship"
+
                 # Compute market tier
                 market_tier = compute_market_tier(event.title, category)
 
                 # Timing: use event start/end dates
                 commence_time = event.start_date
                 resolution_date = event.end_date
+
+                # Detect league and season for cross-source matching
+                league = detect_league(event.title)
+                season = detect_season(event.title, league, resolution_date)
+
+                # For Olympics, use specific discipline as category
+                canon_category = category
+                if llm_sport_category == "olympics":
+                    discipline = extract_olympic_discipline(event.title)
+                    if discipline:
+                        canon_category = discipline
+                canonical_key = compute_canonical_market_key(
+                    llm_sport_category, league, canon_category, season,
+                )
+
+                # Generate category tags
+                tags = generate_category_tags(
+                    event.title, llm_sport_category, league, category,
+                )
+
+                # Build update set for on-conflict
+                update_set = {
+                    "name": event.title,
+                    "market_tier": market_tier,
+                    "llm_league": league,
+                    "canonical_market_key": canonical_key,
+                    "commence_time": commence_time,
+                    "resolution_date": resolution_date,
+                    "status": "open" if event.active else "resolved",
+                    "category_tags": tags,
+                    "updated_at": func.now(),
+                }
+                # Only update llm_sport_category if we have a non-"other" value
+                if llm_sport_category and llm_sport_category != "other":
+                    update_set["llm_sport_category"] = llm_sport_category
 
                 # Upsert FuturesMarket
                 market_stmt = pg_insert(FuturesMarket).values(
@@ -292,21 +420,17 @@ async def _process_event_batch(
                     name=event.title,
                     category=category,
                     llm_sport_category=llm_sport_category,
+                    llm_league=league,
+                    canonical_market_key=canonical_key,
                     market_tier=market_tier,
                     mutually_exclusive=event.neg_risk,
                     commence_time=commence_time,
                     resolution_date=resolution_date,
                     status="open" if event.active else "resolved",
+                    category_tags=tags,
                 ).on_conflict_do_update(
                     index_elements=["source", "external_id"],
-                    set_={
-                        "name": event.title,
-                        "market_tier": market_tier,
-                        "commence_time": commence_time,
-                        "resolution_date": resolution_date,
-                        "status": "open" if event.active else "resolved",
-                        "updated_at": func.now(),
-                    },
+                    set_=update_set,
                 ).returning(FuturesMarket.id)
 
                 result = await session.execute(market_stmt)
