@@ -103,10 +103,11 @@ SPORT_PATTERNS = [
     # Boxing
     (re.compile(r"\bboxing\b", re.I), "boxing"),
 
-    # Motorsport
+    # Motorsport / Automotive
     (re.compile(r"\b(formula.1|f1|nascar|indycar|motogp|wrc)\b", re.I), "motorsports"),
     (re.compile(r"\b(daytona.500|indy.500|le.mans|monaco.grand.prix)\b", re.I), "motorsports"),
     (re.compile(r"\b(racing|motorsport)\b", re.I), "motorsports"),
+    (re.compile(r"\b(bmw|tesla|ford|gm|toyota|honda|mercedes|audi|porsche|ferrari|lamborghini|rivian|lucid)\b.*\b(release|electric|ev|model|vehicle|car)\b", re.I), "motorsports"),
 
     # Cricket
     (re.compile(r"\b(ipl|cricket|t20|test.match|ashes|bbl|big.bash)\b", re.I), "cricket"),
@@ -186,14 +187,16 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(bitcoin|btc|ethereum|etherium|eth|solana|crypto|blockchain|defi|nft|dogecoin|doge.coin|cardano|xrp|ripple|altcoin|litecoin|polkadot|avalanche|chainlink)\b", re.I), "crypto"),
     (re.compile(r"\bprice\s+of\s+(bitcoin|btc|ethereum|etherium|eth|solana|doge|dogecoin|cardano|xrp|litecoin)\b", re.I), "crypto"),
 
-    # Economics / Finance
+    # Economics / Finance / Business
     (re.compile(r"\b(fed\s+rate|interest\s+rate|inflation|gdp|recession|cpi|jobs?\s+report|unemployment|treasury|tariff|federal\s+reserve|fomc|rate\s+cut|rate\s+hike|stock\s+market|s&p\s*500|nasdaq|dow\s+jones)\b", re.I), "economics"),
     (re.compile(r"\b(gas\s+price|oil\s+price|commodity|bond\s+yield|ipo|earnings)\b", re.I), "economics"),
+    (re.compile(r"\b(ceo|cfo|take\s*over|acquisition|merger|board\s+of\s+directors)\b", re.I), "economics"),
 
-    # Tech / Science / AI
+    # Tech / Science / AI / Space
     (re.compile(r"\b(artificial\s+intelligence|chatgpt|openai|anthropic|deepmind|gemini\s+ai|gpt[\s-]?\d)\b", re.I), "tech"),
     (re.compile(r"\b(spacex|starship|nasa|mars\s+mission|moon\s+landing|rocket\s+launch|blue\s+origin)\b", re.I), "tech"),
     (re.compile(r"\b(self[\s-]?driving|autonomous\s+vehicle|quantum\s+computing)\b", re.I), "tech"),
+    (re.compile(r"\b(satellite|space\s+station|astronaut|orbit|lunar)\b", re.I), "tech"),
 
     # Weather / Climate
     (re.compile(r"\b(hurricane|tornado|earthquake|wildfire|heat\s+wave|cold\s+snap|blizzard|flood)\b", re.I), "weather"),
