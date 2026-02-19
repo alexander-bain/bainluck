@@ -310,3 +310,101 @@ async def _poll_futures_odds():
         await service.close()
 
     return stats
+
+
+# =========================================================================
+# Background categorization
+# =========================================================================
+
+async def _categorize_futures_impl(limit: int = 100, force_llm: bool = False):
+    """
+    Categorize uncategorized futures markets in the background.
+
+    Uses rules first (fast, free), then LLM fallback for unmatched markets.
+    Runs as a Celery task to avoid Heroku's 30-second request timeout.
+    """
+    from sqlalchemy import select
+    from app.models import FuturesMarket
+    from app.utils.futures_categorization import categorize_market, categorize_by_rules
+    from app.services import llm
+
+    stats = {
+        "processed": 0,
+        "categorized": 0,
+        "by_category": {},
+        "errors": [],
+        "sample_results": [],
+    }
+
+    try:
+        async with get_task_session() as session:
+            # Find uncategorized markets
+            result = await session.execute(
+                select(FuturesMarket)
+                .where(
+                    FuturesMarket.sport_id.is_(None),
+                    FuturesMarket.llm_sport_category.is_(None),
+                )
+                .limit(limit)
+            )
+            markets = result.scalars().all()
+
+            if not markets:
+                stats["message"] = "No uncategorized markets found"
+                return stats
+
+            llm_available = llm.is_available()
+
+            for market in markets:
+                try:
+                    if force_llm and llm_available:
+                        category = llm.classify_futures_market(market.name)
+                    else:
+                        category = categorize_market(
+                            market.name, use_llm=llm_available
+                        )
+
+                    if category:
+                        market.llm_sport_category = category
+                        stats["categorized"] += 1
+                        stats["by_category"][category] = (
+                            stats["by_category"].get(category, 0) + 1
+                        )
+                        if len(stats["sample_results"]) < 20:
+                            stats["sample_results"].append({
+                                "id": market.id,
+                                "name": market.name,
+                                "category": category,
+                            })
+                except Exception as e:
+                    stats["errors"].append(f"{market.id}: {str(e)}")
+
+                stats["processed"] += 1
+
+            await session.commit()
+
+            # Count remaining
+            remaining_result = await session.execute(
+                select(func.count(FuturesMarket.id))
+                .where(
+                    FuturesMarket.sport_id.is_(None),
+                    FuturesMarket.llm_sport_category.is_(None),
+                )
+            )
+            stats["remaining"] = remaining_result.scalar_one()
+
+    except Exception as e:
+        stats["errors"].append(f"Top-level error: {str(e)}")
+
+    stats["message"] = (
+        f"Categorized {stats['categorized']}/{stats['processed']} markets. "
+        f"{stats.get('remaining', '?')} remaining."
+    )
+
+    logger.info(
+        "Futures categorization complete: %d/%d categorized, %d remaining",
+        stats["categorized"],
+        stats["processed"],
+        stats.get("remaining", -1),
+    )
+    return stats

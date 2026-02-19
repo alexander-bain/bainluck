@@ -525,90 +525,29 @@ async def get_sports_with_outrights(
 @router.post("/futures/categorize")
 async def categorize_futures(
     secret: str = Query(..., description="Admin secret for authorization"),
-    limit: int = Query(50, description="Max markets to categorize per batch"),
-    dry_run: bool = Query(False, description="Preview categorizations without saving"),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, description="Max markets to categorize per batch"),
 ):
     """
-    Categorize uncategorized futures markets using LLM.
+    Categorize uncategorized futures markets using rules + LLM.
 
-    Finds markets without sport_id or llm_sport_category and uses:
-    1. Pattern matching rules (fast, free)
-    2. LLM fallback (smart, for edge cases)
-
-    Results are cached in the llm_sport_category column.
+    Queues a background Celery task to avoid Heroku's 30-second timeout.
+    Use /futures/task/{task_id} to check status.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.models import FuturesMarket
-    from app.utils.futures_categorization import categorize_market
-    from app.services import llm
+    from app.tasks import categorize_futures_task
 
-    # Find uncategorized markets
-    result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-        .limit(limit)
-    )
-    markets = result.scalars().all()
-
-    if not markets:
+    try:
+        task = categorize_futures_task.delay(limit=limit, force_llm=False)
         return {
-            "status": "complete",
-            "message": "No uncategorized markets found",
-            "processed": 0,
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Categorization task queued (limit={limit}). "
+                       f"Use /api/admin/futures/task/{task.id} to check status.",
         }
-
-    categorized = []
-    failed = []
-
-    for market in markets:
-        category = categorize_market(market.name, use_llm=llm.is_available())
-
-        if category:
-            categorized.append({
-                "id": market.id,
-                "name": market.name,
-                "category": category,
-            })
-            if not dry_run:
-                market.llm_sport_category = category
-        else:
-            failed.append({
-                "id": market.id,
-                "name": market.name,
-            })
-
-    if not dry_run:
-        await db.commit()
-
-    # Count remaining
-    remaining_result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-    )
-    remaining = len(remaining_result.scalars().all())
-
-    return {
-        "status": "success",
-        "dry_run": dry_run,
-        "processed": len(markets),
-        "categorized": len(categorized),
-        "failed": len(failed),
-        "remaining": remaining,
-        "llm_available": llm.is_available(),
-        "results": categorized[:10],  # Preview first 10
-        "failures": failed[:10] if failed else None,
-        "message": f"Categorized {len(categorized)}/{len(markets)} markets." +
-                   (f" {remaining} remaining." if remaining > 0 else ""),
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
 @router.get("/futures/categorization-status")
@@ -700,87 +639,29 @@ async def list_uncategorized_futures(
 async def force_categorize_futures(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(100, description="Max markets to categorize"),
-    dry_run: bool = Query(False, description="Preview without saving"),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Force-categorize ALL uncategorized futures using LLM.
 
-    Unlike /categorize which only runs LLM on pattern-miss, this endpoint
-    runs LLM on EVERY uncategorized market and saves the result (even "other").
-
-    This ensures no market is left with llm_sport_category=NULL.
+    Unlike /categorize which tries rules first, this forces LLM on every market.
+    Queues a background Celery task to avoid Heroku's 30-second timeout.
+    Use /futures/task/{task_id} to check status.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.models import FuturesMarket
-    from app.services import llm
+    from app.tasks import categorize_futures_task
 
-    if not llm.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM service not available (OPENAI_API_KEY not set?)"
-        )
-
-    # Find uncategorized markets
-    result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-        .limit(limit)
-    )
-    markets = result.scalars().all()
-
-    if not markets:
+    try:
+        task = categorize_futures_task.delay(limit=limit, force_llm=True)
         return {
-            "status": "complete",
-            "message": "No uncategorized markets found",
-            "processed": 0,
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Force-categorization task queued (limit={limit}). "
+                       f"Use /api/admin/futures/task/{task.id} to check status.",
         }
-
-    results = []
-    by_category = {}
-
-    for market in markets:
-        # Always use LLM (which now always returns a category)
-        category = llm.classify_futures_market(market.name)
-
-        results.append({
-            "id": market.id,
-            "name": market.name,
-            "category": category,
-        })
-
-        by_category[category] = by_category.get(category, 0) + 1
-
-        if not dry_run:
-            market.llm_sport_category = category
-
-    if not dry_run:
-        await db.commit()
-
-    # Count remaining
-    remaining_result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-    )
-    remaining = len(remaining_result.scalars().all())
-
-    return {
-        "status": "success",
-        "dry_run": dry_run,
-        "processed": len(markets),
-        "remaining": remaining,
-        "by_category": by_category,
-        "sample_results": results[:20],
-        "message": f"Categorized {len(markets)} markets. {remaining} remaining.",
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
 # ============================================================================

@@ -182,6 +182,15 @@ def poll_polymarket_markets(self):
     return run_async(_poll_polymarket_markets())
 
 
+# --- Categorization ---
+
+@celery_app.task(bind=True, name="app.tasks.categorize_futures")
+def categorize_futures_task(self, limit: int = 100, force_llm: bool = False):
+    """Categorize uncategorized futures markets (background task)."""
+    from app.tasks.futures import _categorize_futures_impl
+    return run_async(_categorize_futures_impl(limit, force_llm))
+
+
 # --- ESPN ---
 
 @celery_app.task(bind=True, name="app.tasks.enrich_events_metadata")
