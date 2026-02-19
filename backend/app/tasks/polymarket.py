@@ -156,7 +156,6 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "virus": "health",
     # Space / Science
     "space": "tech",
-    "spacex": "tech",
     "nasa": "tech",
     "mars": "tech",
     "rocket": "tech",
@@ -248,120 +247,7 @@ async def _poll_polymarket_markets():
         "errors": [],
     }
 
-    try:
-        # Fetch ALL active events (sports + non-sports)
-        events = await service.get_all_active_events()
-        logger.info("Polymarket: fetched %d active events", len(events))
-
-        async with get_task_session() as session:
-            now = datetime.now(timezone.utc)
-
-            for event in events:
-                try:
-                    if not event.markets:
-                        continue
-
-                    # Determine category from tags
-                    category, llm_sport_category = _tags_to_category(event.tags)
-
-                    # Fall back to pattern matching + league inference if tags didn't help
-                    if not llm_sport_category or llm_sport_category == "other":
-                        from app.utils.futures_categorization import (
-                            categorize_by_rules, detect_league as _detect_league,
-                            infer_sport_from_league as _infer,
-                        )
-                        rules_result = categorize_by_rules(event.title)
-                        if rules_result:
-                            llm_sport_category = rules_result
-                        else:
-                            # Try league detection → sport inference
-                            _league = _detect_league(event.title)
-                            if _league:
-                                _sport = _infer(_league)
-                                if _sport:
-                                    llm_sport_category = _sport
-
-                        # If we found a sport category, ensure category is "championship"
-                        if llm_sport_category and llm_sport_category not in (
-                            "other", "politics", "economics", "tech", "crypto",
-                            "weather", "health", "geopolitics", "legal",
-                            "culture", "entertainment",
-                        ):
-                            category = "championship"
-
-                    # Compute market tier
-                    from app.utils.team_linking import compute_market_tier
-                    from app.utils.futures_categorization import (
-                        detect_league, detect_season,
-                        compute_canonical_market_key,
-                        extract_olympic_discipline,
-                        generate_category_tags,
-                    )
-                    market_tier = compute_market_tier(event.title, category)
-
-                    # Timing: use event start/end dates
-                    commence_time = event.start_date
-                    resolution_date = event.end_date
-
-                    # Detect league and season for cross-source matching
-                    league = detect_league(event.title)
-                    season = detect_season(
-                        event.title, league, resolution_date,
-                    )
-                    # For Olympics, use specific discipline as category
-                    canon_category = category
-                    if llm_sport_category == "olympics":
-                        discipline = extract_olympic_discipline(event.title)
-                        if discipline:
-                            canon_category = discipline
-                    canonical_key = compute_canonical_market_key(
-                        llm_sport_category, league, canon_category, season,
-                    )
-
-                    # Generate category tags
-                    tags = generate_category_tags(
-                        event.title, llm_sport_category, league, category,
-                    )
-
-                    # Build update set for on-conflict
-                    update_set = {
-                        "name": event.title,
-                        "market_tier": market_tier,
-                        "llm_league": league,
-                        "canonical_market_key": canonical_key,
-                        "commence_time": commence_time,
-                        "resolution_date": resolution_date,
-                        "status": "open" if event.active else "resolved",
-                        "category_tags": tags,
-                        "updated_at": func.now(),
-                    }
-                    # Update llm_sport_category if we have a non-"other" value
-                    if llm_sport_category and llm_sport_category != "other":
-                        update_set["llm_sport_category"] = llm_sport_category
-
-                    # Upsert FuturesMarket
-                    market_stmt = pg_insert(FuturesMarket).values(
-                        source="polymarket",
-                        external_id=event.id,
-                        name=event.title,
-                        category=category,
-                        llm_sport_category=llm_sport_category,
-                        llm_league=league,
-                        canonical_market_key=canonical_key,
-                        market_tier=market_tier,
-                        mutually_exclusive=event.neg_risk,
-                        commence_time=commence_time,
-                        resolution_date=resolution_date,
-                        status="open" if event.active else "resolved",
-                        category_tags=tags,
-                    ).on_conflict_do_update(
-                        index_elements=["source", "external_id"],
-                        set_=update_set,
-                    ).returning(FuturesMarket.id)
-
-                    result = await session.execute(market_stmt)
-                    futures_market_id = result.scalar_one()
-                    stats["events_processed"] += 1
+    BATCH_SIZE = 50  # Commit every N events to limit memory
 
     try:
         # Stream events page-by-page instead of loading all into memory.
