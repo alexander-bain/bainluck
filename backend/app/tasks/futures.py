@@ -452,6 +452,7 @@ async def _recategorize_other_impl(limit: int = 500):
     workers. Each batch loads, processes, commits, and releases its markets
     before the next batch starts.
     """
+    from celery.exceptions import SoftTimeLimitExceeded
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
     from app.models import FuturesMarket, FuturesOutcome
@@ -480,6 +481,7 @@ async def _recategorize_other_impl(limit: int = 500):
     llm_available = llm.is_available()
     remaining = limit
     offset = 0
+    timed_out = False
 
     logger.info(
         "Recategorize-other starting: limit=%d, batch_size=%d, llm=%s",
@@ -709,11 +711,22 @@ async def _recategorize_other_impl(limit: int = 500):
             )
             stats["remaining_other"] = remaining_result.scalar_one()
 
+    except SoftTimeLimitExceeded:
+        timed_out = True
+        stats["errors"].append(
+            f"Soft time limit reached after processing {stats['processed']} markets. "
+            "Already-committed batches are saved. Re-run to continue."
+        )
+        logger.warning(
+            "Recategorize-other hit soft time limit after %d markets",
+            stats["processed"],
+        )
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
 
     novel = stats.get("novel_categories", [])
     novel_str = f" Novel categories: {novel}" if novel else ""
+    timeout_str = " (PARTIAL — timed out, re-run to continue)" if timed_out else ""
     stats["message"] = (
         f"Re-checked {stats['processed']} 'other' markets, "
         f"reclassified {stats['reclassified']} "
@@ -722,7 +735,7 @@ async def _recategorize_other_impl(limit: int = 500):
         f"llm:{stats['reclassified_by_llm']}, "
         f"open_ended:{stats['reclassified_by_open_ended']}). "
         f"Tags enriched: {stats['tags_enriched']}. "
-        f"{stats.get('remaining_other', '?')} still 'other'.{novel_str}"
+        f"{stats.get('remaining_other', '?')} still 'other'.{novel_str}{timeout_str}"
     )
 
     logger.info(
