@@ -23,8 +23,8 @@ const localStorageMock = (() => {
 
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
 
-const EVENTS_KEY = 'oddsTracker_pinnedEvents';
-const FUTURES_KEY = 'oddsTracker_pinnedFutures';
+const EVENTS_KEY = 'bainluck_pinnedEvents';
+const FUTURES_KEY = 'bainluck_pinnedFutures';
 const MAX_PINNED = 6;
 
 // Helper functions that mirror the hook logic

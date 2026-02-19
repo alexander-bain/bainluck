@@ -110,7 +110,7 @@ class TestReExports:
 
     def test_celery_app(self):
         from app.tasks import celery_app
-        assert celery_app.main == "odds_tracker"
+        assert celery_app.main == "bainluck"
 
     def test_infer_base_sport(self):
         from app.tasks import _infer_base_sport

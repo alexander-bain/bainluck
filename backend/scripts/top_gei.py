@@ -28,7 +28,7 @@ async def get_top_events():
             score = min(100, max(1, round(float(event.raw_gei) * 100)))
             teams = f"{event.home_team} vs {event.away_team}"[:40]
             final = f"{event.home_score or '?'}-{event.away_score or '?'}"
-            url = f"https://odds.alexbain.com/events/{event.id}"
+            url = f"https://bainluck.com/events/{event.id}"
             print(f"| {i} | {score} | {teams} | {final} | {sport_key} | {url} |")
         print()
 

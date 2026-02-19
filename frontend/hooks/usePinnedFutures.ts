@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const STORAGE_KEY = 'oddsTracker_pinnedFutures';
+const STORAGE_KEY = 'bainluck_pinnedFutures';
 const MAX_PINNED_FUTURES = 6;
 
 interface UsePinnedFuturesResult {

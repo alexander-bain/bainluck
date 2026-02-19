@@ -1,13 +1,13 @@
 # iPad Progress Plan (No Terminal Required)
 
-This plan is designed for sessions where you only have browser access (no local terminal), so you can still move OddsTracker forward.
+This plan is designed for sessions where you only have browser access (no local terminal), so you can still move Bain Luck forward.
 
 ## 1) Start with Product Direction (High Leverage)
 
 ### A. Tighten your "single sentence" value proposition
 Use this draft and iterate until it feels perfect:
 
-> OddsTracker helps casual fans understand how game expectations shift in real time, without needing to understand betting lines.
+> Bain Luck helps casual fans understand how game expectations shift in real time, without needing to understand betting lines.
 
 Why this matters: this sentence should appear consistently in your homepage hero, App Store copy (later), social bios, and launch posts.
 

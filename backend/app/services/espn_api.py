@@ -119,7 +119,7 @@ class ESPNAPIService:
             self._client = httpx.AsyncClient(
                 timeout=self.timeout,
                 headers={
-                    "User-Agent": "OddsTracker/1.0",
+                    "User-Agent": "BainLuck/1.0",
                     "Accept": "application/json",
                 },
             )

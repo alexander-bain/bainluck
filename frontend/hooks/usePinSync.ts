@@ -17,9 +17,9 @@ import { useEffect, useRef } from "react";
 import { useAuthContext } from "@/components/AuthProvider";
 import { syncPins } from "@/lib/api";
 
-const EVENTS_KEY = "oddsTracker_pinnedEvents";
-const FUTURES_KEY = "oddsTracker_pinnedFutures";
-const SYNC_DONE_KEY = "oddsTracker_pinsSyncedToServer";
+const EVENTS_KEY = "bainluck_pinnedEvents";
+const FUTURES_KEY = "bainluck_pinnedFutures";
+const SYNC_DONE_KEY = "bainluck_pinsSyncedToServer";
 
 function loadLocalPins(key: string): number[] {
   if (typeof window === "undefined") return [];

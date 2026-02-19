@@ -2,7 +2,7 @@
 
 ## Overview
 
-Add Google OAuth login, structured onboarding, and personalized event ranking to OddsTracker. The app remains fully functional without login; auth unlocks personalization.
+Add Google OAuth login, structured onboarding, and personalized event ranking to Bain Luck. The app remains fully functional without login; auth unlocks personalization.
 
 **Auth provider:** Firebase Auth (Google Sign-In first, Apple later)
 **Onboarding:** 4 structured screens, all skippable

@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "odds-tracker-api": {
+    "bainluck-api": {
       "type": "stdio",
       "command": "/Users/bain/odds-tracker/tools/mcp-api-proxy/venv/bin/python",
       "args": ["/Users/bain/odds-tracker/tools/mcp-api-proxy/server.py"],

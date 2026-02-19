@@ -4,7 +4,7 @@ One-time script to deduplicate existing OddsSnapshot rows.
 This script collapses consecutive identical snapshots for each event+bookmaker
 into a single row with reading_count and valid_until set.
 
-Run with: heroku run python deduplicate_snapshots.py -a what-are-the-odds
+Run with: heroku run python deduplicate_snapshots.py -a bainluck
 
 WARNING: This modifies data! Run analyze_duplicates.py first to preview.
 """

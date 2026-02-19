@@ -5,15 +5,15 @@ import Link from "next/link";
 /**
  * About Page
  *
- * Explains what OddsTracker is and its mission.
+ * Explains what Bain Luck is and its mission.
  */
 export default function AboutPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       {/* Hero Section */}
       <div className="text-center space-y-4 pb-6 border-b border-mist">
-        <div className="text-6xl">🎯</div>
-        <h1 className="text-title-1 text-graphite">About OddsTracker</h1>
+        <div className="text-6xl">🍀</div>
+        <h1 className="text-title-1 text-graphite">About Bain Luck</h1>
         <p className="text-lg text-slate max-w-xl mx-auto">
           Making sports betting odds actually understandable.
         </p>
@@ -48,7 +48,7 @@ export default function AboutPage() {
         </h2>
         <div className="bg-white rounded-xl p-6 border border-mist shadow-sm space-y-4">
           <p className="text-slate leading-relaxed">
-            OddsTracker converts those cryptic numbers into simple{" "}
+            Bain Luck converts those cryptic numbers into simple{" "}
             <strong className="text-graphite">win probabilities</strong>.
             Instead of &ldquo;-150 / +130&rdquo;, you see:
           </p>
@@ -193,7 +193,7 @@ export default function AboutPage() {
         <div className="bg-slate-50 rounded-xl p-6 border border-slate-200 text-sm text-slate">
           <p className="font-semibold text-graphite mb-2">Disclaimer</p>
           <p className="leading-relaxed">
-            OddsTracker is for informational and entertainment purposes only.
+            Bain Luck is for informational and entertainment purposes only.
             We do not encourage or facilitate gambling. Win probabilities are
             derived from publicly available betting market data and do not
             constitute betting advice. Past performance does not guarantee
@@ -208,7 +208,7 @@ export default function AboutPage() {
           href="/"
           className="inline-flex items-center gap-2 bg-graphite text-white px-6 py-3 rounded-full font-semibold hover:bg-graphite/90 transition-colors"
         >
-          <span>🎯</span>
+          <span>🍀</span>
           Start Exploring
         </Link>
       </div>

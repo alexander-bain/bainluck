@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const STORAGE_KEY = 'oddsTracker_pinnedEvents';
+const STORAGE_KEY = 'bainluck_pinnedEvents';
 const MAX_PINNED_EVENTS = 6;
 
 interface UsePinnedEventsResult {

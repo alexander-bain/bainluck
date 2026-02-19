@@ -1,5 +1,5 @@
 """
-Pulse - OddsTracker's Proprietary Game Excitement Metric
+Pulse - Bain Luck's Proprietary Game Excitement Metric
 
 Pulse measures how "alive" a game is based on probability movement patterns,
 using a vital signs metaphor. A strong pulse means an exciting, dramatic game.
@@ -19,7 +19,7 @@ Output: 1-100 scale where:
 - 61-80: Strong pulse (exciting, back-and-forth)
 - 81-100: Racing pulse (incredible drama, must-watch)
 
-Copyright OddsTracker. All rights reserved.
+Copyright Bain Luck. All rights reserved.
 """
 
 import json
