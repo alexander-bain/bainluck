@@ -371,8 +371,11 @@ class KalshiAPIService:
         if not categories:
             return await self._fetch_all_events_unfiltered()
 
-        # Step 1: Discover series tickers for these categories
-        series_tickers = await self._discover_series_tickers(categories)
+        # Step 1: Discover series tickers for these categories + tags
+        # Tags find subcategory series (e.g., Olympics under Sports)
+        series_tickers = await self._discover_series_tickers(
+            categories, tags=self.SPORTS_TAGS
+        )
 
         if not series_tickers:
             logger.warning("No series tickers found for categories: %s", categories)

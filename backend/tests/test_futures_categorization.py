@@ -347,6 +347,34 @@ class TestOtherSportsPatterns:
     def test_olympics(self):
         assert categorize_by_rules("Olympic Gold Medals") == "olympics"
 
+    # Kalshi Olympics winter sports (names don't contain "Olympic")
+    def test_curling(self):
+        assert categorize_by_rules("Women's Curling: Gold Medal Country") == "olympics"
+
+    def test_figure_skating(self):
+        assert categorize_by_rules("Figure Skating Women's Singles: Medal Winner") == "olympics"
+
+    def test_speed_skating(self):
+        assert categorize_by_rules("Speed Skating Men's 1500m: Gold Medal Country") == "olympics"
+
+    def test_freestyle_skiing(self):
+        assert categorize_by_rules("Freestyle Skiing: Gold Medal Winner") == "olympics"
+
+    def test_ski_mountaineering(self):
+        assert categorize_by_rules("Ski Mountaineering: Medal Winner") == "olympics"
+
+    def test_nordic_combined(self):
+        assert categorize_by_rules("Nordic Combined: Gold Medal Winner") == "olympics"
+
+    def test_biathlon(self):
+        assert categorize_by_rules("Biathlon Mixed Relay: Medal Winner") == "olympics"
+
+    def test_bobsled(self):
+        assert categorize_by_rules("Bobsled 2-Man: Gold Medal Country") == "olympics"
+
+    def test_gold_medal_generic(self):
+        assert categorize_by_rules("Men's Curling: Gold Medal Country") == "olympics"
+
     def test_election(self):
         assert categorize_by_rules("Presidential Election Winner") == "politics"
 
