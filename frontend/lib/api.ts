@@ -1,5 +1,5 @@
 /**
- * API client for OddsTracker backend
+ * API client for Bain Luck backend
  */
 
 import type {

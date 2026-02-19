@@ -1,1 +1,1 @@
-"""OddsTracker backend application."""
+"""Bain Luck backend application."""

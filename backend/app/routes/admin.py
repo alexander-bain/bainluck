@@ -1881,7 +1881,7 @@ async def celery_health():
 
     try:
         r = get_redis_client()
-        heartbeat = r.get("odds_tracker:heartbeat")
+        heartbeat = r.get("bainluck:heartbeat")
         if not heartbeat:
             return {"status": "unknown", "message": "No heartbeat found — worker may not have started yet"}
 

@@ -26,7 +26,7 @@ import type {
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
   betting: { display_name: "Betting Odds", color: "#374151", dash_pattern: null, type: "market" },
   espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3", type: "model" },
-  stat_model: { display_name: "OddsTracker Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
+  stat_model: { display_name: "Bain Luck Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
   moneypuck: { display_name: "MoneyPuck", color: "#10b981", dash_pattern: "4 4", type: "model" },
   fangraphs: { display_name: "FanGraphs", color: "#06b6d4", dash_pattern: "4 4", type: "model" },
 };

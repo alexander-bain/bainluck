@@ -3,8 +3,8 @@ Shared constants and configuration for Celery tasks.
 """
 
 # Adaptive polling state keys in Redis
-POLL_STATE_KEY = "odds_tracker:poll_state"
-LAST_ODDS_HASH_KEY = "odds_tracker:last_odds_hash"
+POLL_STATE_KEY = "bainluck:poll_state"
+LAST_ODDS_HASH_KEY = "bainluck:last_odds_hash"
 
 # Polling intervals (in seconds)
 # Tiered approach based on game proximity (optimized for 5M calls/month)

@@ -19,7 +19,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OddsTracker - Win Probabilities",
+  title: "Bain Luck - Win Probabilities",
   description: "See sports betting odds as intuitive win probabilities",
 };
 
@@ -52,9 +52,9 @@ export default function RootLayout({
                 <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
                   <div className="flex items-center justify-between gap-4">
                     <Link href="/" className="flex items-center gap-2">
-                      <span className="text-2xl">🎯</span>
+                      <span className="text-2xl">🍀</span>
                       <span className="text-title-2 text-graphite">
-                        OddsTracker
+                        Bain Luck
                       </span>
                     </Link>
 
@@ -90,7 +90,7 @@ export default function RootLayout({
                       href="/about"
                       className="flex items-center gap-1.5 text-slate hover:text-graphite transition-colors"
                     >
-                      <span>🎯</span>
+                      <span>🍀</span>
                       <span className="font-medium">About</span>
                     </Link>
                   </nav>

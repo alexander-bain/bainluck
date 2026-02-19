@@ -5,7 +5,7 @@ import Link from "next/link";
 /**
  * Pulse Explainer Page
  *
- * Explains OddsTracker's proprietary excitement metric in accessible language
+ * Explains Bain Luck's proprietary excitement metric in accessible language
  * with visual examples for each excitement level.
  */
 export default function PulseExplainerPage() {
@@ -16,7 +16,7 @@ export default function PulseExplainerPage() {
         <div className="text-6xl">💓</div>
         <h1 className="text-title-1 text-graphite">What is Pulse?</h1>
         <p className="text-lg text-slate max-w-xl mx-auto">
-          Pulse is OddsTracker&apos;s excitement score that tells you how thrilling
+          Pulse is Bain Luck&apos;s excitement score that tells you how thrilling
           a game is—at a glance. Think of it as a game&apos;s heartbeat.
         </p>
       </div>
@@ -364,7 +364,7 @@ export default function PulseExplainerPage() {
           href="/"
           className="inline-flex items-center gap-2 bg-graphite text-white px-6 py-3 rounded-full font-semibold hover:bg-graphite/90 transition-colors"
         >
-          <span>🎯</span>
+          <span>🍀</span>
           Find Exciting Games Now
         </Link>
       </div>

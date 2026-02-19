@@ -1,5 +1,5 @@
 /**
- * TypeScript types for OddsTracker frontend
+ * TypeScript types for Bain Luck frontend
  */
 
 export interface Sport {

@@ -195,7 +195,7 @@ export default function PulseHallOfFamePage() {
             href="/"
             className="inline-flex items-center gap-2 bg-graphite text-white px-6 py-3 rounded-full font-semibold hover:bg-graphite/90 transition-colors"
           >
-            <span>🎯</span>
+            <span>🍀</span>
             Find Exciting Games Now
           </Link>
         </div>

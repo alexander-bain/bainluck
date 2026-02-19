@@ -1,10 +1,10 @@
-# OddsTracker
+# Bain Luck
 
 Convert sports betting odds into intuitive win probabilities.
 
 ## What is this?
 
-OddsTracker fetches live betting odds and translates them into easy-to-understand percentages. Instead of seeing "-150 / +130", you'll see "60% vs 40%".
+Bain Luck fetches live betting odds and translates them into easy-to-understand percentages. Instead of seeing "-150 / +130", you'll see "60% vs 40%".
 
 **Features:**
 - Real-time win probabilities for major sports
@@ -25,8 +25,8 @@ OddsTracker fetches live betting odds and translates them into easy-to-understan
 
 ```bash
 # Clone the repo
-git clone https://github.com/alexander-bain/odds-tracker.git
-cd odds-tracker
+git clone https://github.com/alexander-bain/bainluck.git
+cd bainluck
 
 # Create virtual environment
 python -m venv venv
@@ -54,7 +54,7 @@ uvicorn app.main:app --reload
 ## Project Structure
 
 ```
-odds-tracker/
+bainluck/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py          # FastAPI application

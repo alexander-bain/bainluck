@@ -10,7 +10,7 @@
  * analytics.pageView({
  *   page_type: 'home',
  *   page_path: '/',
- *   page_title: 'OddsTracker - Home',
+ *   page_title: 'Bain Luck - Home',
  * });
  *
  * // Track an event

@@ -34,10 +34,10 @@ export const GA_CONFIG = {
   },
 
   /** Local storage key for consent */
-  CONSENT_STORAGE_KEY: 'oddstracker_consent',
+  CONSENT_STORAGE_KEY: 'bainluck_consent',
 
   /** Local storage key for user preferences */
-  USER_PREFS_STORAGE_KEY: 'oddstracker_analytics_prefs',
+  USER_PREFS_STORAGE_KEY: 'bainluck_analytics_prefs',
 
   /** Debounce times (ms) */
   DEBOUNCE: {
