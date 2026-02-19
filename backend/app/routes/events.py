@@ -2360,6 +2360,7 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         "sport": market.sport.key if market.sport else None,
         "sport_name": market.sport.name if market.sport else None,
         "category": market.category,
+        "llm_sport_category": market.llm_sport_category,
         "status": market.status,
         "source": market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
