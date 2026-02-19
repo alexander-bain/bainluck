@@ -479,6 +479,7 @@ class FuturesMarket(Base):
     source: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # 'odds_api', 'kalshi'
     external_id: Mapped[str] = mapped_column(String(200), nullable=False)  # sport_key or event_ticker
     sport_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sports.id"), index=True)
+    event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("events.id"), index=True)  # Game-level market → event link
 
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -521,6 +522,7 @@ class FuturesMarket(Base):
 
     # Relationships
     sport: Mapped[Optional["Sport"]] = relationship()
+    event: Mapped[Optional["Event"]] = relationship()
     outcomes: Mapped[list["FuturesOutcome"]] = relationship(
         back_populates="market", cascade="all, delete-orphan"
     )

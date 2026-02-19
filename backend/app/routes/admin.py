@@ -2246,3 +2246,135 @@ async def get_snapshot_stats(
         "futures_odds_snapshots": futures_count,
         "total": odds_count + winprob_count + futures_count,
     }
+
+
+# =============================================================================
+# Prediction Market → Event Matching
+# =============================================================================
+
+
+@router.post("/prediction-markets/match")
+async def trigger_prediction_market_matching(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(500, description="Max markets to scan"),
+):
+    """
+    Trigger prediction market → event matching.
+
+    Scans Kalshi and Polymarket game-level markets and links them to events.
+    Also writes win_prob_snapshots for linked markets.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import match_prediction_markets
+
+    try:
+        task = match_prediction_markets.delay(limit=limit)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Prediction market matching task queued (limit={limit}). "
+                       f"Use /api/admin/prediction-markets/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/prediction-markets/task/{task_id}")
+async def get_prediction_market_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of a prediction market matching task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {"task_id": task_id, "state": result.state}
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+    return response
+
+
+@router.get("/prediction-markets/status")
+async def prediction_market_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Show prediction market → event linking status.
+
+    Reports how many game-level markets are linked vs unlinked,
+    and how many win_prob_snapshots exist per source.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func, case
+    from app.models.models import FuturesMarket, WinProbSnapshot
+
+    # Count linked vs unlinked by source
+    link_stats = await db.execute(
+        select(
+            FuturesMarket.source,
+            func.count().label("total"),
+            func.count(FuturesMarket.event_id).label("linked"),
+        )
+        .where(FuturesMarket.source.in_(["kalshi", "polymarket"]))
+        .group_by(FuturesMarket.source)
+    )
+    links_by_source = {}
+    for row in link_stats.all():
+        links_by_source[row.source] = {
+            "total_markets": row.total,
+            "linked_to_events": row.linked,
+            "unlinked": row.total - row.linked,
+        }
+
+    # Count win_prob_snapshots for prediction market sources
+    wp_stats = await db.execute(
+        select(
+            WinProbSnapshot.source,
+            func.count().label("snapshot_count"),
+            func.count(func.distinct(WinProbSnapshot.event_id)).label("event_count"),
+        )
+        .where(WinProbSnapshot.source.in_(["kalshi", "polymarket"]))
+        .group_by(WinProbSnapshot.source)
+    )
+    snapshots_by_source = {}
+    for row in wp_stats.all():
+        snapshots_by_source[row.source] = {
+            "snapshot_count": row.snapshot_count,
+            "event_count": row.event_count,
+        }
+
+    # Show some recently linked markets as examples
+    recent_result = await db.execute(
+        select(
+            FuturesMarket.source,
+            FuturesMarket.name,
+            FuturesMarket.event_id,
+        )
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+        )
+        .order_by(FuturesMarket.updated_at.desc())
+        .limit(10)
+    )
+    recent_linked = [
+        {"source": r.source, "name": r.name, "event_id": r.event_id}
+        for r in recent_result.all()
+    ]
+
+    return {
+        "links_by_source": links_by_source,
+        "win_prob_snapshots": snapshots_by_source,
+        "recent_linked": recent_linked,
+    }
