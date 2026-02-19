@@ -14,7 +14,7 @@ interface PulseBadgeProps {
 /**
  * Displays a Pulse score badge with optional tooltip explaining the metric.
  *
- * Pulse is OddsTracker's proprietary excitement metric (1-100) that measures
+ * Pulse is Bain Luck's proprietary excitement metric (1-100) that measures
  * how thrilling a game is based on win probability changes over time.
  */
 export default function PulseBadge({

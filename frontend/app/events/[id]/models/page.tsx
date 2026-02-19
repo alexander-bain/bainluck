@@ -35,7 +35,7 @@ const FALLBACK_SOURCES: Record<string, WinProbSourceMeta> = {
     snapshot_count: 0,
   },
   stat_model: {
-    display_name: "OddsTracker Model",
+    display_name: "Bain Luck Model",
     type: "model",
     color: "#8b5cf6",
     dash_pattern: "4 4",

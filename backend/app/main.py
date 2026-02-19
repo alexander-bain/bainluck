@@ -1,5 +1,5 @@
 """
-OddsTracker API
+Bain Luck API
 Main FastAPI application entry point.
 """
 
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="OddsTracker API",
+    title="Bain Luck API",
     description="Convert sports betting odds into win probabilities",
     version="0.1.0",
     lifespan=lifespan,
@@ -46,9 +46,13 @@ app = FastAPI(
 allowed_origins = [
     "http://localhost:3000",  # Next.js dev
     "http://127.0.0.1:3000",
+    "https://bainluck.com",
+    "https://www.bainluck.com",
+    # Legacy domain (keep during transition)
     "https://odds.alexbain.com",
     "https://www.odds.alexbain.com",
     # Vercel preview/production URLs
+    "https://bainluck.vercel.app",
     "https://odds-tracker.vercel.app",
     "https://odds-tracker-git-master-alexander-bains-projects.vercel.app",
 ]
@@ -59,7 +63,7 @@ if frontend_url:
     allowed_origins.append(frontend_url)
 
 # Allow all Vercel preview deployments
-allowed_origin_regex = r"https://odds-tracker.*\.vercel\.app"
+allowed_origin_regex = r"https://(odds-tracker|bainluck).*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,7 +88,7 @@ app.include_router(user.router, prefix="/api/me", tags=["User"])
 async def root():
     """Root endpoint."""
     return {
-        "name": "OddsTracker API",
+        "name": "Bain Luck API",
         "version": "0.1.0",
         "docs": "/docs",
     }

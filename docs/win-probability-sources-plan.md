@@ -2,7 +2,7 @@
 
 ## Current State
 
-OddsTracker already has two win probability sources:
+Bain Luck already has two win probability sources:
 1. **Betting odds** (The Odds API) — market-implied probabilities from 5-11 sportsbooks, polled every 30s during live games
 2. **ESPN model** — ESPN's predictive model, polled every 60s during live games via undocumented API
 
@@ -238,7 +238,7 @@ MoneyPuck:          55% Lakers
 
 ### Phase 1: First New Source — MoneyPuck (NHL)
 
-**Why first**: MoneyPuck is likely the easiest to integrate. It's a public site focused specifically on NHL analytics with visible win probability charts, suggesting structured data behind the UI. NHL is a major sport with good OddsTracker coverage.
+**Why first**: MoneyPuck is likely the easiest to integrate. It's a public site focused specifically on NHL analytics with visible win probability charts, suggesting structured data behind the UI. NHL is a major sport with good Bain Luck coverage.
 
 **Tasks:**
 1. Reverse-engineer MoneyPuck's data endpoints (check network tab for JSON APIs behind their charts)
@@ -345,7 +345,7 @@ With 3-4 sources per event, the chart could get cluttered. Mitigation:
 
 1. **Respect robots.txt** — check each source before building a scraper
 2. **Rate limit conservatively** — 60s polling is fine for sites like MoneyPuck; Sports Reference sites may need 120-180s
-3. **Set a proper User-Agent** — identify as OddsTracker, include contact email
+3. **Set a proper User-Agent** — identify as Bain Luck, include contact email
 4. **Cache aggressively** — don't re-fetch if the source data hasn't changed
 5. **Graceful degradation** — if a source goes down or blocks us, the site should still work fine with remaining sources
 6. **Terms of service** — review each source's ToS before scraping. Some explicitly prohibit automated access.

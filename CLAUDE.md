@@ -2,13 +2,13 @@
 
 ## Project Overview
 
-**OddsTracker** is a visual-first sports odds experience that translates betting markets into intuitive win probabilities. Users see "60% vs 40%" instead of "-150 / +130".
+**Bain Luck** is a visual-first sports odds experience that translates betting markets into intuitive win probabilities. Users see "60% vs 40%" instead of "-150 / +130".
 
 **North Star**: The cleanest odds visualization tool on the internet.
 
 **Target User**: Casual sports fans watching games who want context, not betting advice. Second-screen experience.
 
-**Live Site**: https://odds.alexbain.com
+**Live Site**: https://bainluck.com
 
 ---
 
@@ -37,7 +37,7 @@
 ## Project Structure
 
 ```
-odds-tracker/
+bainluck/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI entry point
@@ -105,13 +105,13 @@ odds-tracker/
 
 | Environment | URL |
 |-------------|-----|
-| Production Frontend | https://odds.alexbain.com |
-| Production API | https://what-are-the-odds-0283511a7d93.herokuapp.com |
-| API Docs | https://what-are-the-odds-0283511a7d93.herokuapp.com/docs |
+| Production Frontend | https://bainluck.com |
+| Production API | https://api.bainluck.com |
+| API Docs | https://api.bainluck.com/docs |
 | Vercel Dashboard | Vercel (auto-deploys from master) |
 | Heroku Dashboard | Heroku (auto-deploys from master) |
 
-**Heroku App Name:** `what-are-the-odds` (for CLI commands like `heroku logs -a what-are-the-odds`)
+**Heroku App Name:** `bainluck` (for CLI commands like `heroku logs -a bainluck`)
 
 ---
 
@@ -162,9 +162,9 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 
 Use `curl` against the production API to inspect data:
 ```bash
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/events?sport=americanfootball_nfl"
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/events/search?q=celtics"
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/status"
+curl "https://api.bainluck.com/api/events?sport=americanfootball_nfl"
+curl "https://api.bainluck.com/api/events/search?q=celtics"
+curl "https://api.bainluck.com/api/admin/pulse/status"
 ```
 
 **Note:** When running in Claude Code's web sandbox, direct HTTP requests to the production API may be blocked by egress restrictions. The MCP proxy at `tools/mcp-api-proxy/` is designed for local Claude Code CLI usage only.
@@ -189,7 +189,7 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `FIREBASE_SERVICE_ACCOUNT_JSON` - Full service account JSON string (optional - for admin operations)
 
 ### Frontend (Vercel Environment Variables)
-- `NEXT_PUBLIC_API_URL` = `https://what-are-the-odds-0283511a7d93.herokuapp.com`
+- `NEXT_PUBLIC_API_URL` = `https://api.bainluck.com`
 - `NEXT_PUBLIC_FIREBASE_API_KEY` - Firebase web API key (optional - enables auth UI)
 - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` - Firebase auth domain (e.g., `project-id.firebaseapp.com`)
 - `NEXT_PUBLIC_FIREBASE_PROJECT_ID` - Firebase project ID
@@ -230,9 +230,9 @@ The normalization ceilings were tuned iteratively using `GET /api/admin/pulse/di
 
 **After algorithm changes:** You must force-recalculate stored scores since `raw_gei` values are computed once and cached:
 ```bash
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/recalculate?secret=any&limit=500"
+curl -X POST "https://api.bainluck.com/api/admin/pulse/recalculate?secret=any&limit=500"
 # Then verify with distributions endpoint:
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/distributions"
+curl "https://api.bainluck.com/api/admin/pulse/distributions"
 ```
 
 **Hall of Fame filtering:** The `pulse-rankings` endpoint requires 20+ distinct minute-level time buckets (not raw snapshot rows, since each poll captures 5-11 bookmakers). Completed events with `data_quality == "minimal"` (< 10 aggregated time buckets) never get a stored Pulse score, providing a second layer of filtering.
@@ -305,11 +305,11 @@ sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Ho
 **Admin Endpoints:**
 ```bash
 # Trigger a poll (queues background task, returns task_id)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/poll?secret=any"
+curl -X POST "https://api.bainluck.com/api/admin/kalshi/poll?secret=any"
 # Response: {"status": "queued", "task_id": "abc123...", "message": "..."}
 
 # Check task status (use task_id from above)
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/task/abc123?secret=any"
+curl "https://api.bainluck.com/api/admin/kalshi/task/abc123?secret=any"
 # Response: {"task_id": "abc123", "state": "SUCCESS", "result": {...}}
 ```
 
@@ -321,12 +321,12 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/task
 - Stores bid/ask spreads: `yes_bid`, `yes_ask`, `last_price`
 - Populates `commence_time` (event start) and `resolution_date` (market close)
 
-### Polymarket Integration (Planned)
+### Polymarket Integration
 Polymarket is the world's largest prediction market (~$9B valuation). Unlike Kalshi, it requires **no API key** for read access and has significantly better rate limits and sports coverage.
 
 **Why Polymarket?** Three strategic reasons:
 1. **More sports markets** — 3,294+ active sports markets with NHL and UFC partnerships, extensive soccer coverage (EPL, La Liga, UCL, Bundesliga, Serie A, MLS, etc.)
-2. **Wildcard categories** — Politics, entertainment, crypto, weather, and geopolitics markets that expand OddsTracker beyond sports into "probability of anything"
+2. **Wildcard categories** — Politics, entertainment, crypto, weather, and geopolitics markets that expand Bain Luck beyond sports into "probability of anything"
 3. **Built-in historical data** — `/prices-history` endpoint provides time-series data (configurable granularity) without requiring us to poll and store every snapshot
 
 **API Architecture (4 services, only 2 needed):**
@@ -351,7 +351,7 @@ Polymarket is the world's largest prediction market (~$9B valuation). Unlike Kal
 **Rate Limits:** ~1,000 calls/hour (Cloudflare throttling, much more generous than Kalshi's ~10 req/sec)
 
 **Data Model Mapping:**
-| Polymarket | OddsTracker DB |
+| Polymarket | Bain Luck DB |
 |------------|----------------|
 | Event | `FuturesMarket` (source="polymarket") |
 | Event.id | `FuturesMarket.external_id` |
@@ -367,9 +367,21 @@ Polymarket is the world's largest prediction market (~$9B valuation). Unlike Kal
 
 **NegRisk events:** Multi-outcome events (e.g., "NBA Championship Winner") have one binary market per team, each with Yes/No shares. Maps naturally to our FuturesOutcome model (same as Kalshi multi-market events).
 
-**Planned files:**
-- `backend/app/services/polymarket_api.py` — API client (no API key needed)
-- `backend/app/tasks/polymarket.py` — Polling task (similar to `tasks/kalshi.py`)
+**Files:**
+- `backend/app/services/polymarket_api.py` — API client (Gamma + CLOB, no API key needed)
+- `backend/app/tasks/polymarket.py` — Polling task with streaming pagination (batched commits, page cap warning)
+- `backend/tests/test_polymarket.py` — 69 tests (tag mapping, name extraction, API parsing)
+
+**Polling architecture:** Events are fetched page-by-page (100 per page, 0.3s delay) and processed in batches of 50 to limit memory. Categorization uses a 160+ entry tag-to-category map with fallback to `futures_categorization.py` rules + league detection. Stats include `pages_fetched`, `unique_events_seen`, and `hit_page_cap` for monitoring.
+
+**Admin endpoints:**
+```bash
+# Trigger a poll
+curl -X POST "https://api.bainluck.com/api/admin/polymarket/poll?secret=any"
+
+# Check task status
+curl "https://api.bainluck.com/api/admin/polymarket/task/{task_id}?secret=any"
+```
 
 **Non-sports categories to enable:**
 | Category | Examples |
@@ -431,28 +443,28 @@ SPORT_PATTERNS = [
 **Admin endpoints:**
 ```bash
 # Check categorization status
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorization-status"
+curl "https://api.bainluck.com/api/admin/futures/categorization-status"
 
 # Trigger LLM categorization (requires OPENAI_API_KEY)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorize?secret=xxx&limit=50"
+curl -X POST "https://api.bainluck.com/api/admin/futures/categorize?secret=xxx&limit=50"
 
 # Dry run (preview without saving)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/categorize?secret=xxx&dry_run=true"
+curl -X POST "https://api.bainluck.com/api/admin/futures/categorize?secret=xxx&dry_run=true"
 
 # View uncategorized markets (diagnostic)
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/uncategorized"
+curl "https://api.bainluck.com/api/admin/futures/uncategorized"
 
 # Force-categorize all remaining via LLM
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/futures/force-categorize?secret=xxx&limit=100"
+curl -X POST "https://api.bainluck.com/api/admin/futures/force-categorize?secret=xxx&limit=100"
 ```
 
 **Debug endpoints:**
 ```bash
 # See futures count by source (odds_api vs kalshi vs polymarket)
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sources"
+curl "https://api.bainluck.com/api/futures/debug/sources"
 
 # See sport linking for futures
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/futures/debug/sport-mapping"
+curl "https://api.bainluck.com/api/futures/debug/sport-mapping"
 ```
 
 ### Pinned Events & Futures
@@ -471,8 +483,8 @@ Currently uses localStorage (no auth required). When Firebase Auth is added, thi
 
 ```javascript
 // localStorage keys
-oddsTracker_pinnedEvents    // Array of event IDs
-oddsTracker_pinnedFutures   // Array of futures market IDs
+bainluck_pinnedEvents    // Array of event IDs
+bainluck_pinnedFutures   // Array of futures market IDs
 ```
 
 ### SportsDataIO Integration
@@ -494,11 +506,11 @@ SportsDataIO provides structured sports data: rosters, injuries (trial tier scra
 **Admin endpoints:**
 ```bash
 # Trigger roster sync (all sports or specific)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/rosters/sync?secret=any"
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/rosters/sync?secret=any&sport_key=basketball_nba"
+curl -X POST "https://api.bainluck.com/api/admin/rosters/sync?secret=any"
+curl -X POST "https://api.bainluck.com/api/admin/rosters/sync?secret=any&sport_key=basketball_nba"
 
 # Check task status
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/rosters/task/{task_id}?secret=any"
+curl "https://api.bainluck.com/api/admin/rosters/task/{task_id}?secret=any"
 ```
 
 **Known issues:**
@@ -568,22 +580,22 @@ ESPN's undocumented API provides team data (colors, logos) and live game info (c
 **Admin endpoints:**
 ```bash
 # Sync team data from ESPN (colors, logos)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/sync-teams?secret=xxx&sport_key=basketball_nba"
+curl -X POST "https://api.bainluck.com/api/admin/espn/sync-teams?secret=xxx&sport_key=basketball_nba"
 
 # Check team sync status
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/teams-status"
+curl "https://api.bainluck.com/api/admin/espn/teams-status"
 
 # Sync live event data (clock, period, win prob)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/sync-live-events?secret=xxx&sport_key=basketball_nba"
+curl -X POST "https://api.bainluck.com/api/admin/espn/sync-live-events?secret=xxx&sport_key=basketball_nba"
 
 # Test team name matching
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
+curl -X POST "https://api.bainluck.com/api/admin/espn/match-teams?secret=xxx&our_team_name=Lakers&sport_key=basketball_nba"
 
 # Fix incorrect commence_time values using ESPN as source of truth
 # (backfills completed events — the live sync task handles new ones automatically)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/fix-commence-times?secret=any&limit=500"
+curl -X POST "https://api.bainluck.com/api/admin/espn/fix-commence-times?secret=any&limit=500"
 # Check task status:
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/espn/task/{task_id}?secret=any"
+curl "https://api.bainluck.com/api/admin/espn/task/{task_id}?secret=any"
 ```
 
 ### Authentication & Personalization
@@ -641,13 +653,13 @@ Consecutive identical snapshot rows are collapsed into single rows with `capture
 **Admin endpoints:**
 ```bash
 # Trigger collapse for one table (table: odds, winprob, futures)
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/collapse?secret=any&table=odds&limit=500"
+curl -X POST "https://api.bainluck.com/api/admin/snapshots/collapse?secret=any&table=odds&limit=500"
 
 # Check task status
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/task/{task_id}?secret=any"
+curl "https://api.bainluck.com/api/admin/snapshots/task/{task_id}?secret=any"
 
 # View current row counts
-curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/snapshots/stats?secret=any"
+curl "https://api.bainluck.com/api/admin/snapshots/stats?secret=any"
 ```
 
 **Files:** `backend/app/tasks/retention.py` (`_collapse_snapshots_impl`, `_collapse_table_for_partition`), `backend/app/routes/admin.py` (snapshot endpoints), `backend/tests/test_snapshot_collapse.py` (13 tests)
@@ -658,14 +670,14 @@ The chart can display win probabilities from multiple independent sources, each 
 **Architecture:**
 - **Source registry**: `backend/app/config/win_prob_sources.py` — Python dict (not DB table) defining display_name, color, dash_pattern, methodology, attribution for each source
 - **Generic storage**: `win_prob_snapshots` table with `source` column (replaces ESPN-specific storage for new sources)
-- **OddsTracker Model**: nflfastR-inspired statistical model in `backend/app/utils/win_probability.py`. Uses normal distribution: score diff + time remaining + pregame spread. Sport-specific params: NFL base_std=13.45, NBA/NCAAB=12.0, NHL=2.5
+- **Bain Luck Model**: nflfastR-inspired statistical model in `backend/app/utils/win_probability.py`. Uses normal distribution: score diff + time remaining + pregame spread. Sport-specific params: NFL base_std=13.45, NBA/NCAAB=12.0, NHL=2.5
 - **Dual compute paths**: Stat model computes in both ESPN sync (every 60s) AND odds polling (every 30-60s) for redundancy
 - **Frontend**: OddsChart.tsx renders N sources dynamically; legend labels link to `/events/[id]/models` detail page
 
 **Current sources (3):**
 - **Betting Odds** (market, solid dark line) — consensus from 5-15 sportsbooks via The Odds API
 - **ESPN** (model, orange dashed) — ESPN's proprietary predictor, only available during live games
-- **OddsTracker Model** (model, purple dashed) — our statistical model, attribution to nflfastR/PFR methodology
+- **Bain Luck Model** (model, purple dashed) — our statistical model, attribution to nflfastR/PFR methodology
 
 **Supported sports for stat model:** NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL
 
@@ -734,18 +746,18 @@ gei_percentiles -- Pulse percentile thresholds
 
 ### Run Pulse recalculation
 ```bash
-curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/pulse/recalculate?secret=any&limit=500"
+curl -X POST "https://api.bainluck.com/api/admin/pulse/recalculate?secret=any&limit=500"
 ```
 
 ### Check Pulse status
 ```
-https://what-are-the-odds-0283511a7d93.herokuapp.com/api/events/debug/pulse
+https://api.bainluck.com/api/events/debug/pulse
 ```
 
 ### Debug an event
 ```
-https://what-are-the-odds-0283511a7d93.herokuapp.com/api/events/{id}
-https://what-are-the-odds-0283511a7d93.herokuapp.com/api/events/{id}/debug
+https://api.bainluck.com/api/events/{id}
+https://api.bainluck.com/api/events/{id}/debug
 ```
 
 ---
@@ -789,7 +801,7 @@ These are the current focus. Resist the urge to build new features until these a
 6. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
 8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
-9. 📋 **Polymarket integration** — Prediction market with 3,294+ sports markets and non-sports categories (politics, entertainment, crypto, weather). No API key needed, generous rate limits, built-in price history. Expands vision toward "easiest place to see the probability of anything happening, computed any way possible." Implementation: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`), category mapping for non-sports feed content. See Polymarket Integration section above for full API details.
+9. 📋 **Polymarket integration Phase 2** — Beat schedule (auto-polling on cron), price history backfill via CLOB `/prices-history` endpoint, non-sports category display in frontend (politics, entertainment, crypto tabs). Phase 1 (API client, polling task, tag-to-category mapping, streaming pagination) is shipped.
 10. 📋 Pass Kalshi event category as sport_key for better disambiguation
 11. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
 12. 📋 LLM-powered odds movement explanations
@@ -799,7 +811,7 @@ These are the current focus. Resist the urge to build new features until these a
 16. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
 17. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
 18. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
-19. 📋 **Prediction market game-level odds on event pages** — Kalshi and Polymarket both have individual game outcome markets (moneyline-style). Show these as additional win probability lines alongside sportsbook consensus, ESPN, and the OddsTracker stat model. When prediction market odds diverge significantly from sportsbook consensus (e.g., >5% difference), surface that divergence with a badge/callout and use LLM to generate an explanation of why the markets disagree. This is the ultimate expression of "all possible win probabilities aggregated into one place." Implementation: match prediction market game events to our Event records (by team names + commence_time), write to `win_prob_snapshots` with source="polymarket"/"kalshi", poll at higher frequency for live games (every 2-5 min vs 30-60 min for futures). Frontend: OddsChart already renders N sources dynamically — just needs source registry entries in `win_prob_sources.py`.
+19. 📋 **Prediction market game-level odds on event pages** — Kalshi and Polymarket both have individual game outcome markets (moneyline-style). Show these as additional win probability lines alongside sportsbook consensus, ESPN, and the Bain Luck stat model. When prediction market odds diverge significantly from sportsbook consensus (e.g., >5% difference), surface that divergence with a badge/callout and use LLM to generate an explanation of why the markets disagree. This is the ultimate expression of "all possible win probabilities aggregated into one place." Implementation: match prediction market game events to our Event records (by team names + commence_time), write to `win_prob_snapshots` with source="polymarket"/"kalshi", poll at higher frequency for live games (every 2-5 min vs 30-60 min for futures). Frontend: OddsChart already renders N sources dynamically — just needs source registry entries in `win_prob_sources.py`.
 
 ### Horizon — AI-Native Sports Intelligence (SportsDataIO + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require SportsDataIO enrichment (rosters, injuries, standings, schedules) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -830,7 +842,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ ~~TV/Party mode~~ (shipped for Super Bowl LX, removed post-event — see future priority #14 for v2)
 - ✅ Sentry error tracking (FastAPI + Celery worker, controlled by SENTRY_DSN env var)
 - ✅ Multi-source win probability infrastructure (generic `win_prob_snapshots` table, source config, N-source chart)
-- ✅ OddsTracker statistical win probability model (nflfastR-inspired, NFL/NCAAF/NBA/NCAAB/WNCAAB/NHL)
+- ✅ Bain Luck statistical win probability model (nflfastR-inspired, NFL/NCAAF/NBA/NCAAB/WNCAAB/NHL)
 - ✅ Win probability source detail page (`/events/[id]/models`) with methodology + attribution
 - ✅ ESPN team name matching normalization (unicode/accent handling for college teams)
 - ✅ Status-based probability display (opening odds for finished games, current odds for live, with stale bookmaker filtering)
@@ -843,6 +855,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
 - ✅ Test coverage for core algorithms: 719 backend (pytest items) + 107 frontend = 826 total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), odds polling helpers (27), win prob sources (24), task wiring (19), stale bookmaker filter (14), snapshot collapse (13), redis state (9). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
+- ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -927,9 +940,9 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 | What | Where |
 |------|-------|
 | API docs | `/docs` on backend URL |
-| Pulse explainer | https://odds.alexbain.com/pulse |
-| Pulse Hall of Fame | https://odds.alexbain.com/pulse/hall-of-fame |
-| Search | https://odds.alexbain.com/search?q=celtics |
+| Pulse explainer | https://bainluck.com/pulse |
+| Pulse Hall of Fame | https://bainluck.com/pulse/hall-of-fame |
+| Search | https://bainluck.com/search?q=celtics |
 | PRD | `docs/PRD.md` |
 | Debug endpoints | `/api/events/debug/*` |
 | Admin endpoints | `/api/admin/*` |

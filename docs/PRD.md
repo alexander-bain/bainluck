@@ -1,14 +1,14 @@
-# OddsTracker - Product Requirements Document
+# Bain Luck - Product Requirements Document
 
 ## Executive Summary
 
-OddsTracker is a visual-first sports odds experience that translates betting markets into intuitive, real-time representations of how a game is expected to unfold—before and during play.
+Bain Luck is a visual-first sports odds experience that translates betting markets into intuitive, real-time representations of how a game is expected to unfold—before and during play.
 
 The product is designed primarily as a **second screen for casual sports fans**: people watching a game who want immediate, understandable context for what just happened and why it mattered, without having to interpret betting lines or think like gamblers.
 
-OddsTracker is not a sportsbook, not a pick-selling tool, and not a stats-heavy analytics platform. It is the cleanest, fastest way to visualize expectation shifts in live sports.
+Bain Luck is not a sportsbook, not a pick-selling tool, and not a stats-heavy analytics platform. It is the cleanest, fastest way to visualize expectation shifts in live sports.
 
-**Expanding vision:** OddsTracker aggregates probabilities from sportsbooks (The Odds API), prediction markets (Kalshi, Polymarket), proprietary models (ESPN, OddsTracker stat model), and more — aspiring to be the **easiest place to see the probability of anything happening, computed any way possible**. Non-sports prediction markets (politics, entertainment, crypto) extend this into a broader "probability of everything" experience.
+**Expanding vision:** Bain Luck aggregates probabilities from sportsbooks (The Odds API), prediction markets (Kalshi, Polymarket), proprietary models (ESPN, Bain Luck stat model), and more — aspiring to be the **easiest place to see the probability of anything happening, computed any way possible**. Non-sports prediction markets (politics, entertainment, crypto) extend this into a broader "probability of everything" experience.
 
 ---
 
@@ -18,7 +18,7 @@ OddsTracker is not a sportsbook, not a pick-selling tool, and not a stats-heavy 
 Make betting odds understandable to non-bettors by turning them into clean, live, visual signals about game expectations.
 
 ### North Star Statement
-**OddsTracker is the cleanest odds visualization tool on the internet.**
+**Bain Luck is the cleanest odds visualization tool on the internet.**
 
 ### North Star Metric
 **Time-to-understanding**: How quickly a user can understand what changed in a game and how much it mattered.
@@ -72,7 +72,7 @@ These users may still find value, but the product will not optimize for them in 
 
 ## What This Product Is Not (Non-Goals)
 
-OddsTracker will **not** become:
+Bain Luck will **not** become:
 - A sportsbook or betting interface
 - A pick-selling or tout product
 - A social network
@@ -87,7 +87,7 @@ These exclusions are intentional and protect product clarity.
 
 ### The Second-Screen Experience
 
-OddsTracker is designed to be open during live play, but only active when meaningful.
+Bain Luck is designed to be open during live play, but only active when meaningful.
 
 #### Live Update Philosophy
 - Odds update when markets move meaningfully
@@ -106,7 +106,7 @@ OddsTracker is designed to be open during live play, but only active when meanin
 This removes confusion and builds trust.
 
 #### Automatic Context (Lightweight)
-When a large shift occurs, OddsTracker may surface:
+When a large shift occurs, Bain Luck may surface:
 - "That TD increased win probability by +14%"
 - "This injury moved the line significantly"
 
@@ -614,7 +614,7 @@ def project_scores(home_prob: float, over_under: float) -> tuple[float, float]:
 
 ### Pulse (Game Excitement Metric) ✅ Implemented
 
-OddsTracker's proprietary excitement metric measuring how "alive" a game is based on probability movement patterns.
+Bain Luck's proprietary excitement metric measuring how "alive" a game is based on probability movement patterns.
 
 **Two-layer scoring:**
 1. **Raw score**: Deterministic calculation from odds movement data (stored as `raw_gei` on events)
@@ -1159,7 +1159,7 @@ Completed: February 2026
 
 - [x] Generic `win_prob_snapshots` table with source column
 - [x] Source registry in `backend/app/config/win_prob_sources.py` (Python dict, not DB)
-- [x] OddsTracker statistical win probability model (nflfastR-inspired normal distribution)
+- [x] Bain Luck statistical win probability model (nflfastR-inspired normal distribution)
 - [x] OddsChart renders N sources dynamically with labeled, color-coded lines
 - [x] `/events/[id]/models` detail page showing methodology + attribution
 - [x] Dual compute paths: ESPN sync (60s) + odds polling (30-60s)
@@ -1169,9 +1169,9 @@ Completed: February 2026
 |--------|------|--------|
 | Betting Odds | Market (The Odds API) | All |
 | ESPN | Model (undocumented API) | NBA, NCAAB, NFL, NCAAF, NHL, MLB |
-| OddsTracker Model | Model (nflfastR methodology) | NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL |
+| Bain Luck Model | Model (nflfastR methodology) | NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL |
 
-**OddsTracker Model Details:**
+**Bain Luck Model Details:**
 - Normal distribution model: score diff + time remaining + pregame spread
 - Sport-specific params: NFL base_std=13.45, NBA/NCAAB=12.0, NHL=2.5
 - Depends on `game_clock` and `period` from ESPN sync (if ESPN name matching fails, model can't compute)
@@ -1250,7 +1250,7 @@ Completed: February 2026
 
 Target: Q2 2026
 
-This phase moves OddsTracker toward the broader vision: **"The easiest place to see the probability of anything happening, computed any way possible."** Polymarket adds both deeper sports coverage and wildcard non-sports categories (politics, entertainment, crypto, weather) that make the feed more interesting and differentiated.
+This phase moves Bain Luck toward the broader vision: **"The easiest place to see the probability of anything happening, computed any way possible."** Polymarket adds both deeper sports coverage and wildcard non-sports categories (politics, entertainment, crypto, weather) that make the feed more interesting and differentiated.
 
 #### Phase 15a: Polymarket Integration
 
@@ -1284,7 +1284,7 @@ Key CLOB endpoints:
 
 **Data Model Mapping:**
 
-| Polymarket | OddsTracker DB |
+| Polymarket | Bain Luck DB |
 |------------|----------------|
 | Event | `futures_markets` (source="polymarket") |
 | Event.id | `futures_markets.external_id` |
@@ -1503,7 +1503,7 @@ These are differentiated features that can't be built with odds data alone. They
 
 ### Blacklist Approach
 
-OddsTracker uses a **blacklist** rather than a whitelist for sports coverage:
+Bain Luck uses a **blacklist** rather than a whitelist for sports coverage:
 
 - **Included**: All sports from The Odds API except those on the blacklist
 - **Excluded**: Most soccer leagues (except MLS), Cricket, Rugby, AFL
@@ -1645,7 +1645,7 @@ Monetization must not distort trust or clarity.
 - No calls to action to place bets
 - Clear labeling of prediction markets vs. sports betting
 
-OddsTracker displays information, not transactions.
+Bain Luck displays information, not transactions.
 
 ---
 
@@ -1732,7 +1732,7 @@ These are the current focus. Resist the urge to build new features until these a
 - Pinned Events & Futures (localStorage + server-backed for authenticated users)
 - Sentry error tracking (FastAPI + Celery worker)
 - Multi-source win probability infrastructure (generic table, source registry, N-source chart)
-- OddsTracker statistical win probability model (nflfastR-inspired, 6 sports)
+- Bain Luck statistical win probability model (nflfastR-inspired, 6 sports)
 - Win probability source detail page (`/events/[id]/models`)
 - ESPN integration (team colors/logos, live game data, win probability, venues, alternate names, records)
 - ESPN team name matching normalization (unicode/accent handling for college teams)
@@ -1773,7 +1773,7 @@ These are product experiments, not blockers.
 
 This product wins not by being smarter than users, but by being **clearer than everything else**.
 
-If OddsTracker succeeds, users won't say:
+If Bain Luck succeeds, users won't say:
 > "This helped me bet."
 
 They'll say:

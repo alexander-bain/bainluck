@@ -210,7 +210,7 @@ export default function EventPage({ params }: EventPageProps) {
   // Track page view with event-specific parameters
   usePageTracking({
     pageType: 'event_detail',
-    pageTitle: event ? `${event.home_team} vs ${event.away_team} - OddsTracker` : 'Event - OddsTracker',
+    pageTitle: event ? `${event.home_team} vs ${event.away_team} - Bain Luck` : 'Event - Bain Luck',
     additionalParams: event ? {
       event_id: event.id,
       sport: event.sport || undefined,

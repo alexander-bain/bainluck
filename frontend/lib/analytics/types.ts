@@ -1,5 +1,5 @@
 /**
- * Google Analytics 4 Event Types for OddsTracker
+ * Google Analytics 4 Event Types for Bain Luck
  *
  * Taxonomy Hierarchy:
  * - Category: High-level grouping (navigation, filter, event_interaction, etc.)

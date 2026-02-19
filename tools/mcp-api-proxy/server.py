@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCP server that proxies requests to the OddsTracker production API.
+MCP server that proxies requests to the Bain Luck production API.
 
 Runs locally on your machine so it has full network access.
 Claude Code calls this server's tools to query the production API.
@@ -18,9 +18,9 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-API_BASE = "https://what-are-the-odds-0283511a7d93.herokuapp.com"
+API_BASE = "https://api.bainluck.com"
 
-server = Server("odds-tracker-api")
+server = Server("bainluck-api")
 
 
 @server.list_tools()
@@ -29,7 +29,7 @@ async def list_tools():
         Tool(
             name="odds_api",
             description=(
-                "Make a request to the OddsTracker production API. "
+                "Make a request to the Bain Luck production API. "
                 "Common paths: "
                 "/api/events (list events, ?sport=americanfootball_nfl&status=live), "
                 "/api/events/search?q=super+bowl (search), "

@@ -82,7 +82,7 @@ export default function HomePage() {
   // Track page view
   usePageTracking({
     pageType: 'home',
-    pageTitle: 'OddsTracker - Home',
+    pageTitle: 'Bain Luck - Home',
   });
 
   // Track scroll depth

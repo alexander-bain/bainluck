@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the design for supporting futures/outright markets from multiple sources (The Odds API, Kalshi) in OddsTracker.
+This document outlines the design for supporting futures/outright markets from multiple sources (The Odds API, Kalshi) in Bain Luck.
 
 ## Event Types
 

@@ -22,7 +22,7 @@ target_metadata = Base.metadata
 # Get database URL from environment
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/odds_tracker"
+    "postgresql://postgres:postgres@localhost:5432/bainluck"
 )
 
 # Normalize Heroku's postgres:// to postgresql:// (psycopg2 format)

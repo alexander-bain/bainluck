@@ -37,7 +37,7 @@ export function ConsentBanner() {
                 </h3>
               </div>
               <p className="text-sm text-slate leading-relaxed">
-                We use cookies and similar technologies to understand how you use OddsTracker
+                We use cookies and similar technologies to understand how you use Bain Luck
                 and improve your experience. You can choose which types of tracking to allow.
               </p>
               <button

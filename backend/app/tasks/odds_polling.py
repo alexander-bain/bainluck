@@ -459,7 +459,7 @@ async def _poll_all_odds():
                 should_poll_sport = True
                 if r:
                     try:
-                        last_poll_key = f"odds_tracker:last_poll:{sport_key}"
+                        last_poll_key = f"bainluck:last_poll:{sport_key}"
                         last_poll = r.get(last_poll_key)
                         if last_poll:
                             last_poll_time = float(last_poll.decode())
@@ -482,7 +482,7 @@ async def _poll_all_odds():
                     # Update last poll time in Redis
                     if r:
                         try:
-                            last_poll_key = f"odds_tracker:last_poll:{sport_key}"
+                            last_poll_key = f"bainluck:last_poll:{sport_key}"
                             r.set(last_poll_key, str(now.timestamp()), ex=3600)
                         except Exception:
                             pass

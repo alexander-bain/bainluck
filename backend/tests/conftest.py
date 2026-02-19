@@ -1,4 +1,4 @@
-"""Shared test fixtures for the OddsTracker backend test suite."""
+"""Shared test fixtures for the Bain Luck backend test suite."""
 
 import pytest
 from datetime import datetime, timezone, timedelta

@@ -40,7 +40,7 @@ if REDIS_URL.startswith("rediss://"):
 
 # Create Celery app
 celery_app = Celery(
-    "odds_tracker",
+    "bainluck",
     broker=REDIS_URL,
     backend=REDIS_URL,
 )
@@ -280,7 +280,7 @@ def heartbeat():
     from app.tasks.redis_state import get_redis_client
     try:
         r = get_redis_client()
-        r.set("odds_tracker:heartbeat", datetime.now(timezone.utc).isoformat(), ex=300)
+        r.set("bainluck:heartbeat", datetime.now(timezone.utc).isoformat(), ex=300)
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "error": str(e)}

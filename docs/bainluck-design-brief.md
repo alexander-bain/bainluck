@@ -1,4 +1,4 @@
-# OddsTracker Design Brief
+# Bain Luck Design Brief
 
 ## 1. Design Principles
 
@@ -292,7 +292,7 @@ On iOS, feel like an Apple app. On web, feel like a premium dashboard. Respect e
 
 **Header**
 - Fixed position on scroll (web), standard behavior (iOS)
-- Left: App wordmark "OddsTracker" in Title 2 weight
+- Left: App wordmark "Bain Luck" in Title 2 weight
 - Right: Settings gear icon (web) or profile avatar
 
 **Filter Section**
@@ -552,4 +552,4 @@ module.exports = {
 
 ---
 
-This brief should give any designer or developer enough context to create consistent, on-brand screens for OddsTracker. The emphasis throughout is on speed of comprehension, respect for the user's attention, and the quiet confidence that comes from showing exactly what matters—nothing more.
+This brief should give any designer or developer enough context to create consistent, on-brand screens for Bain Luck. The emphasis throughout is on speed of comprehension, respect for the user's attention, and the quiet confidence that comes from showing exactly what matters—nothing more.

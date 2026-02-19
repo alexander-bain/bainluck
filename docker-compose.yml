@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: odds_tracker
+      POSTGRES_DB: bainluck
     ports:
       - "5432:5432"
     volumes:
@@ -37,7 +37,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/odds_tracker
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/bainluck
       REDIS_URL: redis://redis:6379/0
       ODDS_API_KEY: ${ODDS_API_KEY}
     depends_on:
@@ -55,7 +55,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/odds_tracker
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/bainluck
       REDIS_URL: redis://redis:6379/0
       ODDS_API_KEY: ${ODDS_API_KEY}
     depends_on:
@@ -73,7 +73,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/odds_tracker
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/bainluck
       REDIS_URL: redis://redis:6379/0
       ODDS_API_KEY: ${ODDS_API_KEY}
     depends_on:

@@ -36,7 +36,7 @@ WIN_PROB_SOURCES = {
         "attribution_name": "ESPN",
     },
     "stat_model": {
-        "display_name": "OddsTracker Model",
+        "display_name": "Bain Luck Model",
         "source_type": "model",
         "sports": [
             "americanfootball_nfl", "americanfootball_ncaaf",

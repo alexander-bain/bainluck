@@ -1,8 +1,8 @@
-# OddsTracker Game Excitement Index (GEI) - Technical Proposal
+# Bain Luck Game Excitement Index (GEI) - Technical Proposal
 
 ## Executive Summary
 
-This document proposes a proprietary **Game Excitement Index (GEI)** for OddsTracker that measures how exciting a sporting event was based on odds movement data. Unlike traditional approaches that require play-by-play data, our GEI is derived entirely from betting market signals, making it applicable across all sports we track.
+This document proposes a proprietary **Game Excitement Index (GEI)** for Bain Luck that measures how exciting a sporting event was based on odds movement data. Unlike traditional approaches that require play-by-play data, our GEI is derived entirely from betting market signals, making it applicable across all sports we track.
 
 The final score is a **1-100 percentile ranking** computed both within-sport and cross-sport, allowing users to see "this was the 95th percentile most exciting NBA game this season" or "this was the 87th percentile most exciting game across all sports today."
 
@@ -58,7 +58,7 @@ Average change in win probability per basket, **weighted by time remaining** (la
 
 ---
 
-## Proposed OddsTracker GEI Formula
+## Proposed Bain Luck GEI Formula
 
 ### Component 1: Win Probability Volatility (WPV) — 40% weight
 
