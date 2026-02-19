@@ -50,6 +50,28 @@ WIN_PROB_SOURCES = {
         "attribution_url": "https://www.pro-football-reference.com/about/win_prob.htm",
         "attribution_name": "nflfastR / PFR methodology",
     },
+    "kalshi": {
+        "display_name": "Kalshi",
+        "source_type": "market",
+        "sports": ["*"],
+        "color": "#22c55e",
+        "dash_pattern": "8 4",
+        "description": "Win probability from Kalshi, a CFTC-regulated prediction market where real money is traded on event outcomes. Kalshi odds represent the consensus of market participants betting on game outcomes.",
+        "methodology": "The midpoint of the bid/ask spread for the 'Yes' contract on the game outcome market. Kalshi contracts settle at $1 if the event occurs and $0 otherwise, so the price directly represents the market's implied probability.",
+        "attribution_url": "https://kalshi.com",
+        "attribution_name": "Kalshi",
+    },
+    "polymarket": {
+        "display_name": "Polymarket",
+        "source_type": "market",
+        "sports": ["*"],
+        "color": "#3b82f6",
+        "dash_pattern": "8 4",
+        "description": "Win probability from Polymarket, the world's largest prediction market by volume. Polymarket prices reflect the consensus of thousands of traders betting real money on game outcomes.",
+        "methodology": "The outcome price from Polymarket's CLOB (Central Limit Order Book). Prices range from $0.00 to $1.00 and directly represent implied probability. For binary markets, the 'Yes' price equals the market's probability estimate.",
+        "attribution_url": "https://polymarket.com",
+        "attribution_name": "Polymarket",
+    },
 }
 
 

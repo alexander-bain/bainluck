@@ -244,6 +244,15 @@ def backfill_canonical_keys(self, limit: int = 500):
     return run_async(_backfill_canonical_keys(limit))
 
 
+# --- Prediction Market → Event Matching ---
+
+@celery_app.task(bind=True, name="app.tasks.match_prediction_markets")
+def match_prediction_markets(self, limit: int = 500):
+    """Match game-level prediction markets to events and write win_prob_snapshots."""
+    from app.tasks.prediction_market_matching import _match_prediction_markets
+    return run_async(_match_prediction_markets(limit))
+
+
 # --- Roster Sync (SportsDataIO) ---
 
 @celery_app.task(bind=True, name="app.tasks.sync_rosters")
@@ -331,6 +340,11 @@ celery_app.conf.beat_schedule = {
     "heartbeat": {
         "task": "app.tasks.heartbeat",
         "schedule": 60.0,
+    },
+    "match-prediction-markets": {
+        "task": "app.tasks.match_prediction_markets",
+        "schedule": crontab(minute="5,20,35,50"),  # Every 15 min: after Polymarket (:15) and Kalshi (:45)
+        "kwargs": {"limit": 500},
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",

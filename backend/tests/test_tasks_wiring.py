@@ -163,6 +163,7 @@ class TestBeatScheduleCompleteness:
         "sync-espn-live",
         "backfill-team-logos",
         "backfill-team-links",
+        "match-prediction-markets",
         "heartbeat",
         "collapse-odds-snapshots-daily",
         "collapse-winprob-snapshots-daily",
