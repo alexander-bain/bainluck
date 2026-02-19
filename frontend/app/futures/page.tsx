@@ -9,6 +9,7 @@ import FuturesCard from "@/components/FuturesCard";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { formatProbability } from "@/lib/api";
+import { getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 
 type StatusFilter = "open" | "resolved" | "all";
 
@@ -17,83 +18,6 @@ const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "resolved", label: "Resolved" },
   { value: "all", label: "All" },
 ];
-
-/**
- * Get emoji for sport category
- */
-function getSportEmoji(sportKey: string | null): string {
-  if (!sportKey) return "🏆";
-  const key = sportKey.toLowerCase();
-  if (key.includes("basketball") || key.includes("nba") || key.includes("ncaab")) return "🏀";
-  if (key.includes("football") || key.includes("nfl") || key.includes("ncaaf")) return "🏈";
-  if (key.includes("baseball") || key.includes("mlb")) return "⚾";
-  if (key.includes("hockey") || key.includes("nhl")) return "🏒";
-  if (key.includes("soccer") || key.includes("mls") || key.includes("epl") || key.includes("uefa")) return "⚽";
-  if (key.includes("golf") || key.includes("pga")) return "⛳";
-  if (key.includes("tennis") || key.includes("atp") || key.includes("wta")) return "🎾";
-  if (key.includes("mma") || key.includes("ufc")) return "🥊";
-  if (key.includes("nascar") || key.includes("f1") || key === "motorsports" || key.includes("racing")) return "🏎️";
-  if (key === "politics") return "🗳️";
-  if (key === "entertainment") return "🎬";
-  if (key === "crypto") return "₿";
-  if (key === "economics") return "📊";
-  if (key === "tech") return "🔬";
-  if (key === "weather") return "🌤️";
-  if (key === "health") return "🏥";
-  if (key === "geopolitics") return "🌍";
-  if (key === "legal") return "⚖️";
-  if (key === "culture") return "🎭";
-  if (key === "olympics") return "🏅";
-  if (key === "cricket") return "🏏";
-  if (key === "rugby") return "🏉";
-  if (key === "horse_racing") return "🏇";
-  if (key === "boxing") return "🥊";
-  if (key === "esports") return "🎮";
-  if (key === "chess") return "♟️";
-  if (key === "poker") return "🃏";
-  if (key === "lacrosse") return "🥍";
-  if (key === "aussierules") return "🏈";
-  return "🏆";
-}
-
-/**
- * Format a category key into a display name
- */
-function formatCategoryName(key: string): string {
-  const names: Record<string, string> = {
-    football: "Football",
-    basketball: "Basketball",
-    baseball: "Baseball",
-    hockey: "Hockey",
-    soccer: "Soccer",
-    golf: "Golf",
-    tennis: "Tennis",
-    mma: "MMA",
-    boxing: "Boxing",
-    motorsports: "Motorsports",
-    cricket: "Cricket",
-    rugby: "Rugby",
-    aussierules: "AFL",
-    politics: "Politics",
-    esports: "Esports",
-    entertainment: "Entertainment",
-    olympics: "Olympics",
-    horse_racing: "Horse Racing",
-    lacrosse: "Lacrosse",
-    chess: "Chess",
-    poker: "Poker",
-    crypto: "Crypto",
-    economics: "Economics",
-    tech: "Tech & Science",
-    weather: "Weather",
-    health: "Health",
-    geopolitics: "Geopolitics",
-    legal: "Legal",
-    culture: "Culture",
-    other: "Other",
-  };
-  return names[key] || key.charAt(0).toUpperCase() + key.slice(1);
-}
 
 interface SportGroup {
   sport: string;
@@ -130,13 +54,13 @@ export default function FuturesPage() {
 
     for (const market of markets) {
       const sport = market.sport || market.llm_sport_category || "other";
-      const sportName = market.sport_name || formatCategoryName(sport);
+      const sportName = market.sport_name || getNameForCategory(sport);
 
       if (!groups.has(sport)) {
         groups.set(sport, {
           sport,
           sportName,
-          emoji: getSportEmoji(sport),
+          emoji: getEmojiForCategory(sport),
           markets: [],
         });
       }

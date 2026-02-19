@@ -8,6 +8,7 @@ import {
   getCategoryForLeague,
   getActiveCategoriesFromLeagues,
   getLeagueTier,
+  getNameForCategory,
 } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 
@@ -130,27 +131,9 @@ export default function SportFilter({
     );
   }
 
-  // Map category keys to display with emoji
+  // Map category keys to display with emoji — uses central SPORT_CATEGORIES
   const getCategoryDisplay = (key: string, emoji: string): { label: string; emoji: string } => {
-    const labels: Record<string, string> = {
-      football: "Football",
-      basketball: "Basketball",
-      baseball: "Baseball",
-      hockey: "Hockey",
-      mma: "MMA",
-      boxing: "Boxing",
-      golf: "Golf",
-      tennis: "Tennis",
-      cricket: "Cricket",
-      rugby: "Rugby",
-      aussierules: "AFL",
-      politics: "Politics",
-      esports: "Esports",
-      lacrosse: "Lacrosse",
-      motorsport: "Racing",
-      other: "Other",
-    };
-    return { label: labels[key] || key, emoji };
+    return { label: getNameForCategory(key), emoji };
   };
 
   return (

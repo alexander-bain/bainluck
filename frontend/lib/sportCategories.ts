@@ -765,6 +765,37 @@ export function getCategoryName(leagueKey: string): string {
   return category?.name || "Other";
 }
 
+// Build a fast lookup map from category key to SportCategory
+const _CATEGORY_BY_KEY = new Map<string, SportCategory>(
+  SPORT_CATEGORIES.map((c) => [c.key, c]),
+);
+
+/**
+ * Look up a SportCategory by its key (e.g., "darts", "basketball").
+ * Returns undefined for unknown keys.
+ */
+export function getCategoryByKey(key: string): SportCategory | undefined {
+  return _CATEGORY_BY_KEY.get(key.toLowerCase());
+}
+
+/**
+ * Get emoji for a category key (e.g., "darts" → "🎯").
+ * Falls back to "🏆" for unknown categories.
+ */
+export function getEmojiForCategory(categoryKey: string): string {
+  return _CATEGORY_BY_KEY.get(categoryKey.toLowerCase())?.emoji || "🏆";
+}
+
+/**
+ * Get display name for a category key (e.g., "horse_racing" → "Horse Racing").
+ * Falls back to capitalized key for unknown categories.
+ */
+export function getNameForCategory(categoryKey: string): string {
+  const cat = _CATEGORY_BY_KEY.get(categoryKey.toLowerCase());
+  if (cat) return cat.name;
+  return categoryKey.charAt(0).toUpperCase() + categoryKey.slice(1).replace(/_/g, " ");
+}
+
 /**
  * Group an array of league keys by their category.
  * Returns a map of categoryKey -> leagueKeys[]

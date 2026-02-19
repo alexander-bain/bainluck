@@ -8,6 +8,7 @@ import {
   isCloseGame as checkCloseGame,
   GA_CONFIG,
 } from '@/lib/analytics';
+import { getCategoryByKey } from '@/lib/sportCategories';
 import type {
   EventCardClickParams,
   FilterCategoryParams,
@@ -389,12 +390,7 @@ function getLeagueTier(sport: string | null): 1 | 2 | 3 {
  * Get tier for a category
  */
 function getCategoryTier(category: string): 1 | 2 | 3 {
-  const tier1 = ['football', 'basketball', 'baseball'];
-  const tier2 = ['hockey', 'soccer', 'mma', 'boxing'];
-
-  if (tier1.includes(category)) return 1;
-  if (tier2.includes(category)) return 2;
-  return 3;
+  return getCategoryByKey(category)?.tier ?? 3;
 }
 
 export default useAnalytics;
