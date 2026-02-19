@@ -113,6 +113,9 @@ SPORT_PATTERNS = [
 
     # Politics
     (re.compile(r"\b(election|president|congress|senate|governor|presidential|democrat|republican|trump|biden)\b", re.I), "politics"),
+    (re.compile(r"\bhouse.race\b", re.I), "politics"),
+    (re.compile(r"\bwhich.party.will.win\b", re.I), "politics"),
+    (re.compile(r"\b(gubernatorial|midterm|primary.election|electoral.college|ballot.measure)\b", re.I), "politics"),
 
     # Esports
     (re.compile(r"\b(lol|league.of.legends|csgo|cs2|cs.go|dota|valorant|esports|overwatch.league)\b", re.I), "esports"),

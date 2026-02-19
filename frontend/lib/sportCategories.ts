@@ -429,6 +429,9 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
 
   // Politics
   { pattern: /\b(election|president|congress|senate|governor|presidential|democrat|republican|trump|biden)\b/i, category: "politics" },
+  { pattern: /\bhouse.race\b/i, category: "politics" },
+  { pattern: /\bwhich.party.will.win\b/i, category: "politics" },
+  { pattern: /\b(gubernatorial|midterm|primary.election|electoral.college|ballot.measure)\b/i, category: "politics" },
 
   // Esports
   { pattern: /\b(lol|league.of.legends|csgo|cs2|cs.go|dota|valorant|esports|overwatch.league)\b/i, category: "esports" },

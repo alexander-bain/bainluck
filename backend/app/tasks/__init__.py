@@ -191,6 +191,13 @@ def categorize_futures_task(self, limit: int = 100, force_llm: bool = False):
     return run_async(_categorize_futures_impl(limit, force_llm))
 
 
+@celery_app.task(bind=True, name="app.tasks.recategorize_other")
+def recategorize_other_task(self, limit: int = 500):
+    """Re-run rules on 'other' markets to fix miscategorizations."""
+    from app.tasks.futures import _recategorize_other_impl
+    return run_async(_recategorize_other_impl(limit))
+
+
 # --- ESPN ---
 
 @celery_app.task(bind=True, name="app.tasks.enrich_events_metadata")
