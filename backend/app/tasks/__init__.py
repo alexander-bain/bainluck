@@ -349,6 +349,16 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
         "kwargs": {"table": "futures", "limit": 500},
     },
+    "recategorize-other-daily": {
+        "task": "app.tasks.recategorize_other",
+        "schedule": crontab(minute=0, hour=8),  # Daily at 8:00 AM UTC
+        "kwargs": {"limit": 2000},
+    },
+    "backfill-canonical-keys-daily": {
+        "task": "app.tasks.backfill_canonical_keys",
+        "schedule": crontab(minute=30, hour=8),  # Daily at 8:30 AM UTC
+        "kwargs": {"limit": 2000},
+    },
 }
 
 

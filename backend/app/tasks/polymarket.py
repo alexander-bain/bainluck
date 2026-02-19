@@ -262,6 +262,31 @@ async def _poll_polymarket_markets():
                     # Determine category from tags
                     category, llm_sport_category = _tags_to_category(event.tags)
 
+                    # Fall back to pattern matching + league inference if tags didn't help
+                    if not llm_sport_category or llm_sport_category == "other":
+                        from app.utils.futures_categorization import (
+                            categorize_by_rules, detect_league as _detect_league,
+                            infer_sport_from_league as _infer,
+                        )
+                        rules_result = categorize_by_rules(event.title)
+                        if rules_result:
+                            llm_sport_category = rules_result
+                        else:
+                            # Try league detection → sport inference
+                            _league = _detect_league(event.title)
+                            if _league:
+                                _sport = _infer(_league)
+                                if _sport:
+                                    llm_sport_category = _sport
+
+                        # If we found a sport category, ensure category is "championship"
+                        if llm_sport_category and llm_sport_category not in (
+                            "other", "politics", "economics", "tech", "crypto",
+                            "weather", "health", "geopolitics", "legal",
+                            "culture", "entertainment",
+                        ):
+                            category = "championship"
+
                     # Compute market tier
                     from app.utils.team_linking import compute_market_tier
                     from app.utils.futures_categorization import (
@@ -290,6 +315,21 @@ async def _poll_polymarket_markets():
                         llm_sport_category, league, canon_category, season,
                     )
 
+                    # Build update set for on-conflict
+                    update_set = {
+                        "name": event.title,
+                        "market_tier": market_tier,
+                        "llm_league": league,
+                        "canonical_market_key": canonical_key,
+                        "commence_time": commence_time,
+                        "resolution_date": resolution_date,
+                        "status": "open" if event.active else "resolved",
+                        "updated_at": func.now(),
+                    }
+                    # Update llm_sport_category if we have a non-"other" value
+                    if llm_sport_category and llm_sport_category != "other":
+                        update_set["llm_sport_category"] = llm_sport_category
+
                     # Upsert FuturesMarket
                     market_stmt = pg_insert(FuturesMarket).values(
                         source="polymarket",
@@ -306,16 +346,7 @@ async def _poll_polymarket_markets():
                         status="open" if event.active else "resolved",
                     ).on_conflict_do_update(
                         index_elements=["source", "external_id"],
-                        set_={
-                            "name": event.title,
-                            "market_tier": market_tier,
-                            "llm_league": league,
-                            "canonical_market_key": canonical_key,
-                            "commence_time": commence_time,
-                            "resolution_date": resolution_date,
-                            "status": "open" if event.active else "resolved",
-                            "updated_at": func.now(),
-                        },
+                        set_=update_set,
                     ).returning(FuturesMarket.id)
 
                     result = await session.execute(market_stmt)

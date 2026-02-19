@@ -68,19 +68,28 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     return "other"
 
 
-def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str]) -> Optional[str]:
+def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str]) -> str:
     """
     Determine llm_sport_category for a Kalshi market using pattern matching.
 
     Uses the same rules engine as the admin categorization endpoint,
     plus Kalshi's own category as a fallback hint.
+
+    Always returns a category (never None) — defaults to "other".
     """
-    from app.utils.futures_categorization import categorize_by_rules
+    from app.utils.futures_categorization import categorize_by_rules, detect_league, infer_sport_from_league
 
     # First try pattern matching on market name (handles "Winter Olympics", "NBA MVP", etc.)
     result = categorize_by_rules(market_name)
     if result:
         return result
+
+    # Try league detection → sport inference (e.g., "Stanley Cup" → NHL → hockey)
+    league = detect_league(market_name)
+    if league:
+        sport = infer_sport_from_league(league)
+        if sport:
+            return sport
 
     # Fall back to Kalshi's own category as a hint
     if kalshi_category:
@@ -119,7 +128,7 @@ def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str]) 
         if "financ" in cat_lower:
             return "economics"
 
-    return None
+    return "other"
 
 
 async def _poll_kalshi_markets():
@@ -212,6 +221,7 @@ async def _poll_kalshi_markets():
                         "external_id": event.event_ticker,
                         "name": market_name,
                         "category": category,
+                        "llm_sport_category": sport_category,
                         "market_tier": market_tier,
                         "mutually_exclusive": event.mutually_exclusive,
                         "commence_time": commence_time,
@@ -226,9 +236,9 @@ async def _poll_kalshi_markets():
                         "resolution_date": expiration_time,
                         "updated_at": func.now(),
                     }
-                    # Set llm_sport_category if we can determine it
-                    if sport_category:
-                        upsert_values["llm_sport_category"] = sport_category
+                    # Always update llm_sport_category unless new value is "other"
+                    # and existing might be better (from LLM or previous categorization)
+                    if sport_category and sport_category != "other":
                         update_set["llm_sport_category"] = sport_category
                     # Set league and canonical key
                     if league:
