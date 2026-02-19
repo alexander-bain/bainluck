@@ -39,6 +39,7 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "hockey": "hockey",
     "ufc": "mma",
     "mma": "mma",
+    "fighting": "mma",
     "soccer": "soccer",
     "epl": "soccer",
     "premier league": "soccer",
@@ -49,45 +50,91 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "serie a": "soccer",
     "mls": "soccer",
     "ligue 1": "soccer",
+    "liga mx": "soccer",
+    "copa america": "soccer",
+    "world cup": "soccer",
+    "fifa": "soccer",
     "golf": "golf",
     "pga": "golf",
+    "masters": "golf",
     "tennis": "tennis",
     "atp": "tennis",
     "wta": "tennis",
+    "wimbledon": "tennis",
+    "us open tennis": "tennis",
     "boxing": "boxing",
     "cricket": "cricket",
+    "ipl": "cricket",
     "rugby": "rugby",
     "motorsports": "motorsports",
     "f1": "motorsports",
     "formula 1": "motorsports",
     "nascar": "motorsports",
+    "indycar": "motorsports",
+    "motogp": "motorsports",
     "olympics": "olympics",
+    "olympic": "olympics",
+    "summer olympics": "olympics",
+    "winter olympics": "olympics",
     "esports": "esports",
+    "gaming": "esports",
+    "horse racing": "horse_racing",
+    "horse-racing": "horse_racing",
+    "kentucky derby": "horse_racing",
+    "lacrosse": "lacrosse",
+    "cycling": "other",
+    "swimming": "olympics",
+    "track and field": "olympics",
+    "athletics": "olympics",
     # Non-sports
     "politics": "politics",
     "elections": "politics",
+    "trump": "politics",
+    "congress": "politics",
+    "senate": "politics",
     "entertainment": "entertainment",
     "oscars": "entertainment",
     "movies": "entertainment",
     "music": "entertainment",
+    "tv": "entertainment",
+    "awards": "entertainment",
+    "grammys": "entertainment",
+    "emmys": "entertainment",
     "crypto": "crypto",
     "bitcoin": "crypto",
     "ethereum": "crypto",
+    "solana": "crypto",
+    "defi": "crypto",
+    "nft": "crypto",
     "economy": "economics",
     "fed": "economics",
     "inflation": "economics",
+    "gdp": "economics",
+    "interest rates": "economics",
+    "stocks": "economics",
+    "stock market": "economics",
     "tech": "tech",
     "ai": "tech",
     "science": "tech",
+    "spacex": "tech",
+    "apple": "tech",
+    "google": "tech",
     "weather": "weather",
     "climate": "weather",
+    "hurricane": "weather",
+    "temperature": "weather",
+    # Broad catch-alls
+    "culture": "entertainment",
+    "world": "politics",
+    # Note: "sports" is NOT in this dict — it's handled specially in
+    # _tags_to_category() as a fallback that returns ("championship", None)
 }
 
 # Categories that map to "championship" internal category for sport-linked futures
 _SPORT_CATEGORIES = {
     "basketball", "football", "baseball", "hockey", "mma", "soccer",
     "golf", "tennis", "boxing", "cricket", "rugby", "motorsports",
-    "olympics", "esports",
+    "olympics", "esports", "horse_racing", "lacrosse",
 }
 
 
@@ -138,9 +185,9 @@ async def _poll_polymarket_markets():
     }
 
     try:
-        # Fetch all sports events via the /sports endpoint
-        events = await service.get_all_sports_events()
-        logger.info("Polymarket: fetched %d sports events", len(events))
+        # Fetch ALL active events (sports + non-sports)
+        events = await service.get_all_active_events()
+        logger.info("Polymarket: fetched %d active events", len(events))
 
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)

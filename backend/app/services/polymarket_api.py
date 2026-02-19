@@ -99,21 +99,8 @@ class PolymarketAPIService:
     GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
     CLOB_BASE_URL = "https://clob.polymarket.com"
 
-    # Polymarket tags we want (sports + non-sports wildcard categories)
-    # Discovered via GET /tags and GET /sports endpoints
-    SPORTS_TAGS = [
-        "Sports", "NBA", "NFL", "NHL", "MLB", "UFC", "MMA",
-        "Soccer", "Football", "Basketball", "Baseball", "Hockey",
-        "Tennis", "Golf", "PGA",
-    ]
-
-    NON_SPORTS_TAGS = [
-        "Politics", "Elections", "Crypto", "Bitcoin",
-        "Entertainment", "Oscars", "Movies",
-        "Economy", "Fed", "Inflation",
-        "Tech", "AI", "SpaceX",
-        "Weather", "Climate",
-    ]
+    # Note: We fetch ALL active events (no tag filtering). Categorization
+    # happens in the polling task via tag-to-category mapping.
 
     def __init__(self):
         """Initialize with no auth (Polymarket read API is fully public)."""
@@ -290,23 +277,21 @@ class PolymarketAPIService:
     # High-level fetchers
     # =========================================================================
 
-    async def get_all_sports_events(self) -> list[PolymarketEvent]:
+    async def get_all_active_events(self) -> list[PolymarketEvent]:
         """
-        Fetch all active events by paginating through /events.
+        Fetch ALL active events by paginating through /events.
 
-        Previously tried /sports endpoint for per-league discovery, but that
-        endpoint's field names (series/tags) didn't match what we expected
-        (series_id/tag_id), returning 0 events. The simpler and more robust
-        approach is to fetch all active events directly — this is also what
-        Polymarket docs recommend as "the most efficient approach."
+        Fetches everything Polymarket has — sports, politics, entertainment,
+        crypto, weather, etc. Events are categorized using their tags array
+        in the polling task.
 
-        Events are categorized using their tags array in the polling task.
+        Rate impact: ~50-80 pages × 1 request each, well within ~1,000/hr limit.
         """
         import asyncio
 
         all_events: list[PolymarketEvent] = []
         seen_ids: set[str] = set()
-        max_pages = 30  # safety limit (~3,000 events max)
+        max_pages = 100  # safety limit (~10,000 events max)
 
         for page in range(max_pages):
             if page > 0:
@@ -338,7 +323,7 @@ class PolymarketAPIService:
                 break
 
         logger.info(
-            "Polymarket: fetched %d active events across %d pages",
+            "Polymarket: fetched %d active events (all categories) across %d pages",
             len(all_events),
             min(page + 1, max_pages),
         )
@@ -524,10 +509,10 @@ class PolymarketAPIService:
 
 
 # Convenience function for one-off fetches
-async def fetch_polymarket_sports_events() -> list[PolymarketEvent]:
-    """Fetch all active sports events from Polymarket."""
+async def fetch_polymarket_events() -> list[PolymarketEvent]:
+    """Fetch all active events from Polymarket."""
     service = PolymarketAPIService()
     try:
-        return await service.get_all_sports_events()
+        return await service.get_all_active_events()
     finally:
         await service.close()
