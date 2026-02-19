@@ -448,10 +448,9 @@ async def _recategorize_other_impl(limit: int = 500):
     Phase 4: Open-ended LLM classification (unconstrained, future-proof)
     + Tag enrichment: LLM generates tags for sparse-tag markets
 
-    When new patterns are added, Phase 1 catches them. Phase 3 uses
-    outcome names as context for disambiguation. Phase 4 lets the LLM
-    freely name categories — handling novel market types that don't fit
-    any predefined category without code changes.
+    Processes markets in small batches to avoid OOM on memory-constrained
+    workers. Each batch loads, processes, commits, and releases its markets
+    before the next batch starts.
     """
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -461,6 +460,8 @@ async def _recategorize_other_impl(limit: int = 500):
         generate_category_tags,
     )
     from app.services import llm
+
+    BATCH_SIZE = 25  # Small batches to stay within memory quota
 
     stats = {
         "processed": 0,
@@ -476,98 +477,104 @@ async def _recategorize_other_impl(limit: int = 500):
         "errors": [],
     }
 
+    llm_available = llm.is_available()
+    remaining = limit
+    offset = 0
+
+    logger.info(
+        "Recategorize-other starting: limit=%d, batch_size=%d, llm=%s",
+        limit, BATCH_SIZE, llm_available,
+    )
+
     try:
-        async with get_task_session() as session:
-            # Eagerly load outcomes so we can pass names to LLM
-            result = await session.execute(
-                select(FuturesMarket)
-                .options(selectinload(FuturesMarket.outcomes))
-                .where(FuturesMarket.llm_sport_category == "other")
-                .limit(limit)
-            )
-            markets = result.scalars().all()
+        while remaining > 0:
+            batch_size = min(BATCH_SIZE, remaining)
 
-            if not markets:
-                stats["message"] = "No 'other' markets to re-check"
-                return stats
+            async with get_task_session() as session:
+                result = await session.execute(
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.llm_sport_category == "other")
+                    .limit(batch_size)
+                )
+                markets = result.scalars().all()
 
-            llm_available = llm.is_available()
-            llm_batch = []  # Collect markets for LLM phase
+                if not markets:
+                    logger.info("No more 'other' markets to process")
+                    break
 
-            for market in markets:
-                stats["processed"] += 1
-                try:
-                    # Phase 1: Re-run pattern matching (new patterns + game prop detection)
-                    sport_key = (
-                        market.external_id
-                        if market.source == "odds_api"
-                        else None
-                    )
-                    category = categorize_by_rules(market.name, sport_key)
-                    if category and category != "other":
-                        market.llm_sport_category = category
-                        # Generate tags
-                        market.category_tags = generate_category_tags(
-                            market.name, category, market.llm_league,
-                            market.category,
+                batch_llm = []  # Markets needing LLM in this batch
+
+                # ── Phase 1 & 2: Rules + league inference (fast) ──
+                for market in markets:
+                    stats["processed"] += 1
+                    try:
+                        sport_key = (
+                            market.external_id
+                            if market.source == "odds_api"
+                            else None
                         )
-                        stats["reclassified"] += 1
-                        stats["reclassified_by_rules"] += 1
-                        stats["by_category"][category] = (
-                            stats["by_category"].get(category, 0) + 1
-                        )
-                        if len(stats["sample_results"]) < 20:
-                            stats["sample_results"].append({
-                                "id": market.id,
-                                "name": market.name,
-                                "old": "other",
-                                "new": category,
-                                "method": "rules",
-                            })
-                        continue
-
-                    # Phase 2: Infer sport from league detection
-                    league = market.llm_league
-                    if not league:
-                        league = detect_league(market.name, sport_key)
-                        if league:
-                            market.llm_league = league
-
-                    if league:
-                        sport = infer_sport_from_league(league)
-                        if sport and sport != "other":
-                            market.llm_sport_category = sport
+                        category = categorize_by_rules(market.name, sport_key)
+                        if category and category != "other":
+                            market.llm_sport_category = category
                             market.category_tags = generate_category_tags(
-                                market.name, sport, league,
+                                market.name, category, market.llm_league,
                                 market.category,
                             )
                             stats["reclassified"] += 1
-                            stats["reclassified_by_league"] += 1
-                            stats["by_category"][sport] = (
-                                stats["by_category"].get(sport, 0) + 1
+                            stats["reclassified_by_rules"] += 1
+                            stats["by_category"][category] = (
+                                stats["by_category"].get(category, 0) + 1
                             )
                             if len(stats["sample_results"]) < 20:
                                 stats["sample_results"].append({
                                     "id": market.id,
                                     "name": market.name,
                                     "old": "other",
-                                    "new": sport,
-                                    "method": f"league:{league}",
+                                    "new": category,
+                                    "method": "rules",
                                 })
                             continue
 
-                    # Phase 3: Queue for LLM with outcome context
-                    if llm_available:
-                        llm_batch.append(market)
+                        # Phase 2: Infer sport from league
+                        league = market.llm_league
+                        if not league:
+                            league = detect_league(market.name, sport_key)
+                            if league:
+                                market.llm_league = league
 
-                except Exception as e:
-                    stats["errors"].append(f"{market.id}: {str(e)}")
+                        if league:
+                            sport = infer_sport_from_league(league)
+                            if sport and sport != "other":
+                                market.llm_sport_category = sport
+                                market.category_tags = generate_category_tags(
+                                    market.name, sport, league,
+                                    market.category,
+                                )
+                                stats["reclassified"] += 1
+                                stats["reclassified_by_league"] += 1
+                                stats["by_category"][sport] = (
+                                    stats["by_category"].get(sport, 0) + 1
+                                )
+                                if len(stats["sample_results"]) < 20:
+                                    stats["sample_results"].append({
+                                        "id": market.id,
+                                        "name": market.name,
+                                        "old": "other",
+                                        "new": sport,
+                                        "method": f"league:{league}",
+                                    })
+                                continue
 
-            # Phase 3: LLM classification with outcome names as context
-            if llm_batch:
-                for market in llm_batch:
+                        if llm_available:
+                            batch_llm.append(market)
+
+                    except Exception as e:
+                        stats["errors"].append(f"{market.id}: {str(e)}")
+
+                # ── Phase 3: LLM with outcome context ──
+                for i, market in enumerate(batch_llm):
                     try:
-                        # Get outcome names for context
                         outcome_names = [
                             o.name for o in market.outcomes
                             if o.name and o.name not in ("Yes", "No")
@@ -602,16 +609,12 @@ async def _recategorize_other_impl(limit: int = 500):
                     except Exception as e:
                         stats["errors"].append(f"LLM {market.id}: {str(e)}")
 
-            # Phase 4: Open-ended (unconstrained) classification
-            # For markets Phase 3 still left as "other", ask the LLM to
-            # freely name a category. This handles novel market types that
-            # don't fit SPORT_CATEGORIES without requiring code changes.
-            still_other = [
-                m for m in llm_batch
-                if m.llm_sport_category == "other"
-            ] if llm_batch else []
+                # ── Phase 4: Open-ended classification ──
+                still_other = [
+                    m for m in batch_llm
+                    if m.llm_sport_category == "other"
+                ]
 
-            if still_other:
                 for market in still_other:
                     try:
                         outcome_names = [
@@ -622,7 +625,6 @@ async def _recategorize_other_impl(limit: int = 500):
                             market.name, outcome_names or None,
                         )
                         if result_cat and result_cat != "other":
-                            # Check if this is a novel category
                             known = [c.lower() for c in llm.SPORT_CATEGORIES]
                             if result_cat.lower() not in known:
                                 stats["novel_categories"].append(result_cat)
@@ -632,7 +634,6 @@ async def _recategorize_other_impl(limit: int = 500):
                                 market.name, result_cat,
                                 market.llm_league, market.category,
                             )
-                            # Ensure the open-ended category itself is a tag
                             if result_cat not in tags:
                                 tags = sorted(set(tags) | {result_cat})
                             market.category_tags = tags
@@ -654,36 +655,54 @@ async def _recategorize_other_impl(limit: int = 500):
                             f"Open-ended {market.id}: {str(e)}"
                         )
 
-            # Tag enrichment: For markets with sparse tags (≤1),
-            # ask the LLM to generate richer tags. Limit to 200 per run.
-            if llm_available:
-                sparse_markets = [
-                    m for m in markets
-                    if len(m.category_tags or []) <= 1
-                ][:200]
+                # ── Tag enrichment (within this batch only) ──
+                if llm_available:
+                    sparse_markets = [
+                        m for m in markets
+                        if len(m.category_tags or []) <= 1
+                    ]
 
-                for market in sparse_markets:
-                    try:
-                        outcome_names = [
-                            o.name for o in market.outcomes
-                            if o.name and o.name not in ("Yes", "No")
-                        ]
-                        new_tags = llm.generate_tags_via_llm(
-                            market.name,
-                            outcome_names=outcome_names or None,
-                            existing_tags=market.category_tags,
-                        )
-                        if len(new_tags) > len(market.category_tags or []):
-                            market.category_tags = new_tags
-                            stats["tags_enriched"] += 1
-                    except Exception as e:
-                        stats["errors"].append(
-                            f"Tags {market.id}: {str(e)}"
-                        )
+                    for market in sparse_markets:
+                        try:
+                            outcome_names = [
+                                o.name for o in market.outcomes
+                                if o.name and o.name not in ("Yes", "No")
+                            ]
+                            new_tags = llm.generate_tags_via_llm(
+                                market.name,
+                                outcome_names=outcome_names or None,
+                                existing_tags=market.category_tags,
+                            )
+                            if len(new_tags) > len(market.category_tags or []):
+                                market.category_tags = new_tags
+                                stats["tags_enriched"] += 1
+                        except Exception as e:
+                            stats["errors"].append(
+                                f"Tags {market.id}: {str(e)}"
+                            )
 
-            await session.commit()
+                # Commit this batch and release memory
+                await session.commit()
 
-            # Count remaining 'other'
+            remaining -= len(markets)
+            offset += len(markets)
+
+            logger.info(
+                "Recategorize-other batch done: processed=%d/%d, "
+                "reclassified=%d (rules=%d, league=%d, llm=%d, open=%d), "
+                "tags=%d, errors=%d",
+                stats["processed"], limit,
+                stats["reclassified"],
+                stats["reclassified_by_rules"],
+                stats["reclassified_by_league"],
+                stats["reclassified_by_llm"],
+                stats["reclassified_by_open_ended"],
+                stats["tags_enriched"],
+                len(stats["errors"]),
+            )
+
+        # Final count of remaining 'other' markets
+        async with get_task_session() as session:
             remaining_result = await session.execute(
                 select(func.count(FuturesMarket.id))
                 .where(FuturesMarket.llm_sport_category == "other")
