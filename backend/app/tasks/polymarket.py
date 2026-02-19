@@ -202,11 +202,24 @@ async def _poll_polymarket_markets():
 
                     # Compute market tier
                     from app.utils.team_linking import compute_market_tier
+                    from app.utils.futures_categorization import (
+                        detect_league, detect_season,
+                        compute_canonical_market_key,
+                    )
                     market_tier = compute_market_tier(event.title, category)
 
                     # Timing: use event start/end dates
                     commence_time = event.start_date
                     resolution_date = event.end_date
+
+                    # Detect league and season for cross-source matching
+                    league = detect_league(event.title)
+                    season = detect_season(
+                        event.title, league, resolution_date,
+                    )
+                    canonical_key = compute_canonical_market_key(
+                        llm_sport_category, league, category, season,
+                    )
 
                     # Upsert FuturesMarket
                     market_stmt = pg_insert(FuturesMarket).values(
@@ -215,6 +228,8 @@ async def _poll_polymarket_markets():
                         name=event.title,
                         category=category,
                         llm_sport_category=llm_sport_category,
+                        llm_league=league,
+                        canonical_market_key=canonical_key,
                         market_tier=market_tier,
                         mutually_exclusive=event.neg_risk,
                         commence_time=commence_time,
@@ -225,6 +240,8 @@ async def _poll_polymarket_markets():
                         set_={
                             "name": event.title,
                             "market_tier": market_tier,
+                            "llm_league": league,
+                            "canonical_market_key": canonical_key,
                             "commence_time": commence_time,
                             "resolution_date": resolution_date,
                             "status": "open" if event.active else "resolved",

@@ -181,8 +181,22 @@ async def _poll_futures_odds():
 
                     # Compute market tier for relevance ranking
                     from app.utils.team_linking import compute_market_tier
+                    from app.utils.futures_categorization import (
+                        categorize_by_rules, detect_league,
+                        detect_season, compute_canonical_market_key,
+                    )
                     inferred_category = _infer_category(sport_key)
                     market_tier = compute_market_tier(market_name, inferred_category)
+
+                    # Detect league and sport category
+                    sport_category = categorize_by_rules(market_name, sport_key)
+                    league = detect_league(market_name, sport_key)
+                    season = detect_season(market_name, league)
+
+                    # Compute canonical key for cross-source matching
+                    canonical_key = compute_canonical_market_key(
+                        sport_category, league, inferred_category, season,
+                    )
 
                     # Upsert the market
                     market_stmt = pg_insert(FuturesMarket).values(
@@ -192,6 +206,9 @@ async def _poll_futures_odds():
                         name=market_name,
                         category=inferred_category,
                         market_tier=market_tier,
+                        llm_sport_category=sport_category,
+                        llm_league=league,
+                        canonical_market_key=canonical_key,
                         mutually_exclusive=True,
                         status="open",
                     ).on_conflict_do_update(
@@ -200,6 +217,9 @@ async def _poll_futures_odds():
                             "name": market_name,
                             "sport_id": sport_id,  # Update sport link on every sync
                             "market_tier": market_tier,
+                            "llm_sport_category": sport_category,
+                            "llm_league": league,
+                            "canonical_market_key": canonical_key,
                             "updated_at": func.now(),
                         }
                     ).returning(FuturesMarket.id)

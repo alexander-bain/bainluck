@@ -2005,6 +2005,77 @@ async def get_team_links_status(
 
 
 # ---------------------------------------------------------------------------
+# Canonical Market Key (Cross-source matching)
+# ---------------------------------------------------------------------------
+
+@router.post("/futures/backfill-canonical-keys")
+async def trigger_canonical_key_backfill(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(500, description="Max markets to process per run"),
+):
+    """Trigger backfill of canonical_market_key and llm_league on futures markets.
+
+    Runs as a background Celery task. Returns task_id for status polling.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_canonical_keys
+    task = backfill_canonical_keys.delay(limit)
+
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": f"Backfilling canonical keys for up to {limit} markets",
+    }
+
+
+@router.get("/futures/canonical-key-status")
+async def get_canonical_key_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check the status of canonical market key population across futures markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func
+
+    total = (await db.execute(
+        select(func.count(FuturesMarket.id))
+    )).scalar()
+    with_key = (await db.execute(
+        select(func.count(FuturesMarket.id))
+        .where(FuturesMarket.canonical_market_key.is_not(None))
+    )).scalar()
+    with_league = (await db.execute(
+        select(func.count(FuturesMarket.id))
+        .where(FuturesMarket.llm_league.is_not(None))
+    )).scalar()
+
+    # Count distinct canonical keys with multiple sources
+    multi_source = (await db.execute(
+        select(func.count())
+        .select_from(
+            select(FuturesMarket.canonical_market_key)
+            .where(FuturesMarket.canonical_market_key.is_not(None))
+            .group_by(FuturesMarket.canonical_market_key)
+            .having(func.count(func.distinct(FuturesMarket.source)) > 1)
+            .subquery()
+        )
+    )).scalar()
+
+    return {
+        "markets_total": total,
+        "markets_with_canonical_key": with_key,
+        "markets_without_canonical_key": total - with_key,
+        "markets_with_league": with_league,
+        "canonical_key_percentage": round(with_key / total * 100, 1) if total else 0,
+        "multi_source_keys": multi_source,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Roster Sync (SportsDataIO)
 # ---------------------------------------------------------------------------
 

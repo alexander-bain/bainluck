@@ -159,7 +159,20 @@ async def _poll_kalshi_markets():
 
                     # Compute market tier for relevance ranking
                     from app.utils.team_linking import compute_market_tier
+                    from app.utils.futures_categorization import (
+                        detect_league, detect_season,
+                        compute_canonical_market_key,
+                    )
                     market_tier = compute_market_tier(market_name, category)
+
+                    # Detect league and season for cross-source matching
+                    league = detect_league(market_name)
+                    season = detect_season(
+                        market_name, league, expiration_time,
+                    )
+                    canonical_key = compute_canonical_market_key(
+                        sport_category, league, category, season,
+                    )
 
                     # Upsert the FuturesMarket
                     upsert_values = {
@@ -185,6 +198,13 @@ async def _poll_kalshi_markets():
                     if sport_category:
                         upsert_values["llm_sport_category"] = sport_category
                         update_set["llm_sport_category"] = sport_category
+                    # Set league and canonical key
+                    if league:
+                        upsert_values["llm_league"] = league
+                        update_set["llm_league"] = league
+                    if canonical_key:
+                        upsert_values["canonical_market_key"] = canonical_key
+                        update_set["canonical_market_key"] = canonical_key
 
                     market_stmt = pg_insert(FuturesMarket).values(
                         **upsert_values
