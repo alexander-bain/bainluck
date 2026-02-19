@@ -205,11 +205,13 @@ def format_probability(prob: float, style: str = "percent") -> str:
         return f"{prob:.2f}"
 
 
-def probability_to_american(prob: float) -> int:
+def probability_to_american(prob: float) -> Optional[int]:
     """
     Convert probability back to American odds.
 
     Useful for displaying "fair odds" after removing vig.
+    Returns None for extreme probabilities (0.0 or 1.0) where
+    American odds are undefined.
 
     Examples:
         >>> probability_to_american(0.6)
@@ -217,6 +219,8 @@ def probability_to_american(prob: float) -> int:
         >>> probability_to_american(0.4)
         150
     """
+    if prob <= 0 or prob >= 1:
+        return None
     if prob >= 0.5:
         return round(-100 * prob / (1 - prob))
     else:

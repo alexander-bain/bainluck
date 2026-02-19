@@ -255,7 +255,7 @@ async def _poll_polymarket_markets():
                     # Upsert outcomes with ranks
                     for rank, od in enumerate(outcome_data, 1):
                         prob = od["prob"]
-                        american = probability_to_american(prob) if prob > 0 else None
+                        american = probability_to_american(prob) if 0 < prob < 1 else None
                         stats["markets_processed"] += 1
 
                         outcome_stmt = pg_insert(FuturesOutcome).values(
