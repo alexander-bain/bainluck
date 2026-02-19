@@ -58,6 +58,46 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     return "other"
 
 
+def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str]) -> Optional[str]:
+    """
+    Determine llm_sport_category for a Kalshi market using pattern matching.
+
+    Uses the same rules engine as the admin categorization endpoint,
+    plus Kalshi's own category as a fallback hint.
+    """
+    from app.utils.futures_categorization import categorize_by_rules
+
+    # First try pattern matching on market name (handles "Winter Olympics", "NBA MVP", etc.)
+    result = categorize_by_rules(market_name)
+    if result:
+        return result
+
+    # Fall back to Kalshi's own category as a hint
+    if kalshi_category:
+        cat_lower = kalshi_category.lower()
+        # Map Kalshi categories directly to sport categories where unambiguous
+        kalshi_to_sport = {
+            "golf": "golf",
+            "tennis": "tennis",
+            "soccer": "soccer",
+            "hockey": "hockey",
+            "baseball": "baseball",
+            "basketball": "basketball",
+            "football": "football",
+        }
+        for keyword, sport in kalshi_to_sport.items():
+            if keyword in cat_lower:
+                return sport
+        if "olympic" in cat_lower:
+            return "olympics"
+        if "politic" in cat_lower or "election" in cat_lower:
+            return "politics"
+        if "entertainment" in cat_lower:
+            return "entertainment"
+
+    return None
+
+
 async def _poll_kalshi_markets():
     """Async implementation of Kalshi polling."""
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
@@ -98,8 +138,9 @@ async def _poll_kalshi_markets():
                     if not event.markets:
                         continue
 
-                    # Determine category based on Kalshi's category
+                    # Determine category and sport classification
                     category = _kalshi_category_to_internal(event.category)
+                    sport_category = _categorize_kalshi_market(event.title, event.category)
 
                     # For events with multiple markets (multivariate), create one FuturesMarket
                     # For single-market events, use the market directly
@@ -121,25 +162,35 @@ async def _poll_kalshi_markets():
                     market_tier = compute_market_tier(market_name, category)
 
                     # Upsert the FuturesMarket
+                    upsert_values = {
+                        "source": "kalshi",
+                        "external_id": event.event_ticker,
+                        "name": market_name,
+                        "category": category,
+                        "market_tier": market_tier,
+                        "mutually_exclusive": event.mutually_exclusive,
+                        "commence_time": commence_time,
+                        "resolution_date": expiration_time,
+                        "status": "open",
+                    }
+                    update_set = {
+                        "name": market_name,
+                        "category": category,
+                        "market_tier": market_tier,
+                        "commence_time": commence_time,
+                        "resolution_date": expiration_time,
+                        "updated_at": func.now(),
+                    }
+                    # Set llm_sport_category if we can determine it
+                    if sport_category:
+                        upsert_values["llm_sport_category"] = sport_category
+                        update_set["llm_sport_category"] = sport_category
+
                     market_stmt = pg_insert(FuturesMarket).values(
-                        source="kalshi",
-                        external_id=event.event_ticker,
-                        name=market_name,
-                        category=category,
-                        market_tier=market_tier,
-                        mutually_exclusive=event.mutually_exclusive,
-                        commence_time=commence_time,
-                        resolution_date=expiration_time,
-                        status="open",
+                        **upsert_values
                     ).on_conflict_do_update(
                         index_elements=["source", "external_id"],
-                        set_={
-                            "name": market_name,
-                            "market_tier": market_tier,
-                            "commence_time": commence_time,
-                            "resolution_date": expiration_time,
-                            "updated_at": func.now(),
-                        }
+                        set_=update_set,
                     ).returning(FuturesMarket.id)
 
                     result = await session.execute(market_stmt)
