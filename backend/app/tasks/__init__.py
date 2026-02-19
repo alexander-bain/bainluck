@@ -182,6 +182,22 @@ def poll_polymarket_markets(self):
     return run_async(_poll_polymarket_markets())
 
 
+# --- Categorization ---
+
+@celery_app.task(bind=True, name="app.tasks.categorize_futures")
+def categorize_futures_task(self, limit: int = 100, force_llm: bool = False):
+    """Categorize uncategorized futures markets (background task)."""
+    from app.tasks.futures import _categorize_futures_impl
+    return run_async(_categorize_futures_impl(limit, force_llm))
+
+
+@celery_app.task(bind=True, name="app.tasks.recategorize_other")
+def recategorize_other_task(self, limit: int = 500):
+    """Re-run rules on 'other' markets to fix miscategorizations."""
+    from app.tasks.futures import _recategorize_other_impl
+    return run_async(_recategorize_other_impl(limit))
+
+
 # --- ESPN ---
 
 @celery_app.task(bind=True, name="app.tasks.enrich_events_metadata")
@@ -212,6 +228,13 @@ def backfill_team_links(self, limit: int = 200, use_llm: bool = True):
     """Backfill team_id on futures outcomes and market_tier on futures markets."""
     from app.tasks.team_linking import _backfill_team_links
     return run_async(_backfill_team_links(limit, use_llm))
+
+
+@celery_app.task(bind=True, name="app.tasks.backfill_canonical_keys")
+def backfill_canonical_keys(self, limit: int = 500):
+    """Backfill canonical_market_key and llm_league on futures markets."""
+    from app.tasks.team_linking import _backfill_canonical_keys
+    return run_async(_backfill_canonical_keys(limit))
 
 
 # --- Roster Sync (SportsDataIO) ---
@@ -325,6 +348,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.collapse_snapshots",
         "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
         "kwargs": {"table": "futures", "limit": 500},
+    },
+    "recategorize-other-daily": {
+        "task": "app.tasks.recategorize_other",
+        "schedule": crontab(minute=0, hour=8),  # Daily at 8:00 AM UTC
+        "kwargs": {"limit": 2000},
+    },
+    "backfill-canonical-keys-daily": {
+        "task": "app.tasks.backfill_canonical_keys",
+        "schedule": crontab(minute=30, hour=8),  # Daily at 8:30 AM UTC
+        "kwargs": {"limit": 2000},
     },
 }
 

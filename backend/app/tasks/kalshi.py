@@ -54,6 +54,79 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
         return "entertainment"
     if "tech" in category_lower or "crypto" in category_lower:
         return "tech"
+    if "weather" in category_lower or "climate" in category_lower:
+        return "weather"
+    if "health" in category_lower or "pandemic" in category_lower:
+        return "health"
+    if "legal" in category_lower or "court" in category_lower:
+        return "legal"
+    if "science" in category_lower or "space" in category_lower:
+        return "tech"
+    if "financ" in category_lower:
+        return "economics"
+
+    return "other"
+
+
+def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str]) -> str:
+    """
+    Determine llm_sport_category for a Kalshi market using pattern matching.
+
+    Uses the same rules engine as the admin categorization endpoint,
+    plus Kalshi's own category as a fallback hint.
+
+    Always returns a category (never None) — defaults to "other".
+    """
+    from app.utils.futures_categorization import categorize_by_rules, detect_league, infer_sport_from_league
+
+    # First try pattern matching on market name (handles "Winter Olympics", "NBA MVP", etc.)
+    result = categorize_by_rules(market_name)
+    if result:
+        return result
+
+    # Try league detection → sport inference (e.g., "Stanley Cup" → NHL → hockey)
+    league = detect_league(market_name)
+    if league:
+        sport = infer_sport_from_league(league)
+        if sport:
+            return sport
+
+    # Fall back to Kalshi's own category as a hint
+    if kalshi_category:
+        cat_lower = kalshi_category.lower()
+        # Map Kalshi categories directly to sport categories where unambiguous
+        kalshi_to_sport = {
+            "golf": "golf",
+            "tennis": "tennis",
+            "soccer": "soccer",
+            "hockey": "hockey",
+            "baseball": "baseball",
+            "basketball": "basketball",
+            "football": "football",
+        }
+        for keyword, sport in kalshi_to_sport.items():
+            if keyword in cat_lower:
+                return sport
+        if "olympic" in cat_lower:
+            return "olympics"
+        if "politic" in cat_lower or "election" in cat_lower:
+            return "politics"
+        if "entertainment" in cat_lower:
+            return "entertainment"
+        if "econom" in cat_lower or "fed" in cat_lower or "inflation" in cat_lower:
+            return "economics"
+        if "tech" in cat_lower or "crypto" in cat_lower:
+            return "tech" if "tech" in cat_lower else "crypto"
+        if "weather" in cat_lower or "climate" in cat_lower:
+            return "weather"
+        if "health" in cat_lower:
+            return "health"
+        if "legal" in cat_lower or "court" in cat_lower:
+            return "legal"
+        if "science" in cat_lower or "space" in cat_lower:
+            return "tech"
+        if "financ" in cat_lower:
+            return "economics"
 
     return "other"
 
@@ -80,10 +153,11 @@ async def _poll_kalshi_markets():
     }
 
     try:
-        # Only fetch sports-related categories to stay within rate limits
-        # Kalshi has thousands of politics/economics markets we don't need
-        sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis", "Olympics"]
-        events = await service.get_all_events(categories=sports_categories)
+        # Fetch ALL open Kalshi events (no category filter).
+        # This captures sports (including Olympics subcategories like curling,
+        # figure skating, etc.) + non-sports markets (politics, economics,
+        # entertainment) as the site expands beyond sports.
+        events = await service.get_all_events(categories=None)
 
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)
@@ -97,8 +171,9 @@ async def _poll_kalshi_markets():
                     if not event.markets:
                         continue
 
-                    # Determine category based on Kalshi's category
+                    # Determine category and sport classification
                     category = _kalshi_category_to_internal(event.category)
+                    sport_category = _categorize_kalshi_market(event.title, event.category)
 
                     # For events with multiple markets (multivariate), create one FuturesMarket
                     # For single-market events, use the market directly
@@ -117,28 +192,80 @@ async def _poll_kalshi_markets():
 
                     # Compute market tier for relevance ranking
                     from app.utils.team_linking import compute_market_tier
+                    from app.utils.futures_categorization import (
+                        detect_league, detect_season,
+                        compute_canonical_market_key,
+                        extract_olympic_discipline,
+                        generate_category_tags,
+                        is_game_prop,
+                    )
                     market_tier = compute_market_tier(market_name, category)
 
+                    # Detect league and season for cross-source matching
+                    league = detect_league(market_name)
+                    season = detect_season(
+                        market_name, league, expiration_time,
+                    )
+                    # For Olympics, use specific discipline as category
+                    # so curling matches curling, not all Olympics events
+                    canon_category = category
+                    if sport_category == "olympics":
+                        discipline = extract_olympic_discipline(market_name)
+                        if discipline:
+                            canon_category = discipline
+                    canonical_key = compute_canonical_market_key(
+                        sport_category, league, canon_category, season,
+                    )
+
+                    # Generate category tags
+                    tags = generate_category_tags(
+                        market_name, sport_category, league, category,
+                    )
+
+                    # For game props, set category to "game_prop"
+                    if is_game_prop(market_name):
+                        category = "game_prop"
+
                     # Upsert the FuturesMarket
+                    upsert_values = {
+                        "source": "kalshi",
+                        "external_id": event.event_ticker,
+                        "name": market_name,
+                        "category": category,
+                        "llm_sport_category": sport_category,
+                        "market_tier": market_tier,
+                        "mutually_exclusive": event.mutually_exclusive,
+                        "commence_time": commence_time,
+                        "resolution_date": expiration_time,
+                        "status": "open",
+                        "category_tags": tags,
+                    }
+                    update_set = {
+                        "name": market_name,
+                        "category": category,
+                        "market_tier": market_tier,
+                        "commence_time": commence_time,
+                        "resolution_date": expiration_time,
+                        "category_tags": tags,
+                        "updated_at": func.now(),
+                    }
+                    # Always update llm_sport_category unless new value is "other"
+                    # and existing might be better (from LLM or previous categorization)
+                    if sport_category and sport_category != "other":
+                        update_set["llm_sport_category"] = sport_category
+                    # Set league and canonical key
+                    if league:
+                        upsert_values["llm_league"] = league
+                        update_set["llm_league"] = league
+                    if canonical_key:
+                        upsert_values["canonical_market_key"] = canonical_key
+                        update_set["canonical_market_key"] = canonical_key
+
                     market_stmt = pg_insert(FuturesMarket).values(
-                        source="kalshi",
-                        external_id=event.event_ticker,
-                        name=market_name,
-                        category=category,
-                        market_tier=market_tier,
-                        mutually_exclusive=event.mutually_exclusive,
-                        commence_time=commence_time,
-                        resolution_date=expiration_time,
-                        status="open",
+                        **upsert_values
                     ).on_conflict_do_update(
                         index_elements=["source", "external_id"],
-                        set_={
-                            "name": market_name,
-                            "market_tier": market_tier,
-                            "commence_time": commence_time,
-                            "resolution_date": expiration_time,
-                            "updated_at": func.now(),
-                        }
+                        set_=update_set,
                     ).returning(FuturesMarket.id)
 
                     result = await session.execute(market_stmt)

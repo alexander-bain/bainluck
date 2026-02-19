@@ -265,6 +265,123 @@ async def get_kalshi_task_status(
     return response
 
 
+@router.get("/kalshi/debug-discovery")
+async def debug_kalshi_discovery(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    search: Optional[str] = Query(None, description="Search term to filter series (e.g., 'olympic')"),
+):
+    """
+    Debug Kalshi series discovery: shows what series each category returns,
+    and optionally searches all series for a keyword.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    kalshi_key = os.getenv("KALSHI_API_KEY")
+    if not kalshi_key:
+        raise HTTPException(status_code=400, detail="KALSHI_API_KEY not configured")
+
+    import asyncio
+    from app.services.kalshi_api import KalshiAPIService
+
+    service = KalshiAPIService()
+    try:
+        # Step 1: Discover tags by categories (reveals subcategories like Olympics)
+        tags_by_category = None
+        try:
+            tags_by_category = await service.get_tags_by_categories()
+        except Exception as e:
+            tags_by_category = {"error": str(e)}
+
+        await asyncio.sleep(0.3)
+
+        # Step 2: Check each category
+        categories = service.SPORTS_CATEGORIES
+        category_results = {}
+
+        for category in categories:
+            await asyncio.sleep(0.3)
+            try:
+                series_list, _ = await service.get_series(category=category)
+                tickers = [s.get("ticker") for s in series_list if s.get("ticker")]
+                titles = [s.get("title", s.get("ticker", "?")) for s in series_list]
+                tags_seen = set()
+                for s in series_list:
+                    for tag in (s.get("tags") or []):
+                        tags_seen.add(tag)
+                category_results[category] = {
+                    "count": len(tickers),
+                    "tickers": sorted(tickers)[:30],
+                    "titles": titles[:30],
+                    "tags_on_series": sorted(tags_seen),
+                }
+            except Exception as e:
+                category_results[category] = {"error": str(e)}
+
+        # Step 3: Try tag-based discovery for Olympics specifically
+        olympics_tag_results = {}
+        for tag in ["Olympics", "olympics", "Winter Olympics", "winter-olympics"]:
+            await asyncio.sleep(0.3)
+            try:
+                series_list, _ = await service.get_series(category="Sports", tags=tag)
+                tickers = [s.get("ticker") for s in series_list if s.get("ticker")]
+                titles = [s.get("title", s.get("ticker", "?")) for s in series_list]
+                olympics_tag_results[tag] = {
+                    "count": len(tickers),
+                    "tickers": sorted(tickers)[:20],
+                    "titles": titles[:20],
+                }
+            except Exception as e:
+                olympics_tag_results[tag] = {"error": str(e)}
+
+        # Step 4: If search term provided, scan ALL series for keyword
+        search_results = None
+        if search:
+            search_lower = search.lower()
+            all_series = []
+            cursor = None
+            for page in range(10):  # Up to 10 pages
+                await asyncio.sleep(0.3)
+                page_series, cursor = await service.get_series(cursor=cursor)
+                all_series.extend(page_series)
+                if not cursor:
+                    break
+
+            matches = []
+            for s in all_series:
+                ticker = s.get("ticker", "")
+                title = s.get("title", "")
+                cat = s.get("category", "")
+                tags = s.get("tags") or []
+                tags_str = ",".join(tags).lower()
+                if (search_lower in ticker.lower()
+                    or search_lower in title.lower()
+                    or search_lower in cat.lower()
+                    or search_lower in tags_str):
+                    matches.append({
+                        "ticker": ticker,
+                        "title": title,
+                        "category": cat,
+                        "tags": tags,
+                    })
+
+            search_results = {
+                "query": search,
+                "total_series_scanned": len(all_series),
+                "matches": matches,
+            }
+
+        return {
+            "tags_by_category": tags_by_category,
+            "categories_checked": category_results,
+            "olympics_tag_search": olympics_tag_results,
+            "search_results": search_results,
+        }
+
+    finally:
+        await service.close()
+
+
 @router.post("/polymarket/poll")
 async def trigger_polymarket_poll(
     secret: str = Query(..., description="Admin secret for authorization"),
@@ -408,90 +525,58 @@ async def get_sports_with_outrights(
 @router.post("/futures/categorize")
 async def categorize_futures(
     secret: str = Query(..., description="Admin secret for authorization"),
-    limit: int = Query(50, description="Max markets to categorize per batch"),
-    dry_run: bool = Query(False, description="Preview categorizations without saving"),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, description="Max markets to categorize per batch"),
 ):
     """
-    Categorize uncategorized futures markets using LLM.
+    Categorize uncategorized futures markets using rules + LLM.
 
-    Finds markets without sport_id or llm_sport_category and uses:
-    1. Pattern matching rules (fast, free)
-    2. LLM fallback (smart, for edge cases)
-
-    Results are cached in the llm_sport_category column.
+    Queues a background Celery task to avoid Heroku's 30-second timeout.
+    Use /futures/task/{task_id} to check status.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.models import FuturesMarket
-    from app.utils.futures_categorization import categorize_market
-    from app.services import llm
+    from app.tasks import categorize_futures_task
 
-    # Find uncategorized markets
-    result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-        .limit(limit)
-    )
-    markets = result.scalars().all()
-
-    if not markets:
+    try:
+        task = categorize_futures_task.delay(limit=limit, force_llm=False)
         return {
-            "status": "complete",
-            "message": "No uncategorized markets found",
-            "processed": 0,
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Categorization task queued (limit={limit}). "
+                       f"Use /api/admin/futures/task/{task.id} to check status.",
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
-    categorized = []
-    failed = []
 
-    for market in markets:
-        category = categorize_market(market.name, use_llm=llm.is_available())
+@router.post("/futures/recategorize-other")
+async def recategorize_other_futures(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(500, description="Max 'other' markets to re-check"),
+):
+    """
+    Re-run rules on markets tagged 'other' to fix miscategorizations.
 
-        if category:
-            categorized.append({
-                "id": market.id,
-                "name": market.name,
-                "category": category,
-            })
-            if not dry_run:
-                market.llm_sport_category = category
-        else:
-            failed.append({
-                "id": market.id,
-                "name": market.name,
-            })
+    After adding new patterns to the rules engine, run this to reclassify
+    markets that were previously sent to the LLM and returned 'other'.
+    Only updates if a non-'other' category is found by rules.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    if not dry_run:
-        await db.commit()
+    from app.tasks import recategorize_other_task
 
-    # Count remaining
-    remaining_result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-    )
-    remaining = len(remaining_result.scalars().all())
-
-    return {
-        "status": "success",
-        "dry_run": dry_run,
-        "processed": len(markets),
-        "categorized": len(categorized),
-        "failed": len(failed),
-        "remaining": remaining,
-        "llm_available": llm.is_available(),
-        "results": categorized[:10],  # Preview first 10
-        "failures": failed[:10] if failed else None,
-        "message": f"Categorized {len(categorized)}/{len(markets)} markets." +
-                   (f" {remaining} remaining." if remaining > 0 else ""),
-    }
+    try:
+        task = recategorize_other_task.delay(limit=limit)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Recategorize-other task queued (limit={limit}). "
+                       f"Use /api/admin/futures/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
 @router.get("/futures/categorization-status")
@@ -583,87 +668,29 @@ async def list_uncategorized_futures(
 async def force_categorize_futures(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(100, description="Max markets to categorize"),
-    dry_run: bool = Query(False, description="Preview without saving"),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Force-categorize ALL uncategorized futures using LLM.
 
-    Unlike /categorize which only runs LLM on pattern-miss, this endpoint
-    runs LLM on EVERY uncategorized market and saves the result (even "other").
-
-    This ensures no market is left with llm_sport_category=NULL.
+    Unlike /categorize which tries rules first, this forces LLM on every market.
+    Queues a background Celery task to avoid Heroku's 30-second timeout.
+    Use /futures/task/{task_id} to check status.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.models import FuturesMarket
-    from app.services import llm
+    from app.tasks import categorize_futures_task
 
-    if not llm.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM service not available (OPENAI_API_KEY not set?)"
-        )
-
-    # Find uncategorized markets
-    result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-        .limit(limit)
-    )
-    markets = result.scalars().all()
-
-    if not markets:
+    try:
+        task = categorize_futures_task.delay(limit=limit, force_llm=True)
         return {
-            "status": "complete",
-            "message": "No uncategorized markets found",
-            "processed": 0,
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Force-categorization task queued (limit={limit}). "
+                       f"Use /api/admin/futures/task/{task.id} to check status.",
         }
-
-    results = []
-    by_category = {}
-
-    for market in markets:
-        # Always use LLM (which now always returns a category)
-        category = llm.classify_futures_market(market.name)
-
-        results.append({
-            "id": market.id,
-            "name": market.name,
-            "category": category,
-        })
-
-        by_category[category] = by_category.get(category, 0) + 1
-
-        if not dry_run:
-            market.llm_sport_category = category
-
-    if not dry_run:
-        await db.commit()
-
-    # Count remaining
-    remaining_result = await db.execute(
-        select(FuturesMarket)
-        .where(
-            FuturesMarket.sport_id.is_(None),
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-    )
-    remaining = len(remaining_result.scalars().all())
-
-    return {
-        "status": "success",
-        "dry_run": dry_run,
-        "processed": len(markets),
-        "remaining": remaining,
-        "by_category": by_category,
-        "sample_results": results[:20],
-        "message": f"Categorized {len(markets)} markets. {remaining} remaining.",
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
 # ============================================================================
@@ -1974,6 +2001,77 @@ async def get_team_links_status(
         "markets_total": markets_total,
         "markets_tiered": markets_tiered,
         "markets_untiered": markets_total - markets_tiered,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Canonical Market Key (Cross-source matching)
+# ---------------------------------------------------------------------------
+
+@router.post("/futures/backfill-canonical-keys")
+async def trigger_canonical_key_backfill(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(500, description="Max markets to process per run"),
+):
+    """Trigger backfill of canonical_market_key and llm_league on futures markets.
+
+    Runs as a background Celery task. Returns task_id for status polling.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_canonical_keys
+    task = backfill_canonical_keys.delay(limit)
+
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": f"Backfilling canonical keys for up to {limit} markets",
+    }
+
+
+@router.get("/futures/canonical-key-status")
+async def get_canonical_key_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check the status of canonical market key population across futures markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func
+
+    total = (await db.execute(
+        select(func.count(FuturesMarket.id))
+    )).scalar()
+    with_key = (await db.execute(
+        select(func.count(FuturesMarket.id))
+        .where(FuturesMarket.canonical_market_key.is_not(None))
+    )).scalar()
+    with_league = (await db.execute(
+        select(func.count(FuturesMarket.id))
+        .where(FuturesMarket.llm_league.is_not(None))
+    )).scalar()
+
+    # Count distinct canonical keys with multiple sources
+    multi_source = (await db.execute(
+        select(func.count())
+        .select_from(
+            select(FuturesMarket.canonical_market_key)
+            .where(FuturesMarket.canonical_market_key.is_not(None))
+            .group_by(FuturesMarket.canonical_market_key)
+            .having(func.count(func.distinct(FuturesMarket.source)) > 1)
+            .subquery()
+        )
+    )).scalar()
+
+    return {
+        "markets_total": total,
+        "markets_with_canonical_key": with_key,
+        "markets_without_canonical_key": total - with_key,
+        "markets_with_league": with_league,
+        "canonical_key_percentage": round(with_key / total * 100, 1) if total else 0,
+        "multi_source_keys": multi_source,
     }
 
 

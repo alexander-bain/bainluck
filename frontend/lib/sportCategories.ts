@@ -175,6 +175,63 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["poker_"],
     tier: 3,
   },
+  // Non-sports categories (from prediction markets)
+  {
+    key: "crypto",
+    name: "Crypto",
+    emoji: "₿",
+    prefixes: ["crypto_"],
+    tier: 3,
+  },
+  {
+    key: "economics",
+    name: "Economics",
+    emoji: "📊",
+    prefixes: ["economics_"],
+    tier: 3,
+  },
+  {
+    key: "tech",
+    name: "Tech & Science",
+    emoji: "🔬",
+    prefixes: ["tech_"],
+    tier: 3,
+  },
+  {
+    key: "weather",
+    name: "Weather",
+    emoji: "🌤️",
+    prefixes: ["weather_"],
+    tier: 3,
+  },
+  {
+    key: "health",
+    name: "Health",
+    emoji: "🏥",
+    prefixes: ["health_"],
+    tier: 3,
+  },
+  {
+    key: "geopolitics",
+    name: "Geopolitics",
+    emoji: "🌍",
+    prefixes: ["geopolitics_"],
+    tier: 3,
+  },
+  {
+    key: "legal",
+    name: "Legal",
+    emoji: "⚖️",
+    prefixes: ["legal_"],
+    tier: 3,
+  },
+  {
+    key: "culture",
+    name: "Culture",
+    emoji: "🎭",
+    prefixes: ["culture_"],
+    tier: 3,
+  },
   // Other category is a catch-all (handled in code, not here)
 ];
 
@@ -429,6 +486,9 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
 
   // Politics
   { pattern: /\b(election|president|congress|senate|governor|presidential|democrat|republican|trump|biden)\b/i, category: "politics" },
+  { pattern: /\bhouse.race\b/i, category: "politics" },
+  { pattern: /\bwhich.party.will.win\b/i, category: "politics" },
+  { pattern: /\b(gubernatorial|midterm|primary.election|electoral.college|ballot.measure)\b/i, category: "politics" },
 
   // Esports
   { pattern: /\b(lol|league.of.legends|csgo|cs2|cs.go|dota|valorant|esports|overwatch.league)\b/i, category: "esports" },
@@ -437,8 +497,22 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(oscar|emmy|grammy|golden.globe|academy.award|entertainer|box.office|movie|film|music|spotify|album)\b/i, category: "entertainment" },
   { pattern: /\b(tv.show|television|reality|bachelor|bachelorette|portnoy|youtube|tiktok|influencer)\b/i, category: "entertainment" },
 
-  // Olympics
+  // Olympics - explicit keyword + uniquely-Olympic winter sports
   { pattern: /\b(olympic|olympics|paralympic)\b/i, category: "olympics" },
+  { pattern: /\bcurling\b/i, category: "olympics" },
+  { pattern: /\bfigure.skating\b/i, category: "olympics" },
+  { pattern: /\bspeed.skating\b/i, category: "olympics" },
+  { pattern: /\bshort.track\b/i, category: "olympics" },
+  { pattern: /\bfreestyle.skiing\b/i, category: "olympics" },
+  { pattern: /\balpine.skiing\b/i, category: "olympics" },
+  { pattern: /\bcross.country.skiing\b/i, category: "olympics" },
+  { pattern: /\bski.jumping\b/i, category: "olympics" },
+  { pattern: /\bski.mountaineering\b/i, category: "olympics" },
+  { pattern: /\bnordic.combined\b/i, category: "olympics" },
+  { pattern: /\bbiathlon\b/i, category: "olympics" },
+  { pattern: /\b(bobsled|bobsleigh)\b/i, category: "olympics" },
+  { pattern: /\b(luge|skeleton)\b/i, category: "olympics" },
+  { pattern: /\bgold.medal\b/i, category: "olympics" },
 
   // Lacrosse
   { pattern: /\b(lacrosse|tewaaraton|pll|premier.lacrosse)\b/i, category: "lacrosse" },
