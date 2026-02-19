@@ -156,7 +156,6 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "virus": "health",
     # Space / Science
     "space": "tech",
-    "spacex": "tech",
     "nasa": "tech",
     "mars": "tech",
     "rocket": "tech",
@@ -232,9 +231,11 @@ def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:
 
 async def _poll_polymarket_markets():
     """Async implementation of Polymarket polling."""
+    import asyncio
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
     from app.services.polymarket_api import PolymarketAPIService
     from app.utils.odds_math import probability_to_american
+    from app.utils.team_linking import compute_market_tier
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     service = PolymarketAPIService()
@@ -246,238 +247,65 @@ async def _poll_polymarket_markets():
         "errors": [],
     }
 
+    BATCH_SIZE = 50  # Commit every N events to limit memory
+
     try:
-        # Fetch ALL active events (sports + non-sports)
-        events = await service.get_all_active_events()
-        logger.info("Polymarket: fetched %d active events", len(events))
+        # Stream events page-by-page instead of loading all into memory.
+        # Each page is processed and committed in batches.
+        max_pages = 100
+        seen_ids: set[str] = set()
+        batch: list = []
 
-        async with get_task_session() as session:
-            now = datetime.now(timezone.utc)
+        for page in range(max_pages):
+            if page > 0:
+                await asyncio.sleep(0.3)
 
-            for event in events:
-                try:
-                    if not event.markets:
-                        continue
+            try:
+                events_data = await service.get_events(
+                    active=True, closed=False, limit=100, offset=page * 100,
+                )
+            except Exception as e:
+                logger.warning("Error fetching Polymarket page %d: %s", page, e)
+                break
 
-                    # Determine category from tags
-                    category, llm_sport_category = _tags_to_category(event.tags)
+            if not events_data:
+                break
 
-                    # Fall back to pattern matching + league inference if tags didn't help
-                    if not llm_sport_category or llm_sport_category == "other":
-                        from app.utils.futures_categorization import (
-                            categorize_by_rules, detect_league as _detect_league,
-                            infer_sport_from_league as _infer,
-                        )
-                        rules_result = categorize_by_rules(event.title)
-                        if rules_result:
-                            llm_sport_category = rules_result
-                        else:
-                            # Try league detection → sport inference
-                            _league = _detect_league(event.title)
-                            if _league:
-                                _sport = _infer(_league)
-                                if _sport:
-                                    llm_sport_category = _sport
-
-                        # If we found a sport category, ensure category is "championship"
-                        if llm_sport_category and llm_sport_category not in (
-                            "other", "politics", "economics", "tech", "crypto",
-                            "weather", "health", "geopolitics", "legal",
-                            "culture", "entertainment",
-                        ):
-                            category = "championship"
-
-                    # Compute market tier
-                    from app.utils.team_linking import compute_market_tier
-                    from app.utils.futures_categorization import (
-                        detect_league, detect_season,
-                        compute_canonical_market_key,
-                        extract_olympic_discipline,
-                        generate_category_tags,
-                    )
-                    market_tier = compute_market_tier(event.title, category)
-
-                    # Timing: use event start/end dates
-                    commence_time = event.start_date
-                    resolution_date = event.end_date
-
-                    # Detect league and season for cross-source matching
-                    league = detect_league(event.title)
-                    season = detect_season(
-                        event.title, league, resolution_date,
-                    )
-                    # For Olympics, use specific discipline as category
-                    canon_category = category
-                    if llm_sport_category == "olympics":
-                        discipline = extract_olympic_discipline(event.title)
-                        if discipline:
-                            canon_category = discipline
-                    canonical_key = compute_canonical_market_key(
-                        llm_sport_category, league, canon_category, season,
-                    )
-
-                    # Generate category tags
-                    tags = generate_category_tags(
-                        event.title, llm_sport_category, league, category,
-                    )
-
-                    # Build update set for on-conflict
-                    update_set = {
-                        "name": event.title,
-                        "market_tier": market_tier,
-                        "llm_league": league,
-                        "canonical_market_key": canonical_key,
-                        "commence_time": commence_time,
-                        "resolution_date": resolution_date,
-                        "status": "open" if event.active else "resolved",
-                        "category_tags": tags,
-                        "updated_at": func.now(),
-                    }
-                    # Update llm_sport_category if we have a non-"other" value
-                    if llm_sport_category and llm_sport_category != "other":
-                        update_set["llm_sport_category"] = llm_sport_category
-
-                    # Upsert FuturesMarket
-                    market_stmt = pg_insert(FuturesMarket).values(
-                        source="polymarket",
-                        external_id=event.id,
-                        name=event.title,
-                        category=category,
-                        llm_sport_category=llm_sport_category,
-                        llm_league=league,
-                        canonical_market_key=canonical_key,
-                        market_tier=market_tier,
-                        mutually_exclusive=event.neg_risk,
-                        commence_time=commence_time,
-                        resolution_date=resolution_date,
-                        status="open" if event.active else "resolved",
-                        category_tags=tags,
-                    ).on_conflict_do_update(
-                        index_elements=["source", "external_id"],
-                        set_=update_set,
-                    ).returning(FuturesMarket.id)
-
-                    result = await session.execute(market_stmt)
-                    futures_market_id = result.scalar_one()
-                    stats["events_processed"] += 1
-
-                    # Collect outcome data for ranking
-                    outcome_data = []
-
-                    if event.neg_risk and len(event.markets) > 1:
-                        # NegRisk multi-outcome event: each market is one outcome
-                        # (e.g., "NBA Championship Winner" with one market per team)
-                        for market in event.markets:
-                            if not market.outcome_prices:
-                                continue
-
-                            # "Yes" price is the probability for this outcome
-                            prob = market.outcome_prices[0] if market.outcome_prices else None
-                            if prob is None or prob <= 0:
-                                continue
-
-                            # Outcome name: use the market question, cleaned up
-                            # e.g., "Will the Lakers win?" -> extract team name
-                            outcome_name = _extract_outcome_name(
-                                market.question, event.title
-                            )
-
-                            # Get bid/ask from CLOB token IDs
-                            yes_bid = market.best_bid
-                            yes_ask = market.best_ask
-
-                            outcome_data.append({
-                                "external_id": market.condition_id,
-                                "name": outcome_name,
-                                "prob": prob,
-                                "yes_bid": yes_bid,
-                                "yes_ask": yes_ask,
-                                "last_price": market.last_trade_price,
-                            })
-                    else:
-                        # Single-market or non-negRisk event
-                        for market in event.markets:
-                            if not market.outcome_prices:
-                                continue
-
-                            prob = market.outcome_prices[0] if market.outcome_prices else None
-                            if prob is None or prob <= 0:
-                                continue
-
-                            # For binary events, use "Yes" as outcome name
-                            if len(event.markets) == 1:
-                                outcome_name = "Yes"
-                            else:
-                                outcome_name = _extract_outcome_name(
-                                    market.question, event.title
-                                )
-
-                            outcome_data.append({
-                                "external_id": market.condition_id,
-                                "name": outcome_name,
-                                "prob": prob,
-                                "yes_bid": market.best_bid,
-                                "yes_ask": market.best_ask,
-                                "last_price": market.last_trade_price,
-                            })
-
-                    # Sort by probability descending to compute ranks
-                    outcome_data.sort(key=lambda x: x["prob"], reverse=True)
-
-                    # Upsert outcomes with ranks
-                    for rank, od in enumerate(outcome_data, 1):
-                        prob = od["prob"]
-                        american = probability_to_american(prob) if 0 < prob < 1 else None
-                        stats["markets_processed"] += 1
-
-                        outcome_stmt = pg_insert(FuturesOutcome).values(
-                            market_id=futures_market_id,
-                            external_id=od["external_id"],
-                            name=od["name"],
-                            current_probability=prob,
-                            current_american_odds=american,
-                            current_yes_bid=od["yes_bid"],
-                            current_yes_ask=od["yes_ask"],
-                            opening_probability=prob,
-                            opening_american_odds=american,
-                            opening_captured_at=now,
-                            rank=rank,
-                        ).on_conflict_do_update(
-                            index_elements=["market_id", "external_id"],
-                            set_={
-                                "name": od["name"],
-                                "current_probability": prob,
-                                "current_american_odds": american,
-                                "current_yes_bid": od["yes_bid"],
-                                "current_yes_ask": od["yes_ask"],
-                                "rank": rank,
-                                "last_updated": func.now(),
-                            },
-                        ).returning(FuturesOutcome.id)
-
-                        result = await session.execute(outcome_stmt)
-                        outcome_id = result.scalar_one()
-                        stats["outcomes_updated"] += 1
-
-                        # Create snapshot
-                        snapshot_stmt = pg_insert(FuturesOddsSnapshot).values(
-                            outcome_id=outcome_id,
-                            bookmaker="polymarket",
-                            probability=prob,
-                            american_odds=american,
-                            yes_bid=od["yes_bid"],
-                            yes_ask=od["yes_ask"],
-                            last_price=od["last_price"],
-                            captured_at=now,
-                        )
-                        await session.execute(snapshot_stmt)
-                        stats["snapshots_created"] += 1
-
-                except Exception as e:
-                    stats["errors"].append(f"{event.id}: {str(e)}")
+            for event_data in events_data:
+                event_id = str(event_data.get("id", ""))
+                if not event_id or event_id in seen_ids:
                     continue
+                seen_ids.add(event_id)
 
-            await session.commit()
+                parsed = service._parse_event(event_data)
+                if parsed and parsed.markets:
+                    batch.append(parsed)
+
+                # Process batch when full
+                if len(batch) >= BATCH_SIZE:
+                    await _process_event_batch(
+                        batch, stats, FuturesMarket, FuturesOutcome,
+                        FuturesOddsSnapshot, pg_insert, probability_to_american,
+                        compute_market_tier,
+                    )
+                    batch.clear()
+
+            if len(events_data) < 100:
+                break
+
+        # Process remaining events
+        if batch:
+            await _process_event_batch(
+                batch, stats, FuturesMarket, FuturesOutcome,
+                FuturesOddsSnapshot, pg_insert, probability_to_american,
+                compute_market_tier,
+            )
+            batch.clear()
+
+        logger.info(
+            "Polymarket: processed %d events across %d pages",
+            len(seen_ids), min(page + 1, max_pages),
+        )
 
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
@@ -493,6 +321,230 @@ async def _poll_polymarket_markets():
         len(stats["errors"]),
     )
     return stats
+
+
+async def _process_event_batch(
+    events, stats, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot,
+    pg_insert, probability_to_american, compute_market_tier,
+):
+    """Process and commit a batch of Polymarket events."""
+    from app.utils.futures_categorization import (
+        categorize_by_rules, detect_league as _detect_league,
+        infer_sport_from_league as _infer,
+        detect_league, detect_season,
+        compute_canonical_market_key,
+        extract_olympic_discipline,
+        generate_category_tags,
+    )
+
+    # Non-sport categories that shouldn't flip to "championship"
+    _NON_SPORT_CATEGORIES = {
+        "other", "politics", "economics", "tech", "crypto",
+        "weather", "health", "geopolitics", "legal",
+        "culture", "entertainment",
+    }
+
+    async with get_task_session() as session:
+        now = datetime.now(timezone.utc)
+
+        for event in events:
+            try:
+                if not event.markets:
+                    continue
+
+                # Determine category from tags
+                category, llm_sport_category = _tags_to_category(event.tags)
+
+                # Fall back to pattern matching + league inference if tags didn't help
+                if not llm_sport_category or llm_sport_category == "other":
+                    rules_result = categorize_by_rules(event.title)
+                    if rules_result:
+                        llm_sport_category = rules_result
+                    else:
+                        _league = _detect_league(event.title)
+                        if _league:
+                            _sport = _infer(_league)
+                            if _sport:
+                                llm_sport_category = _sport
+
+                    # If we found a sport category, ensure category is "championship"
+                    if llm_sport_category and llm_sport_category not in _NON_SPORT_CATEGORIES:
+                        category = "championship"
+
+                # Compute market tier
+                market_tier = compute_market_tier(event.title, category)
+
+                # Timing: use event start/end dates
+                commence_time = event.start_date
+                resolution_date = event.end_date
+
+                # Detect league and season for cross-source matching
+                league = detect_league(event.title)
+                season = detect_season(event.title, league, resolution_date)
+
+                # For Olympics, use specific discipline as category
+                canon_category = category
+                if llm_sport_category == "olympics":
+                    discipline = extract_olympic_discipline(event.title)
+                    if discipline:
+                        canon_category = discipline
+                canonical_key = compute_canonical_market_key(
+                    llm_sport_category, league, canon_category, season,
+                )
+
+                # Generate category tags
+                tags = generate_category_tags(
+                    event.title, llm_sport_category, league, category,
+                )
+
+                # Build update set for on-conflict
+                update_set = {
+                    "name": event.title,
+                    "market_tier": market_tier,
+                    "llm_league": league,
+                    "canonical_market_key": canonical_key,
+                    "commence_time": commence_time,
+                    "resolution_date": resolution_date,
+                    "status": "open" if event.active else "resolved",
+                    "category_tags": tags,
+                    "updated_at": func.now(),
+                }
+                # Only update llm_sport_category if we have a non-"other" value
+                if llm_sport_category and llm_sport_category != "other":
+                    update_set["llm_sport_category"] = llm_sport_category
+
+                # Upsert FuturesMarket
+                market_stmt = pg_insert(FuturesMarket).values(
+                    source="polymarket",
+                    external_id=event.id,
+                    name=event.title,
+                    category=category,
+                    llm_sport_category=llm_sport_category,
+                    llm_league=league,
+                    canonical_market_key=canonical_key,
+                    market_tier=market_tier,
+                    mutually_exclusive=event.neg_risk,
+                    commence_time=commence_time,
+                    resolution_date=resolution_date,
+                    status="open" if event.active else "resolved",
+                    category_tags=tags,
+                ).on_conflict_do_update(
+                    index_elements=["source", "external_id"],
+                    set_=update_set,
+                ).returning(FuturesMarket.id)
+
+                result = await session.execute(market_stmt)
+                futures_market_id = result.scalar_one()
+                stats["events_processed"] += 1
+
+                # Collect outcome data for ranking
+                outcome_data = []
+
+                if event.neg_risk and len(event.markets) > 1:
+                    # NegRisk multi-outcome event: each market is one outcome
+                    for market in event.markets:
+                        if not market.outcome_prices:
+                            continue
+
+                        prob = market.outcome_prices[0] if market.outcome_prices else None
+                        if prob is None or prob <= 0:
+                            continue
+
+                        outcome_name = _extract_outcome_name(
+                            market.question, event.title
+                        )
+
+                        outcome_data.append({
+                            "external_id": market.condition_id,
+                            "name": outcome_name,
+                            "prob": prob,
+                            "yes_bid": market.best_bid,
+                            "yes_ask": market.best_ask,
+                            "last_price": market.last_trade_price,
+                        })
+                else:
+                    # Single-market or non-negRisk event
+                    for market in event.markets:
+                        if not market.outcome_prices:
+                            continue
+
+                        prob = market.outcome_prices[0] if market.outcome_prices else None
+                        if prob is None or prob <= 0:
+                            continue
+
+                        if len(event.markets) == 1:
+                            outcome_name = "Yes"
+                        else:
+                            outcome_name = _extract_outcome_name(
+                                market.question, event.title
+                            )
+
+                        outcome_data.append({
+                            "external_id": market.condition_id,
+                            "name": outcome_name,
+                            "prob": prob,
+                            "yes_bid": market.best_bid,
+                            "yes_ask": market.best_ask,
+                            "last_price": market.last_trade_price,
+                        })
+
+                # Sort by probability descending to compute ranks
+                outcome_data.sort(key=lambda x: x["prob"], reverse=True)
+
+                # Upsert outcomes with ranks
+                for rank, od in enumerate(outcome_data, 1):
+                    prob = od["prob"]
+                    american = probability_to_american(prob) if 0 < prob < 1 else None
+                    stats["markets_processed"] += 1
+
+                    outcome_stmt = pg_insert(FuturesOutcome).values(
+                        market_id=futures_market_id,
+                        external_id=od["external_id"],
+                        name=od["name"],
+                        current_probability=prob,
+                        current_american_odds=american,
+                        current_yes_bid=od["yes_bid"],
+                        current_yes_ask=od["yes_ask"],
+                        opening_probability=prob,
+                        opening_american_odds=american,
+                        opening_captured_at=now,
+                        rank=rank,
+                    ).on_conflict_do_update(
+                        index_elements=["market_id", "external_id"],
+                        set_={
+                            "name": od["name"],
+                            "current_probability": prob,
+                            "current_american_odds": american,
+                            "current_yes_bid": od["yes_bid"],
+                            "current_yes_ask": od["yes_ask"],
+                            "rank": rank,
+                            "last_updated": func.now(),
+                        },
+                    ).returning(FuturesOutcome.id)
+
+                    result = await session.execute(outcome_stmt)
+                    outcome_id = result.scalar_one()
+                    stats["outcomes_updated"] += 1
+
+                    # Create snapshot
+                    snapshot_stmt = pg_insert(FuturesOddsSnapshot).values(
+                        outcome_id=outcome_id,
+                        bookmaker="polymarket",
+                        probability=prob,
+                        american_odds=american,
+                        yes_bid=od["yes_bid"],
+                        yes_ask=od["yes_ask"],
+                        last_price=od["last_price"],
+                        captured_at=now,
+                    )
+                    await session.execute(snapshot_stmt)
+                    stats["snapshots_created"] += 1
+
+            except Exception as e:
+                stats["errors"].append(f"{event.id}: {str(e)}")
+                continue
+
+        await session.commit()
 
 
 def _extract_outcome_name(question: str, event_title: str) -> str:
