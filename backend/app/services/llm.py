@@ -311,6 +311,240 @@ def classify_futures_market_with_outcomes(
     return result if result else "other"
 
 
+# =========================================================================
+# Open-ended (unconstrained) classification — future-proof
+# =========================================================================
+
+# Maps common LLM free-text outputs to canonical category names.
+# When the LLM suggests a category that's a known synonym, we normalize it.
+# When it suggests something genuinely new, we keep it as-is.
+_OPEN_ENDED_NORMALIZATIONS: dict[str, str] = {
+    "american_football": "football",
+    "college_football": "football",
+    "pro_football": "football",
+    "college_basketball": "basketball",
+    "pro_basketball": "basketball",
+    "ice_hockey": "hockey",
+    "auto_racing": "motorsports",
+    "motor_sports": "motorsports",
+    "motorsport": "motorsports",
+    "formula_1": "motorsports",
+    "horse_racing": "horse_racing",
+    "mixed_martial_arts": "mma",
+    "australian_rules": "aussierules",
+    "australian_rules_football": "aussierules",
+    "e_sports": "esports",
+    "e-sports": "esports",
+    "video_games": "esports",
+    "cryptocurrency": "crypto",
+    "digital_assets": "crypto",
+    "finance": "economics",
+    "economy": "economics",
+    "financial_markets": "economics",
+    "stock_market": "economics",
+    "monetary_policy": "economics",
+    "science": "tech",
+    "technology": "tech",
+    "artificial_intelligence": "tech",
+    "space_exploration": "tech",
+    "international_relations": "geopolitics",
+    "foreign_policy": "geopolitics",
+    "global_politics": "geopolitics",
+    "law": "legal",
+    "judiciary": "legal",
+    "regulation": "legal",
+    "medical": "health",
+    "public_health": "health",
+    "climate": "weather",
+    "natural_disasters": "weather",
+    "social_media": "culture",
+    "pop_culture": "culture",
+    "reality_tv": "entertainment",
+    "television": "entertainment",
+    "movies": "entertainment",
+    "film": "entertainment",
+    "music": "entertainment",
+    "awards": "entertainment",
+    "celebrity": "entertainment",
+}
+
+
+def _normalize_open_ended_category(raw: str) -> str:
+    """
+    Normalize an LLM-generated free-text category to a canonical name.
+
+    Maps known synonyms to standard categories. Passes through genuinely
+    novel categories as-is, enabling auto-discovery of new category types.
+    """
+    if not raw:
+        return "other"
+
+    cleaned = raw.strip().lower().strip('"\'.')
+    cleaned = cleaned.replace(" ", "_").replace("-", "_")
+
+    # Direct match to existing SPORT_CATEGORIES
+    categories_lower = [c.lower() for c in SPORT_CATEGORIES]
+    if cleaned in categories_lower:
+        return SPORT_CATEGORIES[categories_lower.index(cleaned)]
+
+    # Check normalization map
+    if cleaned in _OPEN_ENDED_NORMALIZATIONS:
+        return _OPEN_ENDED_NORMALIZATIONS[cleaned]
+
+    # Partial match against known categories
+    for i, cat in enumerate(categories_lower):
+        if cat in cleaned or cleaned in cat:
+            return SPORT_CATEGORIES[i]
+
+    # Novel category — pass through as-is
+    # This is the future-proofing mechanism: new market types
+    # automatically get descriptive categories without code changes
+    if cleaned and cleaned != "other":
+        return cleaned
+
+    return "other"
+
+
+def classify_open_ended(
+    market_name: str,
+    outcome_names: Optional[list[str]] = None,
+) -> str:
+    """
+    Classify a market with NO constraints on category names.
+
+    Unlike classify_futures_market() which picks from a fixed list, this
+    lets the LLM freely name the best category. Used as a last resort
+    when constrained classification returns 'other'.
+
+    The result is normalized: mapped to known categories when possible,
+    or stored as-is when truly novel (enabling auto-discovery).
+
+    Args:
+        market_name: The name of the futures market
+        outcome_names: Optional list of outcome names for context
+
+    Returns:
+        Category string (never None - defaults to "other")
+    """
+    client = _get_client()
+    if not client:
+        return "other"
+
+    context_text = market_name
+    if outcome_names:
+        top_outcomes = outcome_names[:15]
+        context_text = f"{market_name}\nOutcomes: {', '.join(top_outcomes)}"
+
+    system_prompt = """You are a classification assistant for a prediction market aggregator.
+Given a prediction market title (and optionally its outcome names), respond with the SINGLE most specific category.
+
+Rules:
+- Respond with ONLY the category name (1-2 words), nothing else
+- Use lowercase with underscores (e.g., "basketball", "horse_racing")
+- Be specific: prefer "basketball" over "sports", "crypto" over "finance"
+- For sports: use the sport name (football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, olympics, esports, horse_racing, lacrosse, chess, poker, aussierules)
+- For non-sports: politics, entertainment, crypto, economics, tech, weather, health, geopolitics, legal, culture
+- Use outcome names (player/team names) as clues when the title is ambiguous
+- If the market is genuinely about a novel topic, name it descriptively (e.g., "ai_safety", "space", "education", "real_estate", "energy")
+- Do NOT say "other" — always pick the most descriptive category possible"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context_text},
+            ],
+            max_tokens=20,
+            temperature=0,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        result = _normalize_open_ended_category(raw)
+
+        if result != "other":
+            logger.info(
+                "Open-ended classified '%s' as '%s' (raw: '%s')",
+                market_name[:60], result, raw,
+            )
+        return result
+
+    except Exception as e:
+        logger.error(f"Open-ended classification error: {e}")
+        return "other"
+
+
+def generate_tags_via_llm(
+    market_name: str,
+    outcome_names: Optional[list[str]] = None,
+    existing_tags: Optional[list[str]] = None,
+) -> list[str]:
+    """
+    Generate descriptive tags for a prediction market using LLM.
+
+    Used to enrich category_tags when pattern-based tag extraction
+    produces sparse results. Returns a merged set of existing + new tags.
+
+    Args:
+        market_name: The market name
+        outcome_names: Optional list of outcome names for context
+        existing_tags: Tags already assigned (won't be duplicated)
+
+    Returns:
+        Sorted list of unique tags (existing + LLM-generated)
+    """
+    client = _get_client()
+    if not client:
+        return existing_tags or []
+
+    context_text = market_name
+    if outcome_names:
+        top_outcomes = outcome_names[:10]
+        context_text = f"{market_name}\nOutcomes: {', '.join(top_outcomes)}"
+
+    existing_str = ""
+    if existing_tags:
+        existing_str = f"\nAlready tagged: {', '.join(existing_tags)}. Do NOT repeat these."
+
+    system_prompt = f"""Generate 3-5 descriptive tags for this prediction market.{existing_str}
+
+Rules:
+- Tags should be lowercase with underscores (e.g., "nba", "trump", "bitcoin")
+- Include the sport or topic (e.g., "basketball", "politics", "crypto")
+- Include specific entities mentioned (teams, people, events, companies)
+- Include the league if applicable (e.g., "nfl", "nba", "epl")
+- Be specific and useful for browsing/searching
+- Respond with ONLY a comma-separated list of tags, nothing else
+
+Example: nba, basketball, mvp, lebron_james, lakers"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context_text},
+            ],
+            max_tokens=100,
+            temperature=0,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        tags = set(existing_tags or [])
+        for tag in raw.split(","):
+            tag = tag.strip().lower().strip('"\'.')
+            tag = tag.replace(" ", "_")
+            # Only add reasonable-length tags
+            if tag and 2 <= len(tag) <= 50:
+                tags.add(tag)
+
+        return sorted(tags)
+
+    except Exception as e:
+        logger.error(f"LLM tag generation error: {e}")
+        return existing_tags or []
+
+
 # Simple in-memory cache for repeated classifications (doesn't cache None)
 _classification_cache: dict[str, str] = {}
 

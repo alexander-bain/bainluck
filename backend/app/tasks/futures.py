@@ -444,12 +444,14 @@ async def _recategorize_other_impl(limit: int = 500):
 
     Phase 1: Pattern matching (fast, free, deterministic)
     Phase 2: League inference (fast, free)
-    Phase 3: LLM with outcome context (smart, costs API calls)
+    Phase 3: LLM with outcome context (smart, constrained to known categories)
+    Phase 4: Open-ended LLM classification (unconstrained, future-proof)
+    + Tag enrichment: LLM generates tags for sparse-tag markets
 
     When new patterns are added, Phase 1 catches them. Phase 3 uses
-    outcome names (player/team names) as context for the LLM to
-    disambiguate markets like "MVP Winner?" that are impossible to
-    categorize by title alone.
+    outcome names as context for disambiguation. Phase 4 lets the LLM
+    freely name categories — handling novel market types that don't fit
+    any predefined category without code changes.
     """
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -466,6 +468,9 @@ async def _recategorize_other_impl(limit: int = 500):
         "reclassified_by_rules": 0,
         "reclassified_by_league": 0,
         "reclassified_by_llm": 0,
+        "reclassified_by_open_ended": 0,
+        "tags_enriched": 0,
+        "novel_categories": [],
         "by_category": {},
         "sample_results": [],
         "errors": [],
@@ -597,6 +602,85 @@ async def _recategorize_other_impl(limit: int = 500):
                     except Exception as e:
                         stats["errors"].append(f"LLM {market.id}: {str(e)}")
 
+            # Phase 4: Open-ended (unconstrained) classification
+            # For markets Phase 3 still left as "other", ask the LLM to
+            # freely name a category. This handles novel market types that
+            # don't fit SPORT_CATEGORIES without requiring code changes.
+            still_other = [
+                m for m in llm_batch
+                if m.llm_sport_category == "other"
+            ] if llm_batch else []
+
+            if still_other:
+                for market in still_other:
+                    try:
+                        outcome_names = [
+                            o.name for o in market.outcomes
+                            if o.name and o.name not in ("Yes", "No")
+                        ]
+                        result_cat = llm.classify_open_ended(
+                            market.name, outcome_names or None,
+                        )
+                        if result_cat and result_cat != "other":
+                            # Check if this is a novel category
+                            known = [c.lower() for c in llm.SPORT_CATEGORIES]
+                            if result_cat.lower() not in known:
+                                stats["novel_categories"].append(result_cat)
+
+                            market.llm_sport_category = result_cat
+                            tags = generate_category_tags(
+                                market.name, result_cat,
+                                market.llm_league, market.category,
+                            )
+                            # Ensure the open-ended category itself is a tag
+                            if result_cat not in tags:
+                                tags = sorted(set(tags) | {result_cat})
+                            market.category_tags = tags
+                            stats["reclassified"] += 1
+                            stats["reclassified_by_open_ended"] += 1
+                            stats["by_category"][result_cat] = (
+                                stats["by_category"].get(result_cat, 0) + 1
+                            )
+                            if len(stats["sample_results"]) < 30:
+                                stats["sample_results"].append({
+                                    "id": market.id,
+                                    "name": market.name,
+                                    "old": "other",
+                                    "new": result_cat,
+                                    "method": "open_ended",
+                                })
+                    except Exception as e:
+                        stats["errors"].append(
+                            f"Open-ended {market.id}: {str(e)}"
+                        )
+
+            # Tag enrichment: For markets with sparse tags (≤1),
+            # ask the LLM to generate richer tags. Limit to 200 per run.
+            if llm_available:
+                sparse_markets = [
+                    m for m in markets
+                    if len(m.category_tags or []) <= 1
+                ][:200]
+
+                for market in sparse_markets:
+                    try:
+                        outcome_names = [
+                            o.name for o in market.outcomes
+                            if o.name and o.name not in ("Yes", "No")
+                        ]
+                        new_tags = llm.generate_tags_via_llm(
+                            market.name,
+                            outcome_names=outcome_names or None,
+                            existing_tags=market.category_tags,
+                        )
+                        if len(new_tags) > len(market.category_tags or []):
+                            market.category_tags = new_tags
+                            stats["tags_enriched"] += 1
+                    except Exception as e:
+                        stats["errors"].append(
+                            f"Tags {market.id}: {str(e)}"
+                        )
+
             await session.commit()
 
             # Count remaining 'other'
@@ -609,22 +693,30 @@ async def _recategorize_other_impl(limit: int = 500):
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
 
+    novel = stats.get("novel_categories", [])
+    novel_str = f" Novel categories: {novel}" if novel else ""
     stats["message"] = (
         f"Re-checked {stats['processed']} 'other' markets, "
         f"reclassified {stats['reclassified']} "
         f"(rules:{stats['reclassified_by_rules']}, "
         f"league:{stats['reclassified_by_league']}, "
-        f"llm:{stats['reclassified_by_llm']}). "
-        f"{stats.get('remaining_other', '?')} still 'other'."
+        f"llm:{stats['reclassified_by_llm']}, "
+        f"open_ended:{stats['reclassified_by_open_ended']}). "
+        f"Tags enriched: {stats['tags_enriched']}. "
+        f"{stats.get('remaining_other', '?')} still 'other'.{novel_str}"
     )
 
     logger.info(
         "Recategorize-other complete: %d/%d reclassified "
-        "(rules=%d, league=%d, llm=%d)",
+        "(rules=%d, league=%d, llm=%d, open_ended=%d), "
+        "tags_enriched=%d, novel=%s",
         stats["reclassified"],
         stats["processed"],
         stats["reclassified_by_rules"],
         stats["reclassified_by_league"],
         stats["reclassified_by_llm"],
+        stats["reclassified_by_open_ended"],
+        stats["tags_enriched"],
+        novel or "none",
     )
     return stats
