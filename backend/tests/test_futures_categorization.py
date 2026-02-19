@@ -1,9 +1,13 @@
 """Tests for futures market sport categorization (rules engine)."""
 
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
-from app.utils.futures_categorization import categorize_by_rules, categorize_market
+from app.utils.futures_categorization import (
+    categorize_by_rules, categorize_market,
+    detect_league, detect_season, compute_canonical_market_key,
+)
 
 
 # =============================================================================
@@ -462,3 +466,283 @@ class TestCategorizeMarket:
         mock_llm.is_available.return_value = False
         result = categorize_market("Some Ambiguous Market")
         assert result == "other"
+
+
+# =============================================================================
+# League Detection (sport_key prefix)
+# =============================================================================
+class TestLeagueDetectionFromSportKey:
+    def test_nba_from_sport_key(self):
+        assert detect_league("Any market", "basketball_nba_championship_winner") == "NBA"
+
+    def test_nfl_from_sport_key(self):
+        assert detect_league("Any market", "americanfootball_nfl_super_bowl_winner") == "NFL"
+
+    def test_mlb_from_sport_key(self):
+        assert detect_league("Any market", "baseball_mlb_world_series_winner") == "MLB"
+
+    def test_nhl_from_sport_key(self):
+        assert detect_league("Any market", "icehockey_nhl_championship_winner") == "NHL"
+
+    def test_epl_from_sport_key(self):
+        assert detect_league("Any market", "soccer_epl") == "EPL"
+
+    def test_pga_from_sport_key(self):
+        assert detect_league("Any market", "golf_pga") == "PGA"
+
+    def test_atp_from_sport_key(self):
+        assert detect_league("Any market", "tennis_atp") == "ATP"
+
+    def test_ufc_from_sport_key(self):
+        assert detect_league("Any market", "mma_mixed_martial_arts") == "UFC"
+
+    def test_ncaaf_from_sport_key(self):
+        assert detect_league("Any market", "americanfootball_ncaaf") == "NCAAF"
+
+    def test_ncaab_from_sport_key(self):
+        assert detect_league("Any market", "basketball_ncaab") == "NCAAB"
+
+    def test_f1_from_sport_key(self):
+        assert detect_league("Any market", "motorsport_f1") == "F1"
+
+    def test_nascar_from_sport_key(self):
+        assert detect_league("Any market", "motorsport_nascar") == "NASCAR"
+
+    def test_mls_from_sport_key(self):
+        assert detect_league("Any market", "soccer_usa_mls") == "MLS"
+
+
+# =============================================================================
+# League Detection (market name patterns)
+# =============================================================================
+class TestLeagueDetectionFromName:
+    def test_nba_championship(self):
+        assert detect_league("NBA Championship Winner") == "NBA"
+
+    def test_nba_finals(self):
+        assert detect_league("NBA Finals MVP") == "NBA"
+
+    def test_nfl_super_bowl(self):
+        assert detect_league("Super Bowl LX Winner") == "NFL"
+
+    def test_nfl_mvp(self):
+        assert detect_league("NFL MVP 2026") == "NFL"
+
+    def test_afc_championship(self):
+        assert detect_league("AFC Championship Winner") == "NFL"
+
+    def test_nfc_east(self):
+        assert detect_league("NFC East Winner") == "NFL"
+
+    def test_mlb_world_series(self):
+        assert detect_league("World Series Winner") == "MLB"
+
+    def test_al_mvp(self):
+        assert detect_league("AL MVP Award") == "MLB"
+
+    def test_nhl(self):
+        assert detect_league("NHL Regular Season Winner") == "NHL"
+
+    def test_stanley_cup(self):
+        assert detect_league("Stanley Cup Winner") == "NHL"
+
+    def test_hart_trophy(self):
+        assert detect_league("Hart Trophy Winner") == "NHL"
+
+    def test_epl_premier_league(self):
+        assert detect_league("Premier League Winner") == "EPL"
+
+    def test_champions_league(self):
+        assert detect_league("Champions League Winner") == "UCL"
+
+    def test_la_liga(self):
+        assert detect_league("La Liga Winner") == "LA_LIGA"
+
+    def test_bundesliga(self):
+        assert detect_league("Bundesliga Champion") == "BUNDESLIGA"
+
+    def test_mls_cup(self):
+        assert detect_league("MLS Cup Winner") == "MLS"
+
+    def test_pga_championship(self):
+        assert detect_league("PGA Championship Winner") == "PGA"
+
+    def test_wimbledon(self):
+        assert detect_league("Wimbledon Winner") == "ATP"
+
+    def test_ncaab_march_madness(self):
+        assert detect_league("March Madness Winner") == "NCAAB"
+
+    def test_ncaaf_college_football(self):
+        assert detect_league("College Football Playoff Winner") == "NCAAF"
+
+    def test_heisman(self):
+        assert detect_league("Heisman Trophy Winner") == "NCAAF"
+
+    def test_ufc(self):
+        assert detect_league("UFC Heavyweight Champion") == "UFC"
+
+    def test_f1(self):
+        assert detect_league("Formula 1 World Championship") == "F1"
+
+    def test_nascar_daytona(self):
+        assert detect_league("Daytona 500 Winner") == "NASCAR"
+
+    def test_olympics(self):
+        assert detect_league("Olympic Gold Medal Count") == "OLYMPICS"
+
+    def test_no_league_ambiguous(self):
+        assert detect_league("MVP Winner?") is None
+
+    def test_no_league_gibberish(self):
+        assert detect_league("xyzzy foobar") is None
+
+
+# =============================================================================
+# Season Detection
+# =============================================================================
+class TestSeasonDetection:
+    def test_explicit_split_year(self):
+        assert detect_season("NBA Championship 2025-26") == "2025-26"
+
+    def test_explicit_split_year_with_slash(self):
+        assert detect_season("EPL Winner 2025/26") == "2025-26"
+
+    def test_explicit_single_year_nfl(self):
+        assert detect_season("NFL MVP 2025", league="NFL") == "2025"
+
+    def test_explicit_year_split_league(self):
+        # "NBA Championship 2026" means the 2025-26 season
+        assert detect_season("NBA Championship 2026", league="NBA") == "2025-26"
+
+    def test_explicit_year_split_league_nhl(self):
+        assert detect_season("Stanley Cup Winner 2026", league="NHL") == "2025-26"
+
+    def test_explicit_year_single_league(self):
+        assert detect_season("World Series Winner 2026", league="MLB") == "2026"
+
+    def test_no_year_resolution_date_split(self):
+        # NBA resolves in June = 2025-26 season
+        resolution = datetime(2026, 6, 15, tzinfo=timezone.utc)
+        assert detect_season("NBA Championship", league="NBA", resolution_date=resolution) == "2025-26"
+
+    def test_no_year_resolution_date_single(self):
+        # NFL resolves in February
+        resolution = datetime(2026, 2, 15, tzinfo=timezone.utc)
+        assert detect_season("Super Bowl Winner", league="NFL", resolution_date=resolution) == "2026"
+
+    def test_no_year_resolution_date_fall_split(self):
+        # EPL starts in September = 2025-26 season
+        resolution = datetime(2026, 5, 20, tzinfo=timezone.utc)
+        assert detect_season("EPL Winner", league="EPL", resolution_date=resolution) == "2025-26"
+
+    def test_no_info_returns_none(self):
+        assert detect_season("Some Market") is None
+
+    def test_no_league_with_year(self):
+        assert detect_season("Something 2026") == "2026"
+
+    def test_politics_year(self):
+        assert detect_season("Presidential Election 2028", league="US") == "2028"
+
+
+# =============================================================================
+# Canonical Market Key
+# =============================================================================
+class TestCanonicalMarketKey:
+    def test_full_key(self):
+        key = compute_canonical_market_key("basketball", "NBA", "championship", "2025-26")
+        assert key == "basketball:NBA:championship:2025-26"
+
+    def test_football_nfl(self):
+        key = compute_canonical_market_key("football", "NFL", "mvp", "2025")
+        assert key == "football:NFL:mvp:2025"
+
+    def test_hockey_nhl(self):
+        key = compute_canonical_market_key("hockey", "NHL", "championship", "2025-26")
+        assert key == "hockey:NHL:championship:2025-26"
+
+    def test_missing_league(self):
+        key = compute_canonical_market_key("basketball", None, "championship", "2025-26")
+        assert key == "basketball::championship:2025-26"
+
+    def test_missing_season(self):
+        key = compute_canonical_market_key("basketball", "NBA", "championship", None)
+        assert key == "basketball:NBA:championship:"
+
+    def test_missing_sport_returns_none(self):
+        key = compute_canonical_market_key(None, "NBA", "championship", "2025-26")
+        assert key is None
+
+    def test_missing_category_returns_none(self):
+        key = compute_canonical_market_key("basketball", "NBA", None, "2025-26")
+        assert key is None
+
+    def test_politics(self):
+        key = compute_canonical_market_key("politics", "US", "prediction", "2026")
+        assert key == "politics:US:prediction:2026"
+
+    def test_case_normalization(self):
+        key = compute_canonical_market_key("Basketball", "nba", "Championship", "2025-26")
+        assert key == "basketball:NBA:championship:2025-26"
+
+    def test_whitespace_stripped(self):
+        key = compute_canonical_market_key(" basketball ", " NBA ", " championship ", " 2025-26 ")
+        assert key == "basketball:NBA:championship:2025-26"
+
+
+# =============================================================================
+# Integration: League + Season + Canonical Key from market name
+# =============================================================================
+class TestCrossSourceMatching:
+    """Test that the same conceptual market produces matching canonical keys
+    regardless of source-specific naming."""
+
+    def test_nba_championship_odds_api(self):
+        """Odds API: sport_key provides league, market name provides name."""
+        league = detect_league("NBA Championship Winner 2025-26", "basketball_nba_championship_winner")
+        season = detect_season("NBA Championship Winner 2025-26", league)
+        key = compute_canonical_market_key("basketball", league, "championship", season)
+        assert key == "basketball:NBA:championship:2025-26"
+
+    def test_nba_championship_kalshi(self):
+        """Kalshi: league and season from market name only."""
+        league = detect_league("NBA Championship")
+        # Kalshi has resolution_date
+        resolution = datetime(2026, 6, 20, tzinfo=timezone.utc)
+        season = detect_season("NBA Championship", league, resolution)
+        key = compute_canonical_market_key("basketball", league, "championship", season)
+        assert key == "basketball:NBA:championship:2025-26"
+
+    def test_nba_championship_polymarket(self):
+        """Polymarket: league from title, season from end date."""
+        league = detect_league("2025-26 NBA Championship Winner")
+        season = detect_season("2025-26 NBA Championship Winner", league)
+        key = compute_canonical_market_key("basketball", league, "championship", season)
+        assert key == "basketball:NBA:championship:2025-26"
+
+    def test_nfl_mvp_matches_across_sources(self):
+        # Odds API
+        league1 = detect_league("NFL MVP", "americanfootball_nfl_mvp")
+        season1 = detect_season("NFL MVP", league1, datetime(2026, 2, 10, tzinfo=timezone.utc))
+        key1 = compute_canonical_market_key("football", league1, "mvp", season1)
+
+        # Kalshi
+        league2 = detect_league("NFL MVP Winner")
+        season2 = detect_season("NFL MVP Winner", league2, datetime(2026, 2, 10, tzinfo=timezone.utc))
+        key2 = compute_canonical_market_key("football", league2, "mvp", season2)
+
+        assert key1 == key2
+        assert key1 == "football:NFL:mvp:2026"
+
+    def test_epl_winner_matches(self):
+        league1 = detect_league("EPL Winner", "soccer_epl")
+        season1 = detect_season("EPL Winner 2025-26", league1)
+        key1 = compute_canonical_market_key("soccer", league1, "championship", season1)
+
+        league2 = detect_league("Premier League Winner 2025-26")
+        season2 = detect_season("Premier League Winner 2025-26", league2)
+        key2 = compute_canonical_market_key("soccer", league2, "championship", season2)
+
+        assert key1 == key2
+        assert key1 == "soccer:EPL:championship:2025-26"

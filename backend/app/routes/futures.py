@@ -229,6 +229,144 @@ async def get_live_futures(
         raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
 
 
+@router.get("/compare")
+async def compare_futures_sources(
+    key: str = Query(..., description="Canonical market key (e.g., basketball:NBA:championship:2025-26)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Compare how different sources price the same market.
+
+    Groups all FuturesMarket rows sharing the same canonical_market_key,
+    then merges their outcomes by team_id (or name fallback) to show
+    side-by-side probabilities from each source.
+    """
+    # Find all markets with this canonical key
+    markets_result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.canonical_market_key == key)
+        .order_by(FuturesMarket.source)
+    )
+    markets = markets_result.scalars().unique().all()
+
+    if not markets:
+        raise HTTPException(status_code=404, detail="No markets found for this canonical key")
+
+    sources = sorted(set(m.source for m in markets))
+
+    # Build outcome index: group outcomes across sources by team_id or normalized name
+    # Priority: match by team_id first, then fall back to case-insensitive name match
+    outcome_groups: dict[str, dict] = {}  # merge_key -> {name, team_id, by_source}
+
+    for market in markets:
+        for outcome in market.outcomes:
+            merge_key = _outcome_merge_key(outcome)
+            if merge_key not in outcome_groups:
+                outcome_groups[merge_key] = {
+                    "name": outcome.name,
+                    "team_id": outcome.team_id,
+                    "by_source": {},
+                }
+
+            source_data = {
+                "probability": float(outcome.current_probability) if outcome.current_probability else None,
+                "american_odds": outcome.current_american_odds,
+                "rank": outcome.rank,
+            }
+            # Include bid/ask for prediction markets
+            if outcome.current_yes_bid is not None:
+                source_data["yes_bid"] = float(outcome.current_yes_bid)
+            if outcome.current_yes_ask is not None:
+                source_data["yes_ask"] = float(outcome.current_yes_ask)
+
+            outcome_groups[merge_key]["by_source"][market.source] = source_data
+
+            # Prefer the name from the source that has a team_id link
+            if outcome.team_id and not outcome_groups[merge_key]["team_id"]:
+                outcome_groups[merge_key]["team_id"] = outcome.team_id
+                outcome_groups[merge_key]["name"] = outcome.name
+
+    # Sort outcomes by average probability across sources (descending)
+    sorted_outcomes = sorted(
+        outcome_groups.values(),
+        key=lambda o: _avg_probability(o["by_source"]),
+        reverse=True,
+    )
+
+    return {
+        "canonical_key": key,
+        "sources": sources,
+        "source_markets": [
+            {
+                "source": m.source,
+                "market_id": m.id,
+                "name": m.name,
+                "outcome_count": len(m.outcomes),
+            }
+            for m in markets
+        ],
+        "outcomes": [
+            {
+                "name": o["name"],
+                "team_id": o["team_id"],
+                "by_source": o["by_source"],
+            }
+            for o in sorted_outcomes
+        ],
+        "outcome_count": len(sorted_outcomes),
+    }
+
+
+@router.get("/canonical-keys")
+async def list_canonical_keys(
+    sport: Optional[str] = Query(None, description="Filter by sport category"),
+    has_multiple_sources: bool = Query(False, description="Only show keys with 2+ sources"),
+    limit: int = Query(50, description="Max results"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List distinct canonical market keys across all futures markets.
+
+    Useful for discovering which markets have cross-source coverage.
+    """
+    query = (
+        select(
+            FuturesMarket.canonical_market_key,
+            func.count(FuturesMarket.id).label("market_count"),
+            func.count(func.distinct(FuturesMarket.source)).label("source_count"),
+            func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
+        )
+        .where(FuturesMarket.canonical_market_key.isnot(None))
+        .group_by(FuturesMarket.canonical_market_key)
+        .order_by(func.count(func.distinct(FuturesMarket.source)).desc())
+    )
+
+    if sport:
+        query = query.where(FuturesMarket.llm_sport_category == sport)
+
+    if has_multiple_sources:
+        query = query.having(func.count(func.distinct(FuturesMarket.source)) > 1)
+
+    query = query.limit(limit)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    return {
+        "keys": [
+            {
+                "canonical_key": row.canonical_market_key,
+                "market_count": row.market_count,
+                "source_count": row.source_count,
+                "sources": sorted(row.sources) if row.sources else [],
+            }
+            for row in rows
+        ],
+        "count": len(rows),
+    }
+
+
 @router.get("")
 async def list_futures_markets(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
@@ -593,3 +731,25 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         "created_at": market.created_at.isoformat() if market.created_at else None,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }
+
+
+def _outcome_merge_key(outcome: FuturesOutcome) -> str:
+    """
+    Generate a merge key for cross-source outcome matching.
+
+    Priority: team_id (most reliable) > normalized name (fallback).
+    """
+    if outcome.team_id:
+        return f"team:{outcome.team_id}"
+    # Normalize name for matching: lowercase, strip whitespace
+    return f"name:{outcome.name.lower().strip()}"
+
+
+def _avg_probability(by_source: dict) -> float:
+    """Average probability across all sources for sorting."""
+    probs = [
+        v["probability"]
+        for v in by_source.values()
+        if v.get("probability") is not None
+    ]
+    return sum(probs) / len(probs) if probs else 0.0

@@ -230,6 +230,13 @@ def backfill_team_links(self, limit: int = 200, use_llm: bool = True):
     return run_async(_backfill_team_links(limit, use_llm))
 
 
+@celery_app.task(bind=True, name="app.tasks.backfill_canonical_keys")
+def backfill_canonical_keys(self, limit: int = 500):
+    """Backfill canonical_market_key and llm_league on futures markets."""
+    from app.tasks.team_linking import _backfill_canonical_keys
+    return run_async(_backfill_canonical_keys(limit))
+
+
 # --- Roster Sync (SportsDataIO) ---
 
 @celery_app.task(bind=True, name="app.tasks.sync_rosters")

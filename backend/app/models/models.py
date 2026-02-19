@@ -491,6 +491,10 @@ class FuturesMarket(Base):
     llm_level: Mapped[Optional[str]] = mapped_column(String(20))  # professional/college/amateur/youth
     llm_league: Mapped[Optional[str]] = mapped_column(String(50))  # NFL/NBA/EPL/etc
 
+    # Cross-source matching key: {sport}:{league}:{category}:{season}
+    # e.g., "basketball:NBA:championship:2025-26"
+    canonical_market_key: Mapped[Optional[str]] = mapped_column(String(200), index=True)
+
     # For multi-outcome markets, whether exactly one outcome can win
     mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)
 
