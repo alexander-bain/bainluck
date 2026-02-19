@@ -265,6 +265,123 @@ async def get_kalshi_task_status(
     return response
 
 
+@router.get("/kalshi/debug-discovery")
+async def debug_kalshi_discovery(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    search: Optional[str] = Query(None, description="Search term to filter series (e.g., 'olympic')"),
+):
+    """
+    Debug Kalshi series discovery: shows what series each category returns,
+    and optionally searches all series for a keyword.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    kalshi_key = os.getenv("KALSHI_API_KEY")
+    if not kalshi_key:
+        raise HTTPException(status_code=400, detail="KALSHI_API_KEY not configured")
+
+    import asyncio
+    from app.services.kalshi_api import KalshiAPIService
+
+    service = KalshiAPIService()
+    try:
+        # Step 1: Discover tags by categories (reveals subcategories like Olympics)
+        tags_by_category = None
+        try:
+            tags_by_category = await service.get_tags_by_categories()
+        except Exception as e:
+            tags_by_category = {"error": str(e)}
+
+        await asyncio.sleep(0.3)
+
+        # Step 2: Check each category
+        categories = service.SPORTS_CATEGORIES
+        category_results = {}
+
+        for category in categories:
+            await asyncio.sleep(0.3)
+            try:
+                series_list, _ = await service.get_series(category=category)
+                tickers = [s.get("ticker") for s in series_list if s.get("ticker")]
+                titles = [s.get("title", s.get("ticker", "?")) for s in series_list]
+                tags_seen = set()
+                for s in series_list:
+                    for tag in (s.get("tags") or []):
+                        tags_seen.add(tag)
+                category_results[category] = {
+                    "count": len(tickers),
+                    "tickers": sorted(tickers)[:30],
+                    "titles": titles[:30],
+                    "tags_on_series": sorted(tags_seen),
+                }
+            except Exception as e:
+                category_results[category] = {"error": str(e)}
+
+        # Step 3: Try tag-based discovery for Olympics specifically
+        olympics_tag_results = {}
+        for tag in ["Olympics", "olympics", "Winter Olympics", "winter-olympics"]:
+            await asyncio.sleep(0.3)
+            try:
+                series_list, _ = await service.get_series(category="Sports", tags=tag)
+                tickers = [s.get("ticker") for s in series_list if s.get("ticker")]
+                titles = [s.get("title", s.get("ticker", "?")) for s in series_list]
+                olympics_tag_results[tag] = {
+                    "count": len(tickers),
+                    "tickers": sorted(tickers)[:20],
+                    "titles": titles[:20],
+                }
+            except Exception as e:
+                olympics_tag_results[tag] = {"error": str(e)}
+
+        # Step 4: If search term provided, scan ALL series for keyword
+        search_results = None
+        if search:
+            search_lower = search.lower()
+            all_series = []
+            cursor = None
+            for page in range(10):  # Up to 10 pages
+                await asyncio.sleep(0.3)
+                page_series, cursor = await service.get_series(cursor=cursor)
+                all_series.extend(page_series)
+                if not cursor:
+                    break
+
+            matches = []
+            for s in all_series:
+                ticker = s.get("ticker", "")
+                title = s.get("title", "")
+                cat = s.get("category", "")
+                tags = s.get("tags") or []
+                tags_str = ",".join(tags).lower()
+                if (search_lower in ticker.lower()
+                    or search_lower in title.lower()
+                    or search_lower in cat.lower()
+                    or search_lower in tags_str):
+                    matches.append({
+                        "ticker": ticker,
+                        "title": title,
+                        "category": cat,
+                        "tags": tags,
+                    })
+
+            search_results = {
+                "query": search,
+                "total_series_scanned": len(all_series),
+                "matches": matches,
+            }
+
+        return {
+            "tags_by_category": tags_by_category,
+            "categories_checked": category_results,
+            "olympics_tag_search": olympics_tag_results,
+            "search_results": search_results,
+        }
+
+    finally:
+        await service.close()
+
+
 @router.post("/polymarket/poll")
 async def trigger_polymarket_poll(
     secret: str = Query(..., description="Admin secret for authorization"),

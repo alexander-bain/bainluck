@@ -80,10 +80,11 @@ async def _poll_kalshi_markets():
     }
 
     try:
-        # Only fetch sports-related categories to stay within rate limits
-        # Kalshi has thousands of politics/economics markets we don't need
-        sports_categories = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Tennis", "Olympics"]
-        events = await service.get_all_events(categories=sports_categories)
+        # Fetch ALL open Kalshi events (no category filter).
+        # This ensures we capture every market including sports subcategories
+        # (Olympics, etc.) and non-sports markets (politics, economics, etc.)
+        # that we'll want as the site expands beyond sports.
+        events = await service.get_all_events(categories=None)
 
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)

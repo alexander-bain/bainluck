@@ -65,8 +65,13 @@ class KalshiAPIService:
     # Production API (despite "elections" in URL, serves all markets)
     BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
-    # Categories we're interested in
-    SPORTS_CATEGORIES = ["Sports", "Golf", "Football", "Basketball", "Baseball", "Hockey", "Soccer", "Tennis", "Olympics"]
+    # Top-level Kalshi category for sports
+    SPORTS_CATEGORIES = ["Sports"]
+
+    # Tags (subcategories) to additionally search within Sports.
+    # Kalshi's series endpoint supports tags filtering for subcategories
+    # (e.g., Olympics is a tag under Sports, not a top-level category).
+    SPORTS_TAGS = ["Olympics", "Winter Olympics", "Football", "Basketball", "Baseball", "Hockey", "Golf", "Tennis", "Soccer"]
 
     def __init__(self, api_key: Optional[str] = None):
         """
@@ -143,14 +148,16 @@ class KalshiAPIService:
     async def get_series(
         self,
         category: Optional[str] = None,
+        tags: Optional[str] = None,
         limit: int = 200,
         cursor: Optional[str] = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
-        Get series from Kalshi. Series support category filtering.
+        Get series from Kalshi. Series support category and tags filtering.
 
         Args:
-            category: Filter by category (e.g., "Sports", "Olympics")
+            category: Filter by category (e.g., "Sports")
+            tags: Comma-separated tags to filter by (e.g., "Olympics,Winter Olympics")
             limit: Max results per page
             cursor: Pagination cursor
 
@@ -160,6 +167,8 @@ class KalshiAPIService:
         params = {"limit": min(limit, 200)}
         if category:
             params["category"] = category
+        if tags:
+            params["tags"] = tags
         if cursor:
             params["cursor"] = cursor
 
@@ -174,6 +183,19 @@ class KalshiAPIService:
         next_cursor = data.get("cursor")
 
         return series, next_cursor
+
+    async def get_tags_by_categories(self) -> dict:
+        """
+        Get tags organized by series categories from Kalshi's search API.
+
+        Returns a mapping of category names to their associated tags.
+        This reveals subcategories like Olympics under Sports.
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/search/tags_by_categories",
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def get_markets(
         self,
@@ -219,16 +241,19 @@ class KalshiAPIService:
     async def _discover_series_tickers(
         self,
         categories: list[str],
+        tags: Optional[list[str]] = None,
     ) -> list[str]:
         """
-        Discover all series tickers for the given categories.
+        Discover all series tickers for the given categories and tags.
 
-        The Kalshi series endpoint supports category filtering, unlike
-        the events endpoint. We use this to find which series belong
-        to sports categories, then fetch events by series_ticker.
+        Strategy:
+        1. Query each category (e.g., "Sports") to get all series
+        2. Also query each tag within the primary category to find
+           subcategory series (e.g., Olympics under Sports)
 
         Args:
             categories: List of Kalshi category names
+            tags: Optional list of tags to search within categories
 
         Returns:
             Deduplicated list of series tickers
@@ -238,10 +263,12 @@ class KalshiAPIService:
         tickers: set[str] = set()
         request_count = 0
 
+        # Phase 1: Discover series by category
         for category in categories:
             cursor = None
             page_count = 0
             max_pages = 10
+            category_tickers = set()
 
             try:
                 while page_count < max_pages:
@@ -258,6 +285,7 @@ class KalshiAPIService:
                         ticker = s.get("ticker")
                         if ticker:
                             tickers.add(ticker)
+                            category_tickers.add(ticker)
 
                     page_count += 1
                     if not cursor:
@@ -267,7 +295,57 @@ class KalshiAPIService:
                 logger.warning("Error fetching Kalshi series for category %s: %s", category, e)
                 continue
 
-        logger.info("Discovered %d series tickers across %d categories", len(tickers), len(categories))
+            if category_tickers:
+                logger.info(
+                    "Category '%s': found %d series tickers: %s",
+                    category, len(category_tickers),
+                    sorted(category_tickers)[:20],
+                )
+            else:
+                logger.info("Category '%s': no series found (empty or null response)", category)
+
+        # Phase 2: Discover additional series by tags (subcategories)
+        if tags:
+            primary_category = categories[0] if categories else None
+            for tag in tags:
+                cursor = None
+                page_count = 0
+                max_pages = 5
+                tag_tickers = set()
+
+                try:
+                    while page_count < max_pages:
+                        if request_count > 0:
+                            await asyncio.sleep(0.5)
+
+                        series_list, cursor = await self.get_series(
+                            category=primary_category,
+                            tags=tag,
+                            cursor=cursor,
+                        )
+                        request_count += 1
+
+                        for s in series_list:
+                            ticker = s.get("ticker")
+                            if ticker and ticker not in tickers:
+                                tag_tickers.add(ticker)
+                                tickers.add(ticker)
+
+                        page_count += 1
+                        if not cursor:
+                            break
+
+                except Exception as e:
+                    logger.warning("Error fetching Kalshi series for tag '%s': %s", tag, e)
+                    continue
+
+                if tag_tickers:
+                    logger.info(
+                        "Tag '%s': found %d NEW series tickers: %s",
+                        tag, len(tag_tickers), sorted(tag_tickers)[:20],
+                    )
+
+        logger.info("Discovered %d unique series tickers total (%d API requests)", len(tickers), request_count)
         return sorted(tickers)
 
     async def get_all_events(
@@ -342,13 +420,14 @@ class KalshiAPIService:
         return list(all_events.values())
 
     async def _fetch_all_events_unfiltered(self) -> list[KalshiEvent]:
-        """Fetch all events without category filtering (paginated)."""
+        """Fetch all open events from Kalshi without category filtering (paginated)."""
         import asyncio
 
-        all_events = []
+        all_events: dict[str, KalshiEvent] = {}  # Dedup by event_ticker
         cursor = None
         page_count = 0
         max_pages = 50
+        categories_seen: dict[str, int] = {}
 
         while page_count < max_pages:
             if page_count > 0:
@@ -363,13 +442,21 @@ class KalshiAPIService:
             for event_data in events:
                 parsed_event = self._parse_event(event_data)
                 if parsed_event:
-                    all_events.append(parsed_event)
+                    all_events[parsed_event.event_ticker] = parsed_event
+                    # Track categories for logging
+                    cat = parsed_event.category or "unknown"
+                    categories_seen[cat] = categories_seen.get(cat, 0) + 1
 
             page_count += 1
             if not cursor:
                 break
 
-        return all_events
+        logger.info(
+            "Fetched %d unique events across %d pages. Categories: %s",
+            len(all_events), page_count, dict(sorted(categories_seen.items())),
+        )
+
+        return list(all_events.values())
 
     def _parse_event(self, event_data: dict) -> Optional[KalshiEvent]:
         """Parse raw event data into KalshiEvent object."""
