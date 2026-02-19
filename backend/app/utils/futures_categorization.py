@@ -157,6 +157,40 @@ SPORT_PATTERNS = [
     # Poker
     (re.compile(r"\b(wsop|poker|world.series.of.poker)\b", re.I), "poker"),
 
+    # Crypto / Digital Assets
+    (re.compile(r"\b(bitcoin|btc|ethereum|eth|solana|crypto|blockchain|defi|nft|dogecoin|cardano|xrp|ripple|altcoin)\b", re.I), "crypto"),
+
+    # Economics / Finance
+    (re.compile(r"\b(fed\s+rate|interest\s+rate|inflation|gdp|recession|cpi|jobs?\s+report|unemployment|treasury|tariff|federal\s+reserve|fomc|rate\s+cut|rate\s+hike|stock\s+market|s&p\s*500|nasdaq|dow\s+jones)\b", re.I), "economics"),
+    (re.compile(r"\b(gas\s+price|oil\s+price|commodity|bond\s+yield|ipo|earnings)\b", re.I), "economics"),
+
+    # Tech / Science / AI
+    (re.compile(r"\b(artificial\s+intelligence|chatgpt|openai|anthropic|deepmind|gemini\s+ai|gpt[\s-]?\d)\b", re.I), "tech"),
+    (re.compile(r"\b(spacex|starship|nasa|mars\s+mission|moon\s+landing|rocket\s+launch|blue\s+origin)\b", re.I), "tech"),
+    (re.compile(r"\b(self[\s-]?driving|autonomous\s+vehicle|quantum\s+computing)\b", re.I), "tech"),
+
+    # Weather / Climate
+    (re.compile(r"\b(hurricane|tornado|earthquake|wildfire|heat\s+wave|cold\s+snap|blizzard|flood)\b", re.I), "weather"),
+    (re.compile(r"\b(temperature|weather|climate|el\s+ni[nñ]o|la\s+ni[nñ]a)\b", re.I), "weather"),
+
+    # Health / Science
+    (re.compile(r"\b(pandemic|covid|vaccine|fda\s+approval|bird\s+flu|mpox|virus|outbreak|drug\s+approval)\b", re.I), "health"),
+    (re.compile(r"\b(cdc|who\s+declares|health\s+emergency|clinical\s+trial)\b", re.I), "health"),
+
+    # Geopolitics / International
+    (re.compile(r"\b(ukraine|russia|china|taiwan|nato|ceasefire|peace\s+deal|war|sanctions|nuclear|missile)\b", re.I), "geopolitics"),
+    (re.compile(r"\b(un\s+security|united\s+nations|diplomatic|geopoliti)\b", re.I), "geopolitics"),
+    (re.compile(r"\b(middle\s+east|israel|gaza|iran|north\s+korea|syria)\b", re.I), "geopolitics"),
+    (re.compile(r"\b(brexit|european\s+union|eu\s+election)\b", re.I), "geopolitics"),
+
+    # Legal / Regulatory
+    (re.compile(r"\b(supreme\s+court|scotus|indictment|verdict|trial|conviction|lawsuit|regulation|antitrust)\b", re.I), "legal"),
+    (re.compile(r"\b(sec\s+charges|doj|department\s+of\s+justice|impeach|pardon)\b", re.I), "legal"),
+
+    # Social Media / Culture
+    (re.compile(r"\b(twitter|x\.com|tiktok\s+ban|social\s+media|meta\s+stock|elon\s+musk)\b", re.I), "culture"),
+    (re.compile(r"\b(nobel\s+prize|pulitzer|time\s+person)\b", re.I), "culture"),
+
     # Known athletes for ambiguous markets (e.g., "US Open" disambiguation)
     # Top golfers
     (re.compile(r"\b(bryson.dechambeau|scottie.scheffler|rory.mcilroy|jon.rahm|xander.schauffele|collin.morikawa|viktor.hovland|jordan.spieth|brooks.koepka|tiger.woods|phil.mickelson|dustin.johnson|cameron.smith|hideki.matsuyama|patrick.cantlay|justin.thomas|tony.finau|max.homa|wyndham.clark|ludvig.aberg)\b", re.I), "golf"),
@@ -426,6 +460,100 @@ def detect_league(
             return league
 
     return None
+
+
+# =============================================================================
+# League → Sport Category inference
+# =============================================================================
+
+# Maps league abbreviations to sport categories. Used to upgrade markets
+# stuck as "other" when league detection succeeds but sport detection didn't.
+LEAGUE_TO_SPORT_CATEGORY: dict[str, str] = {
+    # Basketball
+    "NBA": "basketball",
+    "WNBA": "basketball",
+    "NCAAB": "basketball",
+    "WNCAAB": "basketball",
+    "EUROLEAGUE": "basketball",
+    # Football
+    "NFL": "football",
+    "NCAAF": "football",
+    "CFL": "football",
+    "XFL": "football",
+    # Baseball
+    "MLB": "baseball",
+    "NCAA_BASEBALL": "baseball",
+    # Hockey
+    "NHL": "hockey",
+    # Soccer
+    "EPL": "soccer",
+    "UCL": "soccer",
+    "EUROPA": "soccer",
+    "LA_LIGA": "soccer",
+    "BUNDESLIGA": "soccer",
+    "SERIE_A": "soccer",
+    "LIGUE_1": "soccer",
+    "MLS": "soccer",
+    "NWSL": "soccer",
+    "LIGA_MX": "soccer",
+    "BRASILEIRAO": "soccer",
+    "FIFA_WC": "soccer",
+    "COPA_AMERICA": "soccer",
+    # Golf
+    "PGA": "golf",
+    "LPGA": "golf",
+    "LIV": "golf",
+    # Tennis
+    "ATP": "tennis",
+    "WTA": "tennis",
+    # MMA / Boxing
+    "UFC": "mma",
+    "MMA": "mma",
+    "BOXING": "boxing",
+    # Motorsports
+    "F1": "motorsports",
+    "NASCAR": "motorsports",
+    "INDYCAR": "motorsports",
+    # Cricket
+    "IPL": "cricket",
+    "ICC": "cricket",
+    # Rugby
+    "NRL": "rugby",
+    "SIX_NATIONS": "rugby",
+    "RUGBY": "rugby",
+    # Aussie Rules
+    "AFL": "aussierules",
+    # Horse Racing
+    "HORSE_RACING": "horse_racing",
+    # Olympics
+    "OLYMPICS": "olympics",
+    # Esports
+    "LOL": "esports",
+    "CSGO": "esports",
+    "DOTA": "esports",
+    "VALORANT": "esports",
+    # Non-sports (league-level keys for canonical key)
+    "US": "politics",
+    "AWARDS": "entertainment",
+}
+
+
+def infer_sport_from_league(league: Optional[str]) -> Optional[str]:
+    """
+    Infer the sport category from a detected league abbreviation.
+
+    This allows markets categorized as 'other' to be re-categorized when
+    league detection succeeds (e.g., market mentions 'Stanley Cup' → NHL → hockey).
+
+    Args:
+        league: League abbreviation (e.g., "NBA", "NFL", "EPL")
+
+    Returns:
+        Sport category string, or None if league is unknown.
+    """
+    if not league:
+        return None
+    return LEAGUE_TO_SPORT_CATEGORY.get(league.upper().strip())
 
 
 # =============================================================================

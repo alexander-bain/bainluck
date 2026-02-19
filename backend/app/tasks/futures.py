@@ -441,11 +441,15 @@ async def _recategorize_other_impl(limit: int = 500):
     """
     from sqlalchemy import select
     from app.models import FuturesMarket
-    from app.utils.futures_categorization import categorize_by_rules
+    from app.utils.futures_categorization import (
+        categorize_by_rules, detect_league, infer_sport_from_league,
+    )
 
     stats = {
         "processed": 0,
         "reclassified": 0,
+        "reclassified_by_rules": 0,
+        "reclassified_by_league": 0,
         "by_category": {},
         "sample_results": [],
         "errors": [],
@@ -467,10 +471,12 @@ async def _recategorize_other_impl(limit: int = 500):
             for market in markets:
                 stats["processed"] += 1
                 try:
+                    # Strategy 1: Re-run pattern matching (new patterns)
                     category = categorize_by_rules(market.name)
                     if category and category != "other":
                         market.llm_sport_category = category
                         stats["reclassified"] += 1
+                        stats["reclassified_by_rules"] += 1
                         stats["by_category"][category] = (
                             stats["by_category"].get(category, 0) + 1
                         )
@@ -480,7 +486,39 @@ async def _recategorize_other_impl(limit: int = 500):
                                 "name": market.name,
                                 "old": "other",
                                 "new": category,
+                                "method": "rules",
                             })
+                        continue
+
+                    # Strategy 2: Infer sport from league detection
+                    league = market.llm_league
+                    if not league:
+                        sport_key = (
+                            market.external_id
+                            if market.source == "odds_api"
+                            else None
+                        )
+                        league = detect_league(market.name, sport_key)
+                        if league:
+                            market.llm_league = league
+
+                    if league:
+                        sport = infer_sport_from_league(league)
+                        if sport and sport != "other":
+                            market.llm_sport_category = sport
+                            stats["reclassified"] += 1
+                            stats["reclassified_by_league"] += 1
+                            stats["by_category"][sport] = (
+                                stats["by_category"].get(sport, 0) + 1
+                            )
+                            if len(stats["sample_results"]) < 20:
+                                stats["sample_results"].append({
+                                    "id": market.id,
+                                    "name": market.name,
+                                    "old": "other",
+                                    "new": sport,
+                                    "method": f"league:{league}",
+                                })
                 except Exception as e:
                     stats["errors"].append(f"{market.id}: {str(e)}")
 

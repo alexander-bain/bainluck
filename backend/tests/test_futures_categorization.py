@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app.utils.futures_categorization import (
     categorize_by_rules, categorize_market,
     detect_league, detect_season, compute_canonical_market_key,
+    infer_sport_from_league, LEAGUE_TO_SPORT_CATEGORY,
 )
 
 
@@ -746,3 +747,247 @@ class TestCrossSourceMatching:
 
         assert key1 == key2
         assert key1 == "soccer:EPL:championship:2025-26"
+
+
+# =============================================================================
+# League → Sport Category inference
+# =============================================================================
+class TestLeagueToSportInference:
+    """Test that league abbreviations map to correct sport categories."""
+
+    def test_nba_to_basketball(self):
+        assert infer_sport_from_league("NBA") == "basketball"
+
+    def test_nfl_to_football(self):
+        assert infer_sport_from_league("NFL") == "football"
+
+    def test_mlb_to_baseball(self):
+        assert infer_sport_from_league("MLB") == "baseball"
+
+    def test_nhl_to_hockey(self):
+        assert infer_sport_from_league("NHL") == "hockey"
+
+    def test_epl_to_soccer(self):
+        assert infer_sport_from_league("EPL") == "soccer"
+
+    def test_ucl_to_soccer(self):
+        assert infer_sport_from_league("UCL") == "soccer"
+
+    def test_pga_to_golf(self):
+        assert infer_sport_from_league("PGA") == "golf"
+
+    def test_atp_to_tennis(self):
+        assert infer_sport_from_league("ATP") == "tennis"
+
+    def test_ufc_to_mma(self):
+        assert infer_sport_from_league("UFC") == "mma"
+
+    def test_f1_to_motorsports(self):
+        assert infer_sport_from_league("F1") == "motorsports"
+
+    def test_nascar_to_motorsports(self):
+        assert infer_sport_from_league("NASCAR") == "motorsports"
+
+    def test_ipl_to_cricket(self):
+        assert infer_sport_from_league("IPL") == "cricket"
+
+    def test_afl_to_aussierules(self):
+        assert infer_sport_from_league("AFL") == "aussierules"
+
+    def test_none_returns_none(self):
+        assert infer_sport_from_league(None) is None
+
+    def test_empty_returns_none(self):
+        assert infer_sport_from_league("") is None
+
+    def test_unknown_league_returns_none(self):
+        assert infer_sport_from_league("XYZZY") is None
+
+    def test_case_insensitive(self):
+        assert infer_sport_from_league("nba") == "basketball"
+        assert infer_sport_from_league("Nfl") == "football"
+
+    def test_all_leagues_have_sport(self):
+        """Every league in the mapping should return a non-None sport."""
+        for league, sport in LEAGUE_TO_SPORT_CATEGORY.items():
+            result = infer_sport_from_league(league)
+            assert result == sport, f"League {league} expected {sport}, got {result}"
+
+    def test_politics_league(self):
+        assert infer_sport_from_league("US") == "politics"
+
+    def test_awards_league(self):
+        assert infer_sport_from_league("AWARDS") == "entertainment"
+
+
+# =============================================================================
+# Non-sports pattern matching (new categories)
+# =============================================================================
+class TestNonSportsPatterns:
+    """Test expanded non-sports SPORT_PATTERNS."""
+
+    # -- Crypto / Digital Assets --
+    def test_bitcoin(self):
+        assert categorize_by_rules("Bitcoin to reach $100K?") == "crypto"
+
+    def test_ethereum(self):
+        assert categorize_by_rules("Ethereum price above $5000") == "crypto"
+
+    def test_solana(self):
+        assert categorize_by_rules("Solana market cap doubles") == "crypto"
+
+    def test_crypto(self):
+        assert categorize_by_rules("Crypto market recovery") == "crypto"
+
+    # -- Economics / Finance --
+    def test_fed_rate(self):
+        assert categorize_by_rules("Fed rate cut in March") == "economics"
+
+    def test_inflation(self):
+        assert categorize_by_rules("US inflation above 3%") == "economics"
+
+    def test_gdp(self):
+        assert categorize_by_rules("GDP growth exceeds 4%") == "economics"
+
+    def test_recession(self):
+        assert categorize_by_rules("Will there be a recession in 2026?") == "economics"
+
+    def test_unemployment(self):
+        assert categorize_by_rules("Unemployment rate falls below 4%") == "economics"
+
+    def test_tariff(self):
+        assert categorize_by_rules("New tariff on Chinese imports") == "economics"
+
+    def test_stock_market(self):
+        assert categorize_by_rules("S&P 500 reaches new high") == "economics"
+
+    # -- Tech / Science / AI --
+    def test_openai(self):
+        assert categorize_by_rules("OpenAI releases GPT-5") == "tech"
+
+    def test_spacex(self):
+        assert categorize_by_rules("SpaceX Starship lands successfully") == "tech"
+
+    def test_quantum_computing(self):
+        assert categorize_by_rules("Quantum computing breakthrough") == "tech"
+
+    # -- Weather / Climate --
+    def test_hurricane(self):
+        assert categorize_by_rules("Hurricane hits Florida") == "weather"
+
+    def test_temperature(self):
+        assert categorize_by_rules("Temperature records broken") == "weather"
+
+    def test_earthquake(self):
+        assert categorize_by_rules("Major earthquake in California") == "weather"
+
+    # -- Health --
+    def test_pandemic(self):
+        assert categorize_by_rules("Next pandemic declaration") == "health"
+
+    def test_fda_approval(self):
+        assert categorize_by_rules("FDA approval of new drug") == "health"
+
+    def test_bird_flu(self):
+        assert categorize_by_rules("Bird flu outbreak spreads") == "health"
+
+    # -- Geopolitics --
+    def test_ukraine(self):
+        assert categorize_by_rules("Ukraine ceasefire agreement") == "geopolitics"
+
+    def test_nato(self):
+        assert categorize_by_rules("NATO expansion decision") == "geopolitics"
+
+    def test_china_taiwan(self):
+        assert categorize_by_rules("China-Taiwan tensions escalate") == "geopolitics"
+
+    def test_middle_east(self):
+        assert categorize_by_rules("Middle East peace deal") == "geopolitics"
+
+    def test_sanctions(self):
+        assert categorize_by_rules("New sanctions on Russia") == "geopolitics"
+
+    # -- Legal / Regulatory --
+    def test_supreme_court(self):
+        assert categorize_by_rules("Supreme Court rules on case") == "legal"
+
+    def test_indictment(self):
+        assert categorize_by_rules("Federal indictment announced") == "legal"
+
+    def test_antitrust(self):
+        assert categorize_by_rules("Antitrust case against Google") == "legal"
+
+    # -- Culture / Social --
+    def test_tiktok_ban(self):
+        # TikTok matches the entertainment pattern (tv/tiktok/influencer)
+        assert categorize_by_rules("TikTok ban upheld") == "entertainment"
+
+    def test_nobel_prize(self):
+        assert categorize_by_rules("Nobel Prize in Physics") == "culture"
+
+    # -- Existing categories still work --
+    def test_politics_still_works(self):
+        assert categorize_by_rules("2028 Presidential election") == "politics"
+
+    def test_entertainment_still_works(self):
+        assert categorize_by_rules("Oscar Best Picture winner") == "entertainment"
+
+    def test_esports_still_works(self):
+        assert categorize_by_rules("League of Legends World Championship") == "esports"
+
+
+# =============================================================================
+# League inference upgrading "other" markets
+# =============================================================================
+class TestLeagueInferenceUpgrade:
+    """Test that league detection can upgrade 'other' markets to proper categories."""
+
+    def test_stanley_cup_upgrades_via_league(self):
+        """Market mentions Stanley Cup → NHL → hockey, even if rules somehow missed it."""
+        league = detect_league("Stanley Cup Winner 2026")
+        assert league == "NHL"
+        sport = infer_sport_from_league(league)
+        assert sport == "hockey"
+
+    def test_super_bowl_upgrades_via_league(self):
+        league = detect_league("Super Bowl LXI Champion")
+        assert league == "NFL"
+        sport = infer_sport_from_league(league)
+        assert sport == "football"
+
+    def test_wimbledon_upgrades_via_league(self):
+        league = detect_league("Wimbledon 2026 Winner")
+        assert league == "ATP"
+        sport = infer_sport_from_league(league)
+        assert sport == "tennis"
+
+    def test_premier_league_upgrades_via_league(self):
+        league = detect_league("Premier League Top Scorer")
+        assert league == "EPL"
+        sport = infer_sport_from_league(league)
+        assert sport == "soccer"
+
+    def test_champions_league_upgrades_via_league(self):
+        league = detect_league("Champions League Winner")
+        assert league == "UCL"
+        sport = infer_sport_from_league(league)
+        assert sport == "soccer"
+
+    def test_ipl_upgrades_via_league(self):
+        league = detect_league("IPL 2026 Champion")
+        assert league == "IPL"
+        sport = infer_sport_from_league(league)
+        assert sport == "cricket"
+
+    def test_masters_upgrades_via_league(self):
+        league = detect_league("The Masters 2026 Winner")
+        assert league == "PGA"
+        sport = infer_sport_from_league(league)
+        assert sport == "golf"
+
+    def test_sport_key_provides_league(self):
+        """Odds API sport_key can provide league even when name is ambiguous."""
+        league = detect_league("Regular Season Wins", "basketball_nba_championship")
+        assert league == "NBA"
+        sport = infer_sport_from_league(league)
+        assert sport == "basketball"
