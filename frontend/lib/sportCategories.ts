@@ -175,6 +175,13 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["poker_"],
     tier: 3,
   },
+  {
+    key: "darts",
+    name: "Darts",
+    emoji: "🎯",
+    prefixes: ["darts_"],
+    tier: 3,
+  },
   // Non-sports categories (from prediction markets)
   {
     key: "crypto",
@@ -522,6 +529,9 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
 
   // Poker
   { pattern: /\b(wsop|poker|world.series.of.poker)\b/i, category: "poker" },
+
+  // Darts
+  { pattern: /\b(darts?|pdc|bdo|premier.league.darts|world.darts|world.matchplay)\b/i, category: "darts" },
 ];
 
 /**

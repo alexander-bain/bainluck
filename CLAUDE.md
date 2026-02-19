@@ -406,8 +406,8 @@ Futures markets are categorized using a hybrid approach: pattern matching rules 
 6. Fall back to LLM (GPT-4o-mini) for uncategorized markets
 7. LLM always returns a category (never NULL) — defaults to "other"
 
-**Supported categories (22):**
-football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, other
+**Supported categories (23):**
+football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, aussierules, horse_racing, olympics, esports, entertainment, politics, lacrosse, chess, poker, darts, other
 
 **Files:**
 - Frontend patterns: `frontend/lib/sportCategories.ts`

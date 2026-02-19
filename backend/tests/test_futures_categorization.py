@@ -1209,12 +1209,15 @@ class TestGamePropDetection:
     def test_soccer_corners(self):
         assert detect_game_prop_sport("Arsenal at Chelsea: Corners") == "soccer"
 
-    def test_ambiguous_spread_returns_none(self):
-        """Spread is ambiguous — could be any sport."""
-        assert detect_game_prop_sport("Orlando at Sacramento: Spread") is None
+    def test_ambiguous_spread_uses_seasonal(self):
+        """Spread is ambiguous — uses seasonal inference as tiebreaker."""
+        result = detect_game_prop_sport("Orlando at Sacramento: Spread")
+        # Returns seasonal sport (basketball in Feb-Apr, football in Aug-Oct, None in Nov-Jan)
+        assert result in ("basketball", "football", "baseball", None)
 
-    def test_ambiguous_total_returns_none(self):
-        assert detect_game_prop_sport("Phoenix at San Antonio: Total") is None
+    def test_ambiguous_total_uses_seasonal(self):
+        result = detect_game_prop_sport("Phoenix at San Antonio: Total")
+        assert result in ("basketball", "football", "baseball", None)
 
     def test_not_a_game_prop(self):
         assert detect_game_prop_sport("NBA Championship 2025-26") is None

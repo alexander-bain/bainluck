@@ -6,6 +6,7 @@ Uses OpenAI's GPT-4o-mini for cost-effective classification and extraction.
 
 import os
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from functools import lru_cache
 
@@ -37,6 +38,67 @@ def is_available() -> bool:
     return _get_client() is not None
 
 
+def _get_seasonal_context() -> str:
+    """
+    Generate seasonal context for LLM classification based on current date.
+
+    College teams play multiple sports, so "Iowa at Purdue" could be
+    basketball, football, wrestling, etc. The current month disambiguates:
+    - College football: Aug–Jan (bowls in Dec/Jan)
+    - College basketball: Nov–Apr (March Madness in Mar/Apr)
+    - NFL: Sep–Feb (Super Bowl in Feb)
+    - MLB: Apr–Oct
+    - NHL/NBA: Oct–Jun
+    """
+    now = datetime.now(timezone.utc)
+    month = now.month
+    month_name = now.strftime("%B")
+    year = now.year
+
+    # Build list of currently active sports
+    active = []
+    if month in (10, 11, 12, 1, 2, 3, 4, 5, 6):
+        active.append("NBA/NCAAB basketball (Oct-Apr)")
+    if month in (10, 11, 12, 1, 2, 3, 4, 5, 6):
+        active.append("NHL hockey (Oct-Jun)")
+    if month in (8, 9, 10, 11, 12, 1):
+        active.append("NFL/NCAAF football (Aug-Jan)")
+    if month in (4, 5, 6, 7, 8, 9, 10):
+        active.append("MLB baseball (Apr-Oct)")
+
+    active_str = ", ".join(active) if active else "various"
+
+    # Special guidance for ambiguous college matchups
+    college_hint = ""
+    if month in (2, 3, 4):
+        college_hint = (
+            "IMPORTANT: College football season ended in January. "
+            "College team matchups (e.g., 'Iowa at Purdue', 'Memphis at South Florida') "
+            "in February-April are almost certainly basketball, NOT football."
+        )
+    elif month in (5, 6, 7):
+        college_hint = (
+            "Both college football and basketball are in off-season. "
+            "College matchups may be baseball, softball, or other spring sports."
+        )
+    elif month in (8, 9, 10):
+        college_hint = (
+            "College football is in-season. College basketball starts in November. "
+            "College team matchups in Aug-Oct are likely football."
+        )
+    elif month in (11, 12, 1):
+        college_hint = (
+            "Both college football and basketball are in-season. "
+            "Use context clues (spreads, point totals) to determine which sport."
+        )
+
+    return (
+        f"Current date: {month_name} {year}. "
+        f"Sports currently in-season: {active_str}. "
+        f"{college_hint}"
+    )
+
+
 def classify(
     text: str,
     categories: list[str],
@@ -64,13 +126,18 @@ def classify(
 
     categories_str = ", ".join(categories)
 
+    seasonal = _get_seasonal_context()
+
     system_prompt = f"""You are a classification assistant for a prediction market aggregator. Classify the given text into exactly one of these categories: {categories_str}
+
+{seasonal}
 
 Rules:
 - Respond with ONLY the category name, nothing else (e.g., "football" or "crypto")
 - If it mentions an athlete, classify by their sport (e.g., "Kyler Murray" → football, "LeBron James" → basketball, "Shai Gilgeous-Alexander" → basketball, "Josh Allen" → football)
 - If it mentions a team, classify by their sport (e.g., "Manchester United" → soccer, "Boston Celtics" → basketball)
 - "american football" and "NFL" → football
+- Darts (PDC, BDO, Premier League Darts, darts tournaments) → darts
 - Bitcoin, Ethereum, Solana, crypto prices/tokens → crypto
 - Fed rate, inflation, GDP, tariffs, recession → economics
 - AI, SpaceX, autonomous vehicles → tech
@@ -134,6 +201,9 @@ Rules:
             "australian rules football": "aussierules",
             "aussie rules": "aussierules",
             "table tennis": "tennis",
+            "pdc": "darts",
+            "bdo": "darts",
+            "premier league darts": "darts",
             "mixed martial arts": "mma",
             "e-sports": "esports",
             "video games": "esports",
@@ -197,6 +267,7 @@ SPORT_CATEGORIES = [
     "lacrosse",
     "chess",
     "poker",
+    "darts",
     "crypto",
     "economics",
     "tech",
@@ -296,6 +367,8 @@ def classify_futures_market_with_outcomes(
         top_outcomes = outcome_names[:15]
         context_text = f"{market_name}\nOutcomes: {', '.join(top_outcomes)}"
 
+    seasonal = _get_seasonal_context()
+
     result = classify(
         text=context_text,
         categories=SPORT_CATEGORIES,
@@ -304,7 +377,8 @@ def classify_futures_market_with_outcomes(
             "Use outcome names (player/team names) as clues to determine the sport. "
             "For example, if outcomes include NBA players like Shai Gilgeous-Alexander "
             "or Nikola Jokic, classify as basketball. If outcomes include NFL players "
-            "like Josh Allen or Lamar Jackson, classify as football."
+            "like Josh Allen or Lamar Jackson, classify as football. "
+            f"{seasonal}"
         ),
         fallback="other",
     )
@@ -338,6 +412,10 @@ _OPEN_ENDED_NORMALIZATIONS: dict[str, str] = {
     "e_sports": "esports",
     "e-sports": "esports",
     "video_games": "esports",
+    "darts_tournament": "darts",
+    "pdc": "darts",
+    "bdo": "darts",
+    "premier_league_darts": "darts",
     "cryptocurrency": "crypto",
     "digital_assets": "crypto",
     "finance": "economics",
@@ -443,17 +521,21 @@ def classify_open_ended(
         top_outcomes = outcome_names[:15]
         context_text = f"{market_name}\nOutcomes: {', '.join(top_outcomes)}"
 
-    system_prompt = """You are a classification assistant for a prediction market aggregator.
+    seasonal = _get_seasonal_context()
+
+    system_prompt = f"""You are a classification assistant for a prediction market aggregator.
 Given a prediction market title (and optionally its outcome names), respond with the SINGLE most specific category.
+
+{seasonal}
 
 Rules:
 - Respond with ONLY the category name (1-2 words), nothing else
 - Use lowercase with underscores (e.g., "basketball", "horse_racing")
 - Be specific: prefer "basketball" over "sports", "crypto" over "finance"
-- For sports: use the sport name (football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, olympics, esports, horse_racing, lacrosse, chess, poker, aussierules)
+- For sports: use the sport name (football, basketball, baseball, hockey, golf, tennis, soccer, mma, motorsports, boxing, cricket, rugby, olympics, esports, horse_racing, lacrosse, chess, poker, darts, aussierules)
 - For non-sports: politics, entertainment, crypto, economics, tech, weather, health, geopolitics, legal, culture
 - Use outcome names (player/team names) as clues when the title is ambiguous
-- If the market is genuinely about a novel topic, name it descriptively (e.g., "ai_safety", "space", "education", "real_estate", "energy")
+- If the market is genuinely about a novel topic, name it descriptively (e.g., "ai_safety", "education", "real_estate", "energy")
 - Do NOT say "other" — always pick the most descriptive category possible"""
 
     try:

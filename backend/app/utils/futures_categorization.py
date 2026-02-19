@@ -13,7 +13,7 @@ Also provides:
 
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.services import llm
@@ -157,6 +157,10 @@ SPORT_PATTERNS = [
 
     # Poker
     (re.compile(r"\b(wsop|poker|world.series.of.poker)\b", re.I), "poker"),
+
+    # Darts
+    (re.compile(r"\b(darts?|pdc|bdo|premier.league.darts|world.darts|lakeside|ally.pally|world.matchplay|grand.prix.darts|world.grand.prix.darts)\b", re.I), "darts"),
+    (re.compile(r"\b(nine.dart|180s|checkout|bullseye|dartboard)\b", re.I), "darts"),
 
     # Generic sports awards (catch-all for awards not already matched above)
     # These come after specific sport patterns so "NFL Coach" matches football first
@@ -307,12 +311,45 @@ _STAT_TO_SPORT: dict[str, str] = {
 }
 
 
+def _seasonal_sport_for_college_matchup() -> Optional[str]:
+    """
+    Infer the most likely sport for a college matchup based on current month.
+
+    College teams play multiple sports (football, basketball, baseball, etc.).
+    When the market name is just "Team at Team" with an ambiguous stat like
+    "Spread" or "Total Points", the current date disambiguates:
+    - Feb–Apr: basketball (football ended in Jan, March Madness in Mar/Apr)
+    - May–Jul: baseball/softball (both football and basketball off-season)
+    - Aug–Oct: football (basketball hasn't started yet)
+    - Nov–Jan: ambiguous (both football and basketball in-season) → None
+    """
+    month = datetime.now(timezone.utc).month
+    if month in (2, 3, 4):
+        return "basketball"
+    elif month in (5, 6, 7):
+        return "baseball"
+    elif month in (8, 9, 10):
+        return "football"
+    # Nov–Jan: both football and basketball are in-season
+    return None
+
+
+# Ambiguous stats that exist across multiple sports
+_AMBIGUOUS_STATS = {
+    "spread", "total points", "total", "moneyline", "money line",
+    "winner", "field goals", "over/under",
+}
+
+
 def detect_game_prop_sport(market_name: str) -> Optional[str]:
     """
     Detect sport from game prop market names like 'Boston at Golden State: Rebounds'.
 
     Returns the sport category if a game prop pattern is detected with a
     sport-specific stat, or None if not a game prop or stat is ambiguous.
+
+    For ambiguous stats (spread, total points, moneyline), uses seasonal
+    inference as a tiebreaker for college team matchups.
     """
     match = _GAME_PROP_RE.match(market_name)
     if not match:
@@ -320,19 +357,60 @@ def detect_game_prop_sport(market_name: str) -> Optional[str]:
 
     stat = match.group(3).strip().lower()
 
-    # Check stat against sport mapping
+    # Check stat against sport mapping (deterministic, sport-specific)
     for stat_keyword, sport in _STAT_TO_SPORT.items():
         if stat_keyword in stat:
             return sport
 
-    # For ambiguous stats (spread, total, winner, moneyline, field goals),
-    # we still return None — the Kalshi category or LLM can handle these
+    # For ambiguous stats, try seasonal inference
+    for ambiguous in _AMBIGUOUS_STATS:
+        if ambiguous in stat:
+            return _seasonal_sport_for_college_matchup()
+
     return None
 
 
 def is_game_prop(market_name: str) -> bool:
     """Check if a market name looks like a game prop (Team at Team: Stat)."""
     return _GAME_PROP_RE.match(market_name) is not None
+
+
+# Pattern: "Team at/vs Team" (bare matchup without stat, typical Kalshi format)
+# Team names are typically 1-5 words, start with uppercase, and don't contain
+# question marks, sentence-like structures, or common non-matchup words.
+_BARE_MATCHUP_RE = re.compile(
+    r'^([A-Z][\w\s.\'()]+?)\s+(?:at|vs\.?|@)\s+([A-Z][\w\s.\'()]+?)$',
+)
+
+
+def detect_bare_matchup_sport(market_name: str) -> Optional[str]:
+    """
+    Detect sport from bare matchup names like 'Iowa at Purdue'.
+
+    Only applies seasonal inference — we can't determine the sport from
+    the market name alone. Returns None during ambiguous months (Nov-Jan)
+    when both football and basketball are in-season.
+
+    Excludes sentence-like markets ("What will X say at Y?") by requiring
+    the match to look like team names (starting with uppercase, no question
+    marks, short enough to be team names).
+    """
+    # Quick filters: skip sentences, questions, and game props
+    if '?' in market_name or ':' in market_name:
+        return None
+    if _GAME_PROP_RE.match(market_name):
+        return None
+    match = _BARE_MATCHUP_RE.match(market_name.strip())
+    if not match:
+        return None
+    # Both sides should look like team names (1-5 words, under 40 chars each)
+    team_a, team_b = match.group(1).strip(), match.group(2).strip()
+    if len(team_a) > 40 or len(team_b) > 40:
+        return None
+    if len(team_a.split()) > 6 or len(team_b.split()) > 6:
+        return None
+    # Simple matchup — use seasonal inference
+    return _seasonal_sport_for_college_matchup()
 
 
 # =============================================================================
@@ -482,6 +560,11 @@ def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Op
     game_prop_sport = detect_game_prop_sport(market_name)
     if game_prop_sport:
         return game_prop_sport
+
+    # Try bare matchup detection with seasonal inference (Team at Team)
+    bare_matchup_sport = detect_bare_matchup_sport(market_name)
+    if bare_matchup_sport:
+        return bare_matchup_sport
 
     # Try regex pattern matching
     for pattern, category in SPORT_PATTERNS:
