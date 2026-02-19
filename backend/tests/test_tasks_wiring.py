@@ -168,6 +168,8 @@ class TestBeatScheduleCompleteness:
         "collapse-winprob-snapshots-daily",
         "collapse-futures-snapshots-daily",
         "sync-rosters-daily",
+        "recategorize-other-daily",
+        "backfill-canonical-keys-daily",
     }
 
     def test_no_missing_entries(self):
