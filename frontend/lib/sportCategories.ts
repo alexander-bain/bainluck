@@ -175,6 +175,63 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["poker_"],
     tier: 3,
   },
+  // Non-sports categories (from prediction markets)
+  {
+    key: "crypto",
+    name: "Crypto",
+    emoji: "₿",
+    prefixes: ["crypto_"],
+    tier: 3,
+  },
+  {
+    key: "economics",
+    name: "Economics",
+    emoji: "📊",
+    prefixes: ["economics_"],
+    tier: 3,
+  },
+  {
+    key: "tech",
+    name: "Tech & Science",
+    emoji: "🔬",
+    prefixes: ["tech_"],
+    tier: 3,
+  },
+  {
+    key: "weather",
+    name: "Weather",
+    emoji: "🌤️",
+    prefixes: ["weather_"],
+    tier: 3,
+  },
+  {
+    key: "health",
+    name: "Health",
+    emoji: "🏥",
+    prefixes: ["health_"],
+    tier: 3,
+  },
+  {
+    key: "geopolitics",
+    name: "Geopolitics",
+    emoji: "🌍",
+    prefixes: ["geopolitics_"],
+    tier: 3,
+  },
+  {
+    key: "legal",
+    name: "Legal",
+    emoji: "⚖️",
+    prefixes: ["legal_"],
+    tier: 3,
+  },
+  {
+    key: "culture",
+    name: "Culture",
+    emoji: "🎭",
+    prefixes: ["culture_"],
+    tier: 3,
+  },
   // Other category is a catch-all (handled in code, not here)
 ];
 

@@ -421,8 +421,8 @@ export default function HomePage() {
     });
   }, [trackSectionToggle]);
 
-  // Auto-expand sports with live games on first meaningful data load
-  const [hasAutoExpanded, setHasAutoExpanded] = useState(false);
+  // All sport sections start collapsed; user clicks to expand
+  const [hasAutoExpanded, setHasAutoExpanded] = useState(true);
   useEffect(() => {
     if (hasAutoExpanded || sportGroups.length === 0) return;
 
