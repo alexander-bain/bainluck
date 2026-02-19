@@ -121,8 +121,23 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(oscar|emmy|grammy|golden.globe|academy.award|entertainer|box.office|movie|film|music|spotify|album)\b", re.I), "entertainment"),
     (re.compile(r"\b(tv.show|television|reality|bachelor|bachelorette|portnoy|youtube|tiktok|influencer)\b", re.I), "entertainment"),
 
-    # Olympics
+    # Olympics - explicit keyword + uniquely-Olympic winter sports
     (re.compile(r"\b(olympic|olympics|paralympic)\b", re.I), "olympics"),
+    # Winter sports that only appear in prediction markets during Olympics
+    (re.compile(r"\bcurling\b", re.I), "olympics"),
+    (re.compile(r"\bfigure.skating\b", re.I), "olympics"),
+    (re.compile(r"\bspeed.skating\b", re.I), "olympics"),
+    (re.compile(r"\bshort.track\b", re.I), "olympics"),
+    (re.compile(r"\bfreestyle.skiing\b", re.I), "olympics"),
+    (re.compile(r"\balpine.skiing\b", re.I), "olympics"),
+    (re.compile(r"\bcross.country.skiing\b", re.I), "olympics"),
+    (re.compile(r"\bski.jumping\b", re.I), "olympics"),
+    (re.compile(r"\bski.mountaineering\b", re.I), "olympics"),
+    (re.compile(r"\bnordic.combined\b", re.I), "olympics"),
+    (re.compile(r"\bbiathlon\b", re.I), "olympics"),
+    (re.compile(r"\bbobsled|bobsleigh\b", re.I), "olympics"),
+    (re.compile(r"\b(luge|skeleton)\b", re.I), "olympics"),
+    (re.compile(r"\bgold.medal\b", re.I), "olympics"),
 
     # Lacrosse
     (re.compile(r"\b(lacrosse|tewaaraton|pll|premier.lacrosse)\b", re.I), "lacrosse"),

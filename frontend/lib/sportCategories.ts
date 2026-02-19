@@ -437,8 +437,22 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(oscar|emmy|grammy|golden.globe|academy.award|entertainer|box.office|movie|film|music|spotify|album)\b/i, category: "entertainment" },
   { pattern: /\b(tv.show|television|reality|bachelor|bachelorette|portnoy|youtube|tiktok|influencer)\b/i, category: "entertainment" },
 
-  // Olympics
+  // Olympics - explicit keyword + uniquely-Olympic winter sports
   { pattern: /\b(olympic|olympics|paralympic)\b/i, category: "olympics" },
+  { pattern: /\bcurling\b/i, category: "olympics" },
+  { pattern: /\bfigure.skating\b/i, category: "olympics" },
+  { pattern: /\bspeed.skating\b/i, category: "olympics" },
+  { pattern: /\bshort.track\b/i, category: "olympics" },
+  { pattern: /\bfreestyle.skiing\b/i, category: "olympics" },
+  { pattern: /\balpine.skiing\b/i, category: "olympics" },
+  { pattern: /\bcross.country.skiing\b/i, category: "olympics" },
+  { pattern: /\bski.jumping\b/i, category: "olympics" },
+  { pattern: /\bski.mountaineering\b/i, category: "olympics" },
+  { pattern: /\bnordic.combined\b/i, category: "olympics" },
+  { pattern: /\bbiathlon\b/i, category: "olympics" },
+  { pattern: /\b(bobsled|bobsleigh)\b/i, category: "olympics" },
+  { pattern: /\b(luge|skeleton)\b/i, category: "olympics" },
+  { pattern: /\bgold.medal\b/i, category: "olympics" },
 
   // Lacrosse
   { pattern: /\b(lacrosse|tewaaraton|pll|premier.lacrosse)\b/i, category: "lacrosse" },
