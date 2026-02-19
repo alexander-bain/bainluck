@@ -9,7 +9,12 @@ import FuturesCard from "@/components/FuturesCard";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { formatProbability } from "@/lib/api";
-import { getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
+import {
+  getEmojiForCategory,
+  getNameForCategory,
+  groupBySubcategory,
+  SUBCATEGORY_THRESHOLD,
+} from "@/lib/sportCategories";
 
 type StatusFilter = "open" | "resolved" | "all";
 
@@ -29,6 +34,7 @@ interface SportGroup {
 export default function FuturesPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
   const [expandedSports, setExpandedSports] = useState<Set<string>>(new Set());
+  const [expandedSubcategories, setExpandedSubcategories] = useState<Set<string>>(new Set());
 
   const {
     data: marketsData,
@@ -81,6 +87,18 @@ export default function FuturesPage() {
         next.delete(sport);
       } else {
         next.add(sport);
+      }
+      return next;
+    });
+  };
+
+  const toggleSubcategory = (key: string) => {
+    setExpandedSubcategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
       }
       return next;
     });
@@ -209,17 +227,67 @@ export default function FuturesPage() {
                   </button>
 
                   {/* Markets Grid */}
-                  {expandedSports.has(group.sport) && (
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {group.markets.map((market) => (
-                        <FuturesCard
-                          key={market.id}
-                          market={market}
-                          showSport={false}
-                        />
-                      ))}
-                    </div>
-                  )}
+                  {expandedSports.has(group.sport) && (() => {
+                    const subcategories = groupBySubcategory(group.markets, group.sport);
+                    const useSubcategories = group.markets.length >= SUBCATEGORY_THRESHOLD && subcategories.length > 1;
+
+                    if (!useSubcategories) {
+                      return (
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                          {group.markets.map((market) => (
+                            <FuturesCard
+                              key={market.id}
+                              market={market}
+                              showSport={false}
+                            />
+                          ))}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3">
+                        {subcategories.map((sub) => {
+                          const subKey = `${group.sport}:${sub.key}`;
+                          const isSubExpanded = expandedSubcategories.has(subKey);
+
+                          return (
+                            <div key={subKey}>
+                              <button
+                                onClick={() => toggleSubcategory(subKey)}
+                                className="flex items-center gap-2 mb-2 w-full text-left group"
+                              >
+                                <span className="text-slate group-hover:text-graphite transition-colors">
+                                  {isSubExpanded ? (
+                                    <ChevronDown className="w-4 h-4" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4" />
+                                  )}
+                                </span>
+                                <h3 className="text-body font-medium text-graphite">
+                                  {sub.displayName}
+                                </h3>
+                                <span className="text-caption text-silver">
+                                  {sub.markets.length} market{sub.markets.length !== 1 ? "s" : ""}
+                                </span>
+                              </button>
+                              {isSubExpanded && (
+                                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ml-6">
+                                  {sub.markets.map((market) => (
+                                    <FuturesCard
+                                      key={market.id}
+                                      market={market}
+                                      showSport={false}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </section>
               ))}
             </div>

@@ -1,3 +1,5 @@
+import type { FuturesMarket } from "./types";
+
 /**
  * Sport categories for grouping leagues under parent sports.
  *
@@ -847,6 +849,150 @@ export function getActiveCategoriesFromLeagues(leagueKeys: string[]): SportCateg
 
   return activeCategories;
 }
+// =============================================================================
+// Subcategory grouping for large futures categories
+// =============================================================================
+
+/**
+ * Display names for subcategory tags.
+ * Tags not listed here get auto-formatted (e.g., "fed_rate" → "Fed Rate").
+ */
+const SUBCATEGORY_DISPLAY_NAMES: Record<string, string> = {
+  // Crypto
+  bitcoin: "Bitcoin",
+  ethereum: "Ethereum",
+  solana: "Solana",
+  dogecoin: "Dogecoin",
+  xrp: "XRP",
+  // Politics
+  trump: "Trump",
+  biden: "Biden",
+  harris: "Harris",
+  desantis: "DeSantis",
+  newsom: "Newsom",
+  powell: "Powell",
+  elon_musk: "Elon Musk",
+  // Entertainment
+  oscars: "Oscars",
+  grammys: "Grammys",
+  love_is_blind: "Love Is Blind",
+  // Sports
+  super_bowl: "Super Bowl",
+  world_series: "World Series",
+  march_madness: "March Madness",
+  stanley_cup: "Stanley Cup",
+  nba_finals: "NBA Finals",
+  olympics: "Olympics",
+  // Market types
+  mvp: "MVP",
+  rookie_of_year: "Rookie of the Year",
+  coach_of_year: "Coach of the Year",
+  championship: "Championship",
+  game_prop: "Game Props",
+  // Companies
+  tesla: "Tesla",
+  spacex: "SpaceX",
+  openai: "OpenAI",
+};
+
+/**
+ * Tags that should be excluded from subcategory grouping.
+ * These are too generic or are the parent category itself.
+ */
+const EXCLUDED_SUBCATEGORY_TAGS = new Set([
+  "crypto", "politics", "economics", "tech", "entertainment",
+  "football", "basketball", "baseball", "hockey", "golf", "tennis",
+  "soccer", "mma", "boxing", "motorsports", "esports", "rugby",
+  "cricket", "aussierules", "horse_racing", "olympics", "lacrosse",
+  "chess", "poker", "darts", "other", "weather", "health",
+  "geopolitics", "legal", "culture",
+]);
+
+/**
+ * Get the best subcategory for a futures market from its category_tags.
+ * Returns the most specific tag that isn't the parent category itself.
+ */
+export function getSubcategory(
+  categoryTags: string[] | undefined,
+  parentCategory: string,
+): string | null {
+  if (!categoryTags || categoryTags.length === 0) return null;
+
+  // Find the first tag that's specific (not a parent category)
+  for (const tag of categoryTags) {
+    const lower = tag.toLowerCase();
+    if (lower === parentCategory.toLowerCase()) continue;
+    if (EXCLUDED_SUBCATEGORY_TAGS.has(lower)) continue;
+    return lower;
+  }
+  return null;
+}
+
+/**
+ * Get display name for a subcategory tag.
+ */
+export function getSubcategoryDisplayName(tag: string): string {
+  const display = SUBCATEGORY_DISPLAY_NAMES[tag];
+  if (display) return display;
+  // Auto-format: "fed_rate" → "Fed Rate"
+  return tag
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/**
+ * Minimum number of futures in a category before subcategory grouping kicks in.
+ */
+export const SUBCATEGORY_THRESHOLD = 10;
+
+export interface SubcategoryGroup {
+  key: string;
+  displayName: string;
+  markets: FuturesMarket[];
+}
+
+/**
+ * Group futures markets by subcategory within a parent category.
+ * Returns subcategory groups sorted by market count (descending),
+ * with an "Other" group for markets without a specific subcategory.
+ */
+export function groupBySubcategory(
+  markets: FuturesMarket[],
+  parentCategory: string,
+): SubcategoryGroup[] {
+  const groups = new Map<string, FuturesMarket[]>();
+
+  for (const market of markets) {
+    const sub = getSubcategory(market.category_tags, parentCategory);
+    const key = sub ?? "_other";
+
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key)!.push(market);
+  }
+
+  // Convert to array and sort by count
+  const result: SubcategoryGroup[] = [];
+  groups.forEach((mktList, key) => {
+    result.push({
+      key,
+      displayName: key === "_other" ? "Other" : getSubcategoryDisplayName(key),
+      markets: mktList,
+    });
+  });
+
+  // Sort: named groups by count desc, "_other" always last
+  result.sort((a, b) => {
+    if (a.key === "_other") return 1;
+    if (b.key === "_other") return -1;
+    return b.markets.length - a.markets.length;
+  });
+
+  return result;
+}
+
 /**
  * Calculate an excitement score for an event.
  * Higher scores = more exciting/important games that should surface first.
