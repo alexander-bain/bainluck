@@ -25,7 +25,7 @@ def _get_client():
             if not api_key:
                 logger.warning("OPENAI_API_KEY not set - LLM features disabled")
                 return None
-            _client = OpenAI(api_key=api_key)
+            _client = OpenAI(api_key=api_key, timeout=30.0)
         except ImportError:
             logger.warning("openai package not installed - LLM features disabled")
             return None
