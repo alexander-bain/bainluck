@@ -293,6 +293,7 @@ async def _poll_polymarket_markets():
                         detect_league, detect_season,
                         compute_canonical_market_key,
                         extract_olympic_discipline,
+                        generate_category_tags,
                     )
                     market_tier = compute_market_tier(event.title, category)
 
@@ -315,6 +316,11 @@ async def _poll_polymarket_markets():
                         llm_sport_category, league, canon_category, season,
                     )
 
+                    # Generate category tags
+                    tags = generate_category_tags(
+                        event.title, llm_sport_category, league, category,
+                    )
+
                     # Build update set for on-conflict
                     update_set = {
                         "name": event.title,
@@ -324,6 +330,7 @@ async def _poll_polymarket_markets():
                         "commence_time": commence_time,
                         "resolution_date": resolution_date,
                         "status": "open" if event.active else "resolved",
+                        "category_tags": tags,
                         "updated_at": func.now(),
                     }
                     # Update llm_sport_category if we have a non-"other" value
@@ -344,6 +351,7 @@ async def _poll_polymarket_markets():
                         commence_time=commence_time,
                         resolution_date=resolution_date,
                         status="open" if event.active else "resolved",
+                        category_tags=tags,
                     ).on_conflict_do_update(
                         index_elements=["source", "external_id"],
                         set_=update_set,

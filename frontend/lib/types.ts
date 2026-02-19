@@ -289,6 +289,7 @@ export interface FuturesMarket {
   outcomes?: FuturesOutcome[];
   outcome_count: number;
   bookmakers?: string[];
+  category_tags?: string[];
   created_at: string | null;
   updated_at: string | null;
 }

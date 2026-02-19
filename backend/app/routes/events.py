@@ -1422,12 +1422,17 @@ async def get_related_futures(
     home_patterns = _team_name_patterns(event.home_team_name)
     away_patterns = _team_name_patterns(event.away_team_name)
 
+    # Save team-level patterns BEFORE adding roster players
+    # (used for market name matching — player names in market names would be too noisy)
+    home_team_patterns = list(home_patterns)
+    away_team_patterns = list(away_patterns)
+
     # Look up Team records for alternate names, roster players, AND team_ids
     home_team_ids = set()
     away_team_ids = set()
-    for team_name, patterns, id_set in [
-        (event.home_team_name, home_patterns, home_team_ids),
-        (event.away_team_name, away_patterns, away_team_ids),
+    for team_name, patterns, team_patterns, id_set in [
+        (event.home_team_name, home_patterns, home_team_patterns, home_team_ids),
+        (event.away_team_name, away_patterns, away_team_patterns, away_team_ids),
     ]:
         team_filters = [Team.name == team_name]
         if event.sport_id:
@@ -1446,6 +1451,7 @@ async def get_related_futures(
                         escaped = _escape_like(alt)
                         if escaped.lower() not in [p.lower() for p in patterns]:
                             patterns.append(escaped)
+                            team_patterns.append(escaped)
             # Add roster player names from SportsDataIO (e.g., "Jayson Tatum")
             roster = team_row.roster_players
             if roster and isinstance(roster, list):
@@ -1466,6 +1472,25 @@ async def get_related_futures(
     match_conditions = list(all_name_conditions)
     if all_team_ids:
         match_conditions.append(FuturesOutcome.team_id.in_(list(all_team_ids)))
+
+    # ALSO: Match by MARKET name for game props
+    # Markets like "Boston at Golden State: Rebounds" have team names in the
+    # market name, not the outcome names (which are "Over 218.5", etc.)
+    market_name_conditions = []
+    for p in home_team_patterns + away_team_patterns:
+        if len(p) >= 4:  # Skip very short patterns
+            market_name_conditions.append(FuturesMarket.name.ilike(f"%{p}%"))
+    if market_name_conditions:
+        market_name_subq = (
+            select(FuturesMarket.id)
+            .where(
+                FuturesMarket.id.in_(sport_market_ids),
+                or_(*market_name_conditions),
+            )
+        )
+        match_conditions.append(
+            FuturesOutcome.market_id.in_(market_name_subq)
+        )
 
     if not match_conditions:
         return empty
@@ -1527,9 +1552,15 @@ async def get_related_futures(
         is_away = outcome.team_id in away_team_ids if outcome.team_id else False
 
         if not is_home and not is_away:
-            # Fall back to name matching (team outcomes)
+            # Fall back to name matching on outcome (team outcomes)
             is_home = _matches_any(outcome.name, home_patterns)
             is_away = _matches_any(outcome.name, away_patterns)
+
+        if not is_home and not is_away:
+            # Fall back to name matching on MARKET name (game props)
+            # e.g., "Boston at Golden State: Rebounds" → market name matches
+            is_home = _matches_any(market.name, home_team_patterns)
+            is_away = _matches_any(market.name, away_team_patterns)
 
         if not is_home and not is_away:
             continue
