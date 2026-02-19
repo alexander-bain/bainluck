@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbability, formatAmericanOdds } from "@/lib/api";
+import { getEmojiForCategory, getEmojiForLeague } from "@/lib/sportCategories";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -13,24 +14,6 @@ interface FuturesCardProps {
   onPinToggle?: (futuresId: number) => void;
   /** Whether max pins has been reached (disable pin button) */
   pinDisabled?: boolean;
-}
-
-/**
- * Get emoji for sport category
- */
-function getSportEmoji(sportKey: string | null): string {
-  if (!sportKey) return "🏆";
-  const key = sportKey.toLowerCase();
-  if (key.includes("basketball") || key.includes("nba") || key.includes("ncaab")) return "🏀";
-  if (key.includes("football") || key.includes("nfl") || key.includes("ncaaf")) return "🏈";
-  if (key.includes("baseball") || key.includes("mlb")) return "⚾";
-  if (key.includes("hockey") || key.includes("nhl")) return "🏒";
-  if (key.includes("soccer") || key.includes("mls") || key.includes("epl") || key.includes("uefa")) return "⚽";
-  if (key.includes("golf") || key.includes("pga")) return "⛳";
-  if (key.includes("tennis") || key.includes("atp") || key.includes("wta")) return "🎾";
-  if (key.includes("mma") || key.includes("ufc")) return "🥊";
-  if (key.includes("nascar") || key.includes("f1") || key.includes("racing")) return "🏎️";
-  return "🏆";
 }
 
 /**
@@ -78,7 +61,11 @@ export default function FuturesCard({
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
   const topOutcomes = outcomes.slice(0, 5);
-  const sportEmoji = getSportEmoji(market.sport);
+  const sportEmoji = market.llm_sport_category
+    ? getEmojiForCategory(market.llm_sport_category)
+    : market.sport
+      ? getEmojiForLeague(market.sport)
+      : "🏆";
   const isResolved = market.status === "resolved";
 
   // Find the leader
