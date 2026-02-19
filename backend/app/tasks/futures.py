@@ -670,6 +670,12 @@ async def _recategorize_other_impl(limit: int = 500):
                             f"Open-ended {market.id}: {str(e)}"
                         )
 
+                # ── Finalize: set still-uncategorized NULL markets to "other" ──
+                # This prevents infinite re-fetching of markets that fail all phases
+                for market in markets:
+                    if market.llm_sport_category is None:
+                        market.llm_sport_category = "other"
+
                 # ── Tag enrichment (within this batch only) ──
                 if llm_available:
                     sparse_markets = [
