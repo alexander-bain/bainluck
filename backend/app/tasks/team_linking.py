@@ -215,33 +215,42 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
 
 async def _backfill_canonical_keys(limit: int = 500):
     """
-    Backfill canonical_market_key and llm_league on FuturesMarket records.
+    Backfill canonical_market_key, llm_league, and llm_sport_category on
+    FuturesMarket records.
 
-    Processes markets where canonical_market_key IS NULL and we have enough
-    data (llm_sport_category + category) to compute one. Also fills in
-    llm_league where missing.
+    Processes markets where:
+    - canonical_market_key IS NULL, or
+    - llm_league IS NULL, or
+    - llm_sport_category is 'other' or NULL (tries to upgrade via league
+      inference or expanded pattern matching)
+
+    Also fills in llm_league where missing.
     """
     from app.models import FuturesMarket
     from app.utils.futures_categorization import (
-        detect_league, detect_season, compute_canonical_market_key,
+        categorize_by_rules, detect_league, detect_season,
+        compute_canonical_market_key, infer_sport_from_league,
     )
 
     stats = {
         "processed": 0,
         "leagues_set": 0,
         "keys_set": 0,
+        "categories_upgraded": 0,
         "errors": [],
     }
 
     try:
         async with get_task_session() as session:
-            # Find markets missing canonical key or league
+            # Find markets missing canonical key, league, or stuck as 'other'
             result = await session.execute(
                 select(FuturesMarket)
                 .where(
                     or_(
                         FuturesMarket.canonical_market_key.is_(None),
                         FuturesMarket.llm_league.is_(None),
+                        FuturesMarket.llm_sport_category.is_(None),
+                        FuturesMarket.llm_sport_category == "other",
                     )
                 )
                 .limit(limit)
@@ -269,6 +278,30 @@ async def _backfill_canonical_keys(limit: int = 500):
                             stats["leagues_set"] += 1
                     else:
                         league = market.llm_league
+
+                    # Try to upgrade 'other' or NULL sport category
+                    if not market.llm_sport_category or market.llm_sport_category == "other":
+                        upgraded = False
+
+                        # Strategy 1: Infer sport from detected league
+                        if league:
+                            sport = infer_sport_from_league(league)
+                            if sport:
+                                market.llm_sport_category = sport
+                                stats["categories_upgraded"] += 1
+                                upgraded = True
+
+                        # Strategy 2: Re-run pattern matching (catches newly added patterns)
+                        if not upgraded:
+                            sport_key = (
+                                market.external_id
+                                if market.source == "odds_api"
+                                else None
+                            )
+                            rules_result = categorize_by_rules(market.name, sport_key)
+                            if rules_result and rules_result != "other":
+                                market.llm_sport_category = rules_result
+                                stats["categories_upgraded"] += 1
 
                     # Compute canonical key if missing
                     if not market.canonical_market_key:
@@ -298,12 +331,14 @@ async def _backfill_canonical_keys(limit: int = 500):
     stats["message"] = (
         f"Processed {stats['processed']} markets: "
         f"{stats['leagues_set']} leagues set, "
-        f"{stats['keys_set']} canonical keys set"
+        f"{stats['keys_set']} canonical keys set, "
+        f"{stats['categories_upgraded']} categories upgraded from 'other'"
     )
     logger.info(
-        "Canonical key backfill: %d processed, %d leagues, %d keys",
+        "Canonical key backfill: %d processed, %d leagues, %d keys, %d categories upgraded",
         stats["processed"],
         stats["leagues_set"],
         stats["keys_set"],
+        stats["categories_upgraded"],
     )
     return stats

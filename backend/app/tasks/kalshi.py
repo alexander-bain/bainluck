@@ -54,6 +54,16 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
         return "entertainment"
     if "tech" in category_lower or "crypto" in category_lower:
         return "tech"
+    if "weather" in category_lower or "climate" in category_lower:
+        return "weather"
+    if "health" in category_lower or "pandemic" in category_lower:
+        return "health"
+    if "legal" in category_lower or "court" in category_lower:
+        return "legal"
+    if "science" in category_lower or "space" in category_lower:
+        return "tech"
+    if "financ" in category_lower:
+        return "economics"
 
     return "other"
 
@@ -94,6 +104,20 @@ def _categorize_kalshi_market(market_name: str, kalshi_category: Optional[str]) 
             return "politics"
         if "entertainment" in cat_lower:
             return "entertainment"
+        if "econom" in cat_lower or "fed" in cat_lower or "inflation" in cat_lower:
+            return "economics"
+        if "tech" in cat_lower or "crypto" in cat_lower:
+            return "tech" if "tech" in cat_lower else "crypto"
+        if "weather" in cat_lower or "climate" in cat_lower:
+            return "weather"
+        if "health" in cat_lower:
+            return "health"
+        if "legal" in cat_lower or "court" in cat_lower:
+            return "legal"
+        if "science" in cat_lower or "space" in cat_lower:
+            return "tech"
+        if "financ" in cat_lower:
+            return "economics"
 
     return None
 
