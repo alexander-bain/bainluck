@@ -7,7 +7,8 @@ from unittest.mock import patch
 from app.utils.futures_categorization import (
     categorize_by_rules, categorize_market,
     detect_league, detect_season, compute_canonical_market_key,
-    infer_sport_from_league, LEAGUE_TO_SPORT_CATEGORY,
+    infer_sport_from_league, extract_olympic_discipline,
+    LEAGUE_TO_SPORT_CATEGORY,
 )
 
 
@@ -991,3 +992,163 @@ class TestLeagueInferenceUpgrade:
         assert league == "NBA"
         sport = infer_sport_from_league(league)
         assert sport == "basketball"
+
+
+# =============================================================================
+# Olympic discipline extraction
+# =============================================================================
+class TestOlympicDisciplineExtraction:
+    """Test extraction of specific Olympic disciplines from market names."""
+
+    def test_curling(self):
+        assert extract_olympic_discipline("Who wins Curling Gold Medal?") == "curling"
+
+    def test_figure_skating(self):
+        assert extract_olympic_discipline("2026 Winter Olympics Figure Skating") == "figure_skating"
+
+    def test_speed_skating(self):
+        assert extract_olympic_discipline("Speed Skating 1000m Winner") == "speed_skating"
+
+    def test_alpine_skiing(self):
+        assert extract_olympic_discipline("Alpine Skiing Downhill Gold") == "alpine_skiing"
+
+    def test_bobsled(self):
+        assert extract_olympic_discipline("Bobsled 4-Man Gold Medal") == "bobsled"
+
+    def test_ice_hockey(self):
+        assert extract_olympic_discipline("Ice Hockey Gold Medal Winner") == "ice_hockey"
+
+    def test_swimming(self):
+        assert extract_olympic_discipline("Swimming 100m Butterfly Final") == "swimming"
+
+    def test_gymnastics(self):
+        assert extract_olympic_discipline("Gymnastics All-Around Gold") == "gymnastics"
+
+    def test_track_and_field(self):
+        assert extract_olympic_discipline("Track and Field 100m") == "track_and_field"
+
+    def test_no_discipline(self):
+        assert extract_olympic_discipline("2026 Winter Olympics Medal Count") is None
+
+    def test_generic_olympics_no_match(self):
+        assert extract_olympic_discipline("Most Gold Medals 2026") is None
+
+    def test_biathlon(self):
+        assert extract_olympic_discipline("Biathlon Sprint Winner") == "biathlon"
+
+    def test_cross_country(self):
+        assert extract_olympic_discipline("Cross-Country Skiing 50km") == "cross_country_skiing"
+
+
+# =============================================================================
+# Cross-source Olympic matching
+# =============================================================================
+class TestCrossSourceOlympicMatching:
+    """Test that Olympic events match across Kalshi and Polymarket."""
+
+    def test_curling_matches_across_sources(self):
+        """Both sources should produce the same canonical key for curling."""
+        # Kalshi-style market (usually includes "Olympics" in title)
+        name1 = "2026 Winter Olympics Men's Curling Gold Medal"
+        league1 = detect_league(name1)
+        season1 = detect_season(name1, league1,
+                                datetime(2026, 2, 28, tzinfo=timezone.utc))
+        discipline1 = extract_olympic_discipline(name1)
+        key1 = compute_canonical_market_key("olympics", league1, discipline1 or "championship", season1)
+
+        # Polymarket-style market
+        name2 = "2026 Winter Olympics Curling Gold Medal"
+        league2 = detect_league(name2)
+        season2 = detect_season(name2, league2)
+        discipline2 = extract_olympic_discipline(name2)
+        key2 = compute_canonical_market_key("olympics", league2, discipline2 or "championship", season2)
+
+        assert key1 == key2
+        assert discipline1 == "curling"
+        assert discipline2 == "curling"
+        assert "curling" in key1
+        assert league1 == "OLYMPICS"
+        assert league2 == "OLYMPICS"
+
+    def test_figure_skating_matches(self):
+        """Figure skating should match across sources."""
+        discipline1 = extract_olympic_discipline("Figure Skating Gold Medal Winner")
+        discipline2 = extract_olympic_discipline("2026 Olympics Figure Skating Champion")
+        assert discipline1 == discipline2 == "figure_skating"
+
+
+# =============================================================================
+# Additional sports patterns (coach, awards, misspellings)
+# =============================================================================
+class TestAdditionalSportsPatterns:
+    """Test newly added sports patterns for common uncategorized markets."""
+
+    # Coach/manager awards
+    def test_nba_coach(self):
+        assert categorize_by_rules("NBA Coach of the Year") == "basketball"
+
+    def test_nfl_coach(self):
+        assert categorize_by_rules("NFL Coach of the Year") == "football"
+
+    def test_mlb_manager(self):
+        assert categorize_by_rules("MLB Manager of the Year") == "baseball"
+
+    def test_nhl_jack_adams(self):
+        assert categorize_by_rules("NHL Jack Adams Award") == "hockey"
+
+    def test_generic_coach(self):
+        # Without league context, defaults to football (most common)
+        assert categorize_by_rules("Coach of the Year") == "football"
+
+    def test_generic_manager(self):
+        assert categorize_by_rules("Manager of the Year") == "baseball"
+
+    # Crypto misspellings
+    def test_etherium_misspelling(self):
+        assert categorize_by_rules("Price of Etherium above $5000") == "crypto"
+
+    def test_doge_coin_split(self):
+        assert categorize_by_rules("Doge Coin reaches $1") == "crypto"
+
+    def test_litecoin(self):
+        assert categorize_by_rules("Litecoin price prediction") == "crypto"
+
+    def test_polkadot(self):
+        assert categorize_by_rules("Polkadot market cap") == "crypto"
+
+    def test_price_of_bitcoin(self):
+        assert categorize_by_rules("Price of Bitcoin above $200K") == "crypto"
+
+    # Football stats
+    def test_rushing_leader(self):
+        assert categorize_by_rules("Rushing Yards Leader 2026") == "football"
+
+    def test_passing_touchdown(self):
+        assert categorize_by_rules("Passing Touchdown Leader") == "football"
+
+    # Baseball stats
+    def test_home_run_leader(self):
+        assert categorize_by_rules("Home Run Leader 2026") == "baseball"
+
+    def test_no_hitter(self):
+        assert categorize_by_rules("Next No-Hitter thrown") == "baseball"
+
+    # Swimming/athletics → olympics
+    def test_swimming_to_olympics(self):
+        assert categorize_by_rules("Swimming 100m butterfly winner") == "olympics"
+
+    def test_100m_dash(self):
+        assert categorize_by_rules("100m World Record broken") == "olympics"
+
+    def test_marathon(self):
+        assert categorize_by_rules("Marathon world record 2026") == "olympics"
+
+    # Existing patterns still work
+    def test_nba_mvp_still_works(self):
+        assert categorize_by_rules("NBA MVP Winner 2026") == "basketball"
+
+    def test_super_bowl_still_works(self):
+        assert categorize_by_rules("Super Bowl LXI Winner") == "football"
+
+    def test_stanley_cup_still_works(self):
+        assert categorize_by_rules("Stanley Cup Champion") == "hockey"
