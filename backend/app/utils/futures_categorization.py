@@ -337,8 +337,45 @@ def _seasonal_sport_for_college_matchup() -> Optional[str]:
 # Ambiguous stats that exist across multiple sports
 _AMBIGUOUS_STATS = {
     "spread", "total points", "total", "moneyline", "money line",
-    "winner", "field goals", "over/under",
+    "winner", "field goals", "over/under", "spreads", "totals",
 }
+
+# Team name indicators that strongly suggest professional soccer
+# (EPL, La Liga, Bundesliga, Serie A, Ligue 1, etc.)
+_SOCCER_TEAM_INDICATORS = re.compile(
+    r'\b('
+    # Common suffixes for soccer clubs worldwide
+    r'united|city|fc|rovers|wanderers|hotspur|athletic|albion|villa|palace|forest'
+    r'|wolves|rangers|celtic|dynamo|sporting|olimpico'
+    # EPL / EFL team names (single-word city names recognizable as soccer)
+    r'|arsenal|chelsea|liverpool|everton|fulham|brentford|bournemouth'
+    r'|wolverhampton|tottenham|sunderland|burnley|nottingham|brighton'
+    r'|newcastle|leicester|southampton|luton|sheffield|ipswich|coventry'
+    r'|middlesbrough|swansea|watford|norwich|stoke|aston|blackburn'
+    # La Liga
+    r'|barcelona|atletico|atlético|betis|celta|getafe|osasuna|sevilla|villarreal'
+    r'|sociedad|valladolid|mallorca|girona|deportivo|vallecano|leganes|espanyol'
+    # Bundesliga
+    r'|bayern|dortmund|leverkusen|gladbach|frankfurt|freiburg|augsburg|mainz'
+    r'|hoffenheim|wolfsburg|werder|bochum|heidenheim|darmstadt|köln|stuttgart'
+    # Serie A
+    r'|juventus|napoli|lazio|fiorentina|genoa|torino|empoli|sassuolo|udinese'
+    r'|bologna|cagliari|verona|salernitana|frosinone|lecce|monza'
+    # Ligue 1
+    r'|marseille|lyon|monaco|lille|rennes|nantes|strasbourg|montpellier|brest'
+    r'|reims|toulouse|lorient|clermont|metz|havre'
+    # Liga MX / South America / Other
+    r'|santos|palmeiras|flamengo|corinthians|boca|river|america|guadalajara|tigres'
+    r')\b', re.IGNORECASE,
+)
+
+
+def _is_soccer_matchup(team_a: str, team_b: str) -> bool:
+    """Check if team names suggest a professional soccer matchup."""
+    return bool(
+        _SOCCER_TEAM_INDICATORS.search(team_a)
+        or _SOCCER_TEAM_INDICATORS.search(team_b)
+    )
 
 
 def detect_game_prop_sport(market_name: str) -> Optional[str]:
@@ -348,13 +385,16 @@ def detect_game_prop_sport(market_name: str) -> Optional[str]:
     Returns the sport category if a game prop pattern is detected with a
     sport-specific stat, or None if not a game prop or stat is ambiguous.
 
-    For ambiguous stats (spread, total points, moneyline), uses seasonal
-    inference as a tiebreaker for college team matchups.
+    For ambiguous stats (spread, total points, moneyline):
+    - First checks if team names indicate a soccer matchup (EPL, La Liga, etc.)
+    - Then falls back to seasonal inference for college team matchups
     """
     match = _GAME_PROP_RE.match(market_name)
     if not match:
         return None
 
+    team_a = match.group(1).strip()
+    team_b = match.group(2).strip()
     stat = match.group(3).strip().lower()
 
     # Check stat against sport mapping (deterministic, sport-specific)
@@ -362,9 +402,11 @@ def detect_game_prop_sport(market_name: str) -> Optional[str]:
         if stat_keyword in stat:
             return sport
 
-    # For ambiguous stats, try seasonal inference
+    # For ambiguous stats, check soccer teams first, then seasonal inference
     for ambiguous in _AMBIGUOUS_STATS:
         if ambiguous in stat:
+            if _is_soccer_matchup(team_a, team_b):
+                return "soccer"
             return _seasonal_sport_for_college_matchup()
 
     return None
@@ -409,7 +451,9 @@ def detect_bare_matchup_sport(market_name: str) -> Optional[str]:
         return None
     if len(team_a.split()) > 6 or len(team_b.split()) > 6:
         return None
-    # Simple matchup — use seasonal inference
+    # Check if team names suggest soccer before falling back to seasonal inference
+    if _is_soccer_matchup(team_a, team_b):
+        return "soccer"
     return _seasonal_sport_for_college_matchup()
 
 
