@@ -186,6 +186,7 @@ async def _poll_kalshi_markets():
                     from app.utils.futures_categorization import (
                         detect_league, detect_season,
                         compute_canonical_market_key,
+                        extract_olympic_discipline,
                     )
                     market_tier = compute_market_tier(market_name, category)
 
@@ -194,8 +195,15 @@ async def _poll_kalshi_markets():
                     season = detect_season(
                         market_name, league, expiration_time,
                     )
+                    # For Olympics, use specific discipline as category
+                    # so curling matches curling, not all Olympics events
+                    canon_category = category
+                    if sport_category == "olympics":
+                        discipline = extract_olympic_discipline(market_name)
+                        if discipline:
+                            canon_category = discipline
                     canonical_key = compute_canonical_market_key(
-                        sport_category, league, category, season,
+                        sport_category, league, canon_category, season,
                     )
 
                     # Upsert the FuturesMarket

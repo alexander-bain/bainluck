@@ -157,8 +157,34 @@ SPORT_PATTERNS = [
     # Poker
     (re.compile(r"\b(wsop|poker|world.series.of.poker)\b", re.I), "poker"),
 
-    # Crypto / Digital Assets
-    (re.compile(r"\b(bitcoin|btc|ethereum|eth|solana|crypto|blockchain|defi|nft|dogecoin|cardano|xrp|ripple|altcoin)\b", re.I), "crypto"),
+    # Generic sports awards (catch-all for awards not already matched above)
+    # These come after specific sport patterns so "NFL Coach" matches football first
+    (re.compile(r"\bnba\s+(coach|executive|clutch|all[\s-]?star)\b", re.I), "basketball"),
+    (re.compile(r"\bnfl\s+(coach|executive|comeback|walter.payton|man.of.the.year)\b", re.I), "football"),
+    (re.compile(r"\bmlb\s+(manager|coach|executive|comeback)\b", re.I), "baseball"),
+    (re.compile(r"\bnhl\s+(coach|jack.adams|general.manager)\b", re.I), "hockey"),
+    (re.compile(r"\bmls\s+(coach|mvp|defender|goalkeeper|newcomer)\b", re.I), "soccer"),
+    # "Coach of the year" / "Manager of the year" with sport context
+    (re.compile(r"\b(head\s+)?coach.of.the.year\b", re.I), "football"),  # Most common in NFL context
+    (re.compile(r"\bmanager.of.the.year\b", re.I), "baseball"),  # Most common in MLB context
+
+    # Additional sports patterns commonly missed
+    (re.compile(r"\b(most\s+)?wins?\s+(total|over|under)\b", re.I), "football"),  # NFL regular season wins
+    (re.compile(r"\bplayoff\s+(berth|spot|appearance|contender)\b", re.I), "football"),  # Generic but usually NFL
+    (re.compile(r"\bdraft\s+(pick|order|lottery|#?\d+\s+overall)\b", re.I), "football"),  # NFL/NBA draft
+    (re.compile(r"\b(rushing|passing|receiving|touchdown|sack|interception)\s+(yards?|leader|record|title|king|crown)\b", re.I), "football"),
+    (re.compile(r"\b(home\s+run|batting\s+average|strikeout|rbi|era\s+leader|no[\s-]?hitter|perfect\s+game)\b", re.I), "baseball"),
+    (re.compile(r"\b(triple[\s-]?double|assist|rebound|block|steal)\s+(leader|record|king|title)\b", re.I), "basketball"),
+    (re.compile(r"\b(shutout|hat\s+trick|gordie\s+howe|assist)\b", re.I), "hockey"),
+    (re.compile(r"\b(transfer\s+window|transfer\s+fee|sign|loan)\b.*\b(epl|premier|la\s+liga|bundesliga|serie\s+a)\b", re.I), "soccer"),
+
+    # Swimming / Track & Field / Athletics (often Olympic context)
+    (re.compile(r"\b(swimming|swimmer|butterfly|backstroke|breaststroke|freestyle\s+\d+m)\b", re.I), "olympics"),
+    (re.compile(r"\b(track.and.field|athletics|100m|200m|400m|800m|1500m|marathon|hurdle|javelin|shot.put|discus|pole.vault|high.jump|long.jump|decathlon|heptathlon)\b", re.I), "olympics"),
+
+    # Crypto / Digital Assets (include common misspellings)
+    (re.compile(r"\b(bitcoin|btc|ethereum|etherium|eth|solana|crypto|blockchain|defi|nft|dogecoin|doge.coin|cardano|xrp|ripple|altcoin|litecoin|polkadot|avalanche|chainlink)\b", re.I), "crypto"),
+    (re.compile(r"\bprice\s+of\s+(bitcoin|btc|ethereum|etherium|eth|solana|doge|dogecoin|cardano|xrp|litecoin)\b", re.I), "crypto"),
 
     # Economics / Finance
     (re.compile(r"\b(fed\s+rate|interest\s+rate|inflation|gdp|recession|cpi|jobs?\s+report|unemployment|treasury|tariff|federal\s+reserve|fomc|rate\s+cut|rate\s+hike|stock\s+market|s&p\s*500|nasdaq|dow\s+jones)\b", re.I), "economics"),
@@ -460,6 +486,63 @@ def detect_league(
             return league
 
     return None
+
+
+# =============================================================================
+# Olympic discipline extraction
+# =============================================================================
+
+# Regex for specific Olympic disciplines/events in market names.
+# Used to make canonical keys more specific (e.g., "curling" instead of "championship").
+_OLYMPIC_DISCIPLINE_RE = re.compile(
+    r"\b("
+    # Winter sports
+    r"curling|figure\s*skating|speed\s*skating|short\s*track|"
+    r"alpine\s*skiing|cross[\s-]?country(?:\s*skiing)?|biathlon|"
+    r"bobsled|bobsleigh|luge|skeleton|freestyle(?:\s*skiing)?|snowboard(?:ing)?|"
+    r"ski\s*jumping|nordic\s*combined|ski\s*mountaineering|"
+    r"ice\s*hockey|"
+    # Summer sports
+    r"swimming|diving|water\s*polo|artistic\s*swimming|"
+    r"track\s*(?:and|&)\s*field|athletics|gymnastics|"
+    r"basketball|soccer|football|volleyball|beach\s*volleyball|"
+    r"tennis|table\s*tennis|badminton|"
+    r"boxing|wrestling|judo|taekwondo|karate|fencing|"
+    r"archery|shooting|cycling|rowing|canoeing|sailing|surfing|"
+    r"skateboarding|climbing|"
+    r"weightlifting|equestrian|triathlon|"
+    r"rugby\s*sevens|handball|field\s*hockey|"
+    r"golf"
+    r")\b",
+    re.I,
+)
+
+
+def extract_olympic_discipline(market_name: str) -> Optional[str]:
+    """
+    Extract the specific Olympic discipline from a market name.
+
+    Used to make canonical keys more specific for Olympic events.
+    Without this, all Olympic events would share the same canonical key.
+
+    Args:
+        market_name: The name of the futures market
+
+    Returns:
+        Normalized discipline string (e.g., "curling", "figure_skating"),
+        or None if no specific discipline is found.
+    """
+    match = _OLYMPIC_DISCIPLINE_RE.search(market_name)
+    if not match:
+        return None
+
+    discipline = match.group(1).lower().strip()
+    # Normalize: replace spaces/hyphens with underscores
+    discipline = re.sub(r"[\s-]+", "_", discipline)
+    # Skip overly generic terms
+    if discipline in ("mens", "men_s", "womens", "women_s"):
+        return None
+    return discipline
 
 
 # =============================================================================

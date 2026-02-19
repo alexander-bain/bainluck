@@ -472,7 +472,12 @@ async def _recategorize_other_impl(limit: int = 500):
                 stats["processed"] += 1
                 try:
                     # Strategy 1: Re-run pattern matching (new patterns)
-                    category = categorize_by_rules(market.name)
+                    sport_key = (
+                        market.external_id
+                        if market.source == "odds_api"
+                        else None
+                    )
+                    category = categorize_by_rules(market.name, sport_key)
                     if category and category != "other":
                         market.llm_sport_category = category
                         stats["reclassified"] += 1

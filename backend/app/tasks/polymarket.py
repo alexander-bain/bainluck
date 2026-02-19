@@ -267,6 +267,7 @@ async def _poll_polymarket_markets():
                     from app.utils.futures_categorization import (
                         detect_league, detect_season,
                         compute_canonical_market_key,
+                        extract_olympic_discipline,
                     )
                     market_tier = compute_market_tier(event.title, category)
 
@@ -279,8 +280,14 @@ async def _poll_polymarket_markets():
                     season = detect_season(
                         event.title, league, resolution_date,
                     )
+                    # For Olympics, use specific discipline as category
+                    canon_category = category
+                    if llm_sport_category == "olympics":
+                        discipline = extract_olympic_discipline(event.title)
+                        if discipline:
+                            canon_category = discipline
                     canonical_key = compute_canonical_market_key(
-                        llm_sport_category, league, category, season,
+                        llm_sport_category, league, canon_category, season,
                     )
 
                     # Upsert FuturesMarket

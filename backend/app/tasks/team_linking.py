@@ -230,6 +230,7 @@ async def _backfill_canonical_keys(limit: int = 500):
     from app.utils.futures_categorization import (
         categorize_by_rules, detect_league, detect_season,
         compute_canonical_market_key, infer_sport_from_league,
+        extract_olympic_discipline,
     )
 
     stats = {
@@ -308,10 +309,16 @@ async def _backfill_canonical_keys(limit: int = 500):
                         season = detect_season(
                             market.name, league, market.resolution_date,
                         )
+                        # For Olympics, use specific discipline as category
+                        canon_category = market.category
+                        if market.llm_sport_category == "olympics":
+                            discipline = extract_olympic_discipline(market.name)
+                            if discipline:
+                                canon_category = discipline
                         key = compute_canonical_market_key(
                             market.llm_sport_category,
                             league,
-                            market.category,
+                            canon_category,
                             season,
                         )
                         if key:
