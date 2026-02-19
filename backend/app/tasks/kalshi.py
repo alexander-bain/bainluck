@@ -120,13 +120,11 @@ async def _poll_kalshi_markets():
     }
 
     try:
-        # Fetch sports events using category + tag-based series discovery.
-        # SPORTS_CATEGORIES (["Sports"]) finds most sports series.
-        # SPORTS_TAGS (["Olympics", "Winter Olympics", ...]) finds subcategory
-        # series that may not appear under the top-level Sports category.
-        events = await service.get_all_events(
-            categories=service.SPORTS_CATEGORIES,
-        )
+        # Fetch ALL open Kalshi events (no category filter).
+        # This captures sports + non-sports markets (politics, economics,
+        # entertainment, etc.) as the site expands beyond sports.
+        # Olympics markets are NOT on Kalshi (they come from Polymarket).
+        events = await service.get_all_events(categories=None)
 
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)
