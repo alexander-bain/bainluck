@@ -302,10 +302,21 @@ async def _poll_polymarket_markets():
             )
             batch.clear()
 
+        pages_fetched = page + 1 if events_data is not None else page
         logger.info(
-            "Polymarket: processed %d events across %d pages",
-            len(seen_ids), min(page + 1, max_pages),
+            "Polymarket: fetched %d unique events across %d pages",
+            len(seen_ids), pages_fetched,
         )
+        if pages_fetched >= max_pages:
+            logger.warning(
+                "Polymarket: hit page cap (%d). There may be more events — "
+                "consider raising max_pages.",
+                max_pages,
+            )
+
+        stats["pages_fetched"] = pages_fetched
+        stats["unique_events_seen"] = len(seen_ids)
+        stats["hit_page_cap"] = pages_fetched >= max_pages
 
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")

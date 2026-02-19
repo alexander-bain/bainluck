@@ -321,7 +321,7 @@ curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/kalshi/task
 - Stores bid/ask spreads: `yes_bid`, `yes_ask`, `last_price`
 - Populates `commence_time` (event start) and `resolution_date` (market close)
 
-### Polymarket Integration (Planned)
+### Polymarket Integration
 Polymarket is the world's largest prediction market (~$9B valuation). Unlike Kalshi, it requires **no API key** for read access and has significantly better rate limits and sports coverage.
 
 **Why Polymarket?** Three strategic reasons:
@@ -367,9 +367,21 @@ Polymarket is the world's largest prediction market (~$9B valuation). Unlike Kal
 
 **NegRisk events:** Multi-outcome events (e.g., "NBA Championship Winner") have one binary market per team, each with Yes/No shares. Maps naturally to our FuturesOutcome model (same as Kalshi multi-market events).
 
-**Planned files:**
-- `backend/app/services/polymarket_api.py` — API client (no API key needed)
-- `backend/app/tasks/polymarket.py` — Polling task (similar to `tasks/kalshi.py`)
+**Files:**
+- `backend/app/services/polymarket_api.py` — API client (Gamma + CLOB, no API key needed)
+- `backend/app/tasks/polymarket.py` — Polling task with streaming pagination (batched commits, page cap warning)
+- `backend/tests/test_polymarket.py` — 69 tests (tag mapping, name extraction, API parsing)
+
+**Polling architecture:** Events are fetched page-by-page (100 per page, 0.3s delay) and processed in batches of 50 to limit memory. Categorization uses a 160+ entry tag-to-category map with fallback to `futures_categorization.py` rules + league detection. Stats include `pages_fetched`, `unique_events_seen`, and `hit_page_cap` for monitoring.
+
+**Admin endpoints:**
+```bash
+# Trigger a poll
+curl -X POST "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/polymarket/poll?secret=any"
+
+# Check task status
+curl "https://what-are-the-odds-0283511a7d93.herokuapp.com/api/admin/polymarket/task/{task_id}?secret=any"
+```
 
 **Non-sports categories to enable:**
 | Category | Examples |
@@ -789,7 +801,7 @@ These are the current focus. Resist the urge to build new features until these a
 6. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
 8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
-9. 📋 **Polymarket integration** — Prediction market with 3,294+ sports markets and non-sports categories (politics, entertainment, crypto, weather). No API key needed, generous rate limits, built-in price history. Expands vision toward "easiest place to see the probability of anything happening, computed any way possible." Implementation: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`), category mapping for non-sports feed content. See Polymarket Integration section above for full API details.
+9. 📋 **Polymarket integration Phase 2** — Beat schedule (auto-polling on cron), price history backfill via CLOB `/prices-history` endpoint, non-sports category display in frontend (politics, entertainment, crypto tabs). Phase 1 (API client, polling task, tag-to-category mapping, streaming pagination) is shipped.
 10. 📋 Pass Kalshi event category as sport_key for better disambiguation
 11. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
 12. 📋 LLM-powered odds movement explanations
@@ -843,6 +855,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
 - ✅ Test coverage for core algorithms: 719 backend (pytest items) + 107 frontend = 826 total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), odds polling helpers (27), win prob sources (24), task wiring (19), stale bookmaker filter (14), snapshot collapse (13), redis state (9). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
+- ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 </details>
 
 See `docs/PRD.md` for full roadmap.
