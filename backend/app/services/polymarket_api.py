@@ -292,67 +292,56 @@ class PolymarketAPIService:
 
     async def get_all_sports_events(self) -> list[PolymarketEvent]:
         """
-        Fetch all active sports events using the /sports endpoint for discovery.
+        Fetch all active events by paginating through /events.
 
-        Uses series_id from each sport to fetch events per league,
-        ensuring comprehensive sports coverage.
+        Previously tried /sports endpoint for per-league discovery, but that
+        endpoint's field names (series/tags) didn't match what we expected
+        (series_id/tag_id), returning 0 events. The simpler and more robust
+        approach is to fetch all active events directly — this is also what
+        Polymarket docs recommend as "the most efficient approach."
+
+        Events are categorized using their tags array in the polling task.
         """
         import asyncio
 
         all_events: list[PolymarketEvent] = []
         seen_ids: set[str] = set()
+        max_pages = 30  # safety limit (~3,000 events max)
 
-        try:
-            sports = await self.get_sports()
-        except httpx.HTTPStatusError as e:
-            logger.error("Failed to fetch sports: %s", e)
-            return []
-
-        for sport in sports:
-            series_id = sport.get("series_id")
-            tag_id = sport.get("tag_id")
-
-            # Use series_id if available, fall back to tag_id
-            filter_key = "series_id" if series_id else "tag_id"
-            filter_val = series_id or tag_id
-            if not filter_val:
-                continue
+        for page in range(max_pages):
+            if page > 0:
+                await asyncio.sleep(0.3)
 
             try:
-                # Add modest delay between league fetches to be a good API citizen
-                await asyncio.sleep(0.2)
-
-                offset = 0
-                while True:
-                    kwargs = {
-                        "active": True,
-                        "closed": False,
-                        filter_key: filter_val,
-                        "limit": 100,
-                        "offset": offset,
-                    }
-                    events_data = await self.get_events(**kwargs)
-
-                    if not events_data:
-                        break
-
-                    for event_data in events_data:
-                        event_id = str(event_data.get("id", ""))
-                        if event_id and event_id not in seen_ids:
-                            seen_ids.add(event_id)
-                            parsed = self._parse_event(event_data)
-                            if parsed and parsed.markets:
-                                all_events.append(parsed)
-
-                    if len(events_data) < 100:
-                        break
-                    offset += 100
-
+                events_data = await self.get_events(
+                    active=True,
+                    closed=False,
+                    limit=100,
+                    offset=page * 100,
+                )
             except httpx.HTTPStatusError as e:
-                sport_label = sport.get("label", "unknown")
-                logger.warning("Error fetching sport %s: %s", sport_label, e)
-                continue
+                logger.warning("Error fetching events page %d: %s", page, e)
+                break
 
+            if not events_data:
+                break
+
+            for event_data in events_data:
+                event_id = str(event_data.get("id", ""))
+                if event_id and event_id not in seen_ids:
+                    seen_ids.add(event_id)
+                    parsed = self._parse_event(event_data)
+                    if parsed and parsed.markets:
+                        all_events.append(parsed)
+
+            if len(events_data) < 100:
+                break
+
+        logger.info(
+            "Polymarket: fetched %d active events across %d pages",
+            len(all_events),
+            min(page + 1, max_pages),
+        )
         return all_events
 
     async def get_events_by_tag(
