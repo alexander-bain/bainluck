@@ -242,6 +242,7 @@ class KalshiAPIService:
             cursor = None
             page_count = 0
             max_pages = 10
+            category_tickers = set()
 
             try:
                 while page_count < max_pages:
@@ -258,6 +259,7 @@ class KalshiAPIService:
                         ticker = s.get("ticker")
                         if ticker:
                             tickers.add(ticker)
+                            category_tickers.add(ticker)
 
                     page_count += 1
                     if not cursor:
@@ -267,7 +269,16 @@ class KalshiAPIService:
                 logger.warning("Error fetching Kalshi series for category %s: %s", category, e)
                 continue
 
-        logger.info("Discovered %d series tickers across %d categories", len(tickers), len(categories))
+            if category_tickers:
+                logger.info(
+                    "Category '%s': found %d series tickers: %s",
+                    category, len(category_tickers),
+                    sorted(category_tickers)[:20],  # Log up to 20 for readability
+                )
+            else:
+                logger.info("Category '%s': no series found (empty or null response)", category)
+
+        logger.info("Discovered %d unique series tickers across %d categories", len(tickers), len(categories))
         return sorted(tickers)
 
     async def get_all_events(
