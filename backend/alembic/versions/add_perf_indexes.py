@@ -21,11 +21,11 @@ depends_on: Union[str, None] = None
 def upgrade() -> None:
     # === Critical: Event listing filters ===
     # Every GET /api/events filters by status — currently causes full table scan
-    op.create_index("ix_events_status", "events", ["status"])
+    op.create_index("ix_events_status", "events", ["status"], if_not_exists=True)
     # JOIN to sports table on every event listing
-    op.create_index("ix_events_sport_id", "events", ["sport_id"])
+    op.create_index("ix_events_sport_id", "events", ["sport_id"], if_not_exists=True)
     # Date-range filtering on every event listing
-    op.create_index("ix_events_commence_time", "events", ["commence_time"])
+    op.create_index("ix_events_commence_time", "events", ["commence_time"], if_not_exists=True)
 
     # === High: Odds snapshot window function ===
     # The ranked subquery partitions by (event_id, bookmaker) ORDER BY captured_at DESC.
@@ -34,17 +34,18 @@ def upgrade() -> None:
         "ix_odds_snap_evt_bk_time",
         "odds_snapshots",
         ["event_id", "bookmaker", "captured_at"],
+        if_not_exists=True,
     )
 
     # === High: Futures listing filters ===
-    op.create_index("ix_futures_markets_status", "futures_markets", ["status"])
-    op.create_index("ix_futures_markets_sport_id", "futures_markets", ["sport_id"])
-    op.create_index("ix_futures_markets_source", "futures_markets", ["source"])
+    op.create_index("ix_futures_markets_status", "futures_markets", ["status"], if_not_exists=True)
+    op.create_index("ix_futures_markets_sport_id", "futures_markets", ["sport_id"], if_not_exists=True)
+    op.create_index("ix_futures_markets_source", "futures_markets", ["source"], if_not_exists=True)
 
     # === Medium: Team lookup ===
     # _build_team_lookup uses Team.alternate_names ? 'name' (JSONB containment)
     op.execute(
-        "CREATE INDEX ix_teams_alt_names ON teams USING gin(alternate_names jsonb_path_ops)"
+        "CREATE INDEX IF NOT EXISTS ix_teams_alt_names ON teams USING gin(alternate_names jsonb_path_ops)"
     )
 
 
