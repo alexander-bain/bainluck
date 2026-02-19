@@ -408,3 +408,83 @@ async def _categorize_futures_impl(limit: int = 100, force_llm: bool = False):
         stats.get("remaining", -1),
     )
     return stats
+
+
+async def _recategorize_other_impl(limit: int = 500):
+    """
+    Re-run rules on markets currently tagged 'other' to fix miscategorizations.
+
+    When new patterns are added to the rules engine, markets that were
+    previously sent to the LLM (which returned 'other') may now match
+    a rule. This task re-applies rules to those markets and only updates
+    if a non-'other' category is found.
+    """
+    from sqlalchemy import select
+    from app.models import FuturesMarket
+    from app.utils.futures_categorization import categorize_by_rules
+
+    stats = {
+        "processed": 0,
+        "reclassified": 0,
+        "by_category": {},
+        "sample_results": [],
+        "errors": [],
+    }
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(FuturesMarket)
+                .where(FuturesMarket.llm_sport_category == "other")
+                .limit(limit)
+            )
+            markets = result.scalars().all()
+
+            if not markets:
+                stats["message"] = "No 'other' markets to re-check"
+                return stats
+
+            for market in markets:
+                stats["processed"] += 1
+                try:
+                    category = categorize_by_rules(market.name)
+                    if category and category != "other":
+                        market.llm_sport_category = category
+                        stats["reclassified"] += 1
+                        stats["by_category"][category] = (
+                            stats["by_category"].get(category, 0) + 1
+                        )
+                        if len(stats["sample_results"]) < 20:
+                            stats["sample_results"].append({
+                                "id": market.id,
+                                "name": market.name,
+                                "old": "other",
+                                "new": category,
+                            })
+                except Exception as e:
+                    stats["errors"].append(f"{market.id}: {str(e)}")
+
+            await session.commit()
+
+            # Count remaining 'other'
+            remaining_result = await session.execute(
+                select(func.count(FuturesMarket.id))
+                .where(FuturesMarket.llm_sport_category == "other")
+            )
+            stats["remaining_other"] = remaining_result.scalar_one()
+
+    except Exception as e:
+        stats["errors"].append(f"Top-level error: {str(e)}")
+
+    stats["message"] = (
+        f"Re-checked {stats['processed']} 'other' markets, "
+        f"reclassified {stats['reclassified']}. "
+        f"{stats.get('remaining_other', '?')} still 'other'."
+    )
+
+    logger.info(
+        "Recategorize-other complete: %d/%d reclassified",
+        stats["reclassified"],
+        stats["processed"],
+    )
+    return stats

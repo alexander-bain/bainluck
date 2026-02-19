@@ -378,6 +378,15 @@ class TestOtherSportsPatterns:
     def test_election(self):
         assert categorize_by_rules("Presidential Election Winner") == "politics"
 
+    def test_house_race(self):
+        assert categorize_by_rules("Which party will win the House race for FL-15?") == "politics"
+
+    def test_which_party(self):
+        assert categorize_by_rules("Which party will win the House race for KY-06?") == "politics"
+
+    def test_gubernatorial(self):
+        assert categorize_by_rules("Gubernatorial Election Winner") == "politics"
+
     def test_oscar(self):
         assert categorize_by_rules("Oscar Best Picture") == "entertainment"
 
