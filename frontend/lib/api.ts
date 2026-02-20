@@ -15,6 +15,7 @@ import type {
   SearchResponse,
   PulseRankingsResponse,
   RelatedFuturesResponse,
+  FeedResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -376,6 +377,28 @@ export async function fetchRelatedFutures(
 export function formatAmericanOdds(odds: number | null | undefined): string {
   if (odds === null || odds === undefined) return "-";
   return odds > 0 ? `+${odds}` : `${odds}`;
+}
+
+// ============================================================================
+// Unified Feed API
+// ============================================================================
+
+/**
+ * Fetch the unified feed of interesting events and futures
+ */
+export async function fetchFeed(params?: {
+  limit?: number;
+  offset?: number;
+  sport?: string;
+}): Promise<FeedResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params?.limit) searchParams.set("limit", params.limit.toString());
+  if (params?.offset) searchParams.set("offset", params.offset.toString());
+  if (params?.sport) searchParams.set("sport", params.sport);
+
+  const query = searchParams.toString();
+  return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`);
 }
 
 // ============================================================================

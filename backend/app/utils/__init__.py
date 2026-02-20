@@ -33,6 +33,16 @@ from app.utils.futures_categorization import (
     categorize_market,
     categorize_by_rules,
 )
+from app.utils.futures_highlights import (
+    compute_futures_highlight,
+    should_highlight_futures,
+    FuturesFlags,
+    FuturesHighlightResult,
+)
+from app.utils.feed_reasons import (
+    generate_event_reason,
+    generate_futures_reason,
+)
 
 __all__ = [
     "american_to_probability",
@@ -61,4 +71,10 @@ __all__ = [
     "PulseResult",
     "categorize_market",
     "categorize_by_rules",
+    "compute_futures_highlight",
+    "should_highlight_futures",
+    "FuturesFlags",
+    "FuturesHighlightResult",
+    "generate_event_reason",
+    "generate_futures_reason",
 ]
