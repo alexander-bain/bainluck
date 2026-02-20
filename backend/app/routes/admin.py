@@ -2426,32 +2426,19 @@ async def prediction_market_debug(
         "total_analyzed": len(markets),
         "game_level": [],      # Passed is_game_level_market
         "not_game_level": [],   # Failed — most common bucket
-        "too_many_outcomes": [],
         "matchup_extracted": [],
         "no_matchup": [],       # Passed game-level but no matchup extracted
     }
 
     for market in markets:
-        # Count outcomes
-        oc_result = await db.execute(
-            select(func.count(FuturesOutcome.id))
-            .where(FuturesOutcome.market_id == market.id)
-        )
-        outcome_count = oc_result.scalar() or 0
-
         entry = {
             "source": market.source,
             "name": market.name,
             "category": market.category,
-            "outcomes": outcome_count,
             "llm_sport_category": market.llm_sport_category,
         }
 
-        if outcome_count > 2:
-            funnel["too_many_outcomes"].append(entry)
-            continue
-
-        if not is_game_level_market(market.name, market.category, outcome_count):
+        if not is_game_level_market(market.name, market.category):
             funnel["not_game_level"].append(entry)
             continue
 
@@ -2470,7 +2457,6 @@ async def prediction_market_debug(
     # Summary counts
     summary = {
         "total_analyzed": funnel["total_analyzed"],
-        "too_many_outcomes": len(funnel["too_many_outcomes"]),
         "not_game_level": len(funnel["not_game_level"]),
         "game_level_detected": len(funnel["game_level"]),
         "matchup_extracted": len(funnel["matchup_extracted"]),
@@ -2481,6 +2467,5 @@ async def prediction_market_debug(
         "summary": summary,
         "sample_game_level": funnel["game_level"][:20],
         "sample_not_game_level": funnel["not_game_level"][:20],
-        "sample_too_many_outcomes": funnel["too_many_outcomes"][:10],
         "sample_no_matchup": funnel["no_matchup"][:10],
     }
