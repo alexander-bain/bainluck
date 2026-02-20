@@ -48,7 +48,7 @@ bainluck/
 │   │   │   ├── auth.py          # Auth endpoints (Google sign-in, profile)
 │   │   │   ├── sports.py        # Sports listing
 │   │   │   ├── futures.py       # Championship odds
-│   │   │   ├── user.py          # User data endpoints (pins, teams)
+│   │   │   ├── user.py          # User data endpoints (pins, teams, onboarding, preferences)
 │   │   │   └── health.py        # Health check endpoint
 │   │   ├── services/
 │   │   │   ├── odds_api.py      # The Odds API client
@@ -89,7 +89,10 @@ bainluck/
 │   └── requirements.txt
 ├── frontend/
 │   ├── app/                     # Next.js app router pages
+│   │   ├── onboarding/page.tsx  # 4-step onboarding flow
+│   │   └── preferences/page.tsx # User preferences display + edit
 │   ├── components/              # React components
+│   │   └── OnboardingBanner.tsx # CTA banner for unonboarded users
 │   ├── lib/
 │   │   ├── api.ts              # API client
 │   │   ├── types.ts            # TypeScript interfaces
@@ -135,7 +138,9 @@ bainluck/
 | `backend/app/services/firebase_auth.py` | Firebase Admin SDK init and token verification |
 | `backend/app/dependencies/auth.py` | `get_current_user` / `get_optional_user` FastAPI deps |
 | `backend/app/routes/auth.py` | Auth endpoints (Google sign-in, profile) |
-| `backend/app/routes/user.py` | User data endpoints (pins, team search) |
+| `backend/app/routes/user.py` | User data endpoints (pins, team search, onboarding, preferences) |
+| `frontend/app/onboarding/page.tsx` | 4-step onboarding flow (location, alma maters, sports, rivals) |
+| `frontend/components/OnboardingBanner.tsx` | CTA banner for authenticated users who haven't onboarded |
 | `frontend/lib/firebase.ts` | Firebase config, sign-in/sign-out functions |
 | `frontend/hooks/useAuth.ts` | Auth state hook |
 | `frontend/components/AuthProvider.tsx` | Auth context provider |
@@ -155,7 +160,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (719 pytest items across 15 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse, task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config. See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1250+ pytest items across 16 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse, task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (107 tests across 2 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
 
 ### Querying the Production API
@@ -625,7 +630,9 @@ This requires `FIREBASE_SERVICE_ACCOUNT_JSON` on the backend (not optional for a
 - `frontend/components/AuthProvider.tsx` — Auth context provider, wires token to API client
 - `frontend/components/UserMenu.tsx` — Header sign-in button / user avatar dropdown
 - `frontend/hooks/usePinSync.ts` — One-way localStorage → server pin migration on first login
-- `frontend/app/preferences/page.tsx` — User preferences page (placeholder, shows account info)
+- `frontend/app/preferences/page.tsx` — User preferences page (shows teams, sport affinities, edit link)
+- `frontend/app/onboarding/page.tsx` — 4-step onboarding flow (location → alma maters → sport affinities → rivals)
+- `frontend/components/OnboardingBanner.tsx` — Dismissable CTA banner for authenticated users without preferences
 
 **Database tables:**
 - `users` — Firebase UID, email, display name, photo URL
@@ -637,7 +644,23 @@ This requires `FIREBASE_SERVICE_ACCOUNT_JSON` on the backend (not optional for a
 - Backend: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (**required** for Safari sign-in — enables `create_custom_token` and `get_user_by_email`)
 - Frontend: `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
 
-**City → Teams mapping:** ESPN's `location` field on team objects maps cities/regions/schools to teams. The `Team.location` column stores this. A static metro alias map (~25 entries) groups brand names to metro areas ("New England" → "Boston", "Golden State" → "Bay Area").
+**City → Teams mapping:** ESPN's `location` field on team objects maps cities/regions/schools to teams. The `Team.location` column stores this. A static metro alias map (`METRO_ALIASES` in `user.py`, ~30 entries) groups brand names to metro areas ("New England" → "Boston", "Golden State" → "Bay Area").
+
+**Onboarding flow (shipped):**
+4-step single-page stepper at `/onboarding` — invitational (not forced), triggered by CTA banner on homepage for authenticated users who haven't completed onboarding.
+
+Steps:
+1. **"Where do you follow sports?"** — Location autocomplete → metro alias expansion → team chips (all selected by default, toggleable)
+2. **"Any alma maters?"** — School autocomplete filtered to college sports (ncaa/wncaab keywords)
+3. **"What sports do you care about?"** — Grid of sport cards with 4-level selector: "Love it" (1.0), "Playoffs only" (0.3), "If it's wild" (0.1), "Nah" (0.0)
+4. **"Any rivals?"** — Team autocomplete, "teams you love to hate"
+
+Endpoints:
+- `POST /api/me/onboarding` — Batch save all onboarding data (deletes existing onboarding favorites, inserts new, expands sport affinities, sets `onboarding_completed=True`)
+- `GET /api/me/preferences` — Returns preferences + favorites with team names/logos, compresses sport affinities to frontend keys
+- `GET /api/me/teams/by-location?q=Boston` — Location search with metro alias expansion
+
+**Sport affinity key mapping:** Frontend uses simple keys ("football", "basketball") that expand to backend sport_key format ("americanfootball_nfl", "americanfootball_ncaaf") via `SPORT_AFFINITY_MAPPING` in `user.py`. Compression takes the max weight when multiple backend keys map to the same frontend category. Round-trip tested: expand → compress returns original values.
 
 **Full plan:** `docs/auth-personalization-plan.md`
 
@@ -797,8 +820,8 @@ These are the current focus. Resist the urge to build new features until these a
 
 ### Next — Features (in priority order)
 4. 🟢 **Auth & Personalization Phase 1 (shipped)** — Google Sign-In working on Safari and Chrome via GIS + backend custom token fallback. Backend auth middleware, pin sync endpoints, frontend auth context + sign-in UI, preferences page placeholder. Still needs desktop Safari verification. See `docs/auth-personalization-plan.md` for full plan.
-5. 📋 **Auth & Personalization Phase 2** — Onboarding flow (city→teams, alma maters, sport affinities, rivals), preference storage, LLM-parsed free-text inputs
-6. 📋 **Auth & Personalization Phase 3** — Personalized highlight scoring multiplier, "For You" section, rival schadenfreude surfacing, conditional sport logic
+5. 🟢 **Auth & Personalization Phase 2 (shipped)** — 4-step onboarding flow (location → alma maters → sport affinities → rivals) with metro alias expansion, sport affinity key mapping, batch save endpoint, preferences display page, homepage CTA banner. See onboarding details in Auth & Personalization section above.
+6. 🟢 **Auth & Personalization Phase 3 (shipped)** — Personalized feed scoring: team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting, personalization badges ("Your team", "Local", "Alma mater", "Rival losing"), unified interestingness feed combining events + futures.
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
 8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
 9. 📋 **Polymarket integration Phase 2** — Beat schedule (auto-polling on cron), price history backfill via CLOB `/prices-history` endpoint, non-sports category display in frontend (politics, entertainment, crypto tabs). Phase 1 (API client, polling task, tag-to-category mapping, streaming pagination) is shipped.
@@ -853,9 +876,13 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
-- ✅ Test coverage for core algorithms: 719 backend (pytest items) + 107 frontend = 826 total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), odds polling helpers (27), win prob sources (24), task wiring (19), stale bookmaker filter (14), snapshot collapse (13), redis state (9). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1250+ backend (pytest items) + 107 frontend = 1350+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), odds polling helpers (27), win prob sources (24), task wiring (19), stale bookmaker filter (14), snapshot collapse (13), redis state (9), onboarding/preferences (31). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
+- ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
+- ✅ Auth & Personalization Phase 2 (shipped): 4-step onboarding flow (`/onboarding`) — location with metro alias expansion, alma maters, sport affinities (12 categories with 4 levels), rivals. Backend: `POST /api/me/onboarding` (batch save), `GET /api/me/preferences`, `GET /api/me/teams/by-location` with `METRO_ALIASES` + `SPORT_AFFINITY_MAPPING`. Frontend: single-page stepper, debounced autocomplete, OnboardingBanner CTA, preferences display page. 31 tests for metro aliases, sport affinity expansion/compression, reverse mapping.
+- ✅ Auth & Personalization Phase 3 (shipped): Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting. Personalization badges ("Your team", "Local", "Alma mater", "Rival losing"). Unified interestingness feed combining events + futures on homepage.
+- ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to single "Right Now" feed ranked by interestingness score. Feed items include events and futures, with personalization overlay for authenticated users.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -866,7 +893,7 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 800+ tests (693 backend + 107 frontend) but initially had very few
+- Test suite now has 1350+ tests (1250+ backend + 107 frontend) but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
@@ -943,6 +970,8 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 | Pulse explainer | https://bainluck.com/pulse |
 | Pulse Hall of Fame | https://bainluck.com/pulse/hall-of-fame |
 | Search | https://bainluck.com/search?q=celtics |
+| Onboarding | https://bainluck.com/onboarding |
+| Preferences | https://bainluck.com/preferences |
 | PRD | `docs/PRD.md` |
 | Debug endpoints | `/api/events/debug/*` |
 | Admin endpoints | `/api/admin/*` |
