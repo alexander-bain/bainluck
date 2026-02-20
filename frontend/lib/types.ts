@@ -408,6 +408,41 @@ export interface SearchResponse {
   query: string;
 }
 
+// Onboarding & Preferences types
+export interface TeamSearchResult {
+  id: number;
+  name: string;
+  location: string | null;
+  sport_key: string | null;
+  logo_url: string | null;
+  abbreviation: string | null;
+}
+
+export interface UserFavoriteItem {
+  team_id: number;
+  team_name: string;
+  relation_type: "follow" | "local" | "alma_mater" | "rival";
+  sport_key: string | null;
+  logo_url: string | null;
+  source: string;
+}
+
+export interface UserPreferencesResponse {
+  home_location: string | null;
+  sport_affinities: Record<string, number>;
+  onboarding_completed: boolean;
+  favorites: UserFavoriteItem[];
+}
+
+export interface OnboardingSubmission {
+  home_location: string | null;
+  local_teams: { team_id: number }[];
+  alma_mater_teams: { team_id: number }[];
+  rival_teams: { team_id: number }[];
+  sport_affinities: Record<string, number>;
+  raw_inputs: Record<string, unknown>;
+}
+
 // Unified Feed types
 export interface FeedEventData {
   id: number;

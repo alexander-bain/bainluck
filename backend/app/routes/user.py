@@ -1,7 +1,7 @@
 """
-User data routes: pins, preferences, team search.
+User data routes: pins, preferences, team search, onboarding.
 
-All endpoints require authentication.
+All endpoints require authentication unless noted otherwise.
 """
 
 import logging
@@ -9,11 +9,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select, delete, and_
+from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user
-from app.models.models import User, UserPin, Team
+from app.models.models import User, UserPin, UserFavorite, UserPreference, Team
 from app.services.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,139 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# --- Schemas ---
+# =============================================================================
+# Metro alias mapping for city → teams lookup
+# =============================================================================
+
+# Maps brand/location names to their metro area aliases.
+# When a user types "Boston", we also search for "New England" and vice versa.
+METRO_ALIASES: dict[str, list[str]] = {
+    "golden state": ["san francisco", "bay area", "oakland", "santa cruz"],
+    "new england": ["boston", "foxborough", "foxboro"],
+    "brooklyn": ["new york", "nyc"],
+    "new york": ["brooklyn", "nyc"],
+    "carolina": ["charlotte", "raleigh"],
+    "tampa bay": ["tampa", "st. petersburg"],
+    "tampa": ["tampa bay", "st. petersburg"],
+    "dc": ["washington", "d.c."],
+    "washington": ["dc", "d.c."],
+    "minnesota": ["minneapolis", "twin cities", "st. paul"],
+    "minnesota": ["minneapolis"],
+    "indiana": ["indianapolis"],
+    "indianapolis": ["indiana"],
+    "arizona": ["phoenix", "tempe", "glendale"],
+    "phoenix": ["arizona"],
+    "colorado": ["denver"],
+    "denver": ["colorado"],
+    "utah": ["salt lake city", "salt lake"],
+    "salt lake city": ["utah"],
+    "tennessee": ["nashville", "memphis"],
+    "nashville": ["tennessee"],
+    "miami": ["south florida", "fort lauderdale", "sunrise"],
+    "dallas": ["arlington", "dfw"],
+    "san francisco": ["golden state", "bay area", "oakland", "santa cruz"],
+    "bay area": ["golden state", "san francisco", "oakland", "santa cruz"],
+    "boston": ["new england", "foxborough"],
+    "los angeles": ["la", "anaheim", "inglewood"],
+    "la": ["los angeles", "anaheim", "inglewood"],
+    "chicago": ["chi"],
+    "detroit": ["michigan"],
+    "pittsburgh": ["pennsylvania"],
+    "philadelphia": ["philly"],
+    "philly": ["philadelphia"],
+}
+
+
+def _expand_location_query(query: str) -> list[str]:
+    """Expand a location query to include metro aliases.
+
+    Returns a list of search terms including the original query
+    and any known aliases.
+    """
+    q_lower = query.lower().strip()
+    terms = [q_lower]
+
+    # Check if the query matches any alias key
+    if q_lower in METRO_ALIASES:
+        terms.extend(METRO_ALIASES[q_lower])
+
+    # Also check if the query is a value in any alias list
+    for key, aliases in METRO_ALIASES.items():
+        if q_lower in [a.lower() for a in aliases] and key not in terms:
+            terms.append(key)
+
+    return list(set(terms))
+
+
+# =============================================================================
+# Sport affinity key mapping
+# =============================================================================
+
+# Maps user-friendly sport keys to backend sport_key prefixes
+SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
+    "football": ["americanfootball_nfl", "americanfootball_ncaaf"],
+    "basketball": ["basketball_nba", "basketball_ncaab", "basketball_wncaab"],
+    "baseball": ["baseball_mlb"],
+    "hockey": ["icehockey_nhl"],
+    "soccer": ["soccer_epl", "soccer_usa_mls", "soccer_spain_la_liga",
+               "soccer_germany_bundesliga", "soccer_italy_serie_a",
+               "soccer_france_ligue_one", "soccer_uefa_champs_league"],
+    "golf": ["golf_masters_tournament_winner", "golf_pga_championship_winner",
+             "golf_the_open_championship_winner", "golf_us_open_winner"],
+    "tennis": ["tennis_atp_french_open", "tennis_atp_us_open",
+               "tennis_atp_wimbledon", "tennis_atp_australian_open"],
+    "mma": ["mma_mixed_martial_arts"],
+    "boxing": ["boxing_boxing"],
+    "cricket": ["cricket_icc_world_cup", "cricket_test_match"],
+    "rugby": ["rugbyleague_nrl", "rugbyunion_six_nations"],
+    "motorsport": ["motorsport_formula1"],
+}
+
+# Reverse mapping for display: backend key → friendly category
+SPORT_KEY_TO_CATEGORY: dict[str, str] = {}
+for category, keys in SPORT_AFFINITY_MAPPING.items():
+    for key in keys:
+        SPORT_KEY_TO_CATEGORY[key] = category
+
+
+def _expand_sport_affinities(frontend_affinities: dict[str, float]) -> dict[str, float]:
+    """Expand user-friendly sport keys to full backend sport_key format.
+
+    Input: {"football": 1.0, "basketball": 0.3}
+    Output: {"americanfootball_nfl": 1.0, "americanfootball_ncaaf": 1.0,
+             "basketball_nba": 0.3, "basketball_ncaab": 0.3, ...}
+    """
+    expanded: dict[str, float] = {}
+    for sport_key, weight in frontend_affinities.items():
+        backend_keys = SPORT_AFFINITY_MAPPING.get(sport_key, [])
+        if backend_keys:
+            for bk in backend_keys:
+                expanded[bk] = weight
+        else:
+            # Pass through unrecognized keys (future-proofing)
+            expanded[sport_key] = weight
+    return expanded
+
+
+def _compress_sport_affinities(backend_affinities: dict[str, float]) -> dict[str, float]:
+    """Compress backend sport_key affinities back to user-friendly keys.
+
+    Takes the max weight for each category.
+    Input: {"americanfootball_nfl": 1.0, "americanfootball_ncaaf": 1.0}
+    Output: {"football": 1.0}
+    """
+    compressed: dict[str, float] = {}
+    for backend_key, weight in backend_affinities.items():
+        category = SPORT_KEY_TO_CATEGORY.get(backend_key)
+        if category:
+            compressed[category] = max(compressed.get(category, 0.0), weight)
+        # Skip unknown keys in compressed view
+    return compressed
+
+
+# =============================================================================
+# Schemas
+# =============================================================================
 
 class PinsResponse(BaseModel):
     """All pinned items for a user."""
@@ -51,7 +184,42 @@ class TeamSearchResult(BaseModel):
     abbreviation: Optional[str]
 
 
-# --- Pin endpoints ---
+class TeamRef(BaseModel):
+    """Minimal team reference for onboarding submission."""
+    team_id: int
+
+
+class OnboardingRequest(BaseModel):
+    """Complete onboarding data submitted from the frontend."""
+    home_location: Optional[str] = None
+    local_teams: list[TeamRef] = []
+    alma_mater_teams: list[TeamRef] = []
+    rival_teams: list[TeamRef] = []
+    sport_affinities: dict[str, float] = {}  # e.g., {"football": 1.0, "basketball": 0.3}
+    raw_inputs: dict = {}  # Saved verbatim for debugging
+
+
+class FavoriteItem(BaseModel):
+    """A team favorite with metadata for display."""
+    team_id: int
+    team_name: str
+    relation_type: str
+    sport_key: Optional[str]
+    logo_url: Optional[str]
+    source: str
+
+
+class PreferencesResponse(BaseModel):
+    """Full preferences + favorites for the current user."""
+    home_location: Optional[str]
+    sport_affinities: dict[str, float]  # Compressed (user-friendly keys)
+    onboarding_completed: bool
+    favorites: list[FavoriteItem]
+
+
+# =============================================================================
+# Pin endpoints
+# =============================================================================
 
 MAX_PINS_PER_TYPE = 25  # More generous server-side limit than the 6 in localStorage
 
@@ -180,7 +348,161 @@ async def remove_pin(
     return {"status": "unpinned"}
 
 
-# --- Team search (for onboarding autocomplete) ---
+# =============================================================================
+# Onboarding & Preferences endpoints
+# =============================================================================
+
+@router.post("/onboarding")
+async def submit_onboarding(
+    body: OnboardingRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Save complete onboarding data. Replaces any existing onboarding-sourced
+    favorites and preferences.
+
+    This is a batch endpoint — saves location, teams, sport affinities,
+    and raw inputs all at once.
+    """
+    # 1. Delete existing onboarding-sourced favorites
+    await db.execute(
+        delete(UserFavorite).where(
+            and_(
+                UserFavorite.user_id == user.id,
+                UserFavorite.source == "onboarding",
+            )
+        )
+    )
+
+    # 2. Insert new favorites
+    all_team_ids = set()
+
+    for team_ref in body.local_teams:
+        if team_ref.team_id not in all_team_ids:
+            db.add(UserFavorite(
+                user_id=user.id,
+                team_id=team_ref.team_id,
+                relation_type="local",
+                source="onboarding",
+                weight=1.0,
+            ))
+            all_team_ids.add(team_ref.team_id)
+
+    for team_ref in body.alma_mater_teams:
+        if team_ref.team_id not in all_team_ids:
+            db.add(UserFavorite(
+                user_id=user.id,
+                team_id=team_ref.team_id,
+                relation_type="alma_mater",
+                source="onboarding",
+                weight=1.0,
+            ))
+            all_team_ids.add(team_ref.team_id)
+        else:
+            # Team already added (e.g., local AND alma mater) — update relation
+            # The unique constraint is (user_id, team_id), so we skip duplicates
+            logger.info(f"Skipping duplicate team_id={team_ref.team_id} for user={user.id}")
+
+    for team_ref in body.rival_teams:
+        if team_ref.team_id not in all_team_ids:
+            db.add(UserFavorite(
+                user_id=user.id,
+                team_id=team_ref.team_id,
+                relation_type="rival",
+                source="onboarding",
+                weight=1.0,
+            ))
+            all_team_ids.add(team_ref.team_id)
+
+    # 3. Expand sport affinities to backend keys
+    expanded_affinities = _expand_sport_affinities(body.sport_affinities)
+
+    # 4. Update preferences
+    result = await db.execute(
+        select(UserPreference).where(UserPreference.user_id == user.id)
+    )
+    prefs = result.scalar_one_or_none()
+
+    if prefs:
+        prefs.home_location = body.home_location
+        prefs.sport_affinities = expanded_affinities
+        prefs.onboarding_completed = True
+        prefs.onboarding_raw = body.raw_inputs
+    else:
+        prefs = UserPreference(
+            user_id=user.id,
+            home_location=body.home_location,
+            sport_affinities=expanded_affinities,
+            onboarding_completed=True,
+            onboarding_raw=body.raw_inputs,
+        )
+        db.add(prefs)
+
+    await db.flush()
+
+    logger.info(
+        f"Onboarding completed for user={user.id}: "
+        f"{len(all_team_ids)} teams, {len(expanded_affinities)} sport keys"
+    )
+
+    return {"status": "ok", "onboarding_completed": True}
+
+
+@router.get("/preferences", response_model=PreferencesResponse)
+async def get_preferences(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get current preferences and team favorites.
+    Used to pre-populate the onboarding form for re-editing.
+    """
+    from app.models.models import Sport
+
+    # Load preferences
+    result = await db.execute(
+        select(UserPreference).where(UserPreference.user_id == user.id)
+    )
+    prefs = result.scalar_one_or_none()
+
+    # Load favorites with team info
+    result = await db.execute(
+        select(UserFavorite, Team, Sport.key.label("sport_key"))
+        .join(Team, UserFavorite.team_id == Team.id)
+        .join(Sport, Team.sport_id == Sport.id)
+        .where(UserFavorite.user_id == user.id)
+        .order_by(UserFavorite.relation_type, Team.name)
+    )
+    fav_rows = result.all()
+
+    favorites = [
+        FavoriteItem(
+            team_id=fav.team_id,
+            team_name=team.name,
+            relation_type=fav.relation_type,
+            sport_key=sport_key,
+            logo_url=team.logo_url_small or team.logo_url,
+            source=fav.source,
+        )
+        for fav, team, sport_key in fav_rows
+    ]
+
+    # Compress backend sport affinities to user-friendly keys
+    raw_affinities = prefs.sport_affinities if prefs and prefs.sport_affinities else {}
+    compressed = _compress_sport_affinities(raw_affinities)
+
+    return PreferencesResponse(
+        home_location=prefs.home_location if prefs else None,
+        sport_affinities=compressed,
+        onboarding_completed=prefs.onboarding_completed if prefs else False,
+        favorites=favorites,
+    )
+
+
+# =============================================================================
+# Team search (for onboarding autocomplete)
+# =============================================================================
 
 @router.get("/teams/search", response_model=list[TeamSearchResult])
 async def search_teams(
@@ -222,3 +544,56 @@ async def search_teams(
         )
         for team, sport_key in rows
     ]
+
+
+@router.get("/teams/by-location", response_model=list[TeamSearchResult])
+async def teams_by_location(
+    q: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Find teams by location/city with metro alias expansion.
+    Does not require auth — used during onboarding city selection.
+
+    Example: q="Boston" returns Celtics, Red Sox, Bruins, Patriots (via "New England" alias).
+    """
+    if len(q) < 2:
+        return []
+
+    # Expand query with metro aliases
+    terms = _expand_location_query(q)
+
+    # Build OR conditions for all expanded terms
+    from app.models.models import Sport
+    conditions = []
+    for term in terms:
+        pattern = f"%{term}%"
+        conditions.append(Team.location.ilike(pattern))
+
+    result = await db.execute(
+        select(Team, Sport.key.label("sport_key"))
+        .join(Sport, Team.sport_id == Sport.id)
+        .where(or_(*conditions))
+        .order_by(Team.name)
+        .limit(50)
+    )
+    rows = result.all()
+
+    # Deduplicate by team ID (aliases can match the same team multiple times)
+    seen = set()
+    results = []
+    for team, sport_key in rows:
+        if team.id not in seen:
+            seen.add(team.id)
+            results.append(
+                TeamSearchResult(
+                    id=team.id,
+                    name=team.name,
+                    location=team.location,
+                    sport_key=sport_key,
+                    logo_url=team.logo_url_small or team.logo_url,
+                    abbreviation=team.abbreviation,
+                )
+            )
+
+    return results

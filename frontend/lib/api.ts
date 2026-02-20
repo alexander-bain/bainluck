@@ -16,6 +16,9 @@ import type {
   PulseRankingsResponse,
   RelatedFuturesResponse,
   FeedResponse,
+  TeamSearchResult,
+  UserPreferencesResponse,
+  OnboardingSubmission,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -448,4 +451,46 @@ export async function removePin(
   targetId: number
 ): Promise<void> {
   await apiMutate(`/api/me/pins/${pinType}/${targetId}`, "DELETE");
+}
+
+// ============================================================================
+// Onboarding & Preferences API
+// ============================================================================
+
+/**
+ * Fetch the current user's preferences and team favorites
+ */
+export async function fetchUserPreferences(): Promise<UserPreferencesResponse> {
+  return apiFetch<UserPreferencesResponse>("/api/me/preferences");
+}
+
+/**
+ * Submit complete onboarding data (location, teams, sport affinities)
+ */
+export async function submitOnboarding(
+  data: OnboardingSubmission
+): Promise<{ status: string; onboarding_completed: boolean }> {
+  return apiMutate("/api/me/onboarding", "POST", data);
+}
+
+/**
+ * Search teams by name for autocomplete
+ */
+export async function searchTeams(q: string): Promise<TeamSearchResult[]> {
+  if (q.length < 2) return [];
+  return apiFetch<TeamSearchResult[]>(
+    `/api/me/teams/search?q=${encodeURIComponent(q)}`
+  );
+}
+
+/**
+ * Find teams by location/city with metro alias expansion
+ */
+export async function searchTeamsByLocation(
+  q: string
+): Promise<TeamSearchResult[]> {
+  if (q.length < 2) return [];
+  return apiFetch<TeamSearchResult[]>(
+    `/api/me/teams/by-location?q=${encodeURIComponent(q)}`
+  );
 }
