@@ -66,6 +66,27 @@ _DASH_PROP_RE = re.compile(
     r'^(.+?)\s+[-–—]\s+(.+?):\s+(.+)$', re.IGNORECASE,
 )
 
+# Category prefix pattern: "NBA:", "Pro Men's Basketball:", "Football:" etc.
+# Kalshi often prefixes game titles with the category, e.g., "NBA: Warriors vs Celtics"
+_CATEGORY_PREFIX_RE = re.compile(
+    r'^(?:NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB?|NCAAF?|EPL|La Liga|Serie A|Ligue 1|Bundesliga|'
+    r'Pro\s+(?:Men\'?s?|Women\'?s?)\s+\w+|'
+    r'College\s+\w+|'
+    r'Basketball|Football|Hockey|Baseball|Soccer|Tennis|Golf|Boxing|MMA)\s*:\s*',
+    re.IGNORECASE,
+)
+
+
+def _strip_category_prefix(market_name: str) -> str:
+    """
+    Strip category prefixes like "NBA:", "Pro Men's Basketball:" from market names.
+
+    Kalshi often prefixes event titles with the sport/league category.
+    This normalizes to just the matchup portion for pattern matching.
+    """
+    return _CATEGORY_PREFIX_RE.sub("", market_name).strip()
+
+
 # Championship/award keywords that disqualify "Will X win?" markets
 _NON_GAME_KEYWORDS = (
     "championship", "title", "trophy", "award", "mvp",
@@ -89,30 +110,41 @@ def is_game_level_market(
     Polymarket bundles moneyline + spread + totals under one game event,
     resulting in 3-5+ outcomes — but the event name is still "Team A vs. Team B".
 
+    Also handles category-prefixed names (e.g., "NBA: Warriors vs Celtics")
+    by stripping the prefix before matching.
+
     Criteria:
     - Must match a matchup pattern (bare matchup, dash matchup, or "Will X beat Y?")
     - Must NOT be a game prop (those have stats like "Rebounds")
     """
-    # Skip game props (have ": stat" suffix)
-    if _GAME_PROP_RE.match(market_name):
+    return _check_game_level(market_name) or _check_game_level(_strip_category_prefix(market_name))
+
+
+def _check_game_level(name: str) -> bool:
+    """Check if a (possibly prefix-stripped) market name is game-level."""
+    if not name:
         return False
-    if _DASH_PROP_RE.match(market_name):
+
+    # Skip game props (have ": stat" suffix after matchup)
+    if _GAME_PROP_RE.match(name):
+        return False
+    if _DASH_PROP_RE.match(name):
         return False
 
     # Check for matchup patterns (order matters: more specific first)
-    if _WILL_WIN_AGAINST_RE.match(market_name):
+    if _WILL_WIN_AGAINST_RE.match(name):
         return True
-    if _WILL_BEAT_RE.match(market_name):
+    if _WILL_BEAT_RE.match(name):
         return True
-    if _TO_BEAT_RE.match(market_name):
+    if _TO_BEAT_RE.match(name):
         return True
-    if _BARE_MATCHUP_RE.match(market_name):
+    if _BARE_MATCHUP_RE.match(name):
         return True
-    if _DASH_MATCHUP_RE.match(market_name):
+    if _DASH_MATCHUP_RE.match(name):
         return True
-    if _WILL_WIN_RE.match(market_name):
+    if _WILL_WIN_RE.match(name):
         # "Will X win?" is only game-level if it's not a championship context
-        name_lower = market_name.lower()
+        name_lower = name.lower()
         if any(word in name_lower for word in _NON_GAME_KEYWORDS):
             return False
         return True
@@ -137,6 +169,7 @@ def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
     Extract team names and determine "Yes" team from a game-level market name.
 
     Returns MatchupInfo or None if not a recognized format.
+    Handles category-prefixed names (e.g., "NBA: Warriors vs Celtics").
 
     Conventions:
     - "Team A at Team B" → Yes = Team A (first listed team in "at" format)
@@ -147,6 +180,23 @@ def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
     - "Will Team A win against Team B?" → Yes = Team A
     - "Will Team A win?" → Yes = Team A (team_b will be empty)
     """
+    # Try original name first, then with category prefix stripped
+    result = _extract_matchup_impl(market_name)
+    if result:
+        return result
+
+    stripped = _strip_category_prefix(market_name)
+    if stripped != market_name:
+        return _extract_matchup_impl(stripped)
+
+    return None
+
+
+def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
+    """Core matchup extraction logic."""
+    if not market_name:
+        return None
+
     # Skip game props
     if _GAME_PROP_RE.match(market_name):
         return None

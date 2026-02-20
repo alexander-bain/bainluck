@@ -158,6 +158,29 @@ class TestIsGameLevelMarket:
         """Bare matchup regex should be case-insensitive."""
         assert is_game_level_market("lakers vs clippers", "championship", 1)
 
+    # Category-prefixed market names (common on Kalshi)
+    def test_nba_prefix(self):
+        """Kalshi-style 'NBA: Warriors vs Celtics'."""
+        assert is_game_level_market("NBA: Warriors vs Celtics", "championship", 1)
+
+    def test_nfl_prefix(self):
+        assert is_game_level_market("NFL: Eagles at Chiefs", "championship", 1)
+
+    def test_college_prefix(self):
+        assert is_game_level_market("College Basketball: Duke vs UNC", "championship", 1)
+
+    def test_pro_mens_prefix(self):
+        """Verbose Kalshi prefix."""
+        assert is_game_level_market(
+            "Pro Men's Basketball: Lakers vs Celtics", "championship", 1,
+        )
+
+    def test_prefix_championship_still_rejected(self):
+        """Category-prefixed championship titles should still be rejected."""
+        assert not is_game_level_market(
+            "NBA: Will the Lakers win the championship?", "championship", 1,
+        )
+
 
 # =============================================================================
 # extract_matchup
@@ -306,6 +329,30 @@ class TestExtractMatchup:
         assert extract_matchup("Will the Dodgers win the World Series?") is None
         assert extract_matchup("Will Arsenal win the Premier League?") is None
         assert extract_matchup("Will Celtics win the conference?") is None
+
+    # Category-prefixed names (Kalshi-style)
+    def test_nba_prefix_extract(self):
+        """Category prefix stripped for matchup extraction."""
+        result = extract_matchup("NBA: Warriors vs Celtics")
+        assert result is not None
+        assert result.team_a == "Warriors"
+        assert result.team_b == "Celtics"
+
+    def test_nfl_prefix_extract(self):
+        result = extract_matchup("NFL: Eagles at Chiefs")
+        assert result is not None
+        assert result.team_a == "Eagles"
+        assert result.team_b == "Chiefs"
+
+    def test_pro_mens_prefix_extract(self):
+        result = extract_matchup("Pro Men's Basketball: Lakers vs Celtics")
+        assert result is not None
+        assert result.team_a == "Lakers"
+        assert result.team_b == "Celtics"
+
+    def test_prefix_championship_rejected(self):
+        """Championship context is still detected after prefix stripping."""
+        assert extract_matchup("NBA: Will the Lakers win the championship?") is None
 
 
 # =============================================================================
