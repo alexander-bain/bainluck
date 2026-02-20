@@ -19,9 +19,17 @@ logger = logging.getLogger(__name__)
 
 # ── Game-level market detection ──────────────────────────────────────────────
 
-# "Team A at/vs Team B" (bare matchup without stat — no colon separator)
+# "Team A at/vs/v/@ Team B" (bare matchup without stat — no colon separator)
+# Case-insensitive to handle various capitalizations
 _BARE_MATCHUP_RE = re.compile(
-    r'^([A-Z][\w\s.\'\-()]+?)\s+(?:at|vs\.?|@)\s+([A-Z][\w\s.\'\-()]+?)$',
+    r'^([\w][\w\s.\'\-()]+?)\s+(?:at|vs\.?|v\.?|@)\s+([\w][\w\s.\'\-()]+?)$',
+    re.IGNORECASE,
+)
+
+# "Team A - Team B" (dash/hyphen separator, common in European sports)
+_DASH_MATCHUP_RE = re.compile(
+    r'^([\w][\w\s.\'\-()]{2,}?)\s+[-–—]\s+([\w][\w\s.\'\-()]{2,}?)$',
+    re.IGNORECASE,
 )
 
 # "Will (the) Team A beat/win against Team B?"
@@ -42,9 +50,29 @@ _WILL_WIN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "Will (the) Team A win against/over (the) Team B?"
+_WILL_WIN_AGAINST_RE = re.compile(
+    r'^Will\s+(?:the\s+)?(.+?)\s+win\s+(?:against|over)\s+(?:the\s+)?(.+?)\??$',
+    re.IGNORECASE,
+)
+
 # Game prop pattern (Team at Team: Stat) — NOT a moneyline market
 _GAME_PROP_RE = re.compile(
-    r'^(.+?)\s+(?:at|vs\.?|@)\s+(.+?):\s+(.+)$', re.IGNORECASE,
+    r'^(.+?)\s+(?:at|vs\.?|v\.?|@)\s+(.+?):\s+(.+)$', re.IGNORECASE,
+)
+
+# Game prop with dash separator (Team - Team: Stat)
+_DASH_PROP_RE = re.compile(
+    r'^(.+?)\s+[-–—]\s+(.+?):\s+(.+)$', re.IGNORECASE,
+)
+
+# Championship/award keywords that disqualify "Will X win?" markets
+_NON_GAME_KEYWORDS = (
+    "championship", "title", "trophy", "award", "mvp",
+    "cup", "series", "super bowl", "pennant", "division",
+    "conference", "playoff", "world series", "stanley cup",
+    "premier league", "la liga", "champions league",
+    "grand slam", "open", "masters", "medal", "gold",
 )
 
 
@@ -58,8 +86,8 @@ def is_game_level_market(
     (e.g., "Which team wins this game?") rather than a championship/award future.
 
     Criteria:
-    - Must be a single-outcome binary market (1 outcome with "Yes"/"No")
-    - Must match a matchup pattern (bare matchup or "Will X beat Y?")
+    - Must be a single-outcome binary market (1-2 outcomes)
+    - Must match a matchup pattern (bare matchup, dash matchup, or "Will X beat Y?")
     - Must NOT be a game prop (those have stats like "Rebounds")
     """
     if num_outcomes > 2:
@@ -68,22 +96,25 @@ def is_game_level_market(
     # Skip game props (have ": stat" suffix)
     if _GAME_PROP_RE.match(market_name):
         return False
+    if _DASH_PROP_RE.match(market_name):
+        return False
 
-    # Check for matchup patterns
-    if _BARE_MATCHUP_RE.match(market_name):
+    # Check for matchup patterns (order matters: more specific first)
+    if _WILL_WIN_AGAINST_RE.match(market_name):
         return True
     if _WILL_BEAT_RE.match(market_name):
         return True
     if _TO_BEAT_RE.match(market_name):
         return True
+    if _BARE_MATCHUP_RE.match(market_name):
+        return True
+    if _DASH_MATCHUP_RE.match(market_name):
+        return True
     if _WILL_WIN_RE.match(market_name):
         # "Will X win?" is only game-level if it's a binary market in a sports context
         # (not "Will X win the championship?")
         name_lower = market_name.lower()
-        if any(word in name_lower for word in (
-            "championship", "title", "trophy", "award", "mvp",
-            "cup", "series", "super bowl", "pennant", "division",
-        )):
+        if any(word in name_lower for word in _NON_GAME_KEYWORDS):
             return False
         return True
 
@@ -111,12 +142,24 @@ def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
     Conventions:
     - "Team A at Team B" → Yes = Team A (first listed team in "at" format)
     - "Team A vs Team B" → Yes = Team A (first listed team)
+    - "Team A v Team B" → Yes = Team A (first listed team)
+    - "Team A - Team B" → Yes = Team A (first listed team)
     - "Will Team A beat Team B?" → Yes = Team A
+    - "Will Team A win against Team B?" → Yes = Team A
     - "Will Team A win?" → Yes = Team A (team_b will be empty)
     """
     # Skip game props
     if _GAME_PROP_RE.match(market_name):
         return None
+    if _DASH_PROP_RE.match(market_name):
+        return None
+
+    # "Will Team A win against/over Team B?" (check before will_win)
+    m = _WILL_WIN_AGAINST_RE.match(market_name)
+    if m:
+        team_a = m.group(1).strip()
+        team_b = m.group(2).strip()
+        return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="will_beat")
 
     # "Will Team A beat Team B?"
     m = _WILL_BEAT_RE.match(market_name)
@@ -132,14 +175,19 @@ def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
         team_b = m.group(2).strip()
         return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="to_beat")
 
-    # "Team A at/vs Team B" (bare matchup)
+    # "Team A at/vs/v Team B" (bare matchup)
     m = _BARE_MATCHUP_RE.match(market_name)
     if m:
         team_a = m.group(1).strip()
         team_b = m.group(2).strip()
-        # "at" format: first team is away, second is home
-        # "Yes" = first listed team wins
         return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="bare_matchup")
+
+    # "Team A - Team B" (dash matchup)
+    m = _DASH_MATCHUP_RE.match(market_name)
+    if m:
+        team_a = m.group(1).strip()
+        team_b = m.group(2).strip()
+        return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="dash_matchup")
 
     # "Will Team A win?"
     m = _WILL_WIN_RE.match(market_name)
@@ -147,10 +195,7 @@ def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
         team_a = m.group(1).strip()
         # Check it's not a championship context
         name_lower = market_name.lower()
-        if any(word in name_lower for word in (
-            "championship", "title", "trophy", "award", "mvp",
-            "cup", "series", "super bowl", "pennant", "division",
-        )):
+        if any(word in name_lower for word in _NON_GAME_KEYWORDS):
             return None
         return MatchupInfo(team_a, "", yes_team=team_a, format_type="will_win")
 
