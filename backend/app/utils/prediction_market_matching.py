@@ -66,6 +66,27 @@ _DASH_PROP_RE = re.compile(
     r'^(.+?)\s+[-–—]\s+(.+?):\s+(.+)$', re.IGNORECASE,
 )
 
+# Category prefix pattern: "NBA:", "Pro Men's Basketball:", "Football:" etc.
+# Kalshi often prefixes game titles with the category, e.g., "NBA: Warriors vs Celtics"
+_CATEGORY_PREFIX_RE = re.compile(
+    r'^(?:NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB?|NCAAF?|EPL|La Liga|Serie A|Ligue 1|Bundesliga|'
+    r'Pro\s+(?:Men\'?s?|Women\'?s?)\s+\w+|'
+    r'College\s+\w+|'
+    r'Basketball|Football|Hockey|Baseball|Soccer|Tennis|Golf|Boxing|MMA)\s*:\s*',
+    re.IGNORECASE,
+)
+
+
+def _strip_category_prefix(market_name: str) -> str:
+    """
+    Strip category prefixes like "NBA:", "Pro Men's Basketball:" from market names.
+
+    Kalshi often prefixes event titles with the sport/league category.
+    This normalizes to just the matchup portion for pattern matching.
+    """
+    return _CATEGORY_PREFIX_RE.sub("", market_name).strip()
+
+
 # Championship/award keywords that disqualify "Will X win?" markets
 _NON_GAME_KEYWORDS = (
     "championship", "title", "trophy", "award", "mvp",
@@ -78,42 +99,52 @@ _NON_GAME_KEYWORDS = (
 
 def is_game_level_market(
     market_name: str,
-    category: Optional[str],
-    num_outcomes: int,
+    category: Optional[str] = None,
+    num_outcomes: int = 0,
 ) -> bool:
     """
-    Check if a futures market represents a game-level binary outcome
+    Check if a futures market represents a game-level outcome
     (e.g., "Which team wins this game?") rather than a championship/award future.
 
+    Detection is based on market NAME pattern matching, not outcome count.
+    Polymarket bundles moneyline + spread + totals under one game event,
+    resulting in 3-5+ outcomes — but the event name is still "Team A vs. Team B".
+
+    Also handles category-prefixed names (e.g., "NBA: Warriors vs Celtics")
+    by stripping the prefix before matching.
+
     Criteria:
-    - Must be a single-outcome binary market (1-2 outcomes)
     - Must match a matchup pattern (bare matchup, dash matchup, or "Will X beat Y?")
     - Must NOT be a game prop (those have stats like "Rebounds")
     """
-    if num_outcomes > 2:
+    return _check_game_level(market_name) or _check_game_level(_strip_category_prefix(market_name))
+
+
+def _check_game_level(name: str) -> bool:
+    """Check if a (possibly prefix-stripped) market name is game-level."""
+    if not name:
         return False
 
-    # Skip game props (have ": stat" suffix)
-    if _GAME_PROP_RE.match(market_name):
+    # Skip game props (have ": stat" suffix after matchup)
+    if _GAME_PROP_RE.match(name):
         return False
-    if _DASH_PROP_RE.match(market_name):
+    if _DASH_PROP_RE.match(name):
         return False
 
     # Check for matchup patterns (order matters: more specific first)
-    if _WILL_WIN_AGAINST_RE.match(market_name):
+    if _WILL_WIN_AGAINST_RE.match(name):
         return True
-    if _WILL_BEAT_RE.match(market_name):
+    if _WILL_BEAT_RE.match(name):
         return True
-    if _TO_BEAT_RE.match(market_name):
+    if _TO_BEAT_RE.match(name):
         return True
-    if _BARE_MATCHUP_RE.match(market_name):
+    if _BARE_MATCHUP_RE.match(name):
         return True
-    if _DASH_MATCHUP_RE.match(market_name):
+    if _DASH_MATCHUP_RE.match(name):
         return True
-    if _WILL_WIN_RE.match(market_name):
-        # "Will X win?" is only game-level if it's a binary market in a sports context
-        # (not "Will X win the championship?")
-        name_lower = market_name.lower()
+    if _WILL_WIN_RE.match(name):
+        # "Will X win?" is only game-level if it's not a championship context
+        name_lower = name.lower()
         if any(word in name_lower for word in _NON_GAME_KEYWORDS):
             return False
         return True
@@ -138,6 +169,7 @@ def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
     Extract team names and determine "Yes" team from a game-level market name.
 
     Returns MatchupInfo or None if not a recognized format.
+    Handles category-prefixed names (e.g., "NBA: Warriors vs Celtics").
 
     Conventions:
     - "Team A at Team B" → Yes = Team A (first listed team in "at" format)
@@ -148,6 +180,23 @@ def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
     - "Will Team A win against Team B?" → Yes = Team A
     - "Will Team A win?" → Yes = Team A (team_b will be empty)
     """
+    # Try original name first, then with category prefix stripped
+    result = _extract_matchup_impl(market_name)
+    if result:
+        return result
+
+    stripped = _strip_category_prefix(market_name)
+    if stripped != market_name:
+        return _extract_matchup_impl(stripped)
+
+    return None
+
+
+def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
+    """Core matchup extraction logic."""
+    if not market_name:
+        return None
+
     # Skip game props
     if _GAME_PROP_RE.match(market_name):
         return None
@@ -276,6 +325,76 @@ def match_teams_to_event(
         if other_matches_away and not other_matches_home:
             # Other team is away, so yes_team is home
             return {"yes_is_home": True, "matched_team": yes_team}
+
+    return None
+
+
+def find_moneyline_outcome(
+    outcomes: list,
+    matchup: MatchupInfo,
+    event_home_team: str,
+    event_away_team: str,
+) -> Optional[tuple]:
+    """
+    Find the moneyline outcome for the "yes" team from a list of FuturesOutcome objects.
+
+    Polymarket game events may bundle moneyline, spread, and totals as separate
+    outcomes under one market. This function identifies the correct moneyline
+    outcome by matching outcome names against team names.
+
+    Returns (outcome, yes_is_home) tuple, or None if no moneyline outcome found.
+
+    Strategy:
+    1. Try to find an outcome whose name fuzzy-matches either event team
+    2. Among matched outcomes, pick the one matching the yes_team
+    3. Fall back to first outcome by rank if only 1-2 outcomes exist
+    """
+    # Build list of outcomes that match a team name
+    home_outcomes = []
+    away_outcomes = []
+
+    for outcome in outcomes:
+        if not outcome.name or outcome.current_probability is None:
+            continue
+        prob = float(outcome.current_probability)
+        if prob <= 0 or prob >= 1:
+            continue
+
+        if _fuzzy_team_match(outcome.name, event_home_team):
+            home_outcomes.append(outcome)
+        elif _fuzzy_team_match(outcome.name, event_away_team):
+            away_outcomes.append(outcome)
+
+    # Determine yes_is_home from matchup
+    team_mapping = match_teams_to_event(matchup, event_home_team, event_away_team)
+    if not team_mapping:
+        return None
+
+    yes_is_home = team_mapping["yes_is_home"]
+
+    # Pick the outcome matching the "yes" team
+    if yes_is_home and home_outcomes:
+        return (home_outcomes[0], True)
+    elif not yes_is_home and away_outcomes:
+        return (away_outcomes[0], False)
+
+    # If we found any team-matched outcome, use it with correct mapping
+    if home_outcomes:
+        return (home_outcomes[0], True)
+    if away_outcomes:
+        return (away_outcomes[0], False)
+
+    # Last resort: if 1-2 outcomes with generic names (e.g., "Yes"),
+    # fall back to first valid outcome (original behavior for simple binary markets)
+    _GENERIC_OUTCOME_NAMES = {"yes", "no", ""}
+    if len(outcomes) <= 2:
+        for outcome in outcomes:
+            if (outcome.name or "").lower().strip() not in _GENERIC_OUTCOME_NAMES:
+                continue  # Skip non-generic names (e.g., "Over 220.5")
+            if outcome.current_probability is not None:
+                prob = float(outcome.current_probability)
+                if 0 < prob < 1:
+                    return (outcome, yes_is_home)
 
     return None
 

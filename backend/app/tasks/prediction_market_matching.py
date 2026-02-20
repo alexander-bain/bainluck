@@ -19,6 +19,7 @@ from app.utils.prediction_market_matching import (
     is_game_level_market,
     extract_matchup,
     match_teams_to_event,
+    find_moneyline_outcome,
     _fuzzy_team_match,
     MAX_TIME_DELTA,
     MAX_PAST_GAME_DELTA,
@@ -49,7 +50,6 @@ async def _match_prediction_markets(limit: int = 500):
         # Funnel stats: track where markets drop off
         "funnel": {
             "total_unlinked": 0,
-            "too_many_outcomes": 0,
             "not_game_level": 0,
             "no_matchup_extracted": 0,
             "game_level_detected": 0,
@@ -82,23 +82,16 @@ async def _match_prediction_markets(limit: int = 500):
         for market in unlinked_markets:
             stats["markets_scanned"] += 1
 
-            # Count outcomes for this market
-            outcome_count_result = await session.execute(
-                select(func.count(FuturesOutcome.id))
-                .where(FuturesOutcome.market_id == market.id)
-            )
-            outcome_count = outcome_count_result.scalar() or 0
-
-            # Check if it's a game-level market
-            if outcome_count > 2:
-                stats["funnel"]["too_many_outcomes"] += 1
-                continue
-
-            if not is_game_level_market(market.name, market.category, outcome_count):
+            # Check if market name looks like a game-level matchup.
+            # Note: we do NOT gate on outcome count here. Polymarket bundles
+            # moneyline + spread + totals under one game event, so a game
+            # like "Celtics vs. Warriors" can have 3-5+ outcomes. The name
+            # pattern is the reliable signal, not outcome count.
+            if not is_game_level_market(market.name, market.category):
                 stats["funnel"]["not_game_level"] += 1
                 if len(stats["funnel"]["sample_not_game_level"]) < 10:
                     stats["funnel"]["sample_not_game_level"].append(
-                        {"source": market.source, "name": market.name, "outcomes": outcome_count}
+                        {"source": market.source, "name": market.name}
                     )
                 continue
 
@@ -153,21 +146,6 @@ async def _match_prediction_markets(limit: int = 500):
 
         for market in linked_markets:
             try:
-                # Get the "Yes" outcome probability
-                outcome_result = await session.execute(
-                    select(FuturesOutcome)
-                    .where(FuturesOutcome.market_id == market.id)
-                    .order_by(FuturesOutcome.rank)
-                    .limit(1)
-                )
-                outcome = outcome_result.scalar_one_or_none()
-                if not outcome or outcome.current_probability is None:
-                    continue
-
-                yes_prob = float(outcome.current_probability)
-                if yes_prob <= 0 or yes_prob >= 1:
-                    continue
-
                 # Load the event to determine home/away mapping
                 event_result = await session.execute(
                     select(Event).where(Event.id == market.event_id)
@@ -181,16 +159,30 @@ async def _match_prediction_markets(limit: int = 500):
                 if not matchup:
                     continue
 
-                team_mapping = match_teams_to_event(
-                    matchup,
-                    event.home_team_name,
-                    event.away_team_name,
+                # Get ALL outcomes for this market (game events may have
+                # moneyline + spread + totals bundled together)
+                outcome_result = await session.execute(
+                    select(FuturesOutcome)
+                    .where(FuturesOutcome.market_id == market.id)
+                    .order_by(FuturesOutcome.rank)
                 )
-                if not team_mapping:
+                all_outcomes = outcome_result.scalars().all()
+                if not all_outcomes:
                     continue
 
+                # Find the moneyline outcome by matching team names
+                ml_result = find_moneyline_outcome(
+                    all_outcomes, matchup,
+                    event.home_team_name, event.away_team_name,
+                )
+                if not ml_result:
+                    continue
+
+                outcome, yes_is_home = ml_result
+                yes_prob = float(outcome.current_probability)
+
                 # Convert prediction market probability to home/away
-                if team_mapping["yes_is_home"]:
+                if yes_is_home:
                     home_prob = yes_prob
                 else:
                     home_prob = 1.0 - yes_prob

@@ -14,6 +14,7 @@ from app.utils.prediction_market_matching import (
     is_game_level_market,
     extract_matchup,
     match_teams_to_event,
+    find_moneyline_outcome,
     _fuzzy_team_match,
     MatchupInfo,
 )
@@ -98,13 +99,22 @@ class TestIsGameLevelMarket:
             "Will Jokic win the MVP award?", "mvp", 1,
         )
 
-    def test_not_multi_outcome(self):
-        """Multi-outcome markets (>2 outcomes) are championship-style, not game-level."""
+    def test_multi_outcome_championship_name(self):
+        """Championship NAME doesn't match game patterns regardless of outcome count."""
         assert not is_game_level_market("NBA Championship", "championship", 30)
 
     def test_binary_two_outcomes_ok(self):
         """Binary markets with exactly 2 outcomes are fine."""
         assert is_game_level_market("Celtics at Warriors", "championship", 2)
+
+    def test_many_outcomes_game_name_ok(self):
+        """Game events with >2 outcomes (moneyline+spread+totals) should still match.
+
+        Polymarket bundles moneyline, spread, and totals under one game event.
+        The name is still 'Team A vs. Team B' but outcome count can be 3-5+.
+        """
+        assert is_game_level_market("Celtics vs. Warriors", "championship", 5)
+        assert is_game_level_market("Lakers at Clippers", "championship", 4)
 
     def test_to_beat(self):
         assert is_game_level_market("Celtics to beat Warriors", "championship", 1)
@@ -147,6 +157,29 @@ class TestIsGameLevelMarket:
     def test_case_insensitive_bare_matchup(self):
         """Bare matchup regex should be case-insensitive."""
         assert is_game_level_market("lakers vs clippers", "championship", 1)
+
+    # Category-prefixed market names (common on Kalshi)
+    def test_nba_prefix(self):
+        """Kalshi-style 'NBA: Warriors vs Celtics'."""
+        assert is_game_level_market("NBA: Warriors vs Celtics", "championship", 1)
+
+    def test_nfl_prefix(self):
+        assert is_game_level_market("NFL: Eagles at Chiefs", "championship", 1)
+
+    def test_college_prefix(self):
+        assert is_game_level_market("College Basketball: Duke vs UNC", "championship", 1)
+
+    def test_pro_mens_prefix(self):
+        """Verbose Kalshi prefix."""
+        assert is_game_level_market(
+            "Pro Men's Basketball: Lakers vs Celtics", "championship", 1,
+        )
+
+    def test_prefix_championship_still_rejected(self):
+        """Category-prefixed championship titles should still be rejected."""
+        assert not is_game_level_market(
+            "NBA: Will the Lakers win the championship?", "championship", 1,
+        )
 
 
 # =============================================================================
@@ -297,6 +330,30 @@ class TestExtractMatchup:
         assert extract_matchup("Will Arsenal win the Premier League?") is None
         assert extract_matchup("Will Celtics win the conference?") is None
 
+    # Category-prefixed names (Kalshi-style)
+    def test_nba_prefix_extract(self):
+        """Category prefix stripped for matchup extraction."""
+        result = extract_matchup("NBA: Warriors vs Celtics")
+        assert result is not None
+        assert result.team_a == "Warriors"
+        assert result.team_b == "Celtics"
+
+    def test_nfl_prefix_extract(self):
+        result = extract_matchup("NFL: Eagles at Chiefs")
+        assert result is not None
+        assert result.team_a == "Eagles"
+        assert result.team_b == "Chiefs"
+
+    def test_pro_mens_prefix_extract(self):
+        result = extract_matchup("Pro Men's Basketball: Lakers vs Celtics")
+        assert result is not None
+        assert result.team_a == "Lakers"
+        assert result.team_b == "Celtics"
+
+    def test_prefix_championship_rejected(self):
+        """Championship context is still detected after prefix stripping."""
+        assert extract_matchup("NBA: Will the Lakers win the championship?") is None
+
 
 # =============================================================================
 # _fuzzy_team_match
@@ -422,6 +479,116 @@ class TestMatchTeamsToEvent:
         result = match_teams_to_event(matchup, "Los Angeles Lakers", "Phoenix Suns")
         assert result is not None
         assert result["yes_is_home"] is False
+
+
+# =============================================================================
+# find_moneyline_outcome (for multi-outcome game events)
+# =============================================================================
+
+
+class _MockOutcome:
+    """Lightweight mock for FuturesOutcome used in find_moneyline_outcome tests."""
+
+    def __init__(self, name, prob, yes_bid=None, yes_ask=None):
+        self.name = name
+        self.current_probability = prob
+        self.current_yes_bid = yes_bid
+        self.current_yes_ask = yes_ask
+
+
+class TestFindMoneylineOutcome:
+    """Test moneyline outcome selection from multi-outcome game events."""
+
+    def test_two_outcomes_moneyline(self):
+        """Standard 2-outcome moneyline: pick the yes_team."""
+        outcomes = [
+            _MockOutcome("Boston Celtics", 0.67),
+            _MockOutcome("Golden State Warriors", 0.33),
+        ]
+        matchup = extract_matchup("Celtics vs. Warriors")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Boston Celtics", "Golden State Warriors",
+        )
+        assert result is not None
+        outcome, yes_is_home = result
+        assert outcome.name == "Boston Celtics"
+        # Celtics = yes_team, fuzzy matches home "Boston Celtics" → yes_is_home=True
+        assert yes_is_home is True
+
+    def test_multi_outcome_with_spread_and_total(self):
+        """Game event with moneyline + spread + total: find the moneyline outcome."""
+        outcomes = [
+            _MockOutcome("Boston Celtics", 0.67),
+            _MockOutcome("Golden State Warriors", 0.33),
+            _MockOutcome("Over 220.5", 0.52),
+            _MockOutcome("Celtics -3.5", 0.48),
+        ]
+        matchup = extract_matchup("Celtics vs. Warriors")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Boston Celtics", "Golden State Warriors",
+        )
+        assert result is not None
+        outcome, yes_is_home = result
+        # Should pick the Celtics moneyline, not the spread or total
+        assert "Celtics" in outcome.name
+        assert outcome.current_probability == 0.67
+
+    def test_home_team_selected(self):
+        """When yes_team is the home team."""
+        outcomes = [
+            _MockOutcome("Los Angeles Lakers", 0.55),
+            _MockOutcome("Phoenix Suns", 0.45),
+        ]
+        matchup = extract_matchup("Lakers vs Suns")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Los Angeles Lakers", "Phoenix Suns",
+        )
+        assert result is not None
+        outcome, yes_is_home = result
+        assert "Lakers" in outcome.name
+
+    def test_no_matching_outcome(self):
+        """No outcome matches either team name."""
+        outcomes = [
+            _MockOutcome("Over 220.5", 0.52),
+            _MockOutcome("Under 220.5", 0.48),
+        ]
+        matchup = extract_matchup("Celtics vs. Warriors")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Boston Celtics", "Golden State Warriors",
+        )
+        assert result is None
+
+    def test_single_yes_outcome_fallback(self):
+        """Single 'Yes' outcome falls back to first valid outcome."""
+        outcomes = [_MockOutcome("Yes", 0.65)]
+        matchup = extract_matchup("Celtics vs. Warriors")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Boston Celtics", "Golden State Warriors",
+        )
+        assert result is not None
+        outcome, _ = result
+        assert outcome.name == "Yes"
+
+    def test_zero_probability_skipped(self):
+        """Outcomes with prob=0 or prob=1 are skipped."""
+        outcomes = [
+            _MockOutcome("Boston Celtics", 0.0),
+            _MockOutcome("Golden State Warriors", 0.55),
+        ]
+        matchup = extract_matchup("Celtics vs. Warriors")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Boston Celtics", "Golden State Warriors",
+        )
+        assert result is not None
+        outcome, _ = result
+        assert outcome.name == "Golden State Warriors"
 
 
 # =============================================================================
