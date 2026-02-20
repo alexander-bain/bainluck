@@ -48,13 +48,8 @@ allowed_origins = [
     "http://127.0.0.1:3000",
     "https://bainluck.com",
     "https://www.bainluck.com",
-    # Legacy domain (keep during transition)
-    "https://odds.alexbain.com",
-    "https://www.odds.alexbain.com",
     # Vercel preview/production URLs
     "https://bainluck.vercel.app",
-    "https://odds-tracker.vercel.app",
-    "https://odds-tracker-git-master-alexander-bains-projects.vercel.app",
 ]
 
 # Add production frontend URL from environment
@@ -63,7 +58,7 @@ if frontend_url:
     allowed_origins.append(frontend_url)
 
 # Allow all Vercel preview deployments
-allowed_origin_regex = r"https://(odds-tracker|bainluck).*\.vercel\.app"
+allowed_origin_regex = r"https://bainluck.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
