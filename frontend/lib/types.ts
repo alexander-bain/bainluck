@@ -462,6 +462,11 @@ export interface FeedItem {
   reason: string;
   headline: string | null;
   data: FeedEventData | FeedFuturesData;
+  // Personalization fields (only present when authenticated + score was adjusted)
+  personalized?: boolean;
+  base_score?: number;
+  multiplier?: number;
+  personalization_reasons?: string[];
 }
 
 export interface FeedResponse {
@@ -470,4 +475,12 @@ export interface FeedResponse {
   limit: number;
   offset: number;
   has_more: boolean;
+  // Present when user is authenticated
+  personalized?: boolean;
+  personalization?: {
+    team_count: number;
+    sport_affinities_count: number;
+    pinned_events: number;
+    pinned_futures: number;
+  };
 }

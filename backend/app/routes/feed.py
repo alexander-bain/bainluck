@@ -2,18 +2,25 @@
 
 Merges scored events and scored futures into a single ranked list,
 providing a "what's interesting right now" view across all content types.
+
+Supports optional authentication: logged-in users get personalized scoring
+based on their favorite teams, sport affinities, and pinned items.
+Anonymous users see the generic interestingness feed.
 """
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, and_, or_, func, case
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.dependencies.auth import get_optional_user
 from app.models import Event, OddsSnapshot, Sport, FuturesMarket, FuturesOutcome
+from app.models.models import User, UserFavorite, UserPreference, UserPin
 from app.services import get_db
 from app.utils import (
     aggregate_bookmaker_odds,
@@ -25,6 +32,13 @@ from app.utils import (
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
+from app.utils.personalization import (
+    PersonalizationContext,
+    compute_event_multiplier,
+    compute_futures_multiplier,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -37,28 +51,40 @@ async def get_feed(
     include_events: bool = Query(True, description="Include game events in feed"),
     include_futures: bool = Query(True, description="Include futures markets in feed"),
     db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(get_optional_user),
 ):
     """
     Get a unified ranked feed of interesting events and futures.
 
+    When authenticated, scores are personalized based on:
+    - Favorite teams (follow, local, alma_mater, rival relationships)
+    - Sport affinities (boost/suppress by sport preference)
+    - Pinned items (boosted in feed)
+    - Rival schadenfreude (rival losing = extra boost)
+
     Returns a single list where each item has:
     - type: "event" or "futures"
-    - score: 0-100 interestingness
+    - score: 0-100 interestingness (personalized if authenticated)
     - reason: human-readable explanation
     - headline: short label for badges
     - data: full event or futures payload
+    - personalized: whether score was personalized (only present if true)
     """
     now = datetime.now(timezone.utc)
+
+    # Load personalization context (one DB query for all user data)
+    ctx = await _load_personalization_context(db, user)
+
     feed_items = []
 
     # === SCORE EVENTS ===
     if include_events:
-        event_items = await _score_events(db, now, sport)
+        event_items = await _score_events(db, now, sport, ctx)
         feed_items.extend(event_items)
 
     # === SCORE FUTURES ===
     if include_futures:
-        futures_items = await _score_futures(db, now, sport)
+        futures_items = await _score_futures(db, now, sport, ctx)
         feed_items.extend(futures_items)
 
     # === RANK AND PAGINATE ===
@@ -72,7 +98,7 @@ async def get_feed(
     for item in paginated:
         item.pop("_sort_time", None)
 
-    return {
+    response = {
         "items": paginated,
         "total": total,
         "limit": limit,
@@ -80,10 +106,78 @@ async def get_feed(
         "has_more": (offset + limit) < total,
     }
 
+    # Include personalization metadata if authenticated
+    if ctx.is_authenticated:
+        response["personalized"] = True
+        response["personalization"] = {
+            "team_count": len(ctx.team_relations),
+            "sport_affinities_count": len(ctx.sport_affinities),
+            "pinned_events": len(ctx.pinned_event_ids),
+            "pinned_futures": len(ctx.pinned_futures_ids),
+        }
 
-async def _score_events(db: AsyncSession, now: datetime, sport_filter: Optional[str]) -> list[dict]:
+    return response
+
+
+async def _load_personalization_context(
+    db: AsyncSession,
+    user: Optional[User],
+) -> PersonalizationContext:
+    """Load all user personalization data into a context object.
+
+    Single query pattern: load favorites, preferences, and pins in parallel-ish
+    SQLAlchemy queries, then assemble into the context.
+    """
+    if not user:
+        return PersonalizationContext()
+
+    # Load user favorites (team relationships)
+    favorites_result = await db.execute(
+        select(UserFavorite).where(UserFavorite.user_id == user.id)
+    )
+    favorites = favorites_result.scalars().all()
+
+    team_relations: dict[int, set[str]] = {}
+    team_weights: dict[int, float] = {}
+    for fav in favorites:
+        if fav.team_id not in team_relations:
+            team_relations[fav.team_id] = set()
+        team_relations[fav.team_id].add(fav.relation_type)
+        team_weights[fav.team_id] = float(fav.weight) if fav.weight else 1.0
+
+    # Load user preferences (sport affinities)
+    prefs_result = await db.execute(
+        select(UserPreference).where(UserPreference.user_id == user.id)
+    )
+    prefs = prefs_result.scalar_one_or_none()
+    sport_affinities = prefs.sport_affinities if prefs and prefs.sport_affinities else {}
+
+    # Load user pins
+    pins_result = await db.execute(
+        select(UserPin).where(UserPin.user_id == user.id)
+    )
+    pins = pins_result.scalars().all()
+    pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
+    pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
+
+    return PersonalizationContext(
+        team_relations=team_relations,
+        team_weights=team_weights,
+        sport_affinities=sport_affinities,
+        pinned_event_ids=pinned_event_ids,
+        pinned_futures_ids=pinned_futures_ids,
+        is_authenticated=True,
+    )
+
+
+async def _score_events(
+    db: AsyncSession,
+    now: datetime,
+    sport_filter: Optional[str],
+    ctx: PersonalizationContext,
+) -> list[dict]:
     """Score and format events for the feed."""
-    # Fetch events: live + upcoming (3h) + recently finished (24h)
+    # Fetch events: live + upcoming (2 days) + recently finished (24h)
     yesterday = now - timedelta(hours=24)
     upcoming_cutoff = now + timedelta(days=2)
 
@@ -150,7 +244,24 @@ async def _score_events(db: AsyncSession, now: datetime, sport_filter: Optional[
             now=now,
         )
 
-        if not should_highlight(highlight_result, min_score=20):
+        base_score = highlight_result.score
+
+        # Apply personalization multiplier
+        p_result = compute_event_multiplier(
+            ctx=ctx,
+            home_team_id=event.home_team_id,
+            away_team_id=event.away_team_id,
+            sport_key=event.sport.key if event.sport else None,
+            event_id=event.id,
+            home_score=event.home_score,
+            away_score=event.away_score,
+        )
+        personalized_score = min(100, int(base_score * p_result.multiplier))
+
+        # Lower the threshold for personalized items — if the user follows a team,
+        # surface it even at lower base scores
+        min_score = 10 if p_result.is_personalized else 20
+        if personalized_score < min_score:
             continue
 
         # Generate reason text
@@ -199,19 +310,33 @@ async def _score_events(db: AsyncSession, now: datetime, sport_filter: Optional[
         if event.status == "live":
             sort_time = now.timestamp() + 86400  # Push live to top
 
-        scored_items.append({
+        item = {
             "type": "event",
-            "score": highlight_result.score,
+            "score": personalized_score,
             "reason": reason,
             "headline": get_highlight_label(highlight_result),
             "data": event_data,
             "_sort_time": sort_time,
-        })
+        }
+
+        # Include personalization debug info when score was boosted/suppressed
+        if p_result.is_personalized:
+            item["personalized"] = True
+            item["base_score"] = base_score
+            item["multiplier"] = round(p_result.multiplier, 2)
+            item["personalization_reasons"] = p_result.reasons
+
+        scored_items.append(item)
 
     return scored_items
 
 
-async def _score_futures(db: AsyncSession, now: datetime, sport_filter: Optional[str]) -> list[dict]:
+async def _score_futures(
+    db: AsyncSession,
+    now: datetime,
+    sport_filter: Optional[str],
+    ctx: PersonalizationContext,
+) -> list[dict]:
     """Score and format futures markets for the feed."""
     # Fetch open futures with outcomes
     query = (
@@ -284,7 +409,20 @@ async def _score_futures(db: AsyncSession, now: datetime, sport_filter: Optional
             now=now,
         )
 
-        if not should_highlight_futures(highlight_result, min_score=20):
+        base_score = highlight_result.score
+
+        # Apply personalization multiplier
+        outcome_team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
+        p_result = compute_futures_multiplier(
+            ctx=ctx,
+            sport_category=market.llm_sport_category,
+            outcome_team_ids=outcome_team_ids,
+            futures_market_id=market.id,
+        )
+        personalized_score = min(100, int(base_score * p_result.multiplier))
+
+        min_score = 10 if p_result.is_personalized else 20
+        if personalized_score < min_score:
             continue
 
         # Find the actual biggest mover (with sign) for reason generation
@@ -341,14 +479,22 @@ async def _score_futures(db: AsyncSession, now: datetime, sport_filter: Optional
             days_until = (market.resolution_date - now).total_seconds()
             sort_time = now.timestamp() + max(0, 86400 * 30 - days_until)
 
-        scored_items.append({
+        item = {
             "type": "futures",
-            "score": highlight_result.score,
+            "score": personalized_score,
             "reason": reason,
             "headline": highlight_result.primary_reason,
             "data": futures_data,
             "_sort_time": sort_time,
-        })
+        }
+
+        if p_result.is_personalized:
+            item["personalized"] = True
+            item["base_score"] = base_score
+            item["multiplier"] = round(p_result.multiplier, 2)
+            item["personalization_reasons"] = p_result.reasons
+
+        scored_items.append(item)
 
     return scored_items
 
