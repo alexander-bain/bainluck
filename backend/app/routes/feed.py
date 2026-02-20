@@ -9,7 +9,6 @@ Anonymous users see the generic interestingness feed.
 """
 
 import logging
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -19,17 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_optional_user
-from app.models import Event, OddsSnapshot, Sport, FuturesMarket, FuturesOutcome
+from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.models.models import User, UserFavorite, UserPreference, UserPin
 from app.services import get_db
 from app.utils import (
-    aggregate_bookmaker_odds,
-    detect_reversed_bookmakers,
     compute_highlight,
     get_highlight_label,
     should_highlight,
 )
-from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
 from app.utils.personalization import (
@@ -176,10 +172,17 @@ async def _score_events(
     sport_filter: Optional[str],
     ctx: PersonalizationContext,
 ) -> list[dict]:
-    """Score and format events for the feed."""
-    # Fetch events: live + upcoming (2 days) + recently finished (24h)
-    yesterday = now - timedelta(hours=24)
-    upcoming_cutoff = now + timedelta(days=2)
+    """Score and format events for the feed.
+
+    PERFORMANCE: Uses opening odds (already on Event model) for scoring
+    instead of re-aggregating from odds_snapshots. This avoids the expensive
+    window-function query that was taking 25+ seconds with 130+ live events.
+    Opening odds are accurate enough for ranking — the full aggregated odds
+    are shown when the user clicks through to the event detail page.
+    """
+    # Tighter time windows than the full events list to keep query fast
+    recent_cutoff = now - timedelta(hours=6)
+    upcoming_cutoff = now + timedelta(hours=12)
 
     query = (
         select(Event)
@@ -195,10 +198,11 @@ async def _score_events(
                 ),
                 and_(
                     Event.status.in_(["completed", "closed"]),
-                    Event.commence_time >= yesterday,
+                    Event.commence_time >= recent_cutoff,
                 ),
             )
         )
+        .limit(200)  # Safety cap
     )
 
     if sport_filter:
@@ -210,23 +214,16 @@ async def _score_events(
     if not events:
         return []
 
-    # Get latest odds for scoring
-    event_ids = [e.id for e in events]
-    aggregated_odds_map = await _get_aggregated_odds(db, event_ids, {e.id: e for e in events})
-
-    # Score each event
+    # Score each event using stored opening odds (no snapshot query needed)
     scored_items = []
     for event in events:
-        odds_data = aggregated_odds_map.get(event.id, {})
-        aggregated = odds_data.get("aggregated", {})
-
-        current_home_prob = aggregated.get("home_probability") if aggregated else None
-        current_away_prob = aggregated.get("away_probability") if aggregated else None
-        current_spread = aggregated.get("home_spread") if aggregated else None
-        current_ou = aggregated.get("over_under") if aggregated else None
-
         opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
         opening_away_prob = float(event.opening_away_probability) if event.opening_away_probability else None
+
+        # For scoring, use opening odds as "current" — good enough for ranking.
+        # The highlight scorer detects closeness, upset potential, etc. from these.
+        current_home_prob = opening_home_prob
+        current_away_prob = opening_away_prob
 
         highlight_result = compute_highlight(
             status=event.status,
@@ -234,8 +231,8 @@ async def _score_events(
             sport_key=event.sport.key if event.sport else None,
             current_home_prob=current_home_prob,
             current_away_prob=current_away_prob,
-            current_home_spread=current_spread,
-            current_over_under=current_ou,
+            current_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
+            current_over_under=float(event.opening_over_under) if event.opening_over_under else None,
             opening_home_prob=opening_home_prob,
             opening_away_prob=opening_away_prob,
             opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
@@ -295,7 +292,6 @@ async def _score_events(
             event_data["current_odds"] = {
                 "home_probability": current_home_prob,
                 "away_probability": current_away_prob,
-                "bookmaker_count": aggregated.get("bookmaker_count", 0) if aggregated else 0,
             }
 
         if opening_home_prob is not None:
@@ -338,7 +334,7 @@ async def _score_futures(
     ctx: PersonalizationContext,
 ) -> list[dict]:
     """Score and format futures markets for the feed."""
-    # Fetch open futures with outcomes
+    # Fetch open futures with outcomes — prioritize higher-tier markets
     query = (
         select(FuturesMarket)
         .options(
@@ -346,6 +342,8 @@ async def _score_futures(
             selectinload(FuturesMarket.sport),
         )
         .where(FuturesMarket.status == "open")
+        .order_by(FuturesMarket.market_tier.asc().nulls_last())
+        .limit(100)  # Cap to keep response fast
     )
 
     if sport_filter:
@@ -497,60 +495,6 @@ async def _score_futures(
         scored_items.append(item)
 
     return scored_items
-
-
-async def _get_aggregated_odds(
-    db: AsyncSession, event_ids: list[int], event_map: dict
-) -> dict:
-    """Get latest aggregated odds for a batch of events."""
-    if not event_ids:
-        return {}
-
-    # Subquery: rank snapshots by recency within each event+bookmaker group
-    ranked_subq = (
-        select(
-            OddsSnapshot.id,
-            OddsSnapshot.event_id,
-            func.row_number().over(
-                partition_by=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
-                order_by=OddsSnapshot.captured_at.desc()
-            ).label("rn")
-        )
-        .where(OddsSnapshot.event_id.in_(event_ids))
-        .subquery()
-    )
-
-    latest_odds_query = (
-        select(OddsSnapshot)
-        .join(ranked_subq, and_(
-            OddsSnapshot.id == ranked_subq.c.id,
-            ranked_subq.c.rn == 1
-        ))
-    )
-
-    latest_odds_result = await db.execute(latest_odds_query)
-    all_snapshots = latest_odds_result.scalars().all()
-
-    # Group and aggregate
-    snapshots_by_event = defaultdict(list)
-    for snap in all_snapshots:
-        snapshots_by_event[snap.event_id].append(snap)
-
-    aggregated_odds_map = {}
-    for event_id, snaps in snapshots_by_event.items():
-        ev = event_map.get(event_id)
-        filtered_snaps = _filter_stale_bookmaker_snapshots(
-            snaps,
-            event_status=(ev.status if ev else "scheduled"),
-            commence_time=(ev.commence_time if ev else None),
-        )
-        reversed_bks = detect_reversed_bookmakers(filtered_snaps)
-        agg_snaps = [s for s in filtered_snaps if s.bookmaker not in reversed_bks] if reversed_bks else filtered_snaps
-        aggregated_odds_map[event_id] = {
-            "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
-        }
-
-    return aggregated_odds_map
 
 
 async def _get_canonical_source_counts(db: AsyncSession) -> dict[str, int]:
