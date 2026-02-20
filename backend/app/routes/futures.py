@@ -406,9 +406,29 @@ async def list_futures_markets(
     result = await db.execute(query)
     markets = result.scalars().unique().all()
 
+    # Build canonical key → source count map for cross-source badges
+    canonical_keys = [m.canonical_market_key for m in markets if m.canonical_market_key]
+    source_count_map = {}
+    if canonical_keys:
+        source_query = (
+            select(
+                FuturesMarket.canonical_market_key,
+                func.count(func.distinct(FuturesMarket.source)).label("source_count"),
+                func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
+            )
+            .where(FuturesMarket.canonical_market_key.in_(canonical_keys))
+            .group_by(FuturesMarket.canonical_market_key)
+        )
+        source_result = await db.execute(source_query)
+        for row in source_result.all():
+            source_count_map[row.canonical_market_key] = {
+                "count": row.source_count,
+                "sources": sorted(row.sources) if row.sources else [],
+            }
+
     return {
         "markets": [
-            _format_market_summary(market)
+            _format_market_summary(market, source_count_map)
             for market in markets
         ],
         "count": len(markets),
@@ -649,7 +669,7 @@ async def get_futures_history(
     }
 
 
-def _format_market_summary(market: FuturesMarket) -> dict:
+def _format_market_summary(market: FuturesMarket, source_count_map: dict = None) -> dict:
     """Format a market for list view with top outcomes."""
     # Sort outcomes by probability
     sorted_outcomes = sorted(
@@ -670,7 +690,12 @@ def _format_market_summary(market: FuturesMarket) -> dict:
         for o in sorted_outcomes[:5]
     ]
 
-    return {
+    # Cross-source info from canonical key
+    source_info = None
+    if source_count_map and market.canonical_market_key:
+        source_info = source_count_map.get(market.canonical_market_key)
+
+    result = {
         "id": market.id,
         "name": market.name,
         "sport": market.sport.key if market.sport else None,
@@ -685,6 +710,15 @@ def _format_market_summary(market: FuturesMarket) -> dict:
         "category_tags": market.category_tags or [],
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }
+
+    # Add source count if multiple sources track this market
+    if source_info and source_info["count"] > 1:
+        result["source_count"] = source_info["count"]
+        result["sources"] = source_info["sources"]
+    else:
+        result["source_count"] = 1
+
+    return result
 
 
 def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -> dict:

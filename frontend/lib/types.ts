@@ -407,3 +407,67 @@ export interface SearchResponse {
   sports: SearchSportFacet[];
   query: string;
 }
+
+// Unified Feed types
+export interface FeedEventData {
+  id: number;
+  external_id: string;
+  sport: string | null;
+  sport_name: string | null;
+  home_team: string;
+  away_team: string;
+  commence_time: string;
+  status: "scheduled" | "live" | "completed" | "closed";
+  home_score: number | null;
+  away_score: number | null;
+  current_odds?: {
+    home_probability: number | null;
+    away_probability: number | null;
+    bookmaker_count: number;
+  };
+  opening_odds?: {
+    home_probability: number;
+    away_probability: number | null;
+    favorite: string | null;
+  };
+}
+
+export interface FeedFuturesOutcome {
+  id: number;
+  name: string;
+  probability: number | null;
+  rank: number | null;
+  movement: number | null;
+}
+
+export interface FeedFuturesData {
+  id: number;
+  name: string;
+  sport: string | null;
+  sport_name: string | null;
+  llm_sport_category: string | null;
+  source: string | null;
+  source_count: number;
+  market_tier: number | null;
+  status: string;
+  resolution_date: string | null;
+  top_outcomes: FeedFuturesOutcome[];
+  outcome_count: number;
+  canonical_market_key: string | null;
+}
+
+export interface FeedItem {
+  type: "event" | "futures";
+  score: number;
+  reason: string;
+  headline: string | null;
+  data: FeedEventData | FeedFuturesData;
+}
+
+export interface FeedResponse {
+  items: FeedItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}

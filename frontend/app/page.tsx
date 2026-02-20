@@ -2,10 +2,11 @@
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import useSWR from "swr";
-import { fetchEvents, fetchSports, fetchFuturesMarkets, fetchEventsByIds, fetchFuturesByIds } from "@/lib/api";
-import type { Event, FuturesMarket } from "@/lib/types";
+import { fetchEvents, fetchSports, fetchFuturesMarkets, fetchEventsByIds, fetchFuturesByIds, fetchFeed } from "@/lib/api";
+import type { Event, FuturesMarket, FeedItem } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
+import FeedCard from "@/components/FeedCard";
 import SportFilter from "@/components/SportFilter";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { SkeletonGrid } from "@/components/SkeletonCard";
@@ -120,6 +121,16 @@ export default function HomePage() {
     ["futures", selectedSport, futuresStatus],
     () => fetchFuturesMarkets({ sport: selectedSport ?? undefined, status: futuresStatus }),
     { refreshInterval: 60000 }
+  );
+
+  // Fetch unified feed (events + futures ranked by interestingness)
+  const {
+    data: feedData,
+    isLoading: feedLoading,
+  } = useSWR(
+    ["feed", selectedCategory],
+    () => fetchFeed({ limit: 15, sport: selectedCategory ?? undefined }),
+    { refreshInterval: 30000 }
   );
 
   // Helper to check if a date is today, recent (last 7 days), or upcoming
@@ -552,60 +563,54 @@ export default function HomePage() {
                 </section>
               )}
 
-              {/* Highlights Section */}
-              {featuredEvents.length > 0 && (() => {
-                // Categorize featured events using backend highlight data
-                const liveEvents = featuredEvents.filter((e) =>
-                  e.highlight?.flags?.is_live || e.status === "live"
-                );
-                const upsetEvents = featuredEvents.filter((e) =>
-                  e.highlight?.flags?.is_upset
-                );
-                const closeEvents = featuredEvents.filter((e) =>
-                  e.highlight?.flags?.is_close_matchup && !e.highlight?.flags?.is_live
-                );
-                const soonEvents = featuredEvents.filter((e) =>
-                  e.highlight?.flags?.is_starting_soon && !e.highlight?.flags?.is_live
-                );
-
-                // Build subtitle explanation
-                const subtitleParts: string[] = [];
-                if (liveEvents.length > 0) subtitleParts.push(`${liveEvents.length} live`);
-                if (upsetEvents.length > 0) subtitleParts.push(`${upsetEvents.length} upset${upsetEvents.length > 1 ? "s" : ""}`);
-                if (closeEvents.length > 0) subtitleParts.push(`${closeEvents.length} close`);
-                if (soonEvents.length > 0) subtitleParts.push(`${soonEvents.length} soon`);
-
-                return (
-                  <section>
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">✨</span>
-                        <h2 className="text-title-3 font-semibold text-graphite">
-                          Highlights
-                        </h2>
-                      </div>
-                      <span className="text-caption text-slate">
-                        {subtitleParts.join(" · ")}
-                      </span>
+              {/* Right Now Feed Section — ranked events + futures mixed */}
+              {feedData && feedData.items.length > 0 && (
+                <section>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">✨</span>
+                      <h2 className="text-title-3 font-semibold text-graphite">
+                        Right Now
+                      </h2>
                     </div>
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
-                      {featuredEvents.map((event, index) => (
-                        <EventCard
-                          key={`featured-${event.id}`}
-                          event={event}
-                          showSport={true}
-                          sourceSection="featured"
-                          positionIndex={index}
-                          highlightLabel={event.highlight?.label}
-                          isPinned={isPinned(event.id)}
-                          onPinToggle={togglePin}
-                          pinDisabled={isMaxReached}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                );
-              })()}
+                    <span className="text-caption text-slate">
+                      {(() => {
+                        const eventCount = feedData.items.filter(i => i.type === "event").length;
+                        const futuresCount = feedData.items.filter(i => i.type === "futures").length;
+                        const liveCount = feedData.items.filter(i =>
+                          i.type === "event" && (i.data as import("@/lib/types").FeedEventData).status === "live"
+                        ).length;
+                        const parts: string[] = [];
+                        if (liveCount > 0) parts.push(`${liveCount} live`);
+                        if (eventCount > 0) parts.push(`${eventCount} games`);
+                        if (futuresCount > 0) parts.push(`${futuresCount} futures`);
+                        return parts.join(" · ");
+                      })()}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {feedData.items.map((item, index) => (
+                      <FeedCard
+                        key={`feed-${item.type}-${item.type === "event" ? (item.data as import("@/lib/types").FeedEventData).id : (item.data as import("@/lib/types").FeedFuturesData).id}`}
+                        item={item}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+              {feedLoading && !feedData && (
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-lg">✨</span>
+                    <h2 className="text-title-3 font-semibold text-graphite">Right Now</h2>
+                  </div>
+                  <div className="space-y-2">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="h-20 rounded-lg bg-mist/30 animate-pulse" />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* Sport Category Sections */}
               {sportGroups.map((sportGroup) => {
