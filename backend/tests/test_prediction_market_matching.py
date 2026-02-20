@@ -33,11 +33,37 @@ class TestIsGameLevelMarket:
     def test_bare_matchup_vs(self):
         assert is_game_level_market("Lakers vs Clippers", "championship", 1)
 
+    def test_bare_matchup_vs_dot(self):
+        """Polymarket uses 'vs.' with trailing period."""
+        assert is_game_level_market("Stetson Hatters vs. Jacksonville Dolphins", "championship", 1)
+
+    def test_bare_matchup_v(self):
+        """Soccer-style 'v' separator."""
+        assert is_game_level_market("Arsenal v Chelsea", "championship", 1)
+
+    def test_bare_matchup_v_dot(self):
+        """'v.' separator variant."""
+        assert is_game_level_market("Liverpool v. Everton", "championship", 1)
+
+    def test_dash_matchup(self):
+        """European-style dash separator."""
+        assert is_game_level_market("Bayern Munich - Borussia Dortmund", "championship", 1)
+
+    def test_dash_matchup_en_dash(self):
+        """En-dash separator."""
+        assert is_game_level_market("Real Madrid \u2013 Barcelona", "championship", 1)
+
     def test_will_beat(self):
         assert is_game_level_market("Will the Warriors beat the Celtics?", "championship", 1)
 
     def test_will_win(self):
         assert is_game_level_market("Will the Lakers win?", "championship", 1)
+
+    def test_will_win_against(self):
+        assert is_game_level_market("Will the Lakers win against the Celtics?", "championship", 1)
+
+    def test_will_win_over(self):
+        assert is_game_level_market("Will the Lakers win over the Celtics?", "championship", 1)
 
     def test_not_game_prop(self):
         """Game props (with stat suffix) are NOT game-level moneyline markets."""
@@ -48,6 +74,12 @@ class TestIsGameLevelMarket:
     def test_not_game_prop_points(self):
         assert not is_game_level_market(
             "Lakers vs Clippers: Total Points", "game_prop", 1,
+        )
+
+    def test_not_dash_game_prop(self):
+        """Dash-separated game props are NOT game-level."""
+        assert not is_game_level_market(
+            "Bayern Munich - Dortmund: Total Goals", "game_prop", 1,
         )
 
     def test_not_championship(self):
@@ -86,6 +118,35 @@ class TestIsGameLevelMarket:
         assert not is_game_level_market(
             "Will Arsenal win the FA Cup?", "championship", 1,
         )
+
+    def test_not_conference(self):
+        assert not is_game_level_market(
+            "Will the Celtics win the conference?", "championship", 1,
+        )
+
+    def test_not_stanley_cup(self):
+        assert not is_game_level_market(
+            "Will the Rangers win the Stanley Cup?", "championship", 1,
+        )
+
+    def test_not_world_series(self):
+        assert not is_game_level_market(
+            "Will the Dodgers win the World Series?", "championship", 1,
+        )
+
+    def test_not_premier_league(self):
+        assert not is_game_level_market(
+            "Will Arsenal win the Premier League?", "championship", 1,
+        )
+
+    def test_not_grand_slam(self):
+        assert not is_game_level_market(
+            "Will Djokovic win the Grand Slam?", "championship", 1,
+        )
+
+    def test_case_insensitive_bare_matchup(self):
+        """Bare matchup regex should be case-insensitive."""
+        assert is_game_level_market("lakers vs clippers", "championship", 1)
 
 
 # =============================================================================
@@ -166,6 +227,75 @@ class TestExtractMatchup:
         assert result is not None
         assert result.team_a == "Iowa"
         assert result.team_b == "Purdue"
+
+    # New patterns: "v", dash, "will win against"
+    def test_bare_matchup_v(self):
+        """Soccer-style 'v' separator."""
+        result = extract_matchup("Arsenal v Chelsea")
+        assert result is not None
+        assert result.team_a == "Arsenal"
+        assert result.team_b == "Chelsea"
+        assert result.format_type == "bare_matchup"
+
+    def test_bare_matchup_v_dot(self):
+        result = extract_matchup("Liverpool v. Everton")
+        assert result is not None
+        assert result.team_a == "Liverpool"
+        assert result.team_b == "Everton"
+
+    def test_bare_matchup_vs_dot(self):
+        """Polymarket format with 'vs.' and period."""
+        result = extract_matchup("Stetson Hatters vs. Jacksonville Dolphins")
+        assert result is not None
+        assert result.team_a == "Stetson Hatters"
+        assert result.team_b == "Jacksonville Dolphins"
+
+    def test_dash_matchup(self):
+        """European-style dash separator."""
+        result = extract_matchup("Bayern Munich - Borussia Dortmund")
+        assert result is not None
+        assert result.team_a == "Bayern Munich"
+        assert result.team_b == "Borussia Dortmund"
+        assert result.format_type == "dash_matchup"
+
+    def test_dash_matchup_en_dash(self):
+        """En-dash separator."""
+        result = extract_matchup("Real Madrid \u2013 Barcelona")
+        assert result is not None
+        assert result.team_a == "Real Madrid"
+        assert result.team_b == "Barcelona"
+
+    def test_dash_matchup_em_dash(self):
+        """Em-dash separator."""
+        result = extract_matchup("PSG \u2014 Marseille")
+        assert result is not None
+        assert result.team_a == "PSG"
+        assert result.team_b == "Marseille"
+
+    def test_will_win_against(self):
+        result = extract_matchup("Will the Lakers win against the Celtics?")
+        assert result is not None
+        assert result.team_a == "Lakers"
+        assert result.team_b == "Celtics"
+        assert result.format_type == "will_beat"
+
+    def test_will_win_over(self):
+        result = extract_matchup("Will the Lakers win over the Celtics?")
+        assert result is not None
+        assert result.team_a == "Lakers"
+        assert result.team_b == "Celtics"
+
+    def test_dash_game_prop_returns_none(self):
+        """Dash-separated game props should NOT be extracted."""
+        result = extract_matchup("Bayern Munich - Dortmund: Total Goals")
+        assert result is None
+
+    def test_not_championship_will_win_expanded(self):
+        """Additional non-game keywords shouldn't match."""
+        assert extract_matchup("Will the Rangers win the Stanley Cup?") is None
+        assert extract_matchup("Will the Dodgers win the World Series?") is None
+        assert extract_matchup("Will Arsenal win the Premier League?") is None
+        assert extract_matchup("Will Celtics win the conference?") is None
 
 
 # =============================================================================

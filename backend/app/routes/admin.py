@@ -2378,3 +2378,109 @@ async def prediction_market_status(
         "win_prob_snapshots": snapshots_by_source,
         "recent_linked": recent_linked,
     }
+
+
+@router.get("/prediction-markets/debug")
+async def prediction_market_debug(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    source: Optional[str] = Query(None, description="Filter by source (kalshi, polymarket)"),
+    sample_size: int = Query(50, description="Number of unlinked markets to analyze"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Debug prediction market matching by analyzing sample unlinked markets.
+
+    Shows the matching funnel: how many markets pass each stage
+    (game-level detection → matchup extraction → event lookup).
+    Includes sample market names at each stage for pattern analysis.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.prediction_market_matching import (
+        is_game_level_market,
+        extract_matchup,
+    )
+
+    # Fetch sample of unlinked markets
+    query = (
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.status == "open",
+        )
+        .order_by(FuturesMarket.updated_at.desc())
+        .limit(sample_size)
+    )
+    if source:
+        query = query.where(FuturesMarket.source == source)
+
+    result = await db.execute(query)
+    markets = result.scalars().all()
+
+    # Analyze each market through the funnel
+    funnel = {
+        "total_analyzed": len(markets),
+        "game_level": [],      # Passed is_game_level_market
+        "not_game_level": [],   # Failed — most common bucket
+        "too_many_outcomes": [],
+        "matchup_extracted": [],
+        "no_matchup": [],       # Passed game-level but no matchup extracted
+    }
+
+    for market in markets:
+        # Count outcomes
+        oc_result = await db.execute(
+            select(func.count(FuturesOutcome.id))
+            .where(FuturesOutcome.market_id == market.id)
+        )
+        outcome_count = oc_result.scalar() or 0
+
+        entry = {
+            "source": market.source,
+            "name": market.name,
+            "category": market.category,
+            "outcomes": outcome_count,
+            "llm_sport_category": market.llm_sport_category,
+        }
+
+        if outcome_count > 2:
+            funnel["too_many_outcomes"].append(entry)
+            continue
+
+        if not is_game_level_market(market.name, market.category, outcome_count):
+            funnel["not_game_level"].append(entry)
+            continue
+
+        matchup = extract_matchup(market.name)
+        if not matchup:
+            entry["note"] = "passed is_game_level but extract_matchup returned None"
+            funnel["no_matchup"].append(entry)
+            continue
+
+        entry["team_a"] = matchup.team_a
+        entry["team_b"] = matchup.team_b
+        entry["format_type"] = matchup.format_type
+        funnel["game_level"].append(entry)
+        funnel["matchup_extracted"].append(entry)
+
+    # Summary counts
+    summary = {
+        "total_analyzed": funnel["total_analyzed"],
+        "too_many_outcomes": len(funnel["too_many_outcomes"]),
+        "not_game_level": len(funnel["not_game_level"]),
+        "game_level_detected": len(funnel["game_level"]),
+        "matchup_extracted": len(funnel["matchup_extracted"]),
+        "no_matchup_after_detection": len(funnel["no_matchup"]),
+    }
+
+    return {
+        "summary": summary,
+        "sample_game_level": funnel["game_level"][:20],
+        "sample_not_game_level": funnel["not_game_level"][:20],
+        "sample_too_many_outcomes": funnel["too_many_outcomes"][:10],
+        "sample_no_matchup": funnel["no_matchup"][:10],
+    }

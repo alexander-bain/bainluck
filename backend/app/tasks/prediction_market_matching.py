@@ -46,6 +46,18 @@ async def _match_prediction_markets(limit: int = 500):
         "snapshots_written": 0,
         "snapshots_deduped": 0,
         "errors": [],
+        # Funnel stats: track where markets drop off
+        "funnel": {
+            "total_unlinked": 0,
+            "too_many_outcomes": 0,
+            "not_game_level": 0,
+            "no_matchup_extracted": 0,
+            "game_level_detected": 0,
+            "no_event_found": 0,
+            "linked": 0,
+            "sample_game_level_no_event": [],  # Sample of game-level markets that couldn't match
+            "sample_not_game_level": [],  # Sample of markets that weren't detected as game-level
+        },
     }
 
     now = datetime.now(timezone.utc)
@@ -65,6 +77,7 @@ async def _match_prediction_markets(limit: int = 500):
             .limit(limit)
         )
         unlinked_markets = unlinked_result.scalars().all()
+        stats["funnel"]["total_unlinked"] = len(unlinked_markets)
 
         for market in unlinked_markets:
             stats["markets_scanned"] += 1
@@ -77,13 +90,25 @@ async def _match_prediction_markets(limit: int = 500):
             outcome_count = outcome_count_result.scalar() or 0
 
             # Check if it's a game-level market
+            if outcome_count > 2:
+                stats["funnel"]["too_many_outcomes"] += 1
+                continue
+
             if not is_game_level_market(market.name, market.category, outcome_count):
+                stats["funnel"]["not_game_level"] += 1
+                if len(stats["funnel"]["sample_not_game_level"]) < 10:
+                    stats["funnel"]["sample_not_game_level"].append(
+                        {"source": market.source, "name": market.name, "outcomes": outcome_count}
+                    )
                 continue
 
             # Extract matchup info
             matchup = extract_matchup(market.name)
             if not matchup:
+                stats["funnel"]["no_matchup_extracted"] += 1
                 continue
+
+            stats["funnel"]["game_level_detected"] += 1
 
             # Find candidate events by team name matching
             # Search for events where either team matches either market team
@@ -94,12 +119,25 @@ async def _match_prediction_markets(limit: int = 500):
             if matched_event:
                 market.event_id = matched_event["event_id"]
                 stats["newly_linked"] += 1
+                stats["funnel"]["linked"] += 1
                 logger.info(
                     "Linked %s market '%s' → event %d (%s vs %s) [yes_is_home=%s]",
                     market.source, market.name, matched_event["event_id"],
                     matched_event["home_team"], matched_event["away_team"],
                     matched_event["yes_is_home"],
                 )
+            else:
+                stats["funnel"]["no_event_found"] += 1
+                if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
+                    stats["funnel"]["sample_game_level_no_event"].append(
+                        {
+                            "source": market.source,
+                            "name": market.name,
+                            "team_a": matchup.team_a,
+                            "team_b": matchup.team_b,
+                            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                        }
+                    )
 
         # ── Phase 2: Write win_prob_snapshots for all linked markets ─────
 
