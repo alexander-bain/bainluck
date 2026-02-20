@@ -7,6 +7,7 @@ import type { Event, FuturesMarket, FeedItem } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import FeedCard from "@/components/FeedCard";
+import OnboardingBanner from "@/components/OnboardingBanner";
 import SportFilter from "@/components/SportFilter";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { SkeletonGrid } from "@/components/SkeletonCard";
@@ -562,6 +563,9 @@ export default function HomePage() {
                   </div>
                 </section>
               )}
+
+              {/* Onboarding CTA for authenticated users without preferences */}
+              <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
 
               {/* Right Now Feed Section — ranked events + futures mixed */}
               {feedData && feedData.items.length > 0 && (

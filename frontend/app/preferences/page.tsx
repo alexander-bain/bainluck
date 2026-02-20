@@ -3,6 +3,31 @@
 import { useAuthContext } from "@/components/AuthProvider";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import useSWR from "swr";
+import Link from "next/link";
+import { fetchUserPreferences } from "@/lib/api";
+
+const SPORT_LABELS: Record<string, string> = {
+  football: "Football",
+  basketball: "Basketball",
+  baseball: "Baseball",
+  hockey: "Hockey",
+  soccer: "Soccer",
+  golf: "Golf",
+  tennis: "Tennis",
+  mma: "MMA",
+  boxing: "Boxing",
+  cricket: "Cricket",
+  rugby: "Rugby",
+  motorsport: "Motorsport",
+};
+
+function getLevelLabel(value: number): string {
+  if (value >= 0.8) return "Love it";
+  if (value >= 0.2) return "Playoffs only";
+  if (value > 0) return "If wild";
+  return "Not interested";
+}
 
 export default function PreferencesPage() {
   const { user, isAuthenticated, isLoading, signOut } = useAuthContext();
@@ -15,9 +40,23 @@ export default function PreferencesPage() {
     }
   }, [isLoading, isAuthenticated, router]);
 
+  // Fetch preferences
+  const {
+    data: prefs,
+    isLoading: prefsLoading,
+  } = useSWR(
+    isAuthenticated ? "user-preferences" : null,
+    fetchUserPreferences
+  );
+
   if (isLoading || !isAuthenticated) {
     return null;
   }
+
+  const localTeams = prefs?.favorites.filter((f) => f.relation_type === "local") ?? [];
+  const almaMaterTeams = prefs?.favorites.filter((f) => f.relation_type === "alma_mater") ?? [];
+  const rivalTeams = prefs?.favorites.filter((f) => f.relation_type === "rival") ?? [];
+  const hasPreferences = prefs?.onboarding_completed;
 
   return (
     <div className="max-w-lg mx-auto px-4 py-8">
@@ -50,14 +89,135 @@ export default function PreferencesPage() {
         </div>
       </div>
 
-      {/* Coming soon */}
+      {/* Personalization section */}
       <div className="bg-white rounded-xl border border-mist p-6 mb-6">
-        <h2 className="text-sm font-semibold text-slate uppercase tracking-wide mb-3">
-          Personalization
-        </h2>
-        <p className="text-sm text-slate">
-          Team preferences, sport affinities, and personalized highlights are coming soon.
-        </p>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-slate uppercase tracking-wide">
+            Personalization
+          </h2>
+          {hasPreferences && (
+            <Link
+              href="/onboarding"
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
+            >
+              Edit
+            </Link>
+          )}
+        </div>
+
+        {prefsLoading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-6 bg-mist/30 rounded animate-pulse" />
+            ))}
+          </div>
+        ) : hasPreferences ? (
+          <div className="space-y-5">
+            {/* Home location */}
+            {prefs?.home_location && (
+              <div>
+                <p className="text-xs text-slate font-medium mb-1.5">Home</p>
+                <p className="text-sm text-graphite">{prefs.home_location}</p>
+              </div>
+            )}
+
+            {/* Local teams */}
+            {localTeams.length > 0 && (
+              <div>
+                <p className="text-xs text-slate font-medium mb-1.5">Local teams</p>
+                <div className="flex flex-wrap gap-2">
+                  {localTeams.map((team) => (
+                    <span
+                      key={team.team_id}
+                      className="inline-flex items-center gap-1.5 bg-snow px-2.5 py-1 rounded-lg text-xs font-medium text-graphite border border-mist"
+                    >
+                      {team.logo_url && (
+                        <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
+                      )}
+                      {team.team_name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Alma maters */}
+            {almaMaterTeams.length > 0 && (
+              <div>
+                <p className="text-xs text-slate font-medium mb-1.5">Alma maters</p>
+                <div className="flex flex-wrap gap-2">
+                  {almaMaterTeams.map((team) => (
+                    <span
+                      key={team.team_id}
+                      className="inline-flex items-center gap-1.5 bg-snow px-2.5 py-1 rounded-lg text-xs font-medium text-graphite border border-mist"
+                    >
+                      {team.logo_url && (
+                        <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
+                      )}
+                      {team.team_name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Rivals */}
+            {rivalTeams.length > 0 && (
+              <div>
+                <p className="text-xs text-slate font-medium mb-1.5">Rivals</p>
+                <div className="flex flex-wrap gap-2">
+                  {rivalTeams.map((team) => (
+                    <span
+                      key={team.team_id}
+                      className="inline-flex items-center gap-1.5 bg-red-50 px-2.5 py-1 rounded-lg text-xs font-medium text-red-700 border border-red-200"
+                    >
+                      {team.logo_url && (
+                        <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
+                      )}
+                      {team.team_name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sport affinities */}
+            {prefs?.sport_affinities && Object.keys(prefs.sport_affinities).length > 0 && (
+              <div>
+                <p className="text-xs text-slate font-medium mb-1.5">Sport interests</p>
+                <div className="space-y-1">
+                  {Object.entries(prefs.sport_affinities)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([sport, level]) => (
+                      <div
+                        key={sport}
+                        className="flex items-center justify-between text-xs"
+                      >
+                        <span className="text-graphite font-medium">
+                          {SPORT_LABELS[sport] || sport}
+                        </span>
+                        <span className="text-slate">
+                          {getLevelLabel(level)}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-4">
+            <p className="text-sm text-slate mb-3">
+              Set up your preferences to personalize your feed.
+            </p>
+            <Link
+              href="/onboarding"
+              className="inline-block px-4 py-2 bg-graphite text-white rounded-xl text-sm font-medium hover:bg-graphite/90 transition-colors"
+            >
+              Set up personalization
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Sign out */}
