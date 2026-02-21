@@ -3,20 +3,29 @@ Tests for prediction market → event matching utility.
 
 Tests cover:
 - Game-level market detection (is_game_level_market)
+- Kalshi game ticker detection (is_kalshi_game_ticker)
+- Category prefix stripping (_strip_category_prefix)
 - Matchup extraction from various formats
 - Team name fuzzy matching
 - Home/away probability mapping
+- Kalshi market name construction (_build_game_market_name)
 """
 
 import pytest
 
 from app.utils.prediction_market_matching import (
     is_game_level_market,
+    is_kalshi_game_ticker,
     extract_matchup,
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
+    _strip_category_prefix,
     MatchupInfo,
+)
+from app.tasks.kalshi import (
+    _is_kalshi_game_ticker as kalshi_is_game_ticker,
+    _build_game_market_name,
 )
 
 
@@ -685,3 +694,458 @@ class TestEdgeCases:
         yes_prob = 0.65
         home_prob = yes_prob if mapping["yes_is_home"] else 1.0 - yes_prob
         assert home_prob == pytest.approx(0.35)
+
+
+# =============================================================================
+# is_kalshi_game_ticker — Utility function (in prediction_market_matching.py)
+# =============================================================================
+
+
+class TestIsKalshiGameTicker:
+    """Test Kalshi game ticker detection from external_id."""
+
+    def test_nba_game_ticker(self):
+        assert is_kalshi_game_ticker("KXNBAGAME-26FEB19BOSGSW")
+
+    def test_nba_game_ticker_lowercase(self):
+        assert is_kalshi_game_ticker("kxnbagame-26feb19bosgsw")
+
+    def test_nfl_game_ticker(self):
+        assert is_kalshi_game_ticker("KXNFLGAME-26SEP14SFDEN")
+
+    def test_nhl_game_ticker(self):
+        assert is_kalshi_game_ticker("KXNHLGAME-26FEB20BOSNYR")
+
+    def test_mlb_game_ticker(self):
+        assert is_kalshi_game_ticker("KXMLBGAME-26APR05NYYLAD")
+
+    def test_ncaab_game_ticker(self):
+        assert is_kalshi_game_ticker("KXNCAABGAME-26MAR20DUKEUNC")
+
+    def test_ncaaf_game_ticker(self):
+        assert is_kalshi_game_ticker("KXNCAAFGAME-26OCT12OHSTPSU")
+
+    def test_wnba_game_ticker(self):
+        assert is_kalshi_game_ticker("KXWNBAGAME-26JUN15NYLVLA")
+
+    def test_mls_game_ticker(self):
+        assert is_kalshi_game_ticker("KXMLSGAME-26JUL04NYCLA")
+
+    def test_soccer_game_ticker(self):
+        assert is_kalshi_game_ticker("KXSOCCERGAME-26FEB20ARSCHI")
+
+    def test_ufc_fight_ticker(self):
+        assert is_kalshi_game_ticker("KXUFCFIGHT-26MAR15JONES")
+
+    def test_boxing_fight_ticker(self):
+        assert is_kalshi_game_ticker("KXBOXINGFIGHT-26APR10FURY")
+
+    def test_not_game_championship(self):
+        """Championship tickers should not be game-level."""
+        assert not is_kalshi_game_ticker("NBACHAMP-BOS")
+
+    def test_not_game_mvp(self):
+        assert not is_kalshi_game_ticker("KXCOTY-24-BELICHICK")
+
+    def test_not_game_politics(self):
+        assert not is_kalshi_game_ticker("PRES-26-DEM")
+
+    def test_empty_string(self):
+        assert not is_kalshi_game_ticker("")
+
+    def test_none_value(self):
+        assert not is_kalshi_game_ticker(None)
+
+
+# =============================================================================
+# Kalshi _is_kalshi_game_ticker (in tasks/kalshi.py — returns sport label)
+# =============================================================================
+
+
+class TestKalshiGameTickerSportLabel:
+    """Test Kalshi game ticker detection returns correct sport labels."""
+
+    def test_nba_returns_label(self):
+        assert kalshi_is_game_ticker("KXNBAGAME-26FEB19BOSGSW") == "NBA"
+
+    def test_nfl_returns_label(self):
+        assert kalshi_is_game_ticker("KXNFLGAME-26SEP14SFDEN") == "NFL"
+
+    def test_nhl_returns_label(self):
+        assert kalshi_is_game_ticker("KXNHLGAME-26FEB20BOSNYR") == "NHL"
+
+    def test_mlb_returns_label(self):
+        assert kalshi_is_game_ticker("KXMLBGAME-26APR05NYYLAD") == "MLB"
+
+    def test_ncaab_returns_label(self):
+        assert kalshi_is_game_ticker("KXNCAABGAME-26MAR20DUKEUNC") == "NCAAB"
+
+    def test_ncaaf_returns_label(self):
+        assert kalshi_is_game_ticker("KXNCAAFGAME-26OCT12OHSTPSU") == "NCAAF"
+
+    def test_ufc_returns_label(self):
+        assert kalshi_is_game_ticker("KXUFCFIGHT-26MAR15JONES") == "UFC"
+
+    def test_non_game_returns_none(self):
+        assert kalshi_is_game_ticker("NBACHAMP-BOS") is None
+
+    def test_empty_returns_none(self):
+        assert kalshi_is_game_ticker("") is None
+
+    def test_none_returns_none(self):
+        assert kalshi_is_game_ticker(None) is None
+
+
+# =============================================================================
+# _strip_category_prefix — expanded patterns
+# =============================================================================
+
+
+class TestStripCategoryPrefix:
+    """Test category prefix stripping for various Kalshi naming formats."""
+
+    def test_nba_prefix(self):
+        assert _strip_category_prefix("NBA: Celtics vs Warriors") == "Celtics vs Warriors"
+
+    def test_nfl_prefix(self):
+        assert _strip_category_prefix("NFL: Eagles at Chiefs") == "Eagles at Chiefs"
+
+    def test_nhl_prefix(self):
+        assert _strip_category_prefix("NHL: Bruins vs Rangers") == "Bruins vs Rangers"
+
+    def test_mlb_prefix(self):
+        assert _strip_category_prefix("MLB: Yankees at Dodgers") == "Yankees at Dodgers"
+
+    def test_professional_basketball_game(self):
+        """Kalshi's 'Professional Basketball Game:' prefix."""
+        result = _strip_category_prefix("Professional Basketball Game: Boston Celtics at Golden State Warriors")
+        assert result == "Boston Celtics at Golden State Warriors"
+
+    def test_professional_mens_basketball(self):
+        result = _strip_category_prefix("Professional Men's Basketball: Lakers vs Celtics")
+        assert result == "Lakers vs Celtics"
+
+    def test_professional_hockey(self):
+        result = _strip_category_prefix("Professional Hockey: Bruins at Rangers")
+        assert result == "Bruins at Rangers"
+
+    def test_professional_womens_basketball(self):
+        result = _strip_category_prefix("Professional Women's Basketball: Storm at Aces")
+        assert result == "Storm at Aces"
+
+    def test_pro_mens_basketball(self):
+        """Short 'Pro' variant."""
+        result = _strip_category_prefix("Pro Men's Basketball: Lakers vs Celtics")
+        assert result == "Lakers vs Celtics"
+
+    def test_pro_football(self):
+        result = _strip_category_prefix("Pro Football: Eagles at Chiefs")
+        assert result == "Eagles at Chiefs"
+
+    def test_college_basketball(self):
+        result = _strip_category_prefix("College Basketball: Duke vs UNC")
+        assert result == "Duke vs UNC"
+
+    def test_college_football_game(self):
+        result = _strip_category_prefix("College Football Game: Ohio State at Penn State")
+        assert result == "Ohio State at Penn State"
+
+    def test_basketball_bare(self):
+        """Bare sport name prefix."""
+        result = _strip_category_prefix("Basketball: Lakers vs Celtics")
+        assert result == "Lakers vs Celtics"
+
+    def test_football_game(self):
+        result = _strip_category_prefix("Football Game: Eagles at Chiefs")
+        assert result == "Eagles at Chiefs"
+
+    def test_soccer_match(self):
+        result = _strip_category_prefix("Soccer Match: Arsenal v Chelsea")
+        assert result == "Arsenal v Chelsea"
+
+    def test_no_prefix(self):
+        """Names without prefix should pass through unchanged."""
+        assert _strip_category_prefix("Celtics vs Warriors") == "Celtics vs Warriors"
+
+    def test_non_matching_prefix(self):
+        """Non-sport prefixes should not be stripped."""
+        assert _strip_category_prefix("Weather: Sunny tomorrow") == "Weather: Sunny tomorrow"
+
+    def test_epl_prefix(self):
+        result = _strip_category_prefix("EPL: Arsenal v Chelsea")
+        assert result == "Arsenal v Chelsea"
+
+    def test_mls_prefix(self):
+        result = _strip_category_prefix("MLS: LAFC vs Galaxy")
+        assert result == "LAFC vs Galaxy"
+
+    def test_wnba_prefix(self):
+        result = _strip_category_prefix("WNBA: Storm at Aces")
+        assert result == "Storm at Aces"
+
+
+# =============================================================================
+# is_game_level_market with external_id parameter
+# =============================================================================
+
+
+class TestGameLevelWithExternalId:
+    """Test game-level detection using Kalshi ticker (external_id)."""
+
+    def test_generic_name_with_game_ticker(self):
+        """Generic title + game ticker → game-level."""
+        assert is_game_level_market(
+            "Professional Basketball Game",
+            "championship",
+            external_id="KXNBAGAME-26FEB19BOSGSW",
+        )
+
+    def test_generic_name_without_game_ticker(self):
+        """Generic title without game ticker → NOT game-level."""
+        assert not is_game_level_market(
+            "Professional Basketball Game",
+            "championship",
+            external_id="NBACHAMP-BOS",
+        )
+
+    def test_generic_name_no_external_id(self):
+        """Generic title without any external_id → NOT game-level."""
+        assert not is_game_level_market(
+            "Professional Basketball Game",
+            "championship",
+        )
+
+    def test_matchup_name_with_non_game_ticker(self):
+        """Good name + non-game ticker → still game-level (name detection works)."""
+        assert is_game_level_market(
+            "Celtics at Warriors",
+            "championship",
+            external_id="SOMETHING-ELSE",
+        )
+
+    def test_nfl_game_ticker_generic_name(self):
+        assert is_game_level_market(
+            "Professional Football Game",
+            "championship",
+            external_id="KXNFLGAME-26SEP14SFDEN",
+        )
+
+    def test_nhl_game_ticker(self):
+        assert is_game_level_market(
+            "Professional Hockey",
+            "championship",
+            external_id="KXNHLGAME-26FEB20BOSNYR",
+        )
+
+    def test_ufc_fight_ticker(self):
+        assert is_game_level_market(
+            "Mixed Martial Arts Fight",
+            "championship",
+            external_id="KXUFCFIGHT-26MAR15JONES",
+        )
+
+    def test_professional_prefix_stripped(self):
+        """'Professional Basketball Game: X at Y' → prefix stripped → game-level."""
+        assert is_game_level_market(
+            "Professional Basketball Game: Celtics at Warriors",
+            "championship",
+        )
+
+    def test_professional_football_prefix(self):
+        assert is_game_level_market(
+            "Professional Football: Eagles at Chiefs",
+            "championship",
+        )
+
+
+# =============================================================================
+# _build_game_market_name (from tasks/kalshi.py)
+# =============================================================================
+
+
+class TestBuildGameMarketName:
+    """Test Kalshi market name construction for game-level events."""
+
+    def test_event_title_already_good(self):
+        """If event title has a matchup, use it as-is."""
+        result = _build_game_market_name(
+            event_title="Celtics at Warriors",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title=None,
+            yes_sub_title="Boston Celtics",
+            no_sub_title="Golden State Warriors",
+            sport_label="NBA",
+        )
+        assert result == "Celtics at Warriors"
+
+    def test_nba_prefixed_title_still_good(self):
+        """NBA-prefixed title with matchup is preserved."""
+        result = _build_game_market_name(
+            event_title="NBA: Celtics at Warriors",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title=None,
+            yes_sub_title="Boston Celtics",
+            no_sub_title="Golden State Warriors",
+            sport_label="NBA",
+        )
+        assert result == "NBA: Celtics at Warriors"
+
+    def test_generic_title_uses_subtitles(self):
+        """Generic title → constructed from yes_sub_title at no_sub_title."""
+        result = _build_game_market_name(
+            event_title="Professional Basketball Game",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title=None,
+            yes_sub_title="Boston Celtics",
+            no_sub_title="Golden State Warriors",
+            sport_label="NBA",
+        )
+        assert result == "Boston Celtics at Golden State Warriors"
+
+    def test_generic_title_nfl(self):
+        """NFL game with generic title."""
+        result = _build_game_market_name(
+            event_title="Professional Football Game",
+            event_ticker="KXNFLGAME-26SEP14SFDEN",
+            market_title=None,
+            yes_sub_title="San Francisco 49ers",
+            no_sub_title="Denver Broncos",
+            sport_label="NFL",
+        )
+        assert result == "San Francisco 49ers at Denver Broncos"
+
+    def test_market_title_fallback(self):
+        """No sub-titles → use market title if it has a matchup."""
+        result = _build_game_market_name(
+            event_title="Professional Basketball Game",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title="Celtics vs Warriors",
+            yes_sub_title=None,
+            no_sub_title=None,
+            sport_label="NBA",
+        )
+        assert result == "Celtics vs Warriors"
+
+    def test_no_good_source_fallback(self):
+        """No matchup anywhere → falls back to original event title."""
+        result = _build_game_market_name(
+            event_title="Professional Basketball Game",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title="Professional Basketball Game",
+            yes_sub_title=None,
+            no_sub_title=None,
+            sport_label="NBA",
+        )
+        assert result == "Professional Basketball Game"
+
+    def test_only_yes_subtitle_no_no(self):
+        """Only yes_sub_title → can't construct full name → try market_title."""
+        result = _build_game_market_name(
+            event_title="Professional Basketball Game",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title="NBA: Celtics vs Warriors",
+            yes_sub_title="Boston Celtics",
+            no_sub_title=None,
+            sport_label="NBA",
+        )
+        # market_title has matchup after stripping prefix → use it
+        assert result == "NBA: Celtics vs Warriors"
+
+    def test_college_game(self):
+        """College game with sub-titles."""
+        result = _build_game_market_name(
+            event_title="College Basketball Game",
+            event_ticker="KXNCAABGAME-26MAR20DUKEUNC",
+            market_title=None,
+            yes_sub_title="Duke Blue Devils",
+            no_sub_title="UNC Tar Heels",
+            sport_label="NCAAB",
+        )
+        assert result == "Duke Blue Devils at UNC Tar Heels"
+
+    def test_professional_prefix_in_event_title(self):
+        """Event title has 'Professional X Game:' prefix with matchup."""
+        result = _build_game_market_name(
+            event_title="Professional Basketball Game: Celtics at Warriors",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title=None,
+            yes_sub_title="Boston Celtics",
+            no_sub_title="Golden State Warriors",
+            sport_label="NBA",
+        )
+        assert result == "Professional Basketball Game: Celtics at Warriors"
+
+
+# =============================================================================
+# Integration: end-to-end ticker detection → matchup extraction
+# =============================================================================
+
+
+class TestTickerDetectionIntegration:
+    """Test that ticker-detected game markets can still extract matchups."""
+
+    def test_ticker_detected_subtitled_market(self):
+        """Generic name + game ticker → detected, then subtitled name is extractable."""
+        # Step 1: Detection via ticker
+        assert is_game_level_market(
+            "Professional Basketball Game",
+            "championship",
+            external_id="KXNBAGAME-26FEB19BOSGSW",
+        )
+        # Step 2: Build proper name from sub-titles
+        name = _build_game_market_name(
+            event_title="Professional Basketball Game",
+            event_ticker="KXNBAGAME-26FEB19BOSGSW",
+            market_title=None,
+            yes_sub_title="Boston Celtics",
+            no_sub_title="Golden State Warriors",
+            sport_label="NBA",
+        )
+        assert name == "Boston Celtics at Golden State Warriors"
+        # Step 3: Extract matchup from constructed name
+        matchup = extract_matchup(name)
+        assert matchup is not None
+        assert matchup.team_a == "Boston Celtics"
+        assert matchup.team_b == "Golden State Warriors"
+
+    def test_prefixed_name_extraction(self):
+        """Category-prefixed name should extract matchup correctly."""
+        name = "Professional Basketball Game: Boston Celtics at Golden State Warriors"
+        assert is_game_level_market(name, "championship")
+        matchup = extract_matchup(name)
+        assert matchup is not None
+        assert matchup.team_a == "Boston Celtics"
+        assert matchup.team_b == "Golden State Warriors"
+
+    def test_full_flow_ticker_to_event_mapping(self):
+        """Complete flow: ticker detection → name build → extract → team mapping."""
+        # Simulate Kalshi event with generic title
+        name = _build_game_market_name(
+            event_title="Professional Football Game",
+            event_ticker="KXNFLGAME-26SEP14SFDEN",
+            market_title=None,
+            yes_sub_title="San Francisco 49ers",
+            no_sub_title="Denver Broncos",
+            sport_label="NFL",
+        )
+        matchup = extract_matchup(name)
+        assert matchup is not None
+        # Map to event
+        result = match_teams_to_event(
+            matchup, "Denver Broncos", "San Francisco 49ers",
+        )
+        assert result is not None
+        # "San Francisco 49ers" is team_a (yes_team), matches away
+        assert result["yes_is_home"] is False
+
+    def test_polymarket_still_works(self):
+        """Polymarket game names (no ticker) still work via name patterns."""
+        assert is_game_level_market(
+            "Will the Celtics win against the Warriors?",
+            "championship",
+            external_id=None,
+        )
+        matchup = extract_matchup("Will the Celtics win against the Warriors?")
+        assert matchup is not None
+        assert matchup.team_a == "Celtics"
+        assert matchup.team_b == "Warriors"

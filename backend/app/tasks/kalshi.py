@@ -13,6 +13,83 @@ from app.tasks.base import get_task_session, run_async
 logger = logging.getLogger(__name__)
 
 
+# ── Kalshi game ticker detection ─────────────────────────────────────────────
+
+# Map Kalshi game ticker prefixes to sport labels.
+# Used to detect game-level events and construct better market names.
+_KALSHI_GAME_TICKERS: dict[str, str] = {
+    "kxnbagame": "NBA",
+    "kxnflgame": "NFL",
+    "kxnhlgame": "NHL",
+    "kxmlbgame": "MLB",
+    "kxncaabgame": "NCAAB",
+    "kxncaafgame": "NCAAF",
+    "kxwnbagame": "WNBA",
+    "kxmlsgame": "MLS",
+    "kxsoccergame": "Soccer",
+    "kxufcfight": "UFC",
+    "kxboxingfight": "Boxing",
+}
+
+
+def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
+    """
+    Check if a Kalshi event ticker indicates a game-level market.
+
+    Returns the sport label (e.g., "NBA") if it's a game ticker, or None.
+    Kalshi game tickers look like "KXNBAGAME-26FEB19BOSGSW".
+    """
+    if not event_ticker:
+        return None
+    ticker_lower = event_ticker.lower()
+    for prefix, sport in _KALSHI_GAME_TICKERS.items():
+        if ticker_lower.startswith(prefix):
+            return sport
+    return None
+
+
+def _build_game_market_name(
+    event_title: str,
+    event_ticker: str,
+    market_title: Optional[str],
+    yes_sub_title: Optional[str],
+    no_sub_title: Optional[str],
+    sport_label: str,
+) -> str:
+    """
+    Build the best possible market name for a Kalshi game-level event.
+
+    Kalshi game events often have generic titles like "Professional Basketball Game"
+    as the series title. Team names may be in market sub-titles, individual market
+    title, or the event subtitle.
+
+    Priority:
+    1. Event title if it already contains a matchup pattern (e.g., "Celtics at Warriors")
+    2. Constructed from yes_sub_title/no_sub_title (e.g., "Boston Celtics at Golden State Warriors")
+    3. Individual market title if different from event title
+    4. Original event title (fallback)
+    """
+    from app.utils.prediction_market_matching import _check_game_level, _strip_category_prefix
+
+    # Check if event title already has a usable matchup
+    stripped = _strip_category_prefix(event_title)
+    if _check_game_level(stripped) or _check_game_level(event_title):
+        return event_title
+
+    # Construct from sub-titles (most reliable for Kalshi game markets)
+    if yes_sub_title and no_sub_title:
+        return f"{yes_sub_title} at {no_sub_title}"
+
+    # Try market title if it's different and has a matchup
+    if market_title and market_title != event_title:
+        mstripped = _strip_category_prefix(market_title)
+        if _check_game_level(mstripped) or _check_game_level(market_title):
+            return market_title
+
+    # Fallback to original event title
+    return event_title
+
+
 def _parse_kalshi_ticker_name(ticker: str) -> str:
     """Extract a human-readable name from a Kalshi market ticker.
 
@@ -177,11 +254,27 @@ async def _poll_kalshi_markets():
 
                     # For events with multiple markets (multivariate), create one FuturesMarket
                     # For single-market events, use the market directly
+                    game_sport = _is_kalshi_game_ticker(event.event_ticker)
+
                     if len(event.markets) == 1:
                         market = event.markets[0]
-                        market_name = event.title
                         commence_time = market.close_time  # When trading ends
                         expiration_time = market.expiration_time
+
+                        # For game-level events, construct the best possible name
+                        # from sub-titles (team names) since event title may be generic
+                        # (e.g., "Professional Basketball Game" instead of "Celtics at Warriors")
+                        if game_sport:
+                            market_name = _build_game_market_name(
+                                event_title=event.title,
+                                event_ticker=event.event_ticker,
+                                market_title=market.title,
+                                yes_sub_title=market.yes_sub_title,
+                                no_sub_title=market.no_sub_title,
+                                sport_label=game_sport,
+                            )
+                        else:
+                            market_name = event.title
                     else:
                         market_name = event.title
                         # Use earliest close time from all markets
