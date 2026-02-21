@@ -2434,15 +2434,19 @@ async def prediction_market_debug(
         entry = {
             "source": market.source,
             "name": market.name,
+            "external_id": market.external_id,
             "category": market.category,
             "llm_sport_category": market.llm_sport_category,
         }
 
-        if not is_game_level_market(market.name, market.category):
+        if not is_game_level_market(
+            market.name, market.category,
+            external_id=market.external_id,
+        ):
             funnel["not_game_level"].append(entry)
             continue
 
-        matchup = extract_matchup(market.name)
+        matchup = extract_matchup(market.name, external_id=market.external_id)
         if not matchup:
             entry["note"] = "passed is_game_level but extract_matchup returned None"
             funnel["no_matchup"].append(entry)
@@ -2468,4 +2472,105 @@ async def prediction_market_debug(
         "sample_game_level": funnel["game_level"][:20],
         "sample_not_game_level": funnel["not_game_level"][:20],
         "sample_no_matchup": funnel["no_matchup"][:10],
+    }
+
+
+@router.post("/prediction-markets/link")
+async def manual_link_prediction_market(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    market_id: int = Query(..., description="FuturesMarket.id to link"),
+    event_id: int = Query(..., description="Event.id to link to"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually link a prediction market to an event.
+
+    Sets FuturesMarket.event_id and immediately writes a win_prob_snapshot.
+    Use when auto-matching fails (e.g., name patterns don't match, or the game
+    is already completed and the market is resolved).
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from datetime import datetime, timezone
+    from app.models.models import FuturesMarket, FuturesOutcome, WinProbSnapshot
+    from app.utils.prediction_market_matching import (
+        extract_matchup, match_teams_to_event, find_moneyline_outcome,
+    )
+    from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+
+    # Load market
+    market_result = await db.execute(
+        select(FuturesMarket).where(FuturesMarket.id == market_id)
+    )
+    market = market_result.scalar_one_or_none()
+    if not market:
+        raise HTTPException(status_code=404, detail=f"FuturesMarket {market_id} not found")
+
+    # Load event
+    event_result = await db.execute(
+        select(Event).where(Event.id == event_id)
+    )
+    event = event_result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+
+    # Link the market
+    market.event_id = event_id
+
+    # Try to write a snapshot immediately
+    snapshot_result = None
+    matchup = extract_matchup(market.name, external_id=market.external_id)
+    if matchup:
+        # Load outcomes
+        outcome_result = await db.execute(
+            select(FuturesOutcome)
+            .where(FuturesOutcome.market_id == market.id)
+            .order_by(FuturesOutcome.rank)
+        )
+        outcomes = outcome_result.scalars().all()
+
+        ml_result = find_moneyline_outcome(
+            outcomes, matchup,
+            event.home_team_name, event.away_team_name,
+        )
+        if ml_result:
+            outcome, yes_is_home = ml_result
+            yes_prob = float(outcome.current_probability)
+            home_prob = yes_prob if yes_is_home else (1.0 - yes_prob)
+            away_prob = 1.0 - home_prob
+
+            snapshot, is_new = await _create_or_update_win_prob_snapshot(
+                db,
+                event_id=event_id,
+                source=market.source,
+                home_win_probability=round(home_prob, 4),
+                away_win_probability=round(away_prob, 4),
+                game_state={
+                    "market_name": market.name,
+                    "market_id": market.id,
+                    "outcome_name": outcome.name,
+                    "yes_probability": yes_prob,
+                    "manual_link": True,
+                },
+            )
+            if is_new:
+                db.add(snapshot)
+            snapshot_result = {
+                "home_prob": round(home_prob, 4),
+                "away_prob": round(away_prob, 4),
+                "source": market.source,
+                "is_new": is_new,
+            }
+
+    await db.commit()
+
+    return {
+        "status": "linked",
+        "market_id": market_id,
+        "event_id": event_id,
+        "market_name": market.name,
+        "market_source": market.source,
+        "event_teams": f"{event.home_team_name} vs {event.away_team_name}",
+        "snapshot": snapshot_result,
     }

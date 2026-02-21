@@ -17,6 +17,40 @@ from app.utils.team_linking import _normalize_name
 logger = logging.getLogger(__name__)
 
 
+# ── Kalshi game ticker detection ─────────────────────────────────────────────
+
+# Kalshi game-level event ticker prefixes.
+# These reliably identify game-level markets regardless of the event title.
+# e.g., "KXNBAGAME-26FEB19BOSGSW" → NBA game between BOS and GSW on Feb 19
+_KALSHI_GAME_TICKER_PREFIXES = (
+    "kxnbagame",     # NBA game
+    "kxnflgame",     # NFL game
+    "kxnhlgame",     # NHL game
+    "kxmlbgame",     # MLB game
+    "kxncaabgame",   # NCAAB (college basketball) game
+    "kxncaafgame",   # NCAAF (college football) game
+    "kxwnbagame",    # WNBA game
+    "kxmlsgame",     # MLS game
+    "kxsoccergame",  # Soccer game
+    "kxufcfight",    # UFC fight
+    "kxboxingfight", # Boxing fight
+)
+
+
+def is_kalshi_game_ticker(external_id: str) -> bool:
+    """
+    Check if a Kalshi external_id (event_ticker) indicates a game-level market.
+
+    Kalshi uses structured tickers like "KXNBAGAME-26FEB19BOSGSW" for NBA games.
+    This is the most reliable signal for game-level detection — more reliable
+    than name pattern matching.
+    """
+    if not external_id:
+        return False
+    ext_lower = external_id.lower()
+    return any(ext_lower.startswith(prefix) for prefix in _KALSHI_GAME_TICKER_PREFIXES)
+
+
 # ── Game-level market detection ──────────────────────────────────────────────
 
 # "Team A at/vs/v/@ Team B" (bare matchup without stat — no colon separator)
@@ -68,18 +102,39 @@ _DASH_PROP_RE = re.compile(
 
 # Category prefix pattern: "NBA:", "Pro Men's Basketball:", "Football:" etc.
 # Kalshi often prefixes game titles with the category, e.g., "NBA: Warriors vs Celtics"
+#
+# Handles:
+#   - League abbreviations: "NBA:", "NFL:", "NHL:", "MLB:", etc.
+#   - Pro/Professional variants: "Pro Men's Basketball:", "Professional Basketball Game:", etc.
+#   - College: "College Football:", "College Basketball:", etc.
+#   - Bare sport names: "Basketball:", "Football:", "Hockey:", etc.
+#   - Sport + Game/Match: "Basketball Game:", "Football Match:", etc.
 _CATEGORY_PREFIX_RE = re.compile(
-    r'^(?:NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB?|NCAAF?|EPL|La Liga|Serie A|Ligue 1|Bundesliga|'
-    r'Pro\s+(?:Men\'?s?|Women\'?s?)\s+\w+|'
-    r'College\s+\w+|'
-    r'Basketball|Football|Hockey|Baseball|Soccer|Tennis|Golf|Boxing|MMA)\s*:\s*',
+    r'^(?:'
+    # League abbreviations
+    r'NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB?|NCAAF?|EPL|La Liga|Serie A|Ligue 1|Bundesliga'
+    r'|'
+    # "Pro/Professional [Men's/Women's] <sport> [Game/Match]"
+    # Matches: "Pro Men's Basketball", "Professional Basketball Game",
+    #          "Professional Men's Hockey", "Pro Women's Soccer Match"
+    r'(?:Pro(?:fessional)?)\s+[^:]{2,40}'
+    r'|'
+    # "College <sport> [Game/Match]"
+    # Matches: "College Football", "College Basketball Game"
+    r'College\s+[^:]{2,30}'
+    r'|'
+    # Bare sport names with optional "Game/Match"
+    # Matches: "Basketball:", "Football Game:", "Hockey Match:"
+    r'(?:Basketball|Football|Hockey|Baseball|Soccer|Tennis|Golf|Boxing|MMA)'
+    r'(?:\s+(?:Game|Match))?'
+    r')\s*:\s*',
     re.IGNORECASE,
 )
 
 
 def _strip_category_prefix(market_name: str) -> str:
     """
-    Strip category prefixes like "NBA:", "Pro Men's Basketball:" from market names.
+    Strip category prefixes like "NBA:", "Professional Basketball Game:" from market names.
 
     Kalshi often prefixes event titles with the sport/league category.
     This normalizes to just the matchup portion for pattern matching.
@@ -101,14 +156,16 @@ def is_game_level_market(
     market_name: str,
     category: Optional[str] = None,
     num_outcomes: int = 0,
+    external_id: Optional[str] = None,
 ) -> bool:
     """
     Check if a futures market represents a game-level outcome
     (e.g., "Which team wins this game?") rather than a championship/award future.
 
-    Detection is based on market NAME pattern matching, not outcome count.
-    Polymarket bundles moneyline + spread + totals under one game event,
-    resulting in 3-5+ outcomes — but the event name is still "Team A vs. Team B".
+    Detection uses multiple signals:
+    1. Kalshi ticker pattern (most reliable): "KXNBAGAME-..." always = game
+    2. Market NAME pattern matching (regex-based)
+    3. Category prefix stripping for prefixed names
 
     Also handles category-prefixed names (e.g., "NBA: Warriors vs Celtics")
     by stripping the prefix before matching.
@@ -116,7 +173,13 @@ def is_game_level_market(
     Criteria:
     - Must match a matchup pattern (bare matchup, dash matchup, or "Will X beat Y?")
     - Must NOT be a game prop (those have stats like "Rebounds")
+    - OR must have a Kalshi game ticker prefix
     """
+    # Signal 1: Kalshi game ticker detection (most reliable)
+    if external_id and is_kalshi_game_ticker(external_id):
+        return True
+
+    # Signal 2+3: Name pattern matching (with and without prefix stripping)
     return _check_game_level(market_name) or _check_game_level(_strip_category_prefix(market_name))
 
 
@@ -164,7 +227,7 @@ class MatchupInfo:
         self.format_type = format_type  # "bare_matchup", "will_beat", "will_win"
 
 
-def extract_matchup(market_name: str) -> Optional[MatchupInfo]:
+def extract_matchup(market_name: str, external_id: Optional[str] = None) -> Optional[MatchupInfo]:
     """
     Extract team names and determine "Yes" team from a game-level market name.
 

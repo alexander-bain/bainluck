@@ -17,6 +17,7 @@ from sqlalchemy import select, or_, and_, func
 from app.tasks.base import get_task_session
 from app.utils.prediction_market_matching import (
     is_game_level_market,
+    is_kalshi_game_ticker,
     extract_matchup,
     match_teams_to_event,
     find_moneyline_outcome,
@@ -87,16 +88,23 @@ async def _match_prediction_markets(limit: int = 500):
             # moneyline + spread + totals under one game event, so a game
             # like "Celtics vs. Warriors" can have 3-5+ outcomes. The name
             # pattern is the reliable signal, not outcome count.
-            if not is_game_level_market(market.name, market.category):
+            #
+            # For Kalshi, we also check the external_id (event ticker) for
+            # reliable game-level detection: "KXNBAGAME-..." is always a game.
+            if not is_game_level_market(
+                market.name, market.category,
+                external_id=market.external_id,
+            ):
                 stats["funnel"]["not_game_level"] += 1
                 if len(stats["funnel"]["sample_not_game_level"]) < 10:
                     stats["funnel"]["sample_not_game_level"].append(
-                        {"source": market.source, "name": market.name}
+                        {"source": market.source, "name": market.name,
+                         "external_id": market.external_id}
                     )
                 continue
 
             # Extract matchup info
-            matchup = extract_matchup(market.name)
+            matchup = extract_matchup(market.name, external_id=market.external_id)
             if not matchup:
                 stats["funnel"]["no_matchup_extracted"] += 1
                 continue
@@ -135,6 +143,7 @@ async def _match_prediction_markets(limit: int = 500):
         # ── Phase 2: Write win_prob_snapshots for all linked markets ─────
 
         # Find all linked prediction markets (including newly linked ones)
+        # Include "open" and recently-resolved markets so we capture final prices
         linked_result = await session.execute(
             select(FuturesMarket)
             .where(
@@ -154,8 +163,16 @@ async def _match_prediction_markets(limit: int = 500):
                 if not event:
                     continue
 
+                # Skip completed events that finished long ago (> 6 hours)
+                # to avoid writing stale snapshots
+                if event.status in ("completed", "closed"):
+                    if event.commence_time:
+                        hours_since = (now - event.commence_time).total_seconds() / 3600
+                        if hours_since > 12:
+                            continue
+
                 # Re-extract matchup to determine team mapping
-                matchup = extract_matchup(market.name)
+                matchup = extract_matchup(market.name, external_id=market.external_id)
                 if not matchup:
                     continue
 
