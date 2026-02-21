@@ -2788,9 +2788,75 @@ async def prediction_market_event_debug(
                 } if matchup else None,
             })
 
-    # 4. Generate diagnosis
-    if not linked_markets and not result["potential_unlinked_matches"]:
-        result["diagnosis"].append("No linked or potential markets found. Kalshi/Polymarket may not have a market for this game, or it hasn't been polled yet.")
+    # 4. Search for MISLINKED markets — markets that match team names but
+    #    are linked to a DIFFERENT event. This catches the common case where
+    #    the time-window search matched a market to the wrong game.
+    result["mislinked_markets"] = []
+    if search_conditions:
+        mislinked_result = await db.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                FuturesMarket.event_id.isnot(None),
+                FuturesMarket.event_id != event_id,
+                or_(*search_conditions),
+            )
+            .limit(20)
+        )
+        mislinked_markets = mislinked_result.scalars().all()
+
+        for market in mislinked_markets:
+            # Check if this market's name actually matches BOTH teams
+            matchup = extract_matchup_with_ticker_fallback(
+                market.name, external_id=market.external_id,
+            )
+            both_match = False
+            if matchup and matchup.team_b:
+                a_matches = (
+                    _fuzzy_team_match(matchup.team_a, event.home_team_name)
+                    or _fuzzy_team_match(matchup.team_a, event.away_team_name)
+                )
+                b_matches = (
+                    _fuzzy_team_match(matchup.team_b, event.home_team_name)
+                    or _fuzzy_team_match(matchup.team_b, event.away_team_name)
+                )
+                both_match = a_matches and b_matches
+
+            # Load the event it's linked to
+            linked_event_result = await db.execute(
+                select(Event).where(Event.id == market.event_id)
+            )
+            linked_event = linked_event_result.scalar_one_or_none()
+
+            result["mislinked_markets"].append({
+                "market_id": market.id,
+                "source": market.source,
+                "name": market.name,
+                "external_id": market.external_id,
+                "both_teams_match_this_event": both_match,
+                "currently_linked_to_event": {
+                    "id": linked_event.id if linked_event else None,
+                    "teams": f"{linked_event.away_team_name} at {linked_event.home_team_name}" if linked_event else None,
+                    "status": linked_event.status if linked_event else None,
+                    "commence_time": linked_event.commence_time.isoformat() if linked_event and linked_event.commence_time else None,
+                } if linked_event else None,
+                "matchup": {
+                    "team_a": matchup.team_a,
+                    "team_b": matchup.team_b,
+                } if matchup else None,
+            })
+
+    # 5. Generate diagnosis
+    if not linked_markets and not result["potential_unlinked_matches"] and not result["mislinked_markets"]:
+        result["diagnosis"].append("No linked, potential, or mislinked markets found. Kalshi/Polymarket may not have a market for this game, or it hasn't been polled yet.")
+    elif not linked_markets and result["mislinked_markets"]:
+        mislinked_both = [m for m in result["mislinked_markets"] if m["both_teams_match_this_event"]]
+        if mislinked_both:
+            result["diagnosis"].append(
+                f"MISLINKED: {len(mislinked_both)} market(s) match BOTH teams but are linked to a different event. "
+                f"These need to be unlinked and re-matched. Use POST /api/admin/prediction-markets/link to fix manually, "
+                f"or POST /api/admin/prediction-markets/unlink?market_id=X to unlink."
+            )
     elif not linked_markets and result["potential_unlinked_matches"]:
         result["diagnosis"].append(f"Found {len(result['potential_unlinked_matches'])} potential markets but none are linked. The matching task may not have run, or time window / team name matching is failing.")
     elif linked_markets and not sources_seen:
@@ -2800,6 +2866,39 @@ async def prediction_market_event_debug(
             result["diagnosis"].append(f"Source '{src}': {info['count']} snapshots, latest at {info['latest']} (home_prob={info['latest_home_prob']})")
 
     return result
+
+
+@router.post("/prediction-markets/unlink")
+async def unlink_prediction_market(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    market_id: int = Query(..., description="FuturesMarket.id to unlink"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Unlink a prediction market from its event. Sets event_id to NULL so the
+    matching task can re-link it to the correct event on next run.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import FuturesMarket
+    market_result = await db.execute(
+        select(FuturesMarket).where(FuturesMarket.id == market_id)
+    )
+    market = market_result.scalar_one_or_none()
+    if not market:
+        raise HTTPException(status_code=404, detail=f"FuturesMarket {market_id} not found")
+
+    old_event_id = market.event_id
+    market.event_id = None
+    await db.commit()
+
+    return {
+        "status": "unlinked",
+        "market_id": market_id,
+        "market_name": market.name,
+        "old_event_id": old_event_id,
+    }
 
 
 @router.post("/prediction-markets/link")

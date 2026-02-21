@@ -252,6 +252,61 @@ async def _match_prediction_markets(limit: int = 500):
                         }
                     )
 
+        # ── Phase 1.5: Fix stale links ────────────────────────────────────
+        # Markets linked to completed/closed events may be wrong (e.g., "Pistons
+        # vs. Bulls" linked to last week's game instead of tonight's). Check if
+        # there's a better match for game-level markets linked to finished events.
+        stats["funnel"].setdefault("stale_relinked", 0)
+
+        stale_result = await session.execute(
+            select(FuturesMarket, Event)
+            .join(Event, FuturesMarket.event_id == Event.id)
+            .where(
+                FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                FuturesMarket.event_id.isnot(None),
+                Event.status.in_(["completed", "closed"]),
+            )
+            .limit(200)
+        )
+        stale_rows = stale_result.all()
+
+        for market, old_event in stale_rows:
+            try:
+                if not is_game_level_market(
+                    market.name, market.category,
+                    external_id=market.external_id,
+                ):
+                    continue
+
+                matchup = extract_matchup_with_ticker_fallback(
+                    market.name, external_id=market.external_id,
+                )
+                if not matchup or not matchup.team_b:
+                    continue
+
+                ticker_game_date = extract_game_date_from_ticker(market.external_id) if market.source == "kalshi" else None
+
+                # Try to find a better match (scheduled/live event)
+                better_match = await _find_matching_event(
+                    session, matchup, market, now,
+                    game_date_override=ticker_game_date,
+                )
+                if better_match and better_match["event_id"] != old_event.id:
+                    # Found a better event — re-link
+                    logger.info(
+                        "Re-linking %s '%s' from completed event %d → %s event %d (%s vs %s)",
+                        market.source, market.name, old_event.id,
+                        "new", better_match["event_id"],
+                        better_match["home_team"], better_match["away_team"],
+                    )
+                    market.event_id = better_match["event_id"]
+                    stats["funnel"]["stale_relinked"] += 1
+            except Exception as e:
+                logger.debug("Error checking stale link for market %d: %s", market.id, e)
+                continue
+
+        await session.commit()
+
         # ── Phase 2: Write win_prob_snapshots for all linked markets ─────
 
         # Find all linked prediction markets (including newly linked ones)
