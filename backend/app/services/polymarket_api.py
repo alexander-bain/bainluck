@@ -172,6 +172,19 @@ class PolymarketAPIService:
         response.raise_for_status()
         return response.json()
 
+    async def get_event_by_id(self, event_id: str) -> Optional[dict]:
+        """
+        Get a single event by its Polymarket event ID (includes all markets
+        with clobTokenIds needed for price history).
+        """
+        try:
+            response = await self.gamma_client.get(f"/events/{event_id}")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.warning("Failed to get event %s: %s", event_id, e)
+            return None
+
     async def get_sports(self) -> list[dict]:
         """
         Get supported sports/leagues from Gamma API.

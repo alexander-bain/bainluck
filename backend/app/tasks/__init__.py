@@ -27,6 +27,25 @@ from celery.schedules import crontab
 
 from app.tasks.base import run_async
 
+import time as _time
+
+
+def _tracked_run(task_name: str, async_fn):
+    """Run an async task and record success/failure metrics in Redis."""
+    from app.tasks.redis_state import record_task_success, record_task_failure
+    start = _time.monotonic()
+    try:
+        result = run_async(async_fn)
+        duration_ms = (_time.monotonic() - start) * 1000
+        # Extract summary from task result (most tasks return dicts)
+        summary = result if isinstance(result, dict) else {"result": str(result)[:200]}
+        record_task_success(task_name, duration_ms, summary)
+        return result
+    except Exception as exc:
+        duration_ms = (_time.monotonic() - start) * 1000
+        record_task_failure(task_name, duration_ms, str(exc))
+        raise
+
 # Redis URL from environment
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -101,7 +120,7 @@ def discover_events(self):
     """Discover events for ALL active sports."""
     from app.tasks.sports import _discover_events
     try:
-        return run_async(_discover_events())
+        return _tracked_run("discover_events", _discover_events())
     except Exception as exc:
         raise self.retry(exc=exc, countdown=120)
 
@@ -119,7 +138,7 @@ def poll_all_odds(self):
         return {"skipped": True, "reason": reason}
 
     try:
-        result = run_async(_poll_all_odds())
+        result = _tracked_run("poll_odds", _poll_all_odds())
         return {**result, "poll_reason": reason}
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)
@@ -161,7 +180,7 @@ def compute_gei_percentiles(self):
 def poll_futures_odds(self):
     """Poll futures/outrights odds from The Odds API."""
     from app.tasks.futures import _poll_futures_odds
-    return run_async(_poll_futures_odds())
+    return _tracked_run("poll_futures", _poll_futures_odds())
 
 
 # --- Kalshi ---
@@ -170,7 +189,7 @@ def poll_futures_odds(self):
 def poll_kalshi_markets(self):
     """Poll prediction markets from Kalshi."""
     from app.tasks.kalshi import _poll_kalshi_markets
-    return run_async(_poll_kalshi_markets())
+    return _tracked_run("poll_kalshi", _poll_kalshi_markets())
 
 
 # --- Polymarket ---
@@ -179,7 +198,14 @@ def poll_kalshi_markets(self):
 def poll_polymarket_markets(self):
     """Poll prediction markets from Polymarket (no API key needed)."""
     from app.tasks.polymarket import _poll_polymarket_markets
-    return run_async(_poll_polymarket_markets())
+    return _tracked_run("poll_polymarket", _poll_polymarket_markets())
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_polymarket_history")
+def backfill_polymarket_history(self, limit: int = 50, fidelity: int = 60, interval: str = "max"):
+    """Backfill historical prices from Polymarket CLOB API for outcomes with sparse data."""
+    from app.tasks.polymarket import _backfill_polymarket_price_history
+    return _tracked_run("polymarket_history", _backfill_polymarket_price_history(limit, fidelity, interval))
 
 
 # --- Categorization ---
@@ -218,7 +244,7 @@ def enrich_events_metadata(self, limit: int = 50):
 def sync_espn_live_events(self):
     """Sync live event data from ESPN for all sports with active games."""
     from app.tasks.espn_sync import _sync_espn_live_events
-    return run_async(_sync_espn_live_events())
+    return _tracked_run("espn_sync", _sync_espn_live_events())
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_team_logos")
@@ -250,7 +276,7 @@ def backfill_canonical_keys(self, limit: int = 500):
 def match_prediction_markets(self, limit: int = 500):
     """Match game-level prediction markets to events and write win_prob_snapshots."""
     from app.tasks.prediction_market_matching import _match_prediction_markets
-    return run_async(_match_prediction_markets(limit))
+    return _tracked_run("prediction_market_match", _match_prediction_markets(limit))
 
 
 # --- Roster Sync (SportsDataIO) ---

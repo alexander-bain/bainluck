@@ -415,7 +415,7 @@ async def get_polymarket_task_status(
     secret: str = Query(..., description="Admin secret for authorization"),
 ):
     """
-    Check the status of a Polymarket polling task.
+    Check the status of a Polymarket polling/backfill task.
 
     Returns the task state and result (if complete).
     """
@@ -437,6 +437,36 @@ async def get_polymarket_task_status(
             response["error"] = str(result.result)
 
     return response
+
+
+@router.post("/polymarket/backfill-history")
+async def trigger_polymarket_history_backfill(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(50, description="Max outcomes to process per run"),
+    fidelity: int = Query(60, description="Price granularity in minutes (60=hourly, 1440=daily)"),
+    interval: str = Query("max", description="Time range: 1h, 6h, 1d, 1w, max"),
+):
+    """
+    Backfill historical price data from Polymarket's CLOB API.
+
+    Fetches /prices-history for Polymarket outcomes that have sparse
+    snapshot data. Prioritizes outcomes with the fewest existing snapshots.
+    Uses ON CONFLICT DO NOTHING to avoid duplicate inserts.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_polymarket_history
+
+    try:
+        task = backfill_polymarket_history.delay(limit, fidelity, interval)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": "Polymarket history backfill queued. Use /api/admin/polymarket/task/{task_id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
 @router.post("/futures/poll")
@@ -1935,6 +1965,69 @@ async def celery_health():
         }
     except Exception as e:
         return {"status": "error", "message": f"Redis error: {str(e)}"}
+
+
+@router.get("/celery/dashboard")
+async def celery_dashboard():
+    """
+    Task-level success metrics dashboard.
+
+    Shows success/failure rates, last run times, durations, and key output
+    metrics for all tracked tasks. Detects degraded performance (not just
+    crashes) — e.g., ESPN sync matching 0 events, odds polling returning
+    empty results.
+    """
+    from app.tasks.redis_state import get_all_task_metrics, get_redis_client
+
+    # Get per-task metrics
+    tasks = get_all_task_metrics()
+
+    # Get heartbeat status for overall worker health
+    try:
+        r = get_redis_client()
+        heartbeat = r.get("bainluck:heartbeat")
+        if heartbeat:
+            heartbeat_time = datetime.fromisoformat(heartbeat.decode())
+            heartbeat_age = (datetime.now(timezone.utc) - heartbeat_time).total_seconds()
+            worker_status = "healthy" if heartbeat_age < 180 else "unhealthy"
+        else:
+            heartbeat_age = None
+            worker_status = "unknown"
+    except Exception:
+        heartbeat_age = None
+        worker_status = "error"
+
+    # Compute overall health
+    critical_tasks = [t for t in tasks if t.get("health") == "critical"]
+    degraded_tasks = [t for t in tasks if t.get("health") == "degraded"]
+
+    if worker_status != "healthy":
+        overall = "worker_down"
+    elif critical_tasks:
+        overall = "critical"
+    elif degraded_tasks:
+        overall = "degraded"
+    elif not tasks:
+        overall = "no_data"
+    else:
+        overall = "healthy"
+
+    return {
+        "overall_health": overall,
+        "worker_status": worker_status,
+        "worker_heartbeat_age_seconds": round(heartbeat_age) if heartbeat_age else None,
+        "tracked_tasks": len(tasks),
+        "critical_tasks": [t["task"] for t in critical_tasks],
+        "degraded_tasks": [t["task"] for t in degraded_tasks],
+        "tasks": tasks,
+    }
+
+
+@router.get("/celery/task-metrics/{task_name}")
+async def get_task_metrics_endpoint(task_name: str):
+    """Get detailed metrics for a specific task."""
+    from app.tasks.redis_state import get_task_metrics
+    return get_task_metrics(task_name)
 
 
 # ---------------------------------------------------------------------------

@@ -2,11 +2,17 @@
 
 Covers:
 - compute_odds_hash: deterministic hashing of odds data for change detection
+- Task metrics: module-level constants and import validation
 """
 
 import pytest
 
-from app.tasks.redis_state import compute_odds_hash
+from app.tasks.redis_state import (
+    compute_odds_hash,
+    TASK_METRICS_PREFIX,
+    TASK_METRICS_TTL,
+    _utc_now_iso,
+)
 
 
 def _make_event(event_id="evt1", bookmaker="fanduel", price=-150, point=None):
@@ -80,3 +86,37 @@ class TestComputeOddsHash:
         h = compute_odds_hash([{"id": "evt1"}])
         assert isinstance(h, str)
         assert len(h) == 32
+
+
+class TestTaskMetricsConstants:
+    """Test task metrics configuration constants."""
+
+    def test_prefix_format(self):
+        assert TASK_METRICS_PREFIX == "bainluck:task_metrics"
+
+    def test_ttl_is_48_hours(self):
+        assert TASK_METRICS_TTL == 172800  # 48 hours
+
+    def test_utc_now_iso_format(self):
+        """_utc_now_iso returns a valid ISO timestamp."""
+        result = _utc_now_iso()
+        assert isinstance(result, str)
+        assert "T" in result
+        # Should be parseable
+        from datetime import datetime
+        parsed = datetime.fromisoformat(result)
+        assert parsed is not None
+
+    def test_imports_exist(self):
+        """Verify all metrics functions are importable."""
+        from app.tasks.redis_state import (
+            record_task_success,
+            record_task_failure,
+            get_task_metrics,
+            get_all_task_metrics,
+        )
+        # Functions exist and are callable
+        assert callable(record_task_success)
+        assert callable(record_task_failure)
+        assert callable(get_task_metrics)
+        assert callable(get_all_task_metrics)

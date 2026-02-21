@@ -129,3 +129,148 @@ def update_poll_state(data_changed: bool, has_live_games: bool, new_hash: str):
 
     except Exception as e:
         print(f"Redis error in update_poll_state: {e}")
+
+
+# =============================================================================
+# Task-Level Success Metrics
+# =============================================================================
+
+# Redis key prefix for task metrics. Each task gets a hash:
+#   bainluck:task_metrics:{task_name} -> {
+#       last_success_at, last_failure_at, last_duration_ms,
+#       success_count_24h, failure_count_24h,
+#       last_result_summary (JSON), consecutive_failures
+#   }
+TASK_METRICS_PREFIX = "bainluck:task_metrics"
+# How long to keep metrics (48 hours — enough for dashboard + debugging)
+TASK_METRICS_TTL = 172800
+
+
+def record_task_success(task_name: str, duration_ms: float, result_summary: dict | None = None):
+    """
+    Record a successful task execution with key output metrics.
+
+    Args:
+        task_name: Short task identifier (e.g., "poll_odds", "espn_sync")
+        duration_ms: How long the task took
+        result_summary: Key-value pairs from the task's return dict
+                       (e.g., {"events_synced": 12, "errors": 0})
+    """
+    try:
+        r = get_redis_client()
+        key = f"{TASK_METRICS_PREFIX}:{task_name}"
+        now_iso = _utc_now_iso()
+
+        # Increment 24h success counter
+        success_key = f"{TASK_METRICS_PREFIX}:{task_name}:successes"
+        pipe = r.pipeline()
+        pipe.hset(key, mapping={
+            "last_success_at": now_iso,
+            "last_duration_ms": str(round(duration_ms)),
+            "last_result_summary": json.dumps(result_summary or {}),
+            "consecutive_failures": "0",
+        })
+        pipe.expire(key, TASK_METRICS_TTL)
+        pipe.incr(success_key)
+        pipe.expire(success_key, 86400)  # 24h rolling window
+        pipe.execute()
+    except Exception as e:
+        # Never let metrics recording break a task
+        pass
+
+
+def record_task_failure(task_name: str, duration_ms: float, error: str):
+    """Record a failed task execution."""
+    try:
+        r = get_redis_client()
+        key = f"{TASK_METRICS_PREFIX}:{task_name}"
+        now_iso = _utc_now_iso()
+
+        # Get current consecutive failures
+        current = int(r.hget(key, "consecutive_failures") or 0)
+
+        failure_key = f"{TASK_METRICS_PREFIX}:{task_name}:failures"
+        pipe = r.pipeline()
+        pipe.hset(key, mapping={
+            "last_failure_at": now_iso,
+            "last_duration_ms": str(round(duration_ms)),
+            "last_error": error[:500],  # Truncate long errors
+            "consecutive_failures": str(current + 1),
+        })
+        pipe.expire(key, TASK_METRICS_TTL)
+        pipe.incr(failure_key)
+        pipe.expire(failure_key, 86400)
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def get_task_metrics(task_name: str) -> dict:
+    """Get metrics for a specific task."""
+    try:
+        r = get_redis_client()
+        key = f"{TASK_METRICS_PREFIX}:{task_name}"
+        data = r.hgetall(key)
+        if not data:
+            return {"task": task_name, "status": "no_data"}
+
+        success_key = f"{TASK_METRICS_PREFIX}:{task_name}:successes"
+        failure_key = f"{TASK_METRICS_PREFIX}:{task_name}:failures"
+        successes_24h = int(r.get(success_key) or 0)
+        failures_24h = int(r.get(failure_key) or 0)
+
+        result = {"task": task_name, "successes_24h": successes_24h, "failures_24h": failures_24h}
+
+        for k, v in data.items():
+            k_str = k.decode() if isinstance(k, bytes) else k
+            v_str = v.decode() if isinstance(v, bytes) else v
+            if k_str == "last_result_summary":
+                try:
+                    result[k_str] = json.loads(v_str)
+                except (json.JSONDecodeError, TypeError):
+                    result[k_str] = v_str
+            else:
+                result[k_str] = v_str
+
+        # Compute health status
+        consecutive = int(result.get("consecutive_failures", 0))
+        if consecutive >= 5:
+            result["health"] = "critical"
+        elif consecutive >= 2:
+            result["health"] = "degraded"
+        elif successes_24h == 0 and failures_24h == 0:
+            result["health"] = "no_data"
+        else:
+            result["health"] = "healthy"
+
+        return result
+    except Exception as e:
+        return {"task": task_name, "status": "error", "error": str(e)}
+
+
+def get_all_task_metrics() -> list[dict]:
+    """Get metrics for all tracked tasks."""
+    try:
+        r = get_redis_client()
+        # Find all task metric keys
+        pattern = f"{TASK_METRICS_PREFIX}:*"
+        keys = r.keys(pattern)
+
+        # Extract unique task names (skip :successes and :failures counter keys)
+        task_names = set()
+        for key in keys:
+            key_str = key.decode() if isinstance(key, bytes) else key
+            parts = key_str.split(":")
+            if len(parts) == 3:
+                # bainluck:task_metrics:task_name
+                task_names.add(parts[2])
+
+        return [get_task_metrics(name) for name in sorted(task_names)]
+    except Exception as e:
+        return [{"status": "error", "error": str(e)}]
+
+
+def _utc_now_iso() -> str:
+    """Get current UTC time as ISO string."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
