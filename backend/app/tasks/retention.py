@@ -1,208 +1,273 @@
 """
 Snapshot retention — collapse consecutive identical rows to save DB space.
+
+Pure SQL implementation using window functions for constant memory usage.
+No snapshot rows are loaded into Python — all collapsing happens in the database.
 """
 
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import text
 
 from app.tasks.base import get_task_session
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Table-specific configuration
+# ---------------------------------------------------------------------------
+
+_TABLE_CONFIG = {
+    "odds": {
+        "table": "odds_snapshots",
+        "partition_col": "event_id",        # main partition key
+        "sub_partition_col": "bookmaker",   # sub-partition key
+        "value_col": "home_win_probability",
+        "parent_table": "odds_snapshots",   # for finding partition IDs
+    },
+    "winprob": {
+        "table": "win_prob_snapshots",
+        "partition_col": "event_id",
+        "sub_partition_col": "source",
+        "value_col": "home_win_probability",
+        "parent_table": "win_prob_snapshots",
+    },
+    "futures": {
+        "table": "futures_odds_snapshots",
+        "partition_col": "outcome_id",
+        "sub_partition_col": "bookmaker",
+        "value_col": "probability",
+        "parent_table": "futures_odds_snapshots",
+    },
+}
+
 
 async def _collapse_snapshots_impl(min_age_hours: int = 48, table: str = "odds", limit: int = 200):
-    from app.models import (
-        OddsSnapshot, WinProbSnapshot, FuturesOddsSnapshot,
-        FuturesOutcome, Event,
-    )
     from datetime import timedelta
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
-    total_deleted = 0
-    partitions_processed = 0
-
-    CHUNK_SIZE = 5000
-
-    if table == "odds":
-        # Find events with old snapshots, process in batches
-        async with get_task_session() as session:
-            result = await session.execute(
-                select(OddsSnapshot.event_id)
-                .where(OddsSnapshot.captured_at < cutoff)
-                .group_by(OddsSnapshot.event_id)
-                .limit(limit)
-            )
-            event_ids = [r[0] for r in result.fetchall()]
-
-        for event_id in event_ids:
-            # Each event gets its own session/transaction
-            async with get_task_session() as session:
-                deleted = await _collapse_table_for_partition(
-                    session,
-                    table_class=OddsSnapshot,
-                    partition_cols=[OddsSnapshot.event_id, OddsSnapshot.bookmaker],
-                    value_cols=[OddsSnapshot.home_win_probability],
-                    partition_values={"event_id": event_id},
-                    cutoff=cutoff,
-                    chunk_size=CHUNK_SIZE,
-                )
-                total_deleted += deleted
-            partitions_processed += 1
-
-    elif table == "winprob":
-        async with get_task_session() as session:
-            result = await session.execute(
-                select(WinProbSnapshot.event_id)
-                .where(WinProbSnapshot.captured_at < cutoff)
-                .group_by(WinProbSnapshot.event_id)
-                .limit(limit)
-            )
-            event_ids = [r[0] for r in result.fetchall()]
-
-        for event_id in event_ids:
-            async with get_task_session() as session:
-                deleted = await _collapse_table_for_partition(
-                    session,
-                    table_class=WinProbSnapshot,
-                    partition_cols=[WinProbSnapshot.event_id, WinProbSnapshot.source],
-                    value_cols=[WinProbSnapshot.home_win_probability],
-                    partition_values={"event_id": event_id},
-                    cutoff=cutoff,
-                    chunk_size=CHUNK_SIZE,
-                )
-                total_deleted += deleted
-            partitions_processed += 1
-
-    elif table == "futures":
-        async with get_task_session() as session:
-            result = await session.execute(
-                select(FuturesOddsSnapshot.outcome_id)
-                .where(FuturesOddsSnapshot.captured_at < cutoff)
-                .group_by(FuturesOddsSnapshot.outcome_id)
-                .limit(limit)
-            )
-            outcome_ids = [r[0] for r in result.fetchall()]
-
-        for outcome_id in outcome_ids:
-            async with get_task_session() as session:
-                deleted = await _collapse_table_for_partition(
-                    session,
-                    table_class=FuturesOddsSnapshot,
-                    partition_cols=[FuturesOddsSnapshot.outcome_id, FuturesOddsSnapshot.bookmaker],
-                    value_cols=[FuturesOddsSnapshot.probability],
-                    partition_values={"outcome_id": outcome_id},
-                    cutoff=cutoff,
-                    chunk_size=CHUNK_SIZE,
-                )
-                total_deleted += deleted
-            partitions_processed += 1
-
-    else:
+    if table not in _TABLE_CONFIG:
         return {"error": f"Unknown table: {table}. Use 'odds', 'winprob', or 'futures'."}
 
+    cfg = _TABLE_CONFIG[table]
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
+    total_deleted = 0
+    total_updated = 0
+    partitions_processed = 0
+
+    # Step 1: Find partition IDs with old snapshots (constant memory — just IDs)
+    async with get_task_session() as session:
+        result = await session.execute(
+            text(f"""
+                SELECT DISTINCT {cfg['partition_col']}
+                FROM {cfg['table']}
+                WHERE captured_at < :cutoff
+                LIMIT :lim
+            """),
+            {"cutoff": cutoff, "lim": limit},
+        )
+        partition_ids = [r[0] for r in result.fetchall()]
+
+    # Step 2: Process each partition entirely in SQL
+    for part_id in partition_ids:
+        async with get_task_session() as session:
+            deleted, updated = await _collapse_partition_sql(
+                session, cfg, part_id, cutoff
+            )
+            total_deleted += deleted
+            total_updated += updated
+        partitions_processed += 1
+
     logger.info(
-        f"Snapshot collapse [{table}]: {total_deleted} rows deleted "
-        f"across {partitions_processed} partitions"
+        f"Snapshot collapse [{table}]: {total_deleted} rows deleted, "
+        f"{total_updated} keepers updated across {partitions_processed} partitions"
     )
     return {
         "table": table,
         "rows_deleted": total_deleted,
+        "keepers_updated": total_updated,
         "partitions_processed": partitions_processed,
     }
 
 
-async def _collapse_table_for_partition(
-    session,
-    table_class,
-    partition_cols: list,
-    value_cols: list,
-    partition_values: dict,
-    cutoff,
-    chunk_size: int = 5000,
-) -> int:
-    """Collapse consecutive identical rows within a single partition key (e.g., one event).
+async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff: datetime) -> tuple[int, int]:
+    """Collapse consecutive identical rows for one partition using pure SQL.
 
-    Iterates over all distinct sub-partitions (e.g., per-bookmaker within an event),
-    finds consecutive rows with identical values, and merges them by:
-    - Keeping the first row (earliest captured_at)
-    - Setting its valid_until to the last row's captured_at (or valid_until)
-    - Summing reading_counts
-    - Deleting the duplicate rows
+    Uses window functions to identify runs of identical values, then:
+    1. Updates keepers (first row of each run) with aggregated valid_until + reading_count
+    2. Deletes non-keeper rows from runs of length > 1
 
-    Returns total rows deleted.
+    Returns (rows_deleted, keepers_updated).
     """
-    from sqlalchemy import delete
+    tbl = cfg["table"]
+    pcol = cfg["partition_col"]
+    scol = cfg["sub_partition_col"]
+    vcol = cfg["value_col"]
 
-    total_deleted = 0
+    # ------------------------------------------------------------------
+    # CTE-based approach:
+    #
+    # 1. ordered: all rows for this partition (before cutoff), with LAG()
+    #    to compare each row's value with the previous row in the same
+    #    (partition_col, sub_partition_col) group.
+    #
+    # 2. run_marked: flag each row as a "new run" boundary when the value
+    #    changes (or is the first row). Use IS DISTINCT FROM for NULL-safe
+    #    comparison.
+    #
+    # 3. run_grouped: assign a run_group_id via cumulative SUM of boundaries.
+    #
+    # 4. run_stats: for each run of length > 1, compute the keeper ID
+    #    (MIN(id)), last timestamp, and total reading count.
+    #
+    # Then UPDATE keepers and DELETE non-keepers.
+    # ------------------------------------------------------------------
 
-    # Get distinct sub-partition values (e.g., all bookmakers for this event)
-    # partition_cols[0] is the main partition (event_id/outcome_id) — filtered by partition_values
-    # partition_cols[1] is the sub-partition (bookmaker/source) — we iterate over these
-    main_col = partition_cols[0]
-    sub_col = partition_cols[1]
-
-    main_filter = main_col == list(partition_values.values())[0]
-
-    result = await session.execute(
-        select(sub_col).where(
-            main_filter,
-            table_class.captured_at < cutoff,
-        ).distinct()
-    )
-    sub_keys = [r[0] for r in result.fetchall()]
-
-    for sub_key in sub_keys:
-        # Fetch all rows for this partition, ordered by time
-        result = await session.execute(
-            select(table_class).where(
-                main_filter,
-                sub_col == sub_key,
-                table_class.captured_at < cutoff,
-            ).order_by(table_class.captured_at.asc())
+    # Step 1: Update keepers with aggregated valid_until and reading_count
+    update_sql = text(f"""
+        WITH ordered AS (
+            SELECT
+                id,
+                {scol},
+                captured_at,
+                valid_until,
+                reading_count,
+                {vcol},
+                LAG({vcol}) OVER (
+                    PARTITION BY {scol}
+                    ORDER BY captured_at, id
+                ) AS prev_value
+            FROM {tbl}
+            WHERE {pcol} = :part_id
+              AND captured_at < :cutoff
+        ),
+        run_marked AS (
+            SELECT
+                *,
+                CASE
+                    WHEN prev_value IS NULL AND {vcol} IS NULL THEN 0
+                    WHEN {vcol} IS DISTINCT FROM prev_value THEN 1
+                    ELSE 0
+                END AS is_new_run
+            FROM ordered
+        ),
+        run_grouped AS (
+            SELECT
+                *,
+                SUM(is_new_run) OVER (
+                    PARTITION BY {scol}
+                    ORDER BY captured_at, id
+                ) AS run_group
+            FROM run_marked
+        ),
+        run_stats AS (
+            SELECT
+                {scol} AS sub_key,
+                run_group,
+                MIN(id) AS keeper_id,
+                MAX(COALESCE(valid_until, captured_at)) AS last_time,
+                SUM(COALESCE(reading_count, 1)) AS total_readings,
+                COUNT(*) AS run_len
+            FROM run_grouped
+            GROUP BY {scol}, run_group
+            HAVING COUNT(*) > 1
         )
-        rows = result.scalars().all()
+        UPDATE {tbl} t
+        SET valid_until = rs.last_time,
+            reading_count = rs.total_readings
+        FROM run_stats rs
+        WHERE t.id = rs.keeper_id
+    """)
 
-        if len(rows) <= 1:
-            continue
+    result = await session.execute(update_sql, {"part_id": partition_id, "cutoff": cutoff})
+    keepers_updated = result.rowcount
 
-        # Walk through rows, finding runs of identical values
-        ids_to_delete = []
-        keeper = rows[0]
-        value_col = value_cols[0]
+    # Step 2: Delete non-keeper rows from runs of length > 1
+    # We need to re-run the CTE to identify which rows are NOT keepers
+    delete_sql = text(f"""
+        WITH ordered AS (
+            SELECT
+                id,
+                {scol},
+                captured_at,
+                {vcol},
+                LAG({vcol}) OVER (
+                    PARTITION BY {scol}
+                    ORDER BY captured_at, id
+                ) AS prev_value
+            FROM {tbl}
+            WHERE {pcol} = :part_id
+              AND captured_at < :cutoff
+        ),
+        run_marked AS (
+            SELECT
+                *,
+                CASE
+                    WHEN prev_value IS NULL AND {vcol} IS NULL THEN 0
+                    WHEN {vcol} IS DISTINCT FROM prev_value THEN 1
+                    ELSE 0
+                END AS is_new_run
+            FROM ordered
+        ),
+        run_grouped AS (
+            SELECT
+                *,
+                SUM(is_new_run) OVER (
+                    PARTITION BY {scol}
+                    ORDER BY captured_at, id
+                ) AS run_group
+            FROM run_marked
+        ),
+        keepers AS (
+            SELECT
+                {scol} AS sub_key,
+                run_group,
+                MIN(id) AS keeper_id
+            FROM run_grouped
+            GROUP BY {scol}, run_group
+            HAVING COUNT(*) > 1
+        ),
+        to_delete AS (
+            SELECT rg.id
+            FROM run_grouped rg
+            JOIN keepers k
+              ON rg.{scol} = k.sub_key
+             AND rg.run_group = k.run_group
+             AND rg.id != k.keeper_id
+        )
+        DELETE FROM {tbl}
+        WHERE id IN (SELECT id FROM to_delete)
+    """)
 
-        for row in rows[1:]:
-            keeper_val = getattr(keeper, value_col.key)
-            row_val = getattr(row, value_col.key)
+    result = await session.execute(delete_sql, {"part_id": partition_id, "cutoff": cutoff})
+    rows_deleted = result.rowcount
 
-            # Exact match comparison
-            vals_equal = False
-            if keeper_val is None and row_val is None:
-                vals_equal = True
-            elif keeper_val is not None and row_val is not None:
-                vals_equal = float(keeper_val) == float(row_val)
+    # Step 3: Set valid_until on single rows that are followed by a different value
+    # (When a value changes, the previous keeper's valid_until should be set to the
+    # next row's captured_at, matching the Python implementation's behavior)
+    bridge_sql = text(f"""
+        WITH ordered AS (
+            SELECT
+                id,
+                {scol},
+                captured_at,
+                valid_until,
+                LEAD(captured_at) OVER (
+                    PARTITION BY {scol}
+                    ORDER BY captured_at, id
+                ) AS next_captured_at
+            FROM {tbl}
+            WHERE {pcol} = :part_id
+              AND captured_at < :cutoff
+        )
+        UPDATE {tbl} t
+        SET valid_until = o.next_captured_at
+        FROM ordered o
+        WHERE t.id = o.id
+          AND t.valid_until IS NULL
+          AND o.next_captured_at IS NOT NULL
+    """)
 
-            if vals_equal:
-                # Same value — absorb into keeper
-                last_time = row.valid_until or row.captured_at
-                keeper.valid_until = last_time
-                keeper.reading_count = (keeper.reading_count or 1) + (row.reading_count or 1)
-                ids_to_delete.append(row.id)
-            else:
-                # Value changed — this row becomes the new keeper
-                if keeper.valid_until is None:
-                    keeper.valid_until = row.captured_at
-                keeper = row
+    await session.execute(bridge_sql, {"part_id": partition_id, "cutoff": cutoff})
 
-        # Delete absorbed rows in chunks
-        for i in range(0, len(ids_to_delete), chunk_size):
-            chunk = ids_to_delete[i:i + chunk_size]
-            await session.execute(
-                delete(table_class).where(table_class.id.in_(chunk))
-            )
-            await session.flush()
-
-        total_deleted += len(ids_to_delete)
-
-    return total_deleted
+    return rows_deleted, keepers_updated

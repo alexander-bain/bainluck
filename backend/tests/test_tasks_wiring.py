@@ -96,9 +96,10 @@ class TestModuleImports:
     def test_import_retention(self):
         from app.tasks.retention import (
             _collapse_snapshots_impl,
-            _collapse_table_for_partition,
+            _collapse_partition_sql,
         )
         assert callable(_collapse_snapshots_impl)
+        assert callable(_collapse_partition_sql)
 
     def test_import_roster_sync(self):
         from app.tasks.roster_sync import _sync_rosters
