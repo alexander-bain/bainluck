@@ -173,6 +173,69 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
     return None
 
 
+def estimate_seconds_remaining_from_wall_clock(
+    commence_time: "datetime | None",
+    sport_key: str,
+    now: "datetime | None" = None,
+) -> float | None:
+    """
+    Estimate seconds remaining from wall-clock elapsed time.
+
+    This is a fallback for when ESPN sync doesn't provide game clock/period
+    (e.g., college teams that fail name matching). Uses average real-time
+    game durations which are longer than clock time due to stoppages.
+
+    Returns None if game hasn't started, sport isn't supported, or
+    the estimated time remaining is negative (game likely over).
+    """
+    if not commence_time:
+        return None
+
+    sport_key = _normalize_sport_key(sport_key)
+    params = SPORT_PARAMS.get(sport_key)
+    if not params:
+        return None
+
+    _, total_game_seconds = params
+
+    # Average real-time duration of games (including stoppages, halftime, etc.)
+    # These are deliberately conservative (longer) to avoid prematurely
+    # declaring games over — it's better to slightly overestimate remaining time.
+    _WALL_CLOCK_DURATIONS = {
+        "football_nfl": 11700,      # ~3h 15m (NFL average ~3h 12m)
+        "football_ncaaf": 12600,    # ~3h 30m (college games run longer)
+        "basketball_nba": 9000,     # ~2h 30m (NBA average ~2h 15m)
+        "basketball_ncaab": 8100,   # ~2h 15m
+        "basketball_wncaab": 8100,  # ~2h 15m
+        "hockey_nhl": 9000,         # ~2h 30m (NHL average ~2h 20m)
+    }
+
+    wall_duration = _WALL_CLOCK_DURATIONS.get(sport_key)
+    if not wall_duration:
+        return None
+
+    if now is None:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
+    elapsed_wall = (now - commence_time).total_seconds()
+    if elapsed_wall < 0:
+        return None  # Game hasn't started yet
+
+    # Map wall-clock progress to game-clock progress
+    # wall_fraction is how far through the real-time duration we are
+    wall_fraction = min(elapsed_wall / wall_duration, 1.0)
+
+    # Convert to game seconds remaining
+    game_seconds_remaining = total_game_seconds * (1.0 - wall_fraction)
+
+    # Don't return negative or essentially-zero values
+    if game_seconds_remaining < 1.0:
+        return None
+
+    return game_seconds_remaining
+
+
 def compute_statistical_win_prob(
     home_score: int,
     away_score: int,
@@ -180,6 +243,7 @@ def compute_statistical_win_prob(
     period: str | None,
     sport_key: str,
     pregame_spread: float | None = None,
+    commence_time: "datetime | None" = None,
 ) -> float | None:
     """
     Compute home team win probability from current game state.
@@ -192,6 +256,9 @@ def compute_statistical_win_prob(
         sport_key: Sport key (e.g., "football_nfl")
         pregame_spread: Pregame Vegas spread (negative = home favored).
                        If None, assumes 0 (pick'em).
+        commence_time: Game start time (UTC). Used as fallback when
+                      clock/period aren't available — estimates remaining
+                      time from wall-clock elapsed time.
 
     Returns:
         Home win probability (0.0-1.0) or None if game state can't be parsed.
@@ -204,6 +271,11 @@ def compute_statistical_win_prob(
     base_std, total_seconds = params
 
     seconds_remaining = parse_game_clock(clock, period, sport_key)
+    if seconds_remaining is None and commence_time is not None:
+        # Fallback: estimate from wall-clock elapsed time
+        seconds_remaining = estimate_seconds_remaining_from_wall_clock(
+            commence_time, sport_key
+        )
     if seconds_remaining is None:
         return None
 

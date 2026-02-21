@@ -1,9 +1,11 @@
 """Tests for the statistical win probability model."""
 
 import pytest
+from datetime import datetime, timezone, timedelta
 from app.utils.win_probability import (
     _normalize_sport_key,
     compute_statistical_win_prob,
+    estimate_seconds_remaining_from_wall_clock,
     parse_game_clock,
 )
 
@@ -389,3 +391,163 @@ class TestAllSportsWithDatabaseKeys:
         )
         assert result is not None, f"compute_statistical_win_prob returned None for db key {sport_key!r}"
         assert 0.001 <= result <= 0.999
+
+
+class TestWallClockEstimation:
+    """Test wall-clock time remaining estimation (fallback for ESPN mismatches)."""
+
+    def test_game_not_started(self):
+        """Before commence_time, should return None."""
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        result = estimate_seconds_remaining_from_wall_clock(future, "basketball_nba")
+        assert result is None
+
+    def test_none_commence_time(self):
+        result = estimate_seconds_remaining_from_wall_clock(None, "basketball_nba")
+        assert result is None
+
+    def test_unsupported_sport(self):
+        start = datetime.now(timezone.utc) - timedelta(minutes=30)
+        result = estimate_seconds_remaining_from_wall_clock(start, "cricket_test")
+        assert result is None
+
+    def test_nfl_just_started(self):
+        """NFL game just started — most game time remaining."""
+        start = datetime.now(timezone.utc) - timedelta(minutes=5)
+        result = estimate_seconds_remaining_from_wall_clock(start, "americanfootball_nfl")
+        assert result is not None
+        # Should be close to full game (3600s) but slightly less
+        assert 3400 < result < 3600
+
+    def test_nba_halftime(self):
+        """NBA game about 1h 15m in — roughly halftime."""
+        start = datetime.now(timezone.utc) - timedelta(minutes=75)
+        result = estimate_seconds_remaining_from_wall_clock(start, "basketball_nba")
+        assert result is not None
+        # ~half of 2880s game clock remaining
+        assert 1000 < result < 2000
+
+    def test_nfl_nearly_over(self):
+        """NFL game 3 hours in — very little time left."""
+        start = datetime.now(timezone.utc) - timedelta(hours=3)
+        result = estimate_seconds_remaining_from_wall_clock(start, "americanfootball_nfl")
+        assert result is not None
+        assert result < 600  # Less than 10 game-minutes
+
+    def test_game_past_expected_duration(self):
+        """Game that's run past expected wall duration — should return None."""
+        start = datetime.now(timezone.utc) - timedelta(hours=5)
+        result = estimate_seconds_remaining_from_wall_clock(start, "basketball_nba")
+        assert result is None
+
+    def test_nhl_game(self):
+        """NHL game 1 hour in."""
+        start = datetime.now(timezone.utc) - timedelta(hours=1)
+        result = estimate_seconds_remaining_from_wall_clock(start, "icehockey_nhl")
+        assert result is not None
+        assert 1500 < result < 3000
+
+    def test_ncaaf_game(self):
+        """College football game uses NCAAF wall duration."""
+        start = datetime.now(timezone.utc) - timedelta(hours=2)
+        result = estimate_seconds_remaining_from_wall_clock(
+            start, "americanfootball_ncaaf"
+        )
+        assert result is not None
+        assert result > 0
+
+    def test_explicit_now_parameter(self):
+        """Using explicit 'now' parameter instead of real clock."""
+        start = datetime(2026, 2, 20, 19, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 2, 20, 20, 30, 0, tzinfo=timezone.utc)  # 90 min later
+        result = estimate_seconds_remaining_from_wall_clock(
+            start, "basketball_nba", now=now
+        )
+        assert result is not None
+        assert result > 0
+
+    def test_sport_key_aliases_work(self):
+        """Verify Odds API sport keys are properly aliased."""
+        start = datetime.now(timezone.utc) - timedelta(minutes=30)
+        nfl = estimate_seconds_remaining_from_wall_clock(start, "americanfootball_nfl")
+        nhl = estimate_seconds_remaining_from_wall_clock(start, "icehockey_nhl")
+        assert nfl is not None
+        assert nhl is not None
+
+
+class TestComputeWinProbWithWallClock:
+    """Test that compute_statistical_win_prob uses wall-clock fallback."""
+
+    def test_fallback_when_no_clock_no_period(self):
+        """Without clock/period but with commence_time, should still compute."""
+        start = datetime.now(timezone.utc) - timedelta(hours=1)
+        result = compute_statistical_win_prob(
+            home_score=14, away_score=7,
+            clock=None, period=None,
+            sport_key="americanfootball_nfl",
+            pregame_spread=-3,
+            commence_time=start,
+        )
+        assert result is not None
+        assert result > 0.5  # Home leading and favored
+
+    def test_prefers_espn_clock_over_wall_clock(self):
+        """When clock/period are available, should use them (not wall clock)."""
+        start = datetime.now(timezone.utc) - timedelta(hours=1)
+        # With ESPN clock
+        with_clock = compute_statistical_win_prob(
+            home_score=14, away_score=14,
+            clock="7:30", period="Q3",
+            sport_key="americanfootball_nfl",
+            pregame_spread=0,
+            commence_time=start,
+        )
+        # Without ESPN clock (wall-clock fallback)
+        without_clock = compute_statistical_win_prob(
+            home_score=14, away_score=14,
+            clock=None, period=None,
+            sport_key="americanfootball_nfl",
+            pregame_spread=0,
+            commence_time=start,
+        )
+        # Both should return values but they'll differ because wall-clock
+        # estimation is approximate
+        assert with_clock is not None
+        assert without_clock is not None
+        # Both should be roughly 50% for tied game with no spread
+        assert 0.4 < with_clock < 0.6
+        assert 0.4 < without_clock < 0.6
+
+    def test_no_clock_no_commence_returns_none(self):
+        """Without clock AND commence_time, should return None."""
+        result = compute_statistical_win_prob(
+            home_score=14, away_score=7,
+            clock=None, period=None,
+            sport_key="americanfootball_nfl",
+            commence_time=None,
+        )
+        assert result is None
+
+    def test_nba_wall_clock_fallback(self):
+        """NBA game using wall-clock fallback."""
+        start = datetime.now(timezone.utc) - timedelta(minutes=90)
+        result = compute_statistical_win_prob(
+            home_score=55, away_score=48,
+            clock=None, period=None,
+            sport_key="basketball_nba",
+            commence_time=start,
+        )
+        assert result is not None
+        assert result > 0.5  # Home leading
+
+    def test_ncaab_wall_clock_fallback(self):
+        """College basketball — the primary use case for this fallback."""
+        start = datetime.now(timezone.utc) - timedelta(minutes=60)
+        result = compute_statistical_win_prob(
+            home_score=35, away_score=30,
+            clock=None, period=None,
+            sport_key="basketball_ncaab",
+            commence_time=start,
+        )
+        assert result is not None
+        assert result > 0.5

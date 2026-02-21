@@ -676,16 +676,16 @@ async def _poll_all_odds():
                             )
                             scores_updated += 1
 
-                            # Compute stat model for live events with score + clock data
-                            # This runs independently of ESPN sync, so games that
-                            # ESPN name-matching misses still get stat model WP
+                            # Compute stat model for live events with score data.
+                            # Prefers ESPN clock/period but falls back to wall-clock
+                            # estimation from commence_time when ESPN sync misses
+                            # (common for college teams with name mismatches).
                             if (
                                 event_obj
                                 and event_status == "live"
                                 and home_score is not None
                                 and away_score is not None
-                                and event_obj.game_clock
-                                and event_obj.period
+                                and (event_obj.game_clock or event_obj.commence_time)
                             ):
                                 try:
                                     from app.utils.win_probability import compute_statistical_win_prob
@@ -701,6 +701,7 @@ async def _poll_all_odds():
                                         period=event_obj.period,
                                         sport_key=sport_key,
                                         pregame_spread=pregame_spread,
+                                        commence_time=event_obj.commence_time,
                                     )
                                     if stat_wp is not None:
                                         # Update event's win_probability_sources
@@ -727,6 +728,7 @@ async def _poll_all_odds():
                                                     "away_score": away_score,
                                                     "pregame_spread": pregame_spread,
                                                     "source": "odds_poll",
+                                                    "time_source": "espn" if event_obj.game_clock else "wall_clock",
                                                 },
                                             )
                                             if is_new:
