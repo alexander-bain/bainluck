@@ -2596,6 +2596,212 @@ async def prediction_market_debug(
     }
 
 
+@router.get("/prediction-markets/event-debug")
+async def prediction_market_event_debug(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    event_id: int = Query(..., description="Event ID to debug"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Debug prediction market matching for a specific event.
+
+    Shows:
+    - Event details (teams, status, commence_time)
+    - Any linked FuturesMarkets (with source, name, external_id)
+    - Outcomes for each linked market (name, probability, bid/ask)
+    - Any win_prob_snapshots written for this event (by source)
+    - Potential unlinked markets that SHOULD match (searches by team name)
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import or_
+    from app.models.models import (
+        FuturesMarket, FuturesOutcome, WinProbSnapshot,
+    )
+    from app.utils.prediction_market_matching import (
+        is_game_level_market, extract_matchup, extract_matchup_with_ticker_fallback,
+        extract_teams_from_ticker, extract_game_date_from_ticker,
+        match_teams_to_event, find_moneyline_outcome, _fuzzy_team_match,
+    )
+
+    # Load event
+    event_result = await db.execute(select(Event).where(Event.id == event_id))
+    event = event_result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+
+    result = {
+        "event": {
+            "id": event.id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            "status": event.status,
+            "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+            "sport_id": event.sport_id,
+        },
+        "linked_markets": [],
+        "win_prob_snapshots": {},
+        "potential_unlinked_matches": [],
+        "diagnosis": [],
+    }
+
+    # 1. Find linked markets
+    linked_result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.event_id == event_id,
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+        )
+    )
+    linked_markets = linked_result.scalars().all()
+
+    for market in linked_markets:
+        # Get outcomes
+        outcome_result = await db.execute(
+            select(FuturesOutcome)
+            .where(FuturesOutcome.market_id == market.id)
+            .order_by(FuturesOutcome.rank)
+        )
+        outcomes = outcome_result.scalars().all()
+
+        # Try matchup extraction
+        matchup = extract_matchup_with_ticker_fallback(
+            market.name, external_id=market.external_id,
+        )
+
+        # Try find_moneyline_outcome
+        ml_result = None
+        ml_diagnosis = "no matchup extracted"
+        if matchup:
+            ml_result = find_moneyline_outcome(
+                outcomes, matchup,
+                event.home_team_name, event.away_team_name,
+            )
+            if ml_result:
+                ml_diagnosis = f"found: outcome='{ml_result[0].name}', yes_is_home={ml_result[1]}, prob={float(ml_result[0].current_probability)}"
+            else:
+                ml_diagnosis = f"find_moneyline_outcome returned None (matchup: {matchup.team_a} vs {matchup.team_b}, format={matchup.format_type})"
+
+        market_info = {
+            "id": market.id,
+            "source": market.source,
+            "name": market.name,
+            "external_id": market.external_id,
+            "status": market.status,
+            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+            "matchup": {
+                "team_a": matchup.team_a if matchup else None,
+                "team_b": matchup.team_b if matchup else None,
+                "format_type": matchup.format_type if matchup else None,
+            } if matchup else None,
+            "moneyline_diagnosis": ml_diagnosis,
+            "outcomes": [
+                {
+                    "id": o.id,
+                    "name": o.name,
+                    "external_id": o.external_id,
+                    "probability": float(o.current_probability) if o.current_probability is not None else None,
+                    "yes_bid": float(o.current_yes_bid) if o.current_yes_bid is not None else None,
+                    "yes_ask": float(o.current_yes_ask) if o.current_yes_ask is not None else None,
+                    "fuzzy_matches_home": _fuzzy_team_match(o.name or "", event.home_team_name),
+                    "fuzzy_matches_away": _fuzzy_team_match(o.name or "", event.away_team_name),
+                }
+                for o in outcomes
+            ],
+        }
+        result["linked_markets"].append(market_info)
+
+    # 2. Check win_prob_snapshots for this event
+    wp_result = await db.execute(
+        select(WinProbSnapshot)
+        .where(WinProbSnapshot.event_id == event_id)
+        .order_by(WinProbSnapshot.captured_at.desc())
+        .limit(50)
+    )
+    wp_snapshots = wp_result.scalars().all()
+
+    sources_seen = {}
+    for snap in wp_snapshots:
+        if snap.source not in sources_seen:
+            sources_seen[snap.source] = {
+                "count": 0,
+                "latest": None,
+                "latest_home_prob": None,
+            }
+        sources_seen[snap.source]["count"] += 1
+        if sources_seen[snap.source]["latest"] is None:
+            sources_seen[snap.source]["latest"] = snap.captured_at.isoformat()
+            sources_seen[snap.source]["latest_home_prob"] = float(snap.home_win_probability) if snap.home_win_probability else None
+    result["win_prob_snapshots"] = sources_seen
+
+    # 3. Search for potential unlinked markets that should match this event
+    # Search by team names in market name or external_id
+    home_short = event.home_team_name.split()[-1] if event.home_team_name else ""
+    away_short = event.away_team_name.split()[-1] if event.away_team_name else ""
+
+    search_conditions = []
+    for team in [event.home_team_name, event.away_team_name, home_short, away_short]:
+        if team and len(team) >= 3:
+            pattern = f"%{team}%"
+            search_conditions.append(FuturesMarket.name.ilike(pattern))
+            search_conditions.append(FuturesMarket.external_id.ilike(pattern))
+
+    if search_conditions:
+        potential_result = await db.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                FuturesMarket.event_id.is_(None),
+                or_(*search_conditions),
+            )
+            .limit(20)
+        )
+        potential_markets = potential_result.scalars().all()
+
+        for market in potential_markets:
+            ticker_date = extract_game_date_from_ticker(market.external_id)
+            ticker_teams = extract_teams_from_ticker(market.external_id)
+            is_game = is_game_level_market(
+                market.name, market.category,
+                external_id=market.external_id,
+            )
+            matchup = extract_matchup_with_ticker_fallback(
+                market.name, external_id=market.external_id,
+            )
+
+            result["potential_unlinked_matches"].append({
+                "id": market.id,
+                "source": market.source,
+                "name": market.name,
+                "external_id": market.external_id,
+                "status": market.status,
+                "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                "is_game_level": is_game,
+                "ticker_game_date": ticker_date.isoformat() if ticker_date else None,
+                "ticker_teams": list(ticker_teams) if ticker_teams else None,
+                "matchup_extracted": {
+                    "team_a": matchup.team_a,
+                    "team_b": matchup.team_b,
+                    "format_type": matchup.format_type,
+                } if matchup else None,
+            })
+
+    # 4. Generate diagnosis
+    if not linked_markets and not result["potential_unlinked_matches"]:
+        result["diagnosis"].append("No linked or potential markets found. Kalshi/Polymarket may not have a market for this game, or it hasn't been polled yet.")
+    elif not linked_markets and result["potential_unlinked_matches"]:
+        result["diagnosis"].append(f"Found {len(result['potential_unlinked_matches'])} potential markets but none are linked. The matching task may not have run, or time window / team name matching is failing.")
+    elif linked_markets and not sources_seen:
+        result["diagnosis"].append("Markets are linked but no win_prob_snapshots exist. Check find_moneyline_outcome — outcome names may not match team names, or probability values may be NULL/0/1.")
+    elif linked_markets and sources_seen:
+        for src, info in sources_seen.items():
+            result["diagnosis"].append(f"Source '{src}': {info['count']} snapshots, latest at {info['latest']} (home_prob={info['latest_home_prob']})")
+
+    return result
+
+
 @router.post("/prediction-markets/link")
 async def manual_link_prediction_market(
     secret: str = Query(..., description="Admin secret for authorization"),
