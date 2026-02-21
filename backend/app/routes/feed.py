@@ -91,7 +91,9 @@ async def get_feed(
     # Ensure the feed has a mix of events and futures.
     # Without this, futures can dominate (they get "resolving soon" + "multi source"
     # bonuses that events don't have).
-    feed_items = _ensure_feed_diversity(feed_items, limit)
+    # For anonymous users, enforce a stronger event bias (events are the core product).
+    is_anonymous = not ctx.is_authenticated
+    feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=0.6 if is_anonymous else 0.4)
 
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]
@@ -263,9 +265,9 @@ async def _score_events(
 
         # Lower the threshold for personalized items — if the user follows a team,
         # surface it even at lower base scores.
-        # Anonymous threshold: tier 4 events start at -15 so they still need 15+ from
-        # other signals. Tier 1-3 events always pass (tier 1 alone = 20).
-        min_score = 10 if p_result.is_personalized else 15
+        # Anonymous threshold: 20 means tier 1 events always pass (tier 1 = 20),
+        # tier 2 need some signal (close, live, starting soon), tier 3-4 need a lot.
+        min_score = 10 if p_result.is_personalized else 20
         if personalized_score < min_score:
             continue
 
@@ -428,7 +430,11 @@ async def _score_futures(
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
-        min_score = 10 if p_result.is_personalized else 20
+        # Anonymous futures need a high bar — only show futures with real action
+        # (leader changes, major movement, source divergence). Without this, generic
+        # championship futures with "resolving soon" + "multi_source" bonuses flood
+        # the anonymous feed with uncompelling content.
+        min_score = 10 if p_result.is_personalized else 40
         if personalized_score < min_score:
             continue
 
@@ -522,6 +528,7 @@ async def _get_canonical_source_counts(db: AsyncSession) -> dict[str, int]:
 def _ensure_feed_diversity(
     items: list[dict],
     target_size: int,
+    event_pct: float = 0.4,
 ) -> list[dict]:
     """
     Ensure the feed has a healthy mix of events and futures.
@@ -531,7 +538,7 @@ def _ensure_feed_diversity(
     bonuses that events don't have.
 
     Strategy:
-    - Reserve at least 40% of slots for events (if available).
+    - Reserve at least event_pct of slots for events (if available).
     - Among the top N items, interleave so events aren't all pushed down.
     - Preserves score ordering within each type.
     """
@@ -545,8 +552,8 @@ def _ensure_feed_diversity(
     if not events or not futures:
         return items
 
-    # Determine minimum event slots (40% of target, at least 3)
-    min_event_slots = max(3, int(target_size * 0.4))
+    # Determine minimum event slots (event_pct of target, at least 3)
+    min_event_slots = max(3, int(target_size * event_pct))
     min_event_slots = min(min_event_slots, len(events))
 
     # Check if the natural ordering already has enough events in the top N

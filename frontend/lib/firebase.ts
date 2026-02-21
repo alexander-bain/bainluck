@@ -288,7 +288,6 @@ export async function signInWithGoogle(): Promise<string | null> {
         "signInWithCredential"
       );
       console.log("[Firebase] signInWithCredential succeeded for", result.user.email);
-      clearBackendAuth(); // Don't need fallback
       return await result.user.getIdToken();
     } catch (credError: unknown) {
       const authError = credError as { code?: string; message?: string };
@@ -299,7 +298,7 @@ export async function signInWithGoogle(): Promise<string | null> {
       );
     }
 
-    // Attempt 2: Exchange via backend → signInWithCustomToken
+    // Attempt 2: Exchange via backend → get user info + custom token
     let backendData: {
       custom_token?: string;
       id_token?: string;
@@ -333,35 +332,16 @@ export async function signInWithGoogle(): Promise<string | null> {
       return null;
     }
 
-    if (!backendData?.custom_token) {
-      console.error("[Firebase] No custom token in backend response");
+    if (!backendData?.uid) {
+      console.error("[Firebase] No uid in backend response");
       return null;
     }
 
-    // Try signInWithCustomToken (also needs identitytoolkit — may fail on Safari)
-    try {
-      const result = await withTimeout(
-        signInWithCustomToken(authInstance, backendData.custom_token),
-        4000,
-        "signInWithCustomToken"
-      );
-      console.log("[Firebase] signInWithCustomToken succeeded for", result.user.email || result.user.uid);
-      clearBackendAuth(); // Don't need fallback
-      return await result.user.getIdToken();
-    } catch (customTokenError: unknown) {
-      const ctError = customTokenError as { code?: string; message?: string };
-      console.warn(
-        "[Firebase] signInWithCustomToken also failed:",
-        ctError.message || ctError.code,
-        "- falling back to backend-only auth"
-      );
-    }
-
-    // Attempt 3: Backend-only auth (Safari ITP fully blocks Firebase)
-    // The backend already verified the Google token and gave us user info.
-    // Store it locally and use it directly for API calls.
-    if (backendData.id_token && backendData.uid) {
-      console.log("[Firebase] Using backend-only auth for", backendData.email || backendData.uid);
+    // ALWAYS store backend auth as a safety net BEFORE trying signInWithCustomToken.
+    // On Safari, signInWithCustomToken may succeed momentarily but the Firebase
+    // session can be killed by ITP. Having backend auth stored means the
+    // onAuthChange listener can recover when Firebase reports no user.
+    if (backendData.id_token) {
       storeBackendAuth({
         uid: backendData.uid,
         email: backendData.email || null,
@@ -370,10 +350,38 @@ export async function signInWithGoogle(): Promise<string | null> {
         idToken: backendData.id_token,
         expiresAt: Date.now() + (backendData.expires_in || 3600) * 1000,
       });
+    }
+
+    // Try signInWithCustomToken (also needs identitytoolkit — may fail on Safari)
+    if (backendData.custom_token) {
+      try {
+        const result = await withTimeout(
+          signInWithCustomToken(authInstance, backendData.custom_token),
+          4000,
+          "signInWithCustomToken"
+        );
+        console.log("[Firebase] signInWithCustomToken succeeded for", result.user.email || result.user.uid);
+        // Note: we do NOT clear backend auth here. Safari ITP can kill the
+        // Firebase session at any time, and we need the fallback available.
+        return await result.user.getIdToken();
+      } catch (customTokenError: unknown) {
+        const ctError = customTokenError as { code?: string; message?: string };
+        console.warn(
+          "[Firebase] signInWithCustomToken also failed:",
+          ctError.message || ctError.code,
+          "- using backend-only auth"
+        );
+      }
+    }
+
+    // Attempt 3: Backend-only auth (Safari ITP fully blocks Firebase)
+    // Backend auth was already stored above. Return the token.
+    if (backendData.id_token) {
+      console.log("[Firebase] Using backend-only auth for", backendData.email || backendData.uid);
       return backendData.id_token;
     }
 
-    console.error("[Firebase] Backend response missing id_token/uid for fallback auth");
+    console.error("[Firebase] Backend response missing id_token for fallback auth");
     return null;
   } catch (error) {
     console.error("[Firebase] Sign-in error:", error);

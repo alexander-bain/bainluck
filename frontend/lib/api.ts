@@ -179,6 +179,36 @@ export async function searchEvents(params: {
 }
 
 /**
+ * Typeahead search — lightweight suggestions for the search bar
+ */
+export interface TypeaheadSuggestion {
+  type: "team" | "event" | "futures";
+  text: string;
+  // Team fields
+  abbreviation?: string;
+  logo?: string;
+  // Event fields
+  event_id?: number;
+  status?: string;
+  sport?: string;
+  commence_time?: string;
+  // Futures fields
+  market_id?: number;
+  market_tier?: number;
+}
+
+export interface TypeaheadResponse {
+  suggestions: TypeaheadSuggestion[];
+  query: string;
+}
+
+export async function fetchTypeahead(q: string): Promise<TypeaheadResponse> {
+  return apiFetch<TypeaheadResponse>(
+    `/api/events/typeahead?q=${encodeURIComponent(q)}`
+  );
+}
+
+/**
  * Fetch all-time highest and lowest Pulse events
  */
 export async function fetchPulseRankings(params?: {
@@ -438,6 +468,63 @@ export async function fetchFeed(params?: {
 
   const query = searchParams.toString();
   return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`);
+}
+
+// ============================================================================
+// Market Was Wrong API
+// ============================================================================
+
+export interface MarketMovesItem {
+  type: "upset" | "market_error" | "futures_mover";
+  score: number;
+  description: string;
+  // Event upset / market error fields
+  event_id?: number;
+  sport?: string;
+  sport_name?: string;
+  home_team?: string;
+  away_team?: string;
+  home_score?: number;
+  away_score?: number;
+  winner?: string;
+  loser?: string;
+  winner_score?: number;
+  loser_score?: number;
+  winner_opening_prob?: number;
+  loser_opening_prob?: number;
+  market_error?: number;
+  is_upset?: boolean;
+  commence_time?: string;
+  // Futures mover fields
+  market_id?: number;
+  market_name?: string;
+  market_tier?: number;
+  llm_sport_category?: string;
+  outcome_name?: string;
+  current_probability?: number;
+  change_24h?: number;
+  direction?: string;
+}
+
+export interface MarketMovesResponse {
+  items: MarketMovesItem[];
+  total: number;
+  hours: number;
+  generated_at: string;
+}
+
+/**
+ * Fetch 'The Market Was Wrong' — recent upsets and big market surprises
+ */
+export async function fetchMarketMoves(params?: {
+  hours?: number;
+  limit?: number;
+}): Promise<MarketMovesResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.hours) searchParams.set("hours", params.hours.toString());
+  if (params?.limit) searchParams.set("limit", params.limit.toString());
+  const query = searchParams.toString();
+  return apiFetch<MarketMovesResponse>(`/api/market-moves${query ? `?${query}` : ""}`);
 }
 
 // ============================================================================

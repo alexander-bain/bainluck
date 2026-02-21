@@ -7,7 +7,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
 import dynamic from "next/dynamic";
 import UserMenu from "@/components/UserMenu";
-const SearchBox = dynamic(() => import("@/components/SearchBox"), { ssr: false });
+const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
 import SWRProvider from "@/components/SWRProvider";
 import { Analytics } from "@vercel/analytics/next";
 
@@ -58,8 +58,19 @@ export default function RootLayout({
                       </span>
                     </Link>
 
-                    <div className="flex items-center gap-4">
-                      <SearchBox />
+                    <div className="flex items-center gap-3 sm:gap-4">
+                      {/* Mobile: search icon link */}
+                      <Link
+                        href="/search"
+                        className="sm:hidden text-slate hover:text-graphite transition-colors p-1"
+                        aria-label="Search"
+                      >
+                        <span className="text-lg">&#x1f50d;</span>
+                      </Link>
+                      {/* Desktop: full search bar */}
+                      <div className="hidden sm:block w-64 lg:w-80">
+                        <SearchBar compact />
+                      </div>
                       <UserMenu />
                     </div>
                   </div>
@@ -84,6 +95,14 @@ export default function RootLayout({
                     >
                       <span>💓</span>
                       <span className="font-medium">What is Pulse?</span>
+                    </Link>
+                    <span className="text-mist">|</span>
+                    <Link
+                      href="/market-moves"
+                      className="flex items-center gap-1.5 text-slate hover:text-graphite transition-colors"
+                    >
+                      <span>&#x1f92f;</span>
+                      <span className="font-medium">Market Was Wrong</span>
                     </Link>
                     <span className="text-mist">|</span>
                     <Link

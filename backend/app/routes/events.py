@@ -637,6 +637,98 @@ async def search_events(
     }
 
 
+@router.get("/typeahead")
+async def typeahead_search(
+    q: str = Query(..., min_length=2, max_length=50, description="Search query"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lightweight typeahead search for the search bar.
+
+    Returns up to 8 suggestions: matching teams, upcoming events, and futures.
+    Much faster than the full search endpoint — no aggregation or pagination.
+    """
+    now = datetime.now(timezone.utc)
+    pattern = f"%{q}%"
+    suggestions = []
+
+    # 1. Find matching teams (deduplicated by name)
+    team_query = (
+        select(Team.name, Team.abbreviation, Team.sport_id, Team.logo_url_small)
+        .where(
+            or_(
+                Team.name.ilike(pattern),
+                Team.abbreviation.ilike(pattern),
+            )
+        )
+        .order_by(Team.name)
+        .limit(5)
+    )
+    team_result = await db.execute(team_query)
+    teams_seen = set()
+    for row in team_result.all():
+        if row.name not in teams_seen:
+            teams_seen.add(row.name)
+            suggestions.append({
+                "type": "team",
+                "text": row.name,
+                "abbreviation": row.abbreviation,
+                "logo": row.logo_url_small,
+            })
+
+    # 2. Find upcoming/live events matching the query
+    event_query = (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(selectinload(Event.sport))
+        .where(
+            or_(
+                Event.home_team_name.ilike(pattern),
+                Event.away_team_name.ilike(pattern),
+            ),
+            Event.status.in_(["live", "scheduled"]),
+            Event.commence_time >= now - timedelta(hours=1),
+            Event.commence_time <= now + timedelta(days=7),
+        )
+        .order_by(
+            case((Event.status == "live", 0), else_=1),
+            Event.commence_time.asc(),
+        )
+        .limit(4)
+    )
+    event_result = await db.execute(event_query)
+    for event in event_result.scalars().all():
+        suggestions.append({
+            "type": "event",
+            "text": f"{event.away_team_name} at {event.home_team_name}",
+            "event_id": event.id,
+            "status": event.status,
+            "sport": event.sport.key if event.sport else None,
+            "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        })
+
+    # 3. Find matching futures markets
+    futures_query = (
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.name.ilike(pattern),
+            FuturesMarket.status == "open",
+        )
+        .order_by(FuturesMarket.market_tier.asc().nulls_last())
+        .limit(3)
+    )
+    futures_result = await db.execute(futures_query)
+    for market in futures_result.scalars().all():
+        suggestions.append({
+            "type": "futures",
+            "text": market.name,
+            "market_id": market.id,
+            "market_tier": market.market_tier,
+        })
+
+    return {"suggestions": suggestions[:8], "query": q}
+
+
 @router.get("/debug/sport-keys")
 async def debug_sport_keys(db: AsyncSession = Depends(get_db)):
     """Debug endpoint to see all sport keys in the database."""
