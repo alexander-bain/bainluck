@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, or_, and_, func
+from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
 from app.utils.prediction_market_matching import (
@@ -27,6 +28,7 @@ from app.utils.prediction_market_matching import (
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
+    _SPORT_CATEGORY_TO_KEY_PREFIX,
     MAX_TIME_DELTA,
     MAX_PAST_GAME_DELTA,
 )
@@ -489,6 +491,7 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
 
     event_result = await session.execute(
         select(Event)
+        .options(joinedload(Event.sport))
         .where(
             or_(*ilike_conditions),
             Event.commence_time.between(time_start, time_end),
@@ -500,7 +503,7 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
         .order_by(Event.commence_time)
         .limit(20)
     )
-    candidates = event_result.scalars().all()
+    candidates = event_result.scalars().unique().all()
 
     result = _score_candidates(candidates, matchup, market, now, game_date_override)
     if result:
@@ -518,6 +521,7 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
 
         event_result = await session.execute(
             select(Event)
+            .options(joinedload(Event.sport))
             .where(
                 or_(*ilike_conditions),
                 Event.commence_time.between(broad_start, broad_end),
@@ -526,7 +530,7 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
             .order_by(Event.commence_time)
             .limit(20)
         )
-        broad_candidates = event_result.scalars().all()
+        broad_candidates = event_result.scalars().unique().all()
 
         result = _score_candidates(broad_candidates, matchup, market, now, game_date_override)
         if result:
@@ -603,6 +607,16 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
         # Both teams verified matching (gate above ensures this when team_b exists)
         if matchup.team_b:
             score += 10
+
+        # Sport match bonus: prefer events in the same sport as the market.
+        # Uses ticker-based sport prefix (most specific, Kalshi only) first,
+        # then falls back to llm_sport_category (both Kalshi and Polymarket).
+        sport_prefix = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
+        if not sport_prefix and market.llm_sport_category:
+            sport_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
+        if sport_prefix and event.sport and event.sport.key:
+            if event.sport.key.startswith(sport_prefix):
+                score += 5  # Same sport — prefer over cross-sport matches
 
         if score > best_score:
             best_score = score

@@ -592,6 +592,30 @@ _TICKER_TO_SPORT_PREFIX: dict[str, str] = {
 }
 
 
+# ── llm_sport_category → sport_key prefix mapping ────────────────────────────
+# Maps the llm_sport_category values (set by categorization rules or Kalshi
+# category passthrough) to The Odds API sport_key prefixes. Used during
+# event matching to prefer same-sport candidates.
+
+_SPORT_CATEGORY_TO_KEY_PREFIX: dict[str, str] = {
+    "basketball": "basketball",
+    "football": "americanfootball",
+    "soccer": "soccer",
+    "hockey": "icehockey",
+    "baseball": "baseball",
+    "golf": "golf",
+    "tennis": "tennis",
+    "mma": "mma",
+    "boxing": "boxing",
+    "cricket": "cricket",
+    "rugby": "rugby",
+    "motorsports": "motorsport",
+    "lacrosse": "lacrosse",
+    "esports": "esports",
+    "aussierules": "aussierules",
+}
+
+
 def get_sport_prefix_from_ticker(external_id: str) -> Optional[str]:
     """
     Get the sport_key prefix for a Kalshi game ticker.
