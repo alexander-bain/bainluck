@@ -1189,3 +1189,132 @@ def classify_player_team_cached(
 ) -> Optional[str]:
     """Cached version of classify_player_team."""
     return classify_player_team(player_name, sport_category, market_name)
+
+
+# =========================================================================
+# Line movement explanation — "Why Did the Line Move?"
+# =========================================================================
+
+def generate_line_movement_explanation(prompt: str) -> Optional[str]:
+    """
+    Generate a natural-language explanation for why odds moved.
+
+    Uses GPT-4o-mini to analyze odds movement context and produce
+    a casual-fan-friendly explanation of likely causes.
+
+    Args:
+        prompt: Full prompt with movement context (built by
+                line_movement.build_llm_prompt)
+
+    Returns:
+        2-3 sentence explanation string, or None if LLM unavailable.
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200,
+            temperature=0.3,  # Slight creativity for natural language
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Clean up common artifacts
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Line movement explanation error: {e}")
+        return None
+
+
+def generate_market_disagreement_explanation(
+    home_team: str,
+    away_team: str,
+    sport_key: str,
+    sportsbook_home_prob: float,
+    prediction_market_home_prob: float,
+    prediction_market_source: str,
+    divergence_pct: float,
+) -> Optional[str]:
+    """
+    Explain why prediction market odds diverge from sportsbook consensus.
+
+    Args:
+        home_team: Home team name
+        away_team: Away team name
+        sport_key: Sport key
+        sportsbook_home_prob: Sportsbook consensus probability
+        prediction_market_home_prob: Prediction market probability
+        prediction_market_source: "Kalshi" or "Polymarket"
+        divergence_pct: Absolute divergence in percentage points
+
+    Returns:
+        2-3 sentence explanation, or None if LLM unavailable.
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    sport_name = sport_key.replace("_", " ").title() if sport_key else "game"
+
+    sb_home_pct = round(sportsbook_home_prob * 100, 1)
+    pm_home_pct = round(prediction_market_home_prob * 100, 1)
+    div_pct = round(divergence_pct * 100, 1)
+
+    # Determine who the prediction market favors more
+    if prediction_market_home_prob > sportsbook_home_prob:
+        pm_favors = home_team
+        sb_favors = away_team
+    else:
+        pm_favors = away_team
+        sb_favors = home_team
+
+    prompt = f"""You are a sports analyst explaining to casual fans why different odds sources disagree.
+
+Sport: {sport_name}
+Matchup: {away_team} at {home_team}
+
+Sportsbook consensus: {home_team} {sb_home_pct}% / {away_team} {round(100-sb_home_pct, 1)}%
+{prediction_market_source}: {home_team} {pm_home_pct}% / {away_team} {round(100-pm_home_pct, 1)}%
+
+Divergence: {div_pct} percentage points — {prediction_market_source} is more bullish on {pm_favors}
+
+Explain in 2-3 sentences why sportsbooks and prediction markets might disagree on this game. Consider:
+- Prediction markets reflect individual bettors' opinions; sportsbooks balance risk
+- Prediction markets may react faster to news (injuries, lineup changes)
+- Sportsbooks may have more historical data / sharper pricing
+- Public money on prediction markets can create temporary mispricings
+- {prediction_market_source} traders may have different information than traditional bettors
+
+Be specific to the teams and sport. Use casual language. No betting advice.
+Start directly with the explanation (no preamble).
+
+Explanation:"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200,
+            temperature=0.3,
+        )
+
+        result = response.choices[0].message.content.strip()
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+        return result
+
+    except Exception as e:
+        logger.error(f"Market disagreement explanation error: {e}")
+        return None

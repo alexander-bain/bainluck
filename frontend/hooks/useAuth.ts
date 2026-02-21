@@ -17,6 +17,7 @@ import {
   signOut as firebaseSignOut,
   getIdToken,
   onAuthChange,
+  getBackendAuthUser,
   type FirebaseUser,
 } from "@/lib/firebase";
 
@@ -116,6 +117,23 @@ export function useAuth(): UseAuthResult {
       if (idToken) {
         tokenRef.current = idToken;
         await registerWithBackend(idToken);
+
+        // Safari ITP fix: when using backend-only auth (tier 3 fallback),
+        // Firebase's onAuthStateChanged never fires because no Firebase user
+        // was created. Manually update user state from stored backend auth.
+        // Give onAuthStateChanged a brief moment to fire first.
+        setTimeout(() => {
+          const backendUser = getBackendAuthUser();
+          if (backendUser) {
+            console.log("[Auth] Backend-only auth detected, manually updating user state");
+            setUser({
+              uid: backendUser.uid,
+              email: backendUser.email,
+              displayName: backendUser.displayName,
+              photoURL: backendUser.photoURL,
+            });
+          }
+        }, 500);
       }
     } catch (error) {
       console.error("[Auth] Sign-in error:", error);

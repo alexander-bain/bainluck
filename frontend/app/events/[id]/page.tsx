@@ -10,6 +10,7 @@ const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false }
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
 const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ssr: false });
+const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExplainer"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
@@ -1052,6 +1053,14 @@ export default function EventPage({ params }: EventPageProps) {
           />
         </div>
       )}
+
+      {/* Line Movement Analysis — AI-powered odds movement explanations */}
+      <LineMovementExplainer
+        eventId={eventId}
+        homeTeam={event.home_team}
+        awayTeam={event.away_team}
+        eventStatus={event.status}
+      />
 
       {/* Related Futures — bigger picture context (below charts) */}
       <RelatedFutures

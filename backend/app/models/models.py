@@ -605,3 +605,39 @@ class FuturesOddsSnapshot(Base):
 
     # Relationships
     outcome: Mapped["FuturesOutcome"] = relationship(back_populates="snapshots")
+
+
+class LineMovementAnalysis(Base):
+    """Cached LLM-generated explanations for significant line movements."""
+
+    __tablename__ = "line_movement_analyses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
+
+    # Movement data (snapshot of what triggered the analysis)
+    movement_data: Mapped[Optional[dict]] = mapped_column(JSONB)
+    # Detected movements as JSON: [{timestamp, home_prob_before, home_prob_after, change, ...}]
+
+    # LLM-generated explanation
+    explanation: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Market disagreement explanation (when prediction markets diverge from sportsbooks)
+    disagreement_explanation: Mapped[Optional[str]] = mapped_column(Text)
+    disagreement_data: Mapped[Optional[dict]] = mapped_column(JSONB)
+    # {source, sportsbook_prob, prediction_market_prob, divergence}
+
+    # Cache management
+    analysis_type: Mapped[str] = mapped_column(String(30), default="line_movement")
+    # "line_movement" or "market_disagreement"
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Line movement explanations expire:
+    # - Scheduled games: 1 hour (news can change quickly)
+    # - Live games: 15 minutes
+    # - Completed games: never (historical analysis)
+
+    # Relationship
+    event: Mapped["Event"] = relationship()

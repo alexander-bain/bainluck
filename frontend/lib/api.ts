@@ -375,6 +375,42 @@ export async function fetchRelatedFutures(
 }
 
 /**
+ * Fetch line movement analysis and AI explanations for an event
+ */
+export async function fetchLineMovement(eventId: number): Promise<LineMovementResponse> {
+  return apiFetch<LineMovementResponse>(
+    `/api/events/${eventId}/line-movement`
+  );
+}
+
+export interface LineMovementResponse {
+  event_id: number;
+  movements: LineMovement[];
+  explanation: string | null;
+  disagreement_explanation: string | null;
+  disagreement_data: {
+    sportsbook_home_prob: number;
+    prediction_market_home_prob: number;
+    source: string;
+    divergence: number;
+  } | null;
+  cached: boolean;
+  created_at: string;
+}
+
+export interface LineMovement {
+  timestamp_start: string;
+  timestamp_end: string;
+  home_prob_before: number;
+  home_prob_after: number;
+  change: number;
+  magnitude: number;
+  direction: string;
+  context: string;
+  is_major: boolean;
+}
+
+/**
  * Format American odds for display
  */
 export function formatAmericanOdds(odds: number | null | undefined): string {

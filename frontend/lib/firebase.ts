@@ -228,6 +228,28 @@ function clearBackendAuth(): void {
 }
 
 /**
+ * Get backend auth user info (for use by useAuth hook when Firebase
+ * onAuthStateChanged doesn't fire after backend-only sign-in).
+ */
+export function getBackendAuthUser(): {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  idToken: string;
+} | null {
+  const data = loadBackendAuth();
+  if (!data) return null;
+  return {
+    uid: data.uid,
+    email: data.email,
+    displayName: data.displayName,
+    photoURL: data.photoURL,
+    idToken: data.idToken,
+  };
+}
+
+/**
  * Sign in with Google.
  *
  * Opens the Google OAuth consent popup via GIS, then tries three approaches:

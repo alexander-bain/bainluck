@@ -5,6 +5,7 @@ Parallel to highlights.py (game events), this scores futures markets
 on interestingness (0-100) for the unified feed.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -41,6 +42,32 @@ FUTURES_LEAGUE_TIERS: dict[str, int] = {
     "geopolitics": 2,
     "culture": 2,
 }
+
+
+# Minor league patterns — futures with these keywords in the market name
+# get a penalty instead of a major_league bonus, even if the sport_category
+# would normally qualify as tier 1. Prevents AHL/ECHL championship futures
+# from outranking actual NBA/NFL games in the feed.
+_MINOR_LEAGUE_PATTERNS = re.compile(
+    r"\b("
+    # Hockey minor leagues
+    r"AHL|ECHL|KHL|SHL|DEL|Liiga|NLA|EIHL|OHL|WHL|QMJHL|USHL|"
+    # Basketball minor
+    r"G[\s-]?League|NBL|BSN|LNB|"
+    # Baseball minor
+    r"Triple[\s-]?A|Double[\s-]?A|AAA|AA\b|"
+    # Soccer minor/lower divisions
+    r"Ligue\s*2|Serie\s*B|2\.\s*Bundesliga|EFL\s*Championship|League\s*(One|Two)|"
+    r"Eredivisie|Primeira\s*Liga|Super\s*Lig|A[\s-]?League|J[\s-]?League|K[\s-]?League|"
+    r"Scottish\s*Premiership|Belgian\s*Pro|Swiss\s*Super|Austrian\s*Bundesliga|"
+    # Football minor
+    r"CFL|UFL|XFL|USFL|Arena\s*Football"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Penalty applied to minor league futures (offsets the major_league bonus)
+MINOR_LEAGUE_PENALTY = -15
 
 # Scoring weights
 FUTURES_WEIGHTS = {
@@ -89,6 +116,11 @@ class FuturesHighlightResult:
     top_mover_change: Optional[float] = None
 
 
+def is_minor_league_market(market_name: str) -> bool:
+    """Check if a futures market name indicates a minor/lower-tier league."""
+    return bool(_MINOR_LEAGUE_PATTERNS.search(market_name))
+
+
 def compute_futures_highlight(
     # Market metadata
     market_tier: Optional[int] = None,
@@ -101,6 +133,8 @@ def compute_futures_highlight(
     max_source_divergence: Optional[float] = None,
     # Timing
     now: Optional[datetime] = None,
+    # Market name for minor league detection
+    market_name: Optional[str] = None,
 ) -> FuturesHighlightResult:
     """
     Compute highlight score and flags for a futures market.
@@ -135,16 +169,26 @@ def compute_futures_highlight(
     result.reasons.append(f"tier_{tier}")
 
     # === League/sport scoring ===
+    _is_minor = market_name and is_minor_league_market(market_name)
     if sport_category:
         sport_lower = sport_category.lower()
         league_tier = FUTURES_LEAGUE_TIERS.get(sport_lower, 3)
         flags.league_tier = league_tier
-        if league_tier == 1:
+        if _is_minor:
+            # Minor league futures get penalized regardless of sport tier.
+            # An AHL championship is NOT as interesting as an NBA game.
+            result.score += MINOR_LEAGUE_PENALTY
+            result.reasons.append("minor_league")
+        elif league_tier == 1:
             result.score += FUTURES_WEIGHTS["major_league"]
             result.reasons.append("major_league")
         elif league_tier == 2:
             result.score += FUTURES_WEIGHTS["secondary_league"]
             result.reasons.append("secondary_league")
+    elif _is_minor:
+        # No sport_category but name indicates minor league
+        result.score += MINOR_LEAGUE_PENALTY
+        result.reasons.append("minor_league")
 
     # === Outcome movement analysis ===
     if outcomes:

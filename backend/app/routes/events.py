@@ -1953,6 +1953,230 @@ async def get_event_odds_history(
     }
 
 
+@router.get("/{event_id}/line-movement")
+async def get_line_movement_analysis(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get line movement analysis and AI-generated explanations for an event.
+
+    Detects significant odds movements from historical snapshots and returns
+    AI-generated explanations for why lines moved and any prediction market
+    disagreements.
+
+    Results are cached in the database with TTLs based on event status:
+    - Scheduled: 1 hour
+    - Live: 15 minutes
+    - Completed/Closed: permanent (never re-computed)
+    """
+    from app.models import LineMovementAnalysis as LineMovementModel
+    from app.utils.line_movement import detect_line_movements, build_llm_prompt
+
+    # Verify event exists
+    event_result = await db.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.id == event_id)
+    )
+    event = event_result.scalar_one_or_none()
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    now = datetime.now(timezone.utc)
+
+    # Check for cached analysis
+    cached = await db.execute(
+        select(LineMovementModel)
+        .where(
+            LineMovementModel.event_id == event_id,
+            LineMovementModel.analysis_type == "line_movement",
+        )
+        .order_by(LineMovementModel.created_at.desc())
+        .limit(1)
+    )
+    cached_analysis = cached.scalar_one_or_none()
+
+    if cached_analysis:
+        # Check if still valid
+        if cached_analysis.expires_at is None or cached_analysis.expires_at > now:
+            return {
+                "event_id": event_id,
+                "movements": cached_analysis.movement_data or [],
+                "explanation": cached_analysis.explanation,
+                "disagreement_explanation": cached_analysis.disagreement_explanation,
+                "disagreement_data": cached_analysis.disagreement_data,
+                "cached": True,
+                "created_at": cached_analysis.created_at.isoformat(),
+            }
+
+    # Build fresh analysis from snapshots
+    result = await db.execute(
+        select(OddsSnapshot)
+        .where(OddsSnapshot.event_id == event_id)
+        .order_by(OddsSnapshot.captured_at)
+    )
+    snapshots = result.scalars().all()
+
+    # Aggregate snapshots into time buckets (median across bookmakers per minute)
+    from collections import defaultdict
+    import statistics
+
+    snapshots_by_time = defaultdict(list)
+    for snap in snapshots:
+        time_key = snap.captured_at.replace(second=0, microsecond=0)
+        if snap.home_win_probability is not None:
+            snapshots_by_time[time_key].append({
+                "home_probability": float(snap.home_win_probability),
+                "bookmaker_count": 1,
+            })
+
+    aggregated_snapshots = []
+    for timestamp in sorted(snapshots_by_time.keys()):
+        probs = [s["home_probability"] for s in snapshots_by_time[timestamp]]
+        aggregated_snapshots.append({
+            "timestamp": timestamp,
+            "home_probability": statistics.median(probs),
+            "bookmaker_count": len(probs),
+        })
+
+    # Detect line movements
+    opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
+    analysis = detect_line_movements(
+        snapshots=aggregated_snapshots,
+        opening_home_prob=opening_home_prob,
+        event_status=event.status,
+        home_team=event.home_team_name or "",
+        away_team=event.away_team_name or "",
+        sport_key=event.sport.key if event.sport else "",
+    )
+
+    # Serialize movements for response and caching
+    movements_data = [
+        {
+            "timestamp_start": m.timestamp_start.isoformat(),
+            "timestamp_end": m.timestamp_end.isoformat(),
+            "home_prob_before": round(m.home_prob_before, 4),
+            "home_prob_after": round(m.home_prob_after, 4),
+            "change": round(m.change, 4),
+            "magnitude": round(m.magnitude, 4),
+            "direction": m.direction,
+            "context": m.context,
+            "is_major": m.is_major,
+        }
+        for m in analysis.movements
+    ]
+
+    # Generate AI explanation if significant movements found
+    explanation = None
+    if analysis.movements:
+        prompt = build_llm_prompt(analysis)
+        try:
+            from app.services.llm import generate_line_movement_explanation
+            explanation = generate_line_movement_explanation(prompt)
+        except Exception as e:
+            logger.warning(f"LLM explanation failed for event {event_id}: {e}")
+
+    # Check for prediction market disagreement
+    disagreement_explanation = None
+    disagreement_data = None
+
+    # Look for prediction market win_prob_snapshots
+    try:
+        from app.models.models import WinProbSnapshot
+        pm_result = await db.execute(
+            select(WinProbSnapshot)
+            .where(
+                WinProbSnapshot.event_id == event_id,
+                WinProbSnapshot.source.in_(["kalshi", "polymarket"]),
+            )
+            .order_by(WinProbSnapshot.captured_at.desc())
+            .limit(2)
+        )
+        pm_snapshots = pm_result.scalars().all()
+
+        if pm_snapshots and opening_home_prob is not None:
+            # Compare latest prediction market price to sportsbook consensus
+            pm_snap = pm_snapshots[0]
+            pm_prob = float(pm_snap.home_probability) if pm_snap.home_probability is not None else None
+            sportsbook_prob = opening_home_prob
+
+            # Use latest aggregated odds if available
+            if aggregated_snapshots:
+                sportsbook_prob = aggregated_snapshots[-1]["home_probability"]
+
+            if pm_prob is not None and sportsbook_prob is not None:
+                divergence = abs(pm_prob - sportsbook_prob)
+                if divergence >= 0.05:  # 5% disagreement threshold
+                    disagreement_data = {
+                        "sportsbook_home_prob": round(sportsbook_prob, 4),
+                        "prediction_market_home_prob": round(pm_prob, 4),
+                        "source": pm_snap.source,
+                        "divergence": round(divergence, 4),
+                    }
+
+                    try:
+                        from app.services.llm import generate_market_disagreement_explanation
+                        disagreement_explanation = generate_market_disagreement_explanation(
+                            home_team=event.home_team_name or "",
+                            away_team=event.away_team_name or "",
+                            sport_key=event.sport.key if event.sport else "",
+                            sportsbook_home_prob=sportsbook_prob,
+                            prediction_market_home_prob=pm_prob,
+                            prediction_market_source=pm_snap.source,
+                            divergence_pct=divergence,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Disagreement explanation failed for event {event_id}: {e}")
+    except Exception:
+        pass  # win_prob_snapshots table may not exist or other DB issue
+
+    # Cache the analysis
+    ttl = None
+    if event.status == "scheduled":
+        ttl = timedelta(hours=1)
+    elif event.status == "live":
+        ttl = timedelta(minutes=15)
+    # completed/closed: no expiry (permanent cache)
+
+    expires_at = (now + ttl) if ttl else None
+
+    # Upsert cached analysis
+    if cached_analysis:
+        cached_analysis.movement_data = movements_data
+        cached_analysis.explanation = explanation
+        cached_analysis.disagreement_explanation = disagreement_explanation
+        cached_analysis.disagreement_data = disagreement_data
+        cached_analysis.expires_at = expires_at
+    else:
+        new_analysis = LineMovementModel(
+            event_id=event_id,
+            movement_data=movements_data,
+            explanation=explanation,
+            disagreement_explanation=disagreement_explanation,
+            disagreement_data=disagreement_data,
+            analysis_type="line_movement",
+            expires_at=expires_at,
+        )
+        db.add(new_analysis)
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+
+    return {
+        "event_id": event_id,
+        "movements": movements_data,
+        "explanation": explanation,
+        "disagreement_explanation": disagreement_explanation,
+        "disagreement_data": disagreement_data,
+        "cached": False,
+        "created_at": now.isoformat(),
+    }
+
+
 @router.get("/{event_id}/debug")
 async def debug_event_snapshots(
     event_id: int,

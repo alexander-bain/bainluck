@@ -5,6 +5,7 @@ import pytest
 from app.utils.futures_highlights import (
     compute_futures_highlight,
     should_highlight_futures,
+    is_minor_league_market,
     MAJOR_MOVEMENT_THRESHOLD,
     MODERATE_MOVEMENT_THRESHOLD,
 )
@@ -187,6 +188,86 @@ class TestShouldHighlightFutures:
         result = compute_futures_highlight()
         result.score = 10
         assert should_highlight_futures(result) is False
+
+
+class TestMinorLeagueDetection:
+    """Tests for minor league market detection and feed penalty."""
+
+    def test_ahl_detected_as_minor(self):
+        """AHL championship futures should be flagged as minor league."""
+        assert is_minor_league_market("AHL Calder Cup Winner") is True
+
+    def test_echl_detected_as_minor(self):
+        assert is_minor_league_market("ECHL Kelly Cup Winner") is True
+
+    def test_khl_detected_as_minor(self):
+        assert is_minor_league_market("KHL Gagarin Cup") is True
+
+    def test_ligue_2_detected_as_minor(self):
+        assert is_minor_league_market("Ligue 2 Winner 2025-26") is True
+
+    def test_serie_b_detected_as_minor(self):
+        assert is_minor_league_market("Serie B Winner") is True
+
+    def test_efl_championship_detected_as_minor(self):
+        """English EFL Championship (tier 2) is minor for our purposes."""
+        assert is_minor_league_market("EFL Championship Winner") is True
+
+    def test_g_league_detected_as_minor(self):
+        assert is_minor_league_market("NBA G-League Winner") is True
+
+    def test_nhl_not_minor(self):
+        """NHL Stanley Cup should NOT be detected as minor."""
+        assert is_minor_league_market("NHL Stanley Cup Winner") is False
+
+    def test_nba_championship_not_minor(self):
+        assert is_minor_league_market("NBA Championship 2025-26") is False
+
+    def test_nfl_mvp_not_minor(self):
+        assert is_minor_league_market("NFL MVP 2025-26") is False
+
+    def test_epl_not_minor(self):
+        assert is_minor_league_market("English Premier League Winner") is False
+
+    def test_minor_league_gets_score_penalty(self):
+        """Minor league futures should score significantly lower."""
+        nhl = compute_futures_highlight(
+            market_tier=1, sport_category="hockey",
+            market_name="NHL Stanley Cup Winner",
+        )
+        ahl = compute_futures_highlight(
+            market_tier=1, sport_category="hockey",
+            market_name="AHL Calder Cup Winner",
+        )
+        assert nhl.score > ahl.score
+        assert "minor_league" in ahl.reasons
+        assert "major_league" in nhl.reasons
+
+    def test_minor_league_hockey_loses_major_bonus(self):
+        """AHL gets penalty, not major_league bonus, even though hockey is tier 1."""
+        result = compute_futures_highlight(
+            market_tier=1, sport_category="hockey",
+            market_name="AHL Calder Cup Winner",
+        )
+        assert "major_league" not in result.reasons
+        assert "minor_league" in result.reasons
+        # Score should be quite low: tier_1 weight (15) + minor penalty (-15) = 0
+        assert result.score <= 5
+
+    def test_minor_league_below_anonymous_threshold(self):
+        """A minor league championship resolving soon should still score low."""
+        now = datetime(2026, 2, 20, 12, 0, tzinfo=timezone.utc)
+        result = compute_futures_highlight(
+            market_tier=1,
+            sport_category="hockey",
+            resolution_date=now + timedelta(days=5),
+            source_count=2,
+            now=now,
+            market_name="AHL Calder Cup Winner",
+        )
+        # tier 1 (15) + minor penalty (-15) + resolving_soon (15) + multi_source (10) = 25
+        # This is borderline — but much lower than NHL championship (40+)
+        assert result.score <= 30
 
 
 class TestFeedReasons:

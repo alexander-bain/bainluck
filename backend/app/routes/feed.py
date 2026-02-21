@@ -87,6 +87,12 @@ async def get_feed(
     # Sort by score descending, then by recency as tiebreaker
     feed_items.sort(key=lambda x: (x["score"], x.get("_sort_time", 0)), reverse=True)
 
+    # === DIVERSITY GUARANTEE ===
+    # Ensure the feed has a mix of events and futures.
+    # Without this, futures can dominate (they get "resolving soon" + "multi source"
+    # bonuses that events don't have).
+    feed_items = _ensure_feed_diversity(feed_items, limit)
+
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]
 
@@ -257,8 +263,9 @@ async def _score_events(
 
         # Lower the threshold for personalized items — if the user follows a team,
         # surface it even at lower base scores.
-        # Anonymous threshold is 25 to filter out minor league noise.
-        min_score = 10 if p_result.is_personalized else 25
+        # Anonymous threshold: tier 4 events start at -15 so they still need 15+ from
+        # other signals. Tier 1-3 events always pass (tier 1 alone = 20).
+        min_score = 10 if p_result.is_personalized else 15
         if personalized_score < min_score:
             continue
 
@@ -406,6 +413,7 @@ async def _score_futures(
             outcomes=outcomes_data,
             source_count=source_count,
             now=now,
+            market_name=market.name,
         )
 
         base_score = highlight_result.score
@@ -509,3 +517,80 @@ async def _get_canonical_source_counts(db: AsyncSession) -> dict[str, int]:
         .group_by(FuturesMarket.canonical_market_key)
     )
     return {row.canonical_market_key: row.source_count for row in result.all()}
+
+
+def _ensure_feed_diversity(
+    items: list[dict],
+    target_size: int,
+) -> list[dict]:
+    """
+    Ensure the feed has a healthy mix of events and futures.
+
+    The feed should lead with real games when available. Without this,
+    futures can dominate because they get "resolving soon" + "multi source"
+    bonuses that events don't have.
+
+    Strategy:
+    - Reserve at least 40% of slots for events (if available).
+    - Among the top N items, interleave so events aren't all pushed down.
+    - Preserves score ordering within each type.
+    """
+    if not items:
+        return items
+
+    events = [i for i in items if i["type"] == "event"]
+    futures = [i for i in items if i["type"] == "futures"]
+
+    # If one type is empty, nothing to balance
+    if not events or not futures:
+        return items
+
+    # Determine minimum event slots (40% of target, at least 3)
+    min_event_slots = max(3, int(target_size * 0.4))
+    min_event_slots = min(min_event_slots, len(events))
+
+    # Check if the natural ordering already has enough events in the top N
+    top_n = items[:target_size]
+    events_in_top = sum(1 for i in top_n if i["type"] == "event")
+
+    if events_in_top >= min_event_slots:
+        # Natural ordering is fine
+        return items
+
+    # Need to promote events. Take top events that aren't already in top N,
+    # and interleave them with the existing top items.
+    result = []
+    event_idx = 0
+    futures_idx = 0
+    events_placed = 0
+
+    for slot in range(min(target_size, len(items))):
+        need_event = events_placed < min_event_slots and event_idx < len(events)
+
+        # Every 2-3 items, prefer an event if we need more
+        if need_event and (slot % 3 != 2 or futures_idx >= len(futures)):
+            result.append(events[event_idx])
+            event_idx += 1
+            events_placed += 1
+        elif futures_idx < len(futures):
+            result.append(futures[futures_idx])
+            futures_idx += 1
+        elif event_idx < len(events):
+            result.append(events[event_idx])
+            event_idx += 1
+            events_placed += 1
+
+    # Append remaining items (beyond target_size) in original order
+    placed_ids = set()
+    for item in result:
+        data = item.get("data", {})
+        key = (item["type"], data.get("id"))
+        placed_ids.add(key)
+
+    for item in items:
+        data = item.get("data", {})
+        key = (item["type"], data.get("id"))
+        if key not in placed_ids:
+            result.append(item)
+
+    return result

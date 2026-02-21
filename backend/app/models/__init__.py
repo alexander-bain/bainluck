@@ -17,6 +17,7 @@ from app.models.models import (
     FuturesMarket,
     FuturesOutcome,
     FuturesOddsSnapshot,
+    LineMovementAnalysis,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     "FuturesMarket",
     "FuturesOutcome",
     "FuturesOddsSnapshot",
+    "LineMovementAnalysis",
 ]
