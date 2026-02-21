@@ -34,6 +34,7 @@ _KALSHI_GAME_TICKER_PREFIXES = (
     "kxsoccergame",  # Soccer game
     "kxufcfight",    # UFC fight
     "kxboxingfight", # Boxing fight
+    "kxlolgame",     # League of Legends esports game
 )
 
 
