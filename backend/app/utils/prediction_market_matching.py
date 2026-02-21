@@ -161,6 +161,21 @@ def _strip_category_prefix(market_name: str) -> str:
     return _CATEGORY_PREFIX_RE.sub("", market_name).strip()
 
 
+# Trailing parenthetical context like "(Lightweight, Main Card)" or "(Round 5)"
+# Common in Polymarket fight/UFC markets.
+_TRAILING_PAREN_RE = re.compile(r'\s*\([^)]+\)\s*$')
+
+
+def _strip_trailing_paren(name: str) -> str:
+    """Strip trailing parenthetical context from market names.
+
+    Examples:
+        "Oliveira vs. Holloway (Lightweight, Main Card)" → "Oliveira vs. Holloway"
+        "Fighter A vs Fighter B (Prelims)" → "Fighter A vs Fighter B"
+    """
+    return _TRAILING_PAREN_RE.sub("", name).strip()
+
+
 # Championship/award keywords that disqualify "Will X win?" markets
 _NON_GAME_KEYWORDS = (
     "championship", "title", "trophy", "award", "mvp",
@@ -239,8 +254,21 @@ def is_game_level_market(
     if external_id and is_kalshi_game_ticker(external_id):
         return True
 
-    # Signal 2+3: Name pattern matching (with and without prefix stripping)
-    return _check_game_level(market_name) or _check_game_level(_strip_category_prefix(market_name))
+    # Signal 2+3: Name pattern matching (with and without prefix/suffix stripping)
+    # Try progressively more aggressive normalization:
+    # 1. Raw name
+    # 2. Prefix stripped (e.g., "NBA: ..." → "...")
+    # 3. Parenthetical stripped (e.g., "... (Lightweight, Main Card)" → "...")
+    # 4. Both stripped
+    stripped_prefix = _strip_category_prefix(market_name)
+    stripped_paren = _strip_trailing_paren(market_name)
+    stripped_both = _strip_trailing_paren(stripped_prefix)
+    return (
+        _check_game_level(market_name)
+        or _check_game_level(stripped_prefix)
+        or _check_game_level(stripped_paren)
+        or _check_game_level(stripped_both)
+    )
 
 
 def _check_game_level(name: str) -> bool:
@@ -310,16 +338,28 @@ def extract_matchup(market_name: str, external_id: Optional[str] = None) -> Opti
     - "Will Team A win against Team B?" → Yes = Team A
     - "Will Team A win?" → Yes = Team A (team_b will be empty)
     """
-    # Try original name first, then with category prefix stripped
-    result = _extract_matchup_impl(market_name)
-    if result:
-        return result
-
-    stripped = _strip_category_prefix(market_name)
-    if stripped != market_name:
-        return _extract_matchup_impl(stripped)
-
+    # Try progressively more aggressive normalization:
+    # 1. Raw name
+    # 2. Prefix stripped
+    # 3. Parenthetical stripped
+    # 4. Both stripped
+    for name in _normalize_variants(market_name):
+        result = _extract_matchup_impl(name)
+        if result:
+            return result
     return None
+
+
+def _normalize_variants(market_name: str) -> list:
+    """Generate progressively normalized variants of a market name."""
+    variants = [market_name]
+    stripped_prefix = _strip_category_prefix(market_name)
+    stripped_paren = _strip_trailing_paren(market_name)
+    stripped_both = _strip_trailing_paren(stripped_prefix)
+    for v in (stripped_prefix, stripped_paren, stripped_both):
+        if v != market_name and v not in variants:
+            variants.append(v)
+    return variants
 
 
 def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:

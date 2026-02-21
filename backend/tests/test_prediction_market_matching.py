@@ -1667,3 +1667,59 @@ class TestExpandedPrefixStripping:
 
     def test_no_prefix_unchanged(self):
         assert _strip_category_prefix("Celtics vs Warriors") == "Celtics vs Warriors"
+
+
+# =============================================================================
+# Parenthetical suffix stripping + UFC/fight market detection
+# =============================================================================
+
+class TestParentheticalStripping:
+    """Tests for market names with trailing parenthetical context."""
+
+    def test_ufc_fight_with_weight_class_is_game_level(self):
+        """UFC markets with weight class and card position should be detected."""
+        assert is_game_level_market(
+            "UFC 326: Charles Oliveira vs. Max Holloway (Lightweight, Main Card)",
+        )
+
+    def test_ufc_fight_prelims_is_game_level(self):
+        assert is_game_level_market(
+            "UFC 326: Cody Garbrandt vs. Xiao Long (Bantamweight, Prelims)",
+        )
+
+    def test_bellator_fight_with_paren_is_game_level(self):
+        assert is_game_level_market(
+            "Bellator 305: Fighter A vs Fighter B (Welterweight)",
+        )
+
+    def test_matchup_extraction_ufc(self):
+        """Should extract fighter names from UFC format after stripping."""
+        result = extract_matchup(
+            "UFC 326: Charles Oliveira vs. Max Holloway (Lightweight, Main Card)",
+        )
+        assert result is not None
+        assert result.team_a == "Charles Oliveira"
+        assert result.team_b == "Max Holloway"
+
+    def test_matchup_extraction_with_only_paren(self):
+        """Parenthetical without prefix."""
+        result = extract_matchup(
+            "Jones vs Aspinall (Heavyweight, Main Event)",
+        )
+        assert result is not None
+        assert result.team_a == "Jones"
+        assert result.team_b == "Aspinall"
+
+    def test_no_paren_still_works(self):
+        """Standard matchup without parenthetical should still work."""
+        result = extract_matchup("Celtics vs Warriors")
+        assert result is not None
+
+    def test_reinier_vs_caio(self):
+        """Real Polymarket UFC market name."""
+        result = extract_matchup(
+            "UFC 326: Reinier de Ridder vs. Caio Borralho (Middleweight, Main Card)",
+        )
+        assert result is not None
+        assert "Reinier" in result.team_a
+        assert "Borralho" in result.team_b
