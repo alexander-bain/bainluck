@@ -33,6 +33,15 @@ const ONBOARDING_SPORTS = SPORT_CATEGORIES.filter(
   (s) => s.tier === 1 || s.tier === 2
 );
 
+// Non-sports categories from prediction markets (Polymarket, Kalshi)
+const BEYOND_SPORTS_KEYS = new Set([
+  "politics", "entertainment", "crypto", "economics", "tech", "weather",
+  "geopolitics", "culture",
+]);
+const ONBOARDING_BEYOND_SPORTS = SPORT_CATEGORIES.filter(
+  (s) => BEYOND_SPORTS_KEYS.has(s.key)
+);
+
 // Default affinities — Big 3 US sports default to "Love it"
 const DEFAULT_AFFINITIES: Record<string, SportLevel> = {};
 for (const sport of ONBOARDING_SPORTS) {
@@ -41,6 +50,9 @@ for (const sport of ONBOARDING_SPORTS) {
   } else {
     DEFAULT_AFFINITIES[sport.key] = 0;
   }
+}
+for (const cat of ONBOARDING_BEYOND_SPORTS) {
+  DEFAULT_AFFINITIES[cat.key] = 0;
 }
 
 // =============================================================================
@@ -870,7 +882,7 @@ function StepSports({
   return (
     <div>
       <h1 className="text-2xl font-bold text-graphite mb-2">
-        What sports do you care about?
+        What do you care about?
       </h1>
       <p className="text-sm text-slate mb-6">
         This helps us show you the most relevant games and markets.
@@ -908,6 +920,50 @@ function StepSports({
           );
         })}
       </div>
+
+      {/* Beyond Sports — prediction market categories */}
+      {ONBOARDING_BEYOND_SPORTS.length > 0 && (
+        <>
+          <p className="text-xs font-semibold text-slate uppercase tracking-wide mt-6 mb-3">
+            Beyond Sports
+          </p>
+          <p className="text-xs text-slate mb-3">
+            We also track prediction markets for these categories.
+          </p>
+          <div className="space-y-3">
+            {ONBOARDING_BEYOND_SPORTS.map((cat) => {
+              const currentLevel = affinities[cat.key] ?? 0;
+              return (
+                <div
+                  key={cat.key}
+                  className="flex items-center justify-between bg-white border border-mist rounded-xl px-4 py-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">{cat.emoji}</span>
+                    <span className="text-sm font-medium text-graphite">{cat.name}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    {SPORT_LEVELS.map((level) => (
+                      <button
+                        key={level.value}
+                        onClick={() => onChange(cat.key, level.value)}
+                        title={level.description}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                          currentLevel === level.value
+                            ? "bg-graphite text-white"
+                            : "bg-snow text-slate hover:bg-slate-100"
+                        }`}
+                      >
+                        {level.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1044,7 +1100,9 @@ function OnboardingSummary({
   if (!hasAnything) return null;
 
   const sportLabel = (key: string) =>
-    ONBOARDING_SPORTS.find((s) => s.key === key)?.name || key;
+    ONBOARDING_SPORTS.find((s) => s.key === key)?.name ||
+    ONBOARDING_BEYOND_SPORTS.find((s) => s.key === key)?.name ||
+    key;
 
   const levelEmoji = (val: number) => {
     if (val >= 0.8) return "❤️";

@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select, delete, and_, or_, case, cast, String
+from sqlalchemy import select, delete, and_, or_, case, cast, String, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -89,8 +89,12 @@ def _expand_location_query(query: str) -> list[str]:
 # Sport affinity key mapping
 # =============================================================================
 
-# Maps user-friendly sport keys to backend sport_key prefixes
+# Maps user-friendly sport keys to backend sport_key prefixes.
+# For sports, these map to The Odds API sport keys.
+# For non-sports categories, these map to llm_sport_category / category_tag values
+# used by prediction markets (Polymarket, Kalshi).
 SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
+    # --- Sports ---
     "football": ["americanfootball_nfl", "americanfootball_ncaaf"],
     "basketball": ["basketball_nba", "basketball_ncaab", "basketball_wncaab"],
     "baseball": ["baseball_mlb"],
@@ -107,6 +111,15 @@ SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
     "cricket": ["cricket_icc_world_cup", "cricket_test_match"],
     "rugby": ["rugbyleague_nrl", "rugbyunion_six_nations"],
     "motorsport": ["motorsport_formula1"],
+    # --- Beyond Sports (prediction market categories) ---
+    "politics": ["politics"],
+    "entertainment": ["entertainment"],
+    "crypto": ["crypto"],
+    "economics": ["economics"],
+    "tech": ["tech"],
+    "weather": ["weather"],
+    "geopolitics": ["geopolitics"],
+    "culture": ["culture"],
 }
 
 # Reverse mapping for display: backend key → friendly category
@@ -504,6 +517,10 @@ async def search_teams(
     Search teams by name for autocomplete.
     Does not require auth — used during onboarding flow.
     Searches team name, alternate_names, and location.
+
+    Falls back to the events table for teams that don't have Team records yet
+    (common for college teams that haven't been on an ESPN scoreboard).
+    Auto-creates Team records for matches found in events.
     """
     if len(q) < 2:
         return []
@@ -516,7 +533,7 @@ async def search_teams(
     if not words:
         return []
 
-    from app.models.models import Sport
+    from app.models.models import Sport, Event
     conditions = []
     for word in words:
         pattern = f"%{word}%"
@@ -544,7 +561,7 @@ async def search_teams(
     )
     rows = result.all()
 
-    return [
+    results = [
         TeamSearchResult(
             id=team.id,
             name=team.name,
@@ -555,6 +572,98 @@ async def search_teams(
         )
         for team, sport_key in rows
     ]
+
+    # -------------------------------------------------------------------------
+    # Events table fallback: find teams from events that lack Team records.
+    # This catches college teams (Harvard, Brown, Stanford, etc.) that The Odds
+    # API tracks but ESPN sync hasn't created Team records for yet.
+    # -------------------------------------------------------------------------
+    if len(results) < 15:
+        existing_ids = {r.id for r in results}
+        existing_name_sports: set[tuple[str, int]] = set()
+        # Build a set of (name, sport_id) from existing results to avoid duplicates.
+        # We need sport_id (not sport_key) for dedup, so re-query if needed.
+        for team, sport_key in rows:
+            existing_name_sports.add((team.name, team.sport_id))
+
+        # Search both home and away team names in events
+        home_conds = [Event.home_team_name.ilike(f"%{w}%") for w in words]
+        away_conds = [Event.away_team_name.ilike(f"%{w}%") for w in words]
+
+        home_subq = (
+            select(
+                Event.home_team_name.label("team_name"),
+                Sport.id.label("sport_id"),
+                Sport.key.label("sport_key"),
+            )
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(or_(*home_conds))
+        )
+        away_subq = (
+            select(
+                Event.away_team_name.label("team_name"),
+                Sport.id.label("sport_id"),
+                Sport.key.label("sport_key"),
+            )
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(or_(*away_conds))
+        )
+        combined = union_all(home_subq, away_subq).subquery()
+
+        event_teams_result = await db.execute(
+            select(
+                combined.c.team_name,
+                combined.c.sport_id,
+                combined.c.sport_key,
+            ).distinct().limit(50)
+        )
+        event_teams = event_teams_result.all()
+
+        teams_created = 0
+        for team_name, sport_id, sport_key in event_teams:
+            if (team_name, sport_id) in existing_name_sports:
+                continue
+
+            # Check if a Team record already exists (may not be in our initial
+            # search results due to missing location/alternate_names)
+            team_check = await db.execute(
+                select(Team).where(
+                    Team.name == team_name,
+                    Team.sport_id == sport_id,
+                )
+            )
+            team = team_check.scalar_one_or_none()
+
+            if not team:
+                # Auto-create Team record — this team exists in events but has
+                # no Team record (usually college teams not on ESPN scoreboard)
+                team = Team(name=team_name, sport_id=sport_id)
+                db.add(team)
+                await db.flush()
+                teams_created += 1
+
+            if team.id not in existing_ids:
+                results.append(TeamSearchResult(
+                    id=team.id,
+                    name=team.name,
+                    location=team.location,
+                    sport_key=sport_key,
+                    logo_url=team.logo_url_small or team.logo_url,
+                    abbreviation=team.abbreviation,
+                ))
+                existing_ids.add(team.id)
+                existing_name_sports.add((team_name, sport_id))
+
+            if len(results) >= 20:
+                break
+
+        if teams_created > 0:
+            logger.info(
+                f"Auto-created {teams_created} Team records from events "
+                f"fallback (query='{q}')"
+            )
+
+    return results
 
 
 @router.get("/teams/by-location", response_model=list[TeamSearchResult])
@@ -604,8 +713,8 @@ async def teams_by_location(
     rows = result.all()
 
     # Deduplicate by team ID (aliases can match the same team multiple times)
-    seen = set()
-    results = []
+    seen: set[int] = set()
+    results: list[TeamSearchResult] = []
     for team, sport_key in rows:
         if team.id not in seen:
             seen.add(team.id)

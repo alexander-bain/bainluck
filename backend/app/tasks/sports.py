@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, func, case
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import Sport, Event, OddsSnapshot
+from app.models import Sport, Event, OddsSnapshot, Team
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 
@@ -67,6 +67,7 @@ async def _discover_events():
     try:
         total_events = 0
         total_new_events = 0
+        total_new_teams = 0
         sports_polled = 0
 
         async with get_task_session() as session:
@@ -83,6 +84,9 @@ async def _discover_events():
                     # Fetch odds for this sport
                     events_data = await service.get_odds(sport_key)
                     sports_polled += 1
+
+                    # Collect all team names from this sport's events
+                    all_team_names: set[str] = set()
 
                     for event_data in events_data:
                         commence_time = datetime.fromisoformat(
@@ -122,6 +126,10 @@ async def _discover_events():
                         event_id = result.scalar_one()
                         total_events += 1
 
+                        # Track team names for auto-creation below
+                        all_team_names.add(event_data["home_team"])
+                        all_team_names.add(event_data["away_team"])
+
                         # Check if this was a new event (simple heuristic)
                         # If the event has no snapshots, it's likely new
                         snapshot_check = await session.execute(
@@ -143,6 +151,32 @@ async def _discover_events():
                             if is_new:
                                 session.add(snapshot)
 
+                    # Auto-create Team records for any teams not yet in the DB.
+                    # This ensures college teams (Harvard, Brown, Stanford, etc.)
+                    # get Team records even without ESPN scoreboard matching.
+                    if all_team_names:
+                        existing_result = await session.execute(
+                            select(Team.name).where(
+                                Team.sport_id == sport.id,
+                                Team.name.in_(all_team_names),
+                            )
+                        )
+                        existing_team_names = {
+                            row[0] for row in existing_result.all()
+                        }
+                        new_team_names = all_team_names - existing_team_names
+                        for team_name in new_team_names:
+                            session.add(Team(
+                                name=team_name,
+                                sport_id=sport.id,
+                            ))
+                        if new_team_names:
+                            total_new_teams += len(new_team_names)
+                            logger.info(
+                                f"Auto-created {len(new_team_names)} Team "
+                                f"records for {sport_key}"
+                            )
+
                 except Exception as e:
                     # Log but continue with other sports
                     print(f"Error discovering events for {sport_key}: {e}")
@@ -154,6 +188,7 @@ async def _discover_events():
             "sports_polled": sports_polled,
             "events_found": total_events,
             "new_events": total_new_events,
+            "new_teams": total_new_teams,
         }
     finally:
         await service.close()
