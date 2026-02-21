@@ -1741,13 +1741,13 @@ These are the current focus. Resist the urge to build new features until these a
 
 13. **Sport-specific Pulse normalization** — Different sports have different baseline volatility; normalize thresholds per sport.
 
-14. **Fix NFL roster sync** — Only 2/32 teams matched (abbreviation mismatch issue).
+14. ~~**Fix NFL roster sync**~~ ✅ **Shipped** — Phase 1 builds `sd_abbrev → team_id` mapping bridging ESPN/SportsDataIO abbreviation gap. MLB abbreviation map added.
 
 15. **Related futures Phase 4** — LLM context blurbs explaining why a futures market matters for a game.
 
 16. **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events.
 
-17. **Fix `current_odds` backend computation** — Use time-bucketed aggregation for all API consumers instead of per-bookmaker-latest.
+17. ~~**Fix `current_odds` backend computation**~~ ✅ **Shipped** — Stale bookmaker filter now uses `valid_until` (write-time dedup aware) + Layer 2 recency filter for live events (>10 min stale excluded). 23 tests.
 
 ### Later (Q2-Q4 2026)
 - iOS app launch with feed tab, search, and widgets

@@ -178,7 +178,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1486+ pytest items across 19 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (223 tests: ticker detection, ticker abbreviation parsing, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1510+ pytest items across 19 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (259 tests: ticker detection, ticker abbreviation parsing, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117+ tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -297,7 +297,7 @@ Different game statuses show different probability data to users:
 
 **Opening odds** are the last pregame consensus — `_maybe_set_opening_odds` in `tasks/odds_polling.py` updates them with the cross-bookmaker average on every poll while the event is scheduled, then freezes when the game starts. Stored on the `Event` model.
 
-**Stale bookmaker filtering**: `filter_stale_bookmaker_snapshots()` in `app/utils/odds_filtering.py` excludes bookmakers whose last distinct odds value was captured before `commence_time`. Runs for ALL non-scheduled statuses (live, completed, closed). Has 14 regression tests in `tests/test_stale_bookmaker_filter.py`.
+**Stale bookmaker filtering**: `filter_stale_bookmaker_snapshots()` in `app/utils/odds_filtering.py` uses `_effective_time()` which prefers `valid_until` over `captured_at` (correctly handles write-time dedup). Two-layer filtering: (1) exclude bookmakers not confirmed since `commence_time`, (2) for live events, exclude bookmakers >10 min older than the freshest bookmaker. Runs for ALL non-scheduled statuses (live, completed, closed). Has 23 regression tests in `tests/test_stale_bookmaker_filter.py`.
 
 **Frontend cross-check** (event detail page only): Compares `current_odds` against the history endpoint's latest time-bucketed consensus. If they diverge >5% for live games, trusts history. This catches cases where the backend filter doesn't fully solve the stale bookmaker problem.
 
@@ -551,9 +551,9 @@ curl "https://api.bainluck.com/api/admin/rosters/task/{task_id}?secret=any"
 ```
 
 **Known issues:**
-- NFL matches only 2/32 teams — SportsDataIO abbreviations likely differ from our `teams.abbreviation` values. Needs investigation.
+- ~~NFL matches only 2/32 teams~~ **Fixed**: Phase 1 now builds `sd_abbrev → team_id` mapping, bridging the ESPN/SportsDataIO abbreviation gap. Run roster sync to verify: `curl -X POST "https://api.bainluck.com/api/admin/rosters/sync?secret=any&sport_key=americanfootball_nfl"`
 - College sports return no data on trial tier
-- MLB returns "sport_not_found" (may be offseason or requires different API version)
+- MLB returns "sport_not_found" (may be offseason or requires different API version). MLB abbreviation map (30 teams) now added to `SPORTSDATA_ABBREV_TO_NAME`.
 
 ### Related Futures (Event → Futures Linking)
 Shows championship odds, MVP odds, and award futures relevant to teams playing in a specific game.
@@ -811,6 +811,14 @@ Links Kalshi and Polymarket game-level markets (e.g., "NBA: Celtics at Warriors"
 
 **Dash matchup false positive prevention**: The regex `Team A – Team B` pattern is validated by `_looks_like_team_name()` to reject false positives like "English Premier League – 2nd Place" or "The Masters - Winner".
 
+**Both-teams matching gate**: `_score_candidates` requires BOTH `team_a` and `team_b` to fuzzy-match the event when both are available. Prevents "Thunder vs. Pistons" matching "Bulls vs. Pistons" and "Pistons vs. Bulls" matching "Georgia Southern vs South Florida Bulls".
+
+**Sport category scoring**: `_score_candidates` adds a +5 bonus when the market's sport (from ticker prefix or `llm_sport_category` via `_SPORT_CATEGORY_TO_KEY_PREFIX`) matches the event's sport. Prevents cross-sport mislinks.
+
+**Polymarket matchup-named outcome fallback**: `find_moneyline_outcome` handles Polymarket outcomes named with the full matchup (e.g., "Pistons vs. Bulls" instead of a single team name). Checks that both matchup teams appear in the outcome name and rejects outcomes with ":" (spreads/totals).
+
+**Phase 1.5 stale link cleanup**: Scans ALL linked markets (not just completed/closed events) and verifies both teams match. Mislinked markets are re-linked to a better match or unlinked entirely.
+
 **Admin endpoints:**
 ```bash
 # Trigger matching
@@ -830,9 +838,9 @@ curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/link?secret=
 ```
 
 **Files:**
-- `backend/app/utils/prediction_market_matching.py` — Detection regex, fuzzy matching, team mapping, ticker parsing, ticker abbreviation extraction
-- `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases
-- `backend/tests/test_prediction_market_matching.py` — 223 tests (ticker detection, ticker abbreviation parsing, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, integration)
+- `backend/app/utils/prediction_market_matching.py` — Detection regex, fuzzy matching, team mapping, ticker parsing, ticker abbreviation extraction, `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping
+- `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases, both-teams gate, sport scoring
+- `backend/tests/test_prediction_market_matching.py` — 259 tests (ticker detection, ticker abbreviation parsing, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, integration)
 
 ### Team Auto-Creation from Events
 The `_discover_events()` task (runs every 15 min) now batch-creates Team records for any teams found in events that don't yet have entries in the `teams` table. This ensures college teams (Harvard, Brown, Stanford, etc.) get Team records even without ESPN scoreboard matching. The `search_teams` endpoint also falls back to searching the events table and auto-creating Team records for matches.
@@ -949,17 +957,17 @@ These are the current focus. Resist the urge to build new features until these a
 9. 🟢 **MLB Stats API integration (shipped)** — Live baseball win probability from MLB's official API (`statsapi.mlb.com`). No API key needed. Celery task polls every 2 min during live games. Replaces FanGraphs stub. 33 tests.
 10. 🟢 **Divergence badge (shipped)** — Frontend detects when prediction market odds (Kalshi/Polymarket) diverge >5% from sportsbook consensus. Purple badge for >10% gap, blue for >5%. On event detail page data freshness strip.
 11. 🟢 **Non-sports tier promotion (shipped)** — Politics, Entertainment, Crypto promoted from tier 3 to tier 2 in `sportCategories.ts` frontend categorization.
-12. 🟢 **Prediction market game-level odds (shipped)** — Two-pass matching (ticker scan + general scan), 223 tests, sport+time fallback, ticker abbreviation parsing for generic-named Kalshi markets, admin endpoints. Live polling every 2 min. **Still needs:** verify ticker matching on production, LLM explanation of market disagreements.
+12. 🟢 **Prediction market game-level odds (shipped)** — Two-pass matching (ticker scan + general scan), 259 tests, sport+time fallback, ticker abbreviation parsing for generic-named Kalshi markets, admin endpoints. Live polling every 2 min. Both-teams matching gate prevents mislinks (e.g., "Pistons vs. Bulls" matching South Florida Bulls). Sport category scoring bonus for disambiguation. Polymarket matchup-named outcome fallback for `find_moneyline_outcome`. Stale/mislink cleanup scans ALL linked markets (not just completed). **Still needs:** LLM explanation of market disagreements.
 13. 🟢 **Typeahead search (shipped)** — `SearchBar` component with 200ms debounce, keyboard navigation (arrow keys + Enter), integrated into layout header. Backend `GET /api/events/typeahead?q=...` endpoint returns top 5 events + 3 futures. Mobile: search icon links to `/search` page. Desktop: inline search bar in header.
 14. 🟢 **"Market Was Wrong" page (shipped)** — `GET /api/market-moves` endpoint surfaces post-game championship odds shifts. Frontend page at `/market-moves` shows which teams' futures moved most after game results. Backend uses `routes/market_moves.py`.
 15. 🟢 **Onboarding UX fixes (shipped)** — Sport labels on all team search dropdowns/chips (shows "NBA", "NCAA Lacrosse" etc. to disambiguate), fixed duplicate non-sports in onboarding grid, increased session token TTL from 1hr to 8hrs to prevent expiry during onboarding, fixed same-name team clickability (dedup by ID not name).
-16. 📋 Pass Kalshi event category as sport_key for better disambiguation
+16. 🟢 **Sport category disambiguation (shipped)** — `_score_candidates` uses `llm_sport_category` (already populated for both Kalshi and Polymarket) to add sport-match scoring bonus (+5) via `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping. Prevents cross-sport mislinks.
 17. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
 18. 📋 LLM-powered odds movement explanations
 19. 📋 Sport-specific Pulse normalization (different ceilings per sport)
 20. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Rebuild from scratch when prioritized — focus on big charts + clean visualization.
-21. 📋 Fix `current_odds` backend computation for started games — use time-bucketed aggregation (same as history endpoint) instead of per-bookmaker-latest
-22. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch)
+21. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
+22. 🟢 **NFL roster sync fix (shipped)** — Phase 1 team sync builds `sd_abbrev → team_id` mapping that Phase 2 roster sync uses as primary lookup, bridging the ESPN/SportsDataIO abbreviation gap. Added ILIKE fallback for formatting diffs, MLB abbreviation map (30 teams). Should fix 2/32 → 32/32 NFL matching.
 23. 📋 **Related futures Phase 4** — LLM context blurbs explaining why a futures market matters for a game
 24. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
 25. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
@@ -1027,6 +1035,10 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Kalshi ticker abbreviation parsing: `extract_teams_from_ticker()` parses team names from Kalshi game tickers (e.g., `KXNBAGAME-26FEB21DETCHI` → Pistons, Bulls). 100+ team abbreviations across NBA/NFL/NHL/MLB. Solves matching failure for generic-named markets like "Professional Basketball Game" when multiple games exist. 223 tests (up from 195).
 - ✅ Onboarding UX fixes: sport labels on team search/chips, duplicate non-sports category fix, session token TTL 1hr→8hrs, same-name team clickability fix.
 - ✅ Feed quality improvements: raised feed thresholds (event min_score 20, futures min_score 40, 60% diversity cap), non-sports tier promotion to tier 2 in frontend categorization.
+- ✅ Prediction market mislink fixes: both-teams matching gate in `_score_candidates` prevents single-team fuzzy matches (e.g., "Pistons vs. Bulls" matching South Florida Bulls). Phase 1.5 stale link cleanup expanded to scan ALL linked markets (not just completed/closed). Polymarket matchup-named outcome fallback in `find_moneyline_outcome` (handles "Pistons vs. Bulls" as outcome name). 259 tests (up from 223).
+- ✅ Sport category disambiguation for prediction market matching: `_score_candidates` uses `llm_sport_category` + `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping for +5 scoring bonus. Prevents cross-sport mislinks.
+- ✅ NFL roster sync fix: Phase 1 team sync builds `sd_abbrev → team_id` mapping used by Phase 2 roster sync, bridging ESPN/SportsDataIO abbreviation gap. ILIKE fallback for formatting diffs. MLB abbreviation map (30 teams) added to `SPORTSDATA_ABBREV_TO_NAME`.
+- ✅ Stale bookmaker filter improvements: `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) via `_effective_time()`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new).
 </details>
 
 See `docs/PRD.md` for full roadmap.
