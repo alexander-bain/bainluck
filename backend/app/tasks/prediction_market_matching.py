@@ -364,11 +364,12 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     """
     Find an Event that matches the given matchup and market.
 
-    Strategy:
-    1. Search events by team name ILIKE matching
-    2. Filter by commence_time proximity
-    3. Prefer events in the same sport category
-    4. Return the best match or None
+    Two-pass strategy:
+    1. Time-windowed search: ±48h around game date (from ticker or market.commence_time)
+    2. Broad fallback: If no time-windowed match AND we have both team names,
+       search scheduled/live events without time restriction. This handles
+       Polymarket markets (commence_time = market creation date, not game date)
+       and Kalshi markets without parseable ticker dates.
 
     Args:
         game_date_override: If provided, use this as the reference time instead
@@ -390,18 +391,15 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
         ilike_conditions.append(Event.home_team_name.ilike(pattern))
         ilike_conditions.append(Event.away_team_name.ilike(pattern))
 
-    # Time window: events starting within ±48 hours of reference time.
-    # For Kalshi game tickers, use the game date from the ticker (not
-    # market.commence_time, which is the resolution date weeks later).
-    reference_time = game_date_override or market.commence_time or now
-    time_start = reference_time - MAX_TIME_DELTA
-    time_end = reference_time + MAX_TIME_DELTA
-
     # Also restrict: don't match events that started more than 6 hours ago
     # (unless they're still live)
     past_cutoff = now - MAX_PAST_GAME_DELTA
 
-    # Query candidate events
+    # ── Pass 1: Time-windowed search ──────────────────────────────────
+    reference_time = game_date_override or market.commence_time or now
+    time_start = reference_time - MAX_TIME_DELTA
+    time_end = reference_time + MAX_TIME_DELTA
+
     event_result = await session.execute(
         select(Event)
         .where(
@@ -417,10 +415,48 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
     )
     candidates = event_result.scalars().all()
 
+    result = _score_candidates(candidates, matchup, market, now, game_date_override)
+    if result:
+        return result
+
+    # ── Pass 2: Broad fallback (no time window) ──────────────────────
+    # Only when we have BOTH team names (strong signal) and Pass 1 found nothing.
+    # This handles Polymarket (commence_time = market creation date) and
+    # Kalshi markets without parseable ticker dates.
+    # Restrict to scheduled/live events within ±14 days of now to avoid
+    # matching ancient or far-future events.
+    if matchup.team_b:
+        broad_start = now - timedelta(days=1)  # Allow games that started today
+        broad_end = now + timedelta(days=14)   # Up to 2 weeks ahead
+
+        event_result = await session.execute(
+            select(Event)
+            .where(
+                or_(*ilike_conditions),
+                Event.commence_time.between(broad_start, broad_end),
+                Event.status.in_(["scheduled", "live"]),
+            )
+            .order_by(Event.commence_time)
+            .limit(20)
+        )
+        broad_candidates = event_result.scalars().all()
+
+        result = _score_candidates(broad_candidates, matchup, market, now, game_date_override)
+        if result:
+            logger.info(
+                "Broad fallback matched %s '%s' → event %d (time window bypass)",
+                market.source, market.name, result["event_id"],
+            )
+            return result
+
+    return None
+
+
+def _score_candidates(candidates, matchup, market, now, game_date_override=None):
+    """Score candidate events and return the best match (or None)."""
     if not candidates:
         return None
 
-    # Score each candidate
     best_match = None
     best_score = -1
 
@@ -444,20 +480,18 @@ async def _find_matching_event(session, matchup, market, now, game_date_override
             ):
                 continue
 
-        # Score: prefer closer commence_time + same sport + live games
+        # Score: prefer closer to now + live games + both teams matched
         score = 0
 
-        # Time proximity (max 10 points, closer = higher)
-        if event.commence_time and market.commence_time:
+        # Time proximity to now (max 10 points, closer = higher)
+        # Use game_date_override or now as reference — NOT market.commence_time,
+        # which can be the resolution date (Kalshi) or creation date (Polymarket).
+        ref = game_date_override or now
+        if event.commence_time:
             delta_hours = abs(
-                (event.commence_time - market.commence_time).total_seconds()
+                (event.commence_time - ref).total_seconds()
             ) / 3600
-            score += max(0, 10 - delta_hours)
-        elif event.commence_time:
-            delta_hours = abs(
-                (event.commence_time - now).total_seconds()
-            ) / 3600
-            score += max(0, 5 - delta_hours / 10)
+            score += max(0, 10 - delta_hours / 4)  # Gradual decay over ~40h
 
         # Live games get a bonus
         if event.status == "live":
