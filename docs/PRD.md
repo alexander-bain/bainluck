@@ -902,9 +902,15 @@ Search is a core discovery mechanism that lets users find games, teams, and hist
 - Trigram indexes for fast ILIKE queries
 
 **UI Components:**
-- Header search box with debounced dropdown (300ms)
+- `SearchBar` component: typeahead with 200ms debounce, keyboard navigation (up/down arrows + Enter), compact mode for header
+- Header integration: mobile search icon (links to `/search`), desktop inline search bar
 - Full search results page at `/search?q=...`
 - Sport filter pills when multiple leagues match
+
+**Typeahead endpoint:** `GET /api/events/typeahead?q=celtics`
+- Returns top 5 events + 3 futures instantly
+- Used by `SearchBar` component for dropdown suggestions
+- Lightweight endpoint for fast header-based search
 
 ### Search Roadmap
 
@@ -1709,13 +1715,21 @@ These are the current focus. Resist the urge to build new features until these a
 
 5. ~~**Auth & Personalization Phase 3**~~ ✅ **Shipped** — Personalized feed scoring: team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting, personalization badges ("Your team", "Local", "Alma mater", "Rival losing"), unified interestingness feed combining events + futures on homepage.
 
-6. ~~**Prediction market → event matching**~~ ✅ **Shipped** — Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. 195 tests. Live game polling every 2 min via `poll_live_prediction_markets`. Divergence badge shipped (>5% diff detection with purple/blue coloring). Still needs: LLM explanation of divergence reasons.
+6. ~~**Prediction market → event matching**~~ ✅ **Shipped** — Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. 223 tests. Ticker abbreviation parsing (`extract_teams_from_ticker`) solves matching for generic-named Kalshi markets. Live game polling every 2 min via `poll_live_prediction_markets`. Divergence badge shipped (>5% diff detection with purple/blue coloring). Still needs: LLM explanation of divergence reasons.
 
 ### Next — Features (in priority order)
 
 7. ~~**Ranking Level 2**~~ ✅ **Shipped** — Time-series aware scoring using `compute_time_series_metrics()` with volatility, lead changes, momentum. New labels: "Lead change", "Odds shifting fast", "Wild game". Highest-leverage feature for the north star.
 
 8. **MLB Stats API integration** ✅ **Shipped** — Live baseball win probability from official MLB API (statsapi.mlb.com, free, no API key). Polls every 2 min during live games. Appears as "MLB Model" source (key: "fangraphs") on OddsChart.
+
+8a. **Typeahead search** ✅ **Shipped** — `SearchBar` component with 200ms debounce, keyboard navigation (arrow keys + Enter), integrated into layout header. Backend `GET /api/events/typeahead` endpoint returns top 5 events + 3 futures. Mobile search icon + desktop inline bar.
+
+8b. **"Market Was Wrong" page** ✅ **Shipped** — `GET /api/market-moves` endpoint + `/market-moves` frontend page showing post-game championship odds shifts. Backend route in `market_moves.py`.
+
+8c. **Onboarding UX fixes** ✅ **Shipped** — Sport labels on all team search dropdowns and chips (shows "NBA", "NCAA Lacrosse" to disambiguate same-named teams), fixed duplicate non-sports in onboarding grid, session token TTL increased from 1hr to 8hrs, same-name team clickability fix (dedup by ID not name).
+
+8d. **Kalshi ticker abbreviation parsing** ✅ **Shipped** — `extract_teams_from_ticker()` parses team names from Kalshi game tickers (e.g., `KXNBAGAME-26FEB21DETCHI` → Pistons, Bulls). 100+ abbreviations across NBA/NFL/NHL/MLB. `extract_matchup_with_ticker_fallback()` used across all 4 matching codepaths. 223 total matching tests.
 
 9. **Additional win prob sources** — MoneyPuck for NHL, FanGraphs for MLB. Infrastructure ready (stubs configured in `win_prob_sources.py`), awaiting full API integration.
 
@@ -1775,7 +1789,7 @@ These are the current focus. Resist the urge to build new features until these a
 - Related futures Phases 1-3 (team linking, endpoint, "Bigger Picture" UI)
 - SportsDataIO integration (API client, roster sync, player name matching)
 - Polymarket integration Phase 1 (API client, polling task, 160+ tag-to-category mapping, streaming pagination)
-- Prediction market → event matching (two-pass strategy, 190 tests, ticker parsing, sport+time fallback)
+- Prediction market → event matching (two-pass strategy, 223 tests, ticker parsing, ticker abbreviation extraction, sport+time fallback)
 - Firebase Auth Phase 1 (Google Sign-In, Safari fallback, pin sync, auth context)
 - Auth & Personalization Phase 2 (5-step onboarding: location, follow, alma maters, sports+beyond, rivals)
 - Auth & Personalization Phase 3 (personalized feed scoring, rival multipliers, unified interestingness feed)
@@ -1791,7 +1805,12 @@ These are the current focus. Resist the urge to build new features until these a
 - Polymarket Phase 2 (beat schedule, price history backfill, live game polling every 2 min)
 - Celery heartbeat + health endpoint + task-level success metrics
 - Google Analytics 4 integration
-- Test coverage (1500+ total: 1380+ backend + 120 frontend across 22+ test files)
+- Typeahead search (SearchBar component, debounce, keyboard nav, layout header integration, typeahead API endpoint)
+- "Market Was Wrong" page (post-game championship odds shifts, market_moves.py endpoint)
+- Kalshi ticker abbreviation parsing (extract_teams_from_ticker, 100+ abbreviations, solves generic-named market matching)
+- Onboarding UX fixes (sport labels, duplicate category fix, session TTL 8hrs, same-name team clickability)
+- Feed quality improvements (raised thresholds, diversity cap, non-sports tier promotion)
+- Test coverage (1603+ total: 1486+ backend + 117+ frontend across 22+ test files)
 </details>
 
 ---
@@ -1806,7 +1825,7 @@ These are the current focus. Resist the urge to build new features until these a
 
 4. **Auth conversion**: What's the right moment to prompt for sign-in without being annoying? (Currently: only on explicit "Sign In" tap)
 
-5. **Stat model ESPN dependency**: What's the best fallback when ESPN name matching fails for a game? (Wall-time estimation, ESPN ID matching, or direct scoreboard fetch?)
+5. ~~**Stat model ESPN dependency**~~: Resolved — three-pronged fallback: ESPN ID → name → commence_time proximity, plus wall-clock time estimation when ESPN sync misses entirely.
 
 These are product experiments, not blockers.
 
