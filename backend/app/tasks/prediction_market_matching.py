@@ -18,6 +18,7 @@ from app.tasks.base import get_task_session
 from app.utils.prediction_market_matching import (
     is_game_level_market,
     is_kalshi_game_ticker,
+    _KALSHI_GAME_TICKER_PREFIXES,
     extract_matchup,
     match_teams_to_event,
     find_moneyline_outcome,
@@ -27,6 +28,11 @@ from app.utils.prediction_market_matching import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# SQL LIKE patterns for Kalshi game tickers (e.g., "kxnbagame%")
+# Used to directly query game-level markets without scanning all markets.
+_KALSHI_TICKER_LIKE_PATTERNS = [f"{prefix}%" for prefix in _KALSHI_GAME_TICKER_PREFIXES]
 
 
 async def _match_prediction_markets(limit: int = 500):
@@ -65,8 +71,75 @@ async def _match_prediction_markets(limit: int = 500):
 
     async with get_task_session() as session:
         # ── Phase 1: Link unlinked game-level markets ────────────────────
+        #
+        # Two-pass strategy:
+        # Pass 1 (targeted): Directly query Kalshi markets with game ticker
+        #   patterns (KXNBAGAME%, KXNFLGAME%, etc.) — guaranteed game-level,
+        #   no limit needed since there are relatively few.
+        # Pass 2 (general): Scan remaining unlinked markets with a limit,
+        #   using name-based pattern matching to detect Polymarket game
+        #   markets and any Kalshi markets with non-standard tickers.
 
-        # Find prediction market futures without event_id that look like game-level
+        # ── Pass 1: Targeted Kalshi game ticker scan (no limit) ──────────
+        ticker_conditions = [
+            func.lower(FuturesMarket.external_id).like(pattern)
+            for pattern in _KALSHI_TICKER_LIKE_PATTERNS
+        ]
+        ticker_result = await session.execute(
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.event_id.is_(None),
+                or_(*ticker_conditions),
+            )
+        )
+        ticker_markets = ticker_result.scalars().all()
+        stats["funnel"]["ticker_scan_count"] = len(ticker_markets)
+
+        # Track IDs already processed so Pass 2 doesn't re-scan
+        processed_ids = set()
+
+        for market in ticker_markets:
+            processed_ids.add(market.id)
+            stats["markets_scanned"] += 1
+            stats["funnel"]["game_level_detected"] += 1
+
+            matchup = extract_matchup(market.name, external_id=market.external_id)
+            if not matchup:
+                stats["funnel"]["no_matchup_extracted"] += 1
+                continue
+
+            matched_event = await _find_matching_event(
+                session, matchup, market, now,
+            )
+
+            if matched_event:
+                market.event_id = matched_event["event_id"]
+                stats["newly_linked"] += 1
+                stats["funnel"]["linked"] += 1
+                logger.info(
+                    "Linked %s market '%s' → event %d (%s vs %s) [yes_is_home=%s]",
+                    market.source, market.name, matched_event["event_id"],
+                    matched_event["home_team"], matched_event["away_team"],
+                    matched_event["yes_is_home"],
+                )
+            else:
+                stats["funnel"]["no_event_found"] += 1
+                if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
+                    stats["funnel"]["sample_game_level_no_event"].append(
+                        {
+                            "source": market.source,
+                            "name": market.name,
+                            "team_a": matchup.team_a,
+                            "team_b": matchup.team_b,
+                            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                            "external_id": market.external_id,
+                        }
+                    )
+
+        # ── Pass 2: General scan for non-ticker game markets ─────────────
+        # Catches Polymarket game markets and any Kalshi markets with
+        # non-standard tickers (e.g., esports like KXLOLGAME).
         unlinked_result = await session.execute(
             select(FuturesMarket)
             .where(
@@ -78,9 +151,14 @@ async def _match_prediction_markets(limit: int = 500):
             .limit(limit)
         )
         unlinked_markets = unlinked_result.scalars().all()
-        stats["funnel"]["total_unlinked"] = len(unlinked_markets)
+        stats["funnel"]["total_unlinked"] = len(unlinked_markets) + len(ticker_markets)
+        stats["funnel"]["general_scan_count"] = len(unlinked_markets)
 
         for market in unlinked_markets:
+            # Skip markets already processed in Pass 1
+            if market.id in processed_ids:
+                continue
+
             stats["markets_scanned"] += 1
 
             # Check if market name looks like a game-level matchup.
@@ -137,6 +215,7 @@ async def _match_prediction_markets(limit: int = 500):
                             "team_a": matchup.team_a,
                             "team_b": matchup.team_b,
                             "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                            "external_id": market.external_id,
                         }
                     )
 

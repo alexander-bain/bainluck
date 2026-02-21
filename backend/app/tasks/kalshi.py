@@ -29,6 +29,7 @@ _KALSHI_GAME_TICKERS: dict[str, str] = {
     "kxsoccergame": "Soccer",
     "kxufcfight": "UFC",
     "kxboxingfight": "Boxing",
+    "kxlolgame": "LoL",
 }
 
 
