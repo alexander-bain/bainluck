@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select, delete, and_, or_
+from sqlalchemy import select, delete, and_, or_, case, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -192,6 +192,7 @@ class OnboardingRequest(BaseModel):
     """Complete onboarding data submitted from the frontend."""
     home_location: Optional[str] = None
     local_teams: list[TeamRef] = []
+    follow_teams: list[TeamRef] = []  # Explicitly followed teams (any location)
     alma_mater_teams: list[TeamRef] = []
     rival_teams: list[TeamRef] = []
     sport_affinities: dict[str, float] = {}  # e.g., {"football": 1.0, "basketball": 0.3}
@@ -375,44 +376,35 @@ async def submit_onboarding(
     )
 
     # 2. Insert new favorites
-    all_team_ids = set()
+    # With the new constraint (user_id, team_id, relation_type), a team can have
+    # multiple relations (e.g., both "local" and "follow"). We track (team_id, relation_type)
+    # pairs to prevent exact duplicates within a single submission.
+    seen_pairs: set[tuple[int, str]] = set()
+
+    def _add_favorite(team_id: int, relation_type: str) -> None:
+        pair = (team_id, relation_type)
+        if pair in seen_pairs:
+            return
+        seen_pairs.add(pair)
+        db.add(UserFavorite(
+            user_id=user.id,
+            team_id=team_id,
+            relation_type=relation_type,
+            source="onboarding",
+            weight=1.0,
+        ))
 
     for team_ref in body.local_teams:
-        if team_ref.team_id not in all_team_ids:
-            db.add(UserFavorite(
-                user_id=user.id,
-                team_id=team_ref.team_id,
-                relation_type="local",
-                source="onboarding",
-                weight=1.0,
-            ))
-            all_team_ids.add(team_ref.team_id)
+        _add_favorite(team_ref.team_id, "local")
+
+    for team_ref in body.follow_teams:
+        _add_favorite(team_ref.team_id, "follow")
 
     for team_ref in body.alma_mater_teams:
-        if team_ref.team_id not in all_team_ids:
-            db.add(UserFavorite(
-                user_id=user.id,
-                team_id=team_ref.team_id,
-                relation_type="alma_mater",
-                source="onboarding",
-                weight=1.0,
-            ))
-            all_team_ids.add(team_ref.team_id)
-        else:
-            # Team already added (e.g., local AND alma mater) — update relation
-            # The unique constraint is (user_id, team_id), so we skip duplicates
-            logger.info(f"Skipping duplicate team_id={team_ref.team_id} for user={user.id}")
+        _add_favorite(team_ref.team_id, "alma_mater")
 
     for team_ref in body.rival_teams:
-        if team_ref.team_id not in all_team_ids:
-            db.add(UserFavorite(
-                user_id=user.id,
-                team_id=team_ref.team_id,
-                relation_type="rival",
-                source="onboarding",
-                weight=1.0,
-            ))
-            all_team_ids.add(team_ref.team_id)
+        _add_favorite(team_ref.team_id, "rival")
 
     # 3. Expand sport affinities to backend keys
     expanded_affinities = _expand_sport_affinities(body.sport_affinities)
@@ -442,7 +434,7 @@ async def submit_onboarding(
 
     logger.info(
         f"Onboarding completed for user={user.id}: "
-        f"{len(all_team_ids)} teams, {len(expanded_affinities)} sport keys"
+        f"{len(seen_pairs)} team-relations, {len(expanded_affinities)} sport keys"
     )
 
     return {"status": "ok", "onboarding_completed": True}
@@ -530,12 +522,24 @@ async def search_teams(
         pattern = f"%{word}%"
         conditions.append(Team.name.ilike(pattern))
         conditions.append(Team.location.ilike(pattern))
+        conditions.append(Team.abbreviation.ilike(pattern))
+        # Search alternate_names JSONB (stored as ["Lakers", "LA Lakers"])
+        conditions.append(cast(Team.alternate_names, String).ilike(pattern))
+
+    # Relevance ordering: exact name match > starts-with > contains
+    q_lower = q.lower()
+    relevance = case(
+        (Team.name.ilike(q), 0),            # Exact match
+        (Team.name.ilike(f"{q}%"), 1),       # Starts with
+        (Team.abbreviation.ilike(q), 2),     # Abbreviation match
+        else_=3,                              # Contains
+    )
 
     result = await db.execute(
         select(Team, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id)
         .where(or_(*conditions))
-        .order_by(Team.name)
+        .order_by(relevance, Team.name)
         .limit(20)
     )
     rows = result.all()
@@ -570,19 +574,31 @@ async def teams_by_location(
     # Expand query with metro aliases
     terms = _expand_location_query(q)
 
-    # Build OR conditions for all expanded terms — search BOTH name and location
+    # Build OR conditions for all expanded terms — search name, location,
+    # abbreviation, and alternate_names for maximum recall.
     from app.models.models import Sport
     conditions = []
     for term in terms:
         pattern = f"%{term}%"
         conditions.append(Team.location.ilike(pattern))
         conditions.append(Team.name.ilike(pattern))
+        conditions.append(Team.abbreviation.ilike(pattern))
+        conditions.append(cast(Team.alternate_names, String).ilike(pattern))
+
+    # Relevance ordering: location match > name match > others
+    q_lower = q.lower().strip()
+    relevance = case(
+        (Team.location.ilike(q_lower), 0),          # Exact location match
+        (Team.location.ilike(f"%{q_lower}%"), 1),    # Location contains
+        (Team.name.ilike(f"%{q_lower}%"), 2),        # Name contains
+        else_=3,
+    )
 
     result = await db.execute(
         select(Team, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id)
         .where(or_(*conditions))
-        .order_by(Team.name)
+        .order_by(relevance, Team.name)
         .limit(50)
     )
     rows = result.all()
@@ -605,3 +621,119 @@ async def teams_by_location(
             )
 
     return results
+
+
+# =============================================================================
+# Favorites CRUD (inline editing from preferences page)
+# =============================================================================
+
+class AddFavoriteRequest(BaseModel):
+    """Add a single team favorite."""
+    team_id: int
+    relation_type: str  # "follow", "local", "alma_mater", "rival"
+
+
+@router.post("/favorites", status_code=status.HTTP_201_CREATED)
+async def add_favorite(
+    body: AddFavoriteRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a single team favorite. Used for inline editing on the preferences page."""
+    valid_types = {"follow", "local", "alma_mater", "rival"}
+    if body.relation_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"relation_type must be one of {valid_types}")
+
+    # Verify team exists
+    result = await db.execute(select(Team).where(Team.id == body.team_id))
+    team = result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # Check for duplicate (same user, team, relation_type)
+    result = await db.execute(
+        select(UserFavorite).where(
+            and_(
+                UserFavorite.user_id == user.id,
+                UserFavorite.team_id == body.team_id,
+                UserFavorite.relation_type == body.relation_type,
+            )
+        )
+    )
+    if result.scalar_one_or_none():
+        return {"status": "already_exists"}
+
+    db.add(UserFavorite(
+        user_id=user.id,
+        team_id=body.team_id,
+        relation_type=body.relation_type,
+        source="manual",
+        weight=1.0,
+    ))
+    await db.flush()
+
+    logger.info(f"Added favorite: user={user.id} team={body.team_id} type={body.relation_type}")
+    return {"status": "added"}
+
+
+@router.delete("/favorites/{team_id}")
+async def remove_favorite(
+    team_id: int,
+    relation_type: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a specific team favorite by team_id and relation_type."""
+    valid_types = {"follow", "local", "alma_mater", "rival"}
+    if relation_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"relation_type must be one of {valid_types}")
+
+    result = await db.execute(
+        delete(UserFavorite).where(
+            and_(
+                UserFavorite.user_id == user.id,
+                UserFavorite.team_id == team_id,
+                UserFavorite.relation_type == relation_type,
+            )
+        )
+    )
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Favorite not found")
+
+    logger.info(f"Removed favorite: user={user.id} team={team_id} type={relation_type}")
+    return {"status": "removed"}
+
+
+class UpdateSportAffinitiesRequest(BaseModel):
+    """Update sport affinities from preferences page."""
+    sport_affinities: dict[str, float]  # e.g., {"football": 1.0, "basketball": 0.3}
+
+
+@router.put("/preferences/sport-affinities")
+async def update_sport_affinities(
+    body: UpdateSportAffinitiesRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update sport affinities. Accepts user-friendly keys, expands to backend format."""
+    expanded = _expand_sport_affinities(body.sport_affinities)
+
+    result = await db.execute(
+        select(UserPreference).where(UserPreference.user_id == user.id)
+    )
+    prefs = result.scalar_one_or_none()
+
+    if prefs:
+        prefs.sport_affinities = expanded
+    else:
+        prefs = UserPreference(
+            user_id=user.id,
+            sport_affinities=expanded,
+        )
+        db.add(prefs)
+
+    await db.flush()
+
+    logger.info(f"Updated sport affinities for user={user.id}: {len(expanded)} keys")
+    return {"status": "updated"}

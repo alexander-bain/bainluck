@@ -494,3 +494,44 @@ export async function searchTeamsByLocation(
     `/api/me/teams/by-location?q=${encodeURIComponent(q)}`
   );
 }
+
+// ============================================================================
+// Favorites CRUD (inline editing from preferences page)
+// ============================================================================
+
+/**
+ * Add a single team favorite
+ */
+export async function addFavorite(
+  teamId: number,
+  relationType: string
+): Promise<void> {
+  await apiMutate("/api/me/favorites", "POST", {
+    team_id: teamId,
+    relation_type: relationType,
+  });
+}
+
+/**
+ * Remove a single team favorite
+ */
+export async function removeFavorite(
+  teamId: number,
+  relationType: string
+): Promise<void> {
+  await apiMutate(
+    `/api/me/favorites/${teamId}?relation_type=${encodeURIComponent(relationType)}`,
+    "DELETE"
+  );
+}
+
+/**
+ * Update sport affinities
+ */
+export async function updateSportAffinities(
+  affinities: Record<string, number>
+): Promise<void> {
+  await apiMutate("/api/me/preferences/sport-affinities", "PUT", {
+    sport_affinities: affinities,
+  });
+}

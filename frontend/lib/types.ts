@@ -437,6 +437,7 @@ export interface UserPreferencesResponse {
 export interface OnboardingSubmission {
   home_location: string | null;
   local_teams: { team_id: number }[];
+  follow_teams: { team_id: number }[];
   alma_mater_teams: { team_id: number }[];
   rival_teams: { team_id: number }[];
   sport_affinities: Record<string, number>;
