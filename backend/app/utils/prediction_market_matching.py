@@ -556,6 +556,22 @@ def find_moneyline_outcome(
     if away_outcomes:
         return (away_outcomes[0], False)
 
+    # Fallback: outcome name is the full matchup (Polymarket pattern)
+    # e.g., outcome named "Pistons vs. Bulls" instead of a single team name
+    if matchup.team_a and matchup.team_b:
+        a_lower = matchup.team_a.lower()
+        b_lower = matchup.team_b.lower()
+        for outcome in outcomes:
+            if not outcome.name or outcome.current_probability is None:
+                continue
+            prob = float(outcome.current_probability)
+            if prob <= 0 or prob >= 1:
+                continue
+            name_lower = outcome.name.lower()
+            # Must contain both teams and NOT have ":" (props/totals/spreads)
+            if a_lower in name_lower and b_lower in name_lower and ":" not in outcome.name:
+                return (outcome, yes_is_home)
+
     # Last resort: if 1-2 outcomes with generic names (e.g., "Yes"),
     # fall back to first valid outcome (original behavior for simple binary markets)
     _GENERIC_OUTCOME_NAMES = {"yes", "no", ""}

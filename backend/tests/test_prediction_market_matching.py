@@ -604,6 +604,60 @@ class TestFindMoneylineOutcome:
         outcome, _ = result
         assert outcome.name == "Golden State Warriors"
 
+    def test_matchup_name_outcome_fallback(self):
+        """Outcome named with full matchup (e.g., 'Pistons vs. Bulls')."""
+        outcomes = [
+            _MockOutcome("Pistons vs. Bulls", 0.45),
+        ]
+        matchup = extract_matchup("Pistons vs. Bulls")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Chicago Bulls", "Detroit Pistons",
+        )
+        assert result is not None
+        outcome, yes_is_home = result
+        assert outcome.name == "Pistons vs. Bulls"
+
+    def test_matchup_name_rejects_props_with_colon(self):
+        """Outcome with ':' (spread/total) is NOT matched by matchup fallback."""
+        outcomes = [
+            _MockOutcome("Pistons vs. Bulls: O/U 229.5", 0.52),
+        ]
+        matchup = extract_matchup("Pistons vs. Bulls")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Chicago Bulls", "Detroit Pistons",
+        )
+        assert result is None
+
+    def test_matchup_name_among_multiple_outcomes(self):
+        """Matchup-name fallback works when mixed with prop outcomes."""
+        outcomes = [
+            _MockOutcome("Pistons vs. Bulls", 0.45),
+            _MockOutcome("Over 220.5", 0.52),
+            _MockOutcome("Spread: Pistons (-10.5)", 0.48),
+        ]
+        matchup = extract_matchup("Pistons vs. Bulls")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Chicago Bulls", "Detroit Pistons",
+        )
+        assert result is not None
+        outcome, _ = result
+        assert outcome.name == "Pistons vs. Bulls"
+
+    def test_matchup_name_zero_prob_skipped(self):
+        """Matchup-name fallback skips outcomes with prob=0."""
+        outcomes = [
+            _MockOutcome("Pistons vs. Bulls", 0.0),
+        ]
+        matchup = extract_matchup("Pistons vs. Bulls")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Chicago Bulls", "Detroit Pistons",
+        )
+        assert result is None
+
 
 # =============================================================================
 # Win probability sources config
