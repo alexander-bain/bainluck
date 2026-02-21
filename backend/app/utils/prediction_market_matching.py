@@ -10,7 +10,7 @@ so it appears as a trend line on the OddsChart alongside sportsbooks, ESPN, etc.
 import re
 import logging
 from typing import Optional
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.utils.team_linking import _normalize_name
 
@@ -112,8 +112,8 @@ _DASH_PROP_RE = re.compile(
 #   - Sport + Game/Match: "Basketball Game:", "Football Match:", etc.
 _CATEGORY_PREFIX_RE = re.compile(
     r'^(?:'
-    # League abbreviations
-    r'NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB?|NCAAF?|EPL|La Liga|Serie A|Ligue 1|Bundesliga'
+    # League abbreviations (no dash-suffix support needed for these)
+    r'NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB?|NCAAF?|EPL|Ligue 1'
     r'|'
     # "Pro/Professional [Men's/Women's] <sport> [Game/Match]"
     # Matches: "Pro Men's Basketball", "Professional Basketball Game",
@@ -128,6 +128,24 @@ _CATEGORY_PREFIX_RE = re.compile(
     # Matches: "Basketball:", "Football Game:", "Hockey Match:"
     r'(?:Basketball|Football|Hockey|Baseball|Soccer|Tennis|Golf|Boxing|MMA)'
     r'(?:\s+(?:Game|Match))?'
+    r'|'
+    # Polymarket league names and competition names
+    # Matches: "Six Nations:", "Super Rugby Pacific:", "United Rugby Championship:",
+    #          "Champions League:", "Copa Libertadores:", "A-League:", "UFC 326:",
+    #          "Serie A - Round 24:", "La Liga - Matchday 25:"
+    r'(?:La Liga|Serie A|Bundesliga|Six Nations|Super Rugby\s*\w*|United Rugby Championship'
+    r'|Champions League|Europa League|Copa (?:Libertadores|America|del Rey)'
+    r'|A-League|J[.-]?League|K[.-]?League|Indian Super League'
+    r'|Eredivisie|Primeira Liga|Scottish Premiership|Belgian Pro League'
+    r'|Super Lig|Allsvenskan|Eliteserien'
+    r'|UFC\s*\d*|Bellator\s*\d*|PFL\s*\d*|ONE\s*\d*'
+    r'|ATP|WTA|Grand Slam|Australian Open|French Open|Wimbledon|US Open'
+    r'|PGA|LIV Golf|DP World Tour'
+    r'|Formula\s*1|F1|NASCAR|IndyCar'
+    r'|Cricket|IPL|Big Bash|The Ashes'
+    r'|Rugby|Top\s*14|Premiership Rugby'
+    r')'
+    r'(?:\s*-\s*[^:]{1,30})?'  # Optional suffix like "- Round 24", "- Matchday 25"
     r')\s*:\s*',
     re.IGNORECASE,
 )
@@ -668,6 +686,47 @@ def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
             break  # First valid split wins
 
     return best_pair
+
+
+# Month abbreviation → month number for ticker date parsing
+_MONTH_MAP = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
+    """
+    Extract the game date from a Kalshi game ticker.
+
+    Example: "KXNBAGAME-26FEB21DETCHI" → datetime(2026, 2, 21, tzinfo=UTC)
+
+    This is critical because Kalshi's commence_time on game markets is the
+    market RESOLUTION date (often weeks after the game), not the actual game
+    date. The ticker embeds the real game date as YYMMMDD.
+
+    Returns a timezone-aware datetime at midnight UTC, or None if parsing fails.
+    """
+    if not external_id:
+        return None
+
+    m = _TICKER_DATE_RE.match(external_id)
+    if not m:
+        return None
+
+    date_str = m.group(1)  # e.g., "26FEB21"
+
+    # Parse: 2-digit year + 3-letter month + 1-2 digit day
+    try:
+        year = 2000 + int(date_str[:2])
+        month_str = date_str[2:5].lower()
+        day = int(date_str[5:])
+        month = _MONTH_MAP.get(month_str)
+        if not month:
+            return None
+        return datetime(year, month, day, tzinfo=timezone.utc)
+    except (ValueError, IndexError):
+        return None
 
 
 def extract_matchup_with_ticker_fallback(

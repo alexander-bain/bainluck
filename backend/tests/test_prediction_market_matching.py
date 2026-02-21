@@ -20,6 +20,7 @@ from app.utils.prediction_market_matching import (
     extract_matchup,
     extract_matchup_with_ticker_fallback,
     extract_teams_from_ticker,
+    extract_game_date_from_ticker,
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
@@ -1535,3 +1536,134 @@ class TestExtractMatchupWithTickerFallback:
         assert _fuzzy_team_match(result.team_a, "Detroit Pistons")
         # "Bulls" should fuzzy-match "Chicago Bulls"
         assert _fuzzy_team_match(result.team_b, "Chicago Bulls")
+
+
+# =============================================================================
+# extract_game_date_from_ticker
+# =============================================================================
+
+class TestExtractGameDateFromTicker:
+    """Tests for parsing game dates from Kalshi ticker strings."""
+
+    def test_nba_game_date(self):
+        """Standard NBA ticker with Feb 21 date."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXNBAGAME-26FEB21DETCHI")
+        assert result == datetime(2026, 2, 21, tzinfo=timezone.utc)
+
+    def test_nfl_game_date(self):
+        """NFL ticker with single-digit day."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXNFLGAME-26JAN5DALNYG")
+        assert result == datetime(2026, 1, 5, tzinfo=timezone.utc)
+
+    def test_nhl_game_date(self):
+        """NHL ticker."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXNHLGAME-26MAR15BOSPHI")
+        assert result == datetime(2026, 3, 15, tzinfo=timezone.utc)
+
+    def test_mlb_game_date(self):
+        """MLB ticker."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXMLBGAME-26APR3NYYLAA")
+        assert result == datetime(2026, 4, 3, tzinfo=timezone.utc)
+
+    def test_ncaab_game_date(self):
+        """NCAAB ticker."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXNCAABGAME-26MAR19DUKNC")
+        assert result == datetime(2026, 3, 19, tzinfo=timezone.utc)
+
+    def test_ufc_fight_date(self):
+        """UFC ticker."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXUFCFIGHT-26FEB22JONJONES")
+        assert result == datetime(2026, 2, 22, tzinfo=timezone.utc)
+
+    def test_december_date(self):
+        """December date (two-digit month abbreviation edge case)."""
+        from datetime import datetime, timezone
+        result = extract_game_date_from_ticker("KXNBAGAME-25DEC25LACLAL")
+        assert result == datetime(2025, 12, 25, tzinfo=timezone.utc)
+
+    def test_non_game_ticker_returns_none(self):
+        """Non-game Kalshi tickers should return None."""
+        assert extract_game_date_from_ticker("KXNBA-CHAMP-2026") is None
+
+    def test_none_input(self):
+        assert extract_game_date_from_ticker(None) is None
+
+    def test_empty_string(self):
+        assert extract_game_date_from_ticker("") is None
+
+    def test_polymarket_id_returns_none(self):
+        """Polymarket external IDs (numeric) should return None."""
+        assert extract_game_date_from_ticker("12345") is None
+
+    def test_invalid_month_returns_none(self):
+        """Invalid month abbreviation should return None."""
+        assert extract_game_date_from_ticker("KXNBAGAME-26XYZ21DETCHI") is None
+
+
+# =============================================================================
+# Polymarket prefix stripping (expanded prefixes)
+# =============================================================================
+
+class TestExpandedPrefixStripping:
+    """Tests for expanded Polymarket league prefix stripping."""
+
+    def test_six_nations(self):
+        assert _strip_category_prefix("Six Nations: France vs England") == "France vs England"
+
+    def test_super_rugby_pacific(self):
+        assert _strip_category_prefix("Super Rugby Pacific: Blues vs Moana Pasifika") == "Blues vs Moana Pasifika"
+
+    def test_united_rugby_championship(self):
+        assert _strip_category_prefix("United Rugby Championship: Leinster vs Munster") == "Leinster vs Munster"
+
+    def test_ufc_numbered(self):
+        assert _strip_category_prefix("UFC 326: Jones vs Aspinall") == "Jones vs Aspinall"
+
+    def test_ufc_no_number(self):
+        assert _strip_category_prefix("UFC: Adesanya vs Pereira") == "Adesanya vs Pereira"
+
+    def test_champions_league(self):
+        assert _strip_category_prefix("Champions League: Real Madrid vs Bayern Munich") == "Real Madrid vs Bayern Munich"
+
+    def test_copa_libertadores(self):
+        assert _strip_category_prefix("Copa Libertadores: Flamengo vs Palmeiras") == "Flamengo vs Palmeiras"
+
+    def test_serie_a_with_round(self):
+        assert _strip_category_prefix("Serie A - Round 24: AC Milan vs Juventus") == "AC Milan vs Juventus"
+
+    def test_la_liga_with_matchday(self):
+        assert _strip_category_prefix("La Liga - Matchday 25: Barcelona vs Atletico") == "Barcelona vs Atletico"
+
+    def test_eredivisie(self):
+        assert _strip_category_prefix("Eredivisie: Ajax vs PSV") == "Ajax vs PSV"
+
+    def test_atp(self):
+        assert _strip_category_prefix("ATP: Djokovic vs Alcaraz") == "Djokovic vs Alcaraz"
+
+    def test_f1(self):
+        assert _strip_category_prefix("F1: Hamilton vs Verstappen") == "Hamilton vs Verstappen"
+
+    def test_formula_1(self):
+        assert _strip_category_prefix("Formula 1: Hamilton vs Verstappen") == "Hamilton vs Verstappen"
+
+    def test_ipl(self):
+        assert _strip_category_prefix("IPL: Mumbai Indians vs Chennai Super Kings") == "Mumbai Indians vs Chennai Super Kings"
+
+    def test_bellator_numbered(self):
+        assert _strip_category_prefix("Bellator 305: Fighter A vs Fighter B") == "Fighter A vs Fighter B"
+
+    def test_existing_nba_prefix_still_works(self):
+        """Existing prefixes should still work."""
+        assert _strip_category_prefix("NBA: Celtics at Warriors") == "Celtics at Warriors"
+
+    def test_existing_pro_prefix_still_works(self):
+        assert _strip_category_prefix("Professional Basketball Game: Celtics at Warriors") == "Celtics at Warriors"
+
+    def test_no_prefix_unchanged(self):
+        assert _strip_category_prefix("Celtics vs Warriors") == "Celtics vs Warriors"

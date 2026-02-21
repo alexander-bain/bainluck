@@ -23,6 +23,7 @@ from app.utils.prediction_market_matching import (
     extract_matchup,
     extract_matchup_with_ticker_fallback,
     extract_teams_from_ticker,
+    extract_game_date_from_ticker,
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
@@ -112,10 +113,16 @@ async def _match_prediction_markets(limit: int = 500):
                 market.name, external_id=market.external_id,
             )
 
+            # Extract game date from ticker — Kalshi commence_time is the
+            # market RESOLUTION date (often weeks after the game), not the
+            # actual game date. The ticker embeds the real date.
+            ticker_game_date = extract_game_date_from_ticker(market.external_id)
+
             if matchup:
                 # Team-name based matching (either from name or ticker)
                 matched_event = await _find_matching_event(
                     session, matchup, market, now,
+                    game_date_override=ticker_game_date,
                 )
                 if matched_event and matchup.format_type == "ticker_parsed":
                     stats["funnel"].setdefault("ticker_abbrev_linked", 0)
@@ -124,6 +131,7 @@ async def _match_prediction_markets(limit: int = 500):
                 # Last resort: sport + time matching for truly unrecognizable markets
                 matched_event = await _find_event_by_sport_and_time(
                     session, market, now,
+                    game_date_override=ticker_game_date,
                 )
                 if matched_event:
                     stats["funnel"].setdefault("sport_time_fallback_linked", 0)
@@ -209,10 +217,15 @@ async def _match_prediction_markets(limit: int = 500):
 
             stats["funnel"]["game_level_detected"] += 1
 
+            # For Kalshi markets in Pass 2, extract game date from ticker
+            # (commence_time is resolution date, not game date)
+            pass2_game_date = extract_game_date_from_ticker(market.external_id) if market.source == "kalshi" else None
+
             # Find candidate events by team name matching
             # Search for events where either team matches either market team
             matched_event = await _find_matching_event(
                 session, matchup, market, now,
+                game_date_override=pass2_game_date,
             )
 
             if matched_event:
@@ -347,7 +360,7 @@ async def _match_prediction_markets(limit: int = 500):
     return stats
 
 
-async def _find_matching_event(session, matchup, market, now):
+async def _find_matching_event(session, matchup, market, now, game_date_override=None):
     """
     Find an Event that matches the given matchup and market.
 
@@ -356,6 +369,12 @@ async def _find_matching_event(session, matchup, market, now):
     2. Filter by commence_time proximity
     3. Prefer events in the same sport category
     4. Return the best match or None
+
+    Args:
+        game_date_override: If provided, use this as the reference time instead
+            of market.commence_time. Critical for Kalshi game markets where
+            commence_time is the market resolution date (weeks after the game),
+            not the actual game date.
     """
     from app.models.models import Event, Sport
 
@@ -371,9 +390,10 @@ async def _find_matching_event(session, matchup, market, now):
         ilike_conditions.append(Event.home_team_name.ilike(pattern))
         ilike_conditions.append(Event.away_team_name.ilike(pattern))
 
-    # Time window: events starting within ±48 hours of market commence_time
-    # or within ±48 hours of now if no commence_time
-    reference_time = market.commence_time or now
+    # Time window: events starting within ±48 hours of reference time.
+    # For Kalshi game tickers, use the game date from the ticker (not
+    # market.commence_time, which is the resolution date weeks later).
+    reference_time = game_date_override or market.commence_time or now
     time_start = reference_time - MAX_TIME_DELTA
     time_end = reference_time + MAX_TIME_DELTA
 
@@ -467,7 +487,7 @@ async def _find_matching_event(session, matchup, market, now):
     return best_match
 
 
-async def _find_event_by_sport_and_time(session, market, now):
+async def _find_event_by_sport_and_time(session, market, now, game_date_override=None):
     """
     Fallback matching for ticker-detected markets with generic names.
 
@@ -487,9 +507,11 @@ async def _find_event_by_sport_and_time(session, market, now):
     if not sport_prefix:
         return None
 
-    # Use market commence_time (Kalshi close time) as reference.
+    # Use game_date_override (from ticker) if available — Kalshi commence_time
+    # is the market RESOLUTION date (often weeks after the game), not the
+    # actual game date.
     # Search ±6 hours (tighter than the usual ±48h since we have no team names)
-    reference_time = market.commence_time
+    reference_time = game_date_override or market.commence_time
     if not reference_time:
         return None
 
