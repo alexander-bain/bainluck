@@ -165,6 +165,7 @@ class TestBeatScheduleCompleteness:
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",
+        "poll-live-prediction-markets",
         "heartbeat",
         "collapse-odds-snapshots-daily",
         "collapse-winprob-snapshots-daily",

@@ -279,6 +279,13 @@ def match_prediction_markets(self, limit: int = 500):
     return _tracked_run("prediction_market_match", _match_prediction_markets(limit))
 
 
+@celery_app.task(bind=True, name="app.tasks.poll_live_prediction_markets")
+def poll_live_prediction_markets(self):
+    """Fast-poll prices for prediction markets linked to live events (every 2 min)."""
+    from app.tasks.prediction_market_matching import _poll_live_prediction_market_prices
+    return _tracked_run("prediction_market_live", _poll_live_prediction_market_prices())
+
+
 # --- Roster Sync (SportsDataIO) ---
 
 @celery_app.task(bind=True, name="app.tasks.sync_rosters")
@@ -371,6 +378,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.match_prediction_markets",
         "schedule": crontab(minute="5,20,35,50"),  # Every 15 min: after Polymarket (:15) and Kalshi (:45)
         "kwargs": {"limit": 500},
+    },
+    "poll-live-prediction-markets": {
+        "task": "app.tasks.poll_live_prediction_markets",
+        "schedule": 120.0,  # Every 2 minutes — only targets linked live game markets
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",

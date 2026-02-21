@@ -525,3 +525,316 @@ async def _find_event_by_sport_and_time(session, market, now):
 def _escape_like(s: str) -> str:
     """Escape special characters for ILIKE patterns."""
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# =============================================================================
+# Live Game Price Polling
+# =============================================================================
+
+async def _poll_live_prediction_market_prices():
+    """
+    Fast-poll current prices for prediction markets linked to LIVE events.
+
+    Unlike the full Kalshi/Polymarket polling tasks (which run hourly and scan
+    the entire catalog), this task is targeted: it only fetches prices for
+    markets already linked to events that are currently live. This enables
+    2-minute polling frequency without hitting rate limits.
+
+    For Kalshi: Fetches market data via the /markets endpoint filtered by
+    event_ticker to get fresh yes_bid/yes_ask.
+
+    For Polymarket: Fetches event data from the Gamma API to get current
+    outcomePrices (one call per event).
+
+    After updating FuturesOutcome.current_probability, writes win_prob_snapshots
+    so the OddsChart trend line updates in near-real-time.
+    """
+    import asyncio
+    import json
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import (
+        FuturesMarket, FuturesOutcome, Event, WinProbSnapshot,
+    )
+    from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+    from app.utils.odds_math import probability_to_american
+
+    stats = {
+        "live_events": 0,
+        "linked_markets": 0,
+        "kalshi_fetched": 0,
+        "polymarket_fetched": 0,
+        "outcomes_updated": 0,
+        "snapshots_written": 0,
+        "snapshots_deduped": 0,
+        "errors": [],
+    }
+
+    now = datetime.now(timezone.utc)
+
+    async with get_task_session() as session:
+        # Find all linked prediction markets where the event is currently live
+        result = await session.execute(
+            select(FuturesMarket, Event)
+            .join(Event, FuturesMarket.event_id == Event.id)
+            .where(
+                FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                FuturesMarket.event_id.isnot(None),
+                Event.status == "live",
+            )
+        )
+        rows = result.all()
+
+        if not rows:
+            logger.debug("No live-linked prediction markets to poll")
+            return stats
+
+        live_event_ids = set()
+        kalshi_markets = []
+        polymarket_markets = []
+
+        for market, event in rows:
+            live_event_ids.add(event.id)
+            if market.source == "kalshi":
+                kalshi_markets.append((market, event))
+            else:
+                polymarket_markets.append((market, event))
+
+        stats["live_events"] = len(live_event_ids)
+        stats["linked_markets"] = len(rows)
+
+        # ── Fetch Kalshi prices ────────────────────────────────────────
+        if kalshi_markets:
+            try:
+                from app.services.kalshi_api import KalshiClient
+                async with KalshiClient() as kalshi:
+                    for market, event in kalshi_markets:
+                        try:
+                            # Kalshi external_id is the event ticker
+                            markets_data, _ = await kalshi.get_markets(
+                                event_ticker=market.external_id,
+                                status=None,  # Get all statuses
+                                limit=10,
+                            )
+                            stats["kalshi_fetched"] += 1
+
+                            # Update outcomes with fresh prices
+                            for mkt_data in markets_data:
+                                yes_bid = mkt_data.get("yes_bid")
+                                yes_ask = mkt_data.get("yes_ask")
+                                last_price = mkt_data.get("last_price")
+
+                                # Kalshi prices are in cents (0-100)
+                                if yes_bid is not None:
+                                    yes_bid = yes_bid / 100.0
+                                if yes_ask is not None:
+                                    yes_ask = yes_ask / 100.0
+                                if last_price is not None:
+                                    last_price = last_price / 100.0
+
+                                # Calculate probability from mid-market
+                                if yes_bid is not None and yes_ask is not None:
+                                    prob = (yes_bid + yes_ask) / 2
+                                elif last_price is not None:
+                                    prob = last_price
+                                else:
+                                    continue
+
+                                if prob <= 0 or prob >= 1:
+                                    continue
+
+                                # Find matching outcome by ticker
+                                ticker = mkt_data.get("ticker", "")
+                                outcome_result = await session.execute(
+                                    select(FuturesOutcome)
+                                    .where(
+                                        FuturesOutcome.market_id == market.id,
+                                        FuturesOutcome.external_id == ticker,
+                                    )
+                                )
+                                outcome = outcome_result.scalar_one_or_none()
+
+                                if not outcome:
+                                    # Try matching by market_id alone if only one outcome
+                                    outcome_result = await session.execute(
+                                        select(FuturesOutcome)
+                                        .where(FuturesOutcome.market_id == market.id)
+                                        .limit(2)
+                                    )
+                                    outcomes = outcome_result.scalars().all()
+                                    if len(outcomes) == 1:
+                                        outcome = outcomes[0]
+                                    else:
+                                        continue
+
+                                # Update outcome probability
+                                outcome.current_probability = prob
+                                outcome.current_yes_bid = yes_bid
+                                outcome.current_yes_ask = yes_ask
+                                american = probability_to_american(prob) if 0 < prob < 1 else None
+                                outcome.current_american_odds = american
+                                outcome.last_updated = now
+                                stats["outcomes_updated"] += 1
+
+                            # Rate limit between Kalshi requests
+                            await asyncio.sleep(0.3)
+
+                        except Exception as e:
+                            stats["errors"].append(f"kalshi_{market.external_id}: {str(e)[:100]}")
+
+            except Exception as e:
+                stats["errors"].append(f"kalshi_client: {str(e)[:100]}")
+
+        # ── Fetch Polymarket prices ────────────────────────────────────
+        if polymarket_markets:
+            try:
+                from app.services.polymarket_api import PolymarketClient
+                async with PolymarketClient() as poly:
+                    # Group by external_id (Polymarket event ID) to avoid duplicate fetches
+                    seen_events = {}
+                    for market, event in polymarket_markets:
+                        if market.external_id in seen_events:
+                            continue
+
+                        try:
+                            event_data = await poly.get_event_by_id(market.external_id)
+                            stats["polymarket_fetched"] += 1
+
+                            if not event_data:
+                                continue
+
+                            seen_events[market.external_id] = event_data
+
+                            # Parse markets from event data
+                            poly_markets = event_data.get("markets", [])
+                            if not poly_markets:
+                                continue
+
+                            for pm in poly_markets:
+                                condition_id = pm.get("conditionId", "")
+
+                                # Parse outcomePrices (stringified JSON array)
+                                prices_raw = pm.get("outcomePrices", "[]")
+                                try:
+                                    prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
+                                except (json.JSONDecodeError, TypeError):
+                                    continue
+
+                                if not prices:
+                                    continue
+
+                                prob = float(prices[0])
+                                if prob <= 0 or prob >= 1:
+                                    continue
+
+                                # Find matching outcome by condition_id
+                                outcome_result = await session.execute(
+                                    select(FuturesOutcome)
+                                    .where(
+                                        FuturesOutcome.market_id == market.id,
+                                        FuturesOutcome.external_id == condition_id,
+                                    )
+                                )
+                                outcome = outcome_result.scalar_one_or_none()
+                                if not outcome:
+                                    continue
+
+                                # Update outcome probability
+                                outcome.current_probability = prob
+                                american = probability_to_american(prob) if 0 < prob < 1 else None
+                                outcome.current_american_odds = american
+
+                                # Parse bid/ask if available
+                                best_bid = pm.get("bestBid")
+                                best_ask = pm.get("bestAsk")
+                                if best_bid is not None:
+                                    outcome.current_yes_bid = float(best_bid)
+                                if best_ask is not None:
+                                    outcome.current_yes_ask = float(best_ask)
+
+                                outcome.last_updated = now
+                                stats["outcomes_updated"] += 1
+
+                            # Rate limit between Polymarket requests
+                            await asyncio.sleep(0.3)
+
+                        except Exception as e:
+                            stats["errors"].append(f"polymarket_{market.external_id}: {str(e)[:100]}")
+
+            except Exception as e:
+                stats["errors"].append(f"polymarket_client: {str(e)[:100]}")
+
+        # ── Write win_prob_snapshots for all live linked markets ───────
+        # Re-query to pick up freshly-updated probabilities
+        for market, event in rows:
+            try:
+                matchup = extract_matchup(market.name, external_id=market.external_id)
+                if not matchup:
+                    continue
+
+                # Get outcomes for this market
+                outcome_result = await session.execute(
+                    select(FuturesOutcome)
+                    .where(FuturesOutcome.market_id == market.id)
+                    .order_by(FuturesOutcome.rank)
+                )
+                all_outcomes = outcome_result.scalars().all()
+                if not all_outcomes:
+                    continue
+
+                # Find moneyline outcome and determine home/away mapping
+                ml_result = find_moneyline_outcome(
+                    all_outcomes, matchup,
+                    event.home_team_name, event.away_team_name,
+                )
+                if not ml_result:
+                    continue
+
+                outcome, yes_is_home = ml_result
+                yes_prob = float(outcome.current_probability)
+
+                if yes_is_home:
+                    home_prob = yes_prob
+                else:
+                    home_prob = 1.0 - yes_prob
+                away_prob = 1.0 - home_prob
+
+                # Write snapshot with deduplication
+                snapshot, is_new = await _create_or_update_win_prob_snapshot(
+                    session,
+                    event_id=event.id,
+                    source=market.source,
+                    home_win_probability=round(home_prob, 4),
+                    away_win_probability=round(away_prob, 4),
+                    game_state={
+                        "market_name": market.name,
+                        "market_id": market.id,
+                        "outcome_name": outcome.name,
+                        "yes_probability": yes_prob,
+                        "yes_bid": float(outcome.current_yes_bid) if outcome.current_yes_bid else None,
+                        "yes_ask": float(outcome.current_yes_ask) if outcome.current_yes_ask else None,
+                        "poll_type": "live_fast",
+                    },
+                )
+
+                if is_new:
+                    session.add(snapshot)
+                    stats["snapshots_written"] += 1
+                else:
+                    stats["snapshots_deduped"] += 1
+
+            except Exception as e:
+                stats["errors"].append(f"snapshot_{market.id}: {str(e)[:100]}")
+
+        await session.commit()
+
+    logger.info(
+        "Live prediction market poll: events=%d, markets=%d, "
+        "kalshi=%d, polymarket=%d, outcomes=%d, snapshots=%d (deduped=%d)",
+        stats["live_events"], stats["linked_markets"],
+        stats["kalshi_fetched"], stats["polymarket_fetched"],
+        stats["outcomes_updated"], stats["snapshots_written"],
+        stats["snapshots_deduped"],
+    )
+    return stats

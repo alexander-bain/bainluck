@@ -2374,6 +2374,34 @@ async def trigger_prediction_market_matching(
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
+@router.post("/prediction-markets/poll-live")
+async def trigger_live_prediction_market_poll(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Trigger a one-off live prediction market price poll.
+
+    Fetches current prices from Kalshi and Polymarket ONLY for markets
+    linked to events with status='live'. Much faster than full polls.
+    Normally runs automatically every 2 minutes via beat schedule.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import poll_live_prediction_markets
+
+    try:
+        task = poll_live_prediction_markets.delay()
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Live prediction market poll queued. "
+                       f"Use /api/admin/prediction-markets/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
 @router.get("/prediction-markets/task/{task_id}")
 async def get_prediction_market_task_status(
     task_id: str,

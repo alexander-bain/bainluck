@@ -162,7 +162,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1384+ pytest items across 18 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (190 tests: ticker detection, name building, false positives, sport prefix mapping), retention SQL (19 tests: CTE logic simulation, table config, NULL handling). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1389+ pytest items across 18 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (195 tests: ticker detection, name building, false positives, sport prefix mapping, live poll wiring), retention SQL (19 tests: CTE logic simulation, table config, NULL handling). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117 tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -736,7 +736,7 @@ Links Kalshi and Polymarket game-level markets (e.g., "NBA: Celtics at Warriors"
 - **Detection**: `utils/prediction_market_matching.py` — regex-based game-level detection, fuzzy team name matching, Kalshi ticker parsing
 - **Matching task**: `tasks/prediction_market_matching.py` — Celery task that links FuturesMarkets to Events and writes `win_prob_snapshots`
 - **Source registry**: `win_prob_sources.py` already has Kalshi (green `#22c55e`) and Polymarket (blue `#3b82f6`) entries
-- **Beat schedule**: `match_prediction_markets` runs every 15 min at `:05, :20, :35, :50`
+- **Beat schedule**: `match_prediction_markets` runs every 15 min at `:05, :20, :35, :50`; `poll_live_prediction_markets` runs every 2 min (only fetches prices for markets linked to live events)
 
 **Two-pass matching strategy (Phase 1):**
 1. **Pass 1 — Targeted ticker scan**: Queries `FuturesMarket` by Kalshi game ticker patterns (`KXNBAGAME%`, `KXNFLGAME%`, etc.) with no limit. Uses `extract_matchup()` for name-based matching, with `_find_event_by_sport_and_time()` as fallback when names are generic (e.g., "Professional Basketball Game").
@@ -759,6 +759,9 @@ curl "https://api.bainluck.com/api/admin/prediction-markets/status?secret=any"
 # Debug funnel (where markets drop off)
 curl "https://api.bainluck.com/api/admin/prediction-markets/debug?secret=any&sample_size=100"
 
+# Trigger live price poll (normally runs every 2 min automatically)
+curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/poll-live?secret=any"
+
 # Manual link (fallback when auto-matching fails)
 curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/link?secret=any&market_id=123&event_id=456"
 ```
@@ -766,7 +769,7 @@ curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/link?secret=
 **Files:**
 - `backend/app/utils/prediction_market_matching.py` — Detection regex, fuzzy matching, team mapping, ticker parsing
 - `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases
-- `backend/tests/test_prediction_market_matching.py` — 190 tests (ticker detection, name building, false positives, sport prefix mapping, integration)
+- `backend/tests/test_prediction_market_matching.py` — 195 tests (ticker detection, name building, false positives, sport prefix mapping, live poll wiring, integration)
 
 ### Team Auto-Creation from Events
 The `_discover_events()` task (runs every 15 min) now batch-creates Team records for any teams found in events that don't yet have entries in the `teams` table. This ensures college teams (Harvard, Brown, Stanford, etc.) get Team records even without ESPN scoreboard matching. The `search_teams` endpoint also falls back to searching the events table and auto-creating Team records for matches.
@@ -880,7 +883,7 @@ These are the current focus. Resist the urge to build new features until these a
 6. 🟢 **Auth & Personalization Phase 3 (shipped)** — Personalized feed scoring: team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting, personalization badges ("Your team", "Local", "Alma mater", "Rival losing"), unified interestingness feed combining events + futures.
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
 8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
-9. 🟡 **Polymarket integration Phase 2** — Beat schedule ✅ (already running hourly at :15), price history backfill ✅ (`POST /api/admin/polymarket/backfill-history` fetches CLOB `/prices-history` for outcomes with <24 snapshots). **Remaining:** non-sports category display in frontend (politics, entertainment, crypto tabs), increase polling frequency for active markets.
+9. 🟡 **Polymarket integration Phase 2** — Beat schedule ✅ (already running hourly at :15), price history backfill ✅ (`POST /api/admin/polymarket/backfill-history` fetches CLOB `/prices-history` for outcomes with <24 snapshots), live game polling ✅ (every 2 min via `poll_live_prediction_markets`). **Remaining:** non-sports category display in frontend (politics, entertainment, crypto tabs).
 10. 📋 Pass Kalshi event category as sport_key for better disambiguation
 11. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
 12. 📋 LLM-powered odds movement explanations
@@ -890,7 +893,7 @@ These are the current focus. Resist the urge to build new features until these a
 16. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
 17. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
 18. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
-19. 🟢 **Prediction market game-level odds on event pages (matching shipped, needs verification)** — Matching infrastructure built: two-pass strategy (ticker scan + general scan), 190 tests, sport+time fallback, admin endpoints. **Still needs:** (a) deploy and verify on production with live games, (b) increase polling frequency for live games (every 2-5 min vs hourly), (c) divergence badge/callout when prediction market odds differ >5% from sportsbook consensus, (d) LLM explanation of why markets disagree. Frontend: OddsChart already renders N sources dynamically.
+19. 🟢 **Prediction market game-level odds on event pages (matching + live polling shipped)** — Matching infrastructure built: two-pass strategy (ticker scan + general scan), 195 tests, sport+time fallback, admin endpoints. Live price polling: `poll_live_prediction_markets` runs every 2 min, fetches fresh Kalshi bid/ask and Polymarket prices only for markets linked to live events, writes `win_prob_snapshots`. **Still needs:** (a) deploy and verify on production with live games, (b) divergence badge/callout when prediction market odds differ >5% from sportsbook consensus, (c) LLM explanation of why markets disagree. Frontend: OddsChart already renders N sources dynamically.
 
 ### Horizon — AI-Native Sports Intelligence (SportsDataIO + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require SportsDataIO enrichment (rosters, injuries, standings, schedules) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -932,14 +935,14 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
-- ✅ Test coverage for core algorithms: 1384+ backend (pytest items) + 117 frontend = 1501+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (46), team linking (97), LLM classification (60), prediction market matching (190), odds polling helpers (27), win prob sources (24), task wiring (20), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1389+ backend (pytest items) + 117 frontend = 1506+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (46), team linking (97), LLM classification (60), prediction market matching (195), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
 - ✅ Auth & Personalization Phase 2 (shipped): 5-step onboarding flow (`/onboarding`) — location, follow teams, alma maters, sports+beyond (20 categories incl. politics/entertainment/crypto), rivals. Team search falls back to events table and auto-creates Team records for college teams. Inline favorites CRUD on preferences page. 31+ tests.
 - ✅ Auth & Personalization Phase 3 (shipped): Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting. Personalization badges ("Your team", "Local", "Alma mater", "Rival losing"). Unified interestingness feed combining events + futures on homepage.
 - ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to single "Right Now" feed ranked by interestingness score. Feed items include events and futures, with personalization overlay for authenticated users.
-- ✅ Prediction market → event matching: Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. 190 tests covering ticker detection, name building, false positive prevention, sport prefix mapping.
+- ✅ Prediction market → event matching: Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. Live game price polling every 2 min via `poll_live_prediction_markets` (targeted — only fetches prices for linked live-event markets from Kalshi/Polymarket APIs). 195 tests covering ticker detection, name building, false positive prevention, sport prefix mapping, live poll wiring.
 - ✅ ESPN matching resilience + wall-clock fallback: Multi-signal ESPN matching (ESPN ID → name → commence_time proximity) for both live and scheduled events. Wall-clock time estimation fallback for stat model when ESPN sync misses (common for college teams). Odds polling path relaxed to use fallback automatically. 16 new tests (67 total win probability tests).
 - ✅ Task-level monitoring dashboard: `redis_state.py` metrics system tracks success/failure/duration/output per task in Redis. Dashboard at `GET /api/admin/celery/dashboard` with health classification. 7 key tasks instrumented via `_tracked_run()`.
 - ✅ Polymarket price history backfill: `POST /api/admin/polymarket/backfill-history` fetches CLOB `/prices-history` for outcomes with sparse data, stores as `FuturesOddsSnapshot` rows. Resolves clob_token_ids via Gamma API event lookup.
