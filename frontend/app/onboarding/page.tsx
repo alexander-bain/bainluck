@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthContext } from "@/components/AuthProvider";
-import { searchTeamsByLocation, searchTeams, submitOnboarding } from "@/lib/api";
+import { searchTeamsByLocation, searchTeams, submitOnboarding, fetchUserPreferences } from "@/lib/api";
 import { SPORT_CATEGORIES } from "@/lib/sportCategories";
-import type { TeamSearchResult, OnboardingSubmission } from "@/lib/types";
+import type { TeamSearchResult, OnboardingSubmission, UserFavoriteItem } from "@/lib/types";
 
 // =============================================================================
 // Types
@@ -52,9 +52,9 @@ export default function OnboardingPage() {
   const { isAuthenticated, isLoading } = auth;
   const router = useRouter();
 
-  // Step state
+  // Step state — 5 steps now
   const [step, setStep] = useState(1);
-  const TOTAL_STEPS = 4;
+  const TOTAL_STEPS = 5;
 
   // Step 1: Location
   const [locationQuery, setLocationQuery] = useState("");
@@ -62,18 +62,24 @@ export default function OnboardingPage() {
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
   const [locationSearching, setLocationSearching] = useState(false);
 
-  // Step 2: Alma maters
+  // Step 2: Follow (favorite teams, any location)
+  const [followQuery, setFollowQuery] = useState("");
+  const [followResults, setFollowResults] = useState<TeamSearchResult[]>([]);
+  const [followTeams, setFollowTeams] = useState<SelectedTeam[]>([]);
+  const [followSearching, setFollowSearching] = useState(false);
+
+  // Step 3: Alma maters
   const [schoolQuery, setSchoolQuery] = useState("");
   const [schoolResults, setSchoolResults] = useState<TeamSearchResult[]>([]);
   const [almaMaterTeams, setAlmaMaterTeams] = useState<SelectedTeam[]>([]);
   const [schoolSearching, setSchoolSearching] = useState(false);
 
-  // Step 3: Sport affinities
+  // Step 4: Sport affinities
   const [sportAffinities, setSportAffinities] = useState<Record<string, SportLevel>>(
     { ...DEFAULT_AFFINITIES }
   );
 
-  // Step 4: Rivals
+  // Step 5: Rivals
   const [rivalQuery, setRivalQuery] = useState("");
   const [rivalResults, setRivalResults] = useState<TeamSearchResult[]>([]);
   const [rivalTeams, setRivalTeams] = useState<SelectedTeam[]>([]);
@@ -89,6 +95,67 @@ export default function OnboardingPage() {
       router.push("/");
     }
   }, [isLoading, isAuthenticated, router]);
+
+  // Pre-populate from existing preferences when re-visiting onboarding
+  const [prePopulated, setPrePopulated] = useState(false);
+  useEffect(() => {
+    if (!isAuthenticated || prePopulated) return;
+    (async () => {
+      try {
+        const prefs = await fetchUserPreferences();
+        if (!prefs.onboarding_completed) return;
+
+        // Helper to convert favorites to SelectedTeam[]
+        const toSelected = (items: UserFavoriteItem[]): SelectedTeam[] =>
+          items.map((f) => ({
+            id: f.team_id,
+            name: f.team_name,
+            sport_key: f.sport_key,
+            logo_url: f.logo_url,
+            selected: true,
+          }));
+
+        // Location
+        if (prefs.home_location) {
+          setLocationQuery(prefs.home_location);
+          setSelectedLocation(prefs.home_location);
+        }
+        const locals = prefs.favorites.filter((f) => f.relation_type === "local");
+        if (locals.length > 0) setLocationTeams(toSelected(locals));
+
+        // Follow
+        const follows = prefs.favorites.filter((f) => f.relation_type === "follow");
+        if (follows.length > 0) setFollowTeams(toSelected(follows));
+
+        // Alma maters
+        const almas = prefs.favorites.filter((f) => f.relation_type === "alma_mater");
+        if (almas.length > 0) setAlmaMaterTeams(toSelected(almas));
+
+        // Rivals
+        const rivals = prefs.favorites.filter((f) => f.relation_type === "rival");
+        if (rivals.length > 0) setRivalTeams(toSelected(rivals));
+
+        // Sport affinities
+        if (prefs.sport_affinities && Object.keys(prefs.sport_affinities).length > 0) {
+          const mapped: Record<string, SportLevel> = { ...DEFAULT_AFFINITIES };
+          for (const [key, val] of Object.entries(prefs.sport_affinities)) {
+            if (key in mapped) {
+              // Snap to nearest level
+              if (val >= 0.8) mapped[key] = 1.0;
+              else if (val >= 0.2) mapped[key] = 0.3;
+              else if (val > 0) mapped[key] = 0.1;
+              else mapped[key] = 0;
+            }
+          }
+          setSportAffinities(mapped);
+        }
+
+        setPrePopulated(true);
+      } catch {
+        // If fetch fails, just proceed with defaults
+      }
+    })();
+  }, [isAuthenticated, prePopulated]);
 
   // =========================================================================
   // Step 1: Location search
@@ -136,7 +203,67 @@ export default function OnboardingPage() {
   };
 
   // =========================================================================
-  // Step 2: School search
+  // Step 2: Follow search (favorite teams, any location)
+  // =========================================================================
+
+  const followDebounce = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleFollowSearch = useCallback(
+    (value: string) => {
+      setFollowQuery(value);
+
+      if (followDebounce.current) clearTimeout(followDebounce.current);
+
+      if (value.length < 2) {
+        setFollowResults([]);
+        return;
+      }
+
+      setFollowSearching(true);
+      followDebounce.current = setTimeout(async () => {
+        try {
+          const results = await searchTeams(value);
+          // Filter out teams already selected as local or follow
+          const localIds = new Set(
+            locationTeams.filter((t) => t.selected).map((t) => t.id)
+          );
+          const followIds = new Set(followTeams.map((t) => t.id));
+          setFollowResults(
+            results.filter((t) => !localIds.has(t.id) && !followIds.has(t.id))
+          );
+        } catch {
+          // silently fail
+        } finally {
+          setFollowSearching(false);
+        }
+      }, 300);
+    },
+    [locationTeams, followTeams]
+  );
+
+  const addFollowTeam = (team: TeamSearchResult) => {
+    if (followTeams.some((t) => t.id === team.id)) return;
+
+    setFollowTeams((prev) => [
+      ...prev,
+      {
+        id: team.id,
+        name: team.name,
+        sport_key: team.sport_key,
+        logo_url: team.logo_url,
+        selected: true,
+      },
+    ]);
+    setFollowQuery("");
+    setFollowResults([]);
+  };
+
+  const removeFollowTeam = (teamId: number) => {
+    setFollowTeams((prev) => prev.filter((t) => t.id !== teamId));
+  };
+
+  // =========================================================================
+  // Step 3: School search
   // =========================================================================
 
   const schoolDebounce = useRef<ReturnType<typeof setTimeout>>();
@@ -198,7 +325,7 @@ export default function OnboardingPage() {
   };
 
   // =========================================================================
-  // Step 4: Rival search
+  // Step 5: Rival search
   // =========================================================================
 
   const rivalDebounce = useRef<ReturnType<typeof setTimeout>>();
@@ -277,6 +404,7 @@ export default function OnboardingPage() {
         local_teams: locationTeams
           .filter((t) => t.selected)
           .map((t) => ({ team_id: t.id })),
+        follow_teams: followTeams.map((t) => ({ team_id: t.id })),
         alma_mater_teams: almaMaterTeams.map((t) => ({ team_id: t.id })),
         rival_teams: rivalTeams.map((t) => ({ team_id: t.id })),
         sport_affinities: Object.fromEntries(
@@ -284,6 +412,7 @@ export default function OnboardingPage() {
         ),
         raw_inputs: {
           location_query: locationQuery,
+          follow_selections: followTeams.map((t) => t.name),
           school_selections: almaMaterTeams.map((t) => t.name),
           rival_selections: rivalTeams.map((t) => t.name),
         },
@@ -351,6 +480,18 @@ export default function OnboardingPage() {
         )}
 
         {step === 2 && (
+          <StepFollow
+            query={followQuery}
+            onSearch={handleFollowSearch}
+            results={followResults}
+            selected={followTeams}
+            onAdd={addFollowTeam}
+            onRemove={removeFollowTeam}
+            searching={followSearching}
+          />
+        )}
+
+        {step === 3 && (
           <StepAlmaMaters
             query={schoolQuery}
             onSearch={handleSchoolSearch}
@@ -362,7 +503,7 @@ export default function OnboardingPage() {
           />
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <StepSports
             affinities={sportAffinities}
             onChange={(key, value) =>
@@ -371,7 +512,7 @@ export default function OnboardingPage() {
           />
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <StepRivals
             query={rivalQuery}
             onSearch={handleRivalSearch}
@@ -380,6 +521,18 @@ export default function OnboardingPage() {
             onAdd={addRival}
             onRemove={removeRival}
             searching={rivalSearching}
+          />
+        )}
+
+        {/* Summary before submit (on last step) */}
+        {step === TOTAL_STEPS && (
+          <OnboardingSummary
+            location={selectedLocation || locationQuery}
+            localTeams={locationTeams.filter((t) => t.selected)}
+            followTeams={followTeams}
+            almaMaterTeams={almaMaterTeams}
+            rivalTeams={rivalTeams}
+            sportAffinities={sportAffinities}
           />
         )}
 
@@ -397,7 +550,7 @@ export default function OnboardingPage() {
               onClick={goBack}
               className="text-sm text-slate hover:text-graphite transition-colors"
             >
-              ← Back
+              &larr; Back
             </button>
           ) : (
             <div />
@@ -507,7 +660,108 @@ function StepLocation({
 
       {query.length >= 2 && !searching && teams.length === 0 && (
         <p className="text-sm text-slate mt-4">
-          No teams found for &quot;{query}&quot;. Try a major city name.
+          No teams found for &quot;{query}&quot;. Try a major city name, abbreviation, or nickname.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function StepFollow({
+  query,
+  onSearch,
+  results,
+  selected,
+  onAdd,
+  onRemove,
+  searching,
+}: {
+  query: string;
+  onSearch: (q: string) => void;
+  results: TeamSearchResult[];
+  selected: SelectedTeam[];
+  onAdd: (team: TeamSearchResult) => void;
+  onRemove: (teamId: number) => void;
+  searching: boolean;
+}) {
+  return (
+    <div>
+      <h1 className="text-2xl font-bold text-graphite mb-2">
+        Any other favorite teams?
+      </h1>
+      <p className="text-sm text-slate mb-6">
+        Teams you root for, even if they&apos;re not local. These get the biggest
+        boost in your feed.
+      </p>
+
+      <div className="relative">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => onSearch(e.target.value)}
+          placeholder="Search for a team (e.g., Cowboys, Warriors)"
+          className="w-full px-4 py-3 bg-white border border-mist rounded-xl text-sm text-graphite placeholder:text-silver focus:outline-none focus:ring-2 focus:ring-graphite/20"
+          autoFocus
+        />
+
+        {/* Dropdown results */}
+        {results.length > 0 && (
+          <div className="absolute z-10 mt-1 w-full bg-white border border-mist rounded-xl shadow-lg max-h-60 overflow-y-auto">
+            {results.map((team) => (
+              <button
+                key={team.id}
+                onClick={() => onAdd(team)}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-snow transition-colors text-left border-b border-mist/50 last:border-0"
+              >
+                {team.logo_url && (
+                  <img src={team.logo_url} alt="" className="w-5 h-5 object-contain" />
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-graphite truncate">{team.name}</p>
+                  {team.location && (
+                    <p className="text-xs text-slate">{team.location}</p>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {searching && <p className="text-xs text-slate mt-3">Searching...</p>}
+
+      {/* Selected teams */}
+      {selected.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {selected.map((team) => (
+            <span
+              key={team.id}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-graphite text-white rounded-xl text-sm"
+            >
+              {team.logo_url && (
+                <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
+              )}
+              {team.name}
+              <button
+                onClick={() => onRemove(team.id)}
+                className="ml-1 hover:text-white/70"
+              >
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    fillRule="evenodd"
+                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {selected.length === 0 && (
+        <p className="text-xs text-slate mt-4">
+          This step is optional &mdash; skip if your local teams cover it.
         </p>
       )}
     </div>
@@ -752,6 +1006,97 @@ function StepRivals({
           This step is totally optional. Skip if you don&apos;t have any rivals.
         </p>
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// Summary Component (shown on last step before submit)
+// =============================================================================
+
+function OnboardingSummary({
+  location,
+  localTeams,
+  followTeams,
+  almaMaterTeams,
+  rivalTeams,
+  sportAffinities,
+}: {
+  location: string | null | undefined;
+  localTeams: SelectedTeam[];
+  followTeams: SelectedTeam[];
+  almaMaterTeams: SelectedTeam[];
+  rivalTeams: SelectedTeam[];
+  sportAffinities: Record<string, SportLevel>;
+}) {
+  const activeSports = Object.entries(sportAffinities)
+    .filter(([, v]) => v > 0)
+    .sort(([, a], [, b]) => b - a);
+
+  const hasAnything =
+    location ||
+    localTeams.length > 0 ||
+    followTeams.length > 0 ||
+    almaMaterTeams.length > 0 ||
+    rivalTeams.length > 0 ||
+    activeSports.length > 0;
+
+  if (!hasAnything) return null;
+
+  const sportLabel = (key: string) =>
+    ONBOARDING_SPORTS.find((s) => s.key === key)?.name || key;
+
+  const levelEmoji = (val: number) => {
+    if (val >= 0.8) return "❤️";
+    if (val >= 0.2) return "👀";
+    return "🤏";
+  };
+
+  return (
+    <div className="mt-6 p-4 bg-white border border-mist rounded-xl">
+      <p className="text-xs font-semibold text-slate uppercase tracking-wide mb-3">
+        Your selections
+      </p>
+      <div className="space-y-2 text-xs text-graphite">
+        {location && (
+          <p>
+            <span className="text-slate">Home:</span> {location}
+          </p>
+        )}
+        {localTeams.length > 0 && (
+          <p>
+            <span className="text-slate">Local:</span>{" "}
+            {localTeams.map((t) => t.name).join(", ")}
+          </p>
+        )}
+        {followTeams.length > 0 && (
+          <p>
+            <span className="text-slate">Following:</span>{" "}
+            {followTeams.map((t) => t.name).join(", ")}
+          </p>
+        )}
+        {almaMaterTeams.length > 0 && (
+          <p>
+            <span className="text-slate">Alma maters:</span>{" "}
+            {almaMaterTeams.map((t) => t.name).join(", ")}
+          </p>
+        )}
+        {rivalTeams.length > 0 && (
+          <p>
+            <span className="text-slate">Rivals:</span>{" "}
+            {rivalTeams.map((t) => t.name).join(", ")}
+          </p>
+        )}
+        {activeSports.length > 0 && (
+          <p>
+            <span className="text-slate">Sports:</span>{" "}
+            {activeSports.map(([key, val]) => `${levelEmoji(val)} ${sportLabel(key)}`).join(", ")}
+          </p>
+        )}
+      </div>
+      <p className="text-[10px] text-slate/60 mt-2">
+        You can update these anytime from Preferences.
+      </p>
     </div>
   );
 }

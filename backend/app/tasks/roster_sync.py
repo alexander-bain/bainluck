@@ -1,10 +1,13 @@
-"""Roster sync task — fetches player rosters from SportsDataIO and stores on Team records.
+"""Roster and team sync task — fetches teams and player rosters from SportsDataIO.
 
-Player names are stored in Team.roster_players as a JSONB list, e.g.:
-    ["Jayson Tatum", "Jaylen Brown", "Derrick White", ...]
-
-These names are used by the related-futures endpoint to match player outcomes
-(MVP, DPOY, ROY, etc.) to the correct team.
+Two sync phases per sport:
+1. Team sync: Ensures all pro teams exist in the `teams` table with city/location data.
+   Creates missing teams from SportsDataIO's AllTeams endpoint. Backfills location on
+   existing teams if missing.
+2. Roster sync: Stores player names in Team.roster_players as a JSONB list, e.g.:
+   ["Jayson Tatum", "Jaylen Brown", "Derrick White", ...]
+   These names are used by the related-futures endpoint to match player outcomes
+   (MVP, DPOY, ROY, etc.) to the correct team.
 """
 
 import logging
@@ -23,13 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 async def _sync_rosters(sport_key: Optional[str] = None) -> dict:
-    """Sync player rosters from SportsDataIO to Team.roster_players.
+    """Sync teams and player rosters from SportsDataIO.
 
     Args:
         sport_key: Our sport key (e.g., "basketball_nba"). If None, syncs all supported sports.
 
     Returns:
-        Summary dict with teams_updated count and details.
+        Summary dict with teams_created, teams_updated count and details.
     """
     service = SportsDataIOService()
     try:
@@ -39,7 +42,7 @@ async def _sync_rosters(sport_key: Optional[str] = None) -> dict:
 
 
 async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[str]) -> dict:
-    """Implementation of roster sync."""
+    """Implementation of team + roster sync."""
     if not service.api_key:
         return {"error": "SPORTSDATA_API_KEY not configured"}
 
@@ -51,34 +54,21 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
 
     total_updated = 0
     total_players = 0
+    total_teams_created = 0
+    total_teams_backfilled = 0
     details = []
 
     async with get_task_session() as session:
+        from app.models import Sport, Team
+
         for our_key in sport_keys:
             sd_sport = service.get_sportsdata_sport(our_key)
             if not sd_sport:
                 continue
 
-            logger.info(f"Syncing rosters for {our_key} (SportsDataIO: {sd_sport})")
-
-            # Fetch all active players for this sport
-            players = await service.fetch_all_players(sd_sport)
-            if not players:
-                details.append({"sport": our_key, "status": "no_data"})
-                continue
-
-            # Group players by team abbreviation
-            team_players: dict[str, list[str]] = {}
-            for p in players:
-                abbrev = p["team_abbrev"]
-                # Use both full name and ASCII variant for matching coverage
-                names = {p["name"]}
-                if p.get("ascii_name") and p["ascii_name"] != p["name"]:
-                    names.add(p["ascii_name"])
-                team_players.setdefault(abbrev, []).extend(names)
+            logger.info(f"Syncing teams and rosters for {our_key} (SportsDataIO: {sd_sport})")
 
             # Look up our Sport record to scope team matching
-            from app.models import Sport
             sport_result = await session.execute(
                 select(Sport.id).where(Sport.key == our_key)
             )
@@ -91,8 +81,113 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
             # Static name map for this sport (SportsDataIO abbrev → our team name)
             name_map = SPORTSDATA_ABBREV_TO_NAME.get(sd_sport, {})
 
+            # =================================================================
+            # Phase 1: Team sync — ensure all pro teams exist
+            # =================================================================
+            teams_created = 0
+            teams_backfilled = 0
+            sd_teams = await service.fetch_teams(sd_sport)
+
+            for sd_team in sd_teams:
+                abbrev = sd_team.get("key", "")
+                full_name = sd_team.get("full_name", "")
+                city = sd_team.get("city", "")
+
+                if not abbrev or not full_name:
+                    continue
+
+                # Try to find existing team by abbreviation
+                team_result = await session.execute(
+                    select(Team).where(
+                        Team.abbreviation == abbrev,
+                        Team.sport_id == sport_id,
+                    )
+                )
+                existing_team = team_result.scalar_one_or_none()
+
+                # Try by name map if abbreviation didn't match
+                if not existing_team and abbrev in name_map:
+                    team_result = await session.execute(
+                        select(Team).where(
+                            Team.name == name_map[abbrev],
+                            Team.sport_id == sport_id,
+                        )
+                    )
+                    existing_team = team_result.scalar_one_or_none()
+
+                # Try by full_name (SportsDataIO might use different abbreviation)
+                if not existing_team:
+                    team_result = await session.execute(
+                        select(Team).where(
+                            Team.name == full_name,
+                            Team.sport_id == sport_id,
+                        )
+                    )
+                    existing_team = team_result.scalar_one_or_none()
+
+                if existing_team:
+                    # Backfill location if missing
+                    if not existing_team.location and city:
+                        await session.execute(
+                            update(Team)
+                            .where(Team.id == existing_team.id)
+                            .values(location=city)
+                        )
+                        teams_backfilled += 1
+                        logger.info(f"  Backfilled location for {existing_team.name}: {city}")
+                    # Backfill abbreviation if missing
+                    if not existing_team.abbreviation and abbrev:
+                        await session.execute(
+                            update(Team)
+                            .where(Team.id == existing_team.id)
+                            .values(abbreviation=abbrev)
+                        )
+                else:
+                    # Create new Team record from SportsDataIO data
+                    new_team = Team(
+                        name=full_name,
+                        abbreviation=abbrev,
+                        location=city,
+                        sport_id=sport_id,
+                    )
+                    session.add(new_team)
+                    await session.flush()
+                    teams_created += 1
+                    logger.info(f"  Created Team: {full_name} ({abbrev}) in {city}")
+
+            total_teams_created += teams_created
+            total_teams_backfilled += teams_backfilled
+
+            if teams_created > 0 or teams_backfilled > 0:
+                logger.info(
+                    f"  {our_key} team sync: {teams_created} created, "
+                    f"{teams_backfilled} locations backfilled"
+                )
+
+            # =================================================================
+            # Phase 2: Roster sync — update player names
+            # =================================================================
+            players = await service.fetch_all_players(sd_sport)
+            if not players:
+                details.append({
+                    "sport": our_key,
+                    "teams_created": teams_created,
+                    "teams_backfilled": teams_backfilled,
+                    "status": "no_player_data",
+                })
+                continue
+
+            # Group players by team abbreviation
+            team_players: dict[str, list[str]] = {}
+            for p in players:
+                abbrev = p["team_abbrev"]
+                # Use both full name and ASCII variant for matching coverage
+                names = {p["name"]}
+                if p.get("ascii_name") and p["ascii_name"] != p["name"]:
+                    names.add(p["ascii_name"])
+                team_players.setdefault(abbrev, []).extend(names)
+
             # Update each team's roster_players
-            from app.models import Team
             sport_updated = 0
             unmatched = []
             for abbrev, player_names in team_players.items():
@@ -121,6 +216,7 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     team_id = team_row[0] if team_row else None
 
                 # Try 3: Create Team record if we have a name mapping but no DB record
+                # (This should rarely trigger now that Phase 1 creates teams upfront)
                 if not team_id and abbrev in name_map:
                     new_team = Team(
                         name=name_map[abbrev],
@@ -147,6 +243,8 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
             total_updated += sport_updated
             sport_detail = {
                 "sport": our_key,
+                "teams_created": teams_created,
+                "teams_backfilled": teams_backfilled,
                 "teams_updated": sport_updated,
                 "total_teams_in_api": len(team_players),
                 "players_synced": sum(len(v) for v in team_players.values()),
@@ -161,6 +259,8 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
             )
 
     return {
+        "teams_created": total_teams_created,
+        "teams_backfilled": total_teams_backfilled,
         "teams_updated": total_updated,
         "total_player_names": total_players,
         "sports": details,

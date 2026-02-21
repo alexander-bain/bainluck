@@ -324,7 +324,7 @@ class UserFavorite(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("user_id", "team_id", name="uq_user_team"),
+        UniqueConstraint("user_id", "team_id", "relation_type", name="uq_user_team_relation"),
     )
 
     # Relationships
