@@ -152,6 +152,47 @@ _NON_GAME_KEYWORDS = (
     "grand slam", "open", "masters", "medal", "gold",
 )
 
+# ── Dash matchup false positive prevention ───────────────────────────────────
+# "English Premier League – 2nd Place" or "The Masters - Winner" are NOT matchups.
+# These are standings/rankings/award markets that happen to use a dash separator.
+
+# Ordinal placement: "1st Place", "2nd Place", "10th Place", etc.
+_ORDINAL_PLACE_RE = re.compile(r'^\d+(?:st|nd|rd|th)\s+place\s*$', re.IGNORECASE)
+
+# Known non-team terms that appear in dash-separated market names
+_NON_TEAM_NAMES = frozenset({
+    "winner", "loser", "champion", "champions", "mvp",
+    "last place", "top scorer", "runner-up", "runners-up",
+    "top 4", "top 6", "top 8", "top 10",
+    "relegated", "promoted", "promotion", "relegation",
+    "golden boot", "golden glove", "ballon d'or",
+})
+
+
+def _looks_like_team_name(name: str) -> bool:
+    """
+    Check if a name extracted from a dash matchup looks like a team name.
+
+    Rejects ranking terms ("2nd Place"), award terms ("Winner"), and
+    league names that are clearly not teams.
+    """
+    name_stripped = name.strip()
+    if not name_stripped:
+        return False
+    name_lower = name_stripped.lower()
+    # Check non-team terms
+    if name_lower in _NON_TEAM_NAMES:
+        return False
+    # Check ordinal placements: "1st Place", "2nd Place", etc.
+    if _ORDINAL_PLACE_RE.match(name_stripped):
+        return False
+    # League names used as market subjects (not as teams)
+    # "English Premier League", "La Liga", "Champions League" etc.
+    if any(kw in name_lower for kw in ("premier league", "champions league", "la liga",
+                                        "serie a", "bundesliga", "ligue 1", "eredivisie")):
+        return False
+    return True
+
 
 def is_game_level_market(
     market_name: str,
@@ -204,8 +245,15 @@ def _check_game_level(name: str) -> bool:
         return True
     if _BARE_MATCHUP_RE.match(name):
         return True
-    if _DASH_MATCHUP_RE.match(name):
-        return True
+    m = _DASH_MATCHUP_RE.match(name)
+    if m:
+        # Validate both sides look like team names, not rankings/awards
+        # Prevents "English Premier League – 2nd Place" false positives
+        team_a = m.group(1).strip()
+        team_b = m.group(2).strip()
+        if _looks_like_team_name(team_a) and _looks_like_team_name(team_b):
+            return True
+        return False  # Dash pattern matched but sides aren't team names
     if _WILL_WIN_RE.match(name):
         # "Will X win?" is only game-level if it's not a championship context
         name_lower = name.lower()
@@ -300,7 +348,9 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     if m:
         team_a = m.group(1).strip()
         team_b = m.group(2).strip()
-        return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="dash_matchup")
+        # Validate both sides are team names (not rankings like "2nd Place")
+        if _looks_like_team_name(team_a) and _looks_like_team_name(team_b):
+            return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="dash_matchup")
 
     # "Will Team A win?"
     m = _WILL_WIN_RE.match(market_name)
@@ -460,6 +510,43 @@ def find_moneyline_outcome(
                 if 0 < prob < 1:
                     return (outcome, yes_is_home)
 
+    return None
+
+
+# ── Kalshi ticker → sport_key mapping for fallback matching ──────────────────
+# When a Kalshi game market has a generic name (e.g., "Professional Basketball Game")
+# and extract_matchup() fails, we can still match by sport + commence_time.
+# This maps ticker prefixes to The Odds API sport_key prefixes.
+
+_TICKER_TO_SPORT_PREFIX: dict[str, str] = {
+    "kxnbagame": "basketball_nba",
+    "kxnflgame": "americanfootball_nfl",
+    "kxnhlgame": "icehockey_nhl",
+    "kxmlbgame": "baseball_mlb",
+    "kxncaabgame": "basketball_ncaab",
+    "kxncaafgame": "americanfootball_ncaaf",
+    "kxwnbagame": "basketball_wnba",
+    "kxmlsgame": "soccer_usa_mls",
+    "kxsoccergame": "soccer",
+    "kxufcfight": "mma_mixed_martial_arts",
+    "kxboxingfight": "boxing_boxing",
+    "kxlolgame": "esports",
+}
+
+
+def get_sport_prefix_from_ticker(external_id: str) -> Optional[str]:
+    """
+    Get the sport_key prefix for a Kalshi game ticker.
+
+    Returns a sport_key prefix (e.g., "basketball_nba") or None.
+    Used for fallback matching when name-based extraction fails.
+    """
+    if not external_id:
+        return None
+    ext_lower = external_id.lower()
+    for prefix, sport in _TICKER_TO_SPORT_PREFIX.items():
+        if ext_lower.startswith(prefix):
+            return sport
     return None
 
 

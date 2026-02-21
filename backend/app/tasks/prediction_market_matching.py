@@ -19,6 +19,7 @@ from app.utils.prediction_market_matching import (
     is_game_level_market,
     is_kalshi_game_ticker,
     _KALSHI_GAME_TICKER_PREFIXES,
+    get_sport_prefix_from_ticker,
     extract_matchup,
     match_teams_to_event,
     find_moneyline_outcome,
@@ -105,33 +106,43 @@ async def _match_prediction_markets(limit: int = 500):
             stats["funnel"]["game_level_detected"] += 1
 
             matchup = extract_matchup(market.name, external_id=market.external_id)
-            if not matchup:
-                stats["funnel"]["no_matchup_extracted"] += 1
-                continue
 
-            matched_event = await _find_matching_event(
-                session, matchup, market, now,
-            )
+            if matchup:
+                # Primary path: name-based team matching
+                matched_event = await _find_matching_event(
+                    session, matchup, market, now,
+                )
+            else:
+                # Fallback path: sport + time matching for generic-named markets
+                # (e.g., "Professional Basketball Game" where extract_matchup fails)
+                matched_event = await _find_event_by_sport_and_time(
+                    session, market, now,
+                )
+                if matched_event:
+                    stats["funnel"].setdefault("sport_time_fallback_linked", 0)
+                    stats["funnel"]["sport_time_fallback_linked"] += 1
 
             if matched_event:
                 market.event_id = matched_event["event_id"]
                 stats["newly_linked"] += 1
                 stats["funnel"]["linked"] += 1
                 logger.info(
-                    "Linked %s market '%s' → event %d (%s vs %s) [yes_is_home=%s]",
+                    "Linked %s market '%s' → event %d (%s vs %s) [ticker=%s]",
                     market.source, market.name, matched_event["event_id"],
                     matched_event["home_team"], matched_event["away_team"],
-                    matched_event["yes_is_home"],
+                    market.external_id,
                 )
             else:
+                if not matchup:
+                    stats["funnel"]["no_matchup_extracted"] += 1
                 stats["funnel"]["no_event_found"] += 1
                 if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
                     stats["funnel"]["sample_game_level_no_event"].append(
                         {
                             "source": market.source,
                             "name": market.name,
-                            "team_a": matchup.team_a,
-                            "team_b": matchup.team_b,
+                            "team_a": matchup.team_a if matchup else None,
+                            "team_b": matchup.team_b if matchup else None,
                             "commence_time": market.commence_time.isoformat() if market.commence_time else None,
                             "external_id": market.external_id,
                         }
@@ -442,6 +453,73 @@ async def _find_matching_event(session, matchup, market, now):
             }
 
     return best_match
+
+
+async def _find_event_by_sport_and_time(session, market, now):
+    """
+    Fallback matching for ticker-detected markets with generic names.
+
+    When extract_matchup() fails (e.g., market name is "Professional Basketball
+    Game"), we use the Kalshi ticker to determine the sport and search for
+    events by sport_key + commence_time proximity.
+
+    Only returns a match if EXACTLY ONE event matches (unambiguous).
+    Returns the same dict format as _find_matching_event, with
+    yes_is_home=True as default (will be corrected if outcome names
+    match team names in Phase 2).
+    """
+    from app.models.models import Event
+
+    # Determine sport from ticker
+    sport_prefix = get_sport_prefix_from_ticker(market.external_id)
+    if not sport_prefix:
+        return None
+
+    # Use market commence_time (Kalshi close time) as reference.
+    # Search ±6 hours (tighter than the usual ±48h since we have no team names)
+    reference_time = market.commence_time
+    if not reference_time:
+        return None
+
+    time_start = reference_time - timedelta(hours=6)
+    time_end = reference_time + timedelta(hours=6)
+
+    # Query events by sport and time
+    event_result = await session.execute(
+        select(Event)
+        .where(
+            Event.sport_key.like(f"{sport_prefix}%"),
+            Event.commence_time.between(time_start, time_end),
+        )
+        .order_by(Event.commence_time)
+        .limit(5)
+    )
+    candidates = event_result.scalars().all()
+
+    if len(candidates) == 1:
+        # Unambiguous match — exactly one event in that sport + time window
+        event = candidates[0]
+        logger.info(
+            "Sport+time fallback matched %s '%s' → event %d (%s vs %s)",
+            market.external_id, market.name, event.id,
+            event.home_team_name, event.away_team_name,
+        )
+        return {
+            "event_id": event.id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            # Default to True — Phase 2 will determine correct mapping
+            # from outcome names or bid/ask data
+            "yes_is_home": True,
+        }
+
+    if len(candidates) > 1:
+        logger.debug(
+            "Sport+time fallback found %d candidates for %s (ambiguous, skipping)",
+            len(candidates), market.external_id,
+        )
+
+    return None
 
 
 def _escape_like(s: str) -> str:

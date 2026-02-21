@@ -16,10 +16,12 @@ import pytest
 from app.utils.prediction_market_matching import (
     is_game_level_market,
     is_kalshi_game_ticker,
+    get_sport_prefix_from_ticker,
     extract_matchup,
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
+    _looks_like_team_name,
     _strip_category_prefix,
     MatchupInfo,
 )
@@ -1149,3 +1151,128 @@ class TestTickerDetectionIntegration:
         assert matchup is not None
         assert matchup.team_a == "Celtics"
         assert matchup.team_b == "Warriors"
+
+
+# =============================================================================
+# Dash matchup false positive prevention
+# =============================================================================
+
+
+class TestDashMatchupFalsePositives:
+    """Test that rankings/standings are NOT detected as game-level matchups."""
+
+    def test_epl_2nd_place_not_game(self):
+        """'English Premier League – 2nd Place' is a ranking, not a game."""
+        assert not is_game_level_market("English Premier League – 2nd Place", "championship")
+
+    def test_epl_3rd_place_not_game(self):
+        assert not is_game_level_market("English Premier League – 3rd Place", "championship")
+
+    def test_epl_last_place_not_game(self):
+        assert not is_game_level_market("English Premier League – Last Place", "championship")
+
+    def test_masters_winner_not_game(self):
+        """'The Masters - Winner' is an award, not a game."""
+        assert not is_game_level_market("The Masters - Winner", "championship")
+
+    def test_champions_league_winner_not_game(self):
+        assert not is_game_level_market("Champions League – Winner", "championship")
+
+    def test_la_liga_relegated_not_game(self):
+        assert not is_game_level_market("La Liga – Relegated", "championship")
+
+    def test_bundesliga_top_scorer_not_game(self):
+        assert not is_game_level_market("Bundesliga – Top Scorer", "championship")
+
+    def test_serie_a_1st_place_not_game(self):
+        assert not is_game_level_market("Serie A – 1st Place", "championship")
+
+    def test_epl_top_4_not_game(self):
+        assert not is_game_level_market("English Premier League – Top 4", "championship")
+
+    def test_real_dash_matchup_still_works(self):
+        """Actual team matchups with dashes still work."""
+        assert is_game_level_market("Bayern Munich - Borussia Dortmund", "championship")
+        assert is_game_level_market("Real Madrid – Barcelona", "championship")
+        assert is_game_level_market("PSG — Marseille", "championship")
+
+    def test_extract_epl_placement_returns_none(self):
+        """extract_matchup should also reject rankings."""
+        assert extract_matchup("English Premier League – 2nd Place") is None
+        assert extract_matchup("The Masters - Winner") is None
+
+    def test_extract_real_dash_still_works(self):
+        result = extract_matchup("Bayern Munich - Borussia Dortmund")
+        assert result is not None
+        assert result.team_a == "Bayern Munich"
+        assert result.team_b == "Borussia Dortmund"
+
+
+class TestLooksLikeTeamName:
+    """Test the team name validation helper."""
+
+    def test_real_team_names(self):
+        assert _looks_like_team_name("Bayern Munich")
+        assert _looks_like_team_name("Boston Celtics")
+        assert _looks_like_team_name("Real Madrid")
+        assert _looks_like_team_name("Arsenal")
+
+    def test_ordinal_places(self):
+        assert not _looks_like_team_name("1st Place")
+        assert not _looks_like_team_name("2nd Place")
+        assert not _looks_like_team_name("3rd Place")
+        assert not _looks_like_team_name("10th Place")
+
+    def test_non_team_terms(self):
+        assert not _looks_like_team_name("Winner")
+        assert not _looks_like_team_name("Loser")
+        assert not _looks_like_team_name("Champion")
+        assert not _looks_like_team_name("MVP")
+        assert not _looks_like_team_name("Last Place")
+        assert not _looks_like_team_name("Top Scorer")
+        assert not _looks_like_team_name("Relegated")
+        assert not _looks_like_team_name("Top 4")
+
+    def test_league_names(self):
+        assert not _looks_like_team_name("English Premier League")
+        assert not _looks_like_team_name("Champions League")
+        assert not _looks_like_team_name("La Liga")
+
+    def test_empty_string(self):
+        assert not _looks_like_team_name("")
+
+
+# =============================================================================
+# Sport prefix from ticker (for fallback matching)
+# =============================================================================
+
+
+class TestGetSportPrefixFromTicker:
+    """Test ticker → sport_key prefix mapping."""
+
+    def test_nba_game(self):
+        assert get_sport_prefix_from_ticker("KXNBAGAME-26FEB19BOSGSW") == "basketball_nba"
+
+    def test_nfl_game(self):
+        assert get_sport_prefix_from_ticker("KXNFLGAME-26SEP14SFDEN") == "americanfootball_nfl"
+
+    def test_nhl_game(self):
+        assert get_sport_prefix_from_ticker("KXNHLGAME-26FEB20BOSNYR") == "icehockey_nhl"
+
+    def test_mlb_game(self):
+        assert get_sport_prefix_from_ticker("KXMLBGAME-26APR05NYYLAD") == "baseball_mlb"
+
+    def test_ncaab_game(self):
+        assert get_sport_prefix_from_ticker("KXNCAABGAME-26MAR20DUKEUNC") == "basketball_ncaab"
+
+    def test_mls_game(self):
+        assert get_sport_prefix_from_ticker("KXMLSGAME-26JUL04NYCLA") == "soccer_usa_mls"
+
+    def test_non_game_ticker(self):
+        assert get_sport_prefix_from_ticker("NBACHAMP-BOS") is None
+
+    def test_empty(self):
+        assert get_sport_prefix_from_ticker("") is None
+
+    def test_none(self):
+        assert get_sport_prefix_from_ticker(None) is None
