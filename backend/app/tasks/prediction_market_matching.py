@@ -252,25 +252,27 @@ async def _match_prediction_markets(limit: int = 500):
                         }
                     )
 
-        # ── Phase 1.5: Fix stale links ────────────────────────────────────
-        # Markets linked to completed/closed events may be wrong (e.g., "Pistons
-        # vs. Bulls" linked to last week's game instead of tonight's). Check if
-        # there's a better match for game-level markets linked to finished events.
+        # ── Phase 1.5: Fix stale and mislinked markets ────────────────────
+        # Scan ALL linked markets for two problems:
+        # (a) Stale: linked to completed/closed events — try to find the next game
+        # (b) Mislinked: teams don't both match the linked event (e.g.,
+        #     "Pistons vs. Bulls" linked to "Georgia Southern vs South Florida Bulls"
+        #     because "Bulls" substring-matched but "Pistons" didn't)
         stats["funnel"].setdefault("stale_relinked", 0)
+        stats["funnel"].setdefault("mislink_fixed", 0)
 
-        stale_result = await session.execute(
+        all_linked_result = await session.execute(
             select(FuturesMarket, Event)
             .join(Event, FuturesMarket.event_id == Event.id)
             .where(
                 FuturesMarket.source.in_(["kalshi", "polymarket"]),
                 FuturesMarket.event_id.isnot(None),
-                Event.status.in_(["completed", "closed"]),
             )
-            .limit(200)
+            .limit(1000)
         )
-        stale_rows = stale_result.all()
+        all_linked_rows = all_linked_result.all()
 
-        for market, old_event in stale_rows:
+        for market, linked_event in all_linked_rows:
             try:
                 if not is_game_level_market(
                     market.name, market.category,
@@ -284,25 +286,55 @@ async def _match_prediction_markets(limit: int = 500):
                 if not matchup or not matchup.team_b:
                     continue
 
+                # Verify both teams actually match the linked event
+                a_matches = (
+                    _fuzzy_team_match(matchup.team_a, linked_event.home_team_name)
+                    or _fuzzy_team_match(matchup.team_a, linked_event.away_team_name)
+                )
+                b_matches = (
+                    _fuzzy_team_match(matchup.team_b, linked_event.home_team_name)
+                    or _fuzzy_team_match(matchup.team_b, linked_event.away_team_name)
+                )
+                teams_match = a_matches and b_matches
+                is_finished = linked_event.status in ("completed", "closed")
+
+                # Skip if teams match AND event is still active — correctly linked
+                if teams_match and not is_finished:
+                    continue
+
+                # Need to re-link: either teams don't match or event is finished
                 ticker_game_date = extract_game_date_from_ticker(market.external_id) if market.source == "kalshi" else None
 
-                # Try to find a better match (scheduled/live event)
                 better_match = await _find_matching_event(
                     session, matchup, market, now,
                     game_date_override=ticker_game_date,
                 )
-                if better_match and better_match["event_id"] != old_event.id:
-                    # Found a better event — re-link
+
+                if better_match and better_match["event_id"] != linked_event.id:
                     logger.info(
-                        "Re-linking %s '%s' from completed event %d → %s event %d (%s vs %s)",
-                        market.source, market.name, old_event.id,
-                        "new", better_match["event_id"],
+                        "Re-linking %s '%s' from %s event %d (%s vs %s) → event %d (%s vs %s)",
+                        market.source, market.name,
+                        "mislinked" if not teams_match else "completed",
+                        linked_event.id, linked_event.home_team_name, linked_event.away_team_name,
+                        better_match["event_id"],
                         better_match["home_team"], better_match["away_team"],
                     )
                     market.event_id = better_match["event_id"]
-                    stats["funnel"]["stale_relinked"] += 1
+                    if not teams_match:
+                        stats["funnel"]["mislink_fixed"] += 1
+                    else:
+                        stats["funnel"]["stale_relinked"] += 1
+                elif not teams_match:
+                    # Teams don't match and no better event found — unlink to prevent wrong data
+                    logger.info(
+                        "Unlinking %s '%s' from mismatched event %d (%s vs %s) — no better match",
+                        market.source, market.name, linked_event.id,
+                        linked_event.home_team_name, linked_event.away_team_name,
+                    )
+                    market.event_id = None
+                    stats["funnel"]["mislink_fixed"] += 1
             except Exception as e:
-                logger.debug("Error checking stale link for market %d: %s", market.id, e)
+                logger.debug("Error checking link for market %d: %s", market.id, e)
                 continue
 
         await session.commit()
@@ -516,7 +548,24 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
     best_score = -1
 
     for event in candidates:
-        # Check team name matching
+        # When we have both team names, REQUIRE both to fuzzy-match the event.
+        # Prevents false positives like "Thunder vs. Pistons" matching
+        # "Bulls vs. Pistons" (Thunder ≠ Bulls), or "Pistons vs. Bulls"
+        # matching "Georgia Southern Eagles vs South Florida Bulls"
+        # (Pistons ≠ Georgia Southern Eagles).
+        if matchup.team_b:
+            a_matches = (
+                _fuzzy_team_match(matchup.team_a, event.home_team_name)
+                or _fuzzy_team_match(matchup.team_a, event.away_team_name)
+            )
+            b_matches = (
+                _fuzzy_team_match(matchup.team_b, event.home_team_name)
+                or _fuzzy_team_match(matchup.team_b, event.away_team_name)
+            )
+            if not (a_matches and b_matches):
+                continue
+
+        # Check team name matching (determine yes/no home/away mapping)
         team_match = match_teams_to_event(
             matchup,
             event.home_team_name,
@@ -525,22 +574,19 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
         if not team_match:
             continue
 
-        # For "Will X win?" with only one team, verify the other team too
-        # by checking that at least one market team matches an event team
+        # For "Will X win?" with only one team, verify the market team
+        # actually matches an event team
         if matchup.format_type == "will_win" and not matchup.team_b:
-            # Single-team format — must match one event team
             if not (
                 _fuzzy_team_match(matchup.team_a, event.home_team_name)
                 or _fuzzy_team_match(matchup.team_a, event.away_team_name)
             ):
                 continue
 
-        # Score: prefer closer to now + live games + both teams matched
+        # Score: prefer closer to now + live games
         score = 0
 
         # Time proximity to now (max 10 points, closer = higher)
-        # Use game_date_override or now as reference — NOT market.commence_time,
-        # which can be the resolution date (Kalshi) or creation date (Polymarket).
         ref = game_date_override or now
         if event.commence_time:
             delta_hours = abs(
@@ -554,14 +600,9 @@ def _score_candidates(candidates, matchup, market, now, game_date_override=None)
         elif event.status == "scheduled":
             score += 3
 
-        # Both teams matched (not just one) get a bonus
+        # Both teams verified matching (gate above ensures this when team_b exists)
         if matchup.team_b:
-            other = matchup.team_b if matchup.yes_team == matchup.team_a else matchup.team_a
-            if (
-                _fuzzy_team_match(other, event.home_team_name)
-                or _fuzzy_team_match(other, event.away_team_name)
-            ):
-                score += 10  # Both teams matched — very strong signal
+            score += 10
 
         if score > best_score:
             best_score = score
