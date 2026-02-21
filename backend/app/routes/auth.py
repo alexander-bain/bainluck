@@ -246,7 +246,7 @@ async def google_access_token_sign_in(
         "email": email,
         "name": name,
         "picture": picture,
-        "expires_in": 3600,  # 1 hour
+        "expires_in": 28800,  # 8 hours
         "user": {
             "id": user.id,
             "email": user.email,

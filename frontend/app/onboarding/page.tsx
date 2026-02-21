@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthContext } from "@/components/AuthProvider";
 import { searchTeamsByLocation, searchTeams, submitOnboarding, fetchUserPreferences } from "@/lib/api";
-import { SPORT_CATEGORIES } from "@/lib/sportCategories";
+import { SPORT_CATEGORIES, getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import type { TeamSearchResult, OnboardingSubmission, UserFavoriteItem } from "@/lib/types";
 
 // =============================================================================
@@ -28,19 +28,29 @@ const SPORT_LEVELS: { label: string; value: SportLevel; description: string }[] 
   { label: "Nah", value: 0, description: "Not for me" },
 ];
 
-// Sports to show in the grid — tier 1 + tier 2 from sportCategories.ts
-const ONBOARDING_SPORTS = SPORT_CATEGORIES.filter(
-  (s) => s.tier === 1 || s.tier === 2
-);
-
 // Non-sports categories from prediction markets (Polymarket, Kalshi)
 const BEYOND_SPORTS_KEYS = new Set([
   "politics", "entertainment", "crypto", "economics", "tech", "weather",
   "geopolitics", "culture",
 ]);
+
+// Sports to show in the grid — tier 1 + tier 2 from sportCategories.ts,
+// excluding non-sports categories (those go in Beyond Sports section below).
+const ONBOARDING_SPORTS = SPORT_CATEGORIES.filter(
+  (s) => (s.tier === 1 || s.tier === 2) && !BEYOND_SPORTS_KEYS.has(s.key)
+);
 const ONBOARDING_BEYOND_SPORTS = SPORT_CATEGORIES.filter(
   (s) => BEYOND_SPORTS_KEYS.has(s.key)
 );
+
+/**
+ * Format sport_key into a short readable league label.
+ * e.g., "basketball_nba" → "NBA", "lacrosse_ncaa" → "NCAA Lacrosse"
+ */
+function sportLabel(sportKey: string | null): string | null {
+  if (!sportKey) return null;
+  return getLeagueDisplay(sportKey);
+}
 
 // Default affinities — Big 3 US sports default to "Love it"
 const DEFAULT_AFFINITIES: Record<string, SportLevel> = {};
@@ -312,11 +322,8 @@ export default function OnboardingPage() {
   }, [almaMaterTeams]);
 
   const addAlmaMater = (team: TeamSearchResult) => {
-    // Check if this school (by location/name prefix) is already added
-    const alreadyHas = almaMaterTeams.some(
-      (t) => t.name === team.name || (team.location && t.name.startsWith(team.location))
-    );
-    if (alreadyHas) return;
+    // Check if this exact team is already added (by ID)
+    if (almaMaterTeams.some((t) => t.id === team.id)) return;
 
     setAlmaMaterTeams((prev) => [
       ...prev,
@@ -693,6 +700,11 @@ function StepLocation({
                   />
                 )}
                 <span className="font-medium">{team.name}</span>
+                {team.sport_key && (
+                  <span className="text-xs opacity-70">
+                    {sportLabel(team.sport_key)}
+                  </span>
+                )}
                 {team.selected && (
                   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                     <path
@@ -766,11 +778,11 @@ function StepFollow({
                 {team.logo_url && (
                   <img src={team.logo_url} alt="" className="w-5 h-5 object-contain" />
                 )}
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-graphite truncate">{team.name}</p>
-                  {team.location && (
-                    <p className="text-xs text-slate">{team.location}</p>
-                  )}
+                  <p className="text-xs text-slate">
+                    {[sportLabel(team.sport_key), team.location].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
               </button>
             ))}
@@ -792,6 +804,9 @@ function StepFollow({
                 <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
               )}
               {team.name}
+              {team.sport_key && (
+                <span className="text-xs opacity-70">{sportLabel(team.sport_key)}</span>
+              )}
               <button
                 onClick={() => onRemove(team.id)}
                 className="ml-1 hover:text-white/70"
@@ -864,10 +879,10 @@ function StepAlmaMaters({
                 {team.logo_url && (
                   <img src={team.logo_url} alt="" className="w-5 h-5 object-contain" />
                 )}
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-graphite truncate">{team.name}</p>
                   {team.sport_key && (
-                    <p className="text-xs text-slate">{team.sport_key}</p>
+                    <p className="text-xs text-slate">{sportLabel(team.sport_key)}</p>
                   )}
                 </div>
               </button>
@@ -890,6 +905,9 @@ function StepAlmaMaters({
                 <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
               )}
               {team.name}
+              {team.sport_key && (
+                <span className="text-xs opacity-70">{sportLabel(team.sport_key)}</span>
+              )}
               <button
                 onClick={() => onRemove(team.id)}
                 className="ml-1 hover:text-white/70"
@@ -1052,11 +1070,11 @@ function StepRivals({
                 {team.logo_url && (
                   <img src={team.logo_url} alt="" className="w-5 h-5 object-contain" />
                 )}
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-graphite truncate">{team.name}</p>
-                  {team.location && (
-                    <p className="text-xs text-slate">{team.location}</p>
-                  )}
+                  <p className="text-xs text-slate">
+                    {[sportLabel(team.sport_key), team.location].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
               </button>
             ))}
@@ -1078,6 +1096,9 @@ function StepRivals({
                 <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
               )}
               {team.name}
+              {team.sport_key && (
+                <span className="text-xs opacity-70">{sportLabel(team.sport_key)}</span>
+              )}
               <button
                 onClick={() => onRemove(team.id)}
                 className="ml-1 hover:text-red-400"

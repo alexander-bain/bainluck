@@ -135,7 +135,7 @@ def create_custom_token(uid: str) -> Optional[str]:
 def create_session_token(uid: str, email: Optional[str] = None,
                          name: Optional[str] = None,
                          picture: Optional[str] = None,
-                         ttl_seconds: int = 3600) -> Optional[str]:
+                         ttl_seconds: int = 28800) -> Optional[str]:
     """
     Create a backend-signed session token for Safari ITP fallback.
 
