@@ -162,7 +162,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1363+ pytest items across 18 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (190 tests: ticker detection, name building, false positives, sport prefix mapping), retention SQL (19 tests: CTE logic simulation, table config, NULL handling). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1380+ pytest items across 18 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (190 tests: ticker detection, name building, false positives, sport prefix mapping), retention SQL (19 tests: CTE logic simulation, table config, NULL handling). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117 tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -713,14 +713,18 @@ The chart can display win probabilities from multiple independent sources, each 
 
 **Adding a new source:** Add entry to `WIN_PROB_SOURCES` dict in `win_prob_sources.py`, write snapshots to `win_prob_snapshots` with the source key, and the chart/API pick it up automatically.
 
+**ESPN matching resilience (Feb 2026):** The stat model prefers ESPN `game_clock` and `period` data but now has two fallback layers when ESPN name matching fails (common for college teams):
+1. **Multi-signal ESPN matching**: ESPN ID first (set during scheduled pre-sync), then name matching, then commence_time proximity (±6h, exactly 1 candidate)
+2. **Wall-clock time estimation**: `estimate_seconds_remaining_from_wall_clock()` maps elapsed wall time to game-clock time using sport-specific average durations. Less precise than ESPN clock data but sufficient for a reasonable win probability estimate.
+
 **Known issues (Feb 2026):**
-- Stat model depends on `game_clock` and `period` from ESPN sync. If ESPN team name matching fails for an event, the stat model can't compute (no time remaining data). Name normalization helps but some college teams may still mismatch.
-- Stat model can only compute during live games — it cannot be backfilled after a game ends (requires real-time clock/period/score data from ESPN sync).
+- Wall-clock estimation is approximate — it doesn't account for overtime, delays, or pace variation. ESPN clock data is always preferred when available.
+- Stat model can only compute during live games — it cannot be backfilled after a game ends (requires real-time score data).
 - PFR is NOT viable as a live data source (no API, ToS blocks scraping, not real-time)
 
 **Sport key aliasing:** The Odds API uses `americanfootball_nfl`/`americanfootball_ncaaf`/`icehockey_nhl` as sport keys, but the stat model's `SPORT_PARAMS` uses `football_nfl`/`football_ncaaf`/`hockey_nhl`. The `_normalize_sport_key()` function in `win_probability.py` handles this mapping. Basketball keys match natively. If you add a new sport, make sure to test with the actual database sport key.
 
-**Files:** `backend/app/config/win_prob_sources.py`, `backend/app/utils/win_probability.py`, `backend/tests/test_win_probability.py` (39 tests), `frontend/components/OddsChart.tsx`, `frontend/app/events/[id]/models/page.tsx`
+**Files:** `backend/app/config/win_prob_sources.py`, `backend/app/utils/win_probability.py`, `backend/tests/test_win_probability.py` (67 tests), `frontend/components/OddsChart.tsx`, `frontend/app/events/[id]/models/page.tsx`
 
 ### Prediction Market → Event Matching
 Links Kalshi and Polymarket game-level markets (e.g., "NBA: Celtics at Warriors") to Event records so they appear as win probability trend lines on the OddsChart.
@@ -863,7 +867,7 @@ Both backend and frontend auto-deploy from `master` branch.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. 🔴 **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game (providing `game_clock` and `period`). For college sports with hundreds of teams, name mismatches are common. **Worse than expected:** Super Bowl (event 1) had only 4 score_snapshots — if the highest-profile game has unreliable coverage, college sports are likely much worse. Options: match by ESPN ID instead of name, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time as a fallback.
+1. 🟢 **Reduce stat model dependency on ESPN name matching (shipped)** — Three-pronged fix: (a) multi-signal ESPN matching (ESPN ID → name → commence_time proximity) for both live and scheduled events, (b) wall-clock time estimation fallback when ESPN sync misses entirely, (c) odds polling stat model path relaxed to use wall-clock when game_clock unavailable. 67 tests covering wall-clock estimation + fallback integration. **Remaining:** verify on production with live college games to measure improvement in stat model coverage.
 2. 🟡 **Data retention / worker memory** — Heroku worker was hitting R14 (Memory quota exceeded). **Phase 1 fix shipped:** snapshot collapse rewritten to pure SQL using PostgreSQL window functions (LAG, SUM) and CTEs — zero rows loaded into Python, constant memory usage. **Phase 2 opportunities (if OOM persists):** pre-game snapshot thinning (keep 1/hour instead of every poll), aggregate completed games into `odds_aggregated` then delete raw rows, cap futures snapshot retention post-resolution. The `odds_aggregated` table exists in the schema but nothing writes to it yet.
 3. 🟡 **Monitoring and reliability improvements** — Poll health dashboard, improved error handling and retry logic. Celery heartbeat task + `GET /api/admin/celery/health` endpoint now provide basic worker health monitoring. **Gap:** No monitoring for task *correctness*, only *liveness*. Heartbeat confirms the worker is running but doesn't detect silent failures (e.g., `poll_all_odds` returning empty results, ESPN sync matching 0 events). Sentry catches exceptions but not degraded output. Need task-level success metrics.
 
@@ -925,7 +929,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
-- ✅ Test coverage for core algorithms: 1363+ backend (pytest items) + 117 frontend = 1480+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), prediction market matching (190), odds polling helpers (27), win prob sources (24), task wiring (20), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (9), onboarding/preferences (31). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1380+ backend (pytest items) + 117 frontend = 1497+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (46), team linking (97), LLM classification (60), prediction market matching (190), odds polling helpers (27), win prob sources (24), task wiring (20), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (9), onboarding/preferences (31). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
@@ -933,6 +937,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Auth & Personalization Phase 3 (shipped): Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting. Personalization badges ("Your team", "Local", "Alma mater", "Rival losing"). Unified interestingness feed combining events + futures on homepage.
 - ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to single "Right Now" feed ranked by interestingness score. Feed items include events and futures, with personalization overlay for authenticated users.
 - ✅ Prediction market → event matching: Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. 190 tests covering ticker detection, name building, false positive prevention, sport prefix mapping.
+- ✅ ESPN matching resilience + wall-clock fallback: Multi-signal ESPN matching (ESPN ID → name → commence_time proximity) for both live and scheduled events. Wall-clock time estimation fallback for stat model when ESPN sync misses (common for college teams). Odds polling path relaxed to use fallback automatically. 16 new tests (67 total win probability tests).
 </details>
 
 See `docs/PRD.md` for full roadmap.
