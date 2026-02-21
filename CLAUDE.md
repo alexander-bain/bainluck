@@ -76,7 +76,8 @@ bainluck/
 │   │   │   ├── sports.py        # Sport sync, event discovery
 │   │   │   ├── retention.py     # Snapshot collapse/retention
 │   │   │   ├── roster_sync.py   # SportsDataIO roster sync
-│   │   │   └── team_linking.py  # Futures outcome → team linking
+│   │   │   ├── team_linking.py  # Futures outcome → team linking
+│   │   │   └── prediction_market_matching.py  # Link game markets → events
 │   │   └── utils/
 │   │       ├── odds_math.py     # Probability conversions
 │   │       ├── pulse.py         # Game excitement algorithm
@@ -84,12 +85,13 @@ bainluck/
 │   │       ├── win_probability.py # Statistical win prob model
 │   │       ├── odds_filtering.py  # Stale bookmaker filter
 │   │       ├── futures_categorization.py # Rules + LLM categorization
-│   │       └── team_linking.py  # Team name matching utilities
+│   │       ├── team_linking.py  # Team name matching utilities
+│   │       └── prediction_market_matching.py  # Game-level market detection + matching
 │   ├── alembic/                 # Database migrations
 │   └── requirements.txt
 ├── frontend/
 │   ├── app/                     # Next.js app router pages
-│   │   ├── onboarding/page.tsx  # 4-step onboarding flow
+│   │   ├── onboarding/page.tsx  # 5-step onboarding flow
 │   │   └── preferences/page.tsx # User preferences display + edit
 │   ├── components/              # React components
 │   │   └── OnboardingBanner.tsx # CTA banner for unonboarded users
@@ -139,7 +141,7 @@ bainluck/
 | `backend/app/dependencies/auth.py` | `get_current_user` / `get_optional_user` FastAPI deps |
 | `backend/app/routes/auth.py` | Auth endpoints (Google sign-in, profile) |
 | `backend/app/routes/user.py` | User data endpoints (pins, team search, onboarding, preferences) |
-| `frontend/app/onboarding/page.tsx` | 4-step onboarding flow (location, alma maters, sports, rivals) |
+| `frontend/app/onboarding/page.tsx` | 5-step onboarding flow (location, follow, alma maters, sports+beyond, rivals) |
 | `frontend/components/OnboardingBanner.tsx` | CTA banner for authenticated users who haven't onboarded |
 | `frontend/lib/firebase.ts` | Firebase config, sign-in/sign-out functions |
 | `frontend/hooks/useAuth.ts` | Auth state hook |
@@ -160,8 +162,8 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1250+ pytest items across 16 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse, task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping). See `docs/test-coverage-analysis.md` for full breakdown.
-  - Frontend tests cover (107 tests across 2 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic
+  - Backend tests cover (1345+ pytest items across 17 files): Pulse algorithm, Highlights scoring, odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse, task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (190 tests: ticker detection, name building, false positives, sport prefix mapping). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Frontend tests cover (117 tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
 
@@ -631,7 +633,7 @@ This requires `FIREBASE_SERVICE_ACCOUNT_JSON` on the backend (not optional for a
 - `frontend/components/UserMenu.tsx` — Header sign-in button / user avatar dropdown
 - `frontend/hooks/usePinSync.ts` — One-way localStorage → server pin migration on first login
 - `frontend/app/preferences/page.tsx` — User preferences page (shows teams, sport affinities, edit link)
-- `frontend/app/onboarding/page.tsx` — 4-step onboarding flow (location → alma maters → sport affinities → rivals)
+- `frontend/app/onboarding/page.tsx` — 5-step onboarding flow (location → follow → alma maters → sports+beyond → rivals)
 - `frontend/components/OnboardingBanner.tsx` — Dismissable CTA banner for authenticated users without preferences
 
 **Database tables:**
@@ -647,20 +649,25 @@ This requires `FIREBASE_SERVICE_ACCOUNT_JSON` on the backend (not optional for a
 **City → Teams mapping:** ESPN's `location` field on team objects maps cities/regions/schools to teams. The `Team.location` column stores this. A static metro alias map (`METRO_ALIASES` in `user.py`, ~30 entries) groups brand names to metro areas ("New England" → "Boston", "Golden State" → "Bay Area").
 
 **Onboarding flow (shipped):**
-4-step single-page stepper at `/onboarding` — invitational (not forced), triggered by CTA banner on homepage for authenticated users who haven't completed onboarding.
+5-step single-page stepper at `/onboarding` — invitational (not forced), triggered by CTA banner on homepage for authenticated users who haven't completed onboarding.
 
 Steps:
 1. **"Where do you follow sports?"** — Location autocomplete → metro alias expansion → team chips (all selected by default, toggleable)
-2. **"Any alma maters?"** — School autocomplete filtered to college sports (ncaa/wncaab keywords)
-3. **"What sports do you care about?"** — Grid of sport cards with 4-level selector: "Love it" (1.0), "Playoffs only" (0.3), "If it's wild" (0.1), "Nah" (0.0)
-4. **"Any rivals?"** — Team autocomplete, "teams you love to hate"
+2. **"Any other favorite teams?"** — General team search, any location. Gets biggest feed boost (+0.5 follow bonus).
+3. **"Any alma maters?"** — School autocomplete filtered to college sports (ncaa/wncaab keywords). Falls back to events table for teams without Team records (auto-creates them).
+4. **"What do you care about?"** — Grid of sport cards + "Beyond Sports" section (Politics, Entertainment, Crypto, Economics, Tech, Weather, Geopolitics, Culture) with 4-level selector: "Love it" (1.0), "Playoffs only" (0.3), "If it's wild" (0.1), "Nah" (0.0)
+5. **"Any rivals?"** — Team autocomplete, "teams you love to hate"
 
 Endpoints:
 - `POST /api/me/onboarding` — Batch save all onboarding data (deletes existing onboarding favorites, inserts new, expands sport affinities, sets `onboarding_completed=True`)
 - `GET /api/me/preferences` — Returns preferences + favorites with team names/logos, compresses sport affinities to frontend keys
 - `GET /api/me/teams/by-location?q=Boston` — Location search with metro alias expansion
+- `GET /api/me/teams/search?q=Harvard` — Team search with events table fallback for auto-creation
+- `POST /api/me/favorites` — Add single favorite (for inline editing on preferences page)
+- `DELETE /api/me/favorites/{team_id}?relation_type=follow` — Remove favorite
+- `PUT /api/me/preferences/sport-affinities` — Update sport affinities
 
-**Sport affinity key mapping:** Frontend uses simple keys ("football", "basketball") that expand to backend sport_key format ("americanfootball_nfl", "americanfootball_ncaaf") via `SPORT_AFFINITY_MAPPING` in `user.py`. Compression takes the max weight when multiple backend keys map to the same frontend category. Round-trip tested: expand → compress returns original values.
+**Sport affinity key mapping:** Frontend uses simple keys ("football", "basketball") that expand to backend sport_key format ("americanfootball_nfl", "americanfootball_ncaaf") via `SPORT_AFFINITY_MAPPING` in `user.py`. Non-sports categories (politics, entertainment, crypto, etc.) map to their category name directly. Compression takes the max weight when multiple backend keys map to the same frontend category. Round-trip tested: expand → compress returns original values.
 
 **Full plan:** `docs/auth-personalization-plan.md`
 
@@ -714,6 +721,48 @@ The chart can display win probabilities from multiple independent sources, each 
 **Sport key aliasing:** The Odds API uses `americanfootball_nfl`/`americanfootball_ncaaf`/`icehockey_nhl` as sport keys, but the stat model's `SPORT_PARAMS` uses `football_nfl`/`football_ncaaf`/`hockey_nhl`. The `_normalize_sport_key()` function in `win_probability.py` handles this mapping. Basketball keys match natively. If you add a new sport, make sure to test with the actual database sport key.
 
 **Files:** `backend/app/config/win_prob_sources.py`, `backend/app/utils/win_probability.py`, `backend/tests/test_win_probability.py` (39 tests), `frontend/components/OddsChart.tsx`, `frontend/app/events/[id]/models/page.tsx`
+
+### Prediction Market → Event Matching
+Links Kalshi and Polymarket game-level markets (e.g., "NBA: Celtics at Warriors") to Event records so they appear as win probability trend lines on the OddsChart.
+
+**Architecture:**
+- **Detection**: `utils/prediction_market_matching.py` — regex-based game-level detection, fuzzy team name matching, Kalshi ticker parsing
+- **Matching task**: `tasks/prediction_market_matching.py` — Celery task that links FuturesMarkets to Events and writes `win_prob_snapshots`
+- **Source registry**: `win_prob_sources.py` already has Kalshi (green `#22c55e`) and Polymarket (blue `#3b82f6`) entries
+- **Beat schedule**: `match_prediction_markets` runs every 15 min at `:05, :20, :35, :50`
+
+**Two-pass matching strategy (Phase 1):**
+1. **Pass 1 — Targeted ticker scan**: Queries `FuturesMarket` by Kalshi game ticker patterns (`KXNBAGAME%`, `KXNFLGAME%`, etc.) with no limit. Uses `extract_matchup()` for name-based matching, with `_find_event_by_sport_and_time()` as fallback when names are generic (e.g., "Professional Basketball Game").
+2. **Pass 2 — General scan**: Existing limit-based scan (500 unlinked markets) for Polymarket and non-ticker Kalshi markets.
+
+**Kalshi game ticker format**: `KXNBAGAME-26FEB19BOSGSW` = sport prefix + date + team abbreviations. Supported prefixes (12 sports): `kxnbagame`, `kxnflgame`, `kxnhlgame`, `kxmlbgame`, `kxncaabgame`, `kxncaafgame`, `kxwnbagame`, `kxmlsgame`, `kxsoccergame`, `kxufcfight`, `kxboxingfight`, `kxlolgame`.
+
+**Sport+time fallback**: When `extract_matchup()` fails (generic Kalshi names), `get_sport_prefix_from_ticker()` maps the ticker to a sport_key prefix, then `_find_event_by_sport_and_time()` finds events within ±6 hours. Only links if exactly 1 event matches (avoids ambiguity).
+
+**Dash matchup false positive prevention**: The regex `Team A – Team B` pattern is validated by `_looks_like_team_name()` to reject false positives like "English Premier League – 2nd Place" or "The Masters - Winner".
+
+**Admin endpoints:**
+```bash
+# Trigger matching
+curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/match?secret=any"
+
+# Check status (linked vs unlinked counts)
+curl "https://api.bainluck.com/api/admin/prediction-markets/status?secret=any"
+
+# Debug funnel (where markets drop off)
+curl "https://api.bainluck.com/api/admin/prediction-markets/debug?secret=any&sample_size=100"
+
+# Manual link (fallback when auto-matching fails)
+curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/link?secret=any&market_id=123&event_id=456"
+```
+
+**Files:**
+- `backend/app/utils/prediction_market_matching.py` — Detection regex, fuzzy matching, team mapping, ticker parsing
+- `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases
+- `backend/tests/test_prediction_market_matching.py` — 190 tests (ticker detection, name building, false positives, sport prefix mapping, integration)
+
+### Team Auto-Creation from Events
+The `_discover_events()` task (runs every 15 min) now batch-creates Team records for any teams found in events that don't yet have entries in the `teams` table. This ensures college teams (Harvard, Brown, Stanford, etc.) get Team records even without ESPN scoreboard matching. The `search_teams` endpoint also falls back to searching the events table and auto-creating Team records for matches.
 
 ---
 
@@ -820,7 +869,7 @@ These are the current focus. Resist the urge to build new features until these a
 
 ### Next — Features (in priority order)
 4. 🟢 **Auth & Personalization Phase 1 (shipped)** — Google Sign-In working on Safari and Chrome via GIS + backend custom token fallback. Backend auth middleware, pin sync endpoints, frontend auth context + sign-in UI, preferences page placeholder. Still needs desktop Safari verification. See `docs/auth-personalization-plan.md` for full plan.
-5. 🟢 **Auth & Personalization Phase 2 (shipped)** — 4-step onboarding flow (location → alma maters → sport affinities → rivals) with metro alias expansion, sport affinity key mapping, batch save endpoint, preferences display page, homepage CTA banner. See onboarding details in Auth & Personalization section above.
+5. 🟢 **Auth & Personalization Phase 2 (shipped)** — 5-step onboarding flow (location → follow teams → alma maters → sports+beyond → rivals) with metro alias expansion, sport affinity key mapping, batch save endpoint, preferences display page, homepage CTA banner, inline favorites CRUD, non-sports categories (politics, entertainment, crypto, etc.). Team search falls back to events table and auto-creates Team records for college teams. See onboarding details in Auth & Personalization section above.
 6. 🟢 **Auth & Personalization Phase 3 (shipped)** — Personalized feed scoring: team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting, personalization badges ("Your team", "Local", "Alma mater", "Rival losing"), unified interestingness feed combining events + futures.
 7. 📋 Ranking Level 2 — time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature: directly improves the north star.
 8. 📋 Add external win prob sources (MoneyPuck for NHL, FanGraphs for MLB) — infrastructure is ready, just needs API integration + source config entry
@@ -834,7 +883,7 @@ These are the current focus. Resist the urge to build new features until these a
 16. 📋 Fix NFL roster sync — only 2/32 teams matched (abbreviation mismatch between SportsDataIO and `teams` table)
 17. 📋 **Related futures Phase 4** — LLM context blurbs (async, cached) explaining why a futures market matters for a game
 18. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
-19. 📋 **Prediction market game-level odds on event pages** — Kalshi and Polymarket both have individual game outcome markets (moneyline-style). Show these as additional win probability lines alongside sportsbook consensus, ESPN, and the Bain Luck stat model. When prediction market odds diverge significantly from sportsbook consensus (e.g., >5% difference), surface that divergence with a badge/callout and use LLM to generate an explanation of why the markets disagree. This is the ultimate expression of "all possible win probabilities aggregated into one place." Implementation: match prediction market game events to our Event records (by team names + commence_time), write to `win_prob_snapshots` with source="polymarket"/"kalshi", poll at higher frequency for live games (every 2-5 min vs 30-60 min for futures). Frontend: OddsChart already renders N sources dynamically — just needs source registry entries in `win_prob_sources.py`.
+19. 🟢 **Prediction market game-level odds on event pages (matching shipped, needs verification)** — Matching infrastructure built: two-pass strategy (ticker scan + general scan), 190 tests, sport+time fallback, admin endpoints. **Still needs:** (a) deploy and verify on production with live games, (b) increase polling frequency for live games (every 2-5 min vs hourly), (c) divergence badge/callout when prediction market odds differ >5% from sportsbook consensus, (d) LLM explanation of why markets disagree. Frontend: OddsChart already renders N sources dynamically.
 
 ### Horizon — AI-Native Sports Intelligence (SportsDataIO + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require SportsDataIO enrichment (rosters, injuries, standings, schedules) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -876,13 +925,14 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
-- ✅ Test coverage for core algorithms: 1250+ backend (pytest items) + 107 frontend = 1350+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), odds polling helpers (27), win prob sources (24), task wiring (19), stale bookmaker filter (14), snapshot collapse (13), redis state (9), onboarding/preferences (31). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1345+ backend (pytest items) + 117 frontend = 1460+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (88), odds math (35+35), futures categorization (116), win probability (51), ESPN API parsing (46), team linking (97), LLM classification (60), prediction market matching (190), odds polling helpers (27), win prob sources (24), task wiring (19), stale bookmaker filter (14), snapshot collapse (13), redis state (9), onboarding/preferences (31). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
-- ✅ Auth & Personalization Phase 2 (shipped): 4-step onboarding flow (`/onboarding`) — location with metro alias expansion, alma maters, sport affinities (12 categories with 4 levels), rivals. Backend: `POST /api/me/onboarding` (batch save), `GET /api/me/preferences`, `GET /api/me/teams/by-location` with `METRO_ALIASES` + `SPORT_AFFINITY_MAPPING`. Frontend: single-page stepper, debounced autocomplete, OnboardingBanner CTA, preferences display page. 31 tests for metro aliases, sport affinity expansion/compression, reverse mapping.
+- ✅ Auth & Personalization Phase 2 (shipped): 5-step onboarding flow (`/onboarding`) — location, follow teams, alma maters, sports+beyond (20 categories incl. politics/entertainment/crypto), rivals. Team search falls back to events table and auto-creates Team records for college teams. Inline favorites CRUD on preferences page. 31+ tests.
 - ✅ Auth & Personalization Phase 3 (shipped): Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting. Personalization badges ("Your team", "Local", "Alma mater", "Rival losing"). Unified interestingness feed combining events + futures on homepage.
 - ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to single "Right Now" feed ranked by interestingness score. Feed items include events and futures, with personalization overlay for authenticated users.
+- ✅ Prediction market → event matching: Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. 190 tests covering ticker detection, name building, false positive prevention, sport prefix mapping.
 </details>
 
 See `docs/PRD.md` for full roadmap.
