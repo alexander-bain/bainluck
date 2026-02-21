@@ -131,7 +131,10 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             markets_to_tier = tier_result.scalars().all()
 
             for market in markets_to_tier:
-                market.market_tier = compute_market_tier(market.name, market.category)
+                market.market_tier = compute_market_tier(
+                    market.name, market.category,
+                    sport_category=market.llm_sport_category,
+                )
                 stats["markets_tiered"] += 1
 
             # --- Phase 2: Link outcomes to teams ---

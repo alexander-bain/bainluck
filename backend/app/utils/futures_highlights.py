@@ -21,16 +21,25 @@ MARKET_TIER_WEIGHTS = {
 
 # Sport/league tier for futures (mirrors LEAGUE_TIERS in highlights.py)
 FUTURES_LEAGUE_TIERS: dict[str, int] = {
+    # Major sports
     "basketball": 1,
     "football": 1,
     "baseball": 1,
     "hockey": 1,
+    # Secondary sports
     "soccer": 2,
     "golf": 2,
     "tennis": 2,
     "mma": 2,
-    "politics": 1,  # High general interest
+    # Non-sports (high general interest)
+    "politics": 1,
+    "crypto": 1,
+    "economics": 1,
     "entertainment": 2,
+    "tech": 2,
+    "weather": 2,
+    "geopolitics": 2,
+    "culture": 2,
 }
 
 # Scoring weights

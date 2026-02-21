@@ -383,7 +383,10 @@ async def _process_event_batch(
                         category = "championship"
 
                 # Compute market tier
-                market_tier = compute_market_tier(event.title, category)
+                market_tier = compute_market_tier(
+                    event.title, category,
+                    sport_category=llm_sport_category,
+                )
 
                 # Timing: use event start/end dates
                 commence_time = event.start_date

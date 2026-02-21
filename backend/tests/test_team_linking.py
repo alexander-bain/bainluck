@@ -112,6 +112,40 @@ class TestComputeMarketTier:
     def test_empty_name(self):
         assert compute_market_tier("") == 5
 
+    # Non-sports: should get tier 2 instead of 5
+    def test_politics_market_defaults_to_tier_2(self):
+        assert compute_market_tier("Who will win the 2028 presidential election?",
+                                   sport_category="politics") == 2
+
+    def test_crypto_market_defaults_to_tier_2(self):
+        assert compute_market_tier("Will Bitcoin hit $200k by December?",
+                                   sport_category="crypto") == 2
+
+    def test_entertainment_market_defaults_to_tier_2(self):
+        assert compute_market_tier("Who will host the Oscars?",
+                                   sport_category="entertainment") == 2
+
+    def test_economics_market_defaults_to_tier_2(self):
+        assert compute_market_tier("Will the Fed cut rates in March?",
+                                   sport_category="economics") == 2
+
+    def test_geopolitics_market_defaults_to_tier_2(self):
+        assert compute_market_tier("Will there be a ceasefire by June?",
+                                   sport_category="geopolitics") == 2
+
+    def test_tech_market_defaults_to_tier_2(self):
+        assert compute_market_tier("Will SpaceX land on Mars by 2030?",
+                                   sport_category="tech") == 2
+
+    def test_sports_market_without_pattern_still_tier_5(self):
+        """Sports markets that don't match any pattern stay at tier 5."""
+        assert compute_market_tier("Something Random", sport_category="basketball") == 5
+
+    def test_non_sport_with_championship_pattern_is_tier_1(self):
+        """If a non-sport market happens to match championship pattern, tier 1 wins."""
+        assert compute_market_tier("Championship Winner",
+                                   sport_category="entertainment") == 1
+
 
 # =============================================================================
 # Name Normalization

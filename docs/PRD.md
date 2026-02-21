@@ -698,8 +698,10 @@ Events are scored 0-100 by `backend/app/utils/highlights.py` using additive weig
 | Major score swing (>=20%) | +10 | Projected total change from opening |
 | Starting in <3h | +15 | |
 | Starting in <1h | +10 | Bonus on top of 3h |
-| Tier 1 league | +10 | NBA, NFL, MLB, NHL |
-| Tier 2 league | +5 | NCAAB, NCAAF, MLS |
+| Tier 1 league | +20 | NBA, NFL, MLB, NHL, EPL, La Liga, UCL |
+| Tier 2 league | +10 | NCAAB, NCAAF, WNBA, MLS, Bundesliga, Serie A, MMA |
+| Tier 3 league | 0 | Niche/regional |
+| Tier 4 league | -15 | Unknown/uncategorized |
 | Recent upset | +20 | Finished + favorite switched |
 | Recently finished | +5 | Within 24h |
 
@@ -741,16 +743,20 @@ This is a long-term workstream. Each level builds on the previous one and should
 **What works:** Catches live upsets, close games, big pre-game line moves.
 **What doesn't:** Can't distinguish noise from trends without the trend evidence heuristics. Can't detect momentum (accelerating movement vs one-time jump). All events of the same type score identically regardless of sport-specific context.
 
-#### Level 2: Time-series aware scoring
+#### Level 2: Time-series aware scoring ✅ Shipped
 Pass recent snapshot history into the ranking function. This enables:
 - **Trend detection**: Is the line moving consistently in one direction, or oscillating? Consistent movement is a story; oscillation is noise.
 - **Velocity/acceleration**: A line that moved 5% in the last 10 minutes is more interesting than one that moved 5% over 3 days.
 - **Volatility scoring**: High-variance odds histories (lots of movement) are inherently more interesting than flat lines, even if the current state looks unremarkable.
 - **Convergence/divergence**: Are bookmakers agreeing more or less over time? Divergence suggests genuine uncertainty.
 
-**Data available today:** `odds_snapshots` has per-bookmaker, per-poll readings. `odds_aggregated` has period-based min/max/avg. Win probability snapshots capture multi-model readings during live games. The time-series data exists — `compute_highlight` just doesn't use it yet.
+**Shipped February 2026:**
+- [x] `compute_time_series_metrics()` in `utils/highlights.py` analyzes odds snapshots for volatility (RMS probability swings), lead changes (50% crossings), and recent momentum (trend over last hour)
+- [x] New highlights labels: "Lead change" (+20 pts), "Odds shifting fast" (+15 pts volatility bonus), "Wild game" (high variance)
+- [x] Live odds history queried on every highlight computation to capture full volatility picture
+- [x] Component scores: volatility, lead changes, recent trend acceleration all feed into highlights ranking
 
-**Data model work needed:** Consider pre-computing summary stats on the event row (e.g., `max_prob_swing_1h`, `snapshot_count_1h`, `odds_volatility`) to avoid querying snapshot tables on every ranking call. These could be updated by the polling tasks that already touch these events.
+**Implementation:** `backend/app/utils/highlights.py` with helper function `_compute_time_series_metrics(event_id, session)` that queries the last 24 hours of odds_snapshots, aggregates by time bucket, calculates RMS and momentum.
 
 #### Level 3: Sport-specific and contextual scoring
 Different sports have different baseline dynamics:
@@ -1041,35 +1047,42 @@ Completed: February 2026
 #### Phase 6.1: Core Auth ✅ Complete (February 2026)
 - [x] Firebase Auth integration (Google Sign-In)
 - [x] Google Identity Services (GIS) OAuth popup flow
-- [x] Safari compatibility via backend custom token exchange (works around ITP)
+- [x] Safari compatibility via 3-tier auth fallback (shipped Feb 2026)
 - [x] Backend auth middleware (`get_current_user` / `get_optional_user`)
 - [x] User profile endpoints (`POST /api/auth/google`, `GET /api/auth/me`)
 - [x] Server-side pin sync (`/api/me/pins` CRUD)
 - [x] Frontend auth context + sign-in UI (UserMenu, AuthProvider)
 - [x] Pin migration from localStorage to server on first login
 
-**Auth Architecture:**
-- Frontend: GIS `initTokenClient` (OAuth popup, returns access token)
-- Step 1: Try Firebase `signInWithCredential` (works on Chrome/Firefox)
-- Step 2: If that fails (Safari ITP), send access token to `POST /api/auth/google-access-token` -> backend verifies with Google -> creates Firebase custom token -> `signInWithCustomToken`
-- Requires `FIREBASE_SERVICE_ACCOUNT_JSON` on backend for Safari fallback
+**Auth Architecture (3-tier Safari fallback):**
+- **Tier 1 (Chrome/Firefox)**: GIS `initTokenClient` (OAuth popup, 4s timeout) -> Firebase `signInWithCredential` (4s timeout)
+- **Tier 2 (Safari, ITP fallback)**: If Tier 1 fails, send access token to `POST /api/auth/google-access-token` -> backend verifies with Google OAuth token endpoint -> creates Firebase custom token via Admin SDK -> frontend calls `signInWithCustomToken` (4s timeout)
+- **Tier 3 (Last resort)**: If both fail, backend returns PyJWT session token that frontend stores in localStorage and sends as Authorization header
+- **Auth persistence**: Switched from IndexedDB (browser-controlled) to localStorage (app-controlled) for more reliable persistence across tabs and app reloads
+- Requires `FIREBASE_SERVICE_ACCOUNT_JSON` on backend for Safari support (enables token verification and custom token creation)
 
 **Auth Philosophy:**
 - No required sign-in — logged-out experience must feel complete
 - Auth unlocks: Favorites sync, notifications, cross-device preferences, pin sync
 - Auth is **pull-based, not forced**
 
-#### Phase 6.2: Onboarding & Preferences (Planned)
-- [ ] Onboarding flow (city -> teams, alma maters, sport affinities, rivals)
-- [ ] Preference storage in `user_preferences` table
-- [ ] LLM-parsed free-text inputs for team selection
+#### Phase 6.2: Onboarding & Preferences ✅ Complete (February 2026)
+- [x] 5-step onboarding flow (location → follow teams → alma maters → sports+beyond → rivals)
+- [x] Preference storage in `user_preferences` table
+- [x] Metro alias expansion (e.g., "New England" → Boston Celtics, Patriots, Bruins, Red Sox)
+- [x] Team search with events table fallback for auto-creation of college teams
+- [x] Preferences display page showing teams, sport affinities, onboarding state
+- [x] Inline favorites CRUD (add/remove without revisiting onboarding)
+- [x] Batch save endpoint saves location, favorites, sport affinities, onboarding state atomically
 
-#### Phase 6.3: Personalized Experience (Planned)
-- [ ] Personalized highlight scoring multiplier based on favorites
-- [ ] "For You" section on homepage
-- [ ] Rival schadenfreude surfacing
-- [ ] Conditional sport logic (boost sports user follows)
-- [ ] Apple Sign-In (required by App Store policy)
+#### Phase 6.3: Personalized Experience ✅ Complete (February 2026)
+- [x] Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×)
+- [x] Rival multipliers (live losses and blown leads boost rival games in feed)
+- [x] Sport affinity weighting (user's sport preferences boost relevant events)
+- [x] Personalization badges ("Your team", "Local", "Alma mater", "Rival losing")
+- [x] Unified interestingness feed combining events + futures with personalization overlay
+- [x] Non-sports categories in feed (Politics, Entertainment, Crypto, Economics, Tech, Weather, Geopolitics, Culture)
+- [x] Non-sports tier promotion: Politics, Entertainment, Crypto moved from tier 3 to tier 2 in frontend categorization (increased weighting)
 
 ### Phase 7: LLM Integration & Metadata Enrichment ✅ Complete
 **OpenAI-powered smart features and ESPN data integration.**
@@ -1164,12 +1177,14 @@ Completed: February 2026
 - [x] `/events/[id]/models` detail page showing methodology + attribution
 - [x] Dual compute paths: ESPN sync (60s) + odds polling (30-60s)
 
-**Current Sources (3):**
-| Source | Type | Sports |
-|--------|------|--------|
-| Betting Odds | Market (The Odds API) | All |
-| ESPN | Model (undocumented API) | NBA, NCAAB, NFL, NCAAF, NHL, MLB |
-| Bain Luck Model | Model (nflfastR methodology) | NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL |
+**Current Sources (5):**
+| Source | Type | Sports | Notes |
+|--------|------|--------|-------|
+| Betting Odds | Market (The Odds API) | All | Sportsbook consensus (5-15 books) |
+| ESPN | Model (undocumented API) | NBA, NCAAB, NFL, NCAAF, NHL, MLB | Only live games, property color on chart |
+| Bain Luck Model | Model (nflfastR methodology) | NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL | Statistical model with wall-clock fallback |
+| MLB Stats API | Model (Official MLB API) | MLB | Free, live baseball only, no API key |
+| Prediction Markets | Market (Kalshi + Polymarket) | All sports | Game-level outcomes (e.g., "Lakers beat Celtics?") |
 
 **Bain Luck Model Details:**
 - Normal distribution model: score diff + time remaining + pregame spread
@@ -1181,13 +1196,11 @@ Completed: February 2026
 2. Write snapshots to `win_prob_snapshots` table with the source key
 3. Chart and API pick it up automatically — no frontend changes needed
 
-**Future sources to evaluate:**
-| Source | Viability | Notes |
-|--------|-----------|-------|
-| MoneyPuck | High (NHL) | Free JSON API with live game WP |
-| FanGraphs | High (MLB) | Free JSON endpoints for live WP |
-| Inpredictable | Medium | College sports models |
-| kenpom.com | Medium | College basketball, paid |
+**Planned sources (stubs configured, awaiting implementation):**
+| Source | Sport | Status | Notes |
+|--------|-------|--------|-------|
+| MoneyPuck | NHL | Stub configured | Free JSON API with live game WP |
+| FanGraphs | MLB | Stub configured | Free JSON endpoints for live WP (alternative to MLB Stats API) |
 
 ### Phase 12: Related Futures ✅ Complete (Phases 1-3)
 **Show championship odds, MVP odds, and award futures relevant to teams playing in a specific game.**
@@ -1311,10 +1324,11 @@ NegRisk events (multi-outcome, e.g., "NBA Championship Winner") have one binary 
 - [x] Task registration in `tasks/__init__.py` with `name="app.tasks.poll_polymarket"` wrapper
 - [x] 69 tests covering tag mapping, name extraction, API parsing
 
-**Phase 2 remaining:**
-- [ ] Beat schedule (auto-polling on cron, currently manual-only)
-- [ ] Price history backfill via CLOB `/prices-history` endpoint
-- [ ] Non-sports category display in frontend (politics, entertainment, crypto tabs)
+**Phase 2 — Shipped (Feb 2026):**
+- [x] Beat schedule `poll_polymarket` (auto-polling hourly at :15)
+- [x] Price history backfill via CLOB `/prices-history` endpoint (`POST /api/admin/polymarket/backfill-history` fetches historical prices for outcomes with sparse data, stores as FuturesOddsSnapshot rows)
+- [x] Live game price polling every 2 min via `poll_live_prediction_markets` (only fetches prices for markets linked to live events, to avoid rate limit burnout)
+- [x] Non-sports category display in frontend (Politics, Entertainment, Crypto tiers in categorization logic)
 
 **Parsing gotcha:** Gamma API returns `outcomes`, `outcomePrices`, and `clobTokenIds` as stringified JSON arrays (e.g., `"[\"Yes\", \"No\"]"`). Must use `json.loads()` to parse.
 
@@ -1365,7 +1379,7 @@ NegRisk events (multi-outcome, e.g., "NBA Championship Winner") have one binary 
 - [ ] International sportsbooks for broader odds coverage
 - [ ] Real-time sports data (play-by-play) for richer context
 
-#### Phase 15d: Prediction Market Game-Level Odds ✅ Matching Shipped
+#### Phase 15d: Prediction Market Game-Level Odds ✅ Fully Shipped
 
 **Show Kalshi and Polymarket individual game outcomes as win probability sources alongside sportsbooks and models.**
 
@@ -1378,19 +1392,18 @@ Both Kalshi and Polymarket have moneyline-style game outcome markets ("Will the 
 - [x] Dash matchup false positive prevention (rejects "English Premier League – 2nd Place" etc.)
 - [x] Write matched game-level odds to `win_prob_snapshots` with source="polymarket" / source="kalshi"
 - [x] Source registry entries in `win_prob_sources.py` (Kalshi: green `#22c55e`, Polymarket: blue `#3b82f6`)
-- [x] Beat schedule: `match_prediction_markets` runs every 15 min
+- [x] Beat schedule: `match_prediction_markets` runs every 15 min, live polling every 2 min via `poll_live_prediction_markets` (only fetches prices for markets linked to live events)
 - [x] Admin endpoints for status, debug funnel, and manual linking
-- [x] 190 tests covering ticker detection, name building, false positives, sport prefix mapping
+- [x] 195 tests covering ticker detection, name building, false positives, sport prefix mapping, live poll wiring
 - [x] OddsChart already renders N sources dynamically — no frontend changes needed
+- [x] **Divergence badge (shipped Feb 2026)**: Frontend detects when prediction market odds differ >5% from sportsbook consensus. Purple badge for >10% divergence, blue for >5%. Appears on event detail page next to odds chart.
 
-**Remaining work:**
-- [ ] Higher polling frequency for live game markets (every 2-5 min vs hourly)
-- [ ] When prediction market odds diverge from sportsbook consensus by >5%, surface a badge/callout on the event card
-- [ ] Use LLM (GPT-4o-mini) to generate a brief explanation of why the markets might disagree
-- [ ] Cache explanations to avoid redundant LLM calls
+**OddsChart Implementation:**
+- Dynamically renders all configured sources with different colors and dash patterns
+- Prediction market lines (Kalshi green, Polymarket blue) sit alongside sportsbook (dark solid), ESPN (orange dashed), and Bain Luck model (purple dashed) for full comparison
 
 **Why this matters:**
-Sportsbooks set lines to balance action (minimize risk). Prediction markets set prices based on collective belief (maximize accuracy). When they disagree, something interesting is happening — and explaining that divergence is a unique insight no other site provides.
+Sportsbooks set lines to balance action (minimize risk). Prediction markets set prices based on collective belief (maximize accuracy). When they disagree, something interesting is happening — the divergence badge makes this obvious.
 
 ### Phase 16: Probability Comparisons ("Comparable Odds")
 **Make win probabilities viscerally relatable by comparing them to real-world likelihoods.**
@@ -1684,11 +1697,11 @@ Bain Luck displays information, not transactions.
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
 
-1. **Reduce stat model dependency on ESPN name matching** — The stat model can only compute when ESPN sync successfully matches a game. For college sports with hundreds of teams, name mismatches are common. Options: match by ESPN ID, scrape ESPN scoreboard directly, or estimate time remaining from elapsed wall time.
+1. ~~**Reduce stat model dependency on ESPN name matching**~~ ✅ **Shipped** — Three-pronged fix: (a) multi-signal ESPN matching (ESPN ID → name → commence_time proximity) for both live and scheduled events, (b) wall-clock time estimation fallback when ESPN sync misses entirely, (c) odds polling stat model path relaxed to use fallback automatically. 67 tests. Still validating on production with live college games.
 
 2. ~~**Data retention / worker memory (R14 OOM)**~~ ✅ **Shipped** — Snapshot collapse rewritten to pure SQL using PostgreSQL window functions (LAG, SUM, CTEs). Zero rows loaded into Python, constant memory. Phase 2 opportunities remain if OOM recurs (pre-game thinning, odds_aggregated, futures retention cap).
 
-3. **Monitoring and reliability** — Celery heartbeat monitors worker liveness, but not task *correctness*. Need task-level success metrics (e.g., detect when `poll_all_odds` returns empty or ESPN sync matches 0 events).
+3. ~~**Monitoring and reliability**~~ ✅ **Shipped** — Task-level success metrics system: `record_task_success()`/`record_task_failure()` in `redis_state.py` tracks duration, result summaries, consecutive failures, and 24h success/failure counts per task in Redis. Dashboard endpoint `GET /api/admin/celery/dashboard` shows all tracked tasks with health classification. 7 key tasks instrumented.
 
 ### Shipped — Features
 
@@ -1696,35 +1709,37 @@ These are the current focus. Resist the urge to build new features until these a
 
 5. ~~**Auth & Personalization Phase 3**~~ ✅ **Shipped** — Personalized feed scoring: team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting, personalization badges ("Your team", "Local", "Alma mater", "Rival losing"), unified interestingness feed combining events + futures on homepage.
 
-6. ~~**Prediction market → event matching**~~ ✅ **Shipped** — Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. 190 tests. Still needs: live game polling frequency increase, divergence badge, LLM explanation.
+6. ~~**Prediction market → event matching**~~ ✅ **Shipped** — Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. 195 tests. Live game polling every 2 min via `poll_live_prediction_markets`. Divergence badge shipped (>5% diff detection with purple/blue coloring). Still needs: LLM explanation of divergence reasons.
 
 ### Next — Features (in priority order)
 
-7. **Ranking Level 2** — Time-series aware scoring (use odds_snapshots in `compute_highlight`). Highest-leverage feature for the north star.
+7. ~~**Ranking Level 2**~~ ✅ **Shipped** — Time-series aware scoring using `compute_time_series_metrics()` with volatility, lead changes, momentum. New labels: "Lead change", "Odds shifting fast", "Wild game". Highest-leverage feature for the north star.
 
-8. **Additional win prob sources** — MoneyPuck for NHL, FanGraphs for MLB. Infrastructure ready, just needs API integration + source config.
+8. **MLB Stats API integration** ✅ **Shipped** — Live baseball win probability from official MLB API (statsapi.mlb.com, free, no API key). Polls every 2 min during live games. Appears as "MLB Model" source (key: "fangraphs") on OddsChart.
 
-9. **Polymarket Phase 2** — Beat schedule (auto-polling on cron), price history backfill via CLOB `/prices-history`, non-sports category display in frontend (politics, entertainment, crypto tabs).
+9. **Additional win prob sources** — MoneyPuck for NHL, FanGraphs for MLB. Infrastructure ready (stubs configured in `win_prob_sources.py`), awaiting full API integration.
 
-10. **Apple Sign-In** — Required by App Store policy. Also: change Firebase support email, link Firebase to Google Analytics.
+10. **Divergence explanation** — When prediction market odds diverge >5% from sportsbook consensus, use LLM (GPT-4o-mini) to generate explanation. Cache results.
 
-11. **LLM-powered odds movement explanations**
+11. **Apple Sign-In** — Required by App Store policy. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics.
 
-12. **Sport-specific Pulse normalization**
+12. **LLM-powered odds movement explanations** — Detect significant swings, generate context with SportsDataIO injury/news data.
 
-13. **Fix NFL roster sync** — Only 2/32 teams matched (abbreviation mismatch)
+13. **Sport-specific Pulse normalization** — Different sports have different baseline volatility; normalize thresholds per sport.
 
-14. **Related futures Phase 4** — LLM context blurbs
+14. **Fix NFL roster sync** — Only 2/32 teams matched (abbreviation mismatch issue).
 
-15. **Related futures Phase 5** — Bidirectional linking
+15. **Related futures Phase 4** — LLM context blurbs explaining why a futures market matters for a game.
 
-16. **Fix `current_odds` backend computation** — Use time-bucketed aggregation for all API consumers
+16. **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events.
 
-### Later (Q3-Q4 2026)
+17. **Fix `current_odds` backend computation** — Use time-bucketed aggregation for all API consumers instead of per-bookmaker-latest.
+
+### Later (Q2-Q4 2026)
 - iOS app launch with feed tab, search, and widgets
 - Widgets (Lock Screen, Home Screen) — "Most Exciting Game Right Now"
 - Advanced notification preferences
-- TV/Party mode v2 — rebuild for big charts + clean visualization
+- TV/Party mode v2 — rebuild for big charts + clean visualization (focus on big charts + clean UI, skip contest/trivia features)
 
 ### Exploring (No Timeline)
 - Probability Comparisons ("Comparable Odds") — Phase 16
@@ -1767,9 +1782,16 @@ These are the current focus. Resist the urge to build new features until these a
 - Unified feed (homepage redesigned to single "Right Now" feed ranked by interestingness)
 - Team auto-creation from events (event discovery + search fallback auto-create Team records)
 - Non-sports categories in onboarding (politics, entertainment, crypto, economics, tech, weather, geopolitics, culture)
-- Celery heartbeat + health endpoint
+- Ranking Level 2 (time-series aware scoring with volatility, lead changes, momentum)
+- 4-tier league ranking system (30+ leagues mapped, 4-tier multiplier system)
+- MLB Stats API integration (live baseball win probability, free API)
+- Divergence badge for prediction market discrepancy detection (>5% threshold, purple/blue coloring)
+- Safari 3-tier auth fallback (Firebase credential → custom token → PyJWT session token)
+- Non-sports tier promotion (Politics, Entertainment, Crypto moved to tier 2)
+- Polymarket Phase 2 (beat schedule, price history backfill, live game polling every 2 min)
+- Celery heartbeat + health endpoint + task-level success metrics
 - Google Analytics 4 integration
-- Test coverage (1480+ total: 1363+ backend + 117 frontend across 22 test files)
+- Test coverage (1500+ total: 1380+ backend + 120 frontend across 22+ test files)
 </details>
 
 ---

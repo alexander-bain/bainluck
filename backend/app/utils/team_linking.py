@@ -48,16 +48,27 @@ _TIER_4_PATTERNS = [
 ]
 
 
-def compute_market_tier(market_name: str, category: Optional[str] = None) -> int:
+_NON_SPORT_CATEGORIES = {
+    "politics", "crypto", "economics", "entertainment", "tech",
+    "weather", "geopolitics", "culture",
+}
+
+
+def compute_market_tier(market_name: str, category: Optional[str] = None,
+                        sport_category: Optional[str] = None) -> int:
     """
     Assign a tier (1-5) to a futures market based on its name and category.
 
     Tiers:
         1 = Championship / title winner (highest relevance)
-        2 = Conference winner
+        2 = Conference winner / non-sports top-level
         3 = Awards / MVP / individual honors
         4 = Division winner
         5 = Props / other (lowest relevance)
+
+    Non-sports markets (politics, crypto, entertainment, etc.) default to
+    tier 2 since they have no championship/conference hierarchy — they're
+    all top-level questions that should rank alongside major sports futures.
 
     Returns:
         Integer 1-5
@@ -91,6 +102,11 @@ def compute_market_tier(market_name: str, category: Optional[str] = None) -> int
     for pattern in _TIER_1_PATTERNS:
         if pattern.search(name_lower):
             return 1
+
+    # Non-sports markets default to tier 2 (no hierarchy — all top-level)
+    effective_category = (sport_category or category or "").lower()
+    if effective_category in _NON_SPORT_CATEGORIES:
+        return 2
 
     return 5
 

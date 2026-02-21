@@ -293,7 +293,10 @@ async def _poll_kalshi_markets():
                         generate_category_tags,
                         is_game_prop,
                     )
-                    market_tier = compute_market_tier(market_name, category)
+                    market_tier = compute_market_tier(
+                        market_name, category,
+                        sport_category=sport_category,
+                    )
 
                     # Detect league and season for cross-source matching
                     league = detect_league(market_name)
