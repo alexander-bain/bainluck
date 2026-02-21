@@ -15,18 +15,43 @@ from typing import Optional, Literal
 import math
 
 
-# League tier definitions (higher tier = more prominent)
+# League tier definitions — the most important ranking signal for anonymous users.
+# Tier 1 = must-see (major US pro leagues, premier international soccer)
+# Tier 2 = notable (major college, top secondary leagues, WNBA)
+# Tier 3 = niche (mid-tier international, smaller college)
+# Tier 4 = anything not explicitly listed (minor leagues, obscure leagues)
 LEAGUE_TIERS: dict[str, int] = {
-    # Tier 1: Major US leagues
+    # Tier 1: Big 4 US leagues + top international soccer
     "basketball_nba": 1,
     "americanfootball_nfl": 1,
     "baseball_mlb": 1,
     "icehockey_nhl": 1,
-    # Tier 2: College major + MLS
+    "soccer_epl": 1,
+    "soccer_spain_la_liga": 1,
+    "soccer_uefa_champs_league": 1,
+    # Tier 2: Major college + top secondary
     "americanfootball_ncaaf": 2,
     "basketball_ncaab": 2,
+    "basketball_wnba": 2,
+    "basketball_wncaab": 2,
     "soccer_usa_mls": 2,
-    # Tier 3: Everything else
+    "soccer_germany_bundesliga": 2,
+    "soccer_italy_serie_a": 2,
+    "soccer_france_ligue_one": 2,
+    "soccer_uefa_europa_league": 2,
+    "mma_mixed_martial_arts": 2,
+    # Tier 3: Niche but legit
+    "soccer_mexico_ligamx": 3,
+    "soccer_brazil_serie_a": 3,
+    "boxing_boxing": 3,
+    "golf_masters_tournament_winner": 3,
+    "golf_pga_championship_winner": 3,
+    "golf_us_open_winner": 3,
+    "golf_the_open_championship_winner": 3,
+    "tennis_us_open": 3,
+    "tennis_french_open": 3,
+    "tennis_wimbledon": 3,
+    "tennis_australian_open": 3,
 }
 
 # Highlight score weights
@@ -39,8 +64,10 @@ WEIGHTS = {
     "major_score_swing": 10,       # >20% projected score change
     "starting_soon_3h": 15,        # Starting in <3 hours
     "starting_soon_1h": 10,        # Starting in <1 hour (bonus)
-    "tier_1_league": 10,           # Major league bonus
-    "tier_2_league": 5,            # College/secondary league bonus
+    "tier_1_league": 20,           # Major league bonus (substantial — keeps big leagues on top)
+    "tier_2_league": 10,           # College/secondary league bonus
+    "tier_3_league": 0,            # Niche — no bonus, no penalty
+    "tier_4_penalty": -15,         # Minor league penalty (pushes minor leagues down in feed)
     "recent_finish_upset": 20,     # Recently finished + upset
     "recent_finish": 5,            # Recently finished (24h)
     # Level 2: Time-series weights
@@ -92,7 +119,7 @@ class EventFlags:
     is_starting_very_soon: bool = False  # <1h
     is_recently_finished: bool = False  # <24h
     is_upset: bool = False  # Closed + favorite switched
-    league_tier: int = 3
+    league_tier: int = 4
     # Level 2 flags
     is_volatile: bool = False
     has_lead_changes: bool = False
@@ -109,10 +136,10 @@ class HighlightResult:
 
 
 def get_league_tier(sport_key: Optional[str]) -> int:
-    """Get the tier for a league (1=major, 2=secondary, 3=other)."""
+    """Get the tier for a league (1=major, 2=notable, 3=niche, 4=minor)."""
     if not sport_key:
-        return 3
-    return LEAGUE_TIERS.get(sport_key, 3)
+        return 4
+    return LEAGUE_TIERS.get(sport_key, 4)
 
 
 def compute_time_series_metrics(
@@ -251,6 +278,12 @@ def compute_highlight(
     elif flags.league_tier == 2:
         result.score += WEIGHTS["tier_2_league"]
         result.reasons.append("tier_2")
+    elif flags.league_tier == 3:
+        result.score += WEIGHTS["tier_3_league"]
+        result.reasons.append("tier_3")
+    elif flags.league_tier == 4:
+        result.score += WEIGHTS["tier_4_penalty"]
+        result.reasons.append("tier_4")
 
     # === Probability-based flags ===
     is_pre_game = not flags.is_live and status not in ("completed", "closed")
@@ -355,8 +388,8 @@ def compute_highlight(
             result.score += WEIGHTS["recent_momentum"]
             result.reasons.append("recent_momentum")
 
-    # === Cap score at 100 ===
-    result.score = min(100, result.score)
+    # === Clamp score to 0-100 ===
+    result.score = max(0, min(100, result.score))
 
     # === Determine primary reason for display ===
     # Priority order for what to show users

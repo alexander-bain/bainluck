@@ -256,8 +256,9 @@ async def _score_events(
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
         # Lower the threshold for personalized items — if the user follows a team,
-        # surface it even at lower base scores
-        min_score = 10 if p_result.is_personalized else 20
+        # surface it even at lower base scores.
+        # Anonymous threshold is 25 to filter out minor league noise.
+        min_score = 10 if p_result.is_personalized else 25
         if personalized_score < min_score:
             continue
 

@@ -67,10 +67,10 @@ class TestGetLeagueTier:
         assert get_league_tier("soccer_usa_mls") == 2
 
     def test_unknown_league_defaults_to_3(self):
-        assert get_league_tier("unknown_sport") == 3
+        assert get_league_tier("unknown_sport") == 4
 
     def test_none_defaults_to_3(self):
-        assert get_league_tier(None) == 3
+        assert get_league_tier(None) == 4
 
 
 # =============================================================================
@@ -81,6 +81,7 @@ class TestComputeHighlightLive:
         result = compute_highlight(
             status="live",
             commence_time=live_commence,
+            sport_key="basketball_nba",
             now=now,
         )
         assert "live" in result.reasons
@@ -99,6 +100,7 @@ class TestComputeHighlightLive:
             status="live",
             commence_time=live_commence,
             current_home_prob=0.52,
+            sport_key="basketball_nba",
             now=now,
         )
         assert result.flags.is_live
@@ -368,7 +370,7 @@ class TestComputeHighlightLeagueTiers:
         result = compute_highlight(
             status="live",
             commence_time=live_commence,
-            sport_key="cricket_test",
+            sport_key="soccer_mexico_ligamx",
             now=now,
         )
         assert result.flags.league_tier == 3
@@ -384,7 +386,7 @@ class TestComputeHighlightMeta:
         result = compute_highlight(
             status="live",
             commence_time=live_commence,
-            sport_key="basketball_nba",
+            sport_key="soccer_mexico_ligamx",
             current_home_prob=0.50,
             opening_home_prob=0.30,
             opening_favorite="away",
@@ -802,16 +804,16 @@ class TestComputeHighlightExactScores:
         assert result.score == 100
 
     def test_zero_score_event(self, now):
-        """Far-future, tier 3, no odds: score should be 0."""
+        """Far-future, no tier penalty, no odds: score should be 0."""
         far = now + timedelta(days=10)
         result = compute_highlight(
             status="scheduled",
             commence_time=far,
-            sport_key="darts_pdc",
+            sport_key="tennis_us_open",
             now=now,
         )
         assert result.score == 0
-        assert result.reasons == []
+        assert result.reasons == ["tier_3"]  # Tier 3 has no score bonus/penalty
 
 
 # =============================================================================
@@ -1069,6 +1071,7 @@ class TestLevel2Scoring:
             status="live",
             commence_time=now - timedelta(hours=1),
             current_home_prob=0.65,
+            sport_key="basketball_nba",
             now=now,
             time_series=ts,
         )
