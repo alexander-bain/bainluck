@@ -468,7 +468,7 @@ async def _find_event_by_sport_and_time(session, market, now):
     yes_is_home=True as default (will be corrected if outcome names
     match team names in Phase 2).
     """
-    from app.models.models import Event
+    from app.models.models import Event, Sport
 
     # Determine sport from ticker
     sport_prefix = get_sport_prefix_from_ticker(market.external_id)
@@ -485,10 +485,12 @@ async def _find_event_by_sport_and_time(session, market, now):
     time_end = reference_time + timedelta(hours=6)
 
     # Query events by sport and time
+    # Event has sport_id (FK), Sport has key (e.g., "basketball_nba")
     event_result = await session.execute(
         select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
         .where(
-            Event.sport_key.like(f"{sport_prefix}%"),
+            Sport.key.like(f"{sport_prefix}%"),
             Event.commence_time.between(time_start, time_end),
         )
         .order_by(Event.commence_time)
@@ -606,164 +608,164 @@ async def _poll_live_prediction_market_prices():
 
         # ── Fetch Kalshi prices ────────────────────────────────────────
         if kalshi_markets:
+            from app.services.kalshi_api import KalshiAPIService
+            service = KalshiAPIService()
             try:
-                from app.services.kalshi_api import KalshiClient
-                async with KalshiClient() as kalshi:
-                    for market, event in kalshi_markets:
-                        try:
-                            # Kalshi external_id is the event ticker
-                            markets_data, _ = await kalshi.get_markets(
-                                event_ticker=market.external_id,
-                                status=None,  # Get all statuses
-                                limit=10,
+                for market, event in kalshi_markets:
+                    try:
+                        # Kalshi external_id is the event ticker
+                        markets_data, _ = await service.get_markets(
+                            event_ticker=market.external_id,
+                            status=None,  # Get all statuses
+                            limit=10,
+                        )
+                        stats["kalshi_fetched"] += 1
+
+                        # Update outcomes with fresh prices
+                        for mkt_data in markets_data:
+                            yes_bid = mkt_data.get("yes_bid")
+                            yes_ask = mkt_data.get("yes_ask")
+                            last_price = mkt_data.get("last_price")
+
+                            # Kalshi prices are in cents (0-100)
+                            if yes_bid is not None:
+                                yes_bid = yes_bid / 100.0
+                            if yes_ask is not None:
+                                yes_ask = yes_ask / 100.0
+                            if last_price is not None:
+                                last_price = last_price / 100.0
+
+                            # Calculate probability from mid-market
+                            if yes_bid is not None and yes_ask is not None:
+                                prob = (yes_bid + yes_ask) / 2
+                            elif last_price is not None:
+                                prob = last_price
+                            else:
+                                continue
+
+                            if prob <= 0 or prob >= 1:
+                                continue
+
+                            # Find matching outcome by ticker
+                            ticker = mkt_data.get("ticker", "")
+                            outcome_result = await session.execute(
+                                select(FuturesOutcome)
+                                .where(
+                                    FuturesOutcome.market_id == market.id,
+                                    FuturesOutcome.external_id == ticker,
+                                )
                             )
-                            stats["kalshi_fetched"] += 1
+                            outcome = outcome_result.scalar_one_or_none()
 
-                            # Update outcomes with fresh prices
-                            for mkt_data in markets_data:
-                                yes_bid = mkt_data.get("yes_bid")
-                                yes_ask = mkt_data.get("yes_ask")
-                                last_price = mkt_data.get("last_price")
-
-                                # Kalshi prices are in cents (0-100)
-                                if yes_bid is not None:
-                                    yes_bid = yes_bid / 100.0
-                                if yes_ask is not None:
-                                    yes_ask = yes_ask / 100.0
-                                if last_price is not None:
-                                    last_price = last_price / 100.0
-
-                                # Calculate probability from mid-market
-                                if yes_bid is not None and yes_ask is not None:
-                                    prob = (yes_bid + yes_ask) / 2
-                                elif last_price is not None:
-                                    prob = last_price
+                            if not outcome:
+                                # Try matching by market_id alone if only one outcome
+                                outcome_result = await session.execute(
+                                    select(FuturesOutcome)
+                                    .where(FuturesOutcome.market_id == market.id)
+                                    .limit(2)
+                                )
+                                outcomes = outcome_result.scalars().all()
+                                if len(outcomes) == 1:
+                                    outcome = outcomes[0]
                                 else:
                                     continue
 
-                                if prob <= 0 or prob >= 1:
-                                    continue
+                            # Update outcome probability
+                            outcome.current_probability = prob
+                            outcome.current_yes_bid = yes_bid
+                            outcome.current_yes_ask = yes_ask
+                            american = probability_to_american(prob) if 0 < prob < 1 else None
+                            outcome.current_american_odds = american
+                            outcome.last_updated = now
+                            stats["outcomes_updated"] += 1
 
-                                # Find matching outcome by ticker
-                                ticker = mkt_data.get("ticker", "")
-                                outcome_result = await session.execute(
-                                    select(FuturesOutcome)
-                                    .where(
-                                        FuturesOutcome.market_id == market.id,
-                                        FuturesOutcome.external_id == ticker,
-                                    )
-                                )
-                                outcome = outcome_result.scalar_one_or_none()
+                        # Rate limit between Kalshi requests
+                        await asyncio.sleep(0.3)
 
-                                if not outcome:
-                                    # Try matching by market_id alone if only one outcome
-                                    outcome_result = await session.execute(
-                                        select(FuturesOutcome)
-                                        .where(FuturesOutcome.market_id == market.id)
-                                        .limit(2)
-                                    )
-                                    outcomes = outcome_result.scalars().all()
-                                    if len(outcomes) == 1:
-                                        outcome = outcomes[0]
-                                    else:
-                                        continue
+                    except Exception as e:
+                        stats["errors"].append(f"kalshi_{market.external_id}: {str(e)[:100]}")
 
-                                # Update outcome probability
-                                outcome.current_probability = prob
-                                outcome.current_yes_bid = yes_bid
-                                outcome.current_yes_ask = yes_ask
-                                american = probability_to_american(prob) if 0 < prob < 1 else None
-                                outcome.current_american_odds = american
-                                outcome.last_updated = now
-                                stats["outcomes_updated"] += 1
-
-                            # Rate limit between Kalshi requests
-                            await asyncio.sleep(0.3)
-
-                        except Exception as e:
-                            stats["errors"].append(f"kalshi_{market.external_id}: {str(e)[:100]}")
-
-            except Exception as e:
-                stats["errors"].append(f"kalshi_client: {str(e)[:100]}")
+            finally:
+                await service.close()
 
         # ── Fetch Polymarket prices ────────────────────────────────────
         if polymarket_markets:
+            from app.services.polymarket_api import PolymarketAPIService
+            poly_service = PolymarketAPIService()
             try:
-                from app.services.polymarket_api import PolymarketClient
-                async with PolymarketClient() as poly:
-                    # Group by external_id (Polymarket event ID) to avoid duplicate fetches
-                    seen_events = {}
-                    for market, event in polymarket_markets:
-                        if market.external_id in seen_events:
+                # Group by external_id (Polymarket event ID) to avoid duplicate fetches
+                seen_events = {}
+                for market, event in polymarket_markets:
+                    if market.external_id in seen_events:
+                        continue
+
+                    try:
+                        event_data = await poly_service.get_event_by_id(market.external_id)
+                        stats["polymarket_fetched"] += 1
+
+                        if not event_data:
                             continue
 
-                        try:
-                            event_data = await poly.get_event_by_id(market.external_id)
-                            stats["polymarket_fetched"] += 1
+                        seen_events[market.external_id] = event_data
 
-                            if not event_data:
+                        # Parse markets from event data
+                        poly_markets = event_data.get("markets", [])
+                        if not poly_markets:
+                            continue
+
+                        for pm in poly_markets:
+                            condition_id = pm.get("conditionId", "")
+
+                            # Parse outcomePrices (stringified JSON array)
+                            prices_raw = pm.get("outcomePrices", "[]")
+                            try:
+                                prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
+                            except (json.JSONDecodeError, TypeError):
                                 continue
 
-                            seen_events[market.external_id] = event_data
-
-                            # Parse markets from event data
-                            poly_markets = event_data.get("markets", [])
-                            if not poly_markets:
+                            if not prices:
                                 continue
 
-                            for pm in poly_markets:
-                                condition_id = pm.get("conditionId", "")
+                            prob = float(prices[0])
+                            if prob <= 0 or prob >= 1:
+                                continue
 
-                                # Parse outcomePrices (stringified JSON array)
-                                prices_raw = pm.get("outcomePrices", "[]")
-                                try:
-                                    prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
-                                except (json.JSONDecodeError, TypeError):
-                                    continue
-
-                                if not prices:
-                                    continue
-
-                                prob = float(prices[0])
-                                if prob <= 0 or prob >= 1:
-                                    continue
-
-                                # Find matching outcome by condition_id
-                                outcome_result = await session.execute(
-                                    select(FuturesOutcome)
-                                    .where(
-                                        FuturesOutcome.market_id == market.id,
-                                        FuturesOutcome.external_id == condition_id,
-                                    )
+                            # Find matching outcome by condition_id
+                            outcome_result = await session.execute(
+                                select(FuturesOutcome)
+                                .where(
+                                    FuturesOutcome.market_id == market.id,
+                                    FuturesOutcome.external_id == condition_id,
                                 )
-                                outcome = outcome_result.scalar_one_or_none()
-                                if not outcome:
-                                    continue
+                            )
+                            outcome = outcome_result.scalar_one_or_none()
+                            if not outcome:
+                                continue
 
-                                # Update outcome probability
-                                outcome.current_probability = prob
-                                american = probability_to_american(prob) if 0 < prob < 1 else None
-                                outcome.current_american_odds = american
+                            # Update outcome probability
+                            outcome.current_probability = prob
+                            american = probability_to_american(prob) if 0 < prob < 1 else None
+                            outcome.current_american_odds = american
 
-                                # Parse bid/ask if available
-                                best_bid = pm.get("bestBid")
-                                best_ask = pm.get("bestAsk")
-                                if best_bid is not None:
-                                    outcome.current_yes_bid = float(best_bid)
-                                if best_ask is not None:
-                                    outcome.current_yes_ask = float(best_ask)
+                            # Parse bid/ask if available
+                            best_bid = pm.get("bestBid")
+                            best_ask = pm.get("bestAsk")
+                            if best_bid is not None:
+                                outcome.current_yes_bid = float(best_bid)
+                            if best_ask is not None:
+                                outcome.current_yes_ask = float(best_ask)
 
-                                outcome.last_updated = now
-                                stats["outcomes_updated"] += 1
+                            outcome.last_updated = now
+                            stats["outcomes_updated"] += 1
 
-                            # Rate limit between Polymarket requests
-                            await asyncio.sleep(0.3)
+                        # Rate limit between Polymarket requests
+                        await asyncio.sleep(0.3)
 
-                        except Exception as e:
-                            stats["errors"].append(f"polymarket_{market.external_id}: {str(e)[:100]}")
+                    except Exception as e:
+                        stats["errors"].append(f"polymarket_{market.external_id}: {str(e)[:100]}")
 
-            except Exception as e:
-                stats["errors"].append(f"polymarket_client: {str(e)[:100]}")
+            finally:
+                await poly_service.close()
 
         # ── Write win_prob_snapshots for all live linked markets ───────
         # Re-query to pick up freshly-updated probabilities
