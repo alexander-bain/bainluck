@@ -84,6 +84,73 @@ interface SourceAnalysis {
   maxDivergence: number;
 }
 
+interface PredictionMarketDivergence {
+  hasDivergence: boolean;
+  source: string; // "Kalshi" or "Polymarket"
+  sourceKey: string; // "kalshi" or "polymarket"
+  marketProb: number; // prediction market probability (home)
+  bookProb: number; // sportsbook consensus probability (home)
+  delta: number; // absolute difference
+  direction: string; // e.g., "Kalshi says 65% vs books at 58%"
+  homeTeam: string;
+}
+
+// Detect divergence between prediction market odds and sportsbook consensus
+function analyzePredictionMarketDivergence(
+  winProbHistory: Record<string, Array<{
+    timestamp: string;
+    home_probability: number | null;
+  }>> | undefined,
+  winProbSources: Record<string, { display_name: string }> | undefined,
+  currentHomeProb: number | null,
+  homeTeam: string,
+): PredictionMarketDivergence | null {
+  if (!winProbHistory || currentHomeProb === null) return null;
+
+  const predictionSources = ["kalshi", "polymarket"];
+  let biggestDivergence: PredictionMarketDivergence | null = null;
+
+  for (const sourceKey of predictionSources) {
+    const points = winProbHistory[sourceKey];
+    if (!points || points.length === 0) continue;
+
+    // Get the latest point with a valid probability
+    let latestProb: number | null = null;
+    for (let i = points.length - 1; i >= 0; i--) {
+      if (points[i].home_probability !== null) {
+        latestProb = points[i].home_probability;
+        break;
+      }
+    }
+    if (latestProb === null) continue;
+
+    const delta = Math.abs(latestProb - currentHomeProb);
+    // Only flag if >5% divergence
+    if (delta < 0.05) continue;
+
+    const displayName = winProbSources?.[sourceKey]?.display_name || sourceKey;
+
+    if (!biggestDivergence || delta > biggestDivergence.delta) {
+      const marketPct = Math.round(latestProb * 100);
+      const bookPct = Math.round(currentHomeProb * 100);
+      const teamShort = homeTeam.split(" ").pop() || homeTeam;
+
+      biggestDivergence = {
+        hasDivergence: true,
+        source: displayName,
+        sourceKey,
+        marketProb: latestProb,
+        bookProb: currentHomeProb,
+        delta,
+        direction: `${displayName} has ${teamShort} at ${marketPct}% vs sportsbooks at ${bookPct}%`,
+        homeTeam,
+      };
+    }
+  }
+
+  return biggestDivergence;
+}
+
 // Analyze sources from history data to detect divergence
 function analyzeSourcesFromHistory(
   bookmakerHistory: Record<string, Array<{
@@ -396,6 +463,14 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Analyze sources from history data
   const sourceAnalysis = analyzeSourcesFromHistory(historyData?.bookmaker_history);
+
+  // Detect prediction market vs sportsbook divergence
+  const predictionDivergence = analyzePredictionMarketDivergence(
+    historyData?.win_prob_history,
+    historyData?.win_prob_sources,
+    homeProb,
+    event.home_team,
+  );
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
@@ -877,6 +952,23 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded">
                 <span>⚠️</span>
                 <span>{sourceAnalysis.divergenceWarning}</span>
+              </div>
+            )}
+            {predictionDivergence && (
+              <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded ${
+                predictionDivergence.delta >= 0.10
+                  ? "text-purple-800 bg-purple-50 border border-purple-200"
+                  : "text-blue-700 bg-blue-50"
+              }`}>
+                <span>{predictionDivergence.delta >= 0.10 ? "📊" : "🔀"}</span>
+                <span>
+                  {predictionDivergence.direction}
+                  {predictionDivergence.delta >= 0.10 && (
+                    <span className="ml-1 font-semibold">
+                      ({Math.round(predictionDivergence.delta * 100)}% gap)
+                    </span>
+                  )}
+                </span>
               </div>
             )}
           </div>

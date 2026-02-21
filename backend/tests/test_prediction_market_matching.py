@@ -622,12 +622,33 @@ class TestWinProbSources:
         assert WIN_PROB_SOURCES["polymarket"]["source_type"] == "market"
         assert WIN_PROB_SOURCES["polymarket"]["color"] == "#3b82f6"
 
-    def test_all_five_sources(self):
-        """Verify we now have 5 sources: betting, espn, stat_model, kalshi, polymarket."""
+    def test_moneypuck_source_config(self):
+        """MoneyPuck source should be NHL-only model."""
         from app.config.win_prob_sources import WIN_PROB_SOURCES
-        assert len(WIN_PROB_SOURCES) == 5
+        assert "moneypuck" in WIN_PROB_SOURCES
+        mp = WIN_PROB_SOURCES["moneypuck"]
+        assert mp["source_type"] == "model"
+        assert mp["sports"] == ["icehockey_nhl"]
+        assert mp["color"] == "#10b981"
+        assert mp["dash_pattern"] == "4 4"
+
+    def test_fangraphs_source_config(self):
+        """FanGraphs source should be MLB-only model."""
+        from app.config.win_prob_sources import WIN_PROB_SOURCES
+        assert "fangraphs" in WIN_PROB_SOURCES
+        fg = WIN_PROB_SOURCES["fangraphs"]
+        assert fg["source_type"] == "model"
+        assert fg["sports"] == ["baseball_mlb"]
+        assert fg["color"] == "#06b6d4"
+        assert fg["dash_pattern"] == "4 4"
+
+    def test_all_seven_sources(self):
+        """Verify we now have 7 sources: betting, espn, stat_model, kalshi, polymarket, moneypuck, fangraphs."""
+        from app.config.win_prob_sources import WIN_PROB_SOURCES
+        assert len(WIN_PROB_SOURCES) == 7
         assert set(WIN_PROB_SOURCES.keys()) == {
             "betting", "espn", "stat_model", "kalshi", "polymarket",
+            "moneypuck", "fangraphs",
         }
 
 

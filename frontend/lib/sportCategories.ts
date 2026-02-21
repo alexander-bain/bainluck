@@ -113,14 +113,29 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["aussierules_"],
     tier: 2,
   },
-  // Tier 3: Tertiary sports (niche audience)
+  // Tier 2: Beyond Sports (high-volume prediction market categories)
   {
     key: "politics",
     name: "Politics",
     emoji: "🗳️",
     prefixes: ["politics_"],
-    tier: 3,
+    tier: 2,
   },
+  {
+    key: "entertainment",
+    name: "Entertainment",
+    emoji: "🎬",
+    prefixes: ["entertainment_"],
+    tier: 2,
+  },
+  {
+    key: "crypto",
+    name: "Crypto",
+    emoji: "₿",
+    prefixes: ["crypto_"],
+    tier: 2,
+  },
+  // Tier 3: Tertiary sports (niche audience)
   {
     key: "esports",
     name: "Esports",
@@ -157,13 +172,6 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     tier: 3,
   },
   {
-    key: "entertainment",
-    name: "Entertainment",
-    emoji: "🎬",
-    prefixes: ["entertainment_"],
-    tier: 3,
-  },
-  {
     key: "chess",
     name: "Chess",
     emoji: "♟️",
@@ -185,13 +193,6 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     tier: 3,
   },
   // Non-sports categories (from prediction markets)
-  {
-    key: "crypto",
-    name: "Crypto",
-    emoji: "₿",
-    prefixes: ["crypto_"],
-    tier: 3,
-  },
   {
     key: "economics",
     name: "Economics",

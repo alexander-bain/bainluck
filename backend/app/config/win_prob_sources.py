@@ -72,6 +72,28 @@ WIN_PROB_SOURCES = {
         "attribution_url": "https://polymarket.com",
         "attribution_name": "Polymarket",
     },
+    "moneypuck": {
+        "display_name": "MoneyPuck",
+        "source_type": "model",
+        "sports": ["icehockey_nhl"],
+        "color": "#10b981",
+        "dash_pattern": "4 4",
+        "description": "Hockey win probability from MoneyPuck's statistical model, widely considered the gold standard for NHL analytics. Uses shot metrics, expected goals (xG), and real-time game state.",
+        "methodology": "MoneyPuck uses a machine learning model trained on historical NHL play-by-play data. The model incorporates shot quality, expected goals (xG), team strength in various on-ice situations (5v5, power play, penalty kill), score effects, and venue adjustments. Updates in real-time during live games.",
+        "attribution_url": "https://moneypuck.com",
+        "attribution_name": "MoneyPuck",
+    },
+    "fangraphs": {
+        "display_name": "FanGraphs",
+        "source_type": "model",
+        "sports": ["baseball_mlb"],
+        "color": "#06b6d4",
+        "dash_pattern": "4 4",
+        "description": "Baseball win probability from FanGraphs, the premier sabermetrics resource. Their model uses run expectancy tables and leverage index to estimate win probability on every pitch.",
+        "methodology": "FanGraphs' win probability model is based on historical play-by-play data across MLB seasons. It uses run expectancy matrices (based on base/out state), score differential, inning, and home-field advantage. The model is continuously updated using the empirical run environment of each season.",
+        "attribution_url": "https://www.fangraphs.com",
+        "attribution_name": "FanGraphs",
+    },
 }
 
 

@@ -3,11 +3,16 @@ Event highlight scoring and classification.
 
 Computes highlight scores and flags for events based on various factors
 like closeness, upset potential, momentum shifts, etc.
+
+Level 1: Snapshot scoring (opening vs current — two points in time)
+Level 2: Time-series scoring (uses odds_snapshots for volatility,
+         lead changes, and recent momentum)
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Literal
+import math
 
 
 # League tier definitions (higher tier = more prominent)
@@ -38,6 +43,10 @@ WEIGHTS = {
     "tier_2_league": 5,            # College/secondary league bonus
     "recent_finish_upset": 20,     # Recently finished + upset
     "recent_finish": 5,            # Recently finished (24h)
+    # Level 2: Time-series weights
+    "high_volatility": 10,         # Line has been volatile (RMS of deltas > 0.06)
+    "lead_changes": 8,             # Probability crossed 50% (per crossing, max 3)
+    "recent_momentum": 10,         # Fast movement in last 30 min (>8% shift)
 }
 
 # Thresholds
@@ -49,6 +58,24 @@ BLOWOUT_THRESHOLD = 0.85
 MAJOR_PROB_SWING = 0.15  # 15% change
 MAJOR_SCORE_SWING = 0.20  # 20% change
 MIN_PREGAME_MOVEMENT = 0.05  # 5% change needed for pre-game closeness to be a trend
+
+# Level 2 thresholds
+HIGH_VOLATILITY_RMS = 0.06  # 6% RMS of probability deltas = volatile
+RECENT_MOMENTUM_THRESHOLD = 0.08  # 8% shift in last 30 min = fast-moving
+
+
+@dataclass
+class TimeSeriesMetrics:
+    """
+    Pre-computed time-series metrics from odds_snapshots.
+
+    These are computed outside compute_highlight (by the caller that has DB access)
+    and passed in, keeping compute_highlight pure and testable.
+    """
+    volatility_rms: float = 0.0  # RMS of probability deltas between consecutive snapshots
+    lead_changes: int = 0  # Number of times probability crossed 50%
+    recent_momentum: float = 0.0  # Absolute probability shift in last 30 minutes
+    snapshot_count: int = 0  # Number of aggregated time buckets used
 
 
 @dataclass
@@ -66,6 +93,10 @@ class EventFlags:
     is_recently_finished: bool = False  # <24h
     is_upset: bool = False  # Closed + favorite switched
     league_tier: int = 3
+    # Level 2 flags
+    is_volatile: bool = False
+    has_lead_changes: bool = False
+    has_recent_momentum: bool = False
 
 
 @dataclass
@@ -82,6 +113,59 @@ def get_league_tier(sport_key: Optional[str]) -> int:
     if not sport_key:
         return 3
     return LEAGUE_TIERS.get(sport_key, 3)
+
+
+def compute_time_series_metrics(
+    probabilities: list[float],
+    timestamps: Optional[list[datetime]] = None,
+) -> TimeSeriesMetrics:
+    """
+    Compute time-series metrics from a sequence of home probabilities.
+
+    Args:
+        probabilities: List of home_probability values in chronological order.
+                      These should be pre-aggregated (e.g., one per minute bucket).
+        timestamps: Optional list of corresponding timestamps (same length as
+                   probabilities). Used for recent_momentum calculation.
+
+    Returns:
+        TimeSeriesMetrics with volatility, lead changes, and recent momentum.
+    """
+    metrics = TimeSeriesMetrics(snapshot_count=len(probabilities))
+
+    if len(probabilities) < 2:
+        return metrics
+
+    # 1. Volatility: RMS of consecutive probability deltas
+    deltas = [
+        probabilities[i] - probabilities[i - 1]
+        for i in range(1, len(probabilities))
+    ]
+    sum_sq = sum(d * d for d in deltas)
+    metrics.volatility_rms = math.sqrt(sum_sq / len(deltas))
+
+    # 2. Lead changes: count 50% crossings
+    for i in range(1, len(probabilities)):
+        prev = probabilities[i - 1]
+        curr = probabilities[i]
+        # Crossed 50% if one is above and other below (not equal)
+        if (prev < 0.5 and curr > 0.5) or (prev > 0.5 and curr < 0.5):
+            metrics.lead_changes += 1
+
+    # 3. Recent momentum: absolute shift in last 30 minutes
+    if timestamps and len(timestamps) == len(probabilities):
+        now = timestamps[-1]
+        thirty_min_ago = now - timedelta(minutes=30)
+        # Find the value closest to 30 min ago
+        recent_start_val = None
+        for i, ts in enumerate(timestamps):
+            if ts >= thirty_min_ago:
+                recent_start_val = probabilities[i]
+                break
+        if recent_start_val is not None:
+            metrics.recent_momentum = abs(probabilities[-1] - recent_start_val)
+
+    return metrics
 
 
 def compute_highlight(
@@ -102,6 +186,8 @@ def compute_highlight(
     opening_favorite: Optional[str] = None,
     # Timing
     now: Optional[datetime] = None,
+    # Level 2: Time-series metrics (optional — gracefully degrades to Level 1)
+    time_series: Optional[TimeSeriesMetrics] = None,
 ) -> HighlightResult:
     """
     Compute highlight score and flags for an event.
@@ -111,6 +197,10 @@ def compute_highlight(
     - reasons: list of reason codes explaining the score
     - flags: EventFlags with boolean characteristics
     - primary_reason: the most important reason for display
+
+    Level 1 (always available): Uses opening vs current odds (two points).
+    Level 2 (when time_series is provided): Adds volatility, lead changes,
+    and recent momentum from odds_snapshots time series.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -243,6 +333,28 @@ def compute_highlight(
         elif score_change_pct >= 0.10:  # 10% change
             flags.score_swing = "minor"
 
+    # === Level 2: Time-series scoring ===
+    if time_series and time_series.snapshot_count >= 3:
+        # High volatility: lots of line movement
+        if time_series.volatility_rms >= HIGH_VOLATILITY_RMS:
+            flags.is_volatile = True
+            result.score += WEIGHTS["high_volatility"]
+            result.reasons.append("high_volatility")
+
+        # Lead changes: probability crossed 50%
+        if time_series.lead_changes > 0:
+            flags.has_lead_changes = True
+            # Award up to 3 lead changes worth of points
+            lc_bonus = min(time_series.lead_changes, 3) * WEIGHTS["lead_changes"]
+            result.score += lc_bonus
+            result.reasons.append("lead_changes")
+
+        # Recent momentum: fast movement in last 30 min (live games only)
+        if flags.is_live and time_series.recent_momentum >= RECENT_MOMENTUM_THRESHOLD:
+            flags.has_recent_momentum = True
+            result.score += WEIGHTS["recent_momentum"]
+            result.reasons.append("recent_momentum")
+
     # === Cap score at 100 ===
     result.score = min(100, result.score)
 
@@ -251,9 +363,12 @@ def compute_highlight(
     priority_order = [
         ("upset", "Recent upset"),
         ("favorite_switched", "Possible upset"),
+        ("lead_changes", "Lead change"),
         ("very_close", "Coin flip"),
         ("close_matchup", "Close matchup"),
+        ("recent_momentum", "Odds shifting fast"),
         ("major_prob_swing", "Big line movement"),
+        ("high_volatility", "Wild game"),
         ("live", "Live"),
         ("starting_very_soon", "Starting soon"),
         ("starting_soon", "Starting soon"),
@@ -280,12 +395,18 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
         return "Recent upset"
     if flags.is_live and flags.favorite_switched:
         return "Upset brewing"
+    if flags.is_live and flags.has_lead_changes:
+        return "Lead change"
     if flags.is_live and flags.is_very_close:
         return "Coin flip"
     if flags.is_live and flags.is_close_matchup:
         return "Close game"
+    if flags.is_live and flags.has_recent_momentum:
+        return "Odds shifting fast"
     if flags.is_live and flags.probability_swing == "major":
         return "Momentum shift"
+    if flags.is_live and flags.is_volatile:
+        return "Wild game"
     if flags.is_starting_very_soon and flags.is_close_matchup:
         return "Close matchup"
     if flags.is_starting_soon and flags.is_close_matchup:
@@ -308,6 +429,10 @@ def should_highlight(result: HighlightResult, min_score: int = 30) -> bool:
 
     # Always highlight recent upsets
     if result.flags.is_upset:
+        return True
+
+    # Always highlight live games with lead changes
+    if result.flags.is_live and result.flags.has_lead_changes:
         return True
 
     # Otherwise, use score threshold

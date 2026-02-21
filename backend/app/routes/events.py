@@ -18,6 +18,7 @@ from app.utils import (
     aggregate_bookmaker_odds,
     detect_reversed_bookmakers,
     compute_highlight,
+    compute_time_series_metrics,
     get_highlight_label,
     should_highlight,
 )
@@ -1082,10 +1083,58 @@ async def list_events(
         all_team_names.extend([e.home_team_name, e.away_team_name])
     team_lookup = await _build_team_lookup(db, list(set(all_team_names)))
 
+    # Level 2: Compute time-series metrics for live events
+    # Batch-query aggregated probabilities for all live event IDs
+    live_event_ids = [e.id for e in events if e.status == "live"]
+    ts_metrics_map: dict[int, object] = {}
+    if live_event_ids:
+        try:
+            # Get median home_probability per 60-second time bucket per event
+            # This reuses the same aggregation strategy as Pulse
+            from sqlalchemy import text
+            ts_query = text("""
+                WITH bucketed AS (
+                    SELECT
+                        event_id,
+                        date_trunc('minute', captured_at) AS bucket,
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY home_win_probability) AS median_prob,
+                        MIN(captured_at) AS bucket_time
+                    FROM odds_snapshots
+                    WHERE event_id = ANY(:event_ids)
+                      AND home_win_probability IS NOT NULL
+                    GROUP BY event_id, date_trunc('minute', captured_at)
+                    ORDER BY event_id, bucket
+                )
+                SELECT event_id, median_prob, bucket_time
+                FROM bucketed
+            """)
+            ts_result = await db.execute(ts_query, {"event_ids": live_event_ids})
+            ts_rows = ts_result.fetchall()
+
+            # Group by event_id
+            from collections import defaultdict as _defaultdict
+            event_buckets: dict[int, list] = _defaultdict(list)
+            for row in ts_rows:
+                event_buckets[row.event_id].append((float(row.median_prob), row.bucket_time))
+
+            # Compute metrics for each event
+            for eid, buckets in event_buckets.items():
+                if len(buckets) >= 3:
+                    probs = [b[0] for b in buckets]
+                    timestamps = [b[1] for b in buckets]
+                    ts_metrics_map[eid] = compute_time_series_metrics(probs, timestamps)
+        except Exception:
+            # Time-series metrics are a bonus — don't fail the whole endpoint
+            pass
+
     # Format response with aggregated odds
     return {
         "events": [
-            _format_event_with_aggregated_odds(e, aggregated_odds_map.get(e.id), gei_percentiles, team_lookup=team_lookup)
+            _format_event_with_aggregated_odds(
+                e, aggregated_odds_map.get(e.id), gei_percentiles,
+                team_lookup=team_lookup,
+                time_series_metrics=ts_metrics_map.get(e.id),
+            )
             for e in events
         ],
         "count": len(events),
@@ -2239,7 +2288,7 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None) -> dict:
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None) -> dict:
     """Format event for API response with aggregated odds from multiple bookmakers."""
     response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
 
@@ -2316,7 +2365,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                     })
             response["bookmaker_odds"] = bookmaker_odds_list
 
-    # Compute highlight data
+    # Compute highlight data (Level 1 + Level 2 if time_series available)
     highlight_result = compute_highlight(
         status=event.status,
         commence_time=event.commence_time,
@@ -2330,6 +2379,7 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         opening_home_spread=float(event.opening_home_spread) if event.opening_home_spread else None,
         opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
         opening_favorite=event.opening_favorite,
+        time_series=time_series_metrics,
     )
 
     response["highlight"] = {
@@ -2348,6 +2398,9 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "is_recently_finished": highlight_result.flags.is_recently_finished,
             "is_upset": highlight_result.flags.is_upset,
             "league_tier": highlight_result.flags.league_tier,
+            "is_volatile": highlight_result.flags.is_volatile,
+            "has_lead_changes": highlight_result.flags.has_lead_changes,
+            "has_recent_momentum": highlight_result.flags.has_recent_momentum,
         },
     }
 

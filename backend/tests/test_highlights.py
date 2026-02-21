@@ -6,10 +6,12 @@ from datetime import datetime, timezone, timedelta
 from app.utils.highlights import (
     get_league_tier,
     compute_highlight,
+    compute_time_series_metrics,
     get_highlight_label,
     should_highlight,
     EventFlags,
     HighlightResult,
+    TimeSeriesMetrics,
     WEIGHTS,
 )
 
@@ -954,3 +956,225 @@ class TestComputeHighlightPregameCloseness:
             now=now,
         )
         assert not result.flags.is_close_matchup
+
+
+# =============================================================================
+# Level 2: Time-Series Metrics
+# =============================================================================
+class TestComputeTimeSeriesMetrics:
+    """Tests for compute_time_series_metrics()."""
+
+    def test_empty_list(self):
+        """Empty list returns zero metrics."""
+        m = compute_time_series_metrics([])
+        assert m.volatility_rms == 0.0
+        assert m.lead_changes == 0
+        assert m.recent_momentum == 0.0
+        assert m.snapshot_count == 0
+
+    def test_single_point(self):
+        """Single point returns zero metrics."""
+        m = compute_time_series_metrics([0.55])
+        assert m.volatility_rms == 0.0
+        assert m.lead_changes == 0
+        assert m.snapshot_count == 1
+
+    def test_stable_line(self):
+        """Stable line (no movement) has zero volatility."""
+        m = compute_time_series_metrics([0.60, 0.60, 0.60, 0.60])
+        assert m.volatility_rms == 0.0
+        assert m.lead_changes == 0
+        assert m.snapshot_count == 4
+
+    def test_single_swing(self):
+        """One big swing should produce volatility."""
+        m = compute_time_series_metrics([0.40, 0.60, 0.40])
+        assert m.volatility_rms > 0.10  # 20% swings
+        assert m.lead_changes == 2  # crossed 50% twice
+
+    def test_lead_change_exact_cross(self):
+        """Verify lead change counting when crossing 50%."""
+        # 0.45 -> 0.55 is a lead change (below -> above)
+        # 0.55 -> 0.52 is NOT a lead change (both above)
+        m = compute_time_series_metrics([0.45, 0.55, 0.52])
+        assert m.lead_changes == 1
+
+    def test_no_lead_change_same_side(self):
+        """All values on one side of 50% = no lead changes."""
+        m = compute_time_series_metrics([0.60, 0.65, 0.70, 0.62])
+        assert m.lead_changes == 0
+
+    def test_multiple_lead_changes(self):
+        """Multiple crossings of 50%."""
+        m = compute_time_series_metrics([0.40, 0.55, 0.45, 0.60, 0.35])
+        assert m.lead_changes == 4
+
+    def test_recent_momentum_with_timestamps(self):
+        """Recent momentum uses last 30 minutes of timestamps."""
+        base = datetime(2026, 2, 7, 20, 0, 0, tzinfo=timezone.utc)
+        timestamps = [
+            base - timedelta(minutes=60),
+            base - timedelta(minutes=40),
+            base - timedelta(minutes=20),
+            base - timedelta(minutes=5),
+            base,
+        ]
+        # 30 min ago: 0.50, now: 0.62 → momentum = 0.12
+        probs = [0.45, 0.48, 0.50, 0.58, 0.62]
+        m = compute_time_series_metrics(probs, timestamps)
+        assert abs(m.recent_momentum - 0.12) < 0.001
+
+    def test_recent_momentum_no_timestamps(self):
+        """Without timestamps, recent_momentum stays 0."""
+        m = compute_time_series_metrics([0.40, 0.50, 0.60])
+        assert m.recent_momentum == 0.0
+
+    def test_volatility_rms_calculation(self):
+        """RMS of deltas matches expected value."""
+        import math
+        # Deltas: +0.10, -0.10, +0.10
+        m = compute_time_series_metrics([0.50, 0.60, 0.50, 0.60])
+        expected_rms = math.sqrt((0.10**2 + 0.10**2 + 0.10**2) / 3)
+        assert abs(m.volatility_rms - expected_rms) < 0.0001
+
+
+class TestLevel2Scoring:
+    """Tests for Level 2 (time-series) scoring in compute_highlight."""
+
+    @pytest.fixture
+    def now(self):
+        return datetime(2026, 2, 7, 20, 0, 0, tzinfo=timezone.utc)
+
+    def test_level2_graceful_without_time_series(self, now):
+        """Without time_series, Level 2 is silently skipped (Level 1 only)."""
+        result = compute_highlight(
+            status="live",
+            commence_time=now - timedelta(hours=1),
+            current_home_prob=0.50,
+            now=now,
+        )
+        assert not result.flags.is_volatile
+        assert not result.flags.has_lead_changes
+        assert not result.flags.has_recent_momentum
+
+    def test_volatile_game_gets_bonus(self, now):
+        """High volatility adds points."""
+        ts = TimeSeriesMetrics(
+            volatility_rms=0.08,  # Above threshold 0.06
+            lead_changes=0,
+            recent_momentum=0.0,
+            snapshot_count=10,
+        )
+        result = compute_highlight(
+            status="live",
+            commence_time=now - timedelta(hours=1),
+            current_home_prob=0.65,
+            now=now,
+            time_series=ts,
+        )
+        assert result.flags.is_volatile
+        assert "high_volatility" in result.reasons
+        assert result.score >= WEIGHTS["live"] + WEIGHTS["high_volatility"]
+
+    def test_lead_changes_get_bonus(self, now):
+        """Lead changes add points (capped at 3)."""
+        ts = TimeSeriesMetrics(
+            volatility_rms=0.03,
+            lead_changes=5,
+            recent_momentum=0.0,
+            snapshot_count=20,
+        )
+        result = compute_highlight(
+            status="live",
+            commence_time=now - timedelta(hours=1),
+            current_home_prob=0.50,
+            now=now,
+            time_series=ts,
+        )
+        assert result.flags.has_lead_changes
+        assert "lead_changes" in result.reasons
+        # Capped at 3 * WEIGHTS["lead_changes"]
+        expected_lc_bonus = 3 * WEIGHTS["lead_changes"]
+        assert result.score >= WEIGHTS["live"] + expected_lc_bonus
+
+    def test_recent_momentum_live_only(self, now):
+        """Recent momentum only applies to live games."""
+        ts = TimeSeriesMetrics(
+            volatility_rms=0.03,
+            lead_changes=0,
+            recent_momentum=0.12,
+            snapshot_count=10,
+        )
+        # Scheduled game shouldn't get momentum bonus
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=now + timedelta(hours=2),
+            current_home_prob=0.50,
+            now=now,
+            time_series=ts,
+        )
+        assert not result.flags.has_recent_momentum
+        assert "recent_momentum" not in result.reasons
+
+        # Live game should get momentum bonus
+        result2 = compute_highlight(
+            status="live",
+            commence_time=now - timedelta(hours=1),
+            current_home_prob=0.65,
+            now=now,
+            time_series=ts,
+        )
+        assert result2.flags.has_recent_momentum
+        assert "recent_momentum" in result2.reasons
+
+    def test_too_few_snapshots_skips_level2(self, now):
+        """Need at least 3 snapshots for Level 2 scoring."""
+        ts = TimeSeriesMetrics(
+            volatility_rms=0.15,  # Very high
+            lead_changes=3,
+            recent_momentum=0.20,
+            snapshot_count=2,  # Too few!
+        )
+        result = compute_highlight(
+            status="live",
+            commence_time=now - timedelta(hours=1),
+            current_home_prob=0.50,
+            now=now,
+            time_series=ts,
+        )
+        assert not result.flags.is_volatile
+        assert not result.flags.has_lead_changes
+        assert not result.flags.has_recent_momentum
+
+    def test_lead_changes_label_priority(self):
+        """Lead change label should beat close game for live events."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            is_close_matchup=True,
+            has_lead_changes=True,
+        ))
+        assert get_highlight_label(result) == "Lead change"
+
+    def test_live_lead_changes_always_highlighted(self):
+        """Live games with lead changes should always be highlighted."""
+        result = HighlightResult(
+            score=10,  # Below threshold
+            flags=EventFlags(is_live=True, has_lead_changes=True),
+        )
+        assert should_highlight(result)
+
+    def test_wild_game_label(self):
+        """Volatile live game with no other flags gets 'Wild game' label."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            is_volatile=True,
+        ))
+        assert get_highlight_label(result) == "Wild game"
+
+    def test_odds_shifting_fast_label(self):
+        """Recent momentum gets 'Odds shifting fast' label."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            has_recent_momentum=True,
+        ))
+        assert get_highlight_label(result) == "Odds shifting fast"

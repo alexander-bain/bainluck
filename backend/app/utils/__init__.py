@@ -14,10 +14,12 @@ from app.utils.odds_math import (
 )
 from app.utils.highlights import (
     compute_highlight,
+    compute_time_series_metrics,
     get_highlight_label,
     should_highlight,
     EventFlags,
     HighlightResult,
+    TimeSeriesMetrics,
     get_league_tier,
 )
 from app.utils.pulse import (
