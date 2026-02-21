@@ -229,8 +229,24 @@ async def google_access_token_sign_in(
 
     logger.info(f"Access token exchange: uid={firebase_uid}, email={email}")
 
+    # Also create a backend session token for Safari ITP fallback.
+    # When signInWithCustomToken also fails (because Safari blocks
+    # identitytoolkit.googleapis.com entirely), the frontend needs a token
+    # it can use directly for API calls without going through Firebase client SDK.
+    from app.services.firebase_auth import create_session_token
+    fallback_id_token = create_session_token(
+        uid=firebase_uid, email=email, name=name, picture=picture
+    )
+
     return {
         "custom_token": custom_token,
+        # Fields for Safari ITP backend-only auth fallback:
+        "id_token": fallback_id_token,  # Backend-signed JWT, usable as Bearer token
+        "uid": firebase_uid,
+        "email": email,
+        "name": name,
+        "picture": picture,
+        "expires_in": 3600,  # 1 hour
         "user": {
             "id": user.id,
             "email": user.email,

@@ -6,6 +6,11 @@
  * (e.g., Safari ITP blocking Identity Platform), falls back to exchanging
  * the access token through our backend for a Firebase custom token.
  *
+ * Safari ITP can block requests to identitytoolkit.googleapis.com, which
+ * affects both signInWithCredential AND signInWithCustomToken. When both
+ * fail, we fall back to a "backend-only" auth mode where the backend
+ * verifies the Google token and we store the session locally.
+ *
  * PERFORMANCE: Firebase SDK (~200KB) is loaded lazily via dynamic import()
  * so it doesn't block initial page render. The SDK loads on first auth
  * interaction (sign-in click or auth state check).
@@ -24,6 +29,9 @@ const firebaseConfig = {
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// localStorage key for backend-only auth fallback (Safari ITP)
+const BACKEND_AUTH_KEY = "bainluck_backendAuth";
 
 /**
  * Check if Firebase is configured (env vars are set).
@@ -151,14 +159,85 @@ async function getGoogleAccessToken(): Promise<string> {
 }
 
 /**
+ * Race a promise against a timeout. Rejects with TimeoutError if the
+ * timeout fires first.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+/**
+ * Backend-only auth data stored in localStorage when Firebase client SDK
+ * can't communicate with identitytoolkit.googleapis.com (Safari ITP).
+ */
+interface BackendAuthData {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  idToken: string;
+  expiresAt: number; // Unix ms
+}
+
+/**
+ * Store backend auth data in localStorage as fallback.
+ */
+function storeBackendAuth(data: BackendAuthData): void {
+  try {
+    localStorage.setItem(BACKEND_AUTH_KEY, JSON.stringify(data));
+  } catch {
+    // localStorage full or blocked — ignore
+  }
+}
+
+/**
+ * Load backend auth data from localStorage.
+ * Returns null if expired or missing.
+ */
+function loadBackendAuth(): BackendAuthData | null {
+  try {
+    const raw = localStorage.getItem(BACKEND_AUTH_KEY);
+    if (!raw) return null;
+    const data: BackendAuthData = JSON.parse(raw);
+    // Expired? Give 5 min buffer
+    if (Date.now() > data.expiresAt - 5 * 60 * 1000) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clear backend auth data.
+ */
+function clearBackendAuth(): void {
+  try {
+    localStorage.removeItem(BACKEND_AUTH_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Sign in with Google.
  *
- * Opens the Google OAuth consent popup via GIS, then:
- * 1. Tries signInWithCredential (standard Firebase approach)
- * 2. If that fails, exchanges the access token through our backend
- *    for a Firebase custom token, then uses signInWithCustomToken
+ * Opens the Google OAuth consent popup via GIS, then tries three approaches:
+ * 1. signInWithCredential (standard Firebase — works on Chrome/Firefox)
+ * 2. Backend custom token → signInWithCustomToken (works when #1 blocked)
+ * 3. Backend-only auth (when identitytoolkit.googleapis.com is fully blocked
+ *    by Safari ITP — stores auth data in localStorage, API calls use
+ *    the backend-issued token directly)
  *
- * Returns the Firebase ID token on success, null on failure.
+ * Returns the Firebase/backend ID token on success, null on failure.
  */
 export async function signInWithGoogle(): Promise<string | null> {
   const authInstance = await getFirebaseAuth();
@@ -178,28 +257,47 @@ export async function signInWithGoogle(): Promise<string | null> {
     const accessToken = await getGoogleAccessToken();
     console.log("[Firebase] Got Google access token");
 
-    // Attempt 1: Try signInWithCredential directly
+    // Attempt 1: signInWithCredential (fast timeout — Safari ITP blocks this)
     try {
       const credential = GoogleAuthProvider.credential(null, accessToken);
-      const result = await signInWithCredential(authInstance, credential);
+      const result = await withTimeout(
+        signInWithCredential(authInstance, credential),
+        4000,
+        "signInWithCredential"
+      );
       console.log("[Firebase] signInWithCredential succeeded for", result.user.email);
+      clearBackendAuth(); // Don't need fallback
       return await result.user.getIdToken();
     } catch (credError: unknown) {
       const authError = credError as { code?: string; message?: string };
       console.warn(
         "[Firebase] signInWithCredential failed:",
-        authError.code,
+        authError.message || authError.code,
         "- trying backend exchange..."
       );
     }
 
-    // Attempt 2: Exchange access token via backend for custom token
+    // Attempt 2: Exchange via backend → signInWithCustomToken
+    let backendData: {
+      custom_token?: string;
+      id_token?: string;
+      uid?: string;
+      email?: string;
+      name?: string;
+      picture?: string;
+      expires_in?: number;
+    } | null = null;
+
     try {
-      const resp = await fetch(`${API_URL}/api/auth/google-access-token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ access_token: accessToken }),
-      });
+      const resp = await withTimeout(
+        fetch(`${API_URL}/api/auth/google-access-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ access_token: accessToken }),
+        }),
+        8000,
+        "backend token exchange"
+      );
 
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
@@ -207,21 +305,54 @@ export async function signInWithGoogle(): Promise<string | null> {
         return null;
       }
 
-      const data = await resp.json();
-      const customToken = data.custom_token;
-
-      if (!customToken) {
-        console.error("[Firebase] No custom token in backend response");
-        return null;
-      }
-
-      const result = await signInWithCustomToken(authInstance, customToken);
-      console.log("[Firebase] signInWithCustomToken succeeded for", result.user.email || result.user.uid);
-      return await result.user.getIdToken();
-    } catch (backendError) {
-      console.error("[Firebase] Backend exchange fallback failed:", backendError);
+      backendData = await resp.json();
+    } catch (fetchError) {
+      console.error("[Firebase] Backend exchange fetch failed:", fetchError);
       return null;
     }
+
+    if (!backendData?.custom_token) {
+      console.error("[Firebase] No custom token in backend response");
+      return null;
+    }
+
+    // Try signInWithCustomToken (also needs identitytoolkit — may fail on Safari)
+    try {
+      const result = await withTimeout(
+        signInWithCustomToken(authInstance, backendData.custom_token),
+        4000,
+        "signInWithCustomToken"
+      );
+      console.log("[Firebase] signInWithCustomToken succeeded for", result.user.email || result.user.uid);
+      clearBackendAuth(); // Don't need fallback
+      return await result.user.getIdToken();
+    } catch (customTokenError: unknown) {
+      const ctError = customTokenError as { code?: string; message?: string };
+      console.warn(
+        "[Firebase] signInWithCustomToken also failed:",
+        ctError.message || ctError.code,
+        "- falling back to backend-only auth"
+      );
+    }
+
+    // Attempt 3: Backend-only auth (Safari ITP fully blocks Firebase)
+    // The backend already verified the Google token and gave us user info.
+    // Store it locally and use it directly for API calls.
+    if (backendData.id_token && backendData.uid) {
+      console.log("[Firebase] Using backend-only auth for", backendData.email || backendData.uid);
+      storeBackendAuth({
+        uid: backendData.uid,
+        email: backendData.email || null,
+        displayName: backendData.name || null,
+        photoURL: backendData.picture || null,
+        idToken: backendData.id_token,
+        expiresAt: Date.now() + (backendData.expires_in || 3600) * 1000,
+      });
+      return backendData.id_token;
+    }
+
+    console.error("[Firebase] Backend response missing id_token/uid for fallback auth");
+    return null;
   } catch (error) {
     console.error("[Firebase] Sign-in error:", error);
     return null;
@@ -233,9 +364,13 @@ export async function signInWithGoogle(): Promise<string | null> {
  */
 export async function signOut(): Promise<void> {
   const authInstance = await getFirebaseAuth();
-  if (!authInstance) return;
-  const { signOut: firebaseSignOut } = await import("firebase/auth");
-  await firebaseSignOut(authInstance);
+  if (authInstance) {
+    const { signOut: firebaseSignOut } = await import("firebase/auth");
+    await firebaseSignOut(authInstance);
+  }
+
+  // Clear backend-only auth
+  clearBackendAuth();
 
   // Also revoke Google's session
   try {
@@ -248,33 +383,75 @@ export async function signOut(): Promise<void> {
 
 /**
  * Get the current user's ID token (for API calls).
+ * Checks Firebase first, then backend-only auth fallback.
  */
 export async function getIdToken(): Promise<string | null> {
   const authInstance = await getFirebaseAuth();
-  if (!authInstance?.currentUser) return null;
-
-  try {
-    return await authInstance.currentUser.getIdToken();
-  } catch {
-    return null;
+  if (authInstance?.currentUser) {
+    try {
+      return await authInstance.currentUser.getIdToken();
+    } catch {
+      // Fall through to backend auth check
+    }
   }
+
+  // Backend-only auth fallback (Safari ITP)
+  const backendAuth = loadBackendAuth();
+  if (backendAuth) {
+    return backendAuth.idToken;
+  }
+
+  return null;
 }
 
 /**
  * Subscribe to auth state changes.
  * Returns a Promise that resolves to an unsubscribe function.
  * The callback fires once Firebase SDK is loaded and auth state is known.
+ *
+ * Also checks for backend-only auth (Safari ITP fallback) if Firebase
+ * reports no user.
  */
 export async function onAuthChange(
   callback: (user: FirebaseUser | null) => void
 ): Promise<() => void> {
   const authInstance = await getFirebaseAuth();
   if (!authInstance) {
-    callback(null);
+    // Check backend-only auth before reporting null
+    const backendAuth = loadBackendAuth();
+    if (backendAuth) {
+      // Create a minimal user-like object for the callback
+      callback({
+        uid: backendAuth.uid,
+        email: backendAuth.email,
+        displayName: backendAuth.displayName,
+        photoURL: backendAuth.photoURL,
+      } as FirebaseUser);
+    } else {
+      callback(null);
+    }
     return () => {};
   }
   const { onAuthStateChanged } = await import("firebase/auth");
-  return onAuthStateChanged(authInstance, callback);
+  const unsub = onAuthStateChanged(authInstance, (fbUser) => {
+    if (fbUser) {
+      callback(fbUser);
+    } else {
+      // Firebase says no user — check backend-only auth fallback
+      const backendAuth = loadBackendAuth();
+      if (backendAuth) {
+        callback({
+          uid: backendAuth.uid,
+          email: backendAuth.email,
+          displayName: backendAuth.displayName,
+          photoURL: backendAuth.photoURL,
+        } as FirebaseUser);
+      } else {
+        callback(null);
+      }
+    }
+  });
+  return unsub;
 }
 
 export type { FirebaseUser };
