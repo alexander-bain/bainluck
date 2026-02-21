@@ -286,6 +286,15 @@ def poll_live_prediction_markets(self):
     return _tracked_run("prediction_market_live", _poll_live_prediction_market_prices())
 
 
+# --- MLB Live Win Probability ---
+
+@celery_app.task(bind=True, name="app.tasks.sync_mlb_win_probability")
+def sync_mlb_win_probability(self):
+    """Sync live MLB win probabilities from the MLB Stats API (every 2 min during games)."""
+    from app.tasks.mlb_sync import _sync_mlb_win_probability
+    return _tracked_run("mlb_sync", _sync_mlb_win_probability())
+
+
 # --- Roster Sync (SportsDataIO) ---
 
 @celery_app.task(bind=True, name="app.tasks.sync_rosters")
@@ -382,6 +391,10 @@ celery_app.conf.beat_schedule = {
     "poll-live-prediction-markets": {
         "task": "app.tasks.poll_live_prediction_markets",
         "schedule": 120.0,  # Every 2 minutes — only targets linked live game markets
+    },
+    "sync-mlb-win-probability": {
+        "task": "app.tasks.sync_mlb_win_probability",
+        "schedule": 120.0,  # Every 2 minutes during MLB season
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",

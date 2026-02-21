@@ -171,6 +171,7 @@ class TestBeatScheduleCompleteness:
         "collapse-winprob-snapshots-daily",
         "collapse-futures-snapshots-daily",
         "sync-rosters-daily",
+        "sync-mlb-win-probability",
         "recategorize-other-daily",
         "backfill-canonical-keys-daily",
     }

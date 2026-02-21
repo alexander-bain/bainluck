@@ -84,15 +84,15 @@ WIN_PROB_SOURCES = {
         "attribution_name": "MoneyPuck",
     },
     "fangraphs": {
-        "display_name": "FanGraphs",
+        "display_name": "MLB Model",
         "source_type": "model",
         "sports": ["baseball_mlb"],
         "color": "#06b6d4",
         "dash_pattern": "4 4",
-        "description": "Baseball win probability from FanGraphs, the premier sabermetrics resource. Their model uses run expectancy tables and leverage index to estimate win probability on every pitch.",
-        "methodology": "FanGraphs' win probability model is based on historical play-by-play data across MLB seasons. It uses run expectancy matrices (based on base/out state), score differential, inning, and home-field advantage. The model is continuously updated using the empirical run environment of each season.",
-        "attribution_url": "https://www.fangraphs.com",
-        "attribution_name": "FanGraphs",
+        "description": "Official MLB win probability from the MLB Stats API. Computed from play-by-play data using run expectancy tables, leverage index, and game state (inning, outs, runners, score).",
+        "methodology": "MLB's win probability model is based on historical play-by-play data across MLB seasons. It uses run expectancy matrices (based on base/out state), score differential, inning, home-field advantage, and updates on every pitch. Data sourced from the official MLB Stats API (statsapi.mlb.com).",
+        "attribution_url": "https://statsapi.mlb.com",
+        "attribution_name": "MLB Stats API",
     },
 }
 

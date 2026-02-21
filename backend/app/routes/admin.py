@@ -2695,3 +2695,56 @@ async def manual_link_prediction_market(
         "event_teams": f"{event.home_team_name} vs {event.away_team_name}",
         "snapshot": snapshot_result,
     }
+
+
+# =============================================================================
+# MLB Win Probability Admin Endpoints
+# =============================================================================
+
+
+@router.post("/mlb/sync")
+async def trigger_mlb_win_prob_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Trigger a one-off MLB win probability sync.
+
+    Fetches live MLB games from the MLB Stats API and writes win probability
+    snapshots for matched events. Normally runs automatically every 2 minutes.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_mlb_win_probability
+
+    try:
+        task = sync_mlb_win_probability.delay()
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"MLB win probability sync queued. "
+                       f"Use /api/admin/mlb/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/mlb/task/{task_id}")
+async def get_mlb_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of an MLB sync task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {"task_id": task_id, "state": result.state}
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+    return response
