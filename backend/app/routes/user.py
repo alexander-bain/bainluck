@@ -39,7 +39,6 @@ METRO_ALIASES: dict[str, list[str]] = {
     "dc": ["washington", "d.c."],
     "washington": ["dc", "d.c."],
     "minnesota": ["minneapolis", "twin cities", "st. paul"],
-    "minnesota": ["minneapolis"],
     "indiana": ["indianapolis"],
     "indianapolis": ["indiana"],
     "arizona": ["phoenix", "tempe", "glendale"],
@@ -517,17 +516,25 @@ async def search_teams(
     if len(q) < 2:
         return []
 
-    search_pattern = f"%{q}%"
+    # Split multi-word queries into individual search terms.
+    # "Brown University" → search for teams matching "Brown" OR "University"
+    # This lets users type school names like "Harvard University" and find
+    # "Harvard Crimson", or "Brown University" and find "Brown Bears".
+    words = [w.strip() for w in q.split() if len(w.strip()) >= 2]
+    if not words:
+        return []
 
-    # Search by name or location (ILIKE for case-insensitive)
     from app.models.models import Sport
+    conditions = []
+    for word in words:
+        pattern = f"%{word}%"
+        conditions.append(Team.name.ilike(pattern))
+        conditions.append(Team.location.ilike(pattern))
+
     result = await db.execute(
         select(Team, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id)
-        .where(
-            Team.name.ilike(search_pattern)
-            | Team.location.ilike(search_pattern)
-        )
+        .where(or_(*conditions))
         .order_by(Team.name)
         .limit(20)
     )
@@ -563,12 +570,13 @@ async def teams_by_location(
     # Expand query with metro aliases
     terms = _expand_location_query(q)
 
-    # Build OR conditions for all expanded terms
+    # Build OR conditions for all expanded terms — search BOTH name and location
     from app.models.models import Sport
     conditions = []
     for term in terms:
         pattern = f"%{term}%"
         conditions.append(Team.location.ilike(pattern))
+        conditions.append(Team.name.ilike(pattern))
 
     result = await db.execute(
         select(Team, Sport.key.label("sport_key"))

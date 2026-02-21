@@ -48,7 +48,8 @@ for (const sport of ONBOARDING_SPORTS) {
 // =============================================================================
 
 export default function OnboardingPage() {
-  const { isAuthenticated, isLoading } = useAuthContext();
+  const auth = useAuthContext();
+  const { isAuthenticated, isLoading } = auth;
   const router = useRouter();
 
   // Step state
@@ -255,6 +256,21 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setError(null);
 
+    // Check auth token before submitting — Safari can silently lose tokens
+    const { getToken } = auth;
+    try {
+      const token = await getToken();
+      if (!token) {
+        setError("Your session has expired. Please sign in again from the homepage.");
+        setSubmitting(false);
+        return;
+      }
+    } catch {
+      setError("Could not verify your session. Please sign in again from the homepage.");
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const data: OnboardingSubmission = {
         home_location: selectedLocation || locationQuery || null,
@@ -276,7 +292,12 @@ export default function OnboardingPage() {
       await submitOnboarding(data);
       router.push("/?onboarded=1");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const message = err instanceof Error ? err.message : "Something went wrong";
+      if (message.includes("Authentication") || message.includes("401")) {
+        setError("Your session has expired. Please sign in again from the homepage.");
+      } else {
+        setError(message);
+      }
     } finally {
       setSubmitting(false);
     }
