@@ -395,53 +395,91 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setError(null);
 
-    // Check auth token before submitting — Safari can silently lose tokens
-    const { getToken } = auth;
+    // Build submission data first (before any async ops)
+    const data: OnboardingSubmission = {
+      home_location: selectedLocation || locationQuery || null,
+      local_teams: locationTeams
+        .filter((t) => t.selected)
+        .map((t) => ({ team_id: t.id })),
+      follow_teams: followTeams.map((t) => ({ team_id: t.id })),
+      alma_mater_teams: almaMaterTeams.map((t) => ({ team_id: t.id })),
+      rival_teams: rivalTeams.map((t) => ({ team_id: t.id })),
+      sport_affinities: Object.fromEntries(
+        Object.entries(sportAffinities).filter(([, v]) => v > 0)
+      ),
+      raw_inputs: {
+        location_query: locationQuery,
+        follow_selections: followTeams.map((t) => t.name),
+        school_selections: almaMaterTeams.map((t) => t.name),
+        rival_selections: rivalTeams.map((t) => t.name),
+      },
+    };
+
+    // Check auth token — Safari can silently lose tokens (ITP clears IndexedDB)
+    const { getToken, signInWithGoogle } = auth;
+    let token: string | null = null;
     try {
-      const token = await getToken();
+      token = await getToken();
+    } catch {
+      token = null;
+    }
+
+    // If no token, offer to re-sign-in inline rather than redirecting away
+    if (!token) {
+      try {
+        console.log("[Onboarding] Token expired, attempting silent re-auth...");
+        await signInWithGoogle();
+        // Wait a moment for auth state to propagate
+        await new Promise((r) => setTimeout(r, 500));
+        token = await getToken();
+      } catch {
+        token = null;
+      }
+
       if (!token) {
-        setError("Your session has expired. Please sign in again from the homepage.");
+        setError(
+          "Your session expired. Please sign in again from the homepage and return to finish onboarding — your selections are saved in the browser."
+        );
         setSubmitting(false);
         return;
       }
-    } catch {
-      setError("Could not verify your session. Please sign in again from the homepage.");
-      setSubmitting(false);
-      return;
     }
 
-    try {
-      const data: OnboardingSubmission = {
-        home_location: selectedLocation || locationQuery || null,
-        local_teams: locationTeams
-          .filter((t) => t.selected)
-          .map((t) => ({ team_id: t.id })),
-        follow_teams: followTeams.map((t) => ({ team_id: t.id })),
-        alma_mater_teams: almaMaterTeams.map((t) => ({ team_id: t.id })),
-        rival_teams: rivalTeams.map((t) => ({ team_id: t.id })),
-        sport_affinities: Object.fromEntries(
-          Object.entries(sportAffinities).filter(([, v]) => v > 0)
-        ),
-        raw_inputs: {
-          location_query: locationQuery,
-          follow_selections: followTeams.map((t) => t.name),
-          school_selections: almaMaterTeams.map((t) => t.name),
-          rival_selections: rivalTeams.map((t) => t.name),
-        },
-      };
+    // Submit with retry — first attempt may fail if token just refreshed
+    let lastError: string = "Something went wrong";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await submitOnboarding(data);
+        router.push("/?onboarded=1");
+        return; // Success!
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : "Something went wrong";
+        console.error(`[Onboarding] Submit attempt ${attempt + 1} failed:`, lastError);
 
-      await submitOnboarding(data);
-      router.push("/?onboarded=1");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Something went wrong";
-      if (message.includes("Authentication") || message.includes("401")) {
-        setError("Your session has expired. Please sign in again from the homepage.");
-      } else {
-        setError(message);
+        // If auth error, try refreshing token before retry
+        if (attempt === 0 && (lastError.includes("401") || lastError.includes("Authentication"))) {
+          try {
+            token = await getToken();
+            if (!token) {
+              await signInWithGoogle();
+              await new Promise((r) => setTimeout(r, 500));
+            }
+            continue; // Retry
+          } catch {
+            break; // Give up
+          }
+        }
+        break; // Non-auth error, don't retry
       }
-    } finally {
-      setSubmitting(false);
     }
+
+    // All attempts failed
+    if (lastError.includes("Authentication") || lastError.includes("401")) {
+      setError("Your session expired. Please sign in again from the homepage.");
+    } else {
+      setError(`Save failed: ${lastError}. Please try again.`);
+    }
+    setSubmitting(false);
   };
 
   // =========================================================================

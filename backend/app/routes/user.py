@@ -443,7 +443,23 @@ async def submit_onboarding(
         )
         db.add(prefs)
 
-    await db.flush()
+    try:
+        await db.flush()
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(
+            f"Onboarding flush failed for user={user.id}: {error_msg}. "
+            f"Teams: local={[t.team_id for t in body.local_teams]}, "
+            f"follow={[t.team_id for t in body.follow_teams]}, "
+            f"alma_mater={[t.team_id for t in body.alma_mater_teams]}, "
+            f"rival={[t.team_id for t in body.rival_teams]}"
+        )
+        if "foreign key" in error_msg.lower() or "violates" in error_msg.lower():
+            raise HTTPException(
+                status_code=422,
+                detail="One or more selected teams no longer exist. Please remove and re-add them.",
+            )
+        raise
 
     logger.info(
         f"Onboarding completed for user={user.id}: "

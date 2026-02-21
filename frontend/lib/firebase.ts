@@ -61,13 +61,35 @@ async function getFirebaseApp(): Promise<FirebaseApp | null> {
 
 /**
  * Lazily load and initialize Firebase Auth.
+ *
+ * Explicitly sets browserLocalPersistence (localStorage) instead of the
+ * default indexedDBLocalPersistence. Safari's ITP aggressively clears
+ * IndexedDB for cross-origin resources (Firebase uses identitytoolkit.
+ * googleapis.com), causing sign-out on hard refresh. localStorage is
+ * far more stable across Safari restarts and hard refreshes.
  */
 async function getFirebaseAuth(): Promise<Auth | null> {
   if (auth) return auth;
   const firebaseApp = await getFirebaseApp();
   if (!firebaseApp) return null;
-  const { getAuth } = await import("firebase/auth");
-  auth = getAuth(firebaseApp);
+  const {
+    initializeAuth,
+    browserLocalPersistence,
+    getAuth: getAuthDefault,
+    indexedDBLocalPersistence,
+  } = await import("firebase/auth");
+
+  // Try to use initializeAuth with explicit localStorage persistence.
+  // If auth was already initialized (e.g., by another import), fall back
+  // to getAuth() which returns the existing instance.
+  try {
+    auth = initializeAuth(firebaseApp, {
+      persistence: [browserLocalPersistence, indexedDBLocalPersistence],
+    });
+  } catch {
+    // Auth already initialized — use existing instance
+    auth = getAuthDefault(firebaseApp);
+  }
   return auth;
 }
 
