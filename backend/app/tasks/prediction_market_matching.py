@@ -21,6 +21,8 @@ from app.utils.prediction_market_matching import (
     _KALSHI_GAME_TICKER_PREFIXES,
     get_sport_prefix_from_ticker,
     extract_matchup,
+    extract_matchup_with_ticker_fallback,
+    extract_teams_from_ticker,
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
@@ -105,16 +107,21 @@ async def _match_prediction_markets(limit: int = 500):
             stats["markets_scanned"] += 1
             stats["funnel"]["game_level_detected"] += 1
 
-            matchup = extract_matchup(market.name, external_id=market.external_id)
+            # Try name-based extraction first, then ticker abbreviation parsing
+            matchup = extract_matchup_with_ticker_fallback(
+                market.name, external_id=market.external_id,
+            )
 
             if matchup:
-                # Primary path: name-based team matching
+                # Team-name based matching (either from name or ticker)
                 matched_event = await _find_matching_event(
                     session, matchup, market, now,
                 )
+                if matched_event and matchup.format_type == "ticker_parsed":
+                    stats["funnel"].setdefault("ticker_abbrev_linked", 0)
+                    stats["funnel"]["ticker_abbrev_linked"] += 1
             else:
-                # Fallback path: sport + time matching for generic-named markets
-                # (e.g., "Professional Basketball Game" where extract_matchup fails)
+                # Last resort: sport + time matching for truly unrecognizable markets
                 matched_event = await _find_event_by_sport_and_time(
                     session, market, now,
                 )
@@ -192,8 +199,10 @@ async def _match_prediction_markets(limit: int = 500):
                     )
                 continue
 
-            # Extract matchup info
-            matchup = extract_matchup(market.name, external_id=market.external_id)
+            # Extract matchup info (with ticker fallback for Kalshi)
+            matchup = extract_matchup_with_ticker_fallback(
+                market.name, external_id=market.external_id,
+            )
             if not matchup:
                 stats["funnel"]["no_matchup_extracted"] += 1
                 continue
@@ -262,7 +271,10 @@ async def _match_prediction_markets(limit: int = 500):
                             continue
 
                 # Re-extract matchup to determine team mapping
-                matchup = extract_matchup(market.name, external_id=market.external_id)
+                # Uses ticker fallback for generic-named Kalshi markets
+                matchup = extract_matchup_with_ticker_fallback(
+                    market.name, external_id=market.external_id,
+                )
                 if not matchup:
                     continue
 
@@ -771,7 +783,10 @@ async def _poll_live_prediction_market_prices():
         # Re-query to pick up freshly-updated probabilities
         for market, event in rows:
             try:
-                matchup = extract_matchup(market.name, external_id=market.external_id)
+                # Uses ticker fallback for generic-named Kalshi markets
+                matchup = extract_matchup_with_ticker_fallback(
+                    market.name, external_id=market.external_id,
+                )
                 if not matchup:
                     continue
 

@@ -550,6 +550,160 @@ def get_sport_prefix_from_ticker(external_id: str) -> Optional[str]:
     return None
 
 
+# ── Kalshi ticker → team abbreviation extraction ──────────────────────────────
+# Ticker format: KXNBAGAME-26FEB21DETCHI
+#   - Sport prefix: "kxnbagame"
+#   - Separator: "-"
+#   - Date: "26FEB21" (YYMMMDD)
+#   - Teams: "DETCHI" (concatenated abbreviations, 2-3 chars each)
+#
+# The date portion is always: 2-digit year + 3-letter month + 1-2 digit day
+# After the date, the remaining characters are the team abbreviations.
+
+_TICKER_DATE_RE = re.compile(
+    r'^[a-z]+-(\d{2}[a-z]{3}\d{1,2})(.+)$',
+    re.IGNORECASE,
+)
+
+# Kalshi team abbreviation → team name fragments.
+# These map ticker codes to substrings we can ILIKE match against event team names.
+# Only need enough to disambiguate within a sport on a given day.
+_KALSHI_TEAM_ABBREVS: dict[str, str] = {
+    # NBA
+    "atl": "Hawks", "bos": "Celtics", "bkn": "Nets", "cha": "Hornets",
+    "chi": "Bulls", "cle": "Cavaliers", "dal": "Mavericks", "den": "Nuggets",
+    "det": "Pistons", "gsw": "Warriors", "hou": "Rockets", "ind": "Pacers",
+    "lac": "Clippers", "lal": "Lakers", "mem": "Grizzlies", "mia": "Heat",
+    "mil": "Bucks", "min": "Timberwolves", "nop": "Pelicans", "nyk": "Knicks",
+    "okc": "Thunder", "orl": "Magic", "phi": "76ers", "phx": "Suns",
+    "por": "Trail Blazers", "sac": "Kings", "sas": "Spurs", "tor": "Raptors",
+    "uta": "Jazz", "was": "Wizards",
+    # NFL
+    "sf": "49ers", "kc": "Chiefs", "buf": "Bills", "bal": "Ravens",
+    "gb": "Packers", "ne": "Patriots", "pit": "Steelers", "sea": "Seahawks",
+    "tb": "Buccaneers", "ari": "Cardinals", "car": "Panthers",
+    "cin": "Bengals", "jax": "Jaguars", "ten": "Titans",
+    "lar": "Rams", "lac_nfl": "Chargers", "nyg": "Giants", "nyj": "Jets",
+    "no": "Saints", "lv": "Raiders",
+    # NHL
+    "bos_nhl": "Bruins", "nyr": "Rangers", "nyi": "Islanders",
+    "njd": "Devils", "pit_nhl": "Penguins", "phi_nhl": "Flyers",
+    "wsh": "Capitals", "car_nhl": "Hurricanes", "cbj": "Blue Jackets",
+    "fla": "Panthers", "tbl": "Lightning", "tor_nhl": "Maple Leafs",
+    "mtl": "Canadiens", "ott": "Senators", "buf_nhl": "Sabres",
+    "det_nhl": "Red Wings", "chi_nhl": "Blackhawks", "stl": "Blues",
+    "nsh": "Predators", "dal_nhl": "Stars", "min_nhl": "Wild",
+    "wpg": "Jets", "col": "Avalanche", "ari_nhl": "Coyotes",
+    "van": "Canucks", "cgy": "Flames", "edm": "Oilers",
+    "sea_nhl": "Kraken", "vgk": "Golden Knights", "sjs": "Sharks",
+    "ana": "Ducks", "lak": "Kings",
+    # MLB
+    "nyy": "Yankees", "nym": "Mets", "bos_mlb": "Red Sox",
+    "lad": "Dodgers", "hou_mlb": "Astros", "atl_mlb": "Braves",
+    "phi_mlb": "Phillies", "tex": "Rangers", "ari_mlb": "Diamondbacks",
+    "sd": "Padres", "chc": "Cubs", "chw": "White Sox",
+    "det_mlb": "Tigers", "cle_mlb": "Guardians", "min_mlb": "Twins",
+    "kc_mlb": "Royals", "stl_mlb": "Cardinals", "mil_mlb": "Brewers",
+    "cin_mlb": "Reds", "pit_mlb": "Pirates", "sf_mlb": "Giants",
+    "sea_mlb": "Mariners", "oak": "Athletics", "col_mlb": "Rockies",
+    "tb_mlb": "Rays", "bal_mlb": "Orioles", "tor_mlb": "Blue Jays",
+    "mia_mlb": "Marlins", "was_mlb": "Nationals", "laa": "Angels",
+}
+
+# Sport-specific abbreviation subsets (no suffix needed for primary sport)
+# The abbreviation lookup tries exact first, then sport-specific suffixed keys.
+_SPORT_ABBREV_SUFFIX: dict[str, str] = {
+    "kxnbagame": "", "kxwnbagame": "", "kxncaabgame": "",
+    "kxnflgame": "_nfl", "kxncaafgame": "_nfl",
+    "kxnhlgame": "_nhl",
+    "kxmlbgame": "_mlb",
+}
+
+
+def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
+    """
+    Extract team name fragments from a Kalshi game ticker.
+
+    Example: "KXNBAGAME-26FEB21DETCHI" → ("Pistons", "Bulls")
+
+    Returns (team_a_name, team_b_name) tuple, or None if parsing fails.
+    The names are team name fragments suitable for ILIKE matching.
+    """
+    if not external_id:
+        return None
+
+    m = _TICKER_DATE_RE.match(external_id)
+    if not m:
+        return None
+
+    teams_str = m.group(2).lower()
+    if len(teams_str) < 4:  # Need at least 2+2 chars for two teams
+        return None
+
+    # Determine sport suffix for disambiguation
+    ext_lower = external_id.lower()
+    sport_suffix = ""
+    for prefix, suffix in _SPORT_ABBREV_SUFFIX.items():
+        if ext_lower.startswith(prefix):
+            sport_suffix = suffix
+            break
+
+    # Try all possible split points (2+2, 2+3, 3+2, 3+3)
+    best_pair = None
+    for split_at in (2, 3):
+        if split_at >= len(teams_str):
+            continue
+        abbrev_a = teams_str[:split_at]
+        abbrev_b = teams_str[split_at:]
+
+        if len(abbrev_b) < 2 or len(abbrev_b) > 3:
+            continue
+
+        # Look up both abbreviations
+        name_a = _KALSHI_TEAM_ABBREVS.get(abbrev_a) or _KALSHI_TEAM_ABBREVS.get(abbrev_a + sport_suffix)
+        name_b = _KALSHI_TEAM_ABBREVS.get(abbrev_b) or _KALSHI_TEAM_ABBREVS.get(abbrev_b + sport_suffix)
+
+        if name_a and name_b:
+            best_pair = (name_a, name_b)
+            break  # First valid split wins
+
+    return best_pair
+
+
+def extract_matchup_with_ticker_fallback(
+    market_name: str,
+    external_id: Optional[str] = None,
+) -> Optional[MatchupInfo]:
+    """
+    Extract matchup from market name, falling back to Kalshi ticker parsing.
+
+    This is the primary entry point for the matching task. It tries:
+    1. Name-based extraction via extract_matchup()
+    2. Ticker-based team extraction via extract_teams_from_ticker()
+
+    The ticker fallback creates a MatchupInfo with team name fragments
+    (e.g., "Pistons" and "Bulls") that can be fuzzy-matched against events.
+    """
+    # Try name-based extraction first
+    matchup = extract_matchup(market_name, external_id=external_id)
+    if matchup:
+        return matchup
+
+    # Fallback: parse team abbreviations from Kalshi ticker
+    if external_id:
+        ticker_teams = extract_teams_from_ticker(external_id)
+        if ticker_teams:
+            team_a, team_b = ticker_teams
+            return MatchupInfo(
+                team_a=team_a,
+                team_b=team_b,
+                yes_team=team_a,  # First team in ticker = "yes" team
+                format_type="ticker_parsed",
+            )
+
+    return None
+
+
 # ── Time window for event matching ───────────────────────────────────────────
 
 # Maximum time difference between market commence_time and event commence_time
