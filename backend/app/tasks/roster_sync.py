@@ -84,8 +84,12 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
             # =================================================================
             # Phase 1: Team sync — ensure all pro teams exist
             # =================================================================
+            # Also builds sd_abbrev → team_id mapping for Phase 2 roster sync.
+            # This bridges the abbreviation gap: ESPN sets Team.abbreviation
+            # which may differ from SportsDataIO abbreviations (e.g., WSH vs WAS).
             teams_created = 0
             teams_backfilled = 0
+            sd_abbrev_to_team_id: dict[str, int] = {}
             sd_teams = await service.fetch_teams(sd_sport)
 
             for sd_team in sd_teams:
@@ -125,7 +129,20 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     )
                     existing_team = team_result.scalar_one_or_none()
 
+                # Try by ILIKE on name_map value (handles minor formatting diffs
+                # like "St. Louis" vs "St Louis")
+                if not existing_team and abbrev in name_map:
+                    mapped_name = name_map[abbrev]
+                    team_result = await session.execute(
+                        select(Team).where(
+                            Team.name.ilike(f"%{mapped_name}%"),
+                            Team.sport_id == sport_id,
+                        )
+                    )
+                    existing_team = team_result.scalar_one_or_none()
+
                 if existing_team:
+                    sd_abbrev_to_team_id[abbrev] = existing_team.id
                     # Backfill location if missing
                     if not existing_team.location and city:
                         await session.execute(
@@ -152,6 +169,7 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     )
                     session.add(new_team)
                     await session.flush()
+                    sd_abbrev_to_team_id[abbrev] = new_team.id
                     teams_created += 1
                     logger.info(f"  Created Team: {full_name} ({abbrev}) in {city}")
 
@@ -163,6 +181,10 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     f"  {our_key} team sync: {teams_created} created, "
                     f"{teams_backfilled} locations backfilled"
                 )
+            logger.info(
+                f"  {our_key} Phase 1: resolved {len(sd_abbrev_to_team_id)}/{len(sd_teams)} "
+                f"SportsDataIO teams to DB records"
+            )
 
             # =================================================================
             # Phase 2: Roster sync — update player names
@@ -194,17 +216,22 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 # Deduplicate and sort
                 unique_names = sorted(set(player_names))
 
-                # Try 1: Match by abbreviation + sport
-                team_result = await session.execute(
-                    select(Team.id).where(
-                        Team.abbreviation == abbrev,
-                        Team.sport_id == sport_id,
-                    )
-                )
-                team_row = team_result.first()
-                team_id = team_row[0] if team_row else None
+                # Try 1: Use Phase 1 mapping (bridges ESPN/SportsDataIO abbrev gap)
+                team_id = sd_abbrev_to_team_id.get(abbrev)
 
-                # Try 2: Static name map (hardcoded SportsDataIO abbrev → team name)
+                # Try 2: Match by abbreviation + sport (fallback for teams
+                # not in Phase 1 fetch, e.g., expansion teams or data gaps)
+                if not team_id:
+                    team_result = await session.execute(
+                        select(Team.id).where(
+                            Team.abbreviation == abbrev,
+                            Team.sport_id == sport_id,
+                        )
+                    )
+                    team_row = team_result.first()
+                    team_id = team_row[0] if team_row else None
+
+                # Try 3: Static name map (hardcoded SportsDataIO abbrev → team name)
                 if not team_id and abbrev in name_map:
                     team_result = await session.execute(
                         select(Team.id).where(
@@ -215,7 +242,7 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                     team_row = team_result.first()
                     team_id = team_row[0] if team_row else None
 
-                # Try 3: Create Team record if we have a name mapping but no DB record
+                # Try 4: Create Team record if we have a name mapping but no DB record
                 # (This should rarely trigger now that Phase 1 creates teams upfront)
                 if not team_id and abbrev in name_map:
                     new_team = Team(
