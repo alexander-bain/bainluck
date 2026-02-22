@@ -7,6 +7,7 @@ groups by award category, merges cross-source nominees, and orders by ceremony p
 
 import logging
 import re
+import unicodedata
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends
@@ -89,16 +90,23 @@ _CATEGORY_PATTERNS = [
     (re.compile(r"best\s+supporting\s+actor", re.I), "best_supporting_actor"),
     (re.compile(r"best\s+supporting\s+actress", re.I), "best_supporting_actress"),
     (re.compile(r"best\s+animated\s+short", re.I), "best_animated_short"),
+    (re.compile(r"animated\s+short\s+film", re.I), "best_animated_short"),
     (re.compile(r"best\s+live\s*action\s+short", re.I), "best_live_action_short"),
+    (re.compile(r"live\s*action\s+short\s+film", re.I), "best_live_action_short"),
     (re.compile(r"best\s+documentary\s+short", re.I), "best_documentary_short"),
+    (re.compile(r"documentary\s+short\s+(?:film|subject)", re.I), "best_documentary_short"),
     (re.compile(r"best\s+animated\s+feature", re.I), "best_animated_feature"),
+    (re.compile(r"animated\s+feature\s+film", re.I), "best_animated_feature"),
     (re.compile(r"best\s+international\s+feature", re.I), "best_international_feature"),
+    (re.compile(r"international\s+feature\s+film", re.I), "best_international_feature"),
     (re.compile(r"best\s+documentary\s+feature", re.I), "best_documentary_feature"),
     (re.compile(r"best\s+documentary(?!\s+short)", re.I), "best_documentary_feature"),
     (re.compile(r"best\s+adapted\s+screenplay", re.I), "best_adapted_screenplay"),
     (re.compile(r"best\s+original\s+screenplay", re.I), "best_original_screenplay"),
     (re.compile(r"best\s+original\s+score", re.I), "best_original_score"),
+    (re.compile(r"music\s*\(?\s*original\s+score", re.I), "best_original_score"),
     (re.compile(r"best\s+original\s+song", re.I), "best_original_song"),
+    (re.compile(r"music\s*\(?\s*original\s+song", re.I), "best_original_song"),
     (re.compile(r"best\s+production\s+design", re.I), "best_production_design"),
     (re.compile(r"best\s+costume\s+design", re.I), "best_costume_design"),
     (re.compile(r"best\s+makeup", re.I), "best_makeup_hairstyling"),
@@ -114,6 +122,22 @@ _CATEGORY_PATTERNS = [
 ]
 
 
+def _strip_diacritics(s: str) -> str:
+    """Remove accent marks: é→e, á→a, ü→u, etc."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _is_oscars_market(name: str) -> bool:
+    """Filter out false positives like boxing matches containing 'Oscar' as a name."""
+    name_lower = name.lower()
+    if " vs " in name_lower or " vs." in name_lower:
+        return False
+    return True
+
+
 def _normalize_category(market_name: str) -> str | None:
     """Extract category key from a market name like 'Oscars 2026: Best Picture'."""
     for pattern, key in _CATEGORY_PATTERNS:
@@ -123,30 +147,39 @@ def _normalize_category(market_name: str) -> str | None:
 
 
 def _normalize_nominee_name(name: str) -> str:
-    """
-    Normalize a nominee name for cross-source matching.
-    Handles formats like "Actor Name - Film Name" (Kalshi) vs "Actor Name" (Polymarket).
-    """
-    # Strip leading/trailing whitespace
+    """Normalize a nominee name for display."""
     name = name.strip()
-    # Remove common prefixes/suffixes
     name = re.sub(r"^(Yes|No)\s*[-:]\s*", "", name, flags=re.I)
+    # Strip wrapping quotes (Polymarket NegRisk format)
+    name = re.sub(r'^"(.*)"$', r"\1", name)
     return name
 
 
 def _match_key(name: str) -> str:
     """
     Create a matching key from a nominee name for cross-source dedup.
-    Uses first+last name or first few significant words.
+    Strips diacritics, "The " prefix, subtitle after colon, and normalizes whitespace.
     """
     clean = _normalize_nominee_name(name)
     # Take the part before " - " or " for " (strips film/role info)
     clean = re.split(r"\s+[-–]\s+|\s+for\s+", clean, maxsplit=1)[0]
-    # Lowercase, strip non-alphanumeric except spaces
-    clean = re.sub(r"[^a-z0-9\s]", "", clean.lower()).strip()
+    # Strip diacritics (é→e, ñ→n, etc.)
+    clean = _strip_diacritics(clean)
+    # Lowercase
+    clean = clean.lower()
+    # Strip "the " prefix
+    clean = re.sub(r"^the\s+", "", clean)
+    # Strip subtitle after colon ("F1: The Movie" → "F1")
+    clean = clean.split(":")[0].strip()
+    # Strip non-alphanumeric except spaces
+    clean = re.sub(r"[^a-z0-9\s]", "", clean).strip()
     # Collapse whitespace
     clean = re.sub(r"\s+", " ", clean)
     return clean
+
+
+# Max nominees to return per category
+_MAX_NOMINEES = 10
 
 
 @router.get("")
@@ -175,6 +208,9 @@ async def get_oscars(
     result = await db.execute(query)
     markets = result.scalars().unique().all()
 
+    # Filter out false positives (e.g., boxing matches with "Oscar" as a fighter name)
+    markets = [m for m in markets if _is_oscars_market(m.name)]
+
     # Group markets by category
     category_markets: dict[str, list] = defaultdict(list)
     trivia_markets: list[dict] = []
@@ -184,23 +220,41 @@ async def get_oscars(
         if cat_key:
             category_markets[cat_key].append(market)
         else:
-            # Non-award market (e.g., "most nominations")
+            # Non-award market (e.g., "most nominations", "how many Oscars")
             top_outcomes = sorted(
                 [o for o in market.outcomes if o.current_probability is not None],
                 key=lambda o: float(o.current_probability),
                 reverse=True,
             )[:5]
+
+            # Skip markets where all outcomes have the same name
+            # (Polymarket NegRisk: outcomes named "Sinners" x5 instead of counts)
+            unique_names = set(
+                _normalize_nominee_name(o.name) for o in top_outcomes
+            )
+            if len(unique_names) <= 1 and len(top_outcomes) > 1:
+                continue
+
+            # Filter out Kalshi 0.5 noise from trivia outcomes too
+            filtered_outcomes = [
+                o for o in top_outcomes
+                if not (market.source == "kalshi" and o.current_probability is not None
+                        and float(o.current_probability) == 0.5)
+            ]
+            if not filtered_outcomes:
+                filtered_outcomes = top_outcomes  # Fallback if all were 0.5
+
             trivia_markets.append({
                 "id": market.id,
                 "name": market.name,
                 "source": market.source,
                 "top_outcomes": [
                     {
-                        "name": o.name,
+                        "name": _normalize_nominee_name(o.name),
                         "probability": round(float(o.current_probability), 3) if o.current_probability else None,
                         "american_odds": probability_to_american(float(o.current_probability)) if o.current_probability else None,
                     }
-                    for o in top_outcomes
+                    for o in filtered_outcomes
                 ],
             })
 
@@ -221,8 +275,18 @@ async def get_oscars(
                     continue
 
                 prob = float(outcome.current_probability)
-                display_name = _normalize_nominee_name(outcome.name)
-                key = _match_key(outcome.name)
+
+                # Skip Kalshi entries at exactly 0.5 — illiquid binary markets with no signal
+                if source == "kalshi" and prob == 0.5:
+                    continue
+
+                # Skip "Tie" outcomes — not useful for the landing page
+                raw_name = outcome.name.strip()
+                if raw_name.lower() == "tie":
+                    continue
+
+                display_name = _normalize_nominee_name(raw_name)
+                key = _match_key(raw_name)
 
                 if not key:
                     continue
@@ -245,22 +309,33 @@ async def get_oscars(
                     if existing is None or abs(change) > abs(existing):
                         nominee_data[key]["movement_24h"] = round(change, 4)
 
-        # Compute average probability and rank
+        # Compute average probability
         nominees = []
         for data in nominee_data.values():
             avg_prob = sum(data["probabilities"]) / len(data["probabilities"])
-            american_odds = probability_to_american(avg_prob)
-
             nominees.append({
                 "name": data["name"],
-                "probability": round(avg_prob, 3),
-                "american_odds": american_odds,
+                "probability": avg_prob,
                 "movement_24h": data["movement_24h"],
                 "sources": data["sources"],
             })
 
-        # Sort by probability descending and assign ranks
+        # Sort by probability descending, cap at max nominees
         nominees.sort(key=lambda n: n["probability"], reverse=True)
+        nominees = nominees[:_MAX_NOMINEES]
+
+        # Normalize probabilities so they sum to ~100%
+        total_prob = sum(n["probability"] for n in nominees)
+        if total_prob > 0:
+            for nom in nominees:
+                nom["probability"] = round(nom["probability"] / total_prob, 3)
+                nom["american_odds"] = probability_to_american(nom["probability"])
+        else:
+            for nom in nominees:
+                nom["probability"] = round(nom["probability"], 3)
+                nom["american_odds"] = probability_to_american(nom["probability"])
+
+        # Assign ranks
         for i, nom in enumerate(nominees):
             nom["rank"] = i + 1
 

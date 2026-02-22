@@ -10,9 +10,19 @@ const TMDB_IMG = "https://image.tmdb.org/t/p";
 const CACHE_PREFIX = "tmdb_";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-function getApiKey(): string | null {
+function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return process.env.NEXT_PUBLIC_TMDB_API_KEY || null;
+}
+
+/** TMDB fetch with Bearer token auth (supports Read Access Token). */
+async function tmdbFetch(path: string, params?: URLSearchParams): Promise<Response> {
+  const token = getToken();
+  if (!token) throw new Error("No TMDB token");
+  const qs = params ? `?${params}` : "";
+  return fetch(`${TMDB_BASE}${path}${qs}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 // ============================================================================
@@ -79,18 +89,11 @@ export async function searchMovie(name: string, year?: number): Promise<TMDBMovi
   const cached = cacheGet<TMDBMovieResult | null>(cacheKey);
   if (cached !== null) return cached;
 
-  const apiKey = getApiKey();
-  if (!apiKey) return null;
-
   try {
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      query: name,
-      language: "en-US",
-    });
+    const params = new URLSearchParams({ query: name, language: "en-US" });
     if (year) params.set("year", year.toString());
 
-    const res = await fetch(`${TMDB_BASE}/search/movie?${params}`);
+    const res = await tmdbFetch("/search/movie", params);
     if (!res.ok) return null;
 
     const data = await res.json();
@@ -110,17 +113,10 @@ export async function searchPerson(name: string): Promise<TMDBPersonResult | nul
   const cached = cacheGet<TMDBPersonResult | null>(cacheKey);
   if (cached !== null) return cached;
 
-  const apiKey = getApiKey();
-  if (!apiKey) return null;
-
   try {
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      query: name,
-      language: "en-US",
-    });
+    const params = new URLSearchParams({ query: name, language: "en-US" });
 
-    const res = await fetch(`${TMDB_BASE}/search/person?${params}`);
+    const res = await tmdbFetch("/search/person", params);
     if (!res.ok) return null;
 
     const data = await res.json();
@@ -140,12 +136,8 @@ export async function getTrailers(movieId: number): Promise<TMDBVideo[]> {
   const cached = cacheGet<TMDBVideo[]>(cacheKey);
   if (cached !== null) return cached;
 
-  const apiKey = getApiKey();
-  if (!apiKey) return [];
-
   try {
-    const params = new URLSearchParams({ api_key: apiKey });
-    const res = await fetch(`${TMDB_BASE}/movie/${movieId}/videos?${params}`);
+    const res = await tmdbFetch(`/movie/${movieId}/videos`);
     if (!res.ok) return [];
 
     const data = await res.json();
