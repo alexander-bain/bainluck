@@ -2890,6 +2890,20 @@ async def unlink_prediction_market(
         raise HTTPException(status_code=404, detail=f"FuturesMarket {market_id} not found")
 
     old_event_id = market.event_id
+    snapshots_deleted = 0
+
+    # Delete orphaned win_prob_snapshots for the old event
+    if old_event_id:
+        from sqlalchemy import delete as sql_delete
+        from app.models.models import WinProbSnapshot
+        del_result = await db.execute(
+            sql_delete(WinProbSnapshot).where(
+                WinProbSnapshot.event_id == old_event_id,
+                WinProbSnapshot.source == market.source,
+            )
+        )
+        snapshots_deleted = del_result.rowcount
+
     market.event_id = None
     await db.commit()
 
@@ -2898,6 +2912,7 @@ async def unlink_prediction_market(
         "market_id": market_id,
         "market_name": market.name,
         "old_event_id": old_event_id,
+        "snapshots_deleted": snapshots_deleted,
     }
 
 

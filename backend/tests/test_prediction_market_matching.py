@@ -21,11 +21,14 @@ from app.utils.prediction_market_matching import (
     extract_matchup_with_ticker_fallback,
     extract_teams_from_ticker,
     extract_game_date_from_ticker,
+    extract_ticker_fragments,
+    _score_fragment_match,
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
     _looks_like_team_name,
     _strip_category_prefix,
+    _is_prop_or_spread_outcome,
     MatchupInfo,
 )
 from app.tasks.kalshi import (
@@ -1777,3 +1780,190 @@ class TestParentheticalStripping:
         assert result is not None
         assert "Reinier" in result.team_a
         assert "Borralho" in result.team_b
+
+
+# =============================================================================
+# _is_prop_or_spread_outcome
+# =============================================================================
+
+
+class TestPropOutcomeFilter:
+    """Test prop/spread/total outcome filtering."""
+
+    def test_ou_with_number(self):
+        assert _is_prop_or_spread_outcome("O/U 148.5") is True
+
+    def test_over_with_number(self):
+        assert _is_prop_or_spread_outcome("Over 220.5") is True
+
+    def test_under_with_number(self):
+        assert _is_prop_or_spread_outcome("Under 220.5") is True
+
+    def test_total_keyword(self):
+        assert _is_prop_or_spread_outcome("Total Points") is True
+
+    def test_spread_positive(self):
+        assert _is_prop_or_spread_outcome("Celtics +3.5") is True
+
+    def test_spread_negative(self):
+        assert _is_prop_or_spread_outcome("Warriors -4.5") is True
+
+    def test_colon_prop(self):
+        assert _is_prop_or_spread_outcome("Stanford vs Cal: O/U 148.5") is True
+
+    def test_rebounds_prop(self):
+        assert _is_prop_or_spread_outcome("LeBron James Rebounds") is True
+
+    def test_touchdowns_prop(self):
+        assert _is_prop_or_spread_outcome("Josh Allen Touchdowns") is True
+
+    def test_assists_prop(self):
+        assert _is_prop_or_spread_outcome("Assists Over 8.5") is True
+
+    def test_team_name_not_filtered(self):
+        """Pure team names should not be filtered."""
+        assert _is_prop_or_spread_outcome("Boston Celtics") is False
+
+    def test_player_name_not_filtered(self):
+        assert _is_prop_or_spread_outcome("LeBron James") is False
+
+    def test_matchup_name_not_filtered(self):
+        assert _is_prop_or_spread_outcome("Pistons vs. Bulls") is False
+
+    def test_yes_not_filtered(self):
+        assert _is_prop_or_spread_outcome("Yes") is False
+
+    def test_empty_not_filtered(self):
+        assert _is_prop_or_spread_outcome("") is False
+
+    def test_strikeouts(self):
+        assert _is_prop_or_spread_outcome("Pitcher Strikeouts Over 6.5") is True
+
+    def test_yards(self):
+        assert _is_prop_or_spread_outcome("Patrick Mahomes Yards") is True
+
+    def test_three_pointers(self):
+        assert _is_prop_or_spread_outcome("Stephen Curry Three-Pointers") is True
+
+
+class TestFindMoneylineSkipsProps:
+    """Test that find_moneyline_outcome skips prop/spread outcomes."""
+
+    def test_ou_not_picked_when_moneyline_exists(self):
+        """O/U outcome should be skipped even if it fuzzy-matches a team name."""
+        outcomes = [
+            _MockOutcome("Stanford Cardinal", 0.55),
+            _MockOutcome("Stanford vs Cal: O/U 148.5", 0.52),
+        ]
+        matchup = extract_matchup("Stanford vs Cal")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Stanford Cardinal", "California Golden Bears",
+        )
+        assert result is not None
+        outcome, _ = result
+        assert outcome.name == "Stanford Cardinal"
+
+    def test_spread_not_picked(self):
+        """Spread outcomes like 'Celtics -3.5' should be skipped."""
+        outcomes = [
+            _MockOutcome("Boston Celtics", 0.67),
+            _MockOutcome("Celtics -3.5", 0.48),
+            _MockOutcome("Over 220.5", 0.52),
+        ]
+        matchup = extract_matchup("Celtics vs. Warriors")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Boston Celtics", "Golden State Warriors",
+        )
+        assert result is not None
+        outcome, _ = result
+        assert outcome.name == "Boston Celtics"
+
+    def test_only_ou_outcomes_returns_none(self):
+        """If all outcomes are O/U, no moneyline found."""
+        outcomes = [
+            _MockOutcome("Over 220.5", 0.52),
+            _MockOutcome("Under 220.5", 0.48),
+        ]
+        matchup = extract_matchup("Celtics vs. Warriors")
+        assert matchup is not None
+        result = find_moneyline_outcome(
+            outcomes, matchup, "Boston Celtics", "Golden State Warriors",
+        )
+        assert result is None
+
+
+# =============================================================================
+# extract_ticker_fragments / _score_fragment_match (Bug 3: NCAAB matching)
+# =============================================================================
+
+
+class TestExtractTickerFragments:
+    """Test ticker fragment extraction for NCAAB/NCAAF disambiguation."""
+
+    def test_ncaab_ticker(self):
+        result = extract_ticker_fragments("KXNCAABGAME-26FEB21STACAL")
+        assert result is not None
+        abbrev_a, abbrev_b, sport_prefix = result
+        assert abbrev_a == "STA"
+        assert abbrev_b == "CAL"
+        assert sport_prefix == "basketball_ncaab"
+
+    def test_ncaaf_ticker(self):
+        result = extract_ticker_fragments("KXNCAAFGAME-25NOV15OHIMIC")
+        assert result is not None
+        abbrev_a, abbrev_b, sport_prefix = result
+        assert abbrev_a == "OHI"
+        assert abbrev_b == "MIC"
+        assert sport_prefix == "americanfootball_ncaaf"
+
+    def test_nba_ticker(self):
+        result = extract_ticker_fragments("KXNBAGAME-26FEB21DETCHI")
+        assert result is not None
+        abbrev_a, abbrev_b, sport_prefix = result
+        assert abbrev_a == "DET"
+        assert abbrev_b == "CHI"
+        assert sport_prefix == "basketball_nba"
+
+    def test_two_char_abbrevs(self):
+        """NFL tickers can have 2-char abbreviations."""
+        result = extract_ticker_fragments("KXNFLGAME-26FEB21SFKC")
+        assert result is not None
+        abbrev_a, abbrev_b, sport_prefix = result
+        assert abbrev_a == "SF"
+        assert abbrev_b == "KC"
+        assert sport_prefix == "americanfootball_nfl"
+
+    def test_non_game_ticker_returns_none(self):
+        result = extract_ticker_fragments("KXNBAMVP-26FEB21")
+        assert result is None
+
+    def test_empty_returns_none(self):
+        result = extract_ticker_fragments("")
+        assert result is None
+
+
+class TestFragmentMatch:
+    """Test fragment matching for college team disambiguation."""
+
+    def test_sta_matches_stanford(self):
+        score = _score_fragment_match("STA", "CAL", "Stanford Cardinal", "California Golden Bears")
+        assert score == 2  # Both match
+
+    def test_reversed_order(self):
+        score = _score_fragment_match("CAL", "STA", "Stanford Cardinal", "California Golden Bears")
+        assert score == 2  # Both match (order doesn't matter)
+
+    def test_partial_match(self):
+        """Only one fragment matches."""
+        score = _score_fragment_match("STA", "XYZ", "Stanford Cardinal", "California Golden Bears")
+        assert score == 1
+
+    def test_no_match(self):
+        score = _score_fragment_match("XYZ", "ABC", "Stanford Cardinal", "California Golden Bears")
+        assert score == 0
+
+    def test_ohi_matches_ohio_state(self):
+        score = _score_fragment_match("OHI", "MIC", "Ohio State Buckeyes", "Michigan Wolverines")
+        assert score == 2

@@ -1761,6 +1761,70 @@ async def get_related_futures(
     home_futures.sort(key=lambda x: x["relevance_score"], reverse=True)
     away_futures.sort(key=lambda x: x["relevance_score"], reverse=True)
 
+    # ── Generate or retrieve cached LLM summary ─────────────────────
+    summary = None
+    if home_futures or away_futures:
+        try:
+            from app.models.models import LineMovementAnalysis
+            # Check cache
+            cache_result = await db.execute(
+                select(LineMovementAnalysis).where(
+                    LineMovementAnalysis.event_id == event_id,
+                    LineMovementAnalysis.analysis_type == "related_futures",
+                )
+            )
+            cached = cache_result.scalar_one_or_none()
+
+            now_ts = datetime.now(timezone.utc)
+            if cached and cached.explanation:
+                # Check if expired
+                if cached.expires_at is None or cached.expires_at > now_ts:
+                    summary = cached.explanation
+                else:
+                    # Expired — regenerate
+                    cached = None
+
+            if not cached or not cached.explanation:
+                # Generate via LLM
+                from app.services.llm import generate_related_futures_summary
+                summary = generate_related_futures_summary(
+                    home_team=event.home_team_name,
+                    away_team=event.away_team_name,
+                    sport_key=event.sport.key if event.sport else "",
+                    event_status=event.status or "scheduled",
+                    home_futures=[
+                        {"market_name": f["market_name"], "outcome_name": f["outcome_name"], "probability": f["probability"]}
+                        for f in home_futures[:8]
+                    ],
+                    away_futures=[
+                        {"market_name": f["market_name"], "outcome_name": f["outcome_name"], "probability": f["probability"]}
+                        for f in away_futures[:8]
+                    ],
+                )
+                if summary:
+                    # Determine TTL
+                    is_finished = event.status in ("completed", "closed")
+                    if is_finished:
+                        expires = None  # Never expires for finished games
+                    else:
+                        expires = now_ts + timedelta(hours=2)
+
+                    if cached:
+                        cached.explanation = summary
+                        cached.expires_at = expires
+                    else:
+                        new_analysis = LineMovementAnalysis(
+                            event_id=event_id,
+                            analysis_type="related_futures",
+                            explanation=summary,
+                            expires_at=expires,
+                        )
+                        db.add(new_analysis)
+                    await db.commit()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug("Related futures summary error: %s", e)
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -1768,6 +1832,7 @@ async def get_related_futures(
         "home_team_futures": home_futures,
         "away_team_futures": away_futures,
         "total_count": len(home_futures) + len(away_futures),
+        "summary": summary,
     }
 
 

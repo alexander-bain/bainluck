@@ -12,7 +12,7 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 import logging
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, or_, and_, func
+from sqlalchemy import select, or_, and_, func, delete
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
@@ -25,6 +25,8 @@ from app.utils.prediction_market_matching import (
     extract_matchup_with_ticker_fallback,
     extract_teams_from_ticker,
     extract_game_date_from_ticker,
+    extract_ticker_fragments,
+    _score_fragment_match,
     match_teams_to_event,
     find_moneyline_outcome,
     _fuzzy_team_match,
@@ -59,6 +61,7 @@ async def _match_prediction_markets(limit: int = 500):
         "newly_linked": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
+        "orphaned_snapshots_deleted": 0,
         "errors": [],
         # Funnel stats: track where markets drop off
         "funnel": {
@@ -321,6 +324,15 @@ async def _match_prediction_markets(limit: int = 500):
                         better_match["event_id"],
                         better_match["home_team"], better_match["away_team"],
                     )
+                    # Delete orphaned snapshots from the old (wrong) event
+                    if not teams_match:
+                        del_result = await session.execute(
+                            delete(WinProbSnapshot).where(
+                                WinProbSnapshot.event_id == linked_event.id,
+                                WinProbSnapshot.source == market.source,
+                            )
+                        )
+                        stats["orphaned_snapshots_deleted"] += del_result.rowcount
                     market.event_id = better_match["event_id"]
                     if not teams_match:
                         stats["funnel"]["mislink_fixed"] += 1
@@ -333,6 +345,14 @@ async def _match_prediction_markets(limit: int = 500):
                         market.source, market.name, linked_event.id,
                         linked_event.home_team_name, linked_event.away_team_name,
                     )
+                    # Delete orphaned snapshots from the mislinked event
+                    del_result = await session.execute(
+                        delete(WinProbSnapshot).where(
+                            WinProbSnapshot.event_id == linked_event.id,
+                            WinProbSnapshot.source == market.source,
+                        )
+                    )
+                    stats["orphaned_snapshots_deleted"] += del_result.rowcount
                     market.event_id = None
                     stats["funnel"]["mislink_fixed"] += 1
             except Exception as e:
@@ -639,7 +659,10 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
     Game"), we use the Kalshi ticker to determine the sport and search for
     events by sport_key + commence_time proximity.
 
-    Only returns a match if EXACTLY ONE event matches (unambiguous).
+    Returns a match if EXACTLY ONE event matches (unambiguous), or uses
+    ticker fragment matching to disambiguate when multiple candidates exist
+    (critical for NCAAB/NCAAF where dozens of games happen per day).
+
     Returns the same dict format as _find_matching_event, with
     yes_is_home=True as default (will be corrected if outcome names
     match team names in Phase 2).
@@ -654,13 +677,14 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
     # Use game_date_override (from ticker) if available — Kalshi commence_time
     # is the market RESOLUTION date (often weeks after the game), not the
     # actual game date.
-    # Search ±6 hours (tighter than the usual ±48h since we have no team names)
+    # Tighten to ±3h when we have a ticker game date (more precise)
     reference_time = game_date_override or market.commence_time
     if not reference_time:
         return None
 
-    time_start = reference_time - timedelta(hours=6)
-    time_end = reference_time + timedelta(hours=6)
+    window_hours = 3 if game_date_override else 6
+    time_start = reference_time - timedelta(hours=window_hours)
+    time_end = reference_time + timedelta(hours=window_hours)
 
     # Query events by sport and time
     # Event has sport_id (FK), Sport has key (e.g., "basketball_nba")
@@ -672,7 +696,7 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
             Event.commence_time.between(time_start, time_end),
         )
         .order_by(Event.commence_time)
-        .limit(5)
+        .limit(20)
     )
     candidates = event_result.scalars().all()
 
@@ -694,6 +718,34 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
         }
 
     if len(candidates) > 1:
+        # Try ticker fragment matching to disambiguate
+        fragments = extract_ticker_fragments(market.external_id)
+        if fragments:
+            abbrev_a, abbrev_b, _ = fragments
+            best_event = None
+            best_score = 0
+            for event in candidates:
+                score = _score_fragment_match(
+                    abbrev_a, abbrev_b,
+                    event.home_team_name, event.away_team_name,
+                )
+                if score > best_score:
+                    best_score = score
+                    best_event = event
+            if best_score >= 2 and best_event:
+                logger.info(
+                    "Fragment-matched %s → event %d (%s vs %s) [fragments=%s/%s, score=%d]",
+                    market.external_id, best_event.id,
+                    best_event.home_team_name, best_event.away_team_name,
+                    abbrev_a, abbrev_b, best_score,
+                )
+                return {
+                    "event_id": best_event.id,
+                    "home_team": best_event.home_team_name,
+                    "away_team": best_event.away_team_name,
+                    "yes_is_home": True,
+                }
+
         logger.debug(
             "Sport+time fallback found %d candidates for %s (ambiguous, skipping)",
             len(candidates), market.external_id,

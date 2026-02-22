@@ -1318,3 +1318,98 @@ Explanation:"""
     except Exception as e:
         logger.error(f"Market disagreement explanation error: {e}")
         return None
+
+
+def generate_related_futures_summary(
+    home_team: str,
+    away_team: str,
+    sport_key: str,
+    event_status: str,
+    home_futures: list[dict],
+    away_futures: list[dict],
+) -> Optional[str]:
+    """
+    Generate a casual summary of what championship/award futures mean for a game.
+
+    Produces a 2-4 sentence "Bigger Picture" blurb that contextualizes the
+    game within each team's broader season. Used in the related-futures section
+    on event detail pages.
+
+    Args:
+        home_team: Home team name
+        away_team: Away team name
+        sport_key: Sport key (e.g., "basketball_nba")
+        event_status: "scheduled", "live", "completed", "closed"
+        home_futures: List of dicts with keys: market_name, outcome_name, probability
+        away_futures: Same format for away team
+
+    Returns:
+        2-4 sentence summary string, or None if LLM unavailable or no futures data.
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    if not home_futures and not away_futures:
+        return None
+
+    sport_name = sport_key.replace("_", " ").title() if sport_key else "game"
+
+    # Build structured data for prompt
+    def _format_futures(team: str, futures: list[dict]) -> str:
+        if not futures:
+            return f"  {team}: No championship/award markets found."
+        lines = [f"  {team}:"]
+        for f in futures[:8]:  # Cap at 8 per team to limit tokens
+            prob_pct = round(f.get("probability", 0) * 100, 1) if f.get("probability") else "?"
+            lines.append(f"    - {f.get('market_name', '?')}: {prob_pct}%")
+        return "\n".join(lines)
+
+    home_section = _format_futures(home_team, home_futures)
+    away_section = _format_futures(away_team, away_futures)
+
+    status_context = {
+        "scheduled": "The game hasn't started yet.",
+        "live": "The game is currently in progress.",
+        "completed": "The game is over.",
+        "closed": "The game is over.",
+    }.get(event_status, "")
+
+    prompt = f"""You write casual, insightful game context for a sports app called Bain Luck that shows win probabilities.
+
+Sport: {sport_name}
+Matchup: {away_team} at {home_team}
+{status_context}
+
+Championship & award odds for each team:
+{home_section}
+{away_section}
+
+Write a 2-3 sentence summary of what these futures mean for this game. What's at stake?
+- Focus on the bigger picture: title contention, award races, season trajectory
+- Compare the two teams' positions (contender vs underdog, rising vs falling)
+- If one team has much higher championship odds, note the gap
+- Use casual, engaging language — like a knowledgeable friend explaining context
+- Do NOT give betting advice or use gambling terminology
+- Start directly with the insight (no "In this matchup..." preamble)
+
+Summary:"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=250,
+            temperature=0.3,
+        )
+
+        result = response.choices[0].message.content.strip()
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+        return result
+
+    except Exception as e:
+        logger.error(f"Related futures summary error: {e}")
+        return None

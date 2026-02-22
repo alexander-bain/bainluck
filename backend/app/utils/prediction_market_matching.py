@@ -501,6 +501,65 @@ def match_teams_to_event(
     return None
 
 
+def _is_prop_or_spread_outcome(name: str) -> bool:
+    """
+    Check if an outcome name looks like a prop, spread, total, or O/U — NOT moneyline.
+
+    These should be skipped in find_moneyline_outcome() to prevent fuzzy matching
+    "Stanford vs Cal: O/U 148.5" as a "Stanford Cardinal" moneyline outcome.
+
+    Catches:
+    - Over/Under totals: "O/U 148.5", "Over 220.5", "Under 220.5"
+    - Totals/Spreads: "Total Points", "Celtics -3.5", "+4.5"
+    - Player props: "Rebounds", "Points", "Assists", "Touchdowns", "Yards", etc.
+    """
+    if not name:
+        return False
+    # Colon indicates a prop/stat suffix (e.g., "Celtics vs Warriors: O/U 229.5")
+    if ":" in name:
+        return True
+    name_lower = name.strip().lower()
+    # O/U and Over/Under patterns
+    if _PROP_OUTCOME_RE.search(name_lower):
+        return True
+    return False
+
+
+# Regex patterns that identify prop/spread/total outcomes (not moneyline)
+_PROP_OUTCOME_RE = re.compile(
+    r'(?:'
+    # O/U patterns
+    r'o/u\s*\d'
+    r'|over\s+\d'
+    r'|under\s+\d'
+    r'|\btotal\b'
+    # Spread patterns: "+4.5", "-3.5" (standalone or after team name)
+    r'|[+-]\d+\.?\d*\s*$'
+    # Player prop keywords
+    r'|\brebounds?\b'
+    r'|\bpoints?\s*(?:scored|over|under|\d)'
+    r'|\bassists?\b'
+    r'|\bstrikeouts?\b'
+    r'|\btouchdowns?\b'
+    r'|\byards?\b'
+    r'|\bgoals?\s*(?:scored|over|under|\d)'
+    r'|\bsacks?\b'
+    r'|\binterceptions?\b'
+    r'|\bthree.?pointers?\b'
+    r'|\bhome\s*runs?\b'
+    r'|\bhits?\s*(?:over|under|\d)'
+    r'|\bblocks?\b'
+    r'|\bsteals?\b'
+    r'|\bshots?\s*on\s*(?:target|goal)\b'
+    r'|\bcorners?\b'
+    r'|\bcards?\b'
+    r'|\baces?\b'
+    r'|\bdouble.?faults?\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
 def find_moneyline_outcome(
     outcomes: list,
     matchup: MatchupInfo,
@@ -530,6 +589,10 @@ def find_moneyline_outcome(
             continue
         prob = float(outcome.current_probability)
         if prob <= 0 or prob >= 1:
+            continue
+
+        # Skip prop/spread/total outcomes before fuzzy matching
+        if _is_prop_or_spread_outcome(outcome.name):
             continue
 
         if _fuzzy_team_match(outcome.name, event_home_team):
@@ -841,6 +904,101 @@ def extract_matchup_with_ticker_fallback(
             )
 
     return None
+
+
+# ── Ticker fragment extraction for college team disambiguation ────────────
+# Unlike extract_teams_from_ticker() which maps abbreviations to known pro
+# team names, this function returns RAW abbreviation fragments for fuzzy
+# matching against event team names. Useful for NCAAB/NCAAF where there are
+# hundreds of teams and maintaining a complete abbreviation map is impractical.
+
+_TICKER_FRAGMENT_RE = re.compile(
+    r'^([a-z]+)-(\d{2}[a-z]{3}\d{1,2})([a-z]+)$',
+    re.IGNORECASE,
+)
+
+
+def extract_ticker_fragments(external_id: str) -> Optional[tuple[str, str, str]]:
+    """
+    Extract raw abbreviation fragments and sport prefix from a Kalshi game ticker.
+
+    Unlike extract_teams_from_ticker() which maps to known team names, this
+    returns the raw abbreviation strings for fuzzy matching against event team
+    names. Useful for college sports where maintaining a full abbreviation map
+    is impractical.
+
+    Example: "KXNCAABGAME-26FEB21STACAL" → ("STA", "CAL", "basketball_ncaab")
+
+    Returns (abbrev_a, abbrev_b, sport_prefix) or None if parsing fails.
+    """
+    if not external_id:
+        return None
+
+    # Must be a game ticker
+    if not is_kalshi_game_ticker(external_id):
+        return None
+
+    m = _TICKER_FRAGMENT_RE.match(external_id)
+    if not m:
+        return None
+
+    sport_ticker_prefix = m.group(1).lower()
+    teams_str = m.group(3).upper()
+
+    if len(teams_str) < 4:  # Need at least 2+2 chars
+        return None
+
+    # Get sport prefix from ticker
+    sport_prefix = get_sport_prefix_from_ticker(external_id)
+    if not sport_prefix:
+        return None
+
+    # Try splitting into two abbreviations (2+rest, 3+rest)
+    # Prefer 3+3 for NCAAB/NCAAF, then 3+2, 2+3, 2+2
+    for split_at in (3, 2):
+        if split_at >= len(teams_str):
+            continue
+        abbrev_a = teams_str[:split_at]
+        abbrev_b = teams_str[split_at:]
+        if 2 <= len(abbrev_b) <= 4:
+            return (abbrev_a, abbrev_b, sport_prefix)
+
+    return None
+
+
+def _score_fragment_match(
+    abbrev_a: str, abbrev_b: str,
+    home_team: str, away_team: str,
+) -> int:
+    """
+    Score how well two ticker abbreviation fragments match event team names.
+
+    Checks if each abbreviation matches the start of any word in either team
+    name (case-insensitive). Returns 0, 1, or 2 (number of fragments matched).
+    Both fragments must match DIFFERENT teams to score 2.
+    """
+    def _fragment_matches_team(abbrev: str, team_name: str) -> bool:
+        abbrev_lower = abbrev.lower()
+        words = team_name.lower().split()
+        return any(w.startswith(abbrev_lower) for w in words)
+
+    a_home = _fragment_matches_team(abbrev_a, home_team)
+    a_away = _fragment_matches_team(abbrev_a, away_team)
+    b_home = _fragment_matches_team(abbrev_b, home_team)
+    b_away = _fragment_matches_team(abbrev_b, away_team)
+
+    score = 0
+    # Fragment A matches one team and fragment B matches the OTHER team
+    if (a_home and b_away) or (a_away and b_home):
+        score = 2
+    elif a_home or a_away:
+        score += 1
+        if b_home or b_away:
+            score += 1  # Both match but same team — still count
+    elif b_home or b_away:
+        score += 1
+
+    return score
 
 
 # ── Time window for event matching ───────────────────────────────────────────

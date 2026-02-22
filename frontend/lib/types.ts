@@ -368,6 +368,7 @@ export interface RelatedFuturesResponse {
   home_team_futures: RelatedFuture[];
   away_team_futures: RelatedFuture[];
   total_count: number;
+  summary: string | null;
 }
 
 // Pulse rankings types

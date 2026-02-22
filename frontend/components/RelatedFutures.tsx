@@ -213,6 +213,9 @@ function TeamSection({
  *
  * Shows championship, award, and other futures markets linked to the teams
  * in this event. Uses team colors, logos, and probability bars for visual impact.
+ *
+ * When an LLM summary is available, shows summary-first with details collapsed.
+ * Falls back to expanded team sections when no summary exists.
  */
 export default function RelatedFutures({
   eventId,
@@ -223,6 +226,7 @@ export default function RelatedFutures({
   homeTeamLogo,
   awayTeamLogo,
 }: RelatedFuturesProps) {
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const { data, error, isLoading } = useSWR<RelatedFuturesResponse>(
     ["related-futures", eventId],
     () => fetchRelatedFutures(eventId),
@@ -236,7 +240,8 @@ export default function RelatedFutures({
     return null;
   }
 
-  const { home_team_futures, away_team_futures } = data;
+  const { home_team_futures, away_team_futures, summary } = data;
+  const hasSummary = !!summary;
 
   return (
     <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
@@ -244,22 +249,61 @@ export default function RelatedFutures({
         Bigger Picture
       </h3>
 
-      <div className="space-y-4">
-        <TeamSection
-          teamName={homeTeam}
-          futures={home_team_futures}
-          teamColor={homeTeamColor || "#6B7280"}
-          teamLogo={homeTeamLogo}
-          defaultExpanded={home_team_futures.length <= 5}
-        />
-        <TeamSection
-          teamName={awayTeam}
-          futures={away_team_futures}
-          teamColor={awayTeamColor || "#6B7280"}
-          teamLogo={awayTeamLogo}
-          defaultExpanded={away_team_futures.length <= 5}
-        />
-      </div>
+      {/* LLM Summary */}
+      {hasSummary && (
+        <p className="text-sm text-graphite leading-relaxed mb-3">
+          {summary}
+        </p>
+      )}
+
+      {/* Team detail sections */}
+      {hasSummary ? (
+        <>
+          <button
+            onClick={() => setDetailsExpanded(!detailsExpanded)}
+            className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors mb-2"
+          >
+            {detailsExpanded
+              ? "Hide details"
+              : `See all ${data.total_count} futures`}
+          </button>
+          {detailsExpanded && (
+            <div className="space-y-4">
+              <TeamSection
+                teamName={homeTeam}
+                futures={home_team_futures}
+                teamColor={homeTeamColor || "#6B7280"}
+                teamLogo={homeTeamLogo}
+                defaultExpanded={home_team_futures.length <= 5}
+              />
+              <TeamSection
+                teamName={awayTeam}
+                futures={away_team_futures}
+                teamColor={awayTeamColor || "#6B7280"}
+                teamLogo={awayTeamLogo}
+                defaultExpanded={away_team_futures.length <= 5}
+              />
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="space-y-4">
+          <TeamSection
+            teamName={homeTeam}
+            futures={home_team_futures}
+            teamColor={homeTeamColor || "#6B7280"}
+            teamLogo={homeTeamLogo}
+            defaultExpanded={home_team_futures.length <= 5}
+          />
+          <TeamSection
+            teamName={awayTeam}
+            futures={away_team_futures}
+            teamColor={awayTeamColor || "#6B7280"}
+            teamLogo={awayTeamLogo}
+            defaultExpanded={away_team_futures.length <= 5}
+          />
+        </div>
+      )}
     </div>
   );
 }
