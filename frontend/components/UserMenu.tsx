@@ -1,9 +1,5 @@
 /**
  * UserMenu - Sign-in button or user avatar with dropdown.
- *
- * When not authenticated: shows a clickable "Sign in" button.
- * When authenticated: shows user avatar/initial with dropdown menu.
- * When auth is not configured: renders nothing.
  */
 
 "use client";
@@ -20,7 +16,6 @@ export default function UserMenu() {
   const [signingIn, setSigningIn] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -31,10 +26,8 @@ export default function UserMenu() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Don't render anything if auth is not configured
   if (!isAuthAvailable) return null;
 
-  // Not authenticated — show Sign in button
   if (!isAuthenticated) {
     return (
       <button
@@ -48,14 +41,13 @@ export default function UserMenu() {
           }
         }}
         disabled={signingIn}
-        className="text-sm text-slate hover:text-graphite transition-colors"
+        className="text-sm text-text-secondary hover:text-text-primary transition-colors"
       >
         {signingIn ? "Signing in..." : "Sign in"}
       </button>
     );
   }
 
-  // Authenticated — show avatar with dropdown
   const initial = user?.displayName?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || "?";
 
   return (
@@ -69,32 +61,30 @@ export default function UserMenu() {
           <img
             src={user.photoURL}
             alt=""
-            className="w-8 h-8 rounded-full border border-mist"
+            className="w-8 h-8 rounded-full border border-surface-border"
             referrerPolicy="no-referrer"
             onError={() => setImgError(true)}
           />
         ) : (
-          <div className="w-8 h-8 rounded-full bg-graphite text-white flex items-center justify-center text-sm font-medium">
+          <div className="w-8 h-8 rounded-full bg-accent-brand text-text-inverse flex items-center justify-center text-sm font-medium">
             {initial}
           </div>
         )}
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-mist py-1 z-50">
-          {/* User info */}
-          <div className="px-4 py-2 border-b border-mist">
-            <p className="text-sm font-medium text-graphite truncate">
+        <div className="absolute right-0 mt-2 w-48 bg-surface-card rounded-lg shadow-lg border border-surface-border py-1 z-50">
+          <div className="px-4 py-2 border-b border-surface-border">
+            <p className="text-sm font-medium text-text-primary truncate">
               {user?.displayName || "User"}
             </p>
-            <p className="text-xs text-slate truncate">{user?.email}</p>
+            <p className="text-xs text-text-muted truncate">{user?.email}</p>
           </div>
 
-          {/* Menu items */}
           <Link
             href="/preferences"
             onClick={() => setIsOpen(false)}
-            className="block px-4 py-2 text-sm text-graphite hover:bg-snow transition-colors"
+            className="block px-4 py-2 text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
           >
             Preferences
           </Link>
@@ -104,7 +94,7 @@ export default function UserMenu() {
               setIsOpen(false);
               await signOut();
             }}
-            className="w-full text-left px-4 py-2 text-sm text-slate hover:bg-snow transition-colors"
+            className="w-full text-left px-4 py-2 text-sm text-text-muted hover:bg-surface-elevated transition-colors"
           >
             Sign out
           </button>

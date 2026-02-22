@@ -9,18 +9,41 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Core palette from design brief
-        snow: "#FAFAFA",
-        graphite: "#1A1A1A",
-        slate: "#6B7280",
-        silver: "#9CA3AF",
-        mist: "#E5E7EB",
-        ink: "#0F172A",
-        // Semantic colors
-        charcoal: "#374151",
-        fog: "#D1D5DB",
-        forest: "#059669",
-        rust: "#DC2626",
+        // === Scoreboard Dark Design System ===
+        // Surfaces (layered dark)
+        surface: {
+          deep: "#0C0F14",    // Page background
+          card: "#141820",    // Card background
+          elevated: "#1C2028", // Hover / raised elements
+          border: "#242830",   // Borders between elements
+        },
+        // Text hierarchy
+        text: {
+          primary: "#F8FAFC",   // Headlines, numbers
+          secondary: "#94A3B8", // Labels, descriptions
+          muted: "#475569",     // Metadata, timestamps
+          inverse: "#0C0F14",   // Text on light backgrounds
+        },
+        // Accents
+        accent: {
+          live: "#22C55E",      // Live games, positive
+          brand: "#10B981",     // Primary brand / CTA
+          futures: "#8B5CF6",   // Futures/predictions
+          warning: "#F59E0B",   // Warnings, starting soon
+          danger: "#EF4444",    // Negative movement
+        },
+
+        // Legacy aliases (keep existing code working during migration)
+        snow: "#0C0F14",       // Now maps to dark background
+        graphite: "#F8FAFC",   // Now maps to light text
+        slate: "#94A3B8",      // Now maps to secondary text
+        silver: "#475569",     // Now maps to muted text
+        mist: "#242830",       // Now maps to border color
+        ink: "#F8FAFC",
+        charcoal: "#94A3B8",
+        fog: "#1C2028",
+        forest: "#22C55E",
+        rust: "#EF4444",
         emerald: "#10B981",
         amber: "#F59E0B",
       },
@@ -29,7 +52,12 @@ const config: Config = {
         mono: ["var(--font-jetbrains-mono)", "SF Mono", ...defaultTheme.fontFamily.mono],
       },
       fontSize: {
-        // Custom type scale from design brief
+        // Hero probability numbers
+        "prob-hero": ["36px", { lineHeight: "1", letterSpacing: "-0.03em", fontWeight: "700" }],
+        "prob-lg": ["28px", { lineHeight: "1", letterSpacing: "-0.02em", fontWeight: "700" }],
+        "prob-md": ["20px", { lineHeight: "1", letterSpacing: "-0.02em", fontWeight: "700" }],
+        "prob-sm": ["16px", { lineHeight: "1", letterSpacing: "-0.01em", fontWeight: "700" }],
+        // UI type scale
         display: ["48px", { lineHeight: "1.1", letterSpacing: "-0.02em", fontWeight: "700" }],
         "title-1": ["28px", { lineHeight: "1.2", letterSpacing: "-0.01em", fontWeight: "600" }],
         "title-2": ["22px", { lineHeight: "1.25", letterSpacing: "-0.01em", fontWeight: "600" }],
@@ -39,10 +67,9 @@ const config: Config = {
         caption: ["14px", { lineHeight: "1.4", letterSpacing: "0.01em", fontWeight: "400" }],
         "caption-strong": ["14px", { lineHeight: "1.4", letterSpacing: "0.01em", fontWeight: "600" }],
         micro: ["12px", { lineHeight: "1.3", letterSpacing: "0.02em", fontWeight: "500" }],
-        probability: ["32px", { lineHeight: "1", letterSpacing: "-0.02em", fontWeight: "700" }],
+        "micro-xs": ["10px", { lineHeight: "1.2", letterSpacing: "0.04em", fontWeight: "600" }],
       },
       spacing: {
-        // Design system spacing
         "space-1": "4px",
         "space-2": "8px",
         "space-3": "12px",
@@ -55,11 +82,12 @@ const config: Config = {
         "space-16": "64px",
       },
       boxShadow: {
-        card: "0 1px 3px rgba(0,0,0,0.08)",
-        "card-hover": "0 4px 12px rgba(0,0,0,0.08)",
+        card: "0 1px 2px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.03)",
+        "card-hover": "0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06)",
+        glow: "0 0 20px rgba(16, 185, 129, 0.15)",
       },
       borderRadius: {
-        card: "12px",
+        card: "10px",
       },
       transitionDuration: {
         fast: "150ms",

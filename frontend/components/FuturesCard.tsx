@@ -8,29 +8,19 @@ import { getEmojiForCategory, getEmojiForLeague } from "@/lib/sportCategories";
 interface FuturesCardProps {
   market: FuturesMarket;
   showSport?: boolean;
-  /** Whether the futures market is pinned */
   isPinned?: boolean;
-  /** Callback when pin is toggled */
   onPinToggle?: (futuresId: number) => void;
-  /** Whether max pins has been reached (disable pin button) */
   pinDisabled?: boolean;
 }
 
-/**
- * Format sport name for display
- */
 function formatSportName(sportKey: string | null, sportName: string | null): string {
   if (sportName) return sportName;
   if (!sportKey) return "Sports";
-  // Convert key like "basketball_nba_championship_winner" to "NBA Championship"
   return sportKey
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/**
- * Movement indicator component
- */
 function MovementIndicator({ change }: { change: number | null | undefined }) {
   if (change === null || change === undefined || change === 0 || !Number.isFinite(change)) return null;
 
@@ -38,20 +28,12 @@ function MovementIndicator({ change }: { change: number | null | undefined }) {
   const absChange = Math.abs(change * 100);
 
   return (
-    <span
-      className={`text-xs font-medium ${
-        isPositive ? "text-emerald-600" : "text-red-500"
-      }`}
-    >
+    <span className={`text-[11px] font-medium ${isPositive ? "text-accent-live" : "text-accent-danger"}`}>
       {isPositive ? "↑" : "↓"} {absChange.toFixed(1)}%
     </span>
   );
 }
 
-/**
- * Futures Market Card
- * Displays a futures market with top outcomes and probabilities
- */
 export default function FuturesCard({
   market,
   showSport = true,
@@ -61,17 +43,8 @@ export default function FuturesCard({
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
   const topOutcomes = outcomes.slice(0, 5);
-  const sportEmoji = market.llm_sport_category
-    ? getEmojiForCategory(market.llm_sport_category)
-    : market.sport
-      ? getEmojiForLeague(market.sport)
-      : "🏆";
   const isResolved = market.status === "resolved";
 
-  // Find the leader
-  const leader = topOutcomes[0];
-
-  // Handle pin button click (prevent navigation)
   const handlePinClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -82,68 +55,59 @@ export default function FuturesCard({
 
   return (
     <Link href={`/futures/${market.id}`} className="h-full">
-      <div
-        className={`h-full flex flex-col rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer group/card ${
-          isResolved
-            ? "bg-slate-50 border border-slate-200"
-            : "bg-white border border-mist"
-        }`}
-      >
+      <div className={`
+        h-full flex flex-col rounded-card p-3 sm:p-4 transition-all cursor-pointer group/card
+        bg-surface-card border border-surface-border
+        hover:bg-surface-elevated hover:shadow-card-hover
+        ${isResolved ? "opacity-70 hover:opacity-100" : ""}
+      `}>
         {/* Header */}
-        <div className="flex justify-between items-start mb-3">
-          <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
-            {/* Pin button - always visible but subtle, more prominent on hover */}
-            {onPinToggle && (
-              <button
-                onClick={handlePinClick}
-                disabled={pinDisabled && !isPinned}
-                className={`
-                  p-1 rounded-full transition-all shrink-0
-                  ${isPinned
-                    ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
-                    : 'text-slate/30 hover:text-slate hover:bg-slate/10 group-hover/card:text-slate/50'
-                  }
-                  ${pinDisabled && !isPinned ? 'cursor-not-allowed opacity-30' : ''}
-                  focus:outline-none focus:ring-2 focus:ring-amber-300
-                `}
-                title={isPinned ? 'Unpin market' : pinDisabled ? 'Maximum 6 pins' : 'Pin market'}
-                aria-label={isPinned ? 'Unpin market' : 'Pin market'}
-              >
-                <PinIcon filled={isPinned} className="w-4 h-4" />
-              </button>
-            )}
-            {showSport && market.sport && (
-              <span className="text-sm bg-slate/10 px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0">
-                <span>{sportEmoji}</span>
-                <span className="text-slate font-medium truncate max-w-[100px]">
-                  {formatSportName(market.sport, market.sport_name)}
-                </span>
+        <div className="flex justify-between items-start gap-2 mb-2">
+          <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
+            {showSport && (
+              <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
+                {market.llm_sport_category || formatSportName(market.sport, market.sport_name)}
               </span>
             )}
             {market.category && (
-              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full shrink-0">
+              <span className="text-[10px] bg-accent-futures/15 text-accent-futures px-1.5 py-0.5 rounded">
                 {market.category}
               </span>
             )}
           </div>
 
-          {/* Status Badge */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             {isResolved && (
-              <span className="flex items-center gap-1 bg-slate/10 text-slate px-2 py-0.5 rounded-full text-xs font-medium">
-                Resolved
-              </span>
+              <span className="text-micro-xs text-text-muted uppercase">Resolved</span>
             )}
             {market.outcome_count > 0 && (
-              <span className="text-xs text-silver">
-                {market.outcome_count} outcomes
+              <span className="text-micro text-text-muted">
+                {market.outcome_count}
               </span>
+            )}
+            {onPinToggle && (
+              <button
+                onClick={handlePinClick}
+                disabled={pinDisabled && !isPinned}
+                className={`
+                  p-1 rounded transition-all
+                  ${isPinned
+                    ? 'text-accent-warning'
+                    : 'text-text-muted/30 hover:text-text-muted group-hover/card:text-text-muted/50'
+                  }
+                  ${pinDisabled && !isPinned ? 'cursor-not-allowed opacity-30' : ''}
+                `}
+                title={isPinned ? 'Unpin' : pinDisabled ? 'Max 6 pins' : 'Pin'}
+                aria-label={isPinned ? 'Unpin market' : 'Pin market'}
+              >
+                <PinIcon filled={isPinned} className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
         </div>
 
         {/* Market Name */}
-        <h3 className="text-base font-semibold text-graphite mb-3 line-clamp-2">
+        <h3 className="text-sm font-medium text-text-primary mb-3 line-clamp-2 leading-snug">
           {market.name}
         </h3>
 
@@ -160,22 +124,20 @@ export default function FuturesCard({
           ))}
 
           {outcomes.length === 0 && (
-            <div className="text-sm text-slate text-center py-4">
+            <div className="text-sm text-text-muted text-center py-4">
               No outcomes available
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center">
-          <div className="text-xs text-slate">
-            {market.source && (
-              <span>Source: {market.source}</span>
-            )}
+        <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center">
+          <div className="text-micro text-text-muted">
+            {market.source && <span>{market.source}</span>}
           </div>
           {market.updated_at && (
-            <span className="text-xs text-silver">
-              Updated {formatRelativeTime(market.updated_at)}
+            <span className="text-micro text-text-muted">
+              {formatRelativeTime(market.updated_at)}
             </span>
           )}
         </div>
@@ -184,9 +146,6 @@ export default function FuturesCard({
   );
 }
 
-/**
- * Single outcome row within the card
- */
 function OutcomeRow({
   outcome,
   rank,
@@ -199,46 +158,52 @@ function OutcomeRow({
   isResolved: boolean;
 }) {
   const movement = outcome.movement ?? outcome.probability_change_24h;
+  const prob = outcome.probability ?? 0;
 
   return (
-    <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2 flex-1 min-w-0">
-        {/* Rank indicator */}
-        <span
-          className={`w-5 h-5 flex items-center justify-center text-xs rounded-full shrink-0 ${
-            isLeader
-              ? "bg-amber-100 text-amber-700 font-semibold"
-              : "bg-slate/10 text-slate"
-          }`}
-        >
-          {rank}
-        </span>
+    <div className="flex items-center gap-2">
+      {/* Rank */}
+      <span className={`w-5 h-5 flex items-center justify-center text-[10px] rounded flex-shrink-0 ${
+        isLeader
+          ? "bg-accent-warning/15 text-accent-warning font-bold"
+          : "text-text-muted"
+      }`}>
+        {rank}
+      </span>
 
-        {/* Name */}
-        <span
-          className={`text-sm truncate ${
-            isLeader ? "font-semibold text-graphite" : "text-slate"
-          }`}
-        >
-          {outcome.name}
-        </span>
-
-        {/* Winner badge */}
-        {outcome.is_winner && (
-          <span className="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded shrink-0">
-            Winner
+      {/* Name + mini bar */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className={`text-sm truncate ${
+            isLeader ? "font-medium text-text-primary" : "text-text-secondary"
+          }`}>
+            {outcome.name}
           </span>
-        )}
+          {outcome.is_winner && (
+            <span className="text-[10px] bg-accent-live/15 text-accent-live px-1 py-0.5 rounded flex-shrink-0">
+              ✓
+            </span>
+          )}
+        </div>
+        {/* Mini probability bar */}
+        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${Math.min(prob * 100, 100)}%`,
+              backgroundColor: isLeader ? "var(--accent-futures)" : "var(--text-muted)",
+              opacity: isLeader ? 0.7 : 0.3,
+            }}
+          />
+        </div>
       </div>
 
-      {/* Probability and movement */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Probability + movement */}
+      <div className="flex items-center gap-1.5 flex-shrink-0">
         <MovementIndicator change={movement} />
-        <span
-          className={`font-mono text-sm tabular-nums ${
-            isLeader ? "font-bold text-graphite" : "text-slate"
-          }`}
-        >
+        <span className={`font-mono text-sm tabular-nums ${
+          isLeader ? "font-bold text-text-primary" : "text-text-muted"
+        }`}>
           {formatProbability(outcome.probability)}
         </span>
       </div>
@@ -246,9 +211,6 @@ function OutcomeRow({
   );
 }
 
-/**
- * Format relative time (e.g., "2h ago", "3d ago")
- */
 function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
   const now = new Date();
@@ -268,20 +230,14 @@ function formatRelativeTime(isoString: string): string {
   });
 }
 
-/**
- * Pin icon - pushpin style
- */
 function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
   if (filled) {
-    // Filled pushpin
     return (
       <svg className={className} viewBox="0 0 24 24" fill="currentColor">
         <path d="M16 4c0-.55-.22-1.05-.58-1.41-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-6.01 6.01C5.22 9.95 4 11.59 4 13.5c0 1.1.45 2.1 1.17 2.83L2 19.5l1.41 1.41 3.17-3.17c.73.72 1.73 1.17 2.83 1.17 1.91 0 3.55-1.22 4.91-2.58l6.01-6.01c.36-.36.58-.86.58-1.41s-.22-1.05-.58-1.41c-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-4.95 4.95-2.12-2.12L16 4z"/>
       </svg>
     );
   }
-
-  // Outline pushpin
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v1H5V5z" />

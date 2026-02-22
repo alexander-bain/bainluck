@@ -5,18 +5,39 @@
 /* JetBrains Mono loaded via next/font in layout.tsx (self-hosted, non-blocking) */
 
 :root {
-  /* Colors */
-  --color-snow: #FAFAFA;
-  --color-white: #FFFFFF;
-  --color-graphite: #1A1A1A;
-  --color-slate: #6B7280;
-  --color-silver: #9CA3AF;
-  --color-mist: #E5E7EB;
-  --color-ink: #0F172A;
-  --color-charcoal: #374151;
-  --color-fog: #D1D5DB;
-  --color-forest: #059669;
-  --color-rust: #DC2626;
+  /* === Scoreboard Dark Design System === */
+
+  /* Surfaces */
+  --surface-deep: #0C0F14;
+  --surface-card: #141820;
+  --surface-elevated: #1C2028;
+  --surface-border: #242830;
+
+  /* Text */
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #475569;
+  --text-inverse: #0C0F14;
+
+  /* Accents */
+  --accent-live: #22C55E;
+  --accent-brand: #10B981;
+  --accent-futures: #8B5CF6;
+  --accent-warning: #F59E0B;
+  --accent-danger: #EF4444;
+
+  /* Legacy color aliases (keep old code working) */
+  --color-snow: #0C0F14;
+  --color-white: #141820;
+  --color-graphite: #F8FAFC;
+  --color-slate: #94A3B8;
+  --color-silver: #475569;
+  --color-mist: #242830;
+  --color-ink: #F8FAFC;
+  --color-charcoal: #94A3B8;
+  --color-fog: #1C2028;
+  --color-forest: #22C55E;
+  --color-rust: #EF4444;
   --color-emerald: #10B981;
   --color-amber: #F59E0B;
 
@@ -44,8 +65,10 @@
 }
 
 body {
-  color: var(--color-graphite);
-  background: var(--color-snow);
+  color: var(--text-primary);
+  background: var(--surface-deep);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Hide scrollbar for filter pills */
@@ -75,4 +98,22 @@ body {
 /* Probability transition */
 .probability-transition {
   transition: width var(--transition-probability);
+}
+
+/* Team color probability bar */
+.prob-bar {
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+}
+
+.prob-bar-segment {
+  transition: width 400ms ease-out;
+  min-width: 2px;
+}
+
+/* Bottom tab bar safe area */
+.bottom-nav-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }

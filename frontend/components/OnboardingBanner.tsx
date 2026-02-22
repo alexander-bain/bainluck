@@ -6,22 +6,14 @@ import { useAuthContext } from "@/components/AuthProvider";
 
 const DISMISSED_KEY = "bainluck_onboarding_dismissed";
 
-/**
- * Shows a CTA banner for authenticated users who haven't completed onboarding.
- * Dismissable — stores the dismissal in localStorage so it doesn't reappear.
- *
- * Uses the feed response's personalization metadata to determine if the user
- * has set up their preferences (0 teams = hasn't onboarded).
- */
 export default function OnboardingBanner({
   teamCount,
 }: {
   teamCount?: number;
 }) {
   const { isAuthenticated, isLoading } = useAuthContext();
-  const [dismissed, setDismissed] = useState(true); // Default hidden
+  const [dismissed, setDismissed] = useState(true);
 
-  // Check localStorage for dismissal on mount
   useEffect(() => {
     const wasDismissed = localStorage.getItem(DISMISSED_KEY);
     setDismissed(!!wasDismissed);
@@ -32,21 +24,20 @@ export default function OnboardingBanner({
     setDismissed(true);
   };
 
-  // Don't show if: loading, not authenticated, dismissed, or already has teams
   if (isLoading || !isAuthenticated || dismissed || (teamCount && teamCount > 0)) {
     return null;
   }
 
   return (
-    <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-4 mb-6">
+    <div className="bg-surface-card border border-accent-brand/20 rounded-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="text-xl mt-0.5">⭐</span>
+          <span className="text-lg mt-0.5">⭐</span>
           <div>
-            <p className="text-sm font-semibold text-graphite">
+            <p className="text-sm font-semibold text-text-primary">
               Personalize your feed
             </p>
-            <p className="text-xs text-slate mt-0.5">
+            <p className="text-xs text-text-secondary mt-0.5">
               Tell us your teams and sports to see what matters most to you.
             </p>
           </div>
@@ -54,13 +45,13 @@ export default function OnboardingBanner({
         <div className="flex items-center gap-2 flex-shrink-0">
           <Link
             href="/onboarding"
-            className="px-3 py-1.5 bg-graphite text-white rounded-lg text-xs font-medium hover:bg-graphite/90 transition-colors"
+            className="px-3 py-1.5 bg-accent-brand text-text-inverse rounded-lg text-xs font-medium hover:bg-accent-brand/90 transition-colors"
           >
             Get Started
           </Link>
           <button
             onClick={handleDismiss}
-            className="text-slate hover:text-graphite p-1 transition-colors"
+            className="text-text-muted hover:text-text-secondary p-1 transition-colors"
             title="Dismiss"
           >
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
