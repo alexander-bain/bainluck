@@ -252,7 +252,7 @@ async def _poll_polymarket_markets():
     try:
         # Stream events page-by-page instead of loading all into memory.
         # Each page is processed and committed in batches.
-        max_pages = 100
+        max_pages = 30
         seen_ids: set[str] = set()
         batch: list = []
 
