@@ -24,7 +24,7 @@ export function ConsentBanner() {
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[100] p-4 animate-slide-up">
-      <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-2xl border border-mist overflow-hidden">
+      <div className="max-w-4xl mx-auto bg-surface-card rounded-xl shadow-2xl border border-surface-border overflow-hidden">
         {/* Main Banner */}
         <div className="p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row sm:items-start gap-4">
@@ -32,11 +32,11 @@ export function ConsentBanner() {
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xl">🍪</span>
-                <h3 className="text-base font-semibold text-graphite">
+                <h3 className="text-base font-semibold text-text-primary">
                   We value your privacy
                 </h3>
               </div>
-              <p className="text-sm text-slate leading-relaxed">
+              <p className="text-sm text-text-secondary leading-relaxed">
                 We use cookies and similar technologies to understand how you use Bain Luck
                 and improve your experience. You can choose which types of tracking to allow.
               </p>
@@ -52,13 +52,13 @@ export function ConsentBanner() {
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 flex-shrink-0">
               <button
                 onClick={() => setConsent('none')}
-                className="px-4 py-2 text-sm font-medium text-slate bg-slate/10 hover:bg-slate/20 rounded-lg transition-colors"
+                className="px-4 py-2 text-sm font-medium text-text-secondary bg-slate/10 hover:bg-slate/20 rounded-lg transition-colors"
               >
                 Decline all
               </button>
               <button
                 onClick={() => setConsent('analytics')}
-                className="px-4 py-2 text-sm font-medium text-graphite bg-mist hover:bg-slate/20 rounded-lg transition-colors"
+                className="px-4 py-2 text-sm font-medium text-text-primary bg-surface-border hover:bg-slate/20 rounded-lg transition-colors"
               >
                 Analytics only
               </button>
@@ -73,16 +73,16 @@ export function ConsentBanner() {
 
           {/* Details Section */}
           {showDetails && (
-            <div className="mt-4 pt-4 border-t border-mist">
+            <div className="mt-4 pt-4 border-t border-surface-border">
               <div className="grid gap-4 sm:grid-cols-2">
                 {/* Essential */}
                 <div className="p-3 bg-slate/5 rounded-lg">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    <span className="text-sm font-medium text-graphite">Essential</span>
-                    <span className="text-xs text-slate">(Always on)</span>
+                    <span className="text-sm font-medium text-text-primary">Essential</span>
+                    <span className="text-xs text-text-secondary">(Always on)</span>
                   </div>
-                  <p className="text-xs text-slate">
+                  <p className="text-xs text-text-secondary">
                     Required for the site to function. Includes your consent preferences
                     and basic functionality.
                   </p>
@@ -92,9 +92,9 @@ export function ConsentBanner() {
                 <div className="p-3 bg-slate/5 rounded-lg">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                    <span className="text-sm font-medium text-graphite">Analytics</span>
+                    <span className="text-sm font-medium text-text-primary">Analytics</span>
                   </div>
-                  <p className="text-xs text-slate">
+                  <p className="text-xs text-text-secondary">
                     Helps us understand how you use the site so we can improve it.
                     We use Google Analytics with anonymized data.
                   </p>
@@ -103,11 +103,11 @@ export function ConsentBanner() {
                 {/* Marketing (future) */}
                 <div className="p-3 bg-slate/5 rounded-lg opacity-50">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="w-2 h-2 rounded-full bg-purple-500"></span>
-                    <span className="text-sm font-medium text-graphite">Marketing</span>
-                    <span className="text-xs text-slate">(Not currently used)</span>
+                    <span className="w-2 h-2 rounded-full bg-purple-500/150"></span>
+                    <span className="text-sm font-medium text-text-primary">Marketing</span>
+                    <span className="text-xs text-text-secondary">(Not currently used)</span>
                   </div>
-                  <p className="text-xs text-slate">
+                  <p className="text-xs text-text-secondary">
                     Would be used for personalized content and ads.
                     We don&apos;t currently use marketing cookies.
                   </p>
@@ -117,19 +117,19 @@ export function ConsentBanner() {
                 <div className="p-3 bg-slate/5 rounded-lg">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                    <span className="text-sm font-medium text-graphite">Cross-platform</span>
+                    <span className="text-sm font-medium text-text-primary">Cross-platform</span>
                   </div>
-                  <p className="text-xs text-slate">
+                  <p className="text-xs text-text-secondary">
                     If you log in, we connect your activity across web and mobile
                     to provide a seamless experience.
                   </p>
                 </div>
               </div>
 
-              <p className="mt-4 text-xs text-silver">
+              <p className="mt-4 text-xs text-text-muted">
                 You can change your preferences at any time. Your choice will be saved
                 and remembered for future visits. For more information, see our{' '}
-                <a href="/privacy" className="underline hover:text-slate">
+                <a href="/privacy" className="underline hover:text-text-secondary">
                   Privacy Policy
                 </a>
                 .

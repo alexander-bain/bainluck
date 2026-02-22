@@ -14,7 +14,7 @@ function SearchLoading() {
   return (
     <div className="text-center py-12">
       <div className="text-4xl mb-4 animate-pulse">🔍</div>
-      <p className="text-slate">Loading search...</p>
+      <p className="text-text-secondary">Loading search...</p>
     </div>
   );
 }
@@ -87,8 +87,8 @@ function SearchContent() {
     return (
       <div className="text-center py-12">
         <div className="text-4xl mb-4">🔍</div>
-        <h1 className="text-title-2 text-graphite mb-2">Search for Teams</h1>
-        <p className="text-slate">
+        <h1 className="text-title-2 text-text-primary mb-2">Search for Teams</h1>
+        <p className="text-text-secondary">
           Enter at least 2 characters to search for games by team name
         </p>
       </div>
@@ -99,7 +99,7 @@ function SearchContent() {
     return (
       <div className="text-center py-12">
         <div className="text-4xl mb-4 animate-pulse">🔍</div>
-        <p className="text-slate">Searching for &quot;{query}&quot;...</p>
+        <p className="text-text-secondary">Searching for &quot;{query}&quot;...</p>
       </div>
     );
   }
@@ -108,8 +108,8 @@ function SearchContent() {
     return (
       <div className="text-center py-12">
         <div className="text-4xl mb-4">⚠️</div>
-        <h1 className="text-title-2 text-graphite mb-2">Search Error</h1>
-        <p className="text-slate">{error}</p>
+        <h1 className="text-title-2 text-text-primary mb-2">Search Error</h1>
+        <p className="text-text-secondary">{error}</p>
       </div>
     );
   }
@@ -121,15 +121,15 @@ function SearchContent() {
     return (
       <div className="text-center py-12">
         <div className="text-4xl mb-4">🤷</div>
-        <h1 className="text-title-2 text-graphite mb-2">No Results</h1>
-        <p className="text-slate">
+        <h1 className="text-title-2 text-text-primary mb-2">No Results</h1>
+        <p className="text-text-secondary">
           No games or futures found for &quot;{query}&quot;
           {sportFilter && ` in ${getLeagueDisplay(sportFilter)}`}
         </p>
         {sportFilter && (
           <button
             onClick={() => setFilter(undefined)}
-            className="mt-4 text-sm text-graphite underline hover:no-underline"
+            className="mt-4 text-sm text-text-primary underline hover:no-underline"
           >
             Clear sport filter
           </button>
@@ -144,14 +144,14 @@ function SearchContent() {
       <div className="mb-6">
         <Link
           href="/"
-          className="text-sm text-slate hover:text-graphite mb-2 inline-block"
+          className="text-sm text-text-secondary hover:text-text-primary mb-2 inline-block"
         >
           ← Back to all games
         </Link>
-        <h1 className="text-title-1 text-graphite">
+        <h1 className="text-title-1 text-text-primary">
           Search results for &quot;{query}&quot;
         </h1>
-        <p className="text-slate mt-1">
+        <p className="text-text-secondary mt-1">
           {results.pagination.total_results} game{results.pagination.total_results !== 1 ? "s" : ""}
           {hasFutures && ` and ${results.futures.length} futures market${results.futures.length !== 1 ? "s" : ""}`} found
         </p>
@@ -164,8 +164,8 @@ function SearchContent() {
             onClick={() => setFilter(undefined)}
             className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
               !sportFilter
-                ? "bg-graphite text-white"
-                : "bg-white border border-mist text-slate hover:border-graphite"
+                ? "bg-text-primary text-surface-deep"
+                : "bg-surface-card border border-surface-border text-text-secondary hover:border-text-primary"
             }`}
           >
             All ({results.pagination.total_results})
@@ -176,8 +176,8 @@ function SearchContent() {
               onClick={() => setFilter(sport.key)}
               className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors flex items-center gap-1 ${
                 sportFilter === sport.key
-                  ? "bg-graphite text-white"
-                  : "bg-white border border-mist text-slate hover:border-graphite"
+                  ? "bg-text-primary text-surface-deep"
+                  : "bg-surface-card border border-surface-border text-text-secondary hover:border-text-primary"
               }`}
             >
               <span>{getEmojiForLeague(sport.key)}</span>
@@ -191,9 +191,9 @@ function SearchContent() {
       {/* Futures results */}
       {hasFutures && (
         <div className="mb-8">
-          <h2 className="text-title-3 text-graphite mb-4 flex items-center gap-2">
+          <h2 className="text-title-3 text-text-primary mb-4 flex items-center gap-2">
             <span>Futures & Championships</span>
-            <span className="text-sm font-normal text-slate">
+            <span className="text-sm font-normal text-text-secondary">
               ({results.futures.length})
             </span>
           </h2>
@@ -216,9 +216,9 @@ function SearchContent() {
       {hasEvents && (
         <>
           {hasFutures && (
-            <h2 className="text-title-3 text-graphite mb-4 flex items-center gap-2">
+            <h2 className="text-title-3 text-text-primary mb-4 flex items-center gap-2">
               <span>Games</span>
-              <span className="text-sm font-normal text-slate">
+              <span className="text-sm font-normal text-text-secondary">
                 ({results.pagination.total_results})
               </span>
             </h2>
@@ -248,13 +248,13 @@ function SearchContent() {
             disabled={!results.pagination.has_prev}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               results.pagination.has_prev
-                ? "bg-white border border-mist text-graphite hover:bg-snow"
-                : "bg-snow text-silver cursor-not-allowed"
+                ? "bg-surface-card border border-surface-border text-text-primary hover:bg-surface-elevated"
+                : "bg-surface-deep text-text-muted cursor-not-allowed"
             }`}
           >
             ← Previous
           </button>
-          <span className="px-4 py-2 text-sm text-slate">
+          <span className="px-4 py-2 text-sm text-text-secondary">
             Page {currentPage} of {results.pagination.total_pages}
           </span>
           <button
@@ -262,8 +262,8 @@ function SearchContent() {
             disabled={!results.pagination.has_next}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               results.pagination.has_next
-                ? "bg-white border border-mist text-graphite hover:bg-snow"
-                : "bg-snow text-silver cursor-not-allowed"
+                ? "bg-surface-card border border-surface-border text-text-primary hover:bg-surface-elevated"
+                : "bg-surface-deep text-text-muted cursor-not-allowed"
             }`}
           >
             Next →

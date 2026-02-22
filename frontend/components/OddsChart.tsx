@@ -417,16 +417,16 @@ export default function OddsChart({
       );
 
       return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200 max-w-sm">
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-sm">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
           {/* All sources, grouped */}
           {sourceEntries.length > 0 && (
             <div className="space-y-1">
               {sourceEntries.map((source) => (
                 <div key={source.key}>
-                  <p className="text-xs text-gray-400 mb-0.5">
+                  <p className="text-xs text-text-muted mb-0.5">
                     {source.displayName}
-                    <span className="text-gray-300 ml-1">
+                    <span className="text-text-muted ml-1">
                       ({source.type})
                     </span>
                   </p>
@@ -442,7 +442,7 @@ export default function OddsChart({
           )}
           {bookmakerEntries.length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100">
-              <p className="text-xs text-gray-400 mb-1">By sportsbook:</p>
+              <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_delta", "");
                 const homeProb = entry.value + 50;
@@ -474,13 +474,13 @@ export default function OddsChart({
               fillContainer
                 ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${
                     timeRange === option.value
-                      ? "bg-white/10 text-white/40"
+                      ? "bg-surface-card/10 text-white/40"
                       : "text-white/15 hover:text-white/25"
                   }`
                 : `px-3 py-1.5 text-xs ${
                     timeRange === option.value
-                      ? "bg-gray-900 text-white"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      ? "bg-text-primary text-surface-deep"
+                      : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
                   }`
             }`}
           >
@@ -637,7 +637,7 @@ export default function OddsChart({
                 </svg>
                 <span className="text-xs text-gray-500 hover:text-gray-700">
                   {source.displayName}
-                  <span className="text-gray-400 ml-0.5">({source.type})</span>
+                  <span className="text-text-muted ml-0.5">({source.type})</span>
                 </span>
               </>
             );
@@ -664,7 +664,7 @@ export default function OddsChart({
                   strokeWidth="1"
                 />
               </svg>
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-text-muted">
                 Individual sportsbooks
               </span>
             </div>
@@ -673,7 +673,7 @@ export default function OddsChart({
       )}
 
       {/* Tap for details */}
-      <p className="text-xs text-gray-400 text-center shrink-0">
+      <p className="text-xs text-text-muted text-center shrink-0">
         Tap/hover for details
       </p>
     </div>

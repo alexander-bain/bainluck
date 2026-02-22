@@ -483,7 +483,7 @@ export default function EventPage({ params }: EventPageProps) {
         <Link
           href="/"
           onClick={() => trackNavigationClick('back', `/events/${eventId}`, '/')}
-          className="inline-flex items-center text-caption text-slate hover:text-graphite transition-colors"
+          className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
         >
           <svg
             className="w-4 h-4 mr-1"
@@ -506,12 +506,12 @@ export default function EventPage({ params }: EventPageProps) {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {effectivelyLive && (
-                <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-semibold">
+                <span className="flex items-center gap-1.5 bg-emerald-500/15 text-emerald-400 px-2 py-1 rounded-full text-xs font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   LIVE
                 </span>
               )}
-              <span className="text-slate">Next update:</span>
+              <span className="text-text-secondary">Next update:</span>
             </div>
             {/* Circular countdown */}
             <div className="relative w-10 h-10">
@@ -536,7 +536,7 @@ export default function EventPage({ params }: EventPageProps) {
                   className="transition-all duration-100"
                 />
               </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-graphite">
+              <span className="absolute inset-0 flex items-center justify-center text-xs font-mono font-bold text-text-primary">
                 {countdown}
               </span>
             </div>
@@ -550,7 +550,7 @@ export default function EventPage({ params }: EventPageProps) {
           ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
           : isFinished
           ? "bg-slate-50 border border-slate-200"
-          : "bg-white"
+          : "bg-surface-card"
       }`}>
         {/* Top bar: sport badge, status, pin */}
         <div className="flex items-center justify-between mb-3">
@@ -563,7 +563,7 @@ export default function EventPage({ params }: EventPageProps) {
                 p-1.5 rounded-full transition-all
                 ${eventIsPinned
                   ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
-                  : 'text-slate/40 hover:text-slate hover:bg-slate/10'
+                  : 'text-text-secondary/40 hover:text-text-secondary hover:bg-slate/10'
                 }
                 ${isMaxReached && !eventIsPinned ? 'cursor-not-allowed opacity-30' : ''}
                 focus:outline-none focus:ring-2 focus:ring-amber-300
@@ -577,7 +577,7 @@ export default function EventPage({ params }: EventPageProps) {
             {event.sport && (
               <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
                 <span className="text-lg">{sportEmoji}</span>
-                <span className="text-slate font-medium">
+                <span className="text-text-secondary font-medium">
                   {getLeagueDisplay(event.sport)}
                 </span>
               </span>
@@ -586,12 +586,12 @@ export default function EventPage({ params }: EventPageProps) {
 
           {/* Status badge */}
           {isCompleted && (
-            <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
+            <span className="flex items-center gap-1 bg-slate/20 text-text-secondary px-3 py-1 rounded-full text-sm font-medium">
               Closed
             </span>
           )}
           {isClosed && (
-            <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
+            <span className="flex items-center gap-1 bg-slate/20 text-text-secondary px-3 py-1 rounded-full text-sm font-medium">
               Closed
             </span>
           )}
@@ -607,24 +607,24 @@ export default function EventPage({ params }: EventPageProps) {
               </span>
               {event.espn?.game_clock && event.espn?.period && (
                 <>
-                  <span className="text-slate/40">·</span>
-                  <span className="font-medium text-emerald-700">
+                  <span className="text-text-secondary/40">·</span>
+                  <span className="font-medium text-emerald-400">
                     {event.espn.period} · {event.espn.game_clock}
                   </span>
                 </>
               )}
               {event.espn?.broadcast && (
                 <>
-                  <span className="text-slate/40">·</span>
-                  <span className="text-slate">
+                  <span className="text-text-secondary/40">·</span>
+                  <span className="text-text-secondary">
                     {event.espn.broadcast}
                   </span>
                 </>
               )}
               {!event.espn?.game_clock && (
                 <>
-                  <span className="text-slate/40">·</span>
-                  <span className="text-slate">
+                  <span className="text-text-secondary/40">·</span>
+                  <span className="text-text-secondary">
                     Started {formatStartTime(event.commence_time)}
                   </span>
                 </>
@@ -636,7 +636,7 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           ) : isFinished ? (
-            <div className="text-slate space-y-0.5">
+            <div className="text-text-secondary space-y-0.5">
               <div className="text-base font-medium">
                 {new Date(event.commence_time).toLocaleDateString("en-US", {
                   weekday: "short",
@@ -653,11 +653,11 @@ export default function EventPage({ params }: EventPageProps) {
           ) : (
             <div className="space-y-1">
               {gameCountdown && (
-                <div className="text-2xl font-bold text-graphite">
+                <div className="text-2xl font-bold text-text-primary">
                   Starts in {gameCountdown}
                 </div>
               )}
-              <div className="text-base text-graphite">
+              <div className="text-base text-text-primary">
                 {new Date(event.commence_time).toLocaleDateString("en-US", {
                   weekday: "short",
                   month: "short",
@@ -669,7 +669,7 @@ export default function EventPage({ params }: EventPageProps) {
                 })}
               </div>
               {event.espn?.broadcast && (
-                <div className="text-sm text-slate">{event.espn.broadcast}</div>
+                <div className="text-sm text-text-secondary">{event.espn.broadcast}</div>
               )}
             </div>
           )}
@@ -677,32 +677,32 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Score display for live/finished games */}
         {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
-          <div className="mb-3 py-3 bg-white/50 rounded-lg">
+          <div className="mb-3 py-3 bg-surface-card/50 rounded-lg">
             <div className="flex items-center justify-center gap-6">
               <div className="text-center">
                 <div className={`text-4xl font-bold font-mono ${
-                  effectivelyLive ? "text-emerald-600" : "text-graphite"
+                  effectivelyLive ? "text-emerald-600" : "text-text-primary"
                 }`}>
                   {event.home_score}
                 </div>
-                <div className="text-sm text-slate mt-0.5">
+                <div className="text-sm text-text-secondary mt-0.5">
                   {event.home_team.split(" ").pop()}
                 </div>
               </div>
-              <div className="text-2xl text-slate">—</div>
+              <div className="text-2xl text-text-secondary">—</div>
               <div className="text-center">
                 <div className={`text-4xl font-bold font-mono ${
-                  effectivelyLive ? "text-emerald-600" : "text-graphite"
+                  effectivelyLive ? "text-emerald-600" : "text-text-primary"
                 }`}>
                   {event.away_score}
                 </div>
-                <div className="text-sm text-slate mt-0.5">
+                <div className="text-sm text-text-secondary mt-0.5">
                   {event.away_team.split(" ").pop()}
                 </div>
               </div>
             </div>
             {isFinished && (
-              <div className="text-center mt-1.5 text-xs text-slate">
+              <div className="text-center mt-1.5 text-xs text-text-secondary">
                 Score when books closed (may not be final)
               </div>
             )}
@@ -725,22 +725,22 @@ export default function EventPage({ params }: EventPageProps) {
                 />
               )}
               <div>
-                <h2 className={`text-xl font-semibold ${homeFavorite ? "text-graphite" : "text-slate"}`}>
+                <h2 className={`text-xl font-semibold ${homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>
                   {event.home_team}
                 </h2>
                 {event.home_team_data?.record && (
-                  <span className="text-xs text-silver">{event.home_team_data.record}</span>
+                  <span className="text-xs text-text-muted">{event.home_team_data.record}</span>
                 )}
               </div>
               {homeFavorite && homeProb && homeProb > 0.5 && (
-                <span className="text-xs bg-graphite/10 text-graphite px-2 py-0.5 rounded">
+                <span className="text-xs bg-graphite/10 text-text-primary px-2 py-0.5 rounded">
                   Favorite
                 </span>
               )}
             </div>
             <span
               className={`font-mono text-3xl font-bold tabular-nums ${
-                homeFavorite ? "text-graphite" : "text-silver"
+                homeFavorite ? "text-text-primary" : "text-text-muted"
               }`}
             >
               {formatProbability(homeProb)}
@@ -774,22 +774,22 @@ export default function EventPage({ params }: EventPageProps) {
                 />
               )}
               <div>
-                <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-graphite" : "text-slate"}`}>
+                <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>
                   {event.away_team}
                 </h2>
                 {event.away_team_data?.record && (
-                  <span className="text-xs text-silver">{event.away_team_data.record}</span>
+                  <span className="text-xs text-text-muted">{event.away_team_data.record}</span>
                 )}
               </div>
               {!homeFavorite && awayProb && awayProb > 0.5 && (
-                <span className="text-xs bg-graphite/10 text-graphite px-2 py-0.5 rounded">
+                <span className="text-xs bg-graphite/10 text-text-primary px-2 py-0.5 rounded">
                   Favorite
                 </span>
               )}
             </div>
             <span
               className={`font-mono text-3xl font-bold tabular-nums ${
-                !homeFavorite ? "text-graphite" : "text-silver"
+                !homeFavorite ? "text-text-primary" : "text-text-muted"
               }`}
             >
               {formatProbability(awayProb)}
@@ -801,7 +801,7 @@ export default function EventPage({ params }: EventPageProps) {
         <div className="mt-2 text-center space-y-1">
           {probSourceLabel && (
             <div>
-              <span className="text-[11px] text-silver tracking-wide">
+              <span className="text-[11px] text-text-muted tracking-wide">
                 {isFinished ? probSourceLabel : `Betting odds consensus · ${probSourceLabel}`}
               </span>
             </div>
@@ -818,7 +818,7 @@ export default function EventPage({ params }: EventPageProps) {
           )}
           {isLive && openingHomeProb !== null && (
             <div>
-              <span className="text-[11px] text-silver tracking-wide">
+              <span className="text-[11px] text-text-muted tracking-wide">
                 Opened {formatProbability(openingHomeProb)} / {formatProbability(openingAwayProb)}
               </span>
             </div>
@@ -829,7 +829,7 @@ export default function EventPage({ params }: EventPageProps) {
         {(isFinished || isLive) && event.pulse && (
           <div className={`mt-4 py-3 px-4 rounded-lg border ${
             event.pulse.score >= 81
-              ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-200"
+              ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-500/30"
               : event.pulse.score >= 61
               ? "bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200"
               : event.pulse.score >= 41
@@ -845,21 +845,21 @@ export default function EventPage({ params }: EventPageProps) {
                     ? "text-orange-800"
                     : event.pulse.score >= 41
                     ? "text-amber-800"
-                    : "text-slate-700"
+                    : "text-text-secondary-700"
                 }`}>
                   {event.pulse.emoji} {isLive ? "Live Pulse" : "Game Pulse"}
                   {isLive && (
-                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    <span className="w-2 h-2 rounded-full bg-red-500/150 animate-pulse" />
                   )}
                 </h3>
                 <span className={`text-sm font-medium ${
                   event.pulse.score >= 81
-                    ? "text-red-700"
+                    ? "text-red-400"
                     : event.pulse.score >= 61
                     ? "text-orange-700"
                     : event.pulse.score >= 41
                     ? "text-amber-700"
-                    : "text-slate-600"
+                    : "text-text-secondary-600"
                 }`}>
                   — {event.pulse.label}
                 </span>
@@ -871,7 +871,7 @@ export default function EventPage({ params }: EventPageProps) {
                   ? "bg-orange-200 text-orange-800"
                   : event.pulse.score >= 41
                   ? "bg-amber-200 text-amber-800"
-                  : "bg-slate-200 text-slate-700"
+                  : "bg-surface-border text-text-secondary-700"
               }`}>
                 {event.pulse.score} / 100
               </span>
@@ -881,18 +881,18 @@ export default function EventPage({ params }: EventPageProps) {
             {event.pulse.components && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 pt-2 border-t border-slate-200/60 text-xs">
                 <Tooltip content="How often odds shifted significantly during the game" position="top">
-                  <span className="text-slate-500 cursor-help">
-                    HR <span className="font-mono font-semibold text-slate-700">{Math.round(event.pulse.components.heart_rate * 100)}%</span>
+                  <span className="text-text-secondary-500 cursor-help">
+                    HR <span className="font-mono font-semibold text-text-secondary-700">{Math.round(event.pulse.components.heart_rate * 100)}%</span>
                   </span>
                 </Tooltip>
                 <Tooltip content="How large the probability swings were" position="top">
-                  <span className="text-slate-500 cursor-help">
-                    Amp <span className="font-mono font-semibold text-slate-700">{Math.round(event.pulse.components.amplitude * 100)}%</span>
+                  <span className="text-text-secondary-500 cursor-help">
+                    Amp <span className="font-mono font-semibold text-text-secondary-700">{Math.round(event.pulse.components.amplitude * 100)}%</span>
                   </span>
                 </Tooltip>
                 <Tooltip content="How close the matchup was — 100% means a coin flip" position="top">
-                  <span className="text-slate-500 cursor-help">
-                    Vitals <span className="font-mono font-semibold text-slate-700">{Math.round(event.pulse.components.vitals * 100)}%</span>
+                  <span className="text-text-secondary-500 cursor-help">
+                    Vitals <span className="font-mono font-semibold text-text-secondary-700">{Math.round(event.pulse.components.vitals * 100)}%</span>
                   </span>
                 </Tooltip>
                 {event.pulse.components.lead_changes > 0 && (
@@ -907,8 +907,8 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Data freshness strip */}
         {odds?.captured_at && (
-          <div className="mt-4 pt-3 border-t border-mist/50 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-slate">
+          <div className="mt-4 pt-3 border-t border-surface-border/50 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-text-secondary">
               <span className="flex items-center gap-1">
                 🕐 Updated {new Date(odds.captured_at).toLocaleDateString("en-US", {
                   month: "short",
@@ -918,7 +918,7 @@ export default function EventPage({ params }: EventPageProps) {
                   minute: "2-digit",
                 })}
               </span>
-              <div className="flex items-center gap-4 text-xs text-silver">
+              <div className="flex items-center gap-4 text-xs text-text-muted">
                 {odds.spread !== null && (
                   <span className="font-mono">
                     Spread {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
@@ -938,7 +938,7 @@ export default function EventPage({ params }: EventPageProps) {
                   if (count > 0) {
                     return (
                       <span
-                        className="cursor-help border-b border-dotted border-silver hover:text-slate hover:border-slate transition-colors px-1 py-0.5 -mx-1"
+                        className="cursor-help border-b border-dotted border-silver hover:text-text-secondary hover:border-text-secondary transition-colors px-1 py-0.5 -mx-1"
                         title={bookmakerNames.length > 0 ? bookmakerNames.join(", ") : undefined}
                       >
                         {count} source{count !== 1 ? "s" : ""}
@@ -958,7 +958,7 @@ export default function EventPage({ params }: EventPageProps) {
             {predictionDivergence && (
               <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded ${
                 predictionDivergence.delta >= 0.10
-                  ? "text-purple-800 bg-purple-50 border border-purple-200"
+                  ? "text-purple-800 bg-purple-500/15 border border-purple-200"
                   : "text-blue-700 bg-blue-50"
               }`}>
                 <span>{predictionDivergence.delta >= 0.10 ? "📊" : "🔀"}</span>
@@ -978,8 +978,8 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData?.history && historyData.history.length > 0 && (
-        <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
-          <h3 className="text-sm font-semibold text-slate mb-3 flex items-center gap-2">
+        <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
+          <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
             Score Differential
           </h3>
           <ScoreDifferentialChart
@@ -998,8 +998,8 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Trend Chart */}
-      <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
-        <h3 className="text-sm font-semibold text-slate mb-3 flex items-center gap-2">
+      <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
+        <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
           Win Probability
         </h3>
         {historyLoading ? (
@@ -1007,9 +1007,9 @@ export default function EventPage({ params }: EventPageProps) {
             <LoadingSpinner size="sm" />
           </div>
         ) : historyError ? (
-          <div className="h-48 flex flex-col items-center justify-center text-sm text-slate gap-2">
+          <div className="h-48 flex flex-col items-center justify-center text-sm text-text-secondary gap-2">
             <span>Unable to load history</span>
-            <span className="text-xs text-silver">
+            <span className="text-xs text-text-muted">
               {historyError.message || 'Unknown error'}
             </span>
             <button
@@ -1020,7 +1020,7 @@ export default function EventPage({ params }: EventPageProps) {
             </button>
           </div>
         ) : historyData?.history?.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-sm text-slate">
+          <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
             📊 Tracking will begin when odds are available
           </div>
         ) : (
@@ -1042,8 +1042,8 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Win Probabilities by Sportsbook */}
       {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
-        <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
-          <h3 className="text-sm font-semibold text-slate mb-3 flex items-center gap-2">
+        <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
+          <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
             Win Probabilities by Sportsbook
           </h3>
           <BookmakerTable

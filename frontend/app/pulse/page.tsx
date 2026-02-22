@@ -12,10 +12,10 @@ export default function PulseExplainerPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       {/* Hero Section */}
-      <div className="text-center space-y-4 pb-6 border-b border-mist">
+      <div className="text-center space-y-4 pb-6 border-b border-surface-border">
         <div className="text-6xl">💓</div>
-        <h1 className="text-title-1 text-graphite">What is Pulse?</h1>
-        <p className="text-lg text-slate max-w-xl mx-auto">
+        <h1 className="text-title-1 text-text-primary">What is Pulse?</h1>
+        <p className="text-lg text-text-secondary max-w-xl mx-auto">
           Pulse is Bain Luck&apos;s excitement score that tells you how thrilling
           a game is—at a glance. Think of it as a game&apos;s heartbeat.
         </p>
@@ -23,23 +23,23 @@ export default function PulseExplainerPage() {
 
       {/* How It Works */}
       <section className="space-y-4">
-        <h2 className="text-title-2 text-graphite flex items-center gap-2">
+        <h2 className="text-title-2 text-text-primary flex items-center gap-2">
           <span>📊</span> How Pulse Works
         </h2>
-        <div className="bg-white rounded-xl p-6 border border-mist shadow-sm space-y-4">
-          <p className="text-slate leading-relaxed">
+        <div className="bg-surface-card rounded-xl p-6 border border-surface-border shadow-card space-y-4">
+          <p className="text-text-secondary leading-relaxed">
             During a game, betting odds constantly shift based on what&apos;s happening
             on the field. When one team scores, their odds of winning go up.
             When momentum swings, the odds swing too.
           </p>
-          <p className="text-slate leading-relaxed">
-            <strong className="text-graphite">Pulse measures these swings.</strong>{" "}
+          <p className="text-text-secondary leading-relaxed">
+            <strong className="text-text-primary">Pulse measures these swings.</strong>{" "}
             A game where the lead changes hands multiple times and the outcome
             stays uncertain until the final whistle will have a high Pulse score.
             A blowout where one team dominates from start to finish? Low Pulse.
           </p>
-          <div className="bg-snow rounded-lg p-4 border border-mist">
-            <p className="text-sm text-slate italic">
+          <div className="bg-surface-deep rounded-lg p-4 border border-surface-border">
+            <p className="text-sm text-text-secondary italic">
               &ldquo;Pulse answers the question: If I only have time to watch one game,
               which one should I pick?&rdquo;
             </p>
@@ -49,31 +49,31 @@ export default function PulseExplainerPage() {
 
       {/* The Scale */}
       <section className="space-y-4">
-        <h2 className="text-title-2 text-graphite flex items-center gap-2">
+        <h2 className="text-title-2 text-text-primary flex items-center gap-2">
           <span>📈</span> The Pulse Scale (1-100)
         </h2>
 
         <div className="space-y-3">
           {/* Racing */}
-          <div className="bg-white rounded-xl overflow-hidden border border-mist shadow-sm">
+          <div className="bg-surface-card rounded-xl overflow-hidden border border-surface-border shadow-card">
             <div className="flex items-stretch">
-              <div className="w-2 bg-red-500" />
+              <div className="w-2 bg-red-500/150" />
               <div className="flex-1 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">🫀</span>
-                    <span className="font-bold text-graphite text-lg">Racing</span>
-                    <span className="text-sm text-slate">(81-100)</span>
+                    <span className="font-bold text-text-primary text-lg">Racing</span>
+                    <span className="text-sm text-text-secondary">(81-100)</span>
                   </div>
-                  <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-semibold">
+                  <span className="bg-red-500/15 text-red-400 px-3 py-1 rounded-full text-sm font-semibold">
                     Must-Watch
                   </span>
                 </div>
-                <p className="text-slate text-sm leading-relaxed">
+                <p className="text-text-secondary text-sm leading-relaxed">
                   Edge-of-your-seat excitement. Multiple lead changes, dramatic comebacks,
                   or a nail-biter that goes down to the wire. These games are unforgettable.
                 </p>
-                <div className="mt-3 p-3 bg-red-50 rounded-lg">
+                <div className="mt-3 p-3 bg-red-500/15 rounded-lg">
                   <p className="text-xs text-red-800">
                     <strong>Example:</strong> A basketball game where both teams trade
                     3-pointers in the final minutes, with the lead changing 5 times
@@ -85,21 +85,21 @@ export default function PulseExplainerPage() {
           </div>
 
           {/* Strong */}
-          <div className="bg-white rounded-xl overflow-hidden border border-mist shadow-sm">
+          <div className="bg-surface-card rounded-xl overflow-hidden border border-surface-border shadow-card">
             <div className="flex items-stretch">
               <div className="w-2 bg-orange-500" />
               <div className="flex-1 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">💓</span>
-                    <span className="font-bold text-graphite text-lg">Strong</span>
-                    <span className="text-sm text-slate">(61-80)</span>
+                    <span className="font-bold text-text-primary text-lg">Strong</span>
+                    <span className="text-sm text-text-secondary">(61-80)</span>
                   </div>
                   <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-sm font-semibold">
                     Exciting
                   </span>
                 </div>
-                <p className="text-slate text-sm leading-relaxed">
+                <p className="text-text-secondary text-sm leading-relaxed">
                   Genuinely exciting with real moments of drama. The outcome wasn&apos;t
                   certain, and there were stretches where anything could happen.
                 </p>
@@ -115,21 +115,21 @@ export default function PulseExplainerPage() {
           </div>
 
           {/* Steady */}
-          <div className="bg-white rounded-xl overflow-hidden border border-mist shadow-sm">
+          <div className="bg-surface-card rounded-xl overflow-hidden border border-surface-border shadow-card">
             <div className="flex items-stretch">
               <div className="w-2 bg-amber-500" />
               <div className="flex-1 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">💗</span>
-                    <span className="font-bold text-graphite text-lg">Steady</span>
-                    <span className="text-sm text-slate">(41-60)</span>
+                    <span className="font-bold text-text-primary text-lg">Steady</span>
+                    <span className="text-sm text-text-secondary">(41-60)</span>
                   </div>
                   <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-sm font-semibold">
                     Competitive
                   </span>
                 </div>
-                <p className="text-slate text-sm leading-relaxed">
+                <p className="text-text-secondary text-sm leading-relaxed">
                   A competitive game with some tension, but the favorite generally
                   controlled the pace. Worth watching if you&apos;re a fan of either team.
                 </p>
@@ -145,26 +145,26 @@ export default function PulseExplainerPage() {
           </div>
 
           {/* Weak */}
-          <div className="bg-white rounded-xl overflow-hidden border border-mist shadow-sm">
+          <div className="bg-surface-card rounded-xl overflow-hidden border border-surface-border shadow-card">
             <div className="flex items-stretch">
               <div className="w-2 bg-slate-400" />
               <div className="flex-1 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">🩺</span>
-                    <span className="font-bold text-graphite text-lg">Weak</span>
-                    <span className="text-sm text-slate">(21-40)</span>
+                    <span className="font-bold text-text-primary text-lg">Weak</span>
+                    <span className="text-sm text-text-secondary">(21-40)</span>
                   </div>
-                  <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-sm font-semibold">
+                  <span className="bg-surface-elevated text-text-secondary-600 px-3 py-1 rounded-full text-sm font-semibold">
                     One-sided
                   </span>
                 </div>
-                <p className="text-slate text-sm leading-relaxed">
+                <p className="text-text-secondary text-sm leading-relaxed">
                   The outcome was rarely in doubt. One team dominated most of the
                   game with few exciting moments.
                 </p>
                 <div className="mt-3 p-3 bg-slate-50 rounded-lg">
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-text-secondary-600">
                     <strong>Example:</strong> A hockey game where the home team
                     scores twice in the first period and cruises to victory,
                     never trailing.
@@ -175,26 +175,26 @@ export default function PulseExplainerPage() {
           </div>
 
           {/* Flatline */}
-          <div className="bg-white rounded-xl overflow-hidden border border-mist shadow-sm">
+          <div className="bg-surface-card rounded-xl overflow-hidden border border-surface-border shadow-card">
             <div className="flex items-stretch">
               <div className="w-2 bg-slate-300" />
               <div className="flex-1 p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">📉</span>
-                    <span className="font-bold text-graphite text-lg">Flatline</span>
-                    <span className="text-sm text-slate">(1-20)</span>
+                    <span className="font-bold text-text-primary text-lg">Flatline</span>
+                    <span className="text-sm text-text-secondary">(1-20)</span>
                   </div>
-                  <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-full text-sm font-semibold">
+                  <span className="bg-surface-elevated text-text-secondary-500 px-3 py-1 rounded-full text-sm font-semibold">
                     Skip It
                   </span>
                 </div>
-                <p className="text-slate text-sm leading-relaxed">
+                <p className="text-text-secondary text-sm leading-relaxed">
                   A blowout or completely uneventful game. The result was never in
                   question, and watching highlights would give you the full experience.
                 </p>
                 <div className="mt-3 p-3 bg-slate-50 rounded-lg">
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-text-secondary-600">
                     <strong>Example:</strong> A basketball game where the favorite
                     leads by 20+ points from the second quarter onwards and the
                     starters rest the entire fourth quarter.
@@ -208,51 +208,51 @@ export default function PulseExplainerPage() {
 
       {/* Components Breakdown */}
       <section className="space-y-4">
-        <h2 className="text-title-2 text-graphite flex items-center gap-2">
+        <h2 className="text-title-2 text-text-primary flex items-center gap-2">
           <span>🔬</span> What Goes Into Pulse
         </h2>
-        <div className="bg-white rounded-xl p-6 border border-mist shadow-sm">
-          <p className="text-slate mb-4">
+        <div className="bg-surface-card rounded-xl p-6 border border-surface-border shadow-card">
+          <p className="text-text-secondary mb-4">
             Pulse combines several factors to measure excitement:
           </p>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="p-4 bg-snow rounded-lg border border-mist">
+            <div className="p-4 bg-surface-deep rounded-lg border border-surface-border">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xl">💓</span>
-                <span className="font-semibold text-graphite">Heart Rate</span>
+                <span className="font-semibold text-text-primary">Heart Rate</span>
               </div>
-              <p className="text-sm text-slate">
+              <p className="text-sm text-text-secondary">
                 How frequently the odds change. More changes = more action happening.
               </p>
             </div>
 
-            <div className="p-4 bg-snow rounded-lg border border-mist">
+            <div className="p-4 bg-surface-deep rounded-lg border border-surface-border">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xl">📊</span>
-                <span className="font-semibold text-graphite">Amplitude</span>
+                <span className="font-semibold text-text-primary">Amplitude</span>
               </div>
-              <p className="text-sm text-slate">
+              <p className="text-sm text-text-secondary">
                 How big the swings are. Large probability swings mean dramatic moments.
               </p>
             </div>
 
-            <div className="p-4 bg-snow rounded-lg border border-mist">
+            <div className="p-4 bg-surface-deep rounded-lg border border-surface-border">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xl">⚡</span>
-                <span className="font-semibold text-graphite">Vitals</span>
+                <span className="font-semibold text-text-primary">Vitals</span>
               </div>
-              <p className="text-sm text-slate">
+              <p className="text-sm text-text-secondary">
                 How close the game is overall. Tight games are more exciting than blowouts.
               </p>
             </div>
 
-            <div className="p-4 bg-snow rounded-lg border border-mist">
+            <div className="p-4 bg-surface-deep rounded-lg border border-surface-border">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xl">🔄</span>
-                <span className="font-semibold text-graphite">Lead Changes</span>
+                <span className="font-semibold text-text-primary">Lead Changes</span>
               </div>
-              <p className="text-sm text-slate">
+              <p className="text-sm text-text-secondary">
                 How many times the favorite flipped. Each flip adds to the drama.
               </p>
             </div>
@@ -269,13 +269,13 @@ export default function PulseExplainerPage() {
 
       {/* Live vs Completed */}
       <section className="space-y-4">
-        <h2 className="text-title-2 text-graphite flex items-center gap-2">
+        <h2 className="text-title-2 text-text-primary flex items-center gap-2">
           <span>🔴</span> Live vs Final Pulse
         </h2>
-        <div className="bg-white rounded-xl p-6 border border-mist shadow-sm space-y-4">
+        <div className="bg-surface-card rounded-xl p-6 border border-surface-border shadow-card space-y-4">
           <div className="flex gap-4">
             <div className="flex-1 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
-              <div className="font-semibold text-emerald-700 mb-2">
+              <div className="font-semibold text-emerald-400 mb-2">
                 🟢 During Live Games
               </div>
               <p className="text-sm text-emerald-800">
@@ -284,10 +284,10 @@ export default function PulseExplainerPage() {
               </p>
             </div>
             <div className="flex-1 p-4 bg-slate-50 rounded-lg border border-slate-200">
-              <div className="font-semibold text-slate-700 mb-2">
+              <div className="font-semibold text-text-secondary-700 mb-2">
                 ✅ After Final
               </div>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-text-secondary-600">
                 The final Pulse score reflects the entire game. Use it to find
                 the best highlights to rewatch.
               </p>
@@ -298,38 +298,38 @@ export default function PulseExplainerPage() {
 
       {/* FAQ */}
       <section className="space-y-4">
-        <h2 className="text-title-2 text-graphite flex items-center gap-2">
+        <h2 className="text-title-2 text-text-primary flex items-center gap-2">
           <span>❓</span> Common Questions
         </h2>
         <div className="space-y-3">
-          <details className="bg-white rounded-xl border border-mist shadow-sm group">
-            <summary className="p-4 cursor-pointer font-semibold text-graphite flex items-center justify-between">
+          <details className="bg-surface-card rounded-xl border border-surface-border shadow-card group">
+            <summary className="p-4 cursor-pointer font-semibold text-text-primary flex items-center justify-between">
               Does a high Pulse mean the underdog won?
-              <span className="text-slate group-open:rotate-180 transition-transform">▼</span>
+              <span className="text-text-secondary group-open:rotate-180 transition-transform">▼</span>
             </summary>
-            <div className="px-4 pb-4 text-slate text-sm">
+            <div className="px-4 pb-4 text-text-secondary text-sm">
               Not necessarily! Pulse measures excitement, not upsets. A game can have
               high Pulse even if the favorite wins—as long as it was a close, dramatic contest.
             </div>
           </details>
 
-          <details className="bg-white rounded-xl border border-mist shadow-sm group">
-            <summary className="p-4 cursor-pointer font-semibold text-graphite flex items-center justify-between">
+          <details className="bg-surface-card rounded-xl border border-surface-border shadow-card group">
+            <summary className="p-4 cursor-pointer font-semibold text-text-primary flex items-center justify-between">
               Why doesn&apos;t every game have a Pulse score?
-              <span className="text-slate group-open:rotate-180 transition-transform">▼</span>
+              <span className="text-text-secondary group-open:rotate-180 transition-transform">▼</span>
             </summary>
-            <div className="px-4 pb-4 text-slate text-sm">
+            <div className="px-4 pb-4 text-text-secondary text-sm">
               We need enough odds data throughout the game to calculate Pulse accurately.
               Games that just started or have limited betting activity won&apos;t have a score yet.
             </div>
           </details>
 
-          <details className="bg-white rounded-xl border border-mist shadow-sm group">
-            <summary className="p-4 cursor-pointer font-semibold text-graphite flex items-center justify-between">
+          <details className="bg-surface-card rounded-xl border border-surface-border shadow-card group">
+            <summary className="p-4 cursor-pointer font-semibold text-text-primary flex items-center justify-between">
               Is Pulse the same across all sports?
-              <span className="text-slate group-open:rotate-180 transition-transform">▼</span>
+              <span className="text-text-secondary group-open:rotate-180 transition-transform">▼</span>
             </summary>
-            <div className="px-4 pb-4 text-slate text-sm">
+            <div className="px-4 pb-4 text-text-secondary text-sm">
               Yes! Pulse is calibrated to work across sports. A Pulse of 80 in basketball
               represents similar excitement to a Pulse of 80 in football or hockey.
             </div>
@@ -339,11 +339,11 @@ export default function PulseExplainerPage() {
 
       {/* Hall of Fame Link */}
       <section className="space-y-4">
-        <h2 className="text-title-2 text-graphite flex items-center gap-2">
+        <h2 className="text-title-2 text-text-primary flex items-center gap-2">
           <span>🏆</span> Pulse Hall of Fame
         </h2>
-        <div className="bg-white rounded-xl p-6 border border-mist shadow-sm">
-          <p className="text-slate mb-4">
+        <div className="bg-surface-card rounded-xl p-6 border border-surface-border shadow-card">
+          <p className="text-text-secondary mb-4">
             Curious which games had the highest (and lowest) Pulse scores ever?
             Check out our all-time rankings to discover legendary thrillers and
             forgettable blowouts.
@@ -362,7 +362,7 @@ export default function PulseExplainerPage() {
       <div className="text-center pt-4 pb-8">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 bg-graphite text-white px-6 py-3 rounded-full font-semibold hover:bg-graphite/90 transition-colors"
+          className="inline-flex items-center gap-2 bg-text-primary text-surface-deep px-6 py-3 rounded-full font-semibold hover:bg-text-primary/90 transition-colors"
         >
           <span>🍀</span>
           Find Exciting Games Now

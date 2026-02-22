@@ -186,7 +186,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       <div className="flex items-center gap-2">
         <Link
           href="/futures"
-          className="inline-flex items-center text-caption text-slate hover:text-graphite transition-colors"
+          className="inline-flex items-center text-caption text-text-secondary hover:text-text-primary transition-colors"
         >
           <svg
             className="w-4 h-4 mr-1"
@@ -210,7 +210,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         className={`rounded-card shadow-card p-6 ${
           isResolved
             ? "bg-slate-50 border border-slate-200"
-            : "bg-white"
+            : "bg-surface-card"
         }`}
       >
         {/* Sport badge */}
@@ -224,7 +224,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 p-1.5 rounded-full transition-all
                 ${marketIsPinned
                   ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
-                  : 'text-slate/40 hover:text-slate hover:bg-slate/10'
+                  : 'text-text-secondary/40 hover:text-text-secondary hover:bg-slate/10'
                 }
                 ${isMaxReached && !marketIsPinned ? 'cursor-not-allowed opacity-30' : ''}
                 focus:outline-none focus:ring-2 focus:ring-amber-300
@@ -238,7 +238,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             {market.sport && (
               <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
                 <span className="text-lg">{sportEmoji}</span>
-                <span className="text-slate font-medium">
+                <span className="text-text-secondary font-medium">
                   {market.sport_name || market.sport}
                 </span>
               </span>
@@ -247,21 +247,21 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
           {/* Status badge */}
           {isResolved && (
-            <span className="flex items-center gap-1 bg-slate/20 text-slate px-3 py-1 rounded-full text-sm font-medium">
+            <span className="flex items-center gap-1 bg-slate/20 text-text-secondary px-3 py-1 rounded-full text-sm font-medium">
               Resolved
             </span>
           )}
         </div>
 
         {/* Market name */}
-        <h1 className="text-title-1 text-graphite mb-2">{market.name}</h1>
+        <h1 className="text-title-1 text-text-primary mb-2">{market.name}</h1>
 
         {market.description && (
-          <p className="text-body text-slate mb-4">{market.description}</p>
+          <p className="text-body text-text-secondary mb-4">{market.description}</p>
         )}
 
         {/* Market info strip */}
-        <div className="flex flex-wrap gap-4 text-sm text-slate">
+        <div className="flex flex-wrap gap-4 text-sm text-text-secondary">
           <span>
             {market.outcome_count} outcome{market.outcome_count !== 1 ? "s" : ""}
           </span>
@@ -303,15 +303,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
         {/* Sportsbooks */}
         {market.bookmakers && market.bookmakers.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-mist">
-            <div className="text-sm text-slate mb-2">
+          <div className="mt-4 pt-4 border-t border-surface-border">
+            <div className="text-sm text-text-secondary mb-2">
               Odds from {market.bookmakers.length} sportsbook{market.bookmakers.length !== 1 ? "s" : ""}
             </div>
             <div className="flex flex-wrap gap-2">
               {market.bookmakers.map((bookmaker) => (
                 <span
                   key={bookmaker}
-                  className="text-xs bg-slate/10 px-2 py-1 rounded-full text-slate capitalize"
+                  className="text-xs bg-slate/10 px-2 py-1 rounded-full text-text-secondary capitalize"
                 >
                   {formatBookmakerName(bookmaker)}
                 </span>
@@ -322,27 +322,27 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
         {/* Current Leader */}
         {leader && (
-          <div className="mt-6 pt-4 border-t border-mist">
-            <div className="text-sm text-slate mb-2">Current Favorite</div>
+          <div className="mt-6 pt-4 border-t border-surface-border">
+            <div className="text-sm text-text-secondary mb-2">Current Favorite</div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="w-8 h-8 flex items-center justify-center text-lg bg-amber-100 text-amber-700 rounded-full font-bold">
                   1
                 </span>
-                <span className="text-xl font-semibold text-graphite">
+                <span className="text-xl font-semibold text-text-primary">
                   {leader.name}
                 </span>
                 {leader.is_winner && (
-                  <span className="text-sm bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-medium">
+                  <span className="text-sm bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded font-medium">
                     Winner
                   </span>
                 )}
               </div>
               <div className="text-right">
-                <div className="font-mono text-2xl font-bold text-graphite">
+                <div className="font-mono text-2xl font-bold text-text-primary">
                   {formatProbability(leader.probability)}
                 </div>
-                <div className="text-sm text-slate">
+                <div className="text-sm text-text-secondary">
                   {formatAmericanOdds(leader.american_odds)}
                 </div>
               </div>
@@ -353,8 +353,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
       {/* Probability Chart (if history available) */}
       {historyData && historyData.outcomes.length > 0 && (
-        <div className="bg-white rounded-card shadow-card p-6">
-          <h2 className="text-title-3 font-semibold text-graphite mb-4 flex items-center gap-2">
+        <div className="bg-surface-card rounded-card shadow-card p-6">
+          <h2 className="text-title-3 font-semibold text-text-primary mb-4 flex items-center gap-2">
             <span>📈</span>
             Probability Trends
           </h2>
@@ -367,16 +367,16 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       )}
 
       {/* All Outcomes Table */}
-      <div className="bg-white rounded-card shadow-card p-6">
+      <div className="bg-surface-card rounded-card shadow-card p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-title-3 font-semibold text-graphite flex items-center gap-2">
+          <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
             <span>📊</span>
             All Outcomes
           </h2>
           {sortedOutcomes.length > 25 && (
             <button
               onClick={() => setShowAllOutcomes(!showAllOutcomes)}
-              className="text-sm text-slate hover:text-graphite transition-colors"
+              className="text-sm text-text-secondary hover:text-text-primary transition-colors"
             >
               {showAllOutcomes
                 ? "Show less"
@@ -431,7 +431,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         {!showAllOutcomes && sortedOutcomes.length > 25 && (
           <button
             onClick={() => setShowAllOutcomes(true)}
-            className="w-full mt-4 py-2 text-sm text-slate hover:text-graphite border border-mist rounded-lg hover:bg-slate/5 transition-colors"
+            className="w-full mt-4 py-2 text-sm text-text-secondary hover:text-text-primary border border-surface-border rounded-lg hover:bg-slate/5 transition-colors"
           >
             Show {sortedOutcomes.length - 25} more outcomes
           </button>
@@ -464,8 +464,8 @@ function SortButton({
       onClick={onClick}
       className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1 ${
         isActive
-          ? "bg-gray-900 text-white"
-          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          ? "bg-text-primary text-surface-deep"
+          : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
       }`}
     >
       {label}
@@ -517,7 +517,7 @@ function OutcomeRow({
           className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
             isSelected
               ? "bg-blue-500 border-blue-500 text-white"
-              : "border-slate/30 hover:border-slate"
+              : "border-slate/30 hover:border-text-secondary"
           }`}
         >
           {isSelected && (
@@ -537,7 +537,7 @@ function OutcomeRow({
         className={`w-8 h-8 flex items-center justify-center text-sm rounded-full shrink-0 ${
           isLeader
             ? "bg-amber-100 text-amber-700 font-bold"
-            : "bg-white text-slate border border-mist"
+            : "bg-surface-card text-text-secondary border border-surface-border"
         }`}
       >
         {rank}
@@ -558,7 +558,7 @@ function OutcomeRow({
       <div className="flex-1 min-w-0">
         <span
           className={`text-sm truncate block ${
-            isLeader ? "font-semibold text-graphite" : "text-graphite"
+            isLeader ? "font-semibold text-text-primary" : "text-text-primary"
           }`}
         >
           {outcome.name}
@@ -570,7 +570,7 @@ function OutcomeRow({
 
       {/* Opening vs Current comparison */}
       {outcome.opening_probability !== null && (
-        <div className="text-xs text-slate text-right shrink-0">
+        <div className="text-xs text-text-secondary text-right shrink-0">
           <div>
             Open: {formatProbability(outcome.opening_probability)}
           </div>
@@ -583,15 +583,15 @@ function OutcomeRow({
           <span
             className={`text-xs font-medium px-2 py-0.5 rounded-full ${
               change > 0
-                ? "bg-emerald-100 text-emerald-700"
-                : "bg-red-100 text-red-600"
+                ? "bg-emerald-500/15 text-emerald-400"
+                : "bg-red-500/15 text-red-400"
             }`}
           >
             {change > 0 ? "+" : ""}
             {(change * 100).toFixed(1)}%
           </span>
         ) : (
-          <span className="text-xs text-silver">-</span>
+          <span className="text-xs text-text-muted">-</span>
         )}
       </div>
 
@@ -599,12 +599,12 @@ function OutcomeRow({
       <div className="text-right shrink-0">
         <div
           className={`font-mono text-base tabular-nums ${
-            isLeader ? "font-bold text-graphite" : "font-semibold text-graphite"
+            isLeader ? "font-bold text-text-primary" : "font-semibold text-text-primary"
           }`}
         >
           {formatProbability(outcome.probability)}
         </div>
-        <div className="text-xs text-slate font-mono">
+        <div className="text-xs text-text-secondary font-mono">
           {formatAmericanOdds(outcome.american_odds)}
         </div>
       </div>
@@ -647,7 +647,7 @@ function FuturesChart({
 
   if (displayedOutcomes.length === 0) {
     return (
-      <div className="h-48 flex items-center justify-center text-sm text-slate">
+      <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
         Select outcomes below to see their probability trends
       </div>
     );
@@ -806,13 +806,13 @@ function FuturesChart({
               className="w-3 h-3 rounded-full"
               style={{ backgroundColor: colors[idx % colors.length] }}
             />
-            <span className="text-graphite">{outcome.name}</span>
+            <span className="text-text-primary">{outcome.name}</span>
           </button>
         ))}
       </div>
 
       {selectedOutcomes.size === 0 && (
-        <p className="text-xs text-slate text-center">
+        <p className="text-xs text-text-secondary text-center">
           Showing top 5 outcomes. Check boxes below to compare specific outcomes.
         </p>
       )}

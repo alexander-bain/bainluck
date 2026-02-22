@@ -37,7 +37,7 @@ function ProbBar({ probability, color }: { probability: number | null; color: st
   // Scale: 50% probability = full bar (futures rarely exceed 50%)
   const pct = Math.min(100, (probability / 0.5) * 100);
   return (
-    <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-1">
+    <div className="h-1.5 rounded-full bg-surface-elevated overflow-hidden mt-1">
       <div
         className="h-full rounded-full transition-all duration-500"
         style={{
@@ -101,14 +101,14 @@ function FutureRow({
             {tier.icon}
           </span>
         )}
-        <span className="text-xs text-silver truncate">
+        <span className="text-xs text-text-muted truncate">
           {future.market_name}
         </span>
       </div>
 
       {/* Player name (for MVP/award outcomes) */}
       {isPlayerOutcome && (
-        <div className="text-sm text-graphite font-medium mb-0.5">
+        <div className="text-sm text-text-primary font-medium mb-0.5">
           {future.outcome_name}
         </div>
       )}
@@ -116,13 +116,13 @@ function FutureRow({
       {/* Main stats row */}
       <div className="flex items-baseline justify-between gap-3">
         <div className="flex items-baseline gap-2 min-w-0">
-          <span className="font-mono text-lg font-bold tabular-nums text-graphite">
+          <span className="font-mono text-lg font-bold tabular-nums text-text-primary">
             {formatProbability(future.probability)}
           </span>
           <Movement change={future.probability_change_24h} />
         </div>
 
-        <span className="font-mono text-xs text-silver tabular-nums shrink-0">
+        <span className="font-mono text-xs text-text-muted tabular-nums shrink-0">
           {formatOdds(future.american_odds)}
         </span>
       </div>
@@ -174,10 +174,10 @@ function TeamSection({
               className="w-5 h-5 object-contain"
             />
           )}
-          <h4 className="text-xs font-bold uppercase tracking-wider text-graphite">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-text-primary">
             {shortName}
           </h4>
-          <span className="text-[10px] text-silver">
+          <span className="text-[10px] text-text-muted">
             {futures.length} market{futures.length !== 1 ? "s" : ""}
           </span>
         </div>
@@ -244,14 +244,14 @@ export default function RelatedFutures({
   const hasSummary = !!summary;
 
   return (
-    <div className="bg-white rounded-card shadow-card p-4 sm:p-5">
-      <h3 className="text-sm font-semibold text-slate mb-3">
+    <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
+      <h3 className="text-sm font-semibold text-text-secondary mb-3">
         Bigger Picture
       </h3>
 
       {/* LLM Summary */}
       {hasSummary && (
-        <p className="text-sm text-graphite leading-relaxed mb-3">
+        <p className="text-sm text-text-primary leading-relaxed mb-3">
           {summary}
         </p>
       )}

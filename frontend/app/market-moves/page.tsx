@@ -38,20 +38,20 @@ export default function MarketMovesPage() {
   const futuresMovers = items.filter((i) => i.type === "futures_mover");
 
   return (
-    <div className="min-h-screen bg-snow">
+    <div className="min-h-screen bg-surface-deep">
       {/* Header */}
-      <header className="bg-white border-b border-mist">
+      <header className="bg-surface-card border-b border-surface-border">
         <div className="max-w-4xl mx-auto px-4 py-4 sm:py-6">
           <Link
             href="/"
-            className="text-sm text-slate hover:text-graphite transition-colors mb-2 inline-block"
+            className="text-sm text-text-secondary hover:text-text-primary transition-colors mb-2 inline-block"
           >
             &larr; Back to feed
           </Link>
-          <h1 className="text-2xl sm:text-3xl font-bold text-graphite">
+          <h1 className="text-2xl sm:text-3xl font-bold text-text-primary">
             The Market Was Wrong
           </h1>
-          <p className="text-slate mt-1">
+          <p className="text-text-secondary mt-1">
             When the betting market got it wrong — upsets, surprises, and big
             shifts.
           </p>
@@ -68,8 +68,8 @@ export default function MarketMovesPage() {
                 onClick={() => setHours(value)}
                 className={`px-3 py-1 text-sm rounded-full transition-colors ${
                   hours === value
-                    ? "bg-graphite text-white"
-                    : "bg-white border border-mist text-slate hover:bg-snow"
+                    ? "bg-text-primary text-surface-deep"
+                    : "bg-surface-card border border-surface-border text-text-secondary hover:bg-surface-elevated"
                 }`}
               >
                 {label}
@@ -81,7 +81,7 @@ export default function MarketMovesPage() {
 
       <main className="max-w-4xl mx-auto px-4 py-6 space-y-8">
         {loading && (
-          <div className="text-center py-12 text-slate">Loading...</div>
+          <div className="text-center py-12 text-text-secondary">Loading...</div>
         )}
 
         {error && (
@@ -90,10 +90,10 @@ export default function MarketMovesPage() {
 
         {!loading && !error && items.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-lg text-slate">
+            <p className="text-lg text-text-secondary">
               No big market surprises in the last {hours} hours.
             </p>
-            <p className="text-sm text-gray-400 mt-1">
+            <p className="text-sm text-text-muted mt-1">
               Check back after more games finish.
             </p>
           </div>
@@ -102,7 +102,7 @@ export default function MarketMovesPage() {
         {/* UPSETS SECTION */}
         {upsets.length > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-graphite mb-3 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-text-primary mb-3 flex items-center gap-2">
               <span className="text-xl">&#x1f92f;</span> Upsets
             </h2>
             <div className="space-y-3">
@@ -116,7 +116,7 @@ export default function MarketMovesPage() {
         {/* MARKET ERRORS SECTION */}
         {marketErrors.length > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-graphite mb-3 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-text-primary mb-3 flex items-center gap-2">
               <span className="text-xl">&#x1f4c9;</span> Market Misreads
             </h2>
             <div className="space-y-3">
@@ -130,7 +130,7 @@ export default function MarketMovesPage() {
         {/* FUTURES MOVERS SECTION */}
         {futuresMovers.length > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-graphite mb-3 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-text-primary mb-3 flex items-center gap-2">
               <span className="text-xl">&#x1f4c8;</span> Biggest Futures Shifts
             </h2>
             <div className="space-y-3">
@@ -143,7 +143,7 @@ export default function MarketMovesPage() {
 
         {/* Attribution */}
         {!loading && items.length > 0 && (
-          <p className="text-xs text-gray-300 text-center pt-4">
+          <p className="text-xs text-text-muted text-center pt-4">
             Based on opening odds vs actual results. Not betting advice.
           </p>
         )}
@@ -163,38 +163,38 @@ function UpsetCard({ item }: { item: MarketMovesItem }) {
 
   return (
     <Link href={`/events/${item.event_id}`}>
-      <div className="bg-white rounded-xl shadow-sm border border-mist p-4 hover:shadow-md transition-shadow cursor-pointer">
+      <div className="bg-surface-card rounded-xl shadow-card border border-surface-border p-4 hover:shadow-lg transition-shadow cursor-pointer">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             {/* Sport badge */}
             {item.sport_name && (
-              <span className="text-xs text-slate bg-snow px-2 py-0.5 rounded-full">
+              <span className="text-xs text-text-secondary bg-surface-deep px-2 py-0.5 rounded-full">
                 {item.sport_name}
               </span>
             )}
 
             {/* Result */}
             <div className="mt-2">
-              <span className="font-semibold text-graphite">
+              <span className="font-semibold text-text-primary">
                 {item.winner}
               </span>{" "}
-              <span className="text-sm text-slate">beat</span>{" "}
-              <span className="font-medium text-graphite">{item.loser}</span>
-              <span className="text-slate ml-2">
+              <span className="text-sm text-text-secondary">beat</span>{" "}
+              <span className="font-medium text-text-primary">{item.loser}</span>
+              <span className="text-text-secondary ml-2">
                 {item.winner_score}&ndash;{item.loser_score}
               </span>
             </div>
 
             {/* Explanation */}
-            <p className="text-sm text-slate mt-1">
+            <p className="text-sm text-text-secondary mt-1">
               {item.loser} was a{" "}
-              <span className="font-medium text-red-600">{favoritePct}%</span>{" "}
+              <span className="font-medium text-red-400">{favoritePct}%</span>{" "}
               favorite. {item.winner} only had a {underdogPct}% chance.
             </p>
 
             {/* Time */}
             {item.commence_time && (
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-text-muted mt-1">
                 {formatRelativeTime(item.commence_time)}
               </p>
             )}
@@ -205,7 +205,7 @@ function UpsetCard({ item }: { item: MarketMovesItem }) {
             <div
               className={`text-lg font-bold ${
                 errorPct >= 30
-                  ? "text-red-600"
+                  ? "text-red-400"
                   : errorPct >= 20
                   ? "text-orange-500"
                   : "text-amber-500"
@@ -213,7 +213,7 @@ function UpsetCard({ item }: { item: MarketMovesItem }) {
             >
               {errorPct}%
             </div>
-            <div className="text-xs text-gray-400">off</div>
+            <div className="text-xs text-text-muted">off</div>
           </div>
         </div>
       </div>
@@ -226,30 +226,30 @@ function MarketErrorCard({ item }: { item: MarketMovesItem }) {
 
   return (
     <Link href={`/events/${item.event_id}`}>
-      <div className="bg-white rounded-xl shadow-sm border border-mist p-4 hover:shadow-md transition-shadow cursor-pointer">
+      <div className="bg-surface-card rounded-xl shadow-card border border-surface-border p-4 hover:shadow-lg transition-shadow cursor-pointer">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             {item.sport_name && (
-              <span className="text-xs text-slate bg-snow px-2 py-0.5 rounded-full">
+              <span className="text-xs text-text-secondary bg-surface-deep px-2 py-0.5 rounded-full">
                 {item.sport_name}
               </span>
             )}
 
             <div className="mt-2">
-              <span className="font-semibold text-graphite">
+              <span className="font-semibold text-text-primary">
                 {item.winner}
               </span>{" "}
-              <span className="text-sm text-slate">beat</span>{" "}
-              <span className="font-medium text-graphite">{item.loser}</span>
-              <span className="text-slate ml-2">
+              <span className="text-sm text-text-secondary">beat</span>{" "}
+              <span className="font-medium text-text-primary">{item.loser}</span>
+              <span className="text-text-secondary ml-2">
                 {item.winner_score}&ndash;{item.loser_score}
               </span>
             </div>
 
-            <p className="text-sm text-slate mt-1">{item.description}</p>
+            <p className="text-sm text-text-secondary mt-1">{item.description}</p>
 
             {item.commence_time && (
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-text-muted mt-1">
                 {formatRelativeTime(item.commence_time)}
               </p>
             )}
@@ -257,7 +257,7 @@ function MarketErrorCard({ item }: { item: MarketMovesItem }) {
 
           <div className="flex-shrink-0 text-right">
             <div className="text-lg font-bold text-amber-500">{errorPct}%</div>
-            <div className="text-xs text-gray-400">off</div>
+            <div className="text-xs text-text-muted">off</div>
           </div>
         </div>
       </div>
@@ -271,28 +271,28 @@ function FuturesMoverCard({ item }: { item: MarketMovesItem }) {
   const isUp = (item.change_24h || 0) > 0;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-mist p-4">
+    <div className="bg-surface-card rounded-xl shadow-card border border-surface-border p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           {item.sport_name && (
-            <span className="text-xs text-slate bg-snow px-2 py-0.5 rounded-full">
+            <span className="text-xs text-text-secondary bg-surface-deep px-2 py-0.5 rounded-full">
               {item.sport_name}
             </span>
           )}
 
           <div className="mt-2">
-            <span className="font-semibold text-graphite">
+            <span className="font-semibold text-text-primary">
               {item.outcome_name}
             </span>
           </div>
 
-          <p className="text-sm text-slate mt-1">
+          <p className="text-sm text-text-secondary mt-1">
             {isUp ? "Surged" : "Dropped"} {changePct}% to {currentPct}% in{" "}
             <span className="font-medium">{item.market_name}</span>
           </p>
 
           {item.market_tier === 1 && (
-            <span className="inline-block text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full mt-1">
+            <span className="inline-block text-xs text-purple-400 bg-purple-500/15 px-2 py-0.5 rounded-full mt-1">
               Championship
             </span>
           )}
@@ -301,13 +301,13 @@ function FuturesMoverCard({ item }: { item: MarketMovesItem }) {
         <div className="flex-shrink-0 text-right">
           <div
             className={`text-lg font-bold ${
-              isUp ? "text-green-600" : "text-red-600"
+              isUp ? "text-green-600" : "text-red-400"
             }`}
           >
             {isUp ? "+" : "-"}
             {changePct}%
           </div>
-          <div className="text-xs text-gray-400">24h</div>
+          <div className="text-xs text-text-muted">24h</div>
         </div>
       </div>
     </div>

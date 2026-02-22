@@ -78,7 +78,7 @@ export default function Tooltip({
           role="tooltip"
           className={`absolute z-50 ${positionClasses[actualPosition]} pointer-events-none`}
         >
-          <div className="bg-graphite text-white text-sm rounded-lg px-3 py-2 shadow-lg max-w-xs">
+          <div className="bg-text-primary text-surface-deep text-sm rounded-lg px-3 py-2 shadow-lg max-w-xs">
             {content}
           </div>
           {/* Arrow */}

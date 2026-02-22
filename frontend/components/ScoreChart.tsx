@@ -302,7 +302,7 @@ export default function ScoreChart({
       }
 
       return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
           {/* Aggregate scores */}
           {aggregateEntries.map((entry, index) => (
@@ -317,7 +317,7 @@ export default function ScoreChart({
           {/* Bookmaker breakdown */}
           {Object.keys(bookmakerGroups).length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100">
-              <p className="text-xs text-gray-400 mb-1">By sportsbook:</p>
+              <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {Object.entries(bookmakerGroups).map(([bookmaker, scores]) => (
                 <p key={bookmaker} className="text-xs text-gray-500">
                   {bookmaker}: {scores.home !== undefined ? Math.round(scores.home) : "?"} - {scores.away !== undefined ? Math.round(scores.away) : "?"}
@@ -341,8 +341,8 @@ export default function ScoreChart({
             onClick={() => setTimeRange(option.value)}
             className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
               timeRange === option.value
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                ? "bg-text-primary text-surface-deep"
+                : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
             }`}
           >
             {option.label}
@@ -432,7 +432,7 @@ export default function ScoreChart({
 
       {/* Info about gray lines */}
       {bookmakers.length > 0 && (
-        <p className="text-xs text-gray-400 text-center">
+        <p className="text-xs text-text-muted text-center">
           Gray lines show individual sportsbooks • Tap/hover for details
         </p>
       )}
