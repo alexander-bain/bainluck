@@ -437,7 +437,31 @@ async def search_events(
     """
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days_back)
+
+    # search_pattern is the full query for futures name search (always works)
     search_pattern = f"%{q}%"
+
+    # Split multi-word queries: "USA Canada" should match events where
+    # one team is "USA" and the other is "Canada"
+    terms = q.strip().split()
+    if len(terms) > 1:
+        # Multi-word: each term must match EITHER home or away team name.
+        # This finds "USA vs Canada" when searching "USA Canada".
+        term_conditions = []
+        for term in terms:
+            term_pattern = f"%{term}%"
+            term_conditions.append(
+                or_(
+                    Event.home_team_name.ilike(term_pattern),
+                    Event.away_team_name.ilike(term_pattern),
+                )
+            )
+        team_filter = and_(*term_conditions)
+    else:
+        team_filter = or_(
+            Event.home_team_name.ilike(search_pattern),
+            Event.away_team_name.ilike(search_pattern),
+        )
 
     # Build base query - search both home and away team names
     query = (
@@ -445,10 +469,7 @@ async def search_events(
         .join(Sport, Event.sport_id == Sport.id)
         .options(selectinload(Event.sport))
         .where(
-            or_(
-                Event.home_team_name.ilike(search_pattern),
-                Event.away_team_name.ilike(search_pattern),
-            ),
+            team_filter,
             Event.commence_time >= cutoff,
         )
     )
@@ -652,15 +673,36 @@ async def typeahead_search(
     pattern = f"%{q}%"
     suggestions = []
 
+    # Multi-word query support: "USA Canada" finds events where
+    # one team is "USA" and the other is "Canada"
+    terms = q.strip().split()
+    if len(terms) > 1:
+        event_term_conditions = []
+        team_term_conditions = []
+        for term in terms:
+            tp = f"%{term}%"
+            event_term_conditions.append(
+                or_(Event.home_team_name.ilike(tp), Event.away_team_name.ilike(tp))
+            )
+            team_term_conditions.append(
+                or_(Team.name.ilike(tp), Team.abbreviation.ilike(tp))
+            )
+        event_team_filter = and_(*event_term_conditions)
+        team_filter = and_(*team_term_conditions)
+    else:
+        event_team_filter = or_(
+            Event.home_team_name.ilike(pattern),
+            Event.away_team_name.ilike(pattern),
+        )
+        team_filter = or_(
+            Team.name.ilike(pattern),
+            Team.abbreviation.ilike(pattern),
+        )
+
     # 1. Find matching teams (deduplicated by name)
     team_query = (
         select(Team.name, Team.abbreviation, Team.sport_id, Team.logo_url_small)
-        .where(
-            or_(
-                Team.name.ilike(pattern),
-                Team.abbreviation.ilike(pattern),
-            )
-        )
+        .where(team_filter)
         .order_by(Team.name)
         .limit(5)
     )
@@ -682,10 +724,7 @@ async def typeahead_search(
         .join(Sport, Event.sport_id == Sport.id)
         .options(selectinload(Event.sport))
         .where(
-            or_(
-                Event.home_team_name.ilike(pattern),
-                Event.away_team_name.ilike(pattern),
-            ),
+            event_team_filter,
             Event.status.in_(["live", "scheduled"]),
             Event.commence_time >= now - timedelta(hours=1),
             Event.commence_time <= now + timedelta(days=7),
