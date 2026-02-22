@@ -178,7 +178,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1510+ pytest items across 19 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (259 tests: ticker detection, ticker abbreviation parsing, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1540+ pytest items across 19 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117+ tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -575,11 +575,14 @@ Shows championship odds, MVP odds, and award futures relevant to teams playing i
 - `_team_name_patterns()` — Builds ILIKE-safe patterns from team names
 - `_escape_like()` — Escapes `%`, `_`, `\` for safe ILIKE patterns
 
-**Frontend:** `RelatedFutures.tsx` — "Bigger Picture" section on event detail page with team-colored borders, logos, probability bars, tier icons, player name display
+**Frontend:** `RelatedFutures.tsx` — "Bigger Picture" section on event detail page with team-colored borders, logos, probability bars, tier icons, player name display. Summary-first collapsed design when LLM summary is available; falls back to expanded team sections when no summary.
+
+**LLM Summary:** `generate_related_futures_summary()` in `llm.py` generates a 2-3 sentence casual summary of championship/award implications using GPT-4o-mini. Cached in `LineMovementAnalysis` table with `analysis_type="related_futures"`. TTL: 2 hours for live/scheduled games, never expires for completed. Returned as `"summary": str | null` in the endpoint response. Gracefully degrades when `OPENAI_API_KEY` is not set.
 
 **Files:**
-- Backend endpoint: `backend/app/routes/events.py` (related-futures section)
+- Backend endpoint: `backend/app/routes/events.py` (related-futures section + LLM summary caching)
 - Frontend component: `frontend/components/RelatedFutures.tsx`
+- LLM generation: `backend/app/services/llm.py` (`generate_related_futures_summary`)
 - Team linking utility: `backend/app/utils/team_linking.py`
 - Tests: `backend/tests/test_team_linking.py` (11 tests for helpers)
 
@@ -838,9 +841,9 @@ curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/link?secret=
 ```
 
 **Files:**
-- `backend/app/utils/prediction_market_matching.py` — Detection regex, fuzzy matching, team mapping, ticker parsing, ticker abbreviation extraction, `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping
-- `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases, both-teams gate, sport scoring
-- `backend/tests/test_prediction_market_matching.py` — 259 tests (ticker detection, ticker abbreviation parsing, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, integration)
+- `backend/app/utils/prediction_market_matching.py` — Detection regex, fuzzy matching, team mapping, ticker parsing, ticker abbreviation extraction, ticker fragment matching (NCAAB/NCAAF), prop/spread outcome filter, `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping
+- `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases, both-teams gate, sport scoring, orphaned snapshot cleanup on unlink/re-link, fragment-based disambiguation
+- `backend/tests/test_prediction_market_matching.py` — 291 tests (ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering, integration)
 
 ### Team Auto-Creation from Events
 The `_discover_events()` task (runs every 15 min) now batch-creates Team records for any teams found in events that don't yet have entries in the `teams` table. This ensures college teams (Harvard, Brown, Stanford, etc.) get Team records even without ESPN scoreboard matching. The `search_teams` endpoint also falls back to searching the events table and auto-creating Team records for matches.
@@ -957,7 +960,7 @@ These are the current focus. Resist the urge to build new features until these a
 9. 🟢 **MLB Stats API integration (shipped)** — Live baseball win probability from MLB's official API (`statsapi.mlb.com`). No API key needed. Celery task polls every 2 min during live games. Replaces FanGraphs stub. 33 tests.
 10. 🟢 **Divergence badge (shipped)** — Frontend detects when prediction market odds (Kalshi/Polymarket) diverge >5% from sportsbook consensus. Purple badge for >10% gap, blue for >5%. On event detail page data freshness strip.
 11. 🟢 **Non-sports tier promotion (shipped)** — Politics, Entertainment, Crypto promoted from tier 3 to tier 2 in `sportCategories.ts` frontend categorization.
-12. 🟢 **Prediction market game-level odds (shipped)** — Two-pass matching (ticker scan + general scan), 259 tests, sport+time fallback, ticker abbreviation parsing for generic-named Kalshi markets, admin endpoints. Live polling every 2 min. Both-teams matching gate prevents mislinks (e.g., "Pistons vs. Bulls" matching South Florida Bulls). Sport category scoring bonus for disambiguation. Polymarket matchup-named outcome fallback for `find_moneyline_outcome`. Stale/mislink cleanup scans ALL linked markets (not just completed). **Still needs:** LLM explanation of market disagreements.
+12. 🟢 **Prediction market game-level odds (shipped)** — Two-pass matching (ticker scan + general scan), 291 tests, sport+time fallback, ticker abbreviation parsing for generic-named Kalshi markets, admin endpoints. Live polling every 2 min. Both-teams matching gate prevents mislinks (e.g., "Pistons vs. Bulls" matching South Florida Bulls). Sport category scoring bonus for disambiguation. Polymarket matchup-named outcome fallback for `find_moneyline_outcome`. Stale/mislink cleanup scans ALL linked markets (not just completed) and deletes orphaned `win_prob_snapshots`. Prop/spread outcome filter prevents O/U and spread outcomes from being matched as moneyline. NCAAB/NCAAF ticker fragment matching disambiguates among multiple same-sport candidates. LLM "Bigger Picture" summary on related-futures endpoint (GPT-4o-mini, cached in `LineMovementAnalysis`).
 13. 🟢 **Typeahead search (shipped)** — `SearchBar` component with 200ms debounce, keyboard navigation (arrow keys + Enter), integrated into layout header. Backend `GET /api/events/typeahead?q=...` endpoint returns top 5 events + 3 futures. Mobile: search icon links to `/search` page. Desktop: inline search bar in header.
 14. 🟢 **"Market Was Wrong" page (shipped)** — `GET /api/market-moves` endpoint surfaces post-game championship odds shifts. Frontend page at `/market-moves` shows which teams' futures moved most after game results. Backend uses `routes/market_moves.py`.
 15. 🟢 **Onboarding UX fixes (shipped)** — Sport labels on all team search dropdowns/chips (shows "NBA", "NCAA Lacrosse" etc. to disambiguate), fixed duplicate non-sports in onboarding grid, increased session token TTL from 1hr to 8hrs to prevent expiry during onboarding, fixed same-name team clickability (dedup by ID not name).
@@ -968,7 +971,7 @@ These are the current focus. Resist the urge to build new features until these a
 20. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Rebuild from scratch when prioritized — focus on big charts + clean visualization.
 21. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
 22. 🟢 **NFL roster sync fix (shipped)** — Phase 1 team sync builds `sd_abbrev → team_id` mapping that Phase 2 roster sync uses as primary lookup, bridging the ESPN/SportsDataIO abbreviation gap. Added ILIKE fallback for formatting diffs, MLB abbreviation map (30 teams). Should fix 2/32 → 32/32 NFL matching.
-23. 📋 **Related futures Phase 4** — LLM context blurbs explaining why a futures market matters for a game
+23. 🟢 **Related futures Phase 4 (shipped)** — LLM "Bigger Picture" summary on related-futures endpoint. GPT-4o-mini generates 2-3 sentence casual summary of championship/award implications. Cached in `LineMovementAnalysis` with 2h TTL (never expires for completed games). Frontend summary-first collapsed design with "See all N futures" toggle.
 24. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
 25. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
 
@@ -1012,7 +1015,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
-- ✅ Test coverage for core algorithms: 1486+ backend (pytest items) + 117+ frontend = 1603+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (109, incl. Level 2 time-series), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (46), team linking (97), LLM classification (60), prediction market matching (223), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1516+ backend (pytest items) + 117+ frontend = 1633+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (109, incl. Level 2 time-series), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (46), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
@@ -1035,10 +1038,12 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Kalshi ticker abbreviation parsing: `extract_teams_from_ticker()` parses team names from Kalshi game tickers (e.g., `KXNBAGAME-26FEB21DETCHI` → Pistons, Bulls). 100+ team abbreviations across NBA/NFL/NHL/MLB. Solves matching failure for generic-named markets like "Professional Basketball Game" when multiple games exist. 223 tests (up from 195).
 - ✅ Onboarding UX fixes: sport labels on team search/chips, duplicate non-sports category fix, session token TTL 1hr→8hrs, same-name team clickability fix.
 - ✅ Feed quality improvements: raised feed thresholds (event min_score 20, futures min_score 40, 60% diversity cap), non-sports tier promotion to tier 2 in frontend categorization.
-- ✅ Prediction market mislink fixes: both-teams matching gate in `_score_candidates` prevents single-team fuzzy matches (e.g., "Pistons vs. Bulls" matching South Florida Bulls). Phase 1.5 stale link cleanup expanded to scan ALL linked markets (not just completed/closed). Polymarket matchup-named outcome fallback in `find_moneyline_outcome` (handles "Pistons vs. Bulls" as outcome name). 259 tests (up from 223).
+- ✅ Prediction market mislink fixes: both-teams matching gate in `_score_candidates` prevents single-team fuzzy matches (e.g., "Pistons vs. Bulls" matching South Florida Bulls). Phase 1.5 stale link cleanup expanded to scan ALL linked markets (not just completed/closed). Polymarket matchup-named outcome fallback in `find_moneyline_outcome` (handles "Pistons vs. Bulls" as outcome name). 291 tests (up from 223).
 - ✅ Sport category disambiguation for prediction market matching: `_score_candidates` uses `llm_sport_category` + `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping for +5 scoring bonus. Prevents cross-sport mislinks.
 - ✅ NFL roster sync fix: Phase 1 team sync builds `sd_abbrev → team_id` mapping used by Phase 2 roster sync, bridging ESPN/SportsDataIO abbreviation gap. ILIKE fallback for formatting diffs. MLB abbreviation map (30 teams) added to `SPORTSDATA_ABBREV_TO_NAME`.
 - ✅ Stale bookmaker filter improvements: `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) via `_effective_time()`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new).
+- ✅ Prediction market matching hardening: prop/spread outcome filter (`_is_prop_or_spread_outcome`) prevents O/U, spread, and player prop outcomes from being matched as moneyline. Orphaned `win_prob_snapshots` now deleted on unlink/re-link (Phase 1.5 + admin endpoint). NCAAB/NCAAF ticker fragment matching (`extract_ticker_fragments` + `_score_fragment_match`) disambiguates among multiple same-sport candidates. Time window tightened from ±6h to ±3h with ticker game date. 291 tests (up from 259).
+- ✅ Related futures Phase 4 — LLM "Bigger Picture" summary: `generate_related_futures_summary()` in `llm.py` produces 2-3 sentence casual summary of championship/award implications using GPT-4o-mini. Cached in `LineMovementAnalysis` table with `analysis_type="related_futures"` (2h TTL, never expires for completed games). Frontend summary-first collapsed design in `RelatedFutures.tsx` with "See all N futures" toggle.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1049,7 +1054,7 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 1603+ tests (1486+ backend + 117+ frontend) but initially had very few
+- Test suite now has 1633+ tests (1516+ backend + 117+ frontend) but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
