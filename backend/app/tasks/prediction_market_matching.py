@@ -526,6 +526,9 @@ async def _match_prediction_markets(limit: int = 500):
         len(stats["errors"]),
     )
     return stats
+
+
+async def _find_matching_event(session, matchup, market, now, game_date_override=None):
     """
     Find an Event that matches the given matchup and market.
 
