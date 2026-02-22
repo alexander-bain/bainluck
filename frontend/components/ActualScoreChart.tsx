@@ -73,7 +73,7 @@ export default function ActualScoreChart({
                 {homeTeam.split(" ").pop()}
               </div>
             </div>
-            <div className="text-xl text-gray-400">—</div>
+            <div className="text-xl text-text-muted">—</div>
             <div className="text-center">
               <div className="text-3xl font-bold font-mono text-gray-800">
                 {currentAwayScore}
@@ -88,7 +88,7 @@ export default function ActualScoreChart({
         {/* Message about score history */}
         <div className="text-center py-4 text-sm text-gray-500">
           Score progression tracking is not yet available for this event.
-          <span className="block mt-1 text-gray-400">
+          <span className="block mt-1 text-text-muted">
             {isLive ? "Live score updates are provided by sportsbooks." : "Score shown is from when books closed."}
           </span>
         </div>
@@ -113,7 +113,7 @@ export default function ActualScoreChart({
   }) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
           {payload.map((entry, index) => (
             <p
@@ -125,7 +125,7 @@ export default function ActualScoreChart({
             </p>
           ))}
           {payload.length === 2 && (
-            <p className="text-xs text-gray-400 mt-1 pt-1 border-t border-gray-100">
+            <p className="text-xs text-text-muted mt-1 pt-1 border-t border-gray-100">
               Margin: {Math.abs(payload[0].value - payload[1].value)}
             </p>
           )}
@@ -184,10 +184,10 @@ export default function ActualScoreChart({
         <div className="flex items-center justify-center gap-4 text-sm">
           <span className="text-gray-500">Current:</span>
           <span className="font-mono font-bold text-green-600">{currentHomeScore}</span>
-          <span className="text-gray-400">—</span>
+          <span className="text-text-muted">—</span>
           <span className="font-mono font-bold text-blue-600">{currentAwayScore}</span>
           {Math.abs(currentHomeScore - currentAwayScore) > 0 && (
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-text-muted">
               ({currentHomeScore > currentAwayScore ? homeTeam.split(" ").pop() : awayTeam.split(" ").pop()} +{Math.abs(currentHomeScore - currentAwayScore)})
             </span>
           )}

@@ -502,7 +502,7 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-snow">
+    <div className="min-h-screen bg-surface-deep">
       <div className="max-w-lg mx-auto px-4 py-8">
         {/* Progress indicator */}
         <div className="flex items-center justify-between mb-8">
@@ -511,14 +511,14 @@ export default function OnboardingPage() {
               <div
                 key={i}
                 className={`h-1.5 rounded-full transition-all ${
-                  i + 1 <= step ? "w-8 bg-graphite" : "w-8 bg-slate-200"
+                  i + 1 <= step ? "w-8 bg-graphite" : "w-8 bg-surface-border"
                 }`}
               />
             ))}
           </div>
           <button
             onClick={skip}
-            className="text-xs text-slate hover:text-graphite transition-colors"
+            className="text-xs text-text-secondary hover:text-text-primary transition-colors"
           >
             Skip for now
           </button>
@@ -595,7 +595,7 @@ export default function OnboardingPage() {
 
         {/* Error message */}
         {error && (
-          <div className="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
+          <div className="mt-4 p-3 bg-red-500/150/15 text-red-400 rounded-lg text-sm">
             {error}
           </div>
         )}
@@ -605,7 +605,7 @@ export default function OnboardingPage() {
           {step > 1 ? (
             <button
               onClick={goBack}
-              className="text-sm text-slate hover:text-graphite transition-colors"
+              className="text-sm text-text-secondary hover:text-text-primary transition-colors"
             >
               &larr; Back
             </button>
@@ -616,7 +616,7 @@ export default function OnboardingPage() {
           {step < TOTAL_STEPS ? (
             <button
               onClick={goNext}
-              className="px-6 py-2.5 bg-graphite text-white rounded-xl text-sm font-medium hover:bg-graphite/90 transition-colors"
+              className="px-6 py-2.5 bg-text-primary text-surface-deep rounded-xl text-sm font-medium hover:bg-text-primary/90 transition-colors"
             >
               Continue
             </button>
@@ -624,7 +624,7 @@ export default function OnboardingPage() {
             <button
               onClick={handleSubmit}
               disabled={submitting}
-              className="px-6 py-2.5 bg-graphite text-white rounded-xl text-sm font-medium hover:bg-graphite/90 transition-colors disabled:opacity-50"
+              className="px-6 py-2.5 bg-text-primary text-surface-deep rounded-xl text-sm font-medium hover:bg-text-primary/90 transition-colors disabled:opacity-50"
             >
               {submitting ? "Saving..." : "Done"}
             </button>
@@ -656,10 +656,10 @@ function StepLocation({
 }) {
   return (
     <div>
-      <h1 className="text-2xl font-bold text-graphite mb-2">
+      <h1 className="text-2xl font-bold text-text-primary mb-2">
         Where do you follow sports?
       </h1>
-      <p className="text-sm text-slate mb-6">
+      <p className="text-sm text-text-secondary mb-6">
         We&apos;ll boost your local teams in the feed.
       </p>
 
@@ -668,17 +668,17 @@ function StepLocation({
         value={query}
         onChange={(e) => onSearch(e.target.value)}
         placeholder="City or region (e.g., Boston, Bay Area)"
-        className="w-full px-4 py-3 bg-white border border-mist rounded-xl text-sm text-graphite placeholder:text-silver focus:outline-none focus:ring-2 focus:ring-graphite/20"
+        className="w-full px-4 py-3 bg-surface-card border border-surface-border rounded-xl text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30"
         autoFocus
       />
 
       {searching && (
-        <p className="text-xs text-slate mt-3">Searching...</p>
+        <p className="text-xs text-text-secondary mt-3">Searching...</p>
       )}
 
       {teams.length > 0 && (
         <div className="mt-4">
-          <p className="text-xs text-slate mb-2 font-medium uppercase tracking-wide">
+          <p className="text-xs text-text-secondary mb-2 font-medium uppercase tracking-wide">
             {selectedLocation ? `Teams near ${selectedLocation}` : "Teams found"}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -688,8 +688,8 @@ function StepLocation({
                 onClick={() => onToggle(team.id)}
                 className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition-all ${
                   team.selected
-                    ? "bg-graphite text-white border-graphite"
-                    : "bg-white text-slate border-mist hover:border-slate"
+                    ? "bg-text-primary text-surface-deep border-text-primary"
+                    : "bg-surface-card text-text-secondary border-surface-border hover:border-text-secondary"
                 }`}
               >
                 {team.logo_url && (
@@ -721,7 +721,7 @@ function StepLocation({
       )}
 
       {query.length >= 2 && !searching && teams.length === 0 && (
-        <p className="text-sm text-slate mt-4">
+        <p className="text-sm text-text-secondary mt-4">
           No teams found for &quot;{query}&quot;. Try a major city name, abbreviation, or nickname.
         </p>
       )}
@@ -748,10 +748,10 @@ function StepFollow({
 }) {
   return (
     <div>
-      <h1 className="text-2xl font-bold text-graphite mb-2">
+      <h1 className="text-2xl font-bold text-text-primary mb-2">
         Any other favorite teams?
       </h1>
-      <p className="text-sm text-slate mb-6">
+      <p className="text-sm text-text-secondary mb-6">
         Teams you root for, even if they&apos;re not local. These get the biggest
         boost in your feed.
       </p>
@@ -762,25 +762,25 @@ function StepFollow({
           value={query}
           onChange={(e) => onSearch(e.target.value)}
           placeholder="Search for a team (e.g., Cowboys, Warriors)"
-          className="w-full px-4 py-3 bg-white border border-mist rounded-xl text-sm text-graphite placeholder:text-silver focus:outline-none focus:ring-2 focus:ring-graphite/20"
+          className="w-full px-4 py-3 bg-surface-card border border-surface-border rounded-xl text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30"
           autoFocus
         />
 
         {/* Dropdown results */}
         {results.length > 0 && (
-          <div className="absolute z-10 mt-1 w-full bg-white border border-mist rounded-xl shadow-lg max-h-60 overflow-y-auto">
+          <div className="absolute z-10 mt-1 w-full bg-surface-card border border-surface-border rounded-xl shadow-lg max-h-60 overflow-y-auto">
             {results.map((team) => (
               <button
                 key={team.id}
                 onClick={() => onAdd(team)}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-snow transition-colors text-left border-b border-mist/50 last:border-0"
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-elevated transition-colors text-left border-b border-surface-border/50 last:border-0"
               >
                 {team.logo_url && (
                   <img src={team.logo_url} alt="" className="w-5 h-5 object-contain" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-graphite truncate">{team.name}</p>
-                  <p className="text-xs text-slate">
+                  <p className="text-sm font-medium text-text-primary truncate">{team.name}</p>
+                  <p className="text-xs text-text-secondary">
                     {[sportLabel(team.sport_key), team.location].filter(Boolean).join(" · ")}
                   </p>
                 </div>
@@ -790,7 +790,7 @@ function StepFollow({
         )}
       </div>
 
-      {searching && <p className="text-xs text-slate mt-3">Searching...</p>}
+      {searching && <p className="text-xs text-text-secondary mt-3">Searching...</p>}
 
       {/* Selected teams */}
       {selected.length > 0 && (
@@ -798,7 +798,7 @@ function StepFollow({
           {selected.map((team) => (
             <span
               key={team.id}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-graphite text-white rounded-xl text-sm"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-text-primary text-surface-deep rounded-xl text-sm"
             >
               {team.logo_url && (
                 <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
@@ -809,7 +809,7 @@ function StepFollow({
               )}
               <button
                 onClick={() => onRemove(team.id)}
-                className="ml-1 hover:text-white/70"
+                className="ml-1 hover:text-surface-deep/70"
               >
                 <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -825,7 +825,7 @@ function StepFollow({
       )}
 
       {selected.length === 0 && (
-        <p className="text-xs text-slate mt-4">
+        <p className="text-xs text-text-secondary mt-4">
           This step is optional &mdash; skip if your local teams cover it.
         </p>
       )}
@@ -852,8 +852,8 @@ function StepAlmaMaters({
 }) {
   return (
     <div>
-      <h1 className="text-2xl font-bold text-graphite mb-2">Any alma maters?</h1>
-      <p className="text-sm text-slate mb-6">
+      <h1 className="text-2xl font-bold text-text-primary mb-2">Any alma maters?</h1>
+      <p className="text-sm text-text-secondary mb-6">
         We&apos;ll highlight your school&apos;s games and championship odds.
       </p>
 
@@ -863,26 +863,26 @@ function StepAlmaMaters({
           value={query}
           onChange={(e) => onSearch(e.target.value)}
           placeholder="Search for a school (e.g., Duke, Stanford)"
-          className="w-full px-4 py-3 bg-white border border-mist rounded-xl text-sm text-graphite placeholder:text-silver focus:outline-none focus:ring-2 focus:ring-graphite/20"
+          className="w-full px-4 py-3 bg-surface-card border border-surface-border rounded-xl text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30"
           autoFocus
         />
 
         {/* Dropdown results */}
         {results.length > 0 && (
-          <div className="absolute z-10 mt-1 w-full bg-white border border-mist rounded-xl shadow-lg max-h-60 overflow-y-auto">
+          <div className="absolute z-10 mt-1 w-full bg-surface-card border border-surface-border rounded-xl shadow-lg max-h-60 overflow-y-auto">
             {results.map((team) => (
               <button
                 key={team.id}
                 onClick={() => onAdd(team)}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-snow transition-colors text-left border-b border-mist/50 last:border-0"
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-elevated transition-colors text-left border-b border-surface-border/50 last:border-0"
               >
                 {team.logo_url && (
                   <img src={team.logo_url} alt="" className="w-5 h-5 object-contain" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-graphite truncate">{team.name}</p>
+                  <p className="text-sm font-medium text-text-primary truncate">{team.name}</p>
                   {team.sport_key && (
-                    <p className="text-xs text-slate">{sportLabel(team.sport_key)}</p>
+                    <p className="text-xs text-text-secondary">{sportLabel(team.sport_key)}</p>
                   )}
                 </div>
               </button>
@@ -891,7 +891,7 @@ function StepAlmaMaters({
         )}
       </div>
 
-      {searching && <p className="text-xs text-slate mt-3">Searching...</p>}
+      {searching && <p className="text-xs text-text-secondary mt-3">Searching...</p>}
 
       {/* Selected schools */}
       {selected.length > 0 && (
@@ -899,7 +899,7 @@ function StepAlmaMaters({
           {selected.map((team) => (
             <span
               key={team.id}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-graphite text-white rounded-xl text-sm"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-text-primary text-surface-deep rounded-xl text-sm"
             >
               {team.logo_url && (
                 <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
@@ -910,7 +910,7 @@ function StepAlmaMaters({
               )}
               <button
                 onClick={() => onRemove(team.id)}
-                className="ml-1 hover:text-white/70"
+                className="ml-1 hover:text-surface-deep/70"
               >
                 <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -937,10 +937,10 @@ function StepSports({
 }) {
   return (
     <div>
-      <h1 className="text-2xl font-bold text-graphite mb-2">
+      <h1 className="text-2xl font-bold text-text-primary mb-2">
         What do you care about?
       </h1>
-      <p className="text-sm text-slate mb-6">
+      <p className="text-sm text-text-secondary mb-6">
         This helps us show you the most relevant games and markets.
       </p>
 
@@ -950,11 +950,11 @@ function StepSports({
           return (
             <div
               key={sport.key}
-              className="flex items-center justify-between bg-white border border-mist rounded-xl px-4 py-3"
+              className="flex items-center justify-between bg-surface-card border border-surface-border rounded-xl px-4 py-3"
             >
               <div className="flex items-center gap-3">
                 <span className="text-lg">{sport.emoji}</span>
-                <span className="text-sm font-medium text-graphite">{sport.name}</span>
+                <span className="text-sm font-medium text-text-primary">{sport.name}</span>
               </div>
               <div className="flex gap-1">
                 {SPORT_LEVELS.map((level) => (
@@ -964,8 +964,8 @@ function StepSports({
                     title={level.description}
                     className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                       currentLevel === level.value
-                        ? "bg-graphite text-white"
-                        : "bg-snow text-slate hover:bg-slate-100"
+                        ? "bg-text-primary text-surface-deep"
+                        : "bg-surface-elevated text-text-secondary hover:bg-surface-elevated"
                     }`}
                   >
                     {level.label}
@@ -980,10 +980,10 @@ function StepSports({
       {/* Beyond Sports — prediction market categories */}
       {ONBOARDING_BEYOND_SPORTS.length > 0 && (
         <>
-          <p className="text-xs font-semibold text-slate uppercase tracking-wide mt-6 mb-3">
+          <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mt-6 mb-3">
             Beyond Sports
           </p>
-          <p className="text-xs text-slate mb-3">
+          <p className="text-xs text-text-secondary mb-3">
             We also track prediction markets for these categories.
           </p>
           <div className="space-y-3">
@@ -992,11 +992,11 @@ function StepSports({
               return (
                 <div
                   key={cat.key}
-                  className="flex items-center justify-between bg-white border border-mist rounded-xl px-4 py-3"
+                  className="flex items-center justify-between bg-surface-card border border-surface-border rounded-xl px-4 py-3"
                 >
                   <div className="flex items-center gap-3">
                     <span className="text-lg">{cat.emoji}</span>
-                    <span className="text-sm font-medium text-graphite">{cat.name}</span>
+                    <span className="text-sm font-medium text-text-primary">{cat.name}</span>
                   </div>
                   <div className="flex gap-1">
                     {SPORT_LEVELS.map((level) => (
@@ -1006,8 +1006,8 @@ function StepSports({
                         title={level.description}
                         className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                           currentLevel === level.value
-                            ? "bg-graphite text-white"
-                            : "bg-snow text-slate hover:bg-slate-100"
+                            ? "bg-text-primary text-surface-deep"
+                            : "bg-surface-elevated text-text-secondary hover:bg-surface-elevated"
                         }`}
                       >
                         {level.label}
@@ -1043,8 +1043,8 @@ function StepRivals({
 }) {
   return (
     <div>
-      <h1 className="text-2xl font-bold text-graphite mb-2">Any rivals?</h1>
-      <p className="text-sm text-slate mb-6">
+      <h1 className="text-2xl font-bold text-text-primary mb-2">Any rivals?</h1>
+      <p className="text-sm text-text-secondary mb-6">
         Teams you love to hate. We&apos;ll make sure you see it when they&apos;re losing.
       </p>
 
@@ -1054,25 +1054,25 @@ function StepRivals({
           value={query}
           onChange={(e) => onSearch(e.target.value)}
           placeholder="Search for a team (e.g., Yankees, Lakers)"
-          className="w-full px-4 py-3 bg-white border border-mist rounded-xl text-sm text-graphite placeholder:text-silver focus:outline-none focus:ring-2 focus:ring-graphite/20"
+          className="w-full px-4 py-3 bg-surface-card border border-surface-border rounded-xl text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30"
           autoFocus
         />
 
         {/* Dropdown results */}
         {results.length > 0 && (
-          <div className="absolute z-10 mt-1 w-full bg-white border border-mist rounded-xl shadow-lg max-h-60 overflow-y-auto">
+          <div className="absolute z-10 mt-1 w-full bg-surface-card border border-surface-border rounded-xl shadow-lg max-h-60 overflow-y-auto">
             {results.map((team) => (
               <button
                 key={team.id}
                 onClick={() => onAdd(team)}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-snow transition-colors text-left border-b border-mist/50 last:border-0"
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-elevated transition-colors text-left border-b border-surface-border/50 last:border-0"
               >
                 {team.logo_url && (
                   <img src={team.logo_url} alt="" className="w-5 h-5 object-contain" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-graphite truncate">{team.name}</p>
-                  <p className="text-xs text-slate">
+                  <p className="text-sm font-medium text-text-primary truncate">{team.name}</p>
+                  <p className="text-xs text-text-secondary">
                     {[sportLabel(team.sport_key), team.location].filter(Boolean).join(" · ")}
                   </p>
                 </div>
@@ -1082,7 +1082,7 @@ function StepRivals({
         )}
       </div>
 
-      {searching && <p className="text-xs text-slate mt-3">Searching...</p>}
+      {searching && <p className="text-xs text-text-secondary mt-3">Searching...</p>}
 
       {/* Selected rivals */}
       {selected.length > 0 && (
@@ -1090,7 +1090,7 @@ function StepRivals({
           {selected.map((team) => (
             <span
               key={team.id}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-sm"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-red-500/150/15 text-red-400 border border-red-500/30 rounded-xl text-sm"
             >
               {team.logo_url && (
                 <img src={team.logo_url} alt="" className="w-4 h-4 object-contain" />
@@ -1101,7 +1101,7 @@ function StepRivals({
               )}
               <button
                 onClick={() => onRemove(team.id)}
-                className="ml-1 hover:text-red-400"
+                className="ml-1 hover:text-red-300"
               >
                 <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                   <path
@@ -1117,7 +1117,7 @@ function StepRivals({
       )}
 
       {selected.length === 0 && (
-        <p className="text-xs text-slate mt-4">
+        <p className="text-xs text-text-secondary mt-4">
           This step is totally optional. Skip if you don&apos;t have any rivals.
         </p>
       )}
@@ -1170,48 +1170,48 @@ function OnboardingSummary({
   };
 
   return (
-    <div className="mt-6 p-4 bg-white border border-mist rounded-xl">
-      <p className="text-xs font-semibold text-slate uppercase tracking-wide mb-3">
+    <div className="mt-6 p-4 bg-surface-card border border-surface-border rounded-xl">
+      <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-3">
         Your selections
       </p>
-      <div className="space-y-2 text-xs text-graphite">
+      <div className="space-y-2 text-xs text-text-primary">
         {location && (
           <p>
-            <span className="text-slate">Home:</span> {location}
+            <span className="text-text-secondary">Home:</span> {location}
           </p>
         )}
         {localTeams.length > 0 && (
           <p>
-            <span className="text-slate">Local:</span>{" "}
+            <span className="text-text-secondary">Local:</span>{" "}
             {localTeams.map((t) => t.name).join(", ")}
           </p>
         )}
         {followTeams.length > 0 && (
           <p>
-            <span className="text-slate">Following:</span>{" "}
+            <span className="text-text-secondary">Following:</span>{" "}
             {followTeams.map((t) => t.name).join(", ")}
           </p>
         )}
         {almaMaterTeams.length > 0 && (
           <p>
-            <span className="text-slate">Alma maters:</span>{" "}
+            <span className="text-text-secondary">Alma maters:</span>{" "}
             {almaMaterTeams.map((t) => t.name).join(", ")}
           </p>
         )}
         {rivalTeams.length > 0 && (
           <p>
-            <span className="text-slate">Rivals:</span>{" "}
+            <span className="text-text-secondary">Rivals:</span>{" "}
             {rivalTeams.map((t) => t.name).join(", ")}
           </p>
         )}
         {activeSports.length > 0 && (
           <p>
-            <span className="text-slate">Sports:</span>{" "}
+            <span className="text-text-secondary">Sports:</span>{" "}
             {activeSports.map(([key, val]) => `${levelEmoji(val)} ${sportLabel(key)}`).join(", ")}
           </p>
         )}
       </div>
-      <p className="text-[10px] text-slate/60 mt-2">
+      <p className="text-[10px] text-text-muted mt-2">
         You can update these anytime from Preferences.
       </p>
     </div>

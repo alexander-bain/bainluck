@@ -115,18 +115,18 @@ export default function FuturesPage() {
           <div className="flex items-center gap-2 mb-1">
             <Link
               href="/"
-              className="text-caption text-slate hover:text-graphite transition-colors"
+              className="text-caption text-text-secondary hover:text-text-primary transition-colors"
             >
               Home
             </Link>
-            <span className="text-slate">/</span>
-            <span className="text-caption text-graphite">Futures</span>
+            <span className="text-text-secondary">/</span>
+            <span className="text-caption text-text-primary">Futures</span>
           </div>
-          <h1 className="text-title-1 text-graphite flex items-center gap-2">
+          <h1 className="text-title-1 text-text-primary flex items-center gap-2">
             <span>🏆</span>
             Futures Markets
           </h1>
-          <p className="text-body text-slate mt-1">
+          <p className="text-body text-text-secondary mt-1">
             Championship winners, MVPs, and season-long betting markets
           </p>
         </div>
@@ -139,8 +139,8 @@ export default function FuturesPage() {
               onClick={() => setStatusFilter(option.value)}
               className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
                 statusFilter === option.value
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  ? "bg-text-primary text-surface-deep"
+                  : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
               }`}
             >
               {option.label}
@@ -172,14 +172,14 @@ export default function FuturesPage() {
             <section className="mb-8">
               <div className="flex items-center gap-2 mb-4">
                 <span className="text-lg">📈</span>
-                <h2 className="text-title-3 font-semibold text-graphite">
+                <h2 className="text-title-3 font-semibold text-text-primary">
                   Biggest Movers
                 </h2>
-                <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
+                <span className="text-caption text-text-secondary bg-surface-border/50 px-2 py-0.5 rounded">
                   24h
                 </span>
               </div>
-              <div className="bg-white rounded-card shadow-card p-4 overflow-x-auto">
+              <div className="bg-surface-card rounded-card shadow-card p-4 overflow-x-auto">
                 <div className="flex gap-4 min-w-max">
                   {movers.slice(0, 8).map((mover) => (
                     <MoverCard key={mover.outcome_id} mover={mover} />
@@ -192,10 +192,10 @@ export default function FuturesPage() {
           {/* Markets Grid */}
           {markets.length === 0 ? (
             <div className="text-center py-16">
-              <p className="text-body text-slate mb-2">
+              <p className="text-body text-text-secondary mb-2">
                 No {statusFilter === "all" ? "" : statusFilter} futures markets found
               </p>
-              <p className="text-caption text-silver">
+              <p className="text-caption text-text-muted">
                 {statusFilter !== "all"
                   ? "Try selecting a different status filter"
                   : "Check back later for new markets"}
@@ -211,13 +211,13 @@ export default function FuturesPage() {
                     className="flex items-center gap-2 mb-4 w-full text-left group"
                   >
                     <span className="text-lg">{group.emoji}</span>
-                    <h2 className="text-title-3 font-semibold text-graphite">
+                    <h2 className="text-title-3 font-semibold text-text-primary">
                       {group.sportName}
                     </h2>
-                    <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
+                    <span className="text-caption text-text-secondary bg-surface-border/50 px-2 py-0.5 rounded">
                       {group.markets.length}
                     </span>
-                    <span className="ml-auto text-slate group-hover:text-graphite transition-colors">
+                    <span className="ml-auto text-text-secondary group-hover:text-text-primary transition-colors">
                       {expandedSports.has(group.sport) ? (
                         <ChevronDown className="w-5 h-5" />
                       ) : (
@@ -257,17 +257,17 @@ export default function FuturesPage() {
                                 onClick={() => toggleSubcategory(subKey)}
                                 className="flex items-center gap-2 mb-2 w-full text-left group"
                               >
-                                <span className="text-slate group-hover:text-graphite transition-colors">
+                                <span className="text-text-secondary group-hover:text-text-primary transition-colors">
                                   {isSubExpanded ? (
                                     <ChevronDown className="w-4 h-4" />
                                   ) : (
                                     <ChevronRight className="w-4 h-4" />
                                   )}
                                 </span>
-                                <h3 className="text-body font-medium text-graphite">
+                                <h3 className="text-body font-medium text-text-primary">
                                   {sub.displayName}
                                 </h3>
-                                <span className="text-caption text-silver">
+                                <span className="text-caption text-text-muted">
                                   {sub.markets.length} market{sub.markets.length !== 1 ? "s" : ""}
                                 </span>
                               </button>
@@ -295,7 +295,7 @@ export default function FuturesPage() {
 
           {/* Market count */}
           {markets.length > 0 && (
-            <p className="text-center text-caption text-silver pt-4">
+            <p className="text-center text-caption text-text-muted pt-4">
               {markets.length} market{markets.length !== 1 ? "s" : ""}
             </p>
           )}
@@ -314,23 +314,23 @@ function MoverCard({ mover }: { mover: FuturesMover }) {
 
   return (
     <Link href={`/futures/${mover.market_id}`}>
-      <div className="w-48 p-3 rounded-lg border border-mist hover:border-slate/30 hover:shadow-sm transition-all cursor-pointer bg-white">
-        <div className="text-xs text-slate truncate mb-1">
+      <div className="w-48 p-3 rounded-lg border border-surface-border hover:border-surface-border hover:shadow-card transition-all cursor-pointer bg-surface-card">
+        <div className="text-xs text-text-secondary truncate mb-1">
           {mover.market_name || "Unknown Market"}
         </div>
-        <div className="text-sm font-semibold text-graphite truncate mb-2">
+        <div className="text-sm font-semibold text-text-primary truncate mb-2">
           {mover.name}
         </div>
         <div className="flex items-center justify-between">
-          <span className="font-mono text-sm font-bold text-graphite">
+          <span className="font-mono text-sm font-bold text-text-primary">
             {formatProbability(mover.current_probability)}
           </span>
           {change !== null && (
             <span
               className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                 isPositive
-                  ? "bg-emerald-100 text-emerald-700"
-                  : "bg-red-100 text-red-600"
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "bg-red-500/15 text-red-400"
               }`}
             >
               {isPositive ? "+" : ""}

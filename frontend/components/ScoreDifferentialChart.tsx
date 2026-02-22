@@ -338,7 +338,7 @@ export default function ScoreDifferentialChart({
       };
 
       return (
-        <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
           {projectedEntry && (
             <p className="text-sm font-semibold text-emerald-600">
@@ -352,7 +352,7 @@ export default function ScoreDifferentialChart({
           )}
           {bookmakerEntries.length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100">
-              <p className="text-xs text-gray-400 mb-1">By sportsbook:</p>
+              <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_diff", "");
                 return (
@@ -381,13 +381,13 @@ export default function ScoreDifferentialChart({
               fillContainer
                 ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${
                     timeRange === option.value
-                      ? "bg-white/10 text-white/40"
+                      ? "bg-surface-card/10 text-white/40"
                       : "text-white/15 hover:text-white/25"
                   }`
                 : `px-3 py-1.5 text-xs ${
                     timeRange === option.value
-                      ? "bg-gray-900 text-white"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      ? "bg-text-primary text-surface-deep"
+                      : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
                   }`
             }`}
           >
@@ -501,14 +501,14 @@ export default function ScoreDifferentialChart({
       </div>
 
       {/* Axis labels */}
-      <div className="flex justify-between text-xs text-gray-400 px-2 shrink-0">
+      <div className="flex justify-between text-xs text-text-muted px-2 shrink-0">
         <span>+ = {homeShort} leading</span>
         <span>- = {awayShort} leading</span>
       </div>
 
       {/* Info about gray lines */}
       {bookmakers.length > 0 && (
-        <p className="text-xs text-gray-400 text-center shrink-0">
+        <p className="text-xs text-text-muted text-center shrink-0">
           Gray lines show individual sportsbooks
         </p>
       )}

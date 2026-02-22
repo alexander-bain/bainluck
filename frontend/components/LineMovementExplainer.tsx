@@ -57,11 +57,11 @@ export default function LineMovementExplainer({
   if (!data.movements?.length && !data.disagreement_explanation) return null;
 
   return (
-    <div className="bg-white rounded-card shadow-card p-4 sm:p-5 space-y-4">
+    <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5 space-y-4">
       {/* Line Movement Section */}
       {data.movements?.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-slate mb-2 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             <span className="text-lg">📈</span>
             Why Did the Line Move?
           </h3>
@@ -86,7 +86,7 @@ export default function LineMovementExplainer({
           </div>
 
           {!data.explanation && (
-            <p className="text-xs text-gray-400 mt-2">
+            <p className="text-xs text-text-muted mt-2">
               AI explanation unavailable
             </p>
           )}
@@ -96,7 +96,7 @@ export default function LineMovementExplainer({
       {/* Prediction Market Disagreement Section */}
       {data.disagreement_data && (
         <div className={data.movements?.length ? "pt-3 border-t border-gray-100" : ""}>
-          <h3 className="text-sm font-semibold text-slate mb-2 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             <span className="text-lg">🔮</span>
             Market Divergence
           </h3>
@@ -118,7 +118,7 @@ export default function LineMovementExplainer({
               }`}>
                 {Math.round(data.disagreement_data.divergence * 100)}% gap
               </div>
-              <span className="text-gray-300 text-xs">vs</span>
+              <span className="text-text-muted text-xs">vs</span>
             </div>
 
             <div className="flex-1 text-right">
@@ -131,7 +131,7 @@ export default function LineMovementExplainer({
             </div>
           </div>
 
-          <div className="text-xs text-gray-400 mb-2">
+          <div className="text-xs text-text-muted mb-2">
             {homeTeam} win probability
           </div>
 
@@ -145,7 +145,7 @@ export default function LineMovementExplainer({
       )}
 
       {/* Attribution */}
-      <div className="text-xs text-gray-300 pt-1">
+      <div className="text-xs text-text-muted pt-1">
         Powered by AI analysis · Not betting advice
       </div>
     </div>
@@ -170,7 +170,7 @@ function MovementCard({
   const bgColor = isMajor
     ? "bg-amber-50 border-amber-200"
     : "bg-gray-50 border-gray-200";
-  const textColor = isMajor ? "text-amber-700" : "text-gray-600";
+  const textColor = isMajor ? "text-amber-700" : "text-text-secondary";
 
   // Format time
   const startTime = new Date(movement.timestamp_start);
@@ -187,15 +187,15 @@ function MovementCard({
           <span className={`text-xs font-medium ${textColor}`}>
             {isMajor ? "⚡" : "↗"} {magnitude}% swing
           </span>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-text-muted">
             toward {beneficiary}
           </span>
         </div>
-        <span className="text-xs text-gray-400">{timeStr}</span>
+        <span className="text-xs text-text-muted">{timeStr}</span>
       </div>
       <div className="text-xs text-gray-500 mt-0.5">
         {Math.round(movement.home_prob_before * 100)}% → {Math.round(movement.home_prob_after * 100)}%
-        <span className="text-gray-400 ml-1">({homeTeam})</span>
+        <span className="text-text-muted ml-1">({homeTeam})</span>
       </div>
     </div>
   );

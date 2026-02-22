@@ -86,10 +86,10 @@ export default function SearchBox() {
   return (
     <div ref={containerRef} className="relative">
       {/* Search Input */}
-      <div className={`flex items-center gap-2 bg-snow border rounded-full px-3 py-1.5 transition-all ${
-        isFocused ? "border-graphite shadow-sm" : "border-mist"
+      <div className={`flex items-center gap-2 bg-surface-deep border rounded-full px-3 py-1.5 transition-all ${
+        isFocused ? "border-graphite shadow-card" : "border-surface-border"
       }`}>
-        <span className="text-slate text-sm">
+        <span className="text-text-secondary text-sm">
           {isLoading ? "..." : "🔍"}
         </span>
         <input
@@ -104,7 +104,7 @@ export default function SearchBox() {
           onBlur={() => setIsFocused(false)}
           onKeyDown={handleKeyDown}
           placeholder="Search teams..."
-          className="bg-transparent outline-none text-body text-graphite placeholder:text-silver w-32 sm:w-48 lg:w-56"
+          className="bg-transparent outline-none text-body text-text-primary placeholder:text-text-muted w-32 sm:w-48 lg:w-56"
         />
         {query && (
           <button
@@ -114,7 +114,7 @@ export default function SearchBox() {
               setIsOpen(false);
               inputRef.current?.focus();
             }}
-            className="text-slate hover:text-graphite transition-colors"
+            className="text-text-secondary hover:text-text-primary transition-colors"
           >
             ✕
           </button>
@@ -123,20 +123,20 @@ export default function SearchBox() {
 
       {/* Dropdown Results */}
       {isOpen && results && (
-        <div className="absolute top-full right-0 mt-2 w-80 sm:w-96 bg-white border border-mist rounded-lg shadow-lg overflow-hidden z-50">
+        <div className="absolute top-full right-0 mt-2 w-80 sm:w-96 bg-surface-card border border-surface-border rounded-lg shadow-lg overflow-hidden z-50">
           {results.results.length === 0 ? (
-            <div className="p-4 text-center text-slate">
+            <div className="p-4 text-center text-text-secondary">
               No results for &quot;{query}&quot;
             </div>
           ) : (
             <>
               {/* Sport filter pills if multiple sports */}
               {results.sports.length > 1 && (
-                <div className="px-3 py-2 border-b border-mist bg-snow flex gap-2 flex-wrap">
+                <div className="px-3 py-2 border-b border-surface-border bg-surface-deep flex gap-2 flex-wrap">
                   {results.sports.map((sport) => (
                     <span
                       key={sport.key}
-                      className="text-xs bg-white border border-mist px-2 py-0.5 rounded-full text-slate"
+                      className="text-xs bg-surface-card border border-surface-border px-2 py-0.5 rounded-full text-text-secondary"
                     >
                       {getEmojiForLeague(sport.key)} {sport.name} ({sport.count})
                     </span>
@@ -155,7 +155,7 @@ export default function SearchBox() {
               {results.pagination.total_results > 5 && (
                 <Link
                   href={`/search?q=${encodeURIComponent(query)}`}
-                  className="block px-4 py-3 bg-snow border-t border-mist text-center text-sm font-medium text-graphite hover:bg-mist/30 transition-colors"
+                  className="block px-4 py-3 bg-surface-deep border-t border-surface-border text-center text-sm font-medium text-text-primary hover:bg-surface-border/30 transition-colors"
                   onClick={() => setIsOpen(false)}
                 >
                   View all {results.pagination.total_results} results →
@@ -189,7 +189,7 @@ function SearchResultItem({
   return (
     <Link
       href={`/events/${event.id}`}
-      className="block px-4 py-3 hover:bg-snow border-b border-mist/50 last:border-b-0 transition-colors"
+      className="block px-4 py-3 hover:bg-surface-elevated border-b border-surface-border/50 last:border-b-0 transition-colors"
       onClick={onClick}
     >
       <div className="flex items-start justify-between gap-3">
@@ -197,24 +197,24 @@ function SearchResultItem({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             {event.sport && (
-              <span className="text-xs text-slate">
+              <span className="text-xs text-text-secondary">
                 {getEmojiForLeague(event.sport)} {getLeagueDisplay(event.sport)}
               </span>
             )}
             {isLive && (
-              <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-xs font-semibold">
+              <span className="flex items-center gap-1 bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded text-xs font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 LIVE
               </span>
             )}
             {isFinished && (
-              <span className="text-xs text-slate">Final</span>
+              <span className="text-xs text-text-secondary">Final</span>
             )}
           </div>
-          <div className="text-sm font-medium text-graphite truncate">
+          <div className="text-sm font-medium text-text-primary truncate">
             {event.home_team} vs {event.away_team}
           </div>
-          <div className="text-xs text-slate mt-0.5">
+          <div className="text-xs text-text-secondary mt-0.5">
             {isFinished && event.home_score !== null
               ? `${event.home_score} - ${event.away_score}`
               : formatTime(event.commence_time)}
@@ -224,10 +224,10 @@ function SearchResultItem({
         {/* Probabilities */}
         {homeProb !== null && homeProb !== undefined && (
           <div className="text-right shrink-0">
-            <div className="text-sm font-mono font-semibold text-graphite">
+            <div className="text-sm font-mono font-semibold text-text-primary">
               {formatProbability(homeProb)}
             </div>
-            <div className="text-sm font-mono text-slate">
+            <div className="text-sm font-mono text-text-secondary">
               {formatProbability(awayProb)}
             </div>
           </div>

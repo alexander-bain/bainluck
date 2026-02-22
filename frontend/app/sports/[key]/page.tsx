@@ -37,7 +37,7 @@ export default function SportPage({ params }: SportPageProps) {
       {/* Back link */}
       <Link
         href="/"
-        className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
+        className="inline-flex items-center text-sm text-text-secondary hover:text-gray-900 transition-colors"
       >
         <svg
           className="w-4 h-4 mr-1"
@@ -60,7 +60,7 @@ export default function SportPage({ params }: SportPageProps) {
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
           {sport?.name || sportKey.replace(/_/g, " ").toUpperCase()}
         </h1>
-        <p className="text-gray-600">
+        <p className="text-text-secondary">
           {sport?.group && `${sport.group} • `}
           Upcoming games with win probabilities
         </p>

@@ -154,7 +154,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
       {displaySources.map(({ key, meta, currentValue }) => (
         <div
           key={key}
-          className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"
+          className="bg-surface-card rounded-lg shadow-card border border-gray-200 overflow-hidden"
         >
           {/* Source header with color accent */}
           <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
@@ -167,7 +167,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
                 <h2 className="text-base font-semibold text-gray-900">
                   {meta.display_name}
                 </h2>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-surface-elevated text-gray-500">
                   {meta.type}
                 </span>
               </div>
@@ -187,7 +187,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
                 <p className="text-lg font-bold text-gray-900">
                   {(currentValue * 100).toFixed(1)}%
                 </p>
-                <p className="text-xs text-gray-400">{event.home_team}</p>
+                <p className="text-xs text-text-muted">{event.home_team}</p>
               </div>
             )}
           </div>
@@ -195,18 +195,18 @@ export default function ModelsPage({ params }: ModelsPageProps) {
           {/* Description + methodology */}
           <div className="px-5 py-4 space-y-3">
             {meta.description && (
-              <p className="text-sm text-gray-600">{meta.description}</p>
+              <p className="text-sm text-text-secondary">{meta.description}</p>
             )}
             {meta.methodology && (
               <div>
-                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
                   Methodology
                 </h3>
                 <p className="text-sm text-gray-500">{meta.methodology}</p>
               </div>
             )}
             {meta.snapshot_count > 0 && (
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-text-muted">
                 {meta.snapshot_count} data points captured for this event
               </p>
             )}
@@ -225,7 +225,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
                 strokeDasharray={meta.dash_pattern ?? undefined}
               />
             </svg>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-text-muted">
               Shown as this line on the chart
             </span>
           </div>

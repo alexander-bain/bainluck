@@ -143,21 +143,21 @@ function InlineTeamSearch({
         onChange={(e) => handleInput(e.target.value)}
         onFocus={() => results.length > 0 && setIsOpen(true)}
         placeholder="Search teams..."
-        className="w-full px-3 py-1.5 text-xs border border-mist rounded-lg bg-snow focus:outline-none focus:border-slate/40 transition-colors"
+        className="w-full px-3 py-1.5 text-xs border border-surface-border rounded-lg bg-surface-deep focus:outline-none focus:border-accent-brand/40 transition-colors"
       />
       {isSearching && (
         <div className="absolute right-2 top-1.5">
-          <div className="w-4 h-4 border-2 border-mist border-t-slate rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-surface-border border-t-slate rounded-full animate-spin" />
         </div>
       )}
       {isOpen && results.length > 0 && (
-        <div className="absolute z-20 w-full mt-1 bg-white border border-mist rounded-lg shadow-lg max-h-48 overflow-y-auto">
+        <div className="absolute z-20 w-full mt-1 bg-surface-card border border-surface-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
           {results.map((team) => (
             <button
               key={team.id}
               onClick={() => handleSelect(team)}
               disabled={adding === team.id}
-              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-graphite hover:bg-snow transition-colors disabled:opacity-50"
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
             >
               {team.logo_url && (
                 <img
@@ -168,7 +168,7 @@ function InlineTeamSearch({
               )}
               <span className="truncate">{team.name}</span>
               {team.sport_key && (
-                <span className="text-slate/60 ml-auto flex-shrink-0">
+                <span className="text-text-muted ml-auto flex-shrink-0">
                   {team.sport_key.split("_")[0]}
                 </span>
               )}
@@ -177,8 +177,8 @@ function InlineTeamSearch({
         </div>
       )}
       {isOpen && query.length >= 2 && results.length === 0 && !isSearching && (
-        <div className="absolute z-20 w-full mt-1 bg-white border border-mist rounded-lg shadow-lg p-3">
-          <p className="text-xs text-slate">
+        <div className="absolute z-20 w-full mt-1 bg-surface-card border border-surface-border rounded-lg shadow-lg p-3">
+          <p className="text-xs text-text-secondary">
             No teams found. Try a city, abbreviation, or nickname.
           </p>
         </div>
@@ -216,10 +216,10 @@ function TeamChip({
 
   const colorClasses =
     variant === "rival"
-      ? "bg-red-50 text-red-700 border-red-200"
+      ? "bg-red-500/150/15 text-red-400 border-red-500/30"
       : variant === "follow"
-      ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-      : "bg-snow text-graphite border-mist";
+      ? "bg-accent-brand/15 text-accent-brand border-accent-brand/30"
+      : "bg-surface-elevated text-text-primary border-surface-border";
 
   return (
     <span
@@ -263,7 +263,7 @@ function SportAffinityRow({
 
   return (
     <div className="flex items-center justify-between text-xs py-0.5">
-      <span className="text-graphite font-medium">{label}</span>
+      <span className="text-text-primary font-medium">{label}</span>
       {isEditing ? (
         <div className="flex gap-1">
           {AFFINITY_LEVELS.map((opt, i) => (
@@ -275,8 +275,8 @@ function SportAffinityRow({
               }}
               className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
                 i === currentIndex
-                  ? "bg-graphite text-white"
-                  : "bg-snow text-slate hover:bg-mist"
+                  ? "bg-text-primary text-surface-deep"
+                  : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
               }`}
             >
               {opt.label}
@@ -286,7 +286,7 @@ function SportAffinityRow({
       ) : (
         <button
           onClick={() => setIsEditing(true)}
-          className="text-slate hover:text-graphite transition-colors"
+          className="text-text-secondary hover:text-text-primary transition-colors"
           title="Click to change"
         >
           {getLevelLabel(level)} ›
@@ -368,11 +368,11 @@ export default function PreferencesPage() {
 
   return (
     <div className="max-w-lg mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-graphite mb-6">Preferences</h1>
+      <h1 className="text-2xl font-bold text-text-primary mb-6">Preferences</h1>
 
       {/* Profile section */}
-      <div className="bg-white rounded-xl border border-mist p-6 mb-6">
-        <h2 className="text-sm font-semibold text-slate uppercase tracking-wide mb-4">
+      <div className="bg-surface-card rounded-xl border border-surface-border p-6 mb-6">
+        <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-4">
           Account
         </h2>
         <div className="flex items-center gap-4">
@@ -380,33 +380,33 @@ export default function PreferencesPage() {
             <img
               src={user.photoURL}
               alt=""
-              className="w-12 h-12 rounded-full border border-mist"
+              className="w-12 h-12 rounded-full border border-surface-border"
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className="w-12 h-12 rounded-full bg-graphite text-white flex items-center justify-center text-lg font-medium">
+            <div className="w-12 h-12 rounded-full bg-text-primary text-surface-deep flex items-center justify-center text-lg font-medium">
               {user?.displayName?.charAt(0)?.toUpperCase() || "?"}
             </div>
           )}
           <div>
-            <p className="font-medium text-graphite">
+            <p className="font-medium text-text-primary">
               {user?.displayName || "User"}
             </p>
-            <p className="text-sm text-slate">{user?.email}</p>
+            <p className="text-sm text-text-secondary">{user?.email}</p>
           </div>
         </div>
       </div>
 
       {/* Personalization section */}
-      <div className="bg-white rounded-xl border border-mist p-6 mb-6">
+      <div className="bg-surface-card rounded-xl border border-surface-border p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-slate uppercase tracking-wide">
+          <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
             Personalization
           </h2>
           {hasPreferences && (
             <Link
               href="/onboarding"
-              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
+              className="text-xs text-accent-brand hover:text-accent-brand font-medium transition-colors"
             >
               Redo onboarding
             </Link>
@@ -416,7 +416,7 @@ export default function PreferencesPage() {
         {prefsLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-6 bg-mist/30 rounded animate-pulse" />
+              <div key={i} className="h-6 bg-surface-border/30 rounded animate-pulse" />
             ))}
           </div>
         ) : hasPreferences ? (
@@ -424,14 +424,14 @@ export default function PreferencesPage() {
             {/* Home location */}
             {prefs?.home_location && (
               <div>
-                <p className="text-xs text-slate font-medium mb-1.5">Home</p>
-                <p className="text-sm text-graphite">{prefs.home_location}</p>
+                <p className="text-xs text-text-secondary font-medium mb-1.5">Home</p>
+                <p className="text-sm text-text-primary">{prefs.home_location}</p>
               </div>
             )}
 
             {/* Local teams */}
             <div>
-              <p className="text-xs text-slate font-medium mb-1.5">
+              <p className="text-xs text-text-secondary font-medium mb-1.5">
                 Local teams
               </p>
               {localTeams.length > 0 ? (
@@ -445,7 +445,7 @@ export default function PreferencesPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate/60 italic">None yet</p>
+                <p className="text-xs text-text-muted italic">None yet</p>
               )}
               <InlineTeamSearch
                 relationType="local"
@@ -456,9 +456,9 @@ export default function PreferencesPage() {
 
             {/* Followed teams */}
             <div>
-              <p className="text-xs text-slate font-medium mb-1.5">
+              <p className="text-xs text-text-secondary font-medium mb-1.5">
                 Followed teams
-                <span className="text-slate/50 font-normal ml-1">
+                <span className="text-text-muted font-normal ml-1">
                   (biggest feed boost)
                 </span>
               </p>
@@ -474,7 +474,7 @@ export default function PreferencesPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate/60 italic">None yet</p>
+                <p className="text-xs text-text-muted italic">None yet</p>
               )}
               <InlineTeamSearch
                 relationType="follow"
@@ -485,7 +485,7 @@ export default function PreferencesPage() {
 
             {/* Alma maters */}
             <div>
-              <p className="text-xs text-slate font-medium mb-1.5">
+              <p className="text-xs text-text-secondary font-medium mb-1.5">
                 Alma maters
               </p>
               {almaMaterTeams.length > 0 ? (
@@ -499,7 +499,7 @@ export default function PreferencesPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate/60 italic">None yet</p>
+                <p className="text-xs text-text-muted italic">None yet</p>
               )}
               <InlineTeamSearch
                 relationType="alma_mater"
@@ -511,7 +511,7 @@ export default function PreferencesPage() {
 
             {/* Rivals */}
             <div>
-              <p className="text-xs text-slate font-medium mb-1.5">Rivals</p>
+              <p className="text-xs text-text-secondary font-medium mb-1.5">Rivals</p>
               {rivalTeams.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {rivalTeams.map((team) => (
@@ -524,7 +524,7 @@ export default function PreferencesPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate/60 italic">None yet</p>
+                <p className="text-xs text-text-muted italic">None yet</p>
               )}
               <InlineTeamSearch
                 relationType="rival"
@@ -535,9 +535,9 @@ export default function PreferencesPage() {
 
             {/* Sport affinities */}
             <div>
-              <p className="text-xs text-slate font-medium mb-1.5">
+              <p className="text-xs text-text-secondary font-medium mb-1.5">
                 Sport interests
-                <span className="text-slate/50 font-normal ml-1">
+                <span className="text-text-muted font-normal ml-1">
                   (tap to change)
                 </span>
               </p>
@@ -556,12 +556,12 @@ export default function PreferencesPage() {
           </div>
         ) : (
           <div className="text-center py-4">
-            <p className="text-sm text-slate mb-3">
+            <p className="text-sm text-text-secondary mb-3">
               Set up your preferences to personalize your feed.
             </p>
             <Link
               href="/onboarding"
-              className="inline-block px-4 py-2 bg-graphite text-white rounded-xl text-sm font-medium hover:bg-graphite/90 transition-colors"
+              className="inline-block px-4 py-2 bg-text-primary text-surface-deep rounded-xl text-sm font-medium hover:bg-text-primary/90 transition-colors"
             >
               Set up personalization
             </Link>
@@ -575,7 +575,7 @@ export default function PreferencesPage() {
           await signOut();
           router.push("/");
         }}
-        className="w-full py-3 text-sm text-slate hover:text-graphite border border-mist rounded-xl hover:bg-snow transition-colors"
+        className="w-full py-3 text-sm text-text-secondary hover:text-text-primary border border-surface-border rounded-xl hover:bg-surface-elevated transition-colors"
       >
         Sign out
       </button>
