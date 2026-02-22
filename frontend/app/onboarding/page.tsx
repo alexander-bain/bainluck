@@ -422,7 +422,9 @@ export default function OnboardingPage() {
       },
     };
 
-    // Check auth token — Safari can silently lose tokens (ITP clears IndexedDB)
+    // Get a fresh auth token — pass it DIRECTLY to the API call so it
+    // doesn't rely on the global _getAuthToken getter (which can be stale
+    // or null during re-render cycles).
     const { getToken, signInWithGoogle } = auth;
     let token: string | null = null;
     try {
@@ -452,11 +454,12 @@ export default function OnboardingPage() {
       }
     }
 
-    // Submit with retry — first attempt may fail if token just refreshed
+    // Submit with retry — pass the token directly to bypass the global getter.
+    // This ensures the exact token we validated above is used in the request.
     let lastError: string = "Something went wrong";
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await submitOnboarding(data);
+        await submitOnboarding(data, token);
         router.push("/?onboarded=1");
         return; // Success!
       } catch (err) {
@@ -466,23 +469,24 @@ export default function OnboardingPage() {
         // If auth error, try refreshing token before retry
         if (attempt === 0 && (lastError.includes("401") || lastError.includes("Authentication"))) {
           try {
+            // Try re-auth to get a fresh token
+            await signInWithGoogle();
+            await new Promise((r) => setTimeout(r, 500));
             token = await getToken();
-            if (!token) {
-              await signInWithGoogle();
-              await new Promise((r) => setTimeout(r, 500));
+            if (token) {
+              continue; // Retry with fresh token
             }
-            continue; // Retry
           } catch {
-            break; // Give up
+            // Give up on re-auth
           }
         }
-        break; // Non-auth error, don't retry
+        break; // Non-auth error or re-auth failed, don't retry
       }
     }
 
     // All attempts failed
     if (lastError.includes("Authentication") || lastError.includes("401")) {
-      setError("Your session expired. Please sign in again from the homepage.");
+      setError("Save failed — please try clicking Done again. If it keeps happening, sign out and back in from the homepage.");
     } else {
       setError(`Save failed: ${lastError}. Please try again.`);
     }
