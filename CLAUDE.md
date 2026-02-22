@@ -26,9 +26,11 @@
 - **The Odds API** (the-odds-api.com) - Sports odds data (~$119/mo)
 - **Kalshi** (kalshi.com) - Prediction market data (futures with timing info, free)
 - **Polymarket** (polymarket.com) - Prediction market data (sports + politics/entertainment/crypto, free, no API key)
-- **SportsDataIO** (sportsdata.io) - Rosters, injuries, standings, schedules (~$50-75/mo)
+- **SportsDataIO** (sportsdata.io) - **Being replaced** by ESPN + free league APIs (too expensive for the value provided). Roster sync will migrate to ESPN roster endpoints. Code still exists but `SPORTSDATA_API_KEY` is no longer set.
+- **MySportsFeeds** (mysportsfeeds.com) - Injuries, lineup changes, transactions, game context (pending personal account approval). Key enabler for "Why Did the Line Move?" feature. Affordable alternative to SportsDataIO for structured sports data with timestamps.
 - **MLB Stats API** (statsapi.mlb.com) - Live baseball win probability, schedules, play-by-play (free, no API key)
-- **ESPN** (undocumented API) - Team colors, logos, live game data, win probability (free, unreliable)
+- **ESPN** (undocumented API) - Team colors, logos, live game data, win probability, rosters, injuries, news (free, unreliable)
+- **TMDB** (themoviedb.org) - Movie posters, headshots, trailers for Oscars page (free tier, no API key needed for read — uses Read Access Token as Bearer auth)
 - **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification (~$5/mo)
 - **Google Analytics 4** - User analytics (free)
 - **Firebase Auth** - Google Sign-In (Apple planned), user accounts and personalization (free tier)
@@ -50,6 +52,7 @@ bainluck/
 │   │   │   ├── sports.py        # Sports listing
 │   │   │   ├── futures.py       # Championship odds
 │   │   │   ├── feed.py          # Unified feed endpoint (events + futures ranked)
+│   │   │   ├── oscars.py        # Oscars landing page (cross-source odds aggregation)
 │   │   │   ├── market_moves.py  # "Market Was Wrong" endpoint
 │   │   │   ├── user.py          # User data endpoints (pins, teams, onboarding, preferences)
 │   │   │   └── health.py        # Health check endpoint
@@ -98,6 +101,7 @@ bainluck/
 ├── frontend/
 │   ├── app/                     # Next.js app router pages
 │   │   ├── onboarding/page.tsx  # 5-step onboarding flow
+│   │   ├── oscars/page.tsx      # Oscars landing page (TMDB enriched)
 │   │   ├── preferences/page.tsx # User preferences display + edit
 │   │   ├── search/page.tsx      # Search results page
 │   │   └── market-moves/page.tsx # "Market Was Wrong" page
@@ -107,6 +111,8 @@ bainluck/
 │   ├── lib/
 │   │   ├── api.ts              # API client
 │   │   ├── types.ts            # TypeScript interfaces
+│   │   ├── tmdb.ts             # TMDB API client (movie posters, headshots, trailers)
+│   │   ├── oscarsData.ts       # Static Oscars ceremony data (order, categories, emoji)
 │   │   └── sportCategories.ts  # Sport grouping logic
 │   └── hooks/                   # Custom React hooks
 ├── docs/PRD.md                  # Full product requirements
@@ -154,6 +160,9 @@ bainluck/
 | `frontend/components/OnboardingBanner.tsx` | CTA banner for authenticated users who haven't onboarded |
 | `backend/app/routes/feed.py` | Unified feed endpoint (events + futures, personalized) |
 | `backend/app/routes/market_moves.py` | "Market Was Wrong" — post-game market shifts |
+| `backend/app/routes/oscars.py` | Oscars landing page — cross-source odds aggregation |
+| `frontend/app/oscars/page.tsx` | Oscars frontend — TMDB-enriched award categories |
+| `frontend/lib/tmdb.ts` | TMDB API client (movie posters, headshots, trailers) |
 | `backend/app/utils/prediction_market_matching.py` | Game-level market detection, ticker parsing, team matching |
 | `backend/app/tasks/prediction_market_matching.py` | Prediction market → event linking + snapshot writing |
 | `frontend/components/SearchBar.tsx` | Typeahead search with 200ms debounce and keyboard nav |
@@ -207,7 +216,8 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `ADMIN_SECRET` - Optional: protect admin endpoints
 - `SENTRY_DSN` - From sentry.io (optional - enables error tracking + performance monitoring)
 - `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
-- `SPORTSDATA_API_KEY` - From sportsdata.io (optional - enables roster sync for player matching)
+- `SPORTSDATA_API_KEY` - From sportsdata.io (**deprecated** — being replaced by ESPN + free league APIs)
+- `MYSPORTSFEEDS_API_KEY` - From mysportsfeeds.com (optional — enables structured injury/lineup data for "Why Did the Line Move?", pending account approval)
 - `FIREBASE_PROJECT_ID` - Firebase project ID (optional - enables auth)
 - `FIREBASE_SERVICE_ACCOUNT_JSON` - Full service account JSON string (optional - for admin operations)
 
@@ -217,6 +227,7 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` - Firebase auth domain (e.g., `project-id.firebaseapp.com`)
 - `NEXT_PUBLIC_FIREBASE_PROJECT_ID` - Firebase project ID
 - `NEXT_PUBLIC_GA_MEASUREMENT_ID` - Google Analytics
+- `NEXT_PUBLIC_TMDB_API_KEY` - TMDB Read Access Token (v4 Bearer auth, used for Oscars page movie posters/headshots)
 
 ---
 
@@ -524,8 +535,10 @@ bainluck_pinnedEvents    // Array of event IDs
 bainluck_pinnedFutures   // Array of futures market IDs
 ```
 
-### SportsDataIO Integration
-SportsDataIO provides structured sports data: rosters, injuries (trial tier scrambled), standings, schedules.
+### SportsDataIO Integration (Deprecated — Migrating to ESPN + Free APIs)
+SportsDataIO provides structured sports data: rosters, injuries (trial tier scrambled), standings, schedules. **Being replaced** due to cost — ESPN roster endpoints + free league APIs (MLB Stats API, NHL Web API) provide equivalent roster data at zero cost. MySportsFeeds (pending account approval) will fill the structured injury/lineup data gap for the "Why Did the Line Move?" feature.
+
+**Status:** Code still exists but `SPORTSDATA_API_KEY` is no longer set. Roster sync will be migrated to ESPN roster endpoints (see Current Priorities). The `sportsdata_api.py` client and `roster_sync.py` task will be rewritten to use ESPN as the primary data source.
 
 **Purpose:** Player name matching for related-futures. Stored on `Team.roster_players` JSONB column.
 
@@ -854,6 +867,36 @@ curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/backfill-his
 ### Team Auto-Creation from Events
 The `_discover_events()` task (runs every 15 min) now batch-creates Team records for any teams found in events that don't yet have entries in the `teams` table. This ensures college teams (Harvard, Brown, Stanford, etc.) get Team records even without ESPN scoreboard matching. The `search_teams` endpoint also falls back to searching the events table and auto-creating Team records for matches.
 
+### Oscars Landing Page
+Visual-first landing page for the 98th Academy Awards (March 2, 2026) at `/oscars`. Aggregates prediction market odds from Polymarket and Kalshi, enriched with movie posters and headshots from TMDB.
+
+**Backend:** `GET /api/oscars` — Queries all Oscar-related `FuturesMarket` records, groups by 24 award categories (regex-based extraction from market names), merges nominees across sources with diacritics-aware dedup, normalizes probabilities to sum to 100%, and orders by ceremony presentation.
+
+**Key data quality handling:**
+- **Kalshi 0.5 filtering**: Illiquid binary markets default to 50/50 — filtered out as noise
+- **Diacritics dedup**: `_strip_diacritics()` using `unicodedata.normalize("NFD")` ensures Skarsgård = Skarsgard
+- **Name normalization**: Strips "The " prefix, colon subtitles ("F1: The Movie" → "F1"), role/film info after " - " or " for "
+- **"Tie" outcome filtering**: Removed from all categories
+- **Boxing false positive filter**: `_is_oscars_market()` rejects markets with " vs " (e.g., "Oscar Duarte vs...")
+- **NegRisk trivia dedup**: Skips trivia markets where all outcomes share the same name
+- **Cap at 10 nominees** per category after probability normalization
+
+**Frontend:** Gold-themed page with sections:
+1. **Hero** — Countdown timer to ceremony, gold gradient background
+2. **Best Picture Spotlight** — Horizontal poster row from TMDB, probabilities underneath
+3. **Major Awards** (6 categories) — Headshots + probability bars with source breakdown
+4. **Craft Awards** (17 categories) — Compact expandable rows
+5. **Trivia** — Non-award markets ("most nominations at 99th Oscars")
+
+**TMDB integration** (`frontend/lib/tmdb.ts`): Client-side only (TMDB has CORS headers). Uses Read Access Token (v4) as Bearer auth via `NEXT_PUBLIC_TMDB_API_KEY`. Progressive enrichment — odds render first, images load async via `Promise.allSettled`. localStorage cache with 24h TTL. Graceful fallback to colored initial circles if no token or fetch fails.
+
+**Files:**
+- Backend: `backend/app/routes/oscars.py`
+- Frontend: `frontend/app/oscars/page.tsx`
+- TMDB client: `frontend/lib/tmdb.ts`
+- Static data: `frontend/lib/oscarsData.ts`
+- Types: `OscarsResponse`, `OscarsCategory`, `OscarsNominee` in `frontend/lib/types.ts`
+
 ---
 
 ## API Patterns
@@ -971,28 +1014,30 @@ These are the current focus. Resist the urge to build new features until these a
 14. 🟢 **"Market Was Wrong" page (shipped)** — `GET /api/market-moves` endpoint surfaces post-game championship odds shifts. Frontend page at `/market-moves` shows which teams' futures moved most after game results. Backend uses `routes/market_moves.py`.
 15. 🟢 **Onboarding UX fixes (shipped)** — Sport labels on all team search dropdowns/chips (shows "NBA", "NCAA Lacrosse" etc. to disambiguate), fixed duplicate non-sports in onboarding grid, increased session token TTL from 1hr to 8hrs to prevent expiry during onboarding, fixed same-name team clickability (dedup by ID not name).
 16. 🟢 **Sport category disambiguation (shipped)** — `_score_candidates` uses `llm_sport_category` (already populated for both Kalshi and Polymarket) to add sport-match scoring bonus (+5) via `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping. Prevents cross-sport mislinks.
-17. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
-18. 📋 LLM-powered odds movement explanations
-19. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-20. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Rebuild from scratch when prioritized — focus on big charts + clean visualization.
+17. 🟢 **Oscars landing page (shipped)** — `/oscars` page with 24 award categories, cross-source odds aggregation (Polymarket + Kalshi), TMDB movie posters/headshots, ceremony countdown, gold-themed design. Backend at `GET /api/oscars`. Diacritics-aware nominee dedup, Kalshi 0.5 noise filter, probability normalization. See Oscars Landing Page section above.
+18. 📋 **Migrate roster sync from SportsDataIO to ESPN** — SportsDataIO is too expensive. ESPN's undocumented roster endpoints (`/teams/{espn_id}/roster`) cover all major sports at zero cost. MLB Stats API already provides rosters. Rewrite `roster_sync.py` to use ESPN as primary source, MLB Stats API for baseball. Removes `SPORTSDATA_API_KEY` dependency.
+19. 📋 **"Why Did the Line Move?" v1** — The highest-value upcoming feature. Detect significant odds movements (>3% in <1hr for pre-game, or momentum shifts during live games). Cross-reference with: (a) ESPN injury/news endpoints (free, immediate), (b) MySportsFeeds structured injury/lineup data with timestamps (pending account approval), (c) live game context (score changes, key plays, momentum). Feed correlation data to GPT-4o-mini to generate explanations like "Lakers line moved from -3 to +1 after LeBron listed as questionable" or "Odds shifted after back-to-back turnovers in the 4th quarter." Live games need more than injury data — play-by-play context, momentum shifts, foul trouble, pitching changes, etc. all drive line movement.
+20. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
+21. 📋 Sport-specific Pulse normalization (different ceilings per sport)
+22. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Rebuild from scratch when prioritized — focus on big charts + clean visualization.
 21. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
 22. 🟢 **NFL roster sync fix (shipped)** — Phase 1 team sync builds `sd_abbrev → team_id` mapping that Phase 2 roster sync uses as primary lookup, bridging the ESPN/SportsDataIO abbreviation gap. Added ILIKE fallback for formatting diffs, MLB abbreviation map (30 teams). Should fix 2/32 → 32/32 NFL matching.
 23. 🟢 **Related futures Phase 4 (shipped)** — LLM "Bigger Picture" summary on related-futures endpoint. GPT-4o-mini generates 2-3 sentence casual summary of championship/award implications. Cached in `LineMovementAnalysis` with 2h TTL (never expires for completed games). Frontend summary-first collapsed design with "See all N futures" toggle.
 24. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
 25. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
 
-### Horizon — AI-Native Sports Intelligence (SportsDataIO + The Odds API + AI)
-These are differentiated features that can't be built with odds data alone. They require SportsDataIO enrichment (rosters, injuries, standings, schedules) combined with AI interpretation. Ordered by estimated impact and feasibility.
+### Horizon — AI-Native Sports Intelligence (ESPN + MySportsFeeds + The Odds API + AI)
+These are differentiated features that can't be built with odds data alone. They require sports data enrichment (rosters, injuries, standings, schedules from ESPN free API + MySportsFeeds) combined with AI interpretation. Ordered by estimated impact and feasibility.
 
 1. 🟡 **"The Market Was Wrong" v2** — Basic version shipped (see priority #14). Next: add AI narrative generation ("After tonight's upset loss, the Celtics' title odds dropped from 8% to 5.5%"), deeper historical context, and personalization (show moves for your teams first).
-2. 📋 **"Why Did the Line Move?"** — Detect significant odds movements (>3% in <1hr) and generate explanations by cross-referencing injury reports, lineup changes, and news from SportsDataIO. "Lakers line moved from -3 to +1 after LeBron was listed as questionable."
+2. 🟡 **"Why Did the Line Move?"** — Promoted to priority #19 in Next section. Core architecture: detect significant movements → correlate with ESPN injuries/news + MySportsFeeds structured data + live game context → LLM explanation. See priority #19 for details.
 3. 📋 **"Your Team's Season at a Glance"** — Dashboard view: championship odds trajectory over the season, win/loss record overlaid on odds chart, key inflection points annotated. Needs: team favorites (auth), futures odds history, game results.
-4. 📋 **Injury Impact Score** — When a player is injured, show historical impact on team's odds. "When Steph Curry has been out this season, Warriors odds shift -4.2% on average." Needs: SportsDataIO injury data + odds snapshots correlation.
-5. 📋 **Game Context Card** — Rich pre-game card: standings implications, head-to-head record, streak info, playoff scenario impact. "If the Celtics win tonight, they clinch the #1 seed." Needs: SportsDataIO standings + schedule + AI reasoning.
+4. 📋 **Injury Impact Score** — When a player is injured, show historical impact on team's odds. "When Steph Curry has been out this season, Warriors odds shift -4.2% on average." Needs: MySportsFeeds injury data + odds snapshots correlation.
+5. 📋 **Game Context Card** — Rich pre-game card: standings implications, head-to-head record, streak info, playoff scenario impact. "If the Celtics win tonight, they clinch the #1 seed." Needs: ESPN standings + schedule + AI reasoning.
 6. 📋 **Overreaction Index** — Compare a team's current championship odds trajectory against historical base rates. "The Lions are +400 to win the Super Bowl. Only 3 teams with these regular season stats have ever won." Needs: historical odds data + AI analysis.
 7. 📋 **Momentum Tracker** — Rolling 10-game odds trend visualization. Show which teams are on hot/cold streaks based on how the market is repricing them, not just W/L record. Needs: futures odds time series.
-8. 📋 **"What's Actually at Stake"** — For each game, show concrete implications: "Win and they're 2 games up in the division. Lose and they drop to 4th." Needs: SportsDataIO standings + schedule + playoff math.
-9. 📋 **Sharps vs Public** — If SportsDataIO provides line movement + betting splits, surface when sharp money disagrees with public sentiment. Differentiated from existing tools by visual-first presentation.
+8. 📋 **"What's Actually at Stake"** — For each game, show concrete implications: "Win and they're 2 games up in the division. Lose and they drop to 4th." Needs: ESPN standings + schedule + playoff math.
+9. 📋 **Sharps vs Public** — If MySportsFeeds provides line movement + betting splits, surface when sharp money disagrees with public sentiment. Differentiated from existing tools by visual-first presentation.
 10. 📋 **Futures Postmortem** — At season end, show who "won" the futures market: early bettors on the champion, worst value bets, biggest surprises. Needs: full futures odds history + AI narrative generation.
 
 ### Completed
@@ -1050,6 +1095,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Stale bookmaker filter improvements: `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) via `_effective_time()`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new).
 - ✅ Prediction market matching hardening: prop/spread outcome filter (`_is_prop_or_spread_outcome`) prevents O/U, spread, and player prop outcomes from being matched as moneyline. Orphaned `win_prob_snapshots` now deleted on unlink/re-link (Phase 1.5 + admin endpoint). NCAAB/NCAAF ticker fragment matching (`extract_ticker_fragments` + `_score_fragment_match`) disambiguates among multiple same-sport candidates. Time window tightened from ±6h to ±3h with ticker game date. 291 tests (up from 259).
 - ✅ Related futures Phase 4 — LLM "Bigger Picture" summary: `generate_related_futures_summary()` in `llm.py` produces 2-3 sentence casual summary of championship/award implications using GPT-4o-mini. Cached in `LineMovementAnalysis` table with `analysis_type="related_futures"` (2h TTL, never expires for completed games). Frontend summary-first collapsed design in `RelatedFutures.tsx` with "See all N futures" toggle.
+- ✅ Oscars landing page: `/oscars` page with 24 award categories, cross-source odds aggregation (Polymarket + Kalshi), TMDB movie posters/headshots via Bearer token auth, ceremony countdown, gold-themed design. Backend `GET /api/oscars` with diacritics dedup, Kalshi 0.5 noise filter, probability normalization, boxing false positive filter, NegRisk trivia dedup.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1138,6 +1184,7 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 | Pulse Hall of Fame | https://bainluck.com/pulse/hall-of-fame |
 | Search | https://bainluck.com/search?q=celtics |
 | Market Was Wrong | https://bainluck.com/market-moves |
+| Oscars | https://bainluck.com/oscars |
 | Onboarding | https://bainluck.com/onboarding |
 | Preferences | https://bainluck.com/preferences |
 | PRD | `docs/PRD.md` |
