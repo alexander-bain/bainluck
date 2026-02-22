@@ -286,6 +286,13 @@ def poll_live_prediction_markets(self):
     return _tracked_run("prediction_market_live", _poll_live_prediction_market_prices())
 
 
+@celery_app.task(bind=True, name="app.tasks.backfill_polymarket_win_prob")
+def backfill_polymarket_win_prob(self, market_id: int, event_id: int):
+    """Backfill win_prob_snapshots from Polymarket CLOB price history."""
+    from app.tasks.prediction_market_matching import _backfill_polymarket_win_prob_history
+    return run_async(_backfill_polymarket_win_prob_history(market_id, event_id))
+
+
 # --- MLB Live Win Probability ---
 
 @celery_app.task(bind=True, name="app.tasks.sync_mlb_win_probability")

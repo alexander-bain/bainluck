@@ -77,6 +77,8 @@ async def _match_prediction_markets(limit: int = 500):
     }
 
     now = datetime.now(timezone.utc)
+    # Track newly linked Polymarket markets for price history backfill
+    polymarket_backfill_queue = []
 
     async with get_task_session() as session:
         # ── Phase 1: Link unlinked game-level markets ────────────────────
@@ -171,19 +173,54 @@ async def _match_prediction_markets(limit: int = 500):
         # ── Pass 2: General scan for non-ticker game markets ─────────────
         # Catches Polymarket game markets and any Kalshi markets with
         # non-standard tickers (e.g., esports like KXLOLGAME).
-        unlinked_result = await session.execute(
+        #
+        # Two sub-queries to maximize coverage of game-level markets:
+        # 2a: Markets with matchup name patterns (contains "vs." / "vs ")
+        #     — these are almost certainly game-level. Full budget.
+        # 2b: Remaining markets (catches unusual naming).
+        #     — small budget for edge cases.
+        #
+        # Without this split, 13,000+ Polymarket markets (politics, crypto,
+        # weather, etc.) compete for 500 scan slots and crowd out game
+        # markets like "Celtics vs. Lakers".
+
+        _matchup_base_where = [
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.status == "open",
+        ]
+        _matchup_name_filter = or_(
+            FuturesMarket.name.ilike("% vs.%"),
+            FuturesMarket.name.ilike("% vs %"),
+            FuturesMarket.name.ilike("% – %"),  # en-dash matchups
+        )
+
+        # Pass 2a: matchup-patterned markets (prioritized)
+        matchup_result = await session.execute(
             select(FuturesMarket)
-            .where(
-                FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                FuturesMarket.event_id.is_(None),
-                FuturesMarket.status == "open",
-            )
+            .where(*_matchup_base_where, _matchup_name_filter)
             .order_by(FuturesMarket.updated_at.desc())
             .limit(limit)
         )
-        unlinked_markets = unlinked_result.scalars().all()
+        matchup_markets = matchup_result.scalars().all()
+
+        # Pass 2b: remaining non-matchup markets (edge cases, small budget)
+        remaining_budget = max(0, limit // 5)  # 20% of budget for edge cases
+        remaining_markets = []
+        if remaining_budget > 0:
+            remaining_result = await session.execute(
+                select(FuturesMarket)
+                .where(*_matchup_base_where, ~_matchup_name_filter)
+                .order_by(FuturesMarket.updated_at.desc())
+                .limit(remaining_budget)
+            )
+            remaining_markets = remaining_result.scalars().all()
+
+        unlinked_markets = matchup_markets + remaining_markets
         stats["funnel"]["total_unlinked"] = len(unlinked_markets) + len(ticker_markets)
         stats["funnel"]["general_scan_count"] = len(unlinked_markets)
+        stats["funnel"]["matchup_scan_count"] = len(matchup_markets)
+        stats["funnel"]["remaining_scan_count"] = len(remaining_markets)
 
         for market in unlinked_markets:
             # Skip markets already processed in Pass 1
@@ -243,6 +280,11 @@ async def _match_prediction_markets(limit: int = 500):
                     matched_event["home_team"], matched_event["away_team"],
                     matched_event["yes_is_home"],
                 )
+                # Queue Polymarket markets for price history backfill
+                if market.source == "polymarket":
+                    polymarket_backfill_queue.append(
+                        (market.id, matched_event["event_id"])
+                    )
             else:
                 stats["funnel"]["no_event_found"] += 1
                 if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
@@ -459,6 +501,23 @@ async def _match_prediction_markets(limit: int = 500):
 
         await session.commit()
 
+    # ── Phase 3: Backfill Polymarket price history for newly linked markets ──
+    # Runs outside the main DB session to avoid holding transactions open
+    # during API calls. Each backfill is independent and idempotent.
+    if polymarket_backfill_queue:
+        stats["funnel"]["polymarket_backfills_queued"] = len(polymarket_backfill_queue)
+        for market_id, event_id in polymarket_backfill_queue:
+            try:
+                backfill_stats = await _backfill_polymarket_win_prob_history(
+                    market_id, event_id,
+                )
+                stats["funnel"].setdefault("polymarket_backfill_snapshots", 0)
+                stats["funnel"]["polymarket_backfill_snapshots"] += (
+                    backfill_stats.get("snapshots_created", 0)
+                )
+            except Exception as e:
+                stats["errors"].append(f"backfill_{market_id}: {str(e)[:100]}")
+
     logger.info(
         "Prediction market matching: scanned=%d, linked=%d, "
         "snapshots_written=%d, deduped=%d, errors=%d",
@@ -467,9 +526,6 @@ async def _match_prediction_markets(limit: int = 500):
         len(stats["errors"]),
     )
     return stats
-
-
-async def _find_matching_event(session, matchup, market, now, game_date_override=None):
     """
     Find an Event that matches the given matchup and market.
 
@@ -1071,5 +1127,168 @@ async def _poll_live_prediction_market_prices():
         stats["kalshi_fetched"], stats["polymarket_fetched"],
         stats["outcomes_updated"], stats["snapshots_written"],
         stats["snapshots_deduped"],
+    )
+    return stats
+
+
+async def _backfill_polymarket_win_prob_history(
+    market_id: int,
+    event_id: int,
+    fidelity: int = 30,
+    interval: str = "max",
+):
+    """
+    Backfill win_prob_snapshots from Polymarket's CLOB price history.
+
+    When a Polymarket market is first linked to an event, we only have
+    the current price. This function fetches the full price history from
+    the CLOB API and writes it as win_prob_snapshots, giving us a complete
+    trend line from market creation onward.
+
+    Args:
+        market_id: FuturesMarket.id (our internal ID)
+        event_id: Event.id to write snapshots against
+        fidelity: Price data granularity in minutes (30 = every half hour)
+        interval: Time range ('1h', '6h', '1d', '1w', 'max')
+    """
+    import asyncio
+    import json
+
+    from app.models.models import (
+        FuturesMarket, FuturesOutcome, Event, WinProbSnapshot,
+    )
+
+    stats = {
+        "snapshots_created": 0,
+        "errors": [],
+    }
+
+    async with get_task_session() as session:
+        # Load market and event
+        market = await session.get(FuturesMarket, market_id)
+        event = await session.get(Event, event_id)
+        if not market or not event:
+            stats["errors"].append("market or event not found")
+            return stats
+        if market.source != "polymarket":
+            stats["errors"].append("not a polymarket market")
+            return stats
+
+        # Extract matchup and find moneyline outcome
+        matchup = extract_matchup_with_ticker_fallback(
+            market.name, external_id=market.external_id,
+        )
+        if not matchup:
+            stats["errors"].append("no matchup extracted")
+            return stats
+
+        outcome_result = await session.execute(
+            select(FuturesOutcome)
+            .where(FuturesOutcome.market_id == market.id)
+            .order_by(FuturesOutcome.rank)
+        )
+        all_outcomes = outcome_result.scalars().all()
+        if not all_outcomes:
+            stats["errors"].append("no outcomes")
+            return stats
+
+        ml_result = find_moneyline_outcome(
+            all_outcomes, matchup,
+            event.home_team_name, event.away_team_name,
+        )
+        if not ml_result:
+            stats["errors"].append("no moneyline outcome found")
+            return stats
+
+        outcome, yes_is_home = ml_result
+        moneyline_condition_id = outcome.external_id
+
+        # Fetch the Polymarket event to get clobTokenIds
+        from app.services.polymarket_api import PolymarketAPIService
+        service = PolymarketAPIService()
+        try:
+            event_data = await service.get_event_by_id(market.external_id)
+            if not event_data:
+                stats["errors"].append("failed to fetch polymarket event")
+                return stats
+
+            # Find the clobTokenId for our moneyline outcome's conditionId
+            token_id = None
+            for pm in event_data.get("markets", []):
+                if pm.get("conditionId") == moneyline_condition_id:
+                    clob_ids_raw = pm.get("clobTokenIds", "[]")
+                    try:
+                        if isinstance(clob_ids_raw, str):
+                            clob_ids = json.loads(clob_ids_raw)
+                        else:
+                            clob_ids = clob_ids_raw
+                    except (json.JSONDecodeError, TypeError):
+                        clob_ids = []
+                    if clob_ids:
+                        token_id = clob_ids[0]  # First token = "Yes" side
+                    break
+
+            if not token_id:
+                stats["errors"].append(
+                    f"no clobTokenId for conditionId {moneyline_condition_id}"
+                )
+                return stats
+
+            # Fetch price history
+            history = await service.get_prices_history(
+                token_id=token_id,
+                interval=interval,
+                fidelity=fidelity,
+            )
+            if not history:
+                stats["errors"].append("empty price history")
+                return stats
+
+            logger.info(
+                "Backfilling %d Polymarket price points for market %d → event %d",
+                len(history), market_id, event_id,
+            )
+
+            # Write win_prob_snapshots from price history
+            for point in history:
+                ts = point.get("t")
+                price = point.get("p")
+                if ts is None or price is None:
+                    continue
+
+                yes_prob = float(price)
+                if yes_prob <= 0 or yes_prob >= 1:
+                    continue
+
+                if yes_is_home:
+                    home_prob = yes_prob
+                else:
+                    home_prob = 1.0 - yes_prob
+                away_prob = 1.0 - home_prob
+
+                captured_at = datetime.fromtimestamp(ts, tz=timezone.utc)
+
+                snapshot = WinProbSnapshot(
+                    event_id=event_id,
+                    source="polymarket",
+                    home_win_probability=round(home_prob, 4),
+                    away_win_probability=round(away_prob, 4),
+                    captured_at=captured_at,
+                    game_state={
+                        "market_id": market_id,
+                        "backfill": True,
+                    },
+                )
+                session.add(snapshot)
+                stats["snapshots_created"] += 1
+
+            await session.commit()
+
+        finally:
+            await service.close()
+
+    logger.info(
+        "Polymarket win_prob backfill: market=%d event=%d snapshots=%d errors=%d",
+        market_id, event_id, stats["snapshots_created"], len(stats["errors"]),
     )
     return stats

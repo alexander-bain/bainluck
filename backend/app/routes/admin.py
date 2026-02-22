@@ -2402,6 +2402,35 @@ async def trigger_live_prediction_market_poll(
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
+@router.post("/prediction-markets/backfill-history")
+async def trigger_polymarket_win_prob_backfill(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    market_id: int = Query(..., description="FuturesMarket ID"),
+    event_id: int = Query(..., description="Event ID"),
+):
+    """
+    Backfill win_prob_snapshots from Polymarket CLOB price history.
+
+    Fetches historical prices for the moneyline outcome and writes them
+    as win_prob_snapshots for the event's OddsChart trend line.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_polymarket_win_prob
+
+    try:
+        task = backfill_polymarket_win_prob.delay(market_id, event_id)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Polymarket win_prob backfill queued for market={market_id} event={event_id}. "
+                       f"Use /api/admin/prediction-markets/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
 @router.get("/prediction-markets/task/{task_id}")
 async def get_prediction_market_task_status(
     task_id: str,
