@@ -804,7 +804,9 @@ Links Kalshi and Polymarket game-level markets (e.g., "NBA: Celtics at Warriors"
 
 **Two-pass matching strategy (Phase 1):**
 1. **Pass 1 — Targeted ticker scan**: Queries `FuturesMarket` by Kalshi game ticker patterns (`KXNBAGAME%`, `KXNFLGAME%`, etc.) with no limit. Uses `extract_matchup_with_ticker_fallback()` which tries name-based extraction first, then ticker abbreviation parsing, with `_find_event_by_sport_and_time()` as last resort when both fail.
-2. **Pass 2 — General scan**: Existing limit-based scan (500 unlinked markets) for Polymarket and non-ticker Kalshi markets.
+2. **Pass 2 — Matchup-prioritized scan**: Two sub-queries to maximize game-level coverage: (a) markets with matchup name patterns (`% vs.%`, `% vs %`, `% – %`) get full scan budget (500), (b) remaining non-matchup markets get 20% budget (100) for edge cases. This prevents non-game markets (politics, crypto, weather — 13,000+ Polymarket markets) from crowding out game markets like "Celtics vs. Lakers". Result: 4x more game-level detections (392 vs 90) and 143 new links per run vs 0.
+
+**Polymarket CLOB price history backfill:** When a Polymarket market is first linked to an event, the matching task automatically backfills `win_prob_snapshots` from Polymarket's `/prices-history` endpoint. This fills in the trend line from market creation (typically days before the game) rather than starting from the link timestamp. Uses fidelity=30 (30-minute intervals) for smooth chart rendering.
 
 **Kalshi game ticker format**: `KXNBAGAME-26FEB19BOSGSW` = sport prefix + date + team abbreviations. Supported prefixes (12 sports): `kxnbagame`, `kxnflgame`, `kxnhlgame`, `kxmlbgame`, `kxncaabgame`, `kxncaafgame`, `kxwnbagame`, `kxmlsgame`, `kxsoccergame`, `kxufcfight`, `kxboxingfight`, `kxlolgame`.
 
@@ -838,11 +840,15 @@ curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/poll-live?se
 
 # Manual link (fallback when auto-matching fails)
 curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/link?secret=any&market_id=123&event_id=456"
+
+# Backfill Polymarket win_prob_snapshots from CLOB price history
+# (fills in trend line from market creation, not just current price)
+curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/backfill-history?secret=any&market_id=130740&event_id=5541994"
 ```
 
 **Files:**
 - `backend/app/utils/prediction_market_matching.py` — Detection regex, fuzzy matching, team mapping, ticker parsing, ticker abbreviation extraction, ticker fragment matching (NCAAB/NCAAF), prop/spread outcome filter, `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping
-- `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases, both-teams gate, sport scoring, orphaned snapshot cleanup on unlink/re-link, fragment-based disambiguation
+- `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases, both-teams gate, sport scoring, orphaned snapshot cleanup on unlink/re-link, fragment-based disambiguation, matchup-prioritized scan (Pass 2a/2b), Polymarket CLOB price history backfill on first link
 - `backend/tests/test_prediction_market_matching.py` — 291 tests (ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering, integration)
 
 ### Team Auto-Creation from Events
