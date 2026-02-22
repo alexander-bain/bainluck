@@ -4,7 +4,8 @@ Prediction market → Event matching task.
 Periodically scans futures_markets from Kalshi and Polymarket to:
 1. Detect game-level binary markets (moneyline-style outcomes)
 2. Match them to Event records by team name + commence_time
-3. Write win_prob_snapshots so they appear as trend lines on OddsChart
+3. Auto-create Event records when The Odds API doesn't cover a sport (e.g., Olympics)
+4. Write win_prob_snapshots so they appear as trend lines on OddsChart
 
 Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 """
@@ -21,6 +22,7 @@ from app.utils.prediction_market_matching import (
     is_kalshi_game_ticker,
     _KALSHI_GAME_TICKER_PREFIXES,
     get_sport_prefix_from_ticker,
+    _TICKER_TO_SPORT_PREFIX,
     extract_matchup,
     extract_matchup_with_ticker_fallback,
     extract_teams_from_ticker,
@@ -155,20 +157,48 @@ async def _match_prediction_markets(limit: int = 500):
                     market.external_id,
                 )
             else:
-                if not matchup:
-                    stats["funnel"]["no_matchup_extracted"] += 1
-                stats["funnel"]["no_event_found"] += 1
-                if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
-                    stats["funnel"]["sample_game_level_no_event"].append(
-                        {
-                            "source": market.source,
-                            "name": market.name,
-                            "team_a": matchup.team_a if matchup else None,
-                            "team_b": matchup.team_b if matchup else None,
-                            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
-                            "external_id": market.external_id,
-                        }
+                # No existing event found — try auto-creating one.
+                # This handles sports The Odds API doesn't cover (e.g., Olympics).
+                if matchup and matchup.team_b:
+                    auto_event = await _create_event_from_prediction_market(
+                        session, matchup, market, now,
                     )
+                    if auto_event:
+                        market.event_id = auto_event["event_id"]
+                        stats["newly_linked"] += 1
+                        stats["funnel"]["linked"] += 1
+                        stats["funnel"].setdefault("auto_created_events", 0)
+                        stats["funnel"]["auto_created_events"] += 1
+                    else:
+                        if not matchup:
+                            stats["funnel"]["no_matchup_extracted"] += 1
+                        stats["funnel"]["no_event_found"] += 1
+                        if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
+                            stats["funnel"]["sample_game_level_no_event"].append(
+                                {
+                                    "source": market.source,
+                                    "name": market.name,
+                                    "team_a": matchup.team_a if matchup else None,
+                                    "team_b": matchup.team_b if matchup else None,
+                                    "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                                    "external_id": market.external_id,
+                                }
+                            )
+                else:
+                    if not matchup:
+                        stats["funnel"]["no_matchup_extracted"] += 1
+                    stats["funnel"]["no_event_found"] += 1
+                    if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
+                        stats["funnel"]["sample_game_level_no_event"].append(
+                            {
+                                "source": market.source,
+                                "name": market.name,
+                                "team_a": matchup.team_a if matchup else None,
+                                "team_b": matchup.team_b if matchup else None,
+                                "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                                "external_id": market.external_id,
+                            }
+                        )
 
         # ── Pass 2: General scan for non-ticker game markets ─────────────
         # Catches Polymarket game markets and any Kalshi markets with
@@ -286,18 +316,47 @@ async def _match_prediction_markets(limit: int = 500):
                         (market.id, matched_event["event_id"])
                     )
             else:
-                stats["funnel"]["no_event_found"] += 1
-                if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
-                    stats["funnel"]["sample_game_level_no_event"].append(
-                        {
-                            "source": market.source,
-                            "name": market.name,
-                            "team_a": matchup.team_a,
-                            "team_b": matchup.team_b,
-                            "commence_time": market.commence_time.isoformat() if market.commence_time else None,
-                            "external_id": market.external_id,
-                        }
+                # No existing event — try auto-creating for sports not in The Odds API
+                if matchup.team_b:
+                    auto_event = await _create_event_from_prediction_market(
+                        session, matchup, market, now,
                     )
+                    if auto_event:
+                        market.event_id = auto_event["event_id"]
+                        stats["newly_linked"] += 1
+                        stats["funnel"]["linked"] += 1
+                        stats["funnel"].setdefault("auto_created_events", 0)
+                        stats["funnel"]["auto_created_events"] += 1
+                        if market.source == "polymarket":
+                            polymarket_backfill_queue.append(
+                                (market.id, auto_event["event_id"])
+                            )
+                    else:
+                        stats["funnel"]["no_event_found"] += 1
+                        if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
+                            stats["funnel"]["sample_game_level_no_event"].append(
+                                {
+                                    "source": market.source,
+                                    "name": market.name,
+                                    "team_a": matchup.team_a,
+                                    "team_b": matchup.team_b,
+                                    "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                                    "external_id": market.external_id,
+                                }
+                            )
+                else:
+                    stats["funnel"]["no_event_found"] += 1
+                    if len(stats["funnel"]["sample_game_level_no_event"]) < 10:
+                        stats["funnel"]["sample_game_level_no_event"].append(
+                            {
+                                "source": market.source,
+                                "name": market.name,
+                                "team_a": matchup.team_a,
+                                "team_b": matchup.team_b,
+                                "commence_time": market.commence_time.isoformat() if market.commence_time else None,
+                                "external_id": market.external_id,
+                            }
+                        )
 
         # ── Phase 1.5: Fix stale and mislinked markets ────────────────────
         # Scan ALL linked markets for two problems:
@@ -816,6 +875,136 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
 def _escape_like(s: str) -> str:
     """Escape special characters for ILIKE patterns."""
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# =============================================================================
+# Auto-create Events from Prediction Markets
+# =============================================================================
+
+# Sport key → human-readable name for auto-created sports
+_SPORT_KEY_NAMES: dict[str, tuple[str, str]] = {
+    "icehockey_olympics": ("Ice Hockey - Olympics", "Ice Hockey"),
+    "basketball_olympics": ("Basketball - Olympics", "Basketball"),
+    "soccer_olympics": ("Soccer - Olympics", "Soccer"),
+    "fieldhockey_olympics": ("Field Hockey - Olympics", "Field Hockey"),
+    "curling_olympics": ("Curling - Olympics", "Curling"),
+}
+
+
+async def _create_event_from_prediction_market(session, matchup, market, now):
+    """
+    Auto-create an Event when a game-level prediction market has no matching Event.
+
+    This handles sports that The Odds API doesn't cover (e.g., Olympics).
+    The prediction market itself becomes the primary data source for the event.
+
+    Returns the same dict format as _find_matching_event, or None if creation fails.
+    """
+    from app.models.models import Event, Sport, Team
+    from app.utils.prediction_market_matching import match_teams_to_event
+
+    if not matchup or not matchup.team_a:
+        return None
+
+    team_a = matchup.team_a.strip()
+    team_b = (matchup.team_b or "").strip()
+    if not team_a or not team_b:
+        return None
+
+    # Determine sport key from ticker or category
+    sport_key = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
+    if not sport_key and market.llm_sport_category:
+        cat_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
+        if cat_prefix:
+            sport_key = f"{cat_prefix}_other"
+
+    if not sport_key:
+        logger.debug(
+            "Cannot auto-create event for '%s' — no sport key determinable",
+            market.name,
+        )
+        return None
+
+    # Check if we already have an event with these teams (avoid duplicates)
+    pattern_a = f"%{_escape_like(team_a)}%"
+    pattern_b = f"%{_escape_like(team_b)}%"
+    existing_result = await session.execute(
+        select(Event).where(
+            or_(
+                and_(
+                    Event.home_team_name.ilike(pattern_a),
+                    Event.away_team_name.ilike(pattern_b),
+                ),
+                and_(
+                    Event.home_team_name.ilike(pattern_b),
+                    Event.away_team_name.ilike(pattern_a),
+                ),
+            ),
+            Event.status.in_(["scheduled", "live"]),
+        ).limit(1)
+    )
+    if existing_result.scalar_one_or_none():
+        logger.debug("Event already exists for '%s vs %s', skipping auto-create", team_a, team_b)
+        return None
+
+    # Get or create Sport record
+    sport_result = await session.execute(
+        select(Sport).where(Sport.key == sport_key)
+    )
+    sport = sport_result.scalar_one_or_none()
+    if not sport:
+        sport_info = _SPORT_KEY_NAMES.get(sport_key, (sport_key, sport_key.split("_")[0].title()))
+        sport = Sport(
+            key=sport_key,
+            name=sport_info[0],
+            group=sport_info[1],
+            active=True,
+        )
+        session.add(sport)
+        await session.flush()  # Get the ID
+
+    # Determine commence_time: use market's commence_time if reasonable,
+    # otherwise use now (the market is probably live)
+    commence_time = market.commence_time
+    if not commence_time or abs((commence_time - now).total_seconds()) > 86400 * 30:
+        # commence_time is missing or >30 days away (likely resolution date) — use now
+        commence_time = now
+
+    # Determine status from market status
+    status = "live" if market.status in ("open", "active") else "scheduled"
+
+    # Create a unique external_id from the prediction market
+    external_id = f"pm_{market.source}_{market.external_id}"
+
+    # Create the Event
+    event = Event(
+        sport_id=sport.id,
+        external_id=external_id,
+        home_team_name=team_a,
+        away_team_name=team_b,
+        commence_time=commence_time,
+        status=status,
+    )
+    session.add(event)
+    await session.flush()  # Get the event ID
+
+    # Determine yes_is_home mapping
+    team_match = match_teams_to_event(matchup, team_a, team_b)
+    yes_is_home = team_match["yes_is_home"] if team_match else True
+
+    logger.info(
+        "Auto-created event %d for %s market '%s': %s vs %s [sport=%s, status=%s]",
+        event.id, market.source, market.name,
+        team_a, team_b, sport_key, status,
+    )
+
+    return {
+        "event_id": event.id,
+        "home_team": team_a,
+        "away_team": team_b,
+        "yes_is_home": yes_is_home,
+        "auto_created": True,
+    }
 
 
 # =============================================================================

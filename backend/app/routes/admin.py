@@ -3097,3 +3097,97 @@ async def get_mlb_task_status(
         else:
             response["error"] = str(result.result)
     return response
+
+
+# =============================================================================
+# Manual Event Creation (for sports not covered by The Odds API)
+# =============================================================================
+
+
+@router.post("/events/create")
+async def create_event_manually(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    home_team: str = Query(..., description="Home team name (e.g., 'USA', 'Canada')"),
+    away_team: str = Query(..., description="Away team name"),
+    sport_key: str = Query(..., description="Sport key (e.g., 'icehockey_olympics')"),
+    sport_name: Optional[str] = Query(None, description="Sport display name (auto-generated if omitted)"),
+    commence_time: Optional[str] = Query(None, description="ISO 8601 timestamp (defaults to now)"),
+    status: str = Query("live", description="Event status: scheduled, live, completed, closed"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually create an Event for sports that The Odds API doesn't cover.
+
+    Useful for Olympics, special events, or any sport where events need to
+    exist for prediction market linking.
+
+    After creating, use POST /api/admin/prediction-markets/link to connect
+    prediction markets, or trigger the matching task to auto-link.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import Sport
+
+    # Parse commence_time
+    ct = datetime.now(timezone.utc)
+    if commence_time:
+        try:
+            ct = datetime.fromisoformat(commence_time)
+            if ct.tzinfo is None:
+                ct = ct.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid commence_time: {commence_time}")
+
+    # Get or create Sport record
+    sport_result = await db.execute(
+        select(Sport).where(Sport.key == sport_key)
+    )
+    sport = sport_result.scalar_one_or_none()
+    if not sport:
+        display_name = sport_name or sport_key.replace("_", " ").title()
+        group = sport_key.split("_")[0].title() if "_" in sport_key else display_name
+        sport = Sport(key=sport_key, name=display_name, group=group, active=True)
+        db.add(sport)
+        await db.flush()
+
+    # Check for duplicate
+    existing = await db.execute(
+        select(Event).where(
+            Event.home_team_name == home_team,
+            Event.away_team_name == away_team,
+            Event.status.in_(["scheduled", "live"]),
+        ).limit(1)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Event already exists for {home_team} vs {away_team}",
+        )
+
+    # Create event
+    external_id = f"manual_{sport_key}_{home_team}_{away_team}_{int(ct.timestamp())}"
+    event = Event(
+        sport_id=sport.id,
+        external_id=external_id,
+        home_team_name=home_team,
+        away_team_name=away_team,
+        commence_time=ct,
+        status=status,
+    )
+    db.add(event)
+    await db.commit()
+    await db.refresh(event)
+
+    return {
+        "status": "created",
+        "event_id": event.id,
+        "external_id": event.external_id,
+        "home_team": home_team,
+        "away_team": away_team,
+        "sport_key": sport_key,
+        "commence_time": ct.isoformat(),
+        "event_status": status,
+        "url": f"https://bainluck.com/events/{event.id}",
+        "next_step": f"Link prediction markets: POST /api/admin/prediction-markets/link?market_id=XXX&event_id={event.id}&secret=...",
+    }

@@ -35,6 +35,11 @@ _KALSHI_GAME_TICKER_PREFIXES = (
     "kxufcfight",    # UFC fight
     "kxboxingfight", # Boxing fight
     "kxlolgame",     # League of Legends esports game
+    "kxwohockey",    # Winter Olympics hockey
+    "kxwocurling",   # Winter Olympics curling
+    "kxsohockey",    # Summer Olympics hockey (field hockey)
+    "kxsobasketball", # Summer Olympics basketball
+    "kxsosoccer",    # Summer Olympics soccer
 )
 
 
@@ -126,8 +131,13 @@ _CATEGORY_PREFIX_RE = re.compile(
     r'|'
     # Bare sport names with optional "Game/Match"
     # Matches: "Basketball:", "Football Game:", "Hockey Match:"
-    r'(?:Basketball|Football|Hockey|Baseball|Soccer|Tennis|Golf|Boxing|MMA)'
+    r'(?:Ice\s+Hockey|Basketball|Football|Hockey|Baseball|Soccer|Tennis|Golf|Boxing|MMA)'
     r'(?:\s+(?:Game|Match))?'
+    r'|'
+    # Olympics prefixes
+    # Matches: "Winter Games 2026:", "Winter Olympics:", "Olympics:", "Summer Games 2028:"
+    r'(?:Winter|Summer)\s+(?:Games|Olympics)(?:\s+\d{4})?'
+    r'|Olympics(?:\s+\d{4})?'
     r'|'
     # Polymarket league names and competition names
     # Matches: "Six Nations:", "Super Rugby Pacific:", "United Rugby Championship:",
@@ -165,6 +175,16 @@ def _strip_category_prefix(market_name: str) -> str:
 # Common in Polymarket fight/UFC markets.
 _TRAILING_PAREN_RE = re.compile(r'\s*\([^)]+\)\s*$')
 
+# Championship context suffix like ": Gold Medal (M)" or ": Championship"
+# These look like game props to _GAME_PROP_RE but are actually championship
+# context on game-level markets (e.g., "USA vs Canada: Gold Medal (M)").
+# Strip these BEFORE matchup extraction to avoid false prop detection.
+_CHAMPIONSHIP_SUFFIX_RE = re.compile(
+    r':\s*(?:.*?(?:gold|silver|bronze|medal|championship|title|final|winner'
+    r'|trophy|crown|belt).*?)$',
+    re.IGNORECASE,
+)
+
 
 def _strip_trailing_paren(name: str) -> str:
     """Strip trailing parenthetical context from market names.
@@ -174,6 +194,37 @@ def _strip_trailing_paren(name: str) -> str:
         "Fighter A vs Fighter B (Prelims)" → "Fighter A vs Fighter B"
     """
     return _TRAILING_PAREN_RE.sub("", name).strip()
+
+
+def _strip_championship_suffix(name: str) -> str:
+    """Strip championship context suffixes that look like game props.
+
+    Examples:
+        "USA vs Canada: Gold Medal (M)" → "USA vs Canada"
+        "Team A vs Team B: Championship" → "Team A vs Team B"
+        "Lakers vs Celtics: Total Points" → "Lakers vs Celtics: Total Points" (NOT stripped — not championship)
+    """
+    return _CHAMPIONSHIP_SUFFIX_RE.sub("", name).strip()
+
+
+# Sport name prefix WITHOUT colon — Kalshi sometimes uses bare sport names
+# before the matchup: "Ice Hockey USA vs Canada: Gold Medal (M)"
+# (note: no colon between "Ice Hockey" and "USA")
+_SPORT_NAME_PREFIX_RE = re.compile(
+    r'^(?:Ice\s+Hockey|Field\s+Hockey|Basketball|Football|Hockey|Baseball|Soccer'
+    r'|Tennis|Golf|Boxing|MMA|Curling|Figure\s+Skating|Alpine\s+Skiing)\s+',
+    re.IGNORECASE,
+)
+
+
+def _strip_sport_name_prefix(name: str) -> str:
+    """Strip bare sport name prefix (without colon) from market names.
+
+    Examples:
+        "Ice Hockey USA vs Canada: Gold Medal (M)" → "USA vs Canada: Gold Medal (M)"
+        "Basketball Team A vs Team B" → "Team A vs Team B"
+    """
+    return _SPORT_NAME_PREFIX_RE.sub("", name).strip()
 
 
 # Championship/award keywords that disqualify "Will X win?" markets
@@ -255,20 +306,14 @@ def is_game_level_market(
         return True
 
     # Signal 2+3: Name pattern matching (with and without prefix/suffix stripping)
-    # Try progressively more aggressive normalization:
-    # 1. Raw name
-    # 2. Prefix stripped (e.g., "NBA: ..." → "...")
-    # 3. Parenthetical stripped (e.g., "... (Lightweight, Main Card)" → "...")
-    # 4. Both stripped
-    stripped_prefix = _strip_category_prefix(market_name)
-    stripped_paren = _strip_trailing_paren(market_name)
-    stripped_both = _strip_trailing_paren(stripped_prefix)
-    return (
-        _check_game_level(market_name)
-        or _check_game_level(stripped_prefix)
-        or _check_game_level(stripped_paren)
-        or _check_game_level(stripped_both)
-    )
+    # Uses the same normalization pipeline as extract_matchup() to ensure
+    # consistent detection. Includes sport name prefix stripping (e.g.,
+    # "Ice Hockey USA vs Canada") and championship suffix stripping (e.g.,
+    # ": Gold Medal").
+    for variant in _normalize_variants(market_name):
+        if _check_game_level(variant):
+            return True
+    return False
 
 
 def _check_game_level(name: str) -> bool:
@@ -351,13 +396,38 @@ def extract_matchup(market_name: str, external_id: Optional[str] = None) -> Opti
 
 
 def _normalize_variants(market_name: str) -> list:
-    """Generate progressively normalized variants of a market name."""
+    """Generate progressively normalized variants of a market name.
+
+    Applies progressively more aggressive normalization:
+    1. Raw name
+    2. Category prefix stripped ("NBA: ..." → "...")
+    3. Sport name prefix stripped ("Ice Hockey ..." → "...")
+    4. Trailing parenthetical stripped ("... (M)" → "...")
+    5. Championship suffix stripped (": Gold Medal" → "")
+    6. All combinations of the above
+
+    Example: "Ice Hockey USA vs Canada: Gold Medal (M)"
+      → strip sport name: "USA vs Canada: Gold Medal (M)"
+      → strip championship: "USA vs Canada"
+      → matches _BARE_MATCHUP_RE!
+    """
     variants = [market_name]
     stripped_prefix = _strip_category_prefix(market_name)
+    stripped_sport = _strip_sport_name_prefix(market_name)
     stripped_paren = _strip_trailing_paren(market_name)
-    stripped_both = _strip_trailing_paren(stripped_prefix)
-    for v in (stripped_prefix, stripped_paren, stripped_both):
-        if v != market_name and v not in variants:
+    stripped_champ = _strip_championship_suffix(market_name)
+    # Combined strippings (order matters — sport prefix first, then suffix/paren)
+    stripped_sport_champ = _strip_championship_suffix(stripped_sport)
+    stripped_sport_paren = _strip_trailing_paren(stripped_sport)
+    stripped_sport_both = _strip_championship_suffix(_strip_trailing_paren(stripped_sport))
+    stripped_prefix_champ = _strip_championship_suffix(stripped_prefix)
+    stripped_all = _strip_championship_suffix(_strip_trailing_paren(stripped_prefix))
+    for v in (
+        stripped_prefix, stripped_sport, stripped_paren, stripped_champ,
+        stripped_sport_champ, stripped_sport_paren, stripped_sport_both,
+        stripped_prefix_champ, stripped_all,
+    ):
+        if v and v != market_name and v not in variants:
             variants.append(v)
     return variants
 
@@ -668,6 +738,13 @@ _TICKER_TO_SPORT_PREFIX: dict[str, str] = {
     "kxufcfight": "mma_mixed_martial_arts",
     "kxboxingfight": "boxing_boxing",
     "kxlolgame": "esports",
+    # Winter Olympics
+    "kxwohockey": "icehockey_olympics",
+    "kxwocurling": "curling_olympics",
+    # Summer Olympics
+    "kxsohockey": "fieldhockey_olympics",
+    "kxsobasketball": "basketball_olympics",
+    "kxsosoccer": "soccer_olympics",
 }
 
 
@@ -692,6 +769,7 @@ _SPORT_CATEGORY_TO_KEY_PREFIX: dict[str, str] = {
     "lacrosse": "lacrosse",
     "esports": "esports",
     "aussierules": "aussierules",
+    "olympics": "olympics",  # Will match sport keys like icehockey_olympics, basketball_olympics
 }
 
 
