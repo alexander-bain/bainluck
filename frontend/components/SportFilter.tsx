@@ -21,10 +21,6 @@ interface SportFilterProps {
   loading?: boolean;
 }
 
-/**
- * Filter pills for sports with emoji.
- * Hierarchical design with primary sports (Football, Basketball, Baseball) prominent.
- */
 export default function SportFilter({
   sports,
   selectedSport,
@@ -41,7 +37,6 @@ export default function SportFilter({
     return getActiveCategoriesFromLeagues(allLeagueKeys);
   }, [allLeagueKeys]);
 
-  // Split categories into primary (tier 1) and secondary/tertiary
   const primaryCategories = useMemo(() => {
     return availableCategories.filter((c) => c.tier === 1);
   }, [availableCategories]);
@@ -50,7 +45,6 @@ export default function SportFilter({
     return availableCategories.filter((c) => c.tier !== 1);
   }, [availableCategories]);
 
-  // Sort leagues by tier (major leagues first)
   const availableLeagues = useMemo(() => {
     if (!selectedCategory) return [];
 
@@ -66,15 +60,11 @@ export default function SportFilter({
       leagues = [];
     }
 
-    // Sort by tier (major leagues first)
     return leagues.sort((a, b) => getLeagueTier(a) - getLeagueTier(b));
   }, [selectedCategory, allLeagueKeys]);
 
-  // Must define all hooks before any conditional returns
   const handleCategoryClick = useCallback((categoryKey: string | null) => {
     const isDeselecting = categoryKey === selectedCategory;
-
-    // Track analytics
     trackCategoryFilter(
       isDeselecting ? null : categoryKey,
       isDeselecting ? 'deselect' : 'select',
@@ -92,8 +82,6 @@ export default function SportFilter({
 
   const handleLeagueClick = useCallback((leagueKey: string) => {
     const isDeselecting = leagueKey === selectedSport;
-
-    // Track analytics
     trackLeagueFilter(
       isDeselecting ? null : leagueKey,
       isDeselecting ? 'deselect' : 'select',
@@ -113,7 +101,6 @@ export default function SportFilter({
     const visibleCategories = newExpanded
       ? [...primaryCategories, ...secondaryCategories].map(c => c.key)
       : primaryCategories.map(c => c.key);
-
     trackMoreSportsToggle(newExpanded, visibleCategories);
     setShowMoreSports(newExpanded);
   }, [showMoreSports, primaryCategories, secondaryCategories, trackMoreSportsToggle]);
@@ -124,61 +111,58 @@ export default function SportFilter({
         {[1, 2, 3, 4, 5, 6].map((i) => (
           <div
             key={i}
-            className="h-9 w-20 bg-mist rounded-full animate-pulse flex-shrink-0"
+            className="h-8 w-20 bg-surface-elevated rounded-full animate-pulse flex-shrink-0"
           />
         ))}
       </div>
     );
   }
 
-  // Map category keys to display with emoji — uses central SPORT_CATEGORIES
   const getCategoryDisplay = (key: string, emoji: string): { label: string; emoji: string } => {
     return { label: getNameForCategory(key), emoji };
   };
 
   return (
-    <div className="space-y-3">
-      {/* Primary category pills - prominent display */}
-      <div className="flex flex-wrap gap-2">
+    <div className="space-y-2">
+      {/* Primary category pills */}
+      <div className="flex flex-wrap gap-1.5">
         {/* All button */}
         <button
           onClick={() => handleCategoryClick(null)}
-          className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
+          className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
             selectedCategory === null
-              ? "bg-graphite text-white shadow-sm"
-              : "bg-white text-slate border border-mist hover:bg-mist/50 hover:border-slate/30"
+              ? "bg-text-primary text-surface-deep"
+              : "bg-surface-elevated text-text-secondary hover:text-text-primary"
           }`}
         >
-          🏆 All
+          All
         </button>
 
-        {/* Primary sports (Football, Basketball, Baseball) - larger, more prominent */}
         {primaryCategories.map((category) => {
           const display = getCategoryDisplay(category.key, category.emoji);
           return (
             <button
               key={category.key}
               onClick={() => handleCategoryClick(category.key)}
-              className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
                 selectedCategory === category.key
-                  ? "bg-graphite text-white shadow-sm"
-                  : "bg-white text-graphite border-2 border-graphite/20 hover:border-graphite/40 hover:bg-mist/30"
+                  ? "bg-text-primary text-surface-deep"
+                  : "bg-surface-elevated text-text-secondary hover:text-text-primary"
               }`}
             >
-              <span className="text-base">{display.emoji}</span>
+              <span className="text-sm">{display.emoji}</span>
               <span>{display.label}</span>
             </button>
           );
         })}
 
-        {/* More Sports toggle - only show if there are secondary categories */}
         {secondaryCategories.length > 0 && (
           <button
             onClick={handleMoreSportsToggle}
-            className={`px-3 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
+            className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
               showMoreSports || secondaryCategories.some((c) => c.key === selectedCategory)
-                ? "bg-slate/20 text-graphite"
-                : "bg-slate/10 text-slate hover:bg-slate/20"
+                ? "bg-surface-elevated text-text-primary"
+                : "bg-surface-elevated/50 text-text-muted hover:text-text-secondary"
             }`}
           >
             <span>{showMoreSports ? "Less" : "More"}</span>
@@ -194,20 +178,20 @@ export default function SportFilter({
         )}
       </div>
 
-      {/* Secondary sports - shown when expanded or when one is selected */}
+      {/* Secondary sports */}
       {(showMoreSports || secondaryCategories.some((c) => c.key === selectedCategory)) &&
         secondaryCategories.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-1">
+          <div className="flex flex-wrap gap-1.5">
             {secondaryCategories.map((category) => {
               const display = getCategoryDisplay(category.key, category.emoji);
               return (
                 <button
                   key={category.key}
                   onClick={() => handleCategoryClick(category.key)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 ${
                     selectedCategory === category.key
-                      ? "bg-slate text-white"
-                      : "bg-slate/10 text-slate hover:bg-slate/20"
+                      ? "bg-text-primary text-surface-deep"
+                      : "bg-surface-elevated/50 text-text-muted hover:text-text-secondary"
                   }`}
                 >
                   <span>{display.emoji}</span>
@@ -218,16 +202,16 @@ export default function SportFilter({
           </div>
         )}
 
-      {/* League sub-filter - sorted by tier */}
+      {/* League sub-filter */}
       {selectedCategory && availableLeagues.length > 1 && (
-        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-mist/50">
-          <span className="text-xs text-silver self-center mr-1">Leagues:</span>
+        <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-surface-border/50">
+          <span className="text-[10px] text-text-muted self-center mr-1 uppercase tracking-wider">Leagues</span>
           <button
             onClick={() => onSelectSport(null)}
             className={`px-2.5 py-1 rounded text-xs whitespace-nowrap transition-colors ${
               selectedSport === null
-                ? "bg-graphite text-white"
-                : "bg-white text-slate border border-mist hover:bg-mist/50"
+                ? "bg-text-primary text-surface-deep"
+                : "bg-surface-elevated text-text-secondary hover:text-text-primary"
             }`}
           >
             All
@@ -241,12 +225,12 @@ export default function SportFilter({
                 onClick={() => handleLeagueClick(leagueKey)}
                 className={`px-2.5 py-1 rounded text-xs whitespace-nowrap transition-colors ${
                   selectedSport === leagueKey
-                    ? "bg-graphite text-white"
+                    ? "bg-text-primary text-surface-deep"
                     : tier === 1
-                    ? "bg-white text-graphite border border-graphite/30 font-medium hover:bg-mist/50"
+                    ? "bg-surface-elevated text-text-primary font-medium"
                     : tier === 2
-                    ? "bg-white text-slate border border-mist hover:bg-mist/50"
-                    : "bg-slate/5 text-silver border border-transparent hover:bg-slate/10"
+                    ? "bg-surface-elevated text-text-secondary"
+                    : "bg-surface-elevated/50 text-text-muted"
                 }`}
               >
                 {getLeagueDisplay(leagueKey)}

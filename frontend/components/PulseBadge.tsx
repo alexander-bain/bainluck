@@ -30,12 +30,12 @@ export default function PulseBadge({
   };
 
   const colorClasses = pulse.score >= 81
-    ? "bg-red-100 text-red-700"
+    ? "bg-red-500/15 text-red-400"
     : pulse.score >= 61
-    ? "bg-orange-100 text-orange-700"
+    ? "bg-orange-500/15 text-orange-400"
     : pulse.score >= 41
-    ? "bg-amber-100 text-amber-700"
-    : "bg-slate-100 text-slate-600";
+    ? "bg-amber-500/15 text-amber-400"
+    : "bg-surface-elevated text-text-muted";
 
   const badge = (
     <span

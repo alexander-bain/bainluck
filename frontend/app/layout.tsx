@@ -10,6 +10,7 @@ import UserMenu from "@/components/UserMenu";
 const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
 import SWRProvider from "@/components/SWRProvider";
 import { Analytics } from "@vercel/analytics/next";
+import BottomNav from "@/components/BottomNav";
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -46,29 +47,21 @@ export default function RootLayout({
         <AnalyticsProvider>
           <AuthProvider>
             <PinSyncEffect />
-            <div className="min-h-screen flex flex-col bg-snow">
+            <div className="min-h-screen flex flex-col bg-surface-deep">
               {/* Header */}
-              <header className="bg-white border-b border-mist sticky top-0 z-50">
-                <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-4">
+              <header className="bg-surface-card/80 backdrop-blur-lg border-b border-surface-border sticky top-0 z-50">
+                <div className="max-w-content mx-auto px-4 md:px-6 py-3">
                   <div className="flex items-center justify-between gap-4">
-                    <Link href="/" className="flex items-center gap-2">
-                      <span className="text-2xl">🍀</span>
-                      <span className="text-title-2 text-graphite">
+                    <Link href="/" className="flex items-center gap-2.5">
+                      <span className="text-xl">🍀</span>
+                      <span className="text-lg font-semibold text-text-primary tracking-tight">
                         Bain Luck
                       </span>
                     </Link>
 
-                    <div className="flex items-center gap-3 sm:gap-4">
-                      {/* Mobile: search icon link */}
-                      <Link
-                        href="/search"
-                        className="sm:hidden text-slate hover:text-graphite transition-colors p-1"
-                        aria-label="Search"
-                      >
-                        <span className="text-lg">&#x1f50d;</span>
-                      </Link>
+                    <div className="flex items-center gap-3">
                       {/* Desktop: full search bar */}
-                      <div className="hidden sm:block w-64 lg:w-80">
+                      <div className="hidden md:block w-64 lg:w-80">
                         <SearchBar compact />
                       </div>
                       <UserMenu />
@@ -78,46 +71,43 @@ export default function RootLayout({
               </header>
 
               {/* Main Content */}
-              <main className="flex-1">
-                <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-6">
+              <main className="flex-1 pb-20 md:pb-0">
+                <div className="max-w-content mx-auto px-3 md:px-6 py-4">
                   {children}
                 </div>
               </main>
 
-              {/* Footer */}
-              <footer className="bg-white border-t border-mist mt-auto">
-                <div className="max-w-content mx-auto px-4 md:px-8 lg:px-12 py-6">
-                  {/* Navigation Links */}
-                  <nav className="flex items-center justify-center gap-6 mb-4">
+              {/* Bottom Tab Nav (mobile only) */}
+              <BottomNav />
+
+              {/* Footer (desktop only) */}
+              <footer className="hidden md:block bg-surface-card border-t border-surface-border mt-auto">
+                <div className="max-w-content mx-auto px-6 py-4">
+                  <nav className="flex items-center justify-center gap-6">
                     <Link
                       href="/pulse"
-                      className="flex items-center gap-1.5 text-slate hover:text-graphite transition-colors"
+                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
                     >
                       <span>💓</span>
-                      <span className="font-medium">What is Pulse?</span>
+                      <span>What is Pulse?</span>
                     </Link>
-                    <span className="text-mist">|</span>
+                    <span className="text-surface-border">·</span>
                     <Link
                       href="/market-moves"
-                      className="flex items-center gap-1.5 text-slate hover:text-graphite transition-colors"
+                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
                     >
-                      <span>&#x1f92f;</span>
-                      <span className="font-medium">Market Was Wrong</span>
+                      <span>📊</span>
+                      <span>Market Moves</span>
                     </Link>
-                    <span className="text-mist">|</span>
+                    <span className="text-surface-border">·</span>
                     <Link
                       href="/about"
-                      className="flex items-center gap-1.5 text-slate hover:text-graphite transition-colors"
+                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
                     >
                       <span>🍀</span>
-                      <span className="font-medium">About</span>
+                      <span>About</span>
                     </Link>
                   </nav>
-
-                  {/* Tagline */}
-                  <p className="text-center text-caption text-slate">
-                    📊 Win probabilities updated in real-time
-                  </p>
                 </div>
               </footer>
             </div>

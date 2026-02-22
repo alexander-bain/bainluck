@@ -62,9 +62,7 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
-  // Sport sections are collapsed by default (empty set = all collapsed)
   const [expandedSports, setExpandedSports] = useState<Set<string>>(new Set());
-  // League sections are also collapsed by default
   const [expandedLeagues, setExpandedLeagues] = useState<Set<string>>(new Set());
 
   // Analytics
@@ -87,10 +85,7 @@ export default function HomePage() {
     pageTitle: 'Bain Luck - Home',
   });
 
-  // Track scroll depth
   useScrollDepth({ pageType: 'home' });
-
-  // Track engagement time
   useEngagementTime({ pageType: 'home' });
 
   const {
@@ -110,9 +105,6 @@ export default function HomePage() {
     { refreshInterval: 30000 }
   );
 
-  // Fetch futures markets
-  // - "today" and "upcoming": show open futures
-  // - "recent": show resolved futures (recently completed)
   const futuresStatus = dateFilter === "recent" ? "resolved" : "open";
   const {
     data: futuresData,
@@ -124,7 +116,7 @@ export default function HomePage() {
     { refreshInterval: 60000 }
   );
 
-  // Fetch unified feed (events + futures ranked by interestingness)
+  // Unified feed
   const {
     data: feedData,
     isLoading: feedLoading,
@@ -134,41 +126,28 @@ export default function HomePage() {
     { refreshInterval: 30000 }
   );
 
-  // Helper to check if a date is today, recent (last 7 days), or upcoming
   const getEventDateCategory = (commenceTime: string): "today" | "recent" | "upcoming" => {
     const eventDate = new Date(commenceTime);
     const now = new Date();
-
-    // Get start of today (midnight)
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    // Get start of 7 days ago (for "recent" window)
     const recentStart = new Date(todayStart);
     recentStart.setDate(recentStart.getDate() - 7);
-    // Get start of tomorrow
     const tomorrowStart = new Date(todayStart);
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
 
-    if (eventDate >= todayStart && eventDate < tomorrowStart) {
-      return "today";
-    } else if (eventDate >= recentStart && eventDate < todayStart) {
-      return "recent";
-    } else if (eventDate >= tomorrowStart) {
-      return "upcoming";
-    } else {
-      return "recent"; // Anything older also goes to recent (API limits how far back we fetch)
-    }
+    if (eventDate >= todayStart && eventDate < tomorrowStart) return "today";
+    else if (eventDate >= recentStart && eventDate < todayStart) return "recent";
+    else if (eventDate >= tomorrowStart) return "upcoming";
+    else return "recent";
   };
 
-  // Filter events by category and date filter
   const filteredEvents = useMemo(() => {
     let events = eventsData?.events ?? [];
 
-    // Filter out events without probability data (no moneyline odds)
     events = events.filter((e) =>
       e.current_odds?.home_probability != null && e.current_odds?.away_probability != null
     );
 
-    // First, filter by sport category if selected
     if (selectedCategory && !selectedSport) {
       const category = SPORT_CATEGORIES.find((c) => c.key === selectedCategory);
       if (category) {
@@ -182,22 +161,13 @@ export default function HomePage() {
       }
     }
 
-    // Then, filter by date
     events = events.filter((e) => {
       const dateCategory = getEventDateCategory(e.commence_time);
-      if (dateFilter === "today") {
-        return dateCategory === "today";
-      } else if (dateFilter === "recent") {
-        return dateCategory === "recent";
-      } else {
-        // "upcoming" - future events (tomorrow and beyond)
-        return dateCategory === "upcoming";
-      }
+      if (dateFilter === "today") return dateCategory === "today";
+      else if (dateFilter === "recent") return dateCategory === "recent";
+      else return dateCategory === "upcoming";
     });
 
-    // Sort by commence time
-    // Recent events: most recent first (descending)
-    // Today/upcoming: earliest first (ascending)
     if (dateFilter === "recent") {
       return events.sort((a, b) =>
         new Date(b.commence_time).getTime() - new Date(a.commence_time).getTime()
@@ -208,25 +178,20 @@ export default function HomePage() {
     );
   }, [eventsData?.events, selectedCategory, selectedSport, dateFilter]);
 
-  // Helper to get outcome names from a futures market
   const getOutcomeNames = (market: FuturesMarket): string[] => {
     const outcomes = market.top_outcomes || market.outcomes || [];
     return outcomes.map((o) => o.name);
   };
 
-  // Filter futures by category (no date filter for futures)
   const filteredFutures = useMemo(() => {
     let markets = futuresData?.markets ?? [];
 
-    // Filter by sport category if selected
     if (selectedCategory && !selectedSport) {
       if (selectedCategory === "other") {
-        // "Other" category: futures that don't match any known category
         markets = markets.filter(
           (m) => !getCategoryForFutures(m.sport, m.name, getOutcomeNames(m), m.llm_sport_category)
         );
       } else {
-        // Match futures to selected category using smart categorization
         markets = markets.filter((m) => {
           const category = getCategoryForFutures(m.sport, m.name, getOutcomeNames(m), m.llm_sport_category);
           return category?.key === selectedCategory;
@@ -234,62 +199,53 @@ export default function HomePage() {
       }
     }
 
-    // Sort by outcome count (markets with more outcomes are usually more interesting)
     return markets.sort((a, b) => (b.outcome_count || 0) - (a.outcome_count || 0));
   }, [futuresData?.markets, selectedCategory, selectedSport]);
 
-  // Get featured events using backend highlight scoring
   const featuredEvents = useMemo(() => {
     return filteredEvents
       .filter((e) => e.highlight?.should_feature || isFeaturedEvent(e))
       .sort((a, b) => {
-        // Sort by highlight score (from backend) if available, fall back to excitement score
         const scoreA = a.highlight?.score ?? calculateExcitementScore(a);
         const scoreB = b.highlight?.score ?? calculateExcitementScore(b);
         return scoreB - scoreA;
       })
-      .slice(0, 6); // Max 6 featured events
+      .slice(0, 6);
   }, [filteredEvents]);
 
-  // Find which pinned event IDs are missing from the main events list
+  // Pinned events fetch
   const missingPinnedIds = useMemo(() => {
     const loadedIds = new Set((eventsData?.events ?? []).map(e => e.id));
     return pinnedIds.filter(id => !loadedIds.has(id));
   }, [eventsData?.events, pinnedIds]);
 
-  // Fetch pinned events that aren't in the main list (e.g., events > 7 days away)
   const { data: fetchedPinnedEvents } = useSWR(
     missingPinnedIds.length > 0 ? ["pinned-events", ...missingPinnedIds] : null,
     () => fetchEventsByIds(missingPinnedIds),
   );
 
-  // Combine pinned events from main list + separately fetched
   const pinnedEvents = useMemo(() => {
     const allEvents = eventsData?.events ?? [];
     const fetchedMap = new Map((fetchedPinnedEvents ?? []).map(e => [e.id, e]));
-
     return pinnedIds
       .map(id => allEvents.find(e => e.id === id) ?? fetchedMap.get(id))
       .filter((e): e is Event => e !== undefined);
   }, [eventsData?.events, fetchedPinnedEvents, pinnedIds]);
 
-  // Find which pinned futures IDs are missing from the loaded futures list
+  // Pinned futures fetch
   const missingPinnedFuturesIds = useMemo(() => {
     const loadedIds = new Set((futuresData?.markets ?? []).map(f => f.id));
     return pinnedFuturesIds.filter(id => !loadedIds.has(id));
   }, [futuresData?.markets, pinnedFuturesIds]);
 
-  // Fetch pinned futures that aren't in the main list
   const { data: fetchedPinnedFutures } = useSWR(
     missingPinnedFuturesIds.length > 0 ? ["pinned-futures", ...missingPinnedFuturesIds] : null,
     () => fetchFuturesByIds(missingPinnedFuturesIds),
   );
 
-  // Combine pinned futures from main list + separately fetched
   const pinnedFutures = useMemo(() => {
     const allFutures = futuresData?.markets ?? [];
     const fetchedMap = new Map((fetchedPinnedFutures ?? []).map(f => [f.id, f]));
-
     return pinnedFuturesIds
       .map(id => allFutures.find(f => f.id === id) ?? fetchedMap.get(id))
       .filter((f): f is FuturesMarket => f !== undefined);
@@ -299,7 +255,6 @@ export default function HomePage() {
   const sportGroups = useMemo((): SportGroup[] => {
     const groups = new Map<string, SportGroup>();
 
-    // Helper to get or create a sport group
     const getOrCreateGroup = (sportKey: string): SportGroup => {
       const category = getCategoryForLeague(sportKey);
       const categoryKey = category?.key ?? "other";
@@ -320,14 +275,11 @@ export default function HomePage() {
       return groups.get(categoryKey)!;
     };
 
-    // Add events to groups
     for (const event of filteredEvents) {
       if (!event.sport) continue;
-
       const sportGroup = getOrCreateGroup(event.sport);
       sportGroup.totalEvents++;
 
-      // Find or create league group
       let leagueGroup = sportGroup.leagues.find((l) => l.leagueKey === event.sport);
       if (!leagueGroup) {
         leagueGroup = {
@@ -338,13 +290,10 @@ export default function HomePage() {
         };
         sportGroup.leagues.push(leagueGroup);
       }
-
       leagueGroup.events.push(event);
     }
 
-    // Add futures to groups using smart categorization
     for (const market of filteredFutures) {
-      // Use getCategoryForFutures which matches by sport key, market name, outcome names, AND LLM category
       const category = getCategoryForFutures(market.sport, market.name, getOutcomeNames(market), market.llm_sport_category);
       const categoryKey = category?.key ?? "other";
 
@@ -366,15 +315,12 @@ export default function HomePage() {
       sportGroup.totalFutures++;
     }
 
-    // Sort leagues within each sport by tier, then alphabetically
     const groupsArray = Array.from(groups.values());
     for (const group of groupsArray) {
       group.leagues.sort((a, b) => {
         if (a.tier !== b.tier) return a.tier - b.tier;
         return a.leagueName.localeCompare(b.leagueName);
       });
-
-      // Sort events within each league by game time
       for (const league of group.leagues) {
         league.events.sort((a, b) =>
           new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime()
@@ -382,7 +328,6 @@ export default function HomePage() {
       }
     }
 
-    // Sort sport groups by tier, then by total content (events + futures)
     return groupsArray.sort((a, b) => {
       if (a.tier !== b.tier) return a.tier - b.tier;
       return (b.totalEvents + b.totalFutures) - (a.totalEvents + a.totalFutures);
@@ -393,21 +338,9 @@ export default function HomePage() {
     setExpandedSports((prev) => {
       const next = new Set(prev);
       const isExpanding = !next.has(categoryKey);
-      if (next.has(categoryKey)) {
-        next.delete(categoryKey);
-      } else {
-        next.add(categoryKey);
-      }
-
-      // Track analytics
-      trackSectionToggle(
-        isExpanding ? 'expand' : 'collapse',
-        'sport_category',
-        categoryName,
-        categoryKey,
-        eventCount
-      );
-
+      if (next.has(categoryKey)) next.delete(categoryKey);
+      else next.add(categoryKey);
+      trackSectionToggle(isExpanding ? 'expand' : 'collapse', 'sport_category', categoryName, categoryKey, eventCount);
       return next;
     });
   }, [trackSectionToggle]);
@@ -416,26 +349,13 @@ export default function HomePage() {
     setExpandedLeagues((prev) => {
       const next = new Set(prev);
       const isExpanding = !next.has(leagueKey);
-      if (next.has(leagueKey)) {
-        next.delete(leagueKey);
-      } else {
-        next.add(leagueKey);
-      }
-
-      // Track analytics
-      trackSectionToggle(
-        isExpanding ? 'expand' : 'collapse',
-        'league',
-        leagueName,
-        leagueKey,
-        eventCount
-      );
-
+      if (next.has(leagueKey)) next.delete(leagueKey);
+      else next.add(leagueKey);
+      trackSectionToggle(isExpanding ? 'expand' : 'collapse', 'league', leagueName, leagueKey, eventCount);
       return next;
     });
   }, [trackSectionToggle]);
 
-  // All sport sections start collapsed; user clicks to expand
   const [hasAutoExpanded, setHasAutoExpanded] = useState(true);
   useEffect(() => {
     if (hasAutoExpanded || sportGroups.length === 0) return;
@@ -462,9 +382,9 @@ export default function HomePage() {
   const sports = sportsData?.sports ?? [];
 
   return (
-    <div className="space-y-6">
-      {/* Filters - sticky on scroll */}
-      <div className="sticky top-16 bg-snow py-3 -mx-4 px-4 md:-mx-8 md:px-8 lg:-mx-12 lg:px-12 z-40">
+    <div className="space-y-5">
+      {/* Filters */}
+      <div className="sticky top-[53px] bg-surface-deep/95 backdrop-blur-sm py-3 -mx-3 px-3 md:-mx-6 md:px-6 z-40">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <SportFilter
             sports={sports}
@@ -481,10 +401,10 @@ export default function HomePage() {
               <button
                 key={option.value}
                 onClick={() => setDateFilter(option.value)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                className={`px-3 py-1.5 text-micro font-medium rounded-full transition-colors ${
                   dateFilter === option.value
-                    ? "bg-gray-900 text-white"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    ? "bg-text-primary text-surface-deep"
+                    : "bg-surface-elevated text-text-secondary hover:text-text-primary"
                 }`}
               >
                 {option.label}
@@ -502,7 +422,7 @@ export default function HomePage() {
         />
       )}
 
-      {/* Loading State — skeleton cards instead of a spinner */}
+      {/* Loading State */}
       {eventsLoading && <SkeletonGrid count={6} />}
 
       {/* Events Display */}
@@ -510,33 +430,30 @@ export default function HomePage() {
         <>
           {filteredEvents.length === 0 && filteredFutures.length === 0 ? (
             <div className="text-center py-16">
-              <p className="text-body text-slate mb-2">
+              <p className="text-body text-text-secondary mb-2">
                 No events for {dateFilter === "today" ? "today" : dateFilter === "recent" ? "recent days" : "upcoming dates"}
               </p>
-              <p className="text-caption text-silver">
+              <p className="text-caption text-text-muted">
                 {selectedSport || selectedCategory
                   ? "Try selecting a different sport or date"
                   : "Try a different date filter"}
               </p>
             </div>
           ) : (
-            /* Smart View: Pinned + Featured + Sport Groups */
-            <div className="space-y-8">
-              {/* Pinned Section (events + futures combined) */}
+            <div className="space-y-6">
+              {/* Pinned Section */}
               {(pinnedEvents.length > 0 || pinnedFutures.length > 0) && (
                 <section>
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">📌</span>
-                      <h2 className="text-title-3 font-semibold text-graphite">
-                        Pinned
-                      </h2>
-                    </div>
-                    <span className="text-caption text-slate">
-                      {pinnedEvents.length + pinnedFutures.length} item{pinnedEvents.length + pinnedFutures.length !== 1 ? "s" : ""} you&apos;re tracking
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm">📌</span>
+                    <h2 className="text-sm font-semibold text-text-primary">
+                      Pinned
+                    </h2>
+                    <span className="text-micro text-text-muted">
+                      {pinnedEvents.length + pinnedFutures.length}
                     </span>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
+                  <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
                     {pinnedEvents.map((event, index) => (
                       <EventCard
                         key={`pinned-${event.id}`}
@@ -564,20 +481,17 @@ export default function HomePage() {
                 </section>
               )}
 
-              {/* Onboarding CTA for authenticated users without preferences */}
+              {/* Onboarding CTA */}
               <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
 
-              {/* Right Now Feed Section — ranked events + futures mixed */}
+              {/* Right Now Feed */}
               {feedData && feedData.items.length > 0 && (
                 <section>
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">✨</span>
-                      <h2 className="text-title-3 font-semibold text-graphite">
-                        Right Now
-                      </h2>
-                    </div>
-                    <span className="text-caption text-slate">
+                  <div className="flex items-center gap-2 mb-3">
+                    <h2 className="text-sm font-semibold text-text-primary">
+                      Right Now
+                    </h2>
+                    <span className="text-micro text-text-muted">
                       {(() => {
                         const eventCount = feedData.items.filter(i => i.type === "event").length;
                         const futuresCount = feedData.items.filter(i => i.type === "futures").length;
@@ -604,13 +518,12 @@ export default function HomePage() {
               )}
               {feedLoading && !feedData && (
                 <section>
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="text-lg">✨</span>
-                    <h2 className="text-title-3 font-semibold text-graphite">Right Now</h2>
+                  <div className="flex items-center gap-2 mb-3">
+                    <h2 className="text-sm font-semibold text-text-primary">Right Now</h2>
                   </div>
                   <div className="space-y-2">
                     {[1, 2, 3, 4, 5].map((i) => (
-                      <div key={i} className="h-20 rounded-lg bg-mist/30 animate-pulse" />
+                      <div key={i} className="h-20 rounded-card bg-surface-card animate-pulse" />
                     ))}
                   </div>
                 </section>
@@ -625,23 +538,20 @@ export default function HomePage() {
                   (sum, league) => sum + league.events.filter(e => e.status === "live").length, 0
                 );
                 const isSportExpanded = expandedSports.has(sportGroup.categoryKey);
-                // Flatten: skip league sub-header when only one league and no futures
                 const isFlatLeague = sportGroup.leagues.length === 1 && sportGroup.totalFutures === 0;
-                // Futures-only: skip the "Futures" toggle when there are no events
                 const isFuturesOnly = sportGroup.totalEvents === 0 && sportGroup.totalFutures > 0;
 
                 return (
                   <section key={sportGroup.categoryKey}>
-                    {/* Sport Header */}
                     <button
                       onClick={() => toggleSportExpand(sportGroup.categoryKey, sportGroup.categoryName, totalItems)}
-                      className="flex items-center gap-2 mb-4 w-full text-left group"
+                      className="flex items-center gap-2 mb-3 w-full text-left group"
                     >
-                      <span className="text-lg">{sportGroup.emoji}</span>
-                      <h2 className="text-title-3 font-semibold text-graphite">
+                      <span className="text-sm">{sportGroup.emoji}</span>
+                      <h2 className="text-sm font-semibold text-text-primary">
                         {sportGroup.categoryName}
                       </h2>
-                      <span className="text-caption text-slate bg-mist/50 px-2 py-0.5 rounded">
+                      <span className="text-micro text-text-muted bg-surface-elevated px-2 py-0.5 rounded">
                         {sportGroup.totalEvents > 0 && sportGroup.totalFutures > 0
                           ? `${sportGroup.totalEvents} + ${sportGroup.totalFutures} futures`
                           : sportGroup.totalFutures > 0
@@ -649,58 +559,57 @@ export default function HomePage() {
                           : sportGroup.totalEvents}
                       </span>
                       {liveCount > 0 && !isSportExpanded && (
-                        <span className="text-micro bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-semibold animate-pulse">
+                        <span className="text-micro-xs bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded font-semibold animate-pulse">
                           {liveCount} live
                         </span>
                       )}
-                      <span className="ml-auto text-slate group-hover:text-graphite transition-colors">
+                      <span className="ml-auto text-text-muted group-hover:text-text-secondary transition-colors">
                         {isSportExpanded ? (
-                          <ChevronDown className="w-5 h-5" />
+                          <ChevronDown className="w-4 h-4" />
                         ) : (
-                          <ChevronRight className="w-5 h-5" />
+                          <ChevronRight className="w-4 h-4" />
                         )}
                       </span>
                     </button>
 
-                    {/* Sport Content */}
                     {isSportExpanded && (
                       <div className="space-y-4">
-                        {/* League sections */}
                         {sportGroup.leagues.map((league) => {
                           const isExpanded = isFlatLeague || expandedLeagues.has(league.leagueKey);
 
                           return (
                             <div key={league.leagueKey}>
-                              {/* League Header - hidden for single-league sports (no point clicking twice) */}
                               {!isFlatLeague && (
                                 <button
                                   onClick={() => toggleLeagueExpand(league.leagueKey, league.leagueName, league.events.length)}
                                   className="flex items-center gap-2 mb-2 w-full text-left group"
                                 >
-                                  <span className="text-slate group-hover:text-graphite transition-colors">
+                                  <span className="text-text-muted group-hover:text-text-secondary transition-colors">
                                     {isExpanded ? (
-                                      <ChevronDown className="w-4 h-4" />
+                                      <ChevronDown className="w-3.5 h-3.5" />
                                     ) : (
-                                      <ChevronRight className="w-4 h-4" />
+                                      <ChevronRight className="w-3.5 h-3.5" />
                                     )}
                                   </span>
-                                  <h3 className="text-body font-medium text-graphite">
+                                  <h3 className="text-sm font-medium text-text-secondary">
                                     {league.leagueName}
                                   </h3>
                                   {league.tier === 1 && (
-                                    <span className="text-micro bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                                    <span className="text-micro-xs bg-accent-warning/15 text-accent-warning px-1 py-0.5 rounded">
                                       Major
                                     </span>
                                   )}
-                                  <span className="text-caption text-silver">
-                                    {league.events.length} event{league.events.length !== 1 ? "s" : ""}
+                                  <span className="text-micro text-text-muted">
+                                    {league.events.length}
                                   </span>
                                 </button>
                               )}
 
-                              {/* League Events */}
                               {isExpanded && (
-                                <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ${isFlatLeague ? "" : "ml-6"}`}>
+                                <div
+                                  className={`grid gap-3 items-stretch ${isFlatLeague ? "" : "ml-5"}`}
+                                  style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                                >
                                   {league.events.map((event, index) => (
                                     <EventCard
                                       key={event.id}
@@ -719,47 +628,46 @@ export default function HomePage() {
                           );
                         })}
 
-                        {/* Futures section within sport */}
+                        {/* Futures section */}
                         {sportGroup.futures.length > 0 && (() => {
                           const subcategories = groupBySubcategory(sportGroup.futures, sportGroup.categoryKey);
                           const useSubcategories = sportGroup.futures.length >= SUBCATEGORY_THRESHOLD && subcategories.length > 1;
-
-                          // For futures-only categories, show content directly (no "Futures" toggle)
                           const showFuturesDirectly = isFuturesOnly;
                           const futuresVisible = showFuturesDirectly || isFuturesExpanded;
 
                           return (
                             <div>
-                              {/* Futures Header - hidden for futures-only categories */}
                               {!showFuturesDirectly && (
                                 <button
                                   onClick={() => toggleLeagueExpand(futuresKey, "Futures", sportGroup.futures.length)}
                                   className="flex items-center gap-2 mb-2 w-full text-left group"
                                 >
-                                  <span className="text-slate group-hover:text-graphite transition-colors">
+                                  <span className="text-text-muted group-hover:text-text-secondary transition-colors">
                                     {isFuturesExpanded ? (
-                                      <ChevronDown className="w-4 h-4" />
+                                      <ChevronDown className="w-3.5 h-3.5" />
                                     ) : (
-                                      <ChevronRight className="w-4 h-4" />
+                                      <ChevronRight className="w-3.5 h-3.5" />
                                     )}
                                   </span>
-                                  <h3 className="text-body font-medium text-graphite">
+                                  <h3 className="text-sm font-medium text-text-secondary">
                                     Futures
                                   </h3>
-                                  <span className="text-micro bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                                  <span className="text-micro-xs bg-accent-futures/15 text-accent-futures px-1 py-0.5 rounded">
                                     Outrights
                                   </span>
-                                  <span className="text-caption text-silver">
-                                    {sportGroup.futures.length} market{sportGroup.futures.length !== 1 ? "s" : ""}
+                                  <span className="text-micro text-text-muted">
+                                    {sportGroup.futures.length}
                                   </span>
                                 </button>
                               )}
 
-                              {/* Futures Markets */}
                               {futuresVisible && (() => {
                                 if (!useSubcategories) {
                                   return (
-                                    <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ${showFuturesDirectly ? "" : "ml-6"}`}>
+                                    <div
+                                      className={`grid gap-3 items-stretch ${showFuturesDirectly ? "" : "ml-5"}`}
+                                      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                                    >
                                       {sportGroup.futures.map((market) => (
                                         <FuturesCard
                                           key={`futures-${market.id}`}
@@ -775,7 +683,7 @@ export default function HomePage() {
                                 }
 
                                 return (
-                                  <div className={`space-y-2 ${showFuturesDirectly ? "" : "ml-6"}`}>
+                                  <div className={`space-y-2 ${showFuturesDirectly ? "" : "ml-5"}`}>
                                     {subcategories.map((sub) => {
                                       const subKey = `${futuresKey}:${sub.key}`;
                                       const isSubExpanded = expandedLeagues.has(subKey);
@@ -786,22 +694,25 @@ export default function HomePage() {
                                             onClick={() => toggleLeagueExpand(subKey, sub.displayName, sub.markets.length)}
                                             className="flex items-center gap-2 mb-2 w-full text-left group"
                                           >
-                                            <span className="text-slate group-hover:text-graphite transition-colors">
+                                            <span className="text-text-muted group-hover:text-text-secondary transition-colors">
                                               {isSubExpanded ? (
-                                                <ChevronDown className="w-4 h-4" />
+                                                <ChevronDown className="w-3.5 h-3.5" />
                                               ) : (
-                                                <ChevronRight className="w-4 h-4" />
+                                                <ChevronRight className="w-3.5 h-3.5" />
                                               )}
                                             </span>
-                                            <span className="text-sm font-medium text-graphite">
+                                            <span className="text-sm font-medium text-text-secondary">
                                               {sub.displayName}
                                             </span>
-                                            <span className="text-caption text-silver">
+                                            <span className="text-micro text-text-muted">
                                               {sub.markets.length}
                                             </span>
                                           </button>
                                           {isSubExpanded && (
-                                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 items-stretch ml-6">
+                                            <div
+                                              className="grid gap-3 items-stretch ml-5"
+                                              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                                            >
                                               {sub.markets.map((market) => (
                                                 <FuturesCard
                                                   key={`futures-${market.id}`}
@@ -831,9 +742,8 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Event and futures count */}
           {(filteredEvents.length > 0 || filteredFutures.length > 0) && (
-            <p className="text-center text-caption text-silver pt-4">
+            <p className="text-center text-micro text-text-muted pt-4">
               {filteredEvents.length > 0 && (
                 <>{filteredEvents.length} event{filteredEvents.length !== 1 ? "s" : ""}</>
               )}
@@ -849,18 +759,9 @@ export default function HomePage() {
   );
 }
 
-/**
- * Simple chevron icons
- */
 function ChevronDown({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
     </svg>
   );
@@ -868,13 +769,7 @@ function ChevronDown({ className }: { className?: string }) {
 
 function ChevronRight({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
     </svg>
   );

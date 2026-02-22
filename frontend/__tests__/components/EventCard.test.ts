@@ -55,8 +55,8 @@ describe("EventCard", () => {
       React.createElement(EventCard, { event: makeEvent() })
     );
 
-    expect(html).toContain("Projected:");
-    expect(html).toContain("111 - 104");
+    expect(html).toContain("Proj");
+    expect(html).toContain("111-104");
     expect(html).not.toContain("Final");
   });
 
@@ -77,7 +77,8 @@ describe("EventCard", () => {
     );
 
     expect(html).toContain("LIVE");
-    expect(html).toContain("Opened 55/45");
+    expect(html).toContain("Opened");
+    expect(html).toContain("55/45");
     expect(html).toContain("🫀 88");
   });
 
@@ -92,7 +93,7 @@ describe("EventCard", () => {
     );
 
     expect(html).not.toContain("LIVE");
-    expect(html).toContain("Projected:");
+    expect(html).toContain("Proj");
   });
 
   it("shows final state and uses opening odds as pre-game probabilities", () => {
@@ -116,7 +117,8 @@ describe("EventCard", () => {
     );
 
     expect(html).toContain("Final");
-    expect(html).toContain("Pre-game: 55% / 45%");
+    expect(html).toContain("Pre-game:");
+    expect(html).toContain("55%/45%");
     expect(html).toContain("102");
     expect(html).toContain("99");
   });

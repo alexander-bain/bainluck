@@ -161,13 +161,13 @@ export default function SearchBar({
           }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className={`w-full bg-white border border-mist rounded-full text-graphite placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-graphite/20 focus:border-graphite/40 transition-colors ${
+          className={`w-full bg-surface-elevated border border-surface-border rounded-full text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30 focus:border-accent-brand/40 transition-colors ${
             compact ? "px-4 py-1.5 text-sm" : "px-5 py-2.5 text-base"
           }`}
         />
         {/* Search icon */}
         <div
-          className={`absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 ${
+          className={`absolute right-3 top-1/2 -translate-y-1/2 text-text-muted ${
             compact ? "text-sm" : "text-base"
           }`}
         >
@@ -183,7 +183,7 @@ export default function SearchBar({
       {isOpen && suggestions.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 w-full mt-1 bg-white rounded-xl shadow-lg border border-mist overflow-hidden"
+          className="absolute z-50 w-full mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-border overflow-hidden"
         >
           {suggestions.map((suggestion, idx) => (
             <button
@@ -191,7 +191,7 @@ export default function SearchBar({
               onClick={() => selectSuggestion(suggestion)}
               onMouseEnter={() => setSelectedIndex(idx)}
               className={`w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors ${
-                idx === selectedIndex ? "bg-snow" : "hover:bg-snow/50"
+                idx === selectedIndex ? "bg-surface-elevated" : "hover:bg-surface-elevated/50"
               }`}
             >
               {/* Type icon */}
@@ -219,7 +219,7 @@ export default function SearchBar({
 
               {/* Text */}
               <div className="flex-1 min-w-0">
-                <div className="text-sm text-graphite truncate">
+                <div className="text-sm text-text-primary truncate">
                   {suggestion.text}
                 </div>
                 {/* Subtitle */}
@@ -236,7 +236,7 @@ export default function SearchBar({
               </div>
 
               {/* Type badge */}
-              <span className="text-xs text-gray-400 flex-shrink-0">
+              <span className="text-xs text-text-muted flex-shrink-0">
                 {suggestion.type === "team"
                   ? "Team"
                   : suggestion.type === "event"
@@ -253,7 +253,7 @@ export default function SearchBar({
                 router.push(`/search?q=${encodeURIComponent(query)}`);
                 setIsOpen(false);
               }}
-              className="w-full text-left px-4 py-2 bg-snow/50 text-sm text-slate hover:bg-snow border-t border-mist"
+              className="w-full text-left px-4 py-2 bg-surface-elevated/50 text-sm text-text-secondary hover:bg-surface-elevated border-t border-surface-border"
             >
               See all results for &ldquo;{query}&rdquo;
             </button>

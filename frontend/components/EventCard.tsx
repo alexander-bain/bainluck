@@ -49,10 +49,7 @@ export default function EventCard({
   const odds = event.current_odds;
   const opening = event.opening_odds;
 
-  // Determine which probability to display based on game status:
-  // - Scheduled: current betting consensus
-  // - Live: current odds (best available)
-  // - Completed/Closed: opening odds (what was expected before the game)
+  // Determine which probability to display based on game status
   let homeProb: number | null;
   let awayProb: number | null;
 
@@ -64,29 +61,16 @@ export default function EventCard({
     awayProb = odds?.away_probability ?? null;
   }
 
-  // Handle card click with analytics
   const handleCardClick = () => {
     trackEventCardClick(event, sourceSection, positionIndex);
   };
 
-  // Check if game has actually started based on commence_time
   const hasStarted = new Date(event.commence_time).getTime() <= Date.now();
-
-  // Only consider "live" if status is "live" AND game has actually started
   const isLive = event.status === "live" && hasStarted;
   const isCompleted = event.status === "completed";
   const isClosed = event.status === "closed";
   const isFinished = isCompleted || isClosed;
-
-  // Use highlight flags from backend if available
-  const effectivelyLive = isLive;
-
-  // Determine favorite
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
-
-  // Is this a close game? (within 10% of 50/50)
-  const isCloseGame = homeProb !== null && homeProb !== undefined &&
-    Math.abs(homeProb - 0.5) < 0.1 && !isFinished;
 
   // Format time compactly
   const gameTime = new Date(event.commence_time);
@@ -95,138 +79,118 @@ export default function EventCard({
     minute: "2-digit",
   });
 
-  // Get sport emoji
-  const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
-
-  // Use highlight flags for styling if available
-  const isFeaturedHighlight = event.highlight?.flags?.favorite_switched ||
-    event.highlight?.flags?.is_upset;
-
-  // Only show logos when both teams have them (avoids asymmetric display)
+  // Team colors
+  const homeColor = event.home_team_data?.primary_color || "#94A3B8";
+  const awayColor = event.away_team_data?.primary_color || "#64748B";
   const bothTeamsHaveLogos = !!(event.home_team_data?.logo_small && event.away_team_data?.logo_small);
 
-  // Card border/background based on state
-  const cardClasses = effectivelyLive
-    ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-    : isFeaturedHighlight
-    ? "bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300"
-    : isFinished
-    ? "bg-slate-50/50 border border-mist"
-    : isCloseGame
-    ? "bg-white border-2 border-amber-200"
-    : "bg-white border border-mist";
+  // Short team names (last word) for compact display
+  const homeShort = event.home_team.split(" ").pop() || event.home_team;
+  const awayShort = event.away_team.split(" ").pop() || event.away_team;
 
   return (
     <Link href={`/events/${event.id}`} className="h-full" onClick={handleCardClick}>
       <div
-        className={`h-full flex flex-col rounded-card shadow-card p-4 hover:shadow-card-hover transition-all cursor-pointer group/card ${cardClasses}`}
+        className={`
+          h-full flex flex-col rounded-card p-3 sm:p-4 transition-all cursor-pointer group/card
+          bg-surface-card border border-surface-border
+          hover:bg-surface-elevated hover:border-surface-elevated hover:shadow-card-hover
+          ${isLive ? "ring-1 ring-accent-live/30" : ""}
+          ${isFinished ? "opacity-75 hover:opacity-100" : ""}
+        `}
       >
-        {/* Header: Sport, Status, Time */}
-        <div className="flex justify-between items-start mb-3">
-          <div className="flex items-center gap-2 flex-wrap">
+        {/* Top bar: league + status + pin */}
+        <div className="flex items-center justify-between gap-2 mb-2.5">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {showSport && event.sport && (
+              <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
+                {getLeagueDisplay(event.sport)}
+              </span>
+            )}
+            {highlightLabel && !isLive && (
+              <span className="text-micro-xs bg-accent-warning/15 text-accent-warning px-1.5 py-0.5 rounded">
+                {highlightLabel}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {isLive && (
+              <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-2 py-0.5 rounded text-micro-xs font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
+                {highlightLabel || "LIVE"}
+              </span>
+            )}
+            {isLive && event.pulse && (
+              <PulseBadge pulse={event.pulse} size="sm" />
+            )}
+            {!isLive && !isFinished && (
+              <span className="text-micro text-text-muted">{timeStr}</span>
+            )}
+            {isFinished && (
+              <>
+                <span className="text-micro-xs text-text-muted uppercase">Final</span>
+                {event.pulse && <PulseBadge pulse={event.pulse} size="sm" />}
+              </>
+            )}
             {/* Pin button */}
             {onPinToggle && (
               <button
                 onClick={handlePinClick}
                 disabled={pinDisabled && !isPinned}
                 className={`
-                  p-1 rounded-full transition-all
+                  p-1 rounded transition-all
                   ${isPinned
-                    ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
-                    : 'text-slate/30 hover:text-slate hover:bg-slate/10 group-hover/card:text-slate/50'
+                    ? 'text-accent-warning'
+                    : 'text-text-muted/30 hover:text-text-muted group-hover/card:text-text-muted/50'
                   }
                   ${pinDisabled && !isPinned ? 'cursor-not-allowed opacity-30' : ''}
-                  focus:outline-none focus:ring-2 focus:ring-amber-300
                 `}
-                title={isPinned ? 'Unpin event' : pinDisabled ? 'Maximum 6 pins' : 'Pin event'}
+                title={isPinned ? 'Unpin' : pinDisabled ? 'Max 6 pins' : 'Pin'}
                 aria-label={isPinned ? 'Unpin event' : 'Pin event'}
               >
-                <PinIcon filled={isPinned} className="w-4 h-4" />
+                <PinIcon filled={isPinned} className="w-3.5 h-3.5" />
               </button>
-            )}
-            {showSport && event.sport && (
-              <span className="text-sm bg-slate/10 px-2 py-0.5 rounded-full flex items-center gap-1">
-                <span>{sportEmoji}</span>
-                <span className="text-slate font-medium">
-                  {getLeagueDisplay(event.sport)}
-                </span>
-              </span>
-            )}
-          </div>
-
-          {/* Right: Status + Pulse */}
-          <div className="flex items-center gap-1.5">
-            {!isLive && !isFinished && (
-              <span className="text-xs text-slate">
-                {timeStr}
-              </span>
-            )}
-            {highlightLabel && !effectivelyLive && (
-              <span className="flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-semibold">
-                {highlightLabel}
-              </span>
-            )}
-            {effectivelyLive && (
-              <>
-                <span className="flex items-center gap-1.5 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  {highlightLabel || "LIVE"}
-                </span>
-                {event.pulse && (
-                  <PulseBadge pulse={event.pulse} size="sm" />
-                )}
-              </>
-            )}
-            {/* Unified "Final" badge for both completed and closed games */}
-            {isFinished && (
-              <>
-                <span className="text-xs text-silver">
-                  Final
-                </span>
-                {event.pulse && (
-                  <PulseBadge pulse={event.pulse} size="sm" />
-                )}
-              </>
             )}
           </div>
         </div>
 
-        {/* Score Display — prominent for finished games, live-styled for live */}
-        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null ? (
-          <div className={`flex items-center justify-center gap-4 py-2 mb-2 rounded-lg ${
-            isFinished ? "bg-slate-100/80" : "bg-white/60"
+        {/* Score display for live/finished */}
+        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
+          <div className={`flex items-center justify-center gap-6 py-2 mb-2 rounded-lg ${
+            isLive ? "bg-accent-live/5" : "bg-surface-elevated/50"
           }`}>
             <div className="text-center">
-              <div className={`text-2xl font-bold font-mono ${
+              <div className={`font-mono text-2xl font-bold ${
                 isFinished
-                  ? (event.home_score! > event.away_score! ? "text-graphite" : "text-silver")
-                  : "text-emerald-600"
+                  ? (event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted")
+                  : "text-accent-live"
               }`}>
                 {event.home_score}
               </div>
-              <div className="text-xs text-slate truncate max-w-[80px]">
-                {event.home_team.split(" ").pop()}
+              <div className="text-micro-xs text-text-muted uppercase tracking-wide">
+                {homeShort}
               </div>
             </div>
-            <div className="text-lg text-slate font-medium">—</div>
+            <span className="text-text-muted font-light text-lg">—</span>
             <div className="text-center">
-              <div className={`text-2xl font-bold font-mono ${
+              <div className={`font-mono text-2xl font-bold ${
                 isFinished
-                  ? (event.away_score! > event.home_score! ? "text-graphite" : "text-silver")
-                  : "text-emerald-600"
+                  ? (event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted")
+                  : "text-accent-live"
               }`}>
                 {event.away_score}
               </div>
-              <div className="text-xs text-slate truncate max-w-[80px]">
-                {event.away_team.split(" ").pop()}
+              <div className="text-micro-xs text-text-muted uppercase tracking-wide">
+                {awayShort}
               </div>
             </div>
           </div>
-        ) : null}
+        )}
 
-        {/* Main Content: Teams + Probabilities */}
-        <div className="space-y-2 flex-grow">
-          {/* Home Team Row */}
+        {/* Teams + Probabilities */}
+        <div className="space-y-1.5 flex-grow">
+          {/* Home team */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
               {bothTeamsHaveLogos && (
@@ -239,44 +203,40 @@ export default function EventCard({
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
               )}
-              <span
-                className={`text-base font-semibold truncate ${
-                  homeFavorite ? "text-graphite" : "text-slate"
-                }`}
-              >
+              <span className={`text-sm font-medium truncate ${
+                homeFavorite ? "text-text-primary" : "text-text-secondary"
+              }`}>
                 {event.home_team}
               </span>
             </div>
-            <span
-              className={`font-mono text-xl font-bold tabular-nums ${
-                homeFavorite ? "text-graphite" : "text-silver"
-              }`}
-            >
+            <span className={`font-mono tabular-nums ${
+              homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary"
+            }`}>
               {formatProbability(homeProb)}
             </span>
           </div>
 
-          {/* Probability Bar */}
-          <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-slate/10">
+          {/* Team-colored probability bar (signature element) */}
+          <div className="prob-bar" style={{ background: "rgba(255,255,255,0.06)" }}>
             <div
-              className={`transition-all duration-300 ${
-                homeFavorite
-                  ? effectivelyLive ? "bg-emerald-500" : "bg-graphite"
-                  : "bg-slate/30"
-              }`}
-              style={{ width: `${(homeProb ?? 0.5) * 100}%` }}
+              className="prob-bar-segment"
+              style={{
+                width: `${(homeProb ?? 0.5) * 100}%`,
+                backgroundColor: homeColor,
+                opacity: homeFavorite ? 1 : 0.5,
+              }}
             />
             <div
-              className={`transition-all duration-300 ${
-                !homeFavorite
-                  ? effectivelyLive ? "bg-emerald-500" : "bg-graphite"
-                  : "bg-slate/30"
-              }`}
-              style={{ width: `${(awayProb ?? 0.5) * 100}%` }}
+              className="prob-bar-segment"
+              style={{
+                width: `${(awayProb ?? 0.5) * 100}%`,
+                backgroundColor: awayColor,
+                opacity: !homeFavorite ? 1 : 0.5,
+              }}
             />
           </div>
 
-          {/* Away Team Row */}
+          {/* Away team */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
               {bothTeamsHaveLogos && (
@@ -289,42 +249,37 @@ export default function EventCard({
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
               )}
-              <span
-                className={`text-base font-semibold truncate ${
-                  !homeFavorite ? "text-graphite" : "text-slate"
-                }`}
-              >
+              <span className={`text-sm font-medium truncate ${
+                !homeFavorite ? "text-text-primary" : "text-text-secondary"
+              }`}>
                 {event.away_team}
               </span>
             </div>
-            <span
-              className={`font-mono text-xl font-bold tabular-nums ${
-                !homeFavorite ? "text-graphite" : "text-silver"
-              }`}
-            >
+            <span className={`font-mono tabular-nums ${
+              !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary"
+            }`}>
               {formatProbability(awayProb)}
             </span>
           </div>
         </div>
 
-        {/* Footer — contextual, one line */}
-        <div className="mt-3 pt-3 border-t border-mist/50 flex justify-between items-center text-xs">
+        {/* Footer — contextual info */}
+        <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
           {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
-            <span className="text-slate">
-              Projected: <span className="font-mono font-medium text-graphite">{Math.round(odds.projected_home_score)} - {Math.round(odds.projected_away_score)}</span>
+            <span className="text-text-muted">
+              Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
             </span>
           ) : isLive && opening ? (
-            <span className="text-slate">
-              Opened {Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}
+            <span className="text-text-muted">
+              Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
             </span>
           ) : isFinished ? (
-            <span className="text-silver">
-              Pre-game: {formatProbability(homeProb)} / {formatProbability(awayProb)}
+            <span className="text-text-muted">
+              Pre-game: <span className="font-mono text-text-secondary">{formatProbability(homeProb)}/{formatProbability(awayProb)}</span>
             </span>
           ) : null}
-          {/* Broadcast info */}
           {event.espn?.broadcast && (
-            <span className="text-silver truncate ml-auto" title={event.espn.broadcast}>
+            <span className="text-text-muted truncate ml-auto">
               📺 {event.espn.broadcast.split(",")[0].trim()}
             </span>
           )}
@@ -334,20 +289,14 @@ export default function EventCard({
   );
 }
 
-/**
- * Pin icon - pushpin style
- */
 function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
   if (filled) {
-    // Filled pushpin
     return (
       <svg className={className} viewBox="0 0 24 24" fill="currentColor">
         <path d="M16 4c0-.55-.22-1.05-.58-1.41-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-6.01 6.01C5.22 9.95 4 11.59 4 13.5c0 1.1.45 2.1 1.17 2.83L2 19.5l1.41 1.41 3.17-3.17c.73.72 1.73 1.17 2.83 1.17 1.91 0 3.55-1.22 4.91-2.58l6.01-6.01c.36-.36.58-.86.58-1.41s-.22-1.05-.58-1.41c-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-4.95 4.95-2.12-2.12L16 4z"/>
       </svg>
     );
   }
-
-  // Outline pushpin
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v1H5V5z" />
