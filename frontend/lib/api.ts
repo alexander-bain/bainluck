@@ -13,6 +13,7 @@ import type {
   FuturesHistoryResponse,
   FuturesMoversResponse,
   SearchResponse,
+  SearchSuggestionsResponse,
   PulseRankingsResponse,
   RelatedFuturesResponse,
   FeedResponse,
@@ -182,6 +183,13 @@ export async function searchEvents(params: {
   if (params.per_page) searchParams.set("per_page", params.per_page.toString());
 
   return apiFetch<SearchResponse>(`/api/events/search?${searchParams.toString()}`);
+}
+
+/**
+ * Fetch smart search suggestions for the zero-state search page
+ */
+export async function fetchSearchSuggestions(): Promise<SearchSuggestionsResponse> {
+  return apiFetch<SearchSuggestionsResponse>("/api/events/search-suggestions");
 }
 
 /**

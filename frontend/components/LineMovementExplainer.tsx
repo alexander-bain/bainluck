@@ -68,7 +68,7 @@ export default function LineMovementExplainer({
 
           {/* AI Explanation */}
           {data.explanation && (
-            <p className="text-sm text-gray-700 leading-relaxed mb-3">
+            <p className="text-sm text-text-primary leading-relaxed mb-3">
               {data.explanation}
             </p>
           )}
@@ -95,7 +95,7 @@ export default function LineMovementExplainer({
 
       {/* Prediction Market Disagreement Section */}
       {data.disagreement_data && (
-        <div className={data.movements?.length ? "pt-3 border-t border-gray-100" : ""}>
+        <div className={data.movements?.length ? "pt-3 border-t border-surface-border" : ""}>
           <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             <span className="text-lg">🔮</span>
             Market Divergence
@@ -104,8 +104,8 @@ export default function LineMovementExplainer({
           {/* Divergence visual */}
           <div className="flex items-center gap-3 mb-2">
             <div className="flex-1">
-              <div className="text-xs text-gray-500 mb-1">Sportsbooks</div>
-              <div className="text-lg font-bold text-gray-900">
+              <div className="text-xs text-text-muted mb-1">Sportsbooks</div>
+              <div className="text-lg font-bold text-text-primary">
                 {Math.round(data.disagreement_data.sportsbook_home_prob * 100)}%
               </div>
             </div>
@@ -122,10 +122,10 @@ export default function LineMovementExplainer({
             </div>
 
             <div className="flex-1 text-right">
-              <div className="text-xs text-gray-500 mb-1">
+              <div className="text-xs text-text-muted mb-1">
                 {data.disagreement_data.source === "kalshi" ? "Kalshi" : "Polymarket"}
               </div>
-              <div className="text-lg font-bold text-gray-900">
+              <div className="text-lg font-bold text-text-primary">
                 {Math.round(data.disagreement_data.prediction_market_home_prob * 100)}%
               </div>
             </div>
@@ -137,7 +137,7 @@ export default function LineMovementExplainer({
 
           {/* AI Explanation */}
           {data.disagreement_explanation && (
-            <p className="text-sm text-gray-700 leading-relaxed">
+            <p className="text-sm text-text-primary leading-relaxed">
               {data.disagreement_explanation}
             </p>
           )}
@@ -168,8 +168,8 @@ function MovementCard({
 
   // Color based on magnitude
   const bgColor = isMajor
-    ? "bg-amber-50 border-amber-200"
-    : "bg-gray-50 border-gray-200";
+    ? "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800"
+    : "bg-surface-elevated border-surface-border";
   const textColor = isMajor ? "text-amber-700" : "text-text-secondary";
 
   // Format time
@@ -193,7 +193,7 @@ function MovementCard({
         </div>
         <span className="text-xs text-text-muted">{timeStr}</span>
       </div>
-      <div className="text-xs text-gray-500 mt-0.5">
+      <div className="text-xs text-text-muted mt-0.5">
         {Math.round(movement.home_prob_before * 100)}% → {Math.round(movement.home_prob_after * 100)}%
         <span className="text-text-muted ml-1">({homeTeam})</span>
       </div>

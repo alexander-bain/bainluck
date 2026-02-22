@@ -92,7 +92,7 @@ function FutureRow({
   return (
     <Link
       href={`/futures/${future.market_id}`}
-      className="block group -mx-3 px-3 py-2 rounded-lg hover:bg-slate-50/80 transition-colors"
+      className="block group -mx-3 px-3 py-2 rounded-lg hover:bg-surface-elevated/80 transition-colors"
     >
       {/* Market info line */}
       <div className="flex items-center gap-1.5 mb-0.5">

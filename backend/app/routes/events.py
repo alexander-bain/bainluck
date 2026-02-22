@@ -729,6 +729,224 @@ async def typeahead_search(
     return {"suggestions": suggestions[:8], "query": q}
 
 
+@router.get("/search-suggestions")
+async def search_suggestions(
+    db: AsyncSession = Depends(get_db),
+):
+    """Return 6-8 smart, data-driven search suggestions for the search zero-state.
+
+    Sources: live close games, live upsets, starting soon, futures movers,
+    recent upsets, popular championship markets.
+    """
+    from app.utils.highlights import LEAGUE_TIERS
+
+    now = datetime.now(timezone.utc)
+    suggestions: list[dict] = []
+    seen_queries: set[str] = set()
+
+    def _add(query: str, label: str, type_: str, **kwargs):
+        key = query.lower().strip()
+        if key in seen_queries:
+            return
+        seen_queries.add(key)
+        item = {"query": query, "label": label, "type": type_}
+        item.update(kwargs)
+        suggestions.append(item)
+
+    def _shorter_team(home: str, away: str) -> str:
+        return home if len(home) <= len(away) else away
+
+    # Helper: tier 1-2 sport keys
+    tier_12_keys = {k for k, t in LEAGUE_TIERS.items() if t <= 2}
+
+    # --- 1. Live close games (home prob 35-65%) ---
+    try:
+        live_events_q = (
+            select(Event)
+            .where(Event.status == "live")
+            .options(selectinload(Event.sport))
+            .limit(50)
+        )
+        live_result = await db.execute(live_events_q)
+        live_events = live_result.scalars().all()
+
+        # Get latest odds for live events via subquery
+        if live_events:
+            live_ids = [e.id for e in live_events]
+            # Ranked window: latest snapshot per event
+            ranked = (
+                select(
+                    OddsSnapshot.event_id,
+                    OddsSnapshot.home_probability,
+                    func.row_number().over(
+                        partition_by=OddsSnapshot.event_id,
+                        order_by=OddsSnapshot.captured_at.desc()
+                    ).label("rn")
+                )
+                .where(
+                    OddsSnapshot.event_id.in_(live_ids),
+                    OddsSnapshot.bookmaker == "aggregate",
+                )
+                .subquery()
+            )
+            odds_q = select(ranked.c.event_id, ranked.c.home_probability).where(ranked.c.rn == 1)
+            odds_result = await db.execute(odds_q)
+            odds_map = {row[0]: row[1] for row in odds_result.all()}
+
+            for ev in live_events:
+                if len(suggestions) >= 8:
+                    break
+                hp = odds_map.get(ev.id)
+                if hp is None:
+                    continue
+
+                opponent = ev.away_team_name if hp >= 0.5 else ev.home_team_name
+                short = _shorter_team(ev.home_team_name, ev.away_team_name)
+
+                # Close game: 35-65%
+                if 0.35 <= hp <= 0.65:
+                    _add(
+                        short,
+                        f"Live — tight game vs {opponent}",
+                        "event",
+                        event_id=ev.id,
+                    )
+                # Upset check: opening favorite flipped
+                elif ev.opening_home_probability is not None:
+                    opened_home_fav = ev.opening_home_probability > 0.55
+                    now_away_fav = hp < 0.45
+                    opened_away_fav = ev.opening_home_probability < 0.45
+                    now_home_fav = hp > 0.55
+                    if (opened_home_fav and now_away_fav) or (opened_away_fav and now_home_fav):
+                        underdog = ev.away_team_name if opened_home_fav else ev.home_team_name
+                        _add(
+                            underdog,
+                            "Upset brewing",
+                            "event",
+                            event_id=ev.id,
+                        )
+    except Exception:
+        pass  # Non-critical — continue to other sources
+
+    # --- 2. Starting soon (tier 1-2, within 3 hours) ---
+    try:
+        soon_q = (
+            select(Event)
+            .join(Sport)
+            .where(
+                Event.status == "scheduled",
+                Event.commence_time.between(now, now + timedelta(hours=3)),
+                Sport.key.in_(tier_12_keys),
+            )
+            .order_by(Event.commence_time.asc())
+            .limit(10)
+        )
+        soon_result = await db.execute(soon_q)
+        for ev in soon_result.scalars().all():
+            if len(suggestions) >= 8:
+                break
+            minutes = int((ev.commence_time - now).total_seconds() / 60)
+            if minutes < 60:
+                time_label = f"Tips off in {minutes} min"
+            else:
+                hours = minutes // 60
+                time_label = f"Starts in {hours}h"
+            short = _shorter_team(ev.home_team_name, ev.away_team_name)
+            _add(short, time_label, "event", event_id=ev.id)
+    except Exception:
+        pass
+
+    # --- 3. Futures big movers (|probability_change_24h| > 0.02) ---
+    try:
+        movers_q = (
+            select(FuturesOutcome)
+            .join(FuturesMarket)
+            .where(
+                FuturesMarket.status == "open",
+                FuturesOutcome.probability_change_24h.isnot(None),
+                func.abs(FuturesOutcome.probability_change_24h) > 0.02,
+            )
+            .order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
+            .options(selectinload(FuturesOutcome.market))
+            .limit(5)
+        )
+        movers_result = await db.execute(movers_q)
+        for outcome in movers_result.scalars().all():
+            if len(suggestions) >= 8:
+                break
+            change = outcome.probability_change_24h
+            direction = "Surging" if change > 0 else "Falling"
+            pct = f"{'+' if change > 0 else ''}{round(change * 100, 1)}%"
+            market_name = outcome.market.name if outcome.market else ""
+            # Shorten market name
+            short_market = market_name
+            if len(short_market) > 30:
+                short_market = short_market[:27] + "..."
+            _add(
+                outcome.name,
+                f"{direction} {pct} — {short_market}",
+                "futures",
+                market_id=outcome.market_id,
+            )
+    except Exception:
+        pass
+
+    # --- 4. Recent upsets (completed last 24h, opening underdog won) ---
+    try:
+        upsets_q = (
+            select(Event)
+            .where(
+                Event.status.in_(["completed", "closed"]),
+                Event.commence_time >= now - timedelta(hours=24),
+                Event.opening_home_probability.isnot(None),
+                Event.home_score.isnot(None),
+                Event.away_score.isnot(None),
+            )
+            .options(selectinload(Event.sport))
+            .order_by(Event.commence_time.desc())
+            .limit(20)
+        )
+        upsets_result = await db.execute(upsets_q)
+        for ev in upsets_result.scalars().all():
+            if len(suggestions) >= 8:
+                break
+            home_won = ev.home_score > ev.away_score
+            if home_won and ev.opening_home_probability < 0.40:
+                # Home was underdog and won
+                loser = ev.away_team_name
+                _add(ev.home_team_name, f"Pulled the upset vs {loser}", "event", event_id=ev.id)
+            elif not home_won and ev.opening_home_probability > 0.60:
+                # Away was underdog and won
+                loser = ev.home_team_name
+                _add(ev.away_team_name, f"Pulled the upset vs {loser}", "event", event_id=ev.id)
+    except Exception:
+        pass
+
+    # --- 5. Popular championship markets (tier 1, open) ---
+    try:
+        champ_q = (
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.status == "open",
+                FuturesMarket.market_tier == 1,
+            )
+            .order_by(FuturesMarket.outcome_count.desc().nulls_last())
+            .limit(5)
+        )
+        champ_result = await db.execute(champ_q)
+        for market in champ_result.scalars().all():
+            if len(suggestions) >= 8:
+                break
+            # Extract a short query from the market name
+            name = market.name
+            # Try to get just the league championship part
+            _add(name, "Championship odds", "futures", market_id=market.id)
+    except Exception:
+        pass
+
+    return {"suggestions": suggestions[:8]}
+
+
 @router.get("/debug/sport-keys")
 async def debug_sport_keys(db: AsyncSession = Depends(get_db)):
     """Debug endpoint to see all sport keys in the database."""
@@ -1793,11 +2011,23 @@ async def get_related_futures(
                     sport_key=event.sport.key if event.sport else "",
                     event_status=event.status or "scheduled",
                     home_futures=[
-                        {"market_name": f["market_name"], "outcome_name": f["outcome_name"], "probability": f["probability"]}
+                        {
+                            "market_name": f["market_name"],
+                            "outcome_name": f["outcome_name"],
+                            "probability": f["probability"],
+                            "probability_change_24h": f.get("probability_change_24h"),
+                            "opening_probability": f.get("opening_probability"),
+                        }
                         for f in home_futures[:8]
                     ],
                     away_futures=[
-                        {"market_name": f["market_name"], "outcome_name": f["outcome_name"], "probability": f["probability"]}
+                        {
+                            "market_name": f["market_name"],
+                            "outcome_name": f["outcome_name"],
+                            "probability": f["probability"],
+                            "probability_change_24h": f.get("probability_change_24h"),
+                            "opening_probability": f.get("opening_probability"),
+                        }
                         for f in away_futures[:8]
                     ],
                 )

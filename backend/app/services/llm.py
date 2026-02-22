@@ -1355,43 +1355,59 @@ def generate_related_futures_summary(
 
     sport_name = sport_key.replace("_", " ").title() if sport_key else "game"
 
-    # Build structured data for prompt
+    # Build structured data for prompt — include movement data
     def _format_futures(team: str, futures: list[dict]) -> str:
         if not futures:
             return f"  {team}: No championship/award markets found."
         lines = [f"  {team}:"]
         for f in futures[:8]:  # Cap at 8 per team to limit tokens
-            prob_pct = round(f.get("probability", 0) * 100, 1) if f.get("probability") else "?"
-            lines.append(f"    - {f.get('market_name', '?')}: {prob_pct}%")
+            prob = f.get("probability")
+            prob_pct = f"{round(prob * 100, 1)}%" if prob else "?"
+            parts = [f"    - {f.get('market_name', '?')}: {prob_pct}"]
+
+            # Add movement data if available
+            change = f.get("probability_change_24h")
+            if change and abs(change) >= 0.005:
+                direction = "+" if change > 0 else ""
+                parts.append(f"(24h: {direction}{round(change * 100, 1)}%)")
+
+            opening = f.get("opening_probability")
+            if opening and prob:
+                shift = prob - opening
+                if abs(shift) >= 0.01:
+                    direction = "+" if shift > 0 else ""
+                    parts.append(f"(opened at {round(opening * 100, 1)}%)")
+
+            lines.append(" ".join(parts))
         return "\n".join(lines)
 
     home_section = _format_futures(home_team, home_futures)
     away_section = _format_futures(away_team, away_futures)
 
-    status_context = {
+    status_instruction = {
         "scheduled": "The game hasn't started yet.",
         "live": "The game is currently in progress.",
-        "completed": "The game is over.",
-        "closed": "The game is over.",
+        "completed": "The game is over. If odds moved since opening, mention the shift.",
+        "closed": "The game is over. If odds moved since opening, mention the shift.",
     }.get(event_status, "")
 
-    prompt = f"""You write casual, insightful game context for a sports app called Bain Luck that shows win probabilities.
+    prompt = f"""Summarize these futures odds for a sports app. Write exactly 2-3 sentences using ONLY the numbers provided below. Do not invent or assume any probabilities — state only what the data shows.
 
 Sport: {sport_name}
 Matchup: {away_team} at {home_team}
-{status_context}
+{status_instruction}
 
-Championship & award odds for each team:
+Futures odds:
 {home_section}
 {away_section}
 
-Write a 2-3 sentence summary of what these futures mean for this game. What's at stake?
-- Focus on the bigger picture: title contention, award races, season trajectory
-- Compare the two teams' positions (contender vs underdog, rising vs falling)
-- If one team has much higher championship odds, note the gap
-- Use casual, engaging language — like a knowledgeable friend explaining context
-- Do NOT give betting advice or use gambling terminology
-- Start directly with the insight (no "In this matchup..." preamble)
+Rules:
+- State the actual probabilities from the data above. Example: "The Celtics sit at 18.5% to win the NBA Championship while the Bulls are at 0.2%."
+- If there's notable 24h movement or a gap between opening and current odds, mention it with the actual numbers.
+- Compare the two teams' odds only if there's a meaningful difference.
+- Do NOT editorialize, speculate, or add generic sports commentary. No phrases like "this game could be pivotal" or "a lot is on the line."
+- Do NOT give betting advice.
+- Start directly with the data.
 
 Summary:"""
 
@@ -1402,7 +1418,7 @@ Summary:"""
                 {"role": "user", "content": prompt},
             ],
             max_tokens=250,
-            temperature=0.3,
+            temperature=0.1,
         )
 
         result = response.choices[0].message.content.strip()

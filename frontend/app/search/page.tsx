@@ -3,18 +3,51 @@
 import { Suspense, useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { searchEvents } from "@/lib/api";
+import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
-import type { SearchResponse } from "@/lib/types";
+import SearchBar from "@/components/SearchBar";
+import type { SearchResponse, SearchSuggestion } from "@/lib/types";
 
 function SearchLoading() {
   return (
     <div className="text-center py-12">
       <div className="text-4xl mb-4 animate-pulse">🔍</div>
       <p className="text-text-secondary">Loading search...</p>
+    </div>
+  );
+}
+
+function SuggestionChips({ suggestions }: { suggestions: SearchSuggestion[] }) {
+  const router = useRouter();
+
+  if (suggestions.length === 0) return null;
+
+  return (
+    <div className="mt-6">
+      <h2 className="text-sm font-medium text-text-secondary mb-3">Right now</h2>
+      <div className="flex flex-wrap gap-2">
+        {suggestions.map((s, i) => (
+          <button
+            key={`${s.query}-${i}`}
+            onClick={() => {
+              if (s.type === "event" && s.event_id) {
+                router.push(`/events/${s.event_id}`);
+              } else if (s.type === "futures" && s.market_id) {
+                router.push(`/futures/${s.market_id}`);
+              } else {
+                router.push(`/search?q=${encodeURIComponent(s.query)}`);
+              }
+            }}
+            className="px-3 py-2 rounded-full bg-surface-card border border-surface-border text-sm text-text-primary hover:border-text-primary hover:bg-surface-elevated transition-colors text-left"
+          >
+            <span className="font-medium">{s.query}</span>
+            <span className="text-text-secondary ml-1.5">{s.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -30,6 +63,8 @@ function SearchContent() {
   const [results, setResults] = useState<SearchResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
   // Pinned events
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
@@ -41,6 +76,7 @@ function SearchContent() {
     isMaxReached: isFuturesMaxReached
   } = usePinnedFutures();
 
+  // Fetch search results
   useEffect(() => {
     if (!query || query.length < 2) {
       setResults(null);
@@ -67,6 +103,21 @@ function SearchContent() {
       });
   }, [query, sportFilter, currentPage]);
 
+  // Fetch suggestions when no query
+  useEffect(() => {
+    if (query && query.length >= 2) return;
+
+    setSuggestionsLoading(true);
+    fetchSearchSuggestions()
+      .then((data) => {
+        setSuggestions(data.suggestions);
+        setSuggestionsLoading(false);
+      })
+      .catch(() => {
+        setSuggestionsLoading(false);
+      });
+  }, [query]);
+
   // Update URL when changing filters
   const setFilter = (sport: string | undefined) => {
     const params = new URLSearchParams();
@@ -83,33 +134,49 @@ function SearchContent() {
     router.push(`/search?${params.toString()}`);
   };
 
+  // Zero-state: no query or too short
   if (!query || query.length < 2) {
     return (
-      <div className="text-center py-12">
-        <div className="text-4xl mb-4">🔍</div>
-        <h1 className="text-title-2 text-text-primary mb-2">Search for Teams</h1>
-        <p className="text-text-secondary">
-          Enter at least 2 characters to search for games by team name
-        </p>
+      <div className="max-w-xl mx-auto">
+        <div className="mb-6">
+          <SearchBar initialQuery={query} />
+        </div>
+        {suggestionsLoading ? (
+          <div className="text-center py-8">
+            <p className="text-sm text-text-secondary">Loading suggestions...</p>
+          </div>
+        ) : (
+          <SuggestionChips suggestions={suggestions} />
+        )}
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="text-center py-12">
-        <div className="text-4xl mb-4 animate-pulse">🔍</div>
-        <p className="text-text-secondary">Searching for &quot;{query}&quot;...</p>
+      <div>
+        <div className="max-w-xl mx-auto mb-6">
+          <SearchBar initialQuery={query} />
+        </div>
+        <div className="text-center py-12">
+          <div className="text-4xl mb-4 animate-pulse">🔍</div>
+          <p className="text-text-secondary">Searching for &quot;{query}&quot;...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="text-center py-12">
-        <div className="text-4xl mb-4">⚠️</div>
-        <h1 className="text-title-2 text-text-primary mb-2">Search Error</h1>
-        <p className="text-text-secondary">{error}</p>
+      <div>
+        <div className="max-w-xl mx-auto mb-6">
+          <SearchBar initialQuery={query} />
+        </div>
+        <div className="text-center py-12">
+          <div className="text-4xl mb-4">⚠️</div>
+          <h1 className="text-title-2 text-text-primary mb-2">Search Error</h1>
+          <p className="text-text-secondary">{error}</p>
+        </div>
       </div>
     );
   }
@@ -119,27 +186,37 @@ function SearchContent() {
 
   if (!results || (!hasEvents && !hasFutures)) {
     return (
-      <div className="text-center py-12">
-        <div className="text-4xl mb-4">🤷</div>
-        <h1 className="text-title-2 text-text-primary mb-2">No Results</h1>
-        <p className="text-text-secondary">
-          No games or futures found for &quot;{query}&quot;
-          {sportFilter && ` in ${getLeagueDisplay(sportFilter)}`}
-        </p>
-        {sportFilter && (
-          <button
-            onClick={() => setFilter(undefined)}
-            className="mt-4 text-sm text-text-primary underline hover:no-underline"
-          >
-            Clear sport filter
-          </button>
-        )}
+      <div>
+        <div className="max-w-xl mx-auto mb-6">
+          <SearchBar initialQuery={query} />
+        </div>
+        <div className="text-center py-12">
+          <div className="text-4xl mb-4">🤷</div>
+          <h1 className="text-title-2 text-text-primary mb-2">No Results</h1>
+          <p className="text-text-secondary">
+            No games or futures found for &quot;{query}&quot;
+            {sportFilter && ` in ${getLeagueDisplay(sportFilter)}`}
+          </p>
+          {sportFilter && (
+            <button
+              onClick={() => setFilter(undefined)}
+              className="mt-4 text-sm text-text-primary underline hover:no-underline"
+            >
+              Clear sport filter
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
     <div>
+      {/* Search bar */}
+      <div className="max-w-xl mx-auto mb-6">
+        <SearchBar initialQuery={query} />
+      </div>
+
       {/* Header */}
       <div className="mb-6">
         <Link

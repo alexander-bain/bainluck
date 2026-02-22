@@ -409,6 +409,19 @@ export interface SearchResponse {
   query: string;
 }
 
+// Search suggestions (zero-state)
+export interface SearchSuggestion {
+  query: string;
+  label: string;
+  type: "event" | "futures";
+  event_id?: number;
+  market_id?: number;
+}
+
+export interface SearchSuggestionsResponse {
+  suggestions: SearchSuggestion[];
+}
+
 // Onboarding & Preferences types
 export interface TeamSearchResult {
   id: number;
