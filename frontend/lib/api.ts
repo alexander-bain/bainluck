@@ -63,18 +63,24 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit): Promise<T> 
 }
 
 /**
- * Authenticated fetch wrapper for POST/PUT/DELETE with JSON body
+ * Authenticated fetch wrapper for POST/PUT/DELETE with JSON body.
+ * Optionally accepts a direct token to bypass _getAuthToken (useful when
+ * the caller has already obtained a fresh token, e.g. after re-auth).
  */
 async function apiMutate<T>(
   endpoint: string,
   method: string,
   body?: unknown,
+  directToken?: string | null,
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
 
-  if (_getAuthToken) {
+  // Use direct token if provided, otherwise fall back to the global getter
+  if (directToken) {
+    headers["Authorization"] = `Bearer ${directToken}`;
+  } else if (_getAuthToken) {
     const token = await _getAuthToken();
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
@@ -588,12 +594,14 @@ export async function fetchUserPreferences(): Promise<UserPreferencesResponse> {
 }
 
 /**
- * Submit complete onboarding data (location, teams, sport affinities)
+ * Submit complete onboarding data (location, teams, sport affinities).
+ * Accepts an optional direct token to ensure the freshest auth token is used.
  */
 export async function submitOnboarding(
-  data: OnboardingSubmission
+  data: OnboardingSubmission,
+  directToken?: string | null,
 ): Promise<{ status: string; onboarding_completed: boolean }> {
-  return apiMutate("/api/me/onboarding", "POST", data);
+  return apiMutate("/api/me/onboarding", "POST", data, directToken);
 }
 
 /**

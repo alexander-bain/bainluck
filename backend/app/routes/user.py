@@ -652,8 +652,25 @@ async def search_teams(
 
             if not team:
                 # Auto-create Team record — this team exists in events but has
-                # no Team record (usually college teams not on ESPN scoreboard)
+                # no Team record (usually college teams not on ESPN scoreboard).
+                # Copy logo/location from an existing Team with the same name
+                # (different sport) so the logo shows up consistently.
                 team = Team(name=team_name, sport_id=sport_id)
+
+                existing_with_logo = await db.execute(
+                    select(Team).where(
+                        Team.name == team_name,
+                        Team.logo_url_small.isnot(None),
+                    ).limit(1)
+                )
+                donor = existing_with_logo.scalar_one_or_none()
+                if donor:
+                    team.logo_url = donor.logo_url
+                    team.logo_url_small = donor.logo_url_small
+                    team.location = donor.location
+                    team.primary_color = donor.primary_color
+                    team.secondary_color = donor.secondary_color
+
                 db.add(team)
                 await db.flush()
                 teams_created += 1
