@@ -101,6 +101,14 @@ export default function RootLayout({
                     </Link>
                     <span className="text-surface-border">·</span>
                     <Link
+                      href="/oscars"
+                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
+                    >
+                      <span>🏆</span>
+                      <span>Oscars</span>
+                    </Link>
+                    <span className="text-surface-border">·</span>
+                    <Link
                       href="/about"
                       className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
                     >

@@ -20,6 +20,7 @@ import type {
   TeamSearchResult,
   UserPreferencesResponse,
   OnboardingSubmission,
+  OscarsResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -673,4 +674,15 @@ export async function updateSportAffinities(
   await apiMutate("/api/me/preferences/sport-affinities", "PUT", {
     sport_affinities: affinities,
   });
+}
+
+// ============================================================================
+// Oscars API
+// ============================================================================
+
+/**
+ * Fetch Oscars landing page data — all categories with aggregated odds
+ */
+export async function fetchOscarsData(): Promise<OscarsResponse> {
+  return apiFetch<OscarsResponse>("/api/oscars");
 }

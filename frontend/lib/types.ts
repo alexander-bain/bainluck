@@ -458,6 +458,46 @@ export interface OnboardingSubmission {
   raw_inputs: Record<string, unknown>;
 }
 
+// ============================================================================
+// Oscars types
+// ============================================================================
+
+export interface OscarsNominee {
+  name: string;
+  probability: number;
+  american_odds: number | null;
+  movement_24h: number | null;
+  rank: number;
+  sources: Record<string, number>;
+}
+
+export interface OscarsCategory {
+  key: string;
+  name: string;
+  ceremony_order: number;
+  is_major: boolean;
+  market_ids: number[];
+  nominees: OscarsNominee[];
+}
+
+export interface OscarsTriviaMarket {
+  id: number;
+  name: string;
+  source: string | null;
+  top_outcomes: {
+    name: string;
+    probability: number | null;
+    american_odds: number | null;
+  }[];
+}
+
+export interface OscarsResponse {
+  ceremony_date: string;
+  categories: OscarsCategory[];
+  trivia: OscarsTriviaMarket[];
+  total_categories: number;
+}
+
 // Unified Feed types
 export interface FeedEventData {
   id: number;
