@@ -40,6 +40,12 @@ LEAGUE_TIERS: dict[str, int] = {
     "soccer_france_ligue_one": 2,
     "soccer_uefa_europa_league": 2,
     "mma_mixed_martial_arts": 2,
+    # Olympics — always tier 1 during the Games
+    "icehockey_olympics": 1,
+    "basketball_olympics": 1,
+    "soccer_olympics": 1,
+    "fieldhockey_olympics": 1,
+    "curling_olympics": 2,
     # Tier 3: Niche but legit
     "soccer_mexico_ligamx": 3,
     "soccer_brazil_serie_a": 3,

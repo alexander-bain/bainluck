@@ -901,13 +901,17 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     Returns the same dict format as _find_matching_event, or None if creation fails.
     """
     from app.models.models import Event, Sport, Team
-    from app.utils.prediction_market_matching import match_teams_to_event
+    from app.utils.prediction_market_matching import (
+        match_teams_to_event, _strip_sport_name_prefix, _strip_championship_suffix,
+    )
 
     if not matchup or not matchup.team_a:
         return None
 
-    team_a = matchup.team_a.strip()
-    team_b = (matchup.team_b or "").strip()
+    # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA")
+    # and championship suffixes that may leak through ("Canada Medal" → "Canada")
+    team_a = _strip_championship_suffix(_strip_sport_name_prefix(matchup.team_a.strip())).strip()
+    team_b = _strip_championship_suffix(_strip_sport_name_prefix((matchup.team_b or "").strip())).strip()
     if not team_a or not team_b:
         return None
 

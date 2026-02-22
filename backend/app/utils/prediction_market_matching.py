@@ -181,7 +181,7 @@ _TRAILING_PAREN_RE = re.compile(r'\s*\([^)]+\)\s*$')
 # Strip these BEFORE matchup extraction to avoid false prop detection.
 _CHAMPIONSHIP_SUFFIX_RE = re.compile(
     r':\s*(?:.*?(?:gold|silver|bronze|medal|championship|title|final|winner'
-    r'|trophy|crown|belt).*?)$',
+    r'|trophy|crown|belt).*)$',
     re.IGNORECASE,
 )
 
@@ -422,10 +422,12 @@ def _normalize_variants(market_name: str) -> list:
     stripped_sport_both = _strip_championship_suffix(_strip_trailing_paren(stripped_sport))
     stripped_prefix_champ = _strip_championship_suffix(stripped_prefix)
     stripped_all = _strip_championship_suffix(_strip_trailing_paren(stripped_prefix))
+    # Order: most-stripped variants first so clean team names are found before
+    # partially-stripped ones (e.g., "USA vs Canada" before "Ice Hockey USA vs Canada")
     for v in (
-        stripped_prefix, stripped_sport, stripped_paren, stripped_champ,
-        stripped_sport_champ, stripped_sport_paren, stripped_sport_both,
-        stripped_prefix_champ, stripped_all,
+        stripped_sport_both, stripped_sport_champ, stripped_sport_paren,
+        stripped_sport, stripped_all, stripped_prefix_champ,
+        stripped_prefix, stripped_paren, stripped_champ,
     ):
         if v and v != market_name and v not in variants:
             variants.append(v)

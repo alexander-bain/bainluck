@@ -285,6 +285,12 @@ export const LEAGUE_TIERS: Record<string, 1 | 2 | 3> = {
   golf_pga_championship: 2,
   golf_us_open: 2,
   golf_the_open: 2,
+  // Olympics
+  icehockey_olympics: 1,
+  basketball_olympics: 1,
+  soccer_olympics: 1,
+  fieldhockey_olympics: 2,
+  curling_olympics: 2,
   // Tennis
   tennis_atp_aus_open: 2,
   tennis_atp_wimbledon: 2,

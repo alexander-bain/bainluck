@@ -3191,3 +3191,36 @@ async def create_event_manually(
         "url": f"https://bainluck.com/events/{event.id}",
         "next_step": f"Link prediction markets: POST /api/admin/prediction-markets/link?market_id=XXX&event_id={event.id}&secret=...",
     }
+
+
+@router.patch("/events/{event_id}")
+async def patch_event(
+    event_id: int,
+    secret: str = Query(..., description="Admin secret for authorization"),
+    home_team: Optional[str] = Query(None, description="New home team name"),
+    away_team: Optional[str] = Query(None, description="New away team name"),
+    status: Optional[str] = Query(None, description="New status"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Patch an event's fields (admin only)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    result = await db.execute(select(Event).where(Event.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+
+    updates = {}
+    if home_team is not None:
+        event.home_team_name = home_team
+        updates["home_team"] = home_team
+    if away_team is not None:
+        event.away_team_name = away_team
+        updates["away_team"] = away_team
+    if status is not None:
+        event.status = status
+        updates["status"] = status
+
+    await db.commit()
+    return {"event_id": event_id, "updated": updates}
