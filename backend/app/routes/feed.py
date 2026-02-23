@@ -374,8 +374,10 @@ async def _score_futures(
 
     # === TWO-PASS FETCH for category diversity ===
     # Pass 1: Soonest-resolving across all categories (timely content)
-    # Pass 2: Non-sports categories specifically (politics, crypto, weather, etc.)
-    #   These often resolve in months, so resolution_date ordering excludes them.
+    # Pass 2: Per-category queries for non-sports (politics, crypto, weather, etc.)
+    #   A single non-sports query fails because crypto's 8,955 markets with
+    #   5-minute resolution dates consume the entire LIMIT before politics,
+    #   weather, or entertainment markets are loaded.
     NON_SPORTS_CATEGORIES = [
         "politics", "crypto", "weather", "entertainment",
         "economics", "tech", "geopolitics", "culture",
@@ -389,30 +391,33 @@ async def _score_futures(
         .limit(150)
     )
 
-    query_non_sports = (
-        select(FuturesMarket)
-        .options(*base_options)
-        .where(
-            *base_filters,
-            FuturesMarket.llm_sport_category.in_(NON_SPORTS_CATEGORIES),
-        )
-        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-        .limit(100)
-    )
-
     if sport_filter:
         sport_condition = or_(
             FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
             FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
         )
         query_timely = query_timely.where(sport_condition)
-        query_non_sports = query_non_sports.where(sport_condition)
 
     result_timely = await db.execute(query_timely)
     timely_markets = result_timely.scalars().unique().all()
 
-    result_non_sports = await db.execute(query_non_sports)
-    non_sports_markets = result_non_sports.scalars().unique().all()
+    # Per-category queries for non-sports (10 per category = 80 max)
+    non_sports_markets = []
+    for cat in NON_SPORTS_CATEGORIES:
+        if sport_filter and cat.lower() not in sport_filter.lower():
+            continue
+        cat_query = (
+            select(FuturesMarket)
+            .options(*base_options)
+            .where(
+                *base_filters,
+                FuturesMarket.llm_sport_category == cat,
+            )
+            .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+            .limit(10)
+        )
+        cat_result = await db.execute(cat_query)
+        non_sports_markets.extend(cat_result.scalars().unique().all())
 
     # Merge and deduplicate
     seen_ids = set()
