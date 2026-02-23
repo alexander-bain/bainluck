@@ -172,6 +172,8 @@ bainluck/
 | `frontend/hooks/useAuth.ts` | Auth state hook |
 | `frontend/components/AuthProvider.tsx` | Auth context provider |
 | `docs/auth-personalization-plan.md` | Full auth + personalization implementation plan |
+| `docs/tv-mode-plan.md` | TV Mode design plan (layouts, iOS v2 features, implementation phases) |
+| `tv-mode-prototype.jsx` | Interactive TV Mode prototype (React, device switching, all layouts) |
 | `docs/PRD.md` | Full product requirements and roadmap |
 
 ---
@@ -897,6 +899,52 @@ Visual-first landing page for the 98th Academy Awards (March 2, 2026) at `/oscar
 - Static data: `frontend/lib/oscarsData.ts`
 - Types: `OscarsResponse`, `OscarsCategory`, `OscarsNominee` in `frontend/lib/types.ts`
 
+### TV Mode (Second-Screen Experience)
+Fullscreen browser-first second-screen experience at `/tv` for live games, elections, award shows, and ambient futures display. Designed for phone, iPad, and TV/monitor with a cascaded density hierarchy — every screen shows as much data as possible, bigger screens show MORE.
+
+**Signature element:** Probability numbers "breathe" — a CSS scale/glow animation whose speed maps to the Pulse score. `beatMs(p) = Math.max(550, 2000 - p * 14.5)`. A Pulse-91 thriller visibly throbs faster than a Pulse-42 blowout.
+
+**Design language:** Dark void (#09090b), team colors as the only palette, glowing numbers via text-shadow, no UI chrome in display mode, jumbotron typography.
+
+**Cascaded density hierarchy (v4):**
+
+| Feature | Phone | iPad | TV/Monitor |
+|---------|-------|------|------------|
+| Breathing probability numbers | ✅ 56px | ✅ 56px | ✅ 80px |
+| Multi-source chart (Odds, ESPN, Kalshi, Polymarket) | ✅ w/ gridlines | ✅ w/ gridlines | ✅ w/ gridlines |
+| Score + teams + records | ✅ | ✅ | ✅ large |
+| Probability bar | ✅ | ✅ | ✅ |
+| Pulse ring | ✅ 58px inline | ✅ 72px sidebar | ✅ 100px sidebar |
+| Context (opened, line, divergence) | ✅ | ✅ sidebar | ✅ sidebar |
+| Championship impact | ✅ | ✅ sidebar | ✅ sidebar |
+| Related futures | ✅ up to 3 | ✅ all | ✅ all |
+| Other live games panel | — | ✅ 140px | ✅ 200px |
+| Trending futures panel | — | ✅ top 2 | ✅ top 4 w/ bars |
+| Score-by-period breakdown | — | — | ✅ header |
+| Pulse component breakdown | — | — | ✅ (HR/Amp/Arr/Vit) |
+| Source comparison strip | — | — | ✅ below chart |
+| Sparklines in other games | — | — | ✅ |
+
+**Two modes:**
+- **Live mode**: Single event focus filling the screen. Navigate between games via arrows/swipe. Auto-switches to highest-Pulse game when spike >85.
+- **Ambient mode**: 8-second rotation through interesting futures (championships, elections, crypto) with crossfade. Auto-activates when no live games.
+
+**Smart behaviors:** Auto-switch on Pulse spikes, auto-ambient when no live games, `wakeLock` API to prevent screen dimming, keyboard shortcuts (arrows, space, F).
+
+**Device frames:** Phone 390×780 (with notch), iPad 900×600, TV 1280×720. Scale-to-fit based on viewport width.
+
+**iOS v2 features (documented, not built):** Lock Screen Live Activities (persistent probability bar), Dynamic Island (Pulse dot + score), StandBy mode (giant numbers on MagSafe charger), Apple Watch complications (probability ring), widget gallery (small/medium/large), haptic feedback mapped to Pulse rhythm, Siri integration ("What's the most exciting game right now?").
+
+**Files:**
+- Prototype: `tv-mode-prototype.jsx` (interactive React component with device switching, mode toggling, Pulse slider)
+- Design plan: `docs/tv-mode-plan.md` (full spec including iOS v2 features, implementation phases)
+
+**Implementation plan (4 phases):**
+1. Route + core layout: `/tv` route, device detection, LiveView, wire to events/history APIs
+2. Multi-source + context: win probability sources, opening odds, line movement, related futures, divergence
+3. Ambient + polish: futures rotation, auto-switch, keyboard shortcuts, wakeLock, fullscreen
+4. Smart features: game start notifications, Pulse spike alerts, optional heartbeat audio, multi-game split screen
+
 ---
 
 ## API Patterns
@@ -1019,7 +1067,7 @@ These are the current focus. Resist the urge to build new features until these a
 19. 📋 **"Why Did the Line Move?" v1** — The highest-value upcoming feature. Detect significant odds movements (>3% in <1hr for pre-game, or momentum shifts during live games). Cross-reference with: (a) ESPN injury/news endpoints (free, immediate), (b) MySportsFeeds structured injury/lineup data with timestamps (pending account approval), (c) live game context (score changes, key plays, momentum). Feed correlation data to GPT-4o-mini to generate explanations like "Lakers line moved from -3 to +1 after LeBron listed as questionable" or "Odds shifted after back-to-back turnovers in the 4th quarter." Live games need more than injury data — play-by-play context, momentum shifts, foul trouble, pitching changes, etc. all drive line movement.
 20. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
 21. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-22. 📋 TV/Party mode v2 — fullscreen second-screen display for watch parties. Rebuild from scratch when prioritized — focus on big charts + clean visualization.
+22. 🟡 **TV Mode v2 (designed, prototype built)** — Fullscreen second-screen experience for live games, elections, award shows, and ambient futures. Browser-first (`/tv` route). Cascaded density hierarchy: Phone shows Pulse ring + multi-source chart + context + related futures. iPad shows 3-column layout (chart + context sidebar + other games). TV is maximal with score-by-period, Pulse component breakdown, source comparison strip, sparklines in other-game cards, expanded trending futures. Ambient mode auto-rotates through futures during downtime. Prototype at `tv-mode-prototype.jsx`, full design plan at `docs/tv-mode-plan.md`. iOS v2 features documented (Live Activities, Dynamic Island, StandBy, Apple Watch, widgets, haptics, Siri). See TV Mode section in Key Features below.
 21. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
 22. 🟢 **NFL roster sync fix (shipped)** — Phase 1 team sync builds `sd_abbrev → team_id` mapping that Phase 2 roster sync uses as primary lookup, bridging the ESPN/SportsDataIO abbreviation gap. Added ILIKE fallback for formatting diffs, MLB abbreviation map (30 teams). Should fix 2/32 → 32/32 NFL matching.
 23. 🟢 **Related futures Phase 4 (shipped)** — LLM "Bigger Picture" summary on related-futures endpoint. GPT-4o-mini generates 2-3 sentence casual summary of championship/award implications. Cached in `LineMovementAnalysis` with 2h TTL (never expires for completed games). Frontend summary-first collapsed design with "See all N futures" toggle.
@@ -1053,7 +1101,8 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Pinned Events & Futures (localStorage-based tracking)
 - ✅ Futures categorization hardened (0 uncategorized markets)
 - ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
-- ✅ ~~TV/Party mode~~ (shipped for Super Bowl LX, removed post-event — see future priority #14 for v2)
+- ✅ ~~TV/Party mode v1~~ (shipped for Super Bowl LX, removed post-event)
+- ✅ TV Mode v2 design + interactive prototype (cascaded density hierarchy, multi-source charts, Pulse breathing animation, ambient futures rotation, iOS v2 features documented)
 - ✅ Sentry error tracking (FastAPI + Celery worker, controlled by SENTRY_DSN env var)
 - ✅ Multi-source win probability infrastructure (generic `win_prob_snapshots` table, source config, N-source chart)
 - ✅ Bain Luck statistical win probability model (nflfastR-inspired, NFL/NCAAF/NBA/NCAAB/WNCAAB/NHL)

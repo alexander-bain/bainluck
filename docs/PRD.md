@@ -1753,7 +1753,7 @@ These are the current focus. Resist the urge to build new features until these a
 - iOS app launch with feed tab, search, and widgets
 - Widgets (Lock Screen, Home Screen) — "Most Exciting Game Right Now"
 - Advanced notification preferences
-- TV/Party mode v2 — rebuild for big charts + clean visualization (focus on big charts + clean UI, skip contest/trivia features)
+- **TV Mode v2** — Fullscreen second-screen experience at `/tv`. Design complete, interactive prototype built (`tv-mode-prototype.jsx`). Cascaded density hierarchy: Phone (Pulse ring + multi-source chart + context + related futures), iPad (3-column: chart + context sidebar + other games), TV (maximal: score-by-period, Pulse component breakdown, source comparison strip, sparklines in other games, expanded futures). Ambient futures rotation mode. iOS v2 features documented (Live Activities, Dynamic Island, StandBy, Apple Watch, widgets, haptics, Siri). See `docs/tv-mode-plan.md` for full spec. Implementation: 4 phases (route+layout → multi-source+context → ambient+polish → smart features).
 
 ### Exploring (No Timeline)
 - Probability Comparisons ("Comparable Odds") — Phase 16
