@@ -357,6 +357,10 @@ async def _score_futures(
     # event detail pages. Including them here wastes feed slots and crowds out
     # championship, weather, entertainment, and politics futures.
     #
+    # Also exclude markets past their resolution date — thousands of Polymarket
+    # game-level markets remain "open" status weeks after the game ended. Without
+    # this filter, they consume all the LIMIT slots since we order by resolution_date.
+    #
     # Order by resolution_date proximity: markets resolving soonest are most
     # timely and actionable. NULLs (no resolution date) go last.
     query = (
@@ -368,6 +372,10 @@ async def _score_futures(
         .where(
             FuturesMarket.status == "open",
             FuturesMarket.event_id.is_(None),
+            or_(
+                FuturesMarket.resolution_date.is_(None),
+                FuturesMarket.resolution_date >= now,
+            ),
         )
         .order_by(
             FuturesMarket.resolution_date.asc().nulls_last(),
