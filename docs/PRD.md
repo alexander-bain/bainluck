@@ -775,6 +775,10 @@ User favorites boost events featuring their teams. Recent viewing history could 
 
 **Data model:** `user_favorites` table exists with relation types (follow, local, alma_mater, rival). `user_preferences` has sport affinities. `user_pins` tracks explicit interest.
 
+**Shipped (February 2026):**
+- [x] Personalized feed scoring with team multipliers, rival detection, sport affinity weighting
+- [x] `my_teams_only` filter on `/api/feed` for the "My Teams" page — shows only games/futures involving user's followed teams with wider time windows (24h recent, 7 days upcoming), no min score threshold, no diversity enforcement
+
 **Data model work needed:** A `user_event_interactions` table (or analytics-derived) to know what a user has already seen/engaged with. The ranking function needs a user context parameter, which means the API endpoint signatures change.
 
 **Important constraint:** Logged-out experience must remain high quality. Personalization is additive, not required. The universal ranking must work well on its own.
@@ -805,6 +809,10 @@ GET  /api/events/{id}/related-futures      # Championship/MVP odds for teams in 
 GET  /api/events/search?q=celtics          # Search events + futures by team/market name
 GET  /api/events/pulse-rankings            # Top Pulse games (Hall of Fame)
 
+# Feed
+GET  /api/feed                             # Unified ranked feed (events + futures, personalized)
+GET  /api/feed?my_teams_only=true          # Team-filtered feed (auth required, wider time windows)
+
 # Futures
 GET  /api/futures                          # List active futures markets
 GET  /api/futures/{id}                     # Future details with all outcomes
@@ -826,6 +834,12 @@ GET  /api/me/pins                          # Get user's pinned events/futures
 POST /api/me/pins                          # Pin an event/future
 DELETE /api/me/pins/{pin_type}/{target_id} # Unpin
 GET  /api/me/teams/search?q=lakers         # Search teams for favorites
+GET  /api/me/teams/by-location?q=Boston    # Location search with metro alias expansion
+GET  /api/me/preferences                   # User preferences + favorites
+POST /api/me/onboarding                    # Batch save onboarding data
+POST /api/me/favorites                     # Add single favorite
+DELETE /api/me/favorites/{team_id}         # Remove favorite
+PUT  /api/me/preferences/sport-affinities  # Update sport affinities
 ```
 
 ### Admin Endpoints
@@ -1077,9 +1091,11 @@ Completed: February 2026
 - [x] Preference storage in `user_preferences` table
 - [x] Metro alias expansion (e.g., "New England" → Boston Celtics, Patriots, Bruins, Red Sox)
 - [x] Team search with events table fallback for auto-creation of college teams
-- [x] Preferences display page showing teams, sport affinities, onboarding state
+- [x] Settings editor at `/preferences` (teams, interests, pinned items, account)
 - [x] Inline favorites CRUD (add/remove without revisiting onboarding)
 - [x] Batch save endpoint saves location, favorites, sport affinities, onboarding state atomically
+- [x] My Stuff (`/my-stuff`) restructured as team-filtered feed (was preferences editor)
+- [x] `my_teams_only` API parameter on `/api/feed` with wider time windows, team filtering, no min score
 
 #### Phase 6.3: Personalized Experience ✅ Complete (February 2026)
 - [x] Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×)
@@ -1811,6 +1827,7 @@ These are the current focus. Resist the urge to build new features until these a
 - Onboarding UX fixes (sport labels, duplicate category fix, session TTL 8hrs, same-name team clickability)
 - Feed quality improvements (raised thresholds, diversity cap, non-sports tier promotion)
 - Test coverage (1603+ total: 1486+ backend + 117+ frontend across 22+ test files)
+- My Stuff / Preferences restructure: `/my-stuff` rewritten from preferences editor to team-filtered feed (3 states: sign-in prompt, onboarding prompt, team feed). Preferences editor moved to `/preferences`. Backend `my_teams_only` param on `/api/feed` with wider time windows (24h/7d), team filtering, no min score, no diversity enforcement. UserMenu "Preferences" links to `/preferences`.
 </details>
 
 ---

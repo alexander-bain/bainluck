@@ -102,7 +102,8 @@ bainluck/
 │   ├── app/                     # Next.js app router pages
 │   │   ├── onboarding/page.tsx  # 5-step onboarding flow
 │   │   ├── oscars/page.tsx      # Oscars landing page (TMDB enriched)
-│   │   ├── preferences/page.tsx # User preferences display + edit
+│   │   ├── my-stuff/page.tsx    # "My Teams" — team-filtered feed (3 states: sign-in, onboarding, feed)
+│   │   ├── preferences/page.tsx # Settings editor (teams, interests, pinned, account)
 │   │   ├── search/page.tsx      # Search results page
 │   │   └── market-moves/page.tsx # "Market Was Wrong" page
 │   ├── components/              # React components
@@ -158,7 +159,7 @@ bainluck/
 | `backend/app/routes/user.py` | User data endpoints (pins, team search, onboarding, preferences) |
 | `frontend/app/onboarding/page.tsx` | 5-step onboarding flow (location, follow, alma maters, sports+beyond, rivals) |
 | `frontend/components/OnboardingBanner.tsx` | CTA banner for authenticated users who haven't onboarded |
-| `backend/app/routes/feed.py` | Unified feed endpoint (events + futures, personalized) |
+| `backend/app/routes/feed.py` | Unified feed endpoint (events + futures, personalized, my_teams_only filter) |
 | `backend/app/routes/market_moves.py` | "Market Was Wrong" — post-game market shifts |
 | `backend/app/routes/oscars.py` | Oscars landing page — cross-source odds aggregation |
 | `frontend/app/oscars/page.tsx` | Oscars frontend — TMDB-enriched award categories |
@@ -686,9 +687,10 @@ This requires `FIREBASE_SERVICE_ACCOUNT_JSON` and `ADMIN_SECRET` on the backend.
 - `frontend/lib/firebase.ts` — Firebase app config, GIS OAuth flow, two-step sign-in with backend fallback
 - `frontend/hooks/useAuth.ts` — Reactive auth state, token management
 - `frontend/components/AuthProvider.tsx` — Auth context provider, wires token to API client
-- `frontend/components/UserMenu.tsx` — Header sign-in button / user avatar dropdown
+- `frontend/components/UserMenu.tsx` — Header sign-in button / user avatar dropdown (Preferences links to `/preferences`)
 - `frontend/hooks/usePinSync.ts` — One-way localStorage → server pin migration on first login
-- `frontend/app/preferences/page.tsx` — User preferences page (shows teams, sport affinities, edit link)
+- `frontend/app/my-stuff/page.tsx` — "My Teams" page: team-filtered feed (sign-in prompt → onboarding prompt → team feed)
+- `frontend/app/preferences/page.tsx` — Settings editor (teams, interests, pinned items, account)
 - `frontend/app/onboarding/page.tsx` — 5-step onboarding flow (location → follow → alma maters → sports+beyond → rivals)
 - `frontend/components/OnboardingBanner.tsx` — Dismissable CTA banner for authenticated users without preferences
 
@@ -726,6 +728,21 @@ Endpoints:
 **Sport affinity key mapping:** Frontend uses simple keys ("football", "basketball") that expand to backend sport_key format ("americanfootball_nfl", "americanfootball_ncaaf") via `SPORT_AFFINITY_MAPPING` in `user.py`. Non-sports categories (politics, entertainment, crypto, etc.) map to their category name directly. Compression takes the max weight when multiple backend keys map to the same frontend category. Round-trip tested: expand → compress returns original values.
 
 **Full plan:** `docs/auth-personalization-plan.md`
+
+**Page architecture (tabs + settings):**
+| Tab/Page | URL | Purpose |
+|----------|-----|---------|
+| Feed | `/` | Personalized broad discovery feed (events + futures ranked by interestingness) |
+| Search | `/search` | Typeahead search results |
+| My Stuff | `/my-stuff` | **Team-only filtered feed** — shows only games/futures for user's followed teams |
+| Preferences | `/preferences` | **Settings editor** — teams, interests, pinned items, account |
+
+My Stuff has 3 render states:
+1. **Not authenticated** → sign-in prompt (no API call)
+2. **Authenticated, no teams** → onboarding prompt (links to `/onboarding`)
+3. **Has teams** → calls `GET /api/feed?my_teams_only=true` with 15s refresh, wider time windows (24h recent, 7 days upcoming), no min score, no diversity enforcement
+
+UserMenu dropdown "Preferences" links to `/preferences` (not `/my-stuff`). Bottom nav "My Stuff" links to `/my-stuff`.
 
 ### Snapshot Data Retention
 Consecutive identical snapshot rows are collapsed into single rows with `captured_at` (first seen) and `valid_until` (last confirmed) timestamps. Lossless — original time series is fully reconstructable.
@@ -1146,6 +1163,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Prediction market matching hardening: prop/spread outcome filter (`_is_prop_or_spread_outcome`) prevents O/U, spread, and player prop outcomes from being matched as moneyline. Orphaned `win_prob_snapshots` now deleted on unlink/re-link (Phase 1.5 + admin endpoint). NCAAB/NCAAF ticker fragment matching (`extract_ticker_fragments` + `_score_fragment_match`) disambiguates among multiple same-sport candidates. Time window tightened from ±6h to ±3h with ticker game date. 291 tests (up from 259).
 - ✅ Related futures Phase 4 — LLM "Bigger Picture" summary: `generate_related_futures_summary()` in `llm.py` produces 2-3 sentence casual summary of championship/award implications using GPT-4o-mini. Cached in `LineMovementAnalysis` table with `analysis_type="related_futures"` (2h TTL, never expires for completed games). Frontend summary-first collapsed design in `RelatedFutures.tsx` with "See all N futures" toggle.
 - ✅ Oscars landing page: `/oscars` page with 24 award categories, cross-source odds aggregation (Polymarket + Kalshi), TMDB movie posters/headshots via Bearer token auth, ceremony countdown, gold-themed design. Backend `GET /api/oscars` with diacritics dedup, Kalshi 0.5 noise filter, probability normalization, boxing false positive filter, NegRisk trivia dedup.
+- ✅ My Stuff / Preferences restructure: My Stuff (`/my-stuff`) rewritten from preferences editor to team-filtered feed (3 states: sign-in, onboarding, team feed via `my_teams_only` API param). Preferences editor moved to `/preferences`. Backend `my_teams_only` param on `/api/feed` with wider time windows (24h/7d), team filtering, no min score, no diversity enforcement. UserMenu "Preferences" links to `/preferences`.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1236,6 +1254,7 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 | Market Was Wrong | https://bainluck.com/market-moves |
 | Oscars | https://bainluck.com/oscars |
 | Onboarding | https://bainluck.com/onboarding |
+| My Teams | https://bainluck.com/my-stuff |
 | Preferences | https://bainluck.com/preferences |
 | PRD | `docs/PRD.md` |
 | Debug endpoints | `/api/events/debug/*` |
