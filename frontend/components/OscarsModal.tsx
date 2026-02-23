@@ -6,7 +6,7 @@ import Link from "next/link";
 import type { OscarsCategory } from "@/lib/types";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { FuturesChart } from "@/components/FuturesChart";
-import { CATEGORY_EMOJI } from "@/lib/oscarsData";
+import { CATEGORY_EMOJI, CATEGORY_DESCRIPTIONS } from "@/lib/oscarsData";
 
 interface NomineeImage {
   url: string;
@@ -21,6 +21,12 @@ interface OscarsModalProps {
   images: Record<string, NomineeImage>;
   historyData?: FuturesOutcomeHistory[];
   llmPreview?: string;
+}
+
+function _ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
 export default function OscarsModal({
@@ -54,6 +60,7 @@ export default function OscarsModal({
   if (!isOpen) return null;
 
   const emoji = CATEGORY_EMOJI[category.key] || "";
+  const description = CATEGORY_DESCRIPTIONS[category.key] || "";
 
   return (
     <>
@@ -71,11 +78,23 @@ export default function OscarsModal({
         >
           {/* Sticky header */}
           <div className="sticky top-0 z-10 bg-surface-card/90 backdrop-blur-sm border-b border-surface-border px-5 py-4 flex items-center gap-3">
-            <span className="text-xl">{emoji}</span>
-            <h2 className="text-lg font-bold text-text-primary flex-1">
-              {category.name}
-            </h2>
-            <span className="text-xs text-text-muted mr-2">
+            <span className="text-xl" title={description}>
+              {emoji}
+            </span>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg font-bold text-text-primary">
+                {category.name}
+              </h2>
+              {description && (
+                <p className="text-[10px] text-text-muted truncate">
+                  {description}
+                </p>
+              )}
+            </div>
+            <span
+              className="text-xs text-text-muted mr-2 cursor-default"
+              title={`Presented ${_ordinal(category.ceremony_order)} during the ceremony`}
+            >
               #{category.ceremony_order}
             </span>
             <button
@@ -109,11 +128,16 @@ export default function OscarsModal({
 
             {/* Chart */}
             {historyData && historyData.length > 0 && (
-              <FuturesChart
-                historyData={historyData}
-                goldTheme
-                height={150}
-              />
+              <div>
+                <div className="text-[10px] text-text-muted mb-1.5 uppercase tracking-wider">
+                  Probability trend (7 days)
+                </div>
+                <FuturesChart
+                  historyData={historyData}
+                  goldTheme
+                  height={150}
+                />
+              </div>
             )}
 
             {/* All nominees */}
@@ -127,10 +151,10 @@ export default function OscarsModal({
                 return (
                   <div
                     key={nominee.name}
-                    className={`flex items-center gap-3 p-3 rounded-lg ${
+                    className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
                       isLeader
                         ? "bg-[#D4AF37]/5 border border-[#D4AF37]/20"
-                        : "bg-surface-elevated/50"
+                        : "bg-surface-elevated/50 hover:bg-surface-elevated/80"
                     }`}
                   >
                     {/* Image / initial */}
@@ -172,12 +196,14 @@ export default function OscarsModal({
                           {pct}%
                         </span>
                       </div>
-                      <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-surface-elevated rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${Math.min(pct, 100)}%`,
-                            backgroundColor: isLeader ? "#D4AF37" : "#475569",
+                            background: isLeader
+                              ? "linear-gradient(90deg, #B8860B, #D4AF37, #FFD700)"
+                              : "#475569",
                           }}
                         />
                       </div>
@@ -192,6 +218,7 @@ export default function OscarsModal({
                               ? "text-green-500"
                               : "text-red-400"
                           }`}
+                          title={`${nominee.movement_24h > 0 ? "Up" : "Down"} ${Math.abs(Math.round(nominee.movement_24h * 100))}% in the last 24 hours`}
                         >
                           {nominee.movement_24h > 0 ? "+" : ""}
                           {Math.round(nominee.movement_24h * 100)}%
@@ -208,7 +235,17 @@ export default function OscarsModal({
                 <span>Sources:</span>
                 {Object.entries(category.nominees[0].sources).map(
                   ([src, prob]) => (
-                    <span key={src} className="uppercase">
+                    <span
+                      key={src}
+                      className="uppercase cursor-default"
+                      title={
+                        src === "polymarket"
+                          ? `Polymarket: ${Math.round(prob * 100)}%`
+                          : src === "kalshi"
+                            ? `Kalshi: ${Math.round(prob * 100)}%`
+                            : `${src}: ${Math.round(prob * 100)}%`
+                      }
+                    >
                       {src === "polymarket"
                         ? "PM"
                         : src === "kalshi"
@@ -223,11 +260,30 @@ export default function OscarsModal({
 
             {/* Opening odds comparison */}
             {category.nominees[0]?.opening_probability != null && (
-              <div className="text-xs text-text-muted">
-                Frontrunner opened at{" "}
-                {Math.round(category.nominees[0].opening_probability * 100)}%,
-                now at{" "}
-                {Math.round(category.nominees[0].probability * 100)}%
+              <div
+                className="text-xs text-text-muted flex items-center gap-1.5"
+                title="How the frontrunner's odds have changed since the market opened"
+              >
+                <span>
+                  Frontrunner opened at{" "}
+                  {Math.round(category.nominees[0].opening_probability * 100)}%,
+                  now at{" "}
+                  {Math.round(category.nominees[0].probability * 100)}%
+                </span>
+                {(() => {
+                  const delta = category.nominees[0].probability - category.nominees[0].opening_probability!;
+                  if (Math.abs(delta) < 0.01) return null;
+                  return (
+                    <span
+                      className={`font-mono font-bold ${
+                        delta > 0 ? "text-green-500" : "text-red-400"
+                      }`}
+                    >
+                      ({delta > 0 ? "+" : ""}
+                      {Math.round(delta * 100)}%)
+                    </span>
+                  );
+                })()}
               </div>
             )}
 

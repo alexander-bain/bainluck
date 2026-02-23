@@ -16,6 +16,7 @@ import {
   MAJOR_CATEGORIES,
   PERSON_CATEGORIES,
   CATEGORY_EMOJI,
+  CATEGORY_DESCRIPTIONS,
   CEREMONY_ORDER,
 } from "@/lib/oscarsData";
 import {
@@ -282,9 +283,11 @@ export default function OscarsPage() {
         {/* Post-ceremony scorecard */}
         {isPost && scorecard && scorecard.total > 0 && (
           <div className="bg-surface-card rounded-xl border border-[#D4AF37]/30 p-5 text-center">
-            <div className="text-3xl font-mono font-bold text-[#D4AF37]">
-              {scorecard.correct}/{scorecard.total}
-            </div>
+            <Tooltip text="How often the market frontrunner won">
+              <div className="text-3xl font-mono font-bold text-[#D4AF37]">
+                {scorecard.correct}/{scorecard.total}
+              </div>
+            </Tooltip>
             <div className="text-sm text-text-secondary mt-1">
               predictions correct &mdash; {scorecard.accuracy}% accuracy
             </div>
@@ -519,9 +522,22 @@ function BiggestMoversStrip({
             <div
               key={idx}
               className="flex-shrink-0 bg-surface-elevated rounded-lg px-3 py-2 min-w-[140px]"
+              title={`${mover.name} in ${mover.category_name}`}
             >
               <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-sm">{icon}</span>
+                <Tooltip
+                  text={
+                    isUp
+                      ? isBig
+                        ? "Surging in odds"
+                        : "Rising in odds"
+                      : isBig
+                        ? "Fading fast"
+                        : "Slipping in odds"
+                  }
+                >
+                  <span className="text-sm">{icon}</span>
+                </Tooltip>
                 <span
                   className={`text-sm font-mono font-bold ${
                     isUp ? "text-green-500" : "text-red-400"
@@ -615,7 +631,7 @@ function BestPictureSection({
             >
               {/* Poster */}
               <div
-                className={`relative aspect-[2/3] rounded-lg overflow-hidden bg-surface-elevated transition-colors ${
+                className={`relative aspect-[2/3] rounded-lg overflow-hidden bg-surface-elevated transition-all duration-200 group-hover:scale-[1.03] ${
                   isFrontrunner
                     ? "border-2 border-[#D4AF37] shadow-lg shadow-[#D4AF37]/10"
                     : "border border-surface-border group-hover:border-[#D4AF37]/50"
@@ -643,14 +659,26 @@ function BestPictureSection({
 
                 {/* Rank badge */}
                 {nominee.rank <= 3 && (
-                  <div className="absolute top-1.5 left-1.5 bg-black/70 backdrop-blur-sm text-[#D4AF37] text-xs font-bold px-1.5 py-0.5 rounded">
+                  <div
+                    className="absolute top-1.5 left-1.5 bg-black/70 backdrop-blur-sm text-[#D4AF37] text-xs font-bold px-1.5 py-0.5 rounded"
+                    title={
+                      nominee.rank === 1
+                        ? "Frontrunner"
+                        : nominee.rank === 2
+                          ? "Runner-up"
+                          : "Top 3 contender"
+                    }
+                  >
                     #{nominee.rank}
                   </div>
                 )}
 
                 {/* Winner badge (ceremony mode) */}
                 {nominee.is_winner && (
-                  <div className="absolute top-1.5 right-1.5 bg-green-600/90 text-white text-xs font-bold px-1.5 py-0.5 rounded">
+                  <div
+                    className="absolute top-1.5 right-1.5 bg-green-600/90 text-white text-xs font-bold px-1.5 py-0.5 rounded"
+                    title="Academy Award winner"
+                  >
                     WINNER
                   </div>
                 )}
@@ -692,6 +720,12 @@ function BestPictureSection({
 // Major Category Card (Features #1, #3, #5, #10)
 // ============================================================================
 
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
 function MajorCategoryCard({
   category,
   images,
@@ -721,7 +755,7 @@ function MajorCategoryCard({
   return (
     <div
       onClick={onClick}
-      className={`bg-surface-card rounded-xl border border-l-4 p-4 hover:shadow-card-hover transition-shadow cursor-pointer h-full ${
+      className={`group bg-surface-card rounded-xl border border-l-4 p-4 hover:shadow-card-hover hover:border-[#D4AF37]/30 transition-all cursor-pointer h-full ${
         hasWinner
           ? "border-green-500/40 border-l-green-500"
           : "border-surface-border border-l-[#D4AF37]"
@@ -731,20 +765,34 @@ function MajorCategoryCard({
         <span className="text-lg">{emoji}</span>
         <h3 className="text-body-strong text-text-primary">{category.name}</h3>
         {hasWinner && (
-          <span
-            className={`text-xs px-1.5 py-0.5 rounded font-medium ml-auto ${
+          <Tooltip
+            text={
               frontrunnerPredicted
-                ? "bg-green-500/15 text-green-400"
-                : "bg-red-500/15 text-red-400"
-            }`}
+                ? "Markets correctly predicted the winner"
+                : "Winner was not the market frontrunner"
+            }
+            align="right"
           >
-            {frontrunnerPredicted ? "Predicted" : "Upset!"}
-          </span>
+            <span
+              className={`text-xs px-1.5 py-0.5 rounded font-medium ml-auto ${
+                frontrunnerPredicted
+                  ? "bg-green-500/15 text-green-400"
+                  : "bg-red-500/15 text-red-400"
+              }`}
+            >
+              {frontrunnerPredicted ? "Predicted" : "Upset!"}
+            </span>
+          </Tooltip>
         )}
         {!hasWinner && (
-          <span className="text-xs text-text-muted ml-auto">
-            #{category.ceremony_order}
-          </span>
+          <Tooltip
+            text={`Presented ${ordinal(category.ceremony_order)} during the ceremony`}
+            align="right"
+          >
+            <span className="text-xs text-text-muted ml-auto cursor-default">
+              #{category.ceremony_order}
+            </span>
+          </Tooltip>
         )}
       </div>
 
@@ -825,15 +873,15 @@ function MajorCategoryCard({
                     {pct}%
                   </span>
                 </div>
-                <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
+                <div className="h-1.5 bg-surface-elevated rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{
                       width: `${Math.min(pct, 100)}%`,
-                      backgroundColor: isWinner
-                        ? "#22c55e"
+                      background: isWinner
+                        ? "linear-gradient(90deg, #16a34a, #22c55e)"
                         : isLeader
-                          ? "#D4AF37"
+                          ? "linear-gradient(90deg, #B8860B, #D4AF37, #FFD700)"
                           : "#475569",
                     }}
                   />
@@ -858,9 +906,17 @@ function MajorCategoryCard({
       {/* Inline trend chart (Feature #1) */}
       {historyData && historyData.length > 0 && (
         <div className="mt-3">
+          <div className="text-[10px] text-text-muted mb-1 uppercase tracking-wider">
+            7-day odds trend
+          </div>
           <FuturesChart historyData={historyData} mini goldTheme height={80} />
         </div>
       )}
+
+      {/* Tap for details hint */}
+      <div className="mt-2 text-[10px] text-text-muted text-center opacity-0 group-hover:opacity-60 transition-opacity">
+        Click for full breakdown
+      </div>
     </div>
   );
 }
@@ -914,9 +970,11 @@ function HeadToHead({
       </div>
 
       {/* VS divider */}
-      <div className="flex-shrink-0 text-xs font-bold text-[#D4AF37]/60 uppercase">
-        vs
-      </div>
+      <Tooltip text={`Only ${Math.abs(pct1 - pct2)}% apart \u2014 a tight race`}>
+        <div className="flex-shrink-0 text-xs font-bold text-[#D4AF37]/60 uppercase">
+          vs
+        </div>
+      </Tooltip>
 
       {/* Right side */}
       <div className="flex-1 text-center">
@@ -974,7 +1032,7 @@ function FilmCentricSection({
           return (
             <div
               key={film.film_name}
-              className="bg-surface-card rounded-xl border border-surface-border p-3 flex gap-3"
+              className="bg-surface-card rounded-xl border border-surface-border hover:border-[#D4AF37]/30 p-3 flex gap-3 transition-colors"
             >
               {/* Small poster */}
               <div className="w-12 h-16 rounded overflow-hidden bg-surface-elevated flex-shrink-0">
@@ -1000,9 +1058,14 @@ function FilmCentricSection({
                     {film.film_name}
                   </h3>
                   <div className="text-right flex-shrink-0">
-                    <div className="text-sm font-mono font-bold text-[#D4AF37]">
-                      {film.expected_wins.toFixed(1)}
-                    </div>
+                    <Tooltip
+                      text="Sum of win probabilities across all nominations"
+                      align="right"
+                    >
+                      <div className="text-sm font-mono font-bold text-[#D4AF37]">
+                        {film.expected_wins.toFixed(1)}
+                      </div>
+                    </Tooltip>
                     <div className="text-micro text-text-muted">
                       {isPost ? "actual" : "expected"} wins
                     </div>
@@ -1010,24 +1073,58 @@ function FilmCentricSection({
                 </div>
 
                 {/* Category chips */}
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1.5">
                   {film.nominations.map((nom) => {
                     const catEmoji = CATEGORY_EMOJI[nom.category_key] || "";
                     const pct = Math.round(nom.probability * 100);
                     const isLeader = nom.rank === 1;
+                    // Short label: "Picture", "Director", "Editing", etc.
+                    const shortLabel = nom.category_name
+                      .replace(/^Best\s+/i, "")
+                      .replace(/^Achievement in\s+/i, "")
+                      .replace(/\s+Film$/, "")
+                      .replace(/Motion Picture.*/, "Picture")
+                      .replace(/Performance by an?\s+/i, "")
+                      .replace(/Actor in a Leading Role/, "Actor")
+                      .replace(/Actress in a Leading Role/, "Actress")
+                      .replace(/Actor in a Supporting Role/, "Supp. Actor")
+                      .replace(/Actress in a Supporting Role/, "Supp. Actress")
+                      .replace(/Original Screenplay/, "Orig. Screenplay")
+                      .replace(/Adapted Screenplay/, "Adpt. Screenplay")
+                      .replace(/International Feature/, "Int'l Feature")
+                      .replace(/Animated Feature/, "Animated")
+                      .replace(/Documentary Feature/, "Documentary")
+                      .replace(/Documentary Short/, "Doc. Short")
+                      .replace(/Animated Short/, "Anim. Short")
+                      .replace(/Live Action Short/, "Live Short")
+                      .replace(/Production Design/, "Prod. Design")
+                      .replace(/Makeup and Hairstyling/, "Makeup")
+                      .replace(/Visual Effects/, "VFX")
+                      .replace(/Film Editing/, "Editing")
+                      .replace(/Costume Design/, "Costumes")
+                      .replace(/Original Score/, "Score")
+                      .replace(/Original Song/, "Song");
 
                     return (
-                      <span
+                      <Tooltip
                         key={nom.category_key}
-                        className={`text-micro px-1.5 py-0.5 rounded ${
-                          isLeader
-                            ? "bg-[#D4AF37]/15 text-[#D4AF37]"
-                            : "bg-surface-elevated text-text-secondary"
-                        }`}
-                        title={nom.category_name}
+                        text={`${nom.category_name}: ${pct}% to win${isLeader ? " (frontrunner)" : ""}`}
+                        position="bottom"
                       >
-                        {catEmoji} {pct}%
-                      </span>
+                        <span
+                          className={`inline-flex items-center gap-1 text-micro px-2 py-0.5 rounded cursor-default ${
+                            isLeader
+                              ? "bg-[#D4AF37]/15 text-[#D4AF37] font-medium"
+                              : "bg-surface-elevated text-text-secondary"
+                          }`}
+                        >
+                          <span>{catEmoji}</span>
+                          <span className="truncate max-w-[80px]">
+                            {shortLabel}
+                          </span>
+                          <span className="font-mono font-bold">{pct}%</span>
+                        </span>
+                      </Tooltip>
                     );
                   })}
                 </div>
@@ -1065,23 +1162,32 @@ function CraftCategoryCard({
   return (
     <div
       onClick={onClick}
-      className={`bg-surface-card rounded-xl border p-3 hover:shadow-card-hover transition-shadow cursor-pointer h-full ${
+      className={`bg-surface-card rounded-xl border p-3 hover:shadow-card-hover hover:border-[#D4AF37]/30 transition-all cursor-pointer h-full ${
         hasWinner
           ? "border-green-500/30"
           : "border-surface-border"
       }`}
     >
       <div className="flex items-center gap-2 mb-2">
-        <span>{emoji}</span>
+        <Tooltip text={CATEGORY_DESCRIPTIONS[category.key] || category.name}>
+          <span>{emoji}</span>
+        </Tooltip>
         <h3 className="text-caption-strong text-text-primary">
           {category.name}
         </h3>
         {hasWinner ? (
-          <span className="text-micro text-green-400 ml-auto">&#x2713;</span>
+          <Tooltip text="Academy Award winner announced" align="right">
+            <span className="text-micro text-green-400 ml-auto">&#x2713;</span>
+          </Tooltip>
         ) : (
-          <span className="text-micro text-text-muted ml-auto">
-            #{category.ceremony_order}
-          </span>
+          <Tooltip
+            text={`Presented ${ordinal(category.ceremony_order)} during the ceremony`}
+            align="right"
+          >
+            <span className="text-micro text-text-muted ml-auto cursor-default">
+              #{category.ceremony_order}
+            </span>
+          </Tooltip>
         )}
       </div>
 
@@ -1092,7 +1198,11 @@ function CraftCategoryCard({
           const isWinner = nominee.is_winner;
 
           return (
-            <div key={nominee.name} className="flex items-center gap-2">
+            <div
+              key={nominee.name}
+              className="flex items-center gap-2"
+              title={`${nominee.name}: ${pct}% chance to win`}
+            >
               <span
                 className={`text-xs truncate flex-1 ${
                   isLeader || isWinner
@@ -1107,15 +1217,15 @@ function CraftCategoryCard({
               </span>
 
               {/* Mini bar */}
-              <div className="w-16 h-1 bg-surface-elevated rounded-full overflow-hidden flex-shrink-0">
+              <div className="w-16 h-1.5 bg-surface-elevated rounded-full overflow-hidden flex-shrink-0">
                 <div
                   className="h-full rounded-full"
                   style={{
                     width: `${Math.min(pct, 100)}%`,
-                    backgroundColor: isWinner
-                      ? "#22c55e"
+                    background: isWinner
+                      ? "linear-gradient(90deg, #16a34a, #22c55e)"
                       : isLeader
-                        ? "#D4AF37"
+                        ? "linear-gradient(90deg, #B8860B, #D4AF37)"
                         : "#475569",
                   }}
                 />
@@ -1136,6 +1246,38 @@ function CraftCategoryCard({
 // Shared Components
 // ============================================================================
 
+function Tooltip({
+  text,
+  children,
+  position = "top",
+  align = "center",
+}: {
+  text: string;
+  children: React.ReactNode;
+  position?: "top" | "bottom";
+  align?: "center" | "left" | "right";
+}) {
+  const alignClass =
+    align === "left"
+      ? "left-0"
+      : align === "right"
+        ? "right-0"
+        : "left-1/2 -translate-x-1/2";
+
+  return (
+    <span className="group/tip relative inline-flex items-center">
+      {children}
+      <span
+        className={`pointer-events-none absolute ${alignClass} px-2 py-1 rounded-md bg-surface-deep border border-surface-border shadow-lg text-[11px] text-text-primary whitespace-nowrap opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150 z-50 leading-tight ${
+          position === "top" ? "bottom-full mb-2" : "top-full mt-2"
+        }`}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function MovementBadge({ movement }: { movement: number | null }) {
   if (!movement || Math.abs(movement) < 0.005) return null;
 
@@ -1151,21 +1293,30 @@ function MovementBadge({ movement }: { movement: number | null }) {
       : "";
 
   return (
-    <span
-      className={`text-micro font-mono ${
-        isUp ? "text-green-500" : "text-red-400"
-      }`}
+    <Tooltip
+      text={`${isUp ? "Up" : "Down"} ${pct}% in the last 24 hours`}
     >
-      {icon}
-      {isUp ? "+" : "-"}
-      {pct}%
-    </span>
+      <span
+        className={`text-micro font-mono ${
+          isUp ? "text-green-500" : "text-red-400"
+        }`}
+      >
+        {icon}
+        {isUp ? "+" : "-"}
+        {pct}%
+      </span>
+    </Tooltip>
   );
 }
 
 function SourceDisplay({ sources }: { sources: Record<string, number> }) {
   const sourceNames = Object.keys(sources);
   if (sourceNames.length === 0) return null;
+
+  const SOURCE_FULL_NAMES: Record<string, string> = {
+    polymarket: "Polymarket",
+    kalshi: "Kalshi",
+  };
 
   // Source disagreement callout (Feature #3)
   const pm = sources["polymarket"];
@@ -1176,28 +1327,31 @@ function SourceDisplay({ sources }: { sources: Record<string, number> }) {
     Math.abs(pm - kl) > 0.05
   ) {
     return (
-      <span className="text-xs text-amber-400">
-        &#x26A0;&#xFE0F; Markets split: PM {Math.round(pm * 100)}% vs KL{" "}
-        {Math.round(kl * 100)}%
-      </span>
+      <Tooltip text="Polymarket and Kalshi disagree by more than 5%">
+        <span className="text-xs text-amber-400">
+          &#x26A0;&#xFE0F; Markets split: PM {Math.round(pm * 100)}% vs KL{" "}
+          {Math.round(kl * 100)}%
+        </span>
+      </Tooltip>
     );
   }
 
-  // Normal source dots
+  // Normal source dots with tooltips
   return (
     <div className="flex items-center gap-1.5 mt-1">
       {sourceNames.map((src) => (
-        <span
+        <Tooltip
           key={src}
-          className="text-micro-xs text-text-muted uppercase"
-          title={`${src}: ${Math.round(sources[src] * 100)}%`}
+          text={`${SOURCE_FULL_NAMES[src] || src}: ${Math.round(sources[src] * 100)}%`}
         >
-          {src === "polymarket"
-            ? "PM"
-            : src === "kalshi"
-              ? "KL"
-              : src.toUpperCase().slice(0, 2)}
-        </span>
+          <span className="text-micro-xs text-text-muted uppercase cursor-default">
+            {src === "polymarket"
+              ? "PM"
+              : src === "kalshi"
+                ? "KL"
+                : src.toUpperCase().slice(0, 2)}
+          </span>
+        </Tooltip>
       ))}
     </div>
   );

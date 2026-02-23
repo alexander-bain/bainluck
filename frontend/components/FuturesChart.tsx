@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 
 const DEFAULT_COLORS = [
@@ -69,6 +69,13 @@ export function FuturesChart({
     );
   }
 
+  // Hover tooltip state (non-mini only)
+  const [hoverInfo, setHoverInfo] = useState<{
+    svgX: number;
+    time: number;
+    values: { name: string; prob: number; color: string }[];
+  } | null>(null);
+
   // Find time range and probability range
   let minTime = Infinity;
   let maxTime = -Infinity;
@@ -105,13 +112,70 @@ export function FuturesChart({
   const yScale = (prob: number) =>
     padding.top + (1 - prob / maxProb) * innerHeight;
 
+  // Hover handler for interactive tooltip
+  function handleChartHover(e: React.MouseEvent<SVGSVGElement>) {
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * chartWidth;
+    if (svgX < padding.left || svgX > chartWidth - padding.right) {
+      setHoverInfo(null);
+      return;
+    }
+    const time =
+      minTime + ((svgX - padding.left) / innerWidth) * (maxTime - minTime);
+    const values = displayedOutcomes
+      .map((outcome, idx) => {
+        let best: number | null = null;
+        let bestDist = Infinity;
+        for (const pt of outcome.history) {
+          if (pt.probability === null) continue;
+          const d = Math.abs(new Date(pt.timestamp).getTime() - time);
+          if (d < bestDist) {
+            bestDist = d;
+            best = pt.probability;
+          }
+        }
+        return best !== null
+          ? {
+              name: outcome.name,
+              prob: best,
+              color: colors[idx % colors.length],
+            }
+          : null;
+      })
+      .filter((v): v is NonNullable<typeof v> => v !== null)
+      .sort((a, b) => b.prob - a.prob);
+    setHoverInfo({ svgX, time, values });
+  }
+
+  function formatTooltipTime(ts: number): string {
+    const d = new Date(ts);
+    const range = maxTime - minTime;
+    if (range < 24 * 60 * 60 * 1000) {
+      return d.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    }
+    return (
+      d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+      " " +
+      d.toLocaleTimeString("en-US", { hour: "numeric" })
+    );
+  }
+
   return (
     <div className={`${mini ? "" : "space-y-4"} ${className ?? ""}`}>
-      <div className={mini ? "" : "overflow-x-auto"}>
+      <div className={mini ? "" : "overflow-x-auto relative"}>
         <svg
           viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
           className={mini ? "w-full" : "w-full min-w-[600px]"}
-          style={{ maxHeight: mini ? `${effectiveHeight}px` : "250px" }}
+          style={{
+            maxHeight: mini ? `${effectiveHeight}px` : "250px",
+            cursor: mini ? undefined : "crosshair",
+          }}
+          onMouseMove={mini ? undefined : handleChartHover}
+          onMouseLeave={mini ? undefined : () => setHoverInfo(null)}
         >
           {/* Y-axis grid lines */}
           {effectiveShowAxes &&
@@ -223,7 +287,69 @@ export function FuturesChart({
               />
             );
           })}
+
+          {/* Hover crosshair and dots */}
+          {hoverInfo && !mini && (
+            <>
+              <line
+                x1={hoverInfo.svgX}
+                y1={padding.top}
+                x2={hoverInfo.svgX}
+                y2={padding.top + innerHeight}
+                stroke={goldTheme ? "#D4AF37" : "#94a3b8"}
+                strokeWidth={1}
+                strokeDasharray="4 2"
+                opacity={0.6}
+              />
+              {hoverInfo.values.map((v, i) => (
+                <circle
+                  key={i}
+                  cx={hoverInfo.svgX}
+                  cy={yScale(v.prob)}
+                  r={4}
+                  fill={v.color}
+                  stroke={goldTheme ? "#1a1408" : "#0C0F14"}
+                  strokeWidth={2}
+                />
+              ))}
+            </>
+          )}
         </svg>
+
+        {/* Hover tooltip */}
+        {hoverInfo && !mini && (
+          <div
+            className="absolute pointer-events-none z-50"
+            style={{
+              left: `${(hoverInfo.svgX / chartWidth) * 100}%`,
+              top: 0,
+              transform:
+                hoverInfo.svgX > chartWidth * 0.6
+                  ? "translateX(-105%)"
+                  : "translateX(5%)",
+            }}
+          >
+            <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px]">
+              <div className="text-[10px] text-text-muted mb-1 font-mono">
+                {formatTooltipTime(hoverInfo.time)}
+              </div>
+              {hoverInfo.values.map((v, i) => (
+                <div key={i} className="flex items-center gap-2 py-0.5">
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: v.color }}
+                  />
+                  <span className="text-[11px] text-text-secondary truncate max-w-[120px]">
+                    {v.name}
+                  </span>
+                  <span className="text-[11px] font-mono font-bold text-text-primary ml-auto pl-2">
+                    {Math.round(v.prob * 100)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Legend */}

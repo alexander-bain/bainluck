@@ -77,3 +77,31 @@ export const CATEGORY_EMOJI: Record<string, string> = {
   best_visual_effects: "\u2728",
   best_casting: "\uD83C\uDFAD",
 };
+
+/** Official category descriptions (for tooltips) */
+export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  best_picture: "Best Motion Picture of the Year",
+  best_director: "Best Achievement in Directing",
+  best_actor: "Best Actor in a Leading Role",
+  best_actress: "Best Actress in a Leading Role",
+  best_supporting_actor: "Best Actor in a Supporting Role",
+  best_supporting_actress: "Best Actress in a Supporting Role",
+  best_original_screenplay: "Best Original Screenplay",
+  best_adapted_screenplay: "Best Adapted Screenplay",
+  best_animated_feature: "Best Animated Feature Film",
+  best_international_feature: "Best International Feature Film",
+  best_documentary_feature: "Best Documentary Feature",
+  best_documentary_short: "Best Documentary Short Film",
+  best_animated_short: "Best Animated Short Film",
+  best_live_action_short: "Best Live Action Short Film",
+  best_original_score: "Best Original Score",
+  best_original_song: "Best Original Song",
+  best_sound: "Best Achievement in Sound",
+  best_production_design: "Best Production Design",
+  best_cinematography: "Best Cinematography",
+  best_film_editing: "Best Film Editing",
+  best_costume_design: "Best Costume Design",
+  best_makeup_hairstyling: "Best Makeup and Hairstyling",
+  best_visual_effects: "Best Visual Effects",
+  best_casting: "Best Casting",
+};
