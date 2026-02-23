@@ -312,6 +312,14 @@ async def _score_events(
         current_home_prob = opening_home_prob
         current_away_prob = opening_away_prob
 
+        # Auto-detect preseason as exhibition from sport key when
+        # llm_importance isn't set (ESPN doesn't sync preseason sport keys)
+        importance = event.llm_importance
+        if not importance or importance == "unknown":
+            sport_key_str = event.sport.key if event.sport else ""
+            if "preseason" in sport_key_str:
+                importance = "exhibition"
+
         highlight_result = compute_highlight(
             status=event.status,
             commence_time=event.commence_time,
@@ -328,7 +336,7 @@ async def _score_events(
             now=now,
             home_team_name=event.home_team_name,
             away_team_name=event.away_team_name,
-            importance=event.llm_importance,
+            importance=importance,
         )
 
         base_score = highlight_result.score
@@ -347,13 +355,13 @@ async def _score_events(
 
         # Lower the threshold for personalized items — if the user follows a team,
         # surface it even at lower base scores.
-        # Anonymous threshold: 20 means tier 1 events always pass (tier 1 = 20),
-        # tier 2 need some signal (close, live, starting soon), tier 3-4 need a lot.
+        # Anonymous threshold: 25 means tier 1 events need at least one signal
+        # (live, close, starting soon) beyond just being a major league game.
         # my_teams_only: show ALL their team's games regardless of score.
         if my_teams_only:
             min_score = 0
         else:
-            min_score = 10 if p_result.is_personalized else 20
+            min_score = 10 if p_result.is_personalized else 25
         if personalized_score < min_score:
             continue
 
@@ -446,6 +454,7 @@ async def _score_futures(
         ),
         ~FuturesMarket.name.ilike('% vs %'),
         ~FuturesMarket.name.ilike('% vs. %'),
+        ~FuturesMarket.name.ilike('% at %'),
     ]
 
     base_options = [
@@ -458,7 +467,7 @@ async def _score_futures(
     # Without this, crypto micro-markets (5-min resolution) consume all
     # slots when sorted by resolution_date.
     # Limit each category to PER_CAT_LIMIT markets to cap total DB load.
-    PER_CAT_LIMIT = 20
+    PER_CAT_LIMIT = 10
     ALL_CATEGORIES = [
         # Sports
         "basketball", "football", "baseball", "hockey", "golf", "tennis",
@@ -594,9 +603,9 @@ async def _score_futures(
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
-        # Include all scored futures — no minimum threshold.
-        # The per-category query structure already guarantees diversity.
-        # The feed-level pagination (limit param) controls how many are returned.
+        # Filter low-signal futures (my_teams_only shows everything)
+        if not my_teams_only and personalized_score < 35:
+            continue
 
         # Find the actual biggest mover (with sign) for reason generation
         top_mover_name = highlight_result.top_mover_name

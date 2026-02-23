@@ -52,6 +52,8 @@ LEAGUE_TIERS: dict[str, int] = {
     "soccer_mexico_ligamx": 3,
     "soccer_brazil_serie_a": 3,
     "boxing_boxing": 3,
+    # Tier 4: Preseason/spring training (explicit to avoid defaulting)
+    "baseball_mlb_preseason": 4,
     # Tennis Grand Slams and Golf Majors → tier 2 (they ARE the big moments)
     "golf_masters_tournament_winner": 2,
     "golf_pga_championship_winner": 2,

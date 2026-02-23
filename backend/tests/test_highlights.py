@@ -72,6 +72,9 @@ class TestGetLeagueTier:
     def test_none_defaults_to_3(self):
         assert get_league_tier(None) == 4
 
+    def test_preseason_is_tier_4(self):
+        assert get_league_tier("baseball_mlb_preseason") == 4
+
 
 # =============================================================================
 # compute_highlight - Live Games
