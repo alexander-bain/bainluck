@@ -351,51 +351,76 @@ async def _score_futures(
     ctx: PersonalizationContext,
 ) -> list[dict]:
     """Score and format futures markets for the feed."""
-    # Fetch open futures with outcomes.
-    # Three filters to prevent game-level markets from flooding the feed:
-    # 1. Exclude event-linked markets (event_id IS NOT NULL) — already shown as
-    #    win probability trend lines on event detail pages.
-    # 2. Exclude past-resolution markets — thousands remain status="open" weeks
-    #    after resolution, consuming LIMIT slots.
-    # 3. Exclude matchup-named markets (" vs " / " vs. ") — game-level PM markets
-    #    from Polymarket/Kalshi (basketball, esports, soccer, tennis matches)
-    #    resolve in hours, always beating championship/politics/crypto futures in
-    #    the resolution_date sort.
-    #
-    # Order by resolution_date proximity: markets resolving soonest are most
-    # timely and actionable. NULLs (no resolution date) go last.
-    query = (
+    # === BASE FILTERS ===
+    # Three filters prevent game-level markets from flooding the feed:
+    # 1. Exclude event-linked markets (event_id IS NOT NULL)
+    # 2. Exclude past-resolution markets (status="open" after resolution)
+    # 3. Exclude matchup-named markets (" vs " / " vs. ")
+    base_filters = [
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+        ~FuturesMarket.name.ilike('% vs %'),
+        ~FuturesMarket.name.ilike('% vs. %'),
+    ]
+
+    base_options = [
+        selectinload(FuturesMarket.outcomes),
+        selectinload(FuturesMarket.sport),
+    ]
+
+    # === TWO-PASS FETCH for category diversity ===
+    # Pass 1: Soonest-resolving across all categories (timely content)
+    # Pass 2: Non-sports categories specifically (politics, crypto, weather, etc.)
+    #   These often resolve in months, so resolution_date ordering excludes them.
+    NON_SPORTS_CATEGORIES = [
+        "politics", "crypto", "weather", "entertainment",
+        "economics", "tech", "geopolitics", "culture",
+    ]
+
+    query_timely = (
         select(FuturesMarket)
-        .options(
-            selectinload(FuturesMarket.outcomes),
-            selectinload(FuturesMarket.sport),
-        )
+        .options(*base_options)
+        .where(*base_filters)
+        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+        .limit(150)
+    )
+
+    query_non_sports = (
+        select(FuturesMarket)
+        .options(*base_options)
         .where(
-            FuturesMarket.status == "open",
-            FuturesMarket.event_id.is_(None),
-            or_(
-                FuturesMarket.resolution_date.is_(None),
-                FuturesMarket.resolution_date >= now,
-            ),
-            ~FuturesMarket.name.ilike('% vs %'),
-            ~FuturesMarket.name.ilike('% vs. %'),
+            *base_filters,
+            FuturesMarket.llm_sport_category.in_(NON_SPORTS_CATEGORIES),
         )
-        .order_by(
-            FuturesMarket.resolution_date.asc().nulls_last(),
-        )
-        .limit(300)  # Enough to get category diversity from remaining markets
+        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+        .limit(100)
     )
 
     if sport_filter:
-        query = query.where(
-            or_(
-                FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
-                FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
-            )
+        sport_condition = or_(
+            FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
+            FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
         )
+        query_timely = query_timely.where(sport_condition)
+        query_non_sports = query_non_sports.where(sport_condition)
 
-    result = await db.execute(query)
-    markets = result.scalars().unique().all()
+    result_timely = await db.execute(query_timely)
+    timely_markets = result_timely.scalars().unique().all()
+
+    result_non_sports = await db.execute(query_non_sports)
+    non_sports_markets = result_non_sports.scalars().unique().all()
+
+    # Merge and deduplicate
+    seen_ids = set()
+    markets = []
+    for m in list(timely_markets) + list(non_sports_markets):
+        if m.id not in seen_ids:
+            seen_ids.add(m.id)
+            markets.append(m)
 
     if not markets:
         return []
@@ -460,13 +485,14 @@ async def _score_futures(
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
-        # Anonymous futures threshold: now that game-level PM markets (which scored
-        # 50+ via market_tier=1 + resolving_soon + multi_source) are excluded, real
-        # championship/weather/politics futures need a lower bar. With market_tier=None
-        # (scored as tier 5 = 2 pts), even a "resolving soon + multi-source + major league"
-        # market only scores 37. Threshold 25 requires at least one meaningful signal
-        # (resolving soon, movement, or multi-source) beyond just being a major league.
-        min_score = 10 if p_result.is_personalized else 25
+        # Anonymous futures threshold: with market_tier=None (scored as tier 5 = 2 pts),
+        # the threshold must be low enough that high-interest categories pass:
+        #   politics/crypto/economics (major_league +10) → 12 pts → PASS
+        #   weather/entertainment (secondary +5) + resolving_30d (+8) → 15 → PASS
+        #   unknown category, no signals → 2 pts → FAIL (good)
+        # The diversity enforcement at the feed level (60% events for anonymous)
+        # prevents futures from dominating even with this lower threshold.
+        min_score = 10 if p_result.is_personalized else 12
         if personalized_score < min_score:
             continue
 
