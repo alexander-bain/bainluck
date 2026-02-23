@@ -60,6 +60,13 @@ export function FuturesChart({
     return historyData.slice(0, 5);
   }, [historyData, selectedOutcomes]);
 
+  // Hover tooltip state (non-mini only) — must be before any early returns
+  const [hoverInfo, setHoverInfo] = useState<{
+    svgX: number;
+    time: number;
+    values: { name: string; prob: number; color: string }[];
+  } | null>(null);
+
   if (displayedOutcomes.length === 0) {
     if (mini) return null;
     return (
@@ -68,13 +75,6 @@ export function FuturesChart({
       </div>
     );
   }
-
-  // Hover tooltip state (non-mini only)
-  const [hoverInfo, setHoverInfo] = useState<{
-    svgX: number;
-    time: number;
-    values: { name: string; prob: number; color: string }[];
-  } | null>(null);
 
   // Find time range and probability range
   let minTime = Infinity;
