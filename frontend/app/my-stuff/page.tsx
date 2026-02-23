@@ -1,391 +1,367 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
-import { useRouter } from "next/navigation";
-import {
-  fetchUserPreferences,
-  searchTeams,
-  addFavorite,
-  removeFavorite,
-  updateSportAffinities,
-  fetchEventsByIds,
-  fetchFuturesByIds,
-} from "@/lib/api";
+import { fetchFeed } from "@/lib/api";
+import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import FeedCard from "@/components/FeedCard";
+import { SkeletonGrid } from "@/components/SkeletonCard";
+import ErrorMessage from "@/components/ErrorMessage";
+import { getCategoryForLeague } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures } from "@/hooks";
-import { useCategoryInterests, getLevelLabel, stepUp, stepDown } from "@/hooks/useCategoryInterests";
+import { fetchEventsByIds, fetchFuturesByIds } from "@/lib/api";
+import type { Event, FuturesMarketDetailResponse } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
-import type { TeamSearchResult, UserFavoriteItem, FuturesMarketDetailResponse } from "@/lib/types";
-
-// All categories (sports + beyond)
-const ALL_CATEGORIES: { key: string; label: string; emoji: string }[] = [
-  // Sports — split pro vs college for football + basketball
-  { key: "nfl", label: "NFL", emoji: "🏈" },
-  { key: "college_football", label: "College Football", emoji: "🏈" },
-  { key: "nba", label: "NBA", emoji: "🏀" },
-  { key: "college_basketball", label: "College Basketball", emoji: "🏀" },
-  { key: "baseball", label: "Baseball", emoji: "⚾" },
-  { key: "hockey", label: "Hockey", emoji: "🏒" },
-  { key: "soccer", label: "Soccer", emoji: "⚽" },
-  { key: "golf", label: "Golf", emoji: "⛳" },
-  { key: "tennis", label: "Tennis", emoji: "🎾" },
-  { key: "mma", label: "MMA", emoji: "🥊" },
-  { key: "boxing", label: "Boxing", emoji: "🥊" },
-  { key: "motorsports", label: "Motorsports", emoji: "🏎️" },
-  { key: "cricket", label: "Cricket", emoji: "🏏" },
-  { key: "rugby", label: "Rugby", emoji: "🏉" },
-  // Beyond sports
-  { key: "politics", label: "Politics", emoji: "🏛️" },
-  { key: "entertainment", label: "Entertainment", emoji: "🎬" },
-  { key: "crypto", label: "Crypto", emoji: "₿" },
-  { key: "economics", label: "Economics", emoji: "📈" },
-  { key: "tech", label: "Tech", emoji: "💻" },
-  { key: "weather", label: "Weather", emoji: "🌤️" },
-  { key: "geopolitics", label: "Geopolitics", emoji: "🌍" },
-  { key: "culture", label: "Culture", emoji: "🎭" },
-  { key: "esports", label: "Esports", emoji: "🎮" },
-  { key: "lacrosse", label: "Lacrosse", emoji: "🥍" },
-  { key: "chess", label: "Chess", emoji: "♟️" },
-];
-
-const LEVEL_OPTIONS = [
-  { label: "Love it", value: 1.0 },
-  { label: "Playoffs only", value: 0.3 },
-  { label: "If wild", value: 0.1 },
-  { label: "Nah", value: 0 },
-];
 
 export default function MyStuffPage() {
-  const { user, isAuthenticated, isLoading: authLoading, signOut } = useAuthContext();
-  const router = useRouter();
-  const { interests, setInterest, isLoading: interestsLoading } = useCategoryInterests();
+  const { isAuthenticated, isLoading: authLoading, signInWithGoogle } = useAuthContext();
 
-  // Pinned events
-  const { pinnedIds, isPinned, togglePin, isMaxReached } = usePinnedEvents();
+  // State A: Not authenticated
+  if (!authLoading && !isAuthenticated) {
+    return <SignInPrompt onSignIn={signInWithGoogle} />;
+  }
+
+  // Auth is still loading — show skeleton
+  if (authLoading) {
+    return <SkeletonGrid count={4} />;
+  }
+
+  // State B & C: Authenticated — render the feed
+  return <MyTeamsFeed />;
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in prompt (State A)
+// ---------------------------------------------------------------------------
+
+function SignInPrompt({ onSignIn }: { onSignIn: () => Promise<void> }) {
+  return (
+    <div className="max-w-lg mx-auto">
+      <div className="text-center py-16 px-4">
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-surface-elevated flex items-center justify-center">
+          <span className="text-2xl">&#9917;</span>
+        </div>
+        <h2 className="text-lg font-semibold text-text-primary mb-2">
+          See your teams in one place
+        </h2>
+        <p className="text-sm text-text-secondary mb-6 max-w-xs mx-auto">
+          Sign in and follow your favorite teams to track their games and championship odds.
+        </p>
+        <button
+          onClick={onSignIn}
+          className="px-6 py-2.5 bg-text-primary text-surface-deep rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          Sign in with Google
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Team-filtered feed (State B + C)
+// ---------------------------------------------------------------------------
+
+function MyTeamsFeed() {
+  // Pinned items
+  const { pinnedIds, togglePin, isMaxReached } = usePinnedEvents();
   const {
     pinnedIds: pinnedFuturesIds,
-    isPinned: isFuturesPinned,
     togglePin: toggleFuturesPin,
     isMaxReached: isFuturesMaxReached,
   } = usePinnedFutures();
 
-  // Fetch pinned items data
-  const { data: pinnedEvents } = useSWR(
-    pinnedIds.length > 0 ? ["my-stuff-pinned-events", ...pinnedIds] : null,
-    () => fetchEventsByIds(pinnedIds),
-  );
-  const { data: pinnedFutures } = useSWR(
-    pinnedFuturesIds.length > 0 ? ["my-stuff-pinned-futures", ...pinnedFuturesIds] : null,
-    () => fetchFuturesByIds(pinnedFuturesIds),
-  );
-
-  // Auth'd user preferences
+  // Fetch team-only feed
   const {
-    data: prefs,
-    mutate: mutatePrefs,
+    data: feedData,
+    error: feedError,
+    isLoading: feedLoading,
+    mutate: refreshFeed,
   } = useSWR(
-    isAuthenticated ? "user-preferences" : null,
-    fetchUserPreferences,
+    "my-teams-feed",
+    () => fetchFeed({ limit: 100, my_teams_only: true }),
+    { refreshInterval: 15000 },
   );
 
-  const handleRefresh = () => mutatePrefs();
+  // State B: Authenticated but no teams followed
+  const teamCount = feedData?.personalization?.team_count ?? null;
+  if (feedData && teamCount === 0) {
+    return <OnboardingPrompt />;
+  }
 
-  const localTeams = prefs?.favorites.filter(f => f.relation_type === "local") ?? [];
-  const followTeams = prefs?.favorites.filter(f => f.relation_type === "follow") ?? [];
-  const almaMaterTeams = prefs?.favorites.filter(f => f.relation_type === "alma_mater") ?? [];
-  const rivalTeams = prefs?.favorites.filter(f => f.relation_type === "rival") ?? [];
-  const allFavTeamIds = new Set(prefs?.favorites.map(f => f.team_id) ?? []);
+  // Pinned events from feed data
+  const feedEventIds = useMemo(() => {
+    if (!feedData) return new Set<number>();
+    return new Set(
+      feedData.items
+        .filter(i => i.type === "event")
+        .map(i => (i.data as FeedEventData).id)
+    );
+  }, [feedData]);
+
+  const missingPinnedIds = useMemo(() => {
+    return pinnedIds.filter(id => !feedEventIds.has(id));
+  }, [feedEventIds, pinnedIds]);
+
+  const { data: fetchedPinnedEvents } = useSWR(
+    missingPinnedIds.length > 0 ? ["my-stuff-pinned-events", ...missingPinnedIds] : null,
+    () => fetchEventsByIds(missingPinnedIds),
+  );
+
+  const pinnedEvents = useMemo(() => {
+    const feedEventMap = new Map<number, Event>();
+    if (feedData) {
+      for (const item of feedData.items) {
+        if (item.type === "event") {
+          const d = item.data as FeedEventData;
+          feedEventMap.set(d.id, {
+            id: d.id,
+            external_id: d.external_id,
+            sport: d.sport,
+            home_team: d.home_team,
+            away_team: d.away_team,
+            commence_time: d.commence_time,
+            status: d.status,
+            home_score: d.home_score,
+            away_score: d.away_score,
+            current_odds: d.current_odds ? {
+              home_probability: d.current_odds.home_probability,
+              away_probability: d.current_odds.away_probability,
+              bookmaker_count: d.current_odds.bookmaker_count,
+              projected_home_score: null,
+              projected_away_score: null,
+            } : undefined,
+            opening_odds: d.opening_odds ? {
+              home_probability: d.opening_odds.home_probability,
+              away_probability: d.opening_odds.away_probability ?? null,
+              favorite: d.opening_odds.favorite ?? null,
+            } : undefined,
+          } as Event);
+        }
+      }
+    }
+    const fetchedMap = new Map((fetchedPinnedEvents ?? []).map(e => [e.id, e]));
+    return pinnedIds
+      .map(id => fetchedMap.get(id) ?? feedEventMap.get(id))
+      .filter((e): e is Event => e !== undefined);
+  }, [feedData, fetchedPinnedEvents, pinnedIds]);
+
+  // Pinned futures
+  const feedFuturesIds = useMemo(() => {
+    if (!feedData) return new Set<number>();
+    return new Set(
+      feedData.items
+        .filter(i => i.type === "futures")
+        .map(i => (i.data as FeedFuturesData).id)
+    );
+  }, [feedData]);
+
+  const missingPinnedFuturesIds = useMemo(() => {
+    return pinnedFuturesIds.filter(id => !feedFuturesIds.has(id));
+  }, [feedFuturesIds, pinnedFuturesIds]);
+
+  const { data: fetchedPinnedFutures } = useSWR(
+    missingPinnedFuturesIds.length > 0 ? ["my-stuff-pinned-futures", ...missingPinnedFuturesIds] : null,
+    () => fetchFuturesByIds(missingPinnedFuturesIds),
+  );
+
+  const pinnedFutures = useMemo(() => {
+    const fetchedMap = new Map((fetchedPinnedFutures ?? []).map(f => [f.id, f]));
+    return pinnedFuturesIds
+      .map(id => fetchedMap.get(id))
+      .filter((f): f is FuturesMarketDetailResponse => f !== undefined);
+  }, [fetchedPinnedFutures, pinnedFuturesIds]);
+
+  // Group feed items into sections
+  const feedSections = useMemo(() => {
+    if (!feedData || feedData.items.length === 0) return [];
+
+    const now = new Date();
+    const threeHoursMs = 3 * 60 * 60 * 1000;
+
+    const liveNow: FeedItem[] = [];
+    const startingSoon: FeedItem[] = [];
+    const topMarkets: FeedItem[] = [];
+    const moreGames: FeedItem[] = [];
+
+    for (const item of feedData.items) {
+      if (item.type === "futures") {
+        topMarkets.push(item);
+      } else {
+        const data = item.data as FeedEventData;
+        if (data.status === "live") {
+          liveNow.push(item);
+        } else if (data.status === "scheduled") {
+          const gameTime = new Date(data.commence_time);
+          const untilMs = gameTime.getTime() - now.getTime();
+          if (untilMs > 0 && untilMs <= threeHoursMs) {
+            startingSoon.push(item);
+          } else {
+            moreGames.push(item);
+          }
+        } else {
+          moreGames.push(item);
+        }
+      }
+    }
+
+    const sections: { key: string; emoji: string; title: string; accent: string; items: FeedItem[] }[] = [];
+    if (liveNow.length > 0) sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });
+    if (startingSoon.length > 0) sections.push({ key: "soon", emoji: "\u23F0", title: "Starting Soon", accent: "text-text-secondary", items: startingSoon });
+    if (topMarkets.length > 0) sections.push({ key: "markets", emoji: "\uD83D\uDCCA", title: "Top Markets", accent: "text-accent-futures", items: topMarkets });
+    if (moreGames.length > 0) sections.push({ key: "more", emoji: "\uD83C\uDFDF\uFE0F", title: "More Games", accent: "text-text-secondary", items: moreGames });
+
+    return sections;
+  }, [feedData]);
 
   return (
-    <div className="max-w-lg mx-auto space-y-6">
-      <h1 className="text-xl font-bold text-text-primary">My Stuff</h1>
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold text-text-primary">My Teams</h1>
+        <Link
+          href="/preferences"
+          className="text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity"
+        >
+          Edit
+        </Link>
+      </div>
 
-      {/* ================================================================
-          Your Teams (auth'd only)
-          ================================================================ */}
-      {isAuthenticated && prefs && (
-        <section className="bg-surface-card rounded-xl border border-surface-border p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
-              Your Teams
-            </h2>
-            <Link
-              href="/onboarding"
-              className="text-xs text-accent-brand hover:text-accent-brand font-medium transition-colors"
-            >
-              Edit
-            </Link>
-          </div>
+      {/* Error */}
+      {feedError && (
+        <ErrorMessage
+          message={feedError.message}
+          onRetry={() => refreshFeed()}
+        />
+      )}
 
-          {[
-            { label: "Following", teams: followTeams, variant: "follow" as const, type: "follow" },
-            { label: "Local", teams: localTeams, variant: "default" as const, type: "local" },
-            { label: "Alma maters", teams: almaMaterTeams, variant: "default" as const, type: "alma_mater" },
-            { label: "Rivals", teams: rivalTeams, variant: "rival" as const, type: "rival" },
-          ].map(section => (
-            section.teams.length > 0 && (
-              <div key={section.type} className="mb-3 last:mb-0">
-                <p className="text-xs text-text-muted font-medium mb-1.5">{section.label}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {section.teams.map(team => (
-                    <TeamChip
-                      key={`${team.team_id}-${section.type}`}
-                      team={team}
-                      variant={section.variant}
-                      onRemove={handleRefresh}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          ))}
+      {/* Loading */}
+      {feedLoading && !feedData && <SkeletonGrid count={4} />}
 
-          {followTeams.length === 0 && localTeams.length === 0 && almaMaterTeams.length === 0 && rivalTeams.length === 0 && (
-            <div className="text-center py-3">
-              <p className="text-xs text-text-muted mb-2">No teams yet</p>
-              <Link
-                href="/onboarding"
-                className="text-xs text-accent-brand font-medium"
-              >
-                Set up your teams
-              </Link>
+      {/* Content */}
+      {feedData && (
+        <>
+          {feedData.items.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-sm text-text-secondary mb-1">
+                No games or markets right now for your teams
+              </p>
+              <p className="text-xs text-text-muted">
+                Check back when your teams are playing
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Pinned Section */}
+              {(pinnedEvents.length > 0 || pinnedFutures.length > 0) && (
+                <section>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm">&#128204;</span>
+                    <h2 className="text-sm font-semibold text-text-primary">
+                      Pinned
+                    </h2>
+                    <span className="text-micro text-text-muted">
+                      {pinnedEvents.length + pinnedFutures.length}
+                    </span>
+                  </div>
+                  <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
+                    {pinnedEvents.map((event, index) => (
+                      <EventCard
+                        key={`pinned-${event.id}`}
+                        event={event}
+                        showSport={true}
+                        sourceSection="my_stuff"
+                        positionIndex={index}
+                        highlightLabel={event.highlight?.label}
+                        isPinned={true}
+                        onPinToggle={togglePin}
+                        pinDisabled={isMaxReached}
+                      />
+                    ))}
+                    {pinnedFutures.map((market) => (
+                      <FuturesCard
+                        key={`pinned-futures-${market.id}`}
+                        market={market}
+                        showSport={true}
+                        isPinned={true}
+                        onPinToggle={toggleFuturesPin}
+                        pinDisabled={isFuturesMaxReached}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Grouped feed sections */}
+              {feedSections.map((section) => (
+                <section key={section.key}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm">{section.emoji}</span>
+                    <h2 className={`text-sm font-semibold ${section.accent}`}>
+                      {section.title}
+                    </h2>
+                    <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                      {section.items.length}
+                    </span>
+                  </div>
+                  <div
+                    className="grid gap-3"
+                    style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                  >
+                    {section.items.map((item) => {
+                      const key = item.type === "event"
+                        ? `my-event-${(item.data as FeedEventData).id}`
+                        : `my-futures-${(item.data as FeedFuturesData).id}`;
+                      const category = item.type === "event"
+                        ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
+                        : (item.data as FeedFuturesData).llm_sport_category ?? "other";
+                      return (
+                        <FeedCard
+                          key={key}
+                          item={item}
+                          category={category}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
             </div>
           )}
-        </section>
+        </>
       )}
+    </div>
+  );
+}
 
-      {/* ================================================================
-          Your Interests
-          ================================================================ */}
-      <section className="bg-surface-card rounded-xl border border-surface-border p-4">
-        <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-3">
-          Your Interests
+// ---------------------------------------------------------------------------
+// Onboarding prompt (State B)
+// ---------------------------------------------------------------------------
+
+function OnboardingPrompt() {
+  return (
+    <div className="max-w-lg mx-auto">
+      <h1 className="text-xl font-bold text-text-primary mb-6">My Teams</h1>
+      <div className="text-center py-12 px-4">
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-surface-elevated flex items-center justify-center">
+          <span className="text-2xl">&#127942;</span>
+        </div>
+        <h2 className="text-lg font-semibold text-text-primary mb-2">
+          Follow some teams to get started
         </h2>
-        <p className="text-xs text-text-muted mb-3">
-          Controls what shows up in your feed. Tap to change.
+        <p className="text-sm text-text-secondary mb-6 max-w-xs mx-auto">
+          Tell us your favorite teams and we'll show their games and championship odds here.
         </p>
-
-        <div className="space-y-1">
-          {ALL_CATEGORIES.map(cat => (
-            <InterestRow
-              key={cat.key}
-              category={cat.key}
-              label={cat.label}
-              emoji={cat.emoji}
-              value={interests[cat.key] ?? 0}
-              onUpdate={setInterest}
-            />
-          ))}
-        </div>
-      </section>
-
-      {/* ================================================================
-          Pinned Items
-          ================================================================ */}
-      {(pinnedIds.length > 0 || pinnedFuturesIds.length > 0) && (
-        <section className="bg-surface-card rounded-xl border border-surface-border p-4">
-          <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-3">
-            Pinned
-          </h2>
-          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), 1fr))" }}>
-            {(pinnedEvents ?? []).map((event, idx) => (
-              <EventCard
-                key={`pinned-${event.id}`}
-                event={event}
-                showSport
-                sourceSection="my_stuff"
-                positionIndex={idx}
-                isPinned
-                onPinToggle={togglePin}
-                pinDisabled={isMaxReached}
-              />
-            ))}
-            {(pinnedFutures ?? []).map((market) => (
-              <FuturesCard
-                key={`pinned-f-${market.id}`}
-                market={market}
-                showSport
-                isPinned
-                onPinToggle={toggleFuturesPin}
-                pinDisabled={isFuturesMaxReached}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* ================================================================
-          Account (auth'd) or Sign In prompt (anon)
-          ================================================================ */}
-      {isAuthenticated && user ? (
-        <section className="bg-surface-card rounded-xl border border-surface-border p-4">
-          <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-3">
-            Account
-          </h2>
-          <div className="flex items-center gap-3 mb-4">
-            {user.photoURL ? (
-              <img
-                src={user.photoURL}
-                alt=""
-                className="w-10 h-10 rounded-full border border-surface-border"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-text-primary text-surface-deep flex items-center justify-center text-sm font-medium">
-                {user.displayName?.charAt(0)?.toUpperCase() || "?"}
-              </div>
-            )}
-            <div>
-              <p className="text-sm font-medium text-text-primary">{user.displayName || "User"}</p>
-              <p className="text-xs text-text-secondary">{user.email}</p>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <Link
-              href="/onboarding"
-              className="flex-1 text-center py-2 text-xs font-medium text-text-secondary border border-surface-border rounded-lg hover:bg-surface-elevated transition-colors"
-            >
-              Redo onboarding
-            </Link>
-            <button
-              onClick={async () => {
-                await signOut();
-                router.push("/");
-              }}
-              className="flex-1 py-2 text-xs font-medium text-text-secondary border border-surface-border rounded-lg hover:bg-surface-elevated transition-colors"
-            >
-              Sign out
-            </button>
-          </div>
-        </section>
-      ) : !authLoading && (
-        <section className="bg-surface-card rounded-xl border border-surface-border p-6 text-center">
-          <p className="text-sm text-text-secondary mb-1">
-            Sign in to sync across devices
-          </p>
-          <p className="text-xs text-text-muted">
-            Your interests are saved locally. Sign in to keep them everywhere.
-          </p>
-        </section>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Interest row with 4-level selector
-// ---------------------------------------------------------------------------
-
-function InterestRow({
-  category,
-  label,
-  emoji,
-  value,
-  onUpdate,
-}: {
-  category: string;
-  label: string;
-  emoji: string;
-  value: number;
-  onUpdate: (category: string, value: number) => void;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-
-  const currentLabel = getLevelLabel(value);
-
-  return (
-    <div className="flex items-center justify-between text-xs py-1">
-      <span className="flex items-center gap-1.5 text-text-primary font-medium">
-        <span>{emoji}</span>
-        {label}
-      </span>
-      {isEditing ? (
-        <div className="flex gap-1">
-          {LEVEL_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => {
-                onUpdate(category, opt.value);
-                setIsEditing(false);
-              }}
-              className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
-                Math.abs(value - opt.value) < 0.05
-                  ? "bg-text-primary text-surface-deep"
-                  : "bg-surface-elevated text-text-secondary hover:bg-surface-border"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <button
-          onClick={() => setIsEditing(true)}
-          className="text-text-secondary hover:text-text-primary transition-colors"
+        <Link
+          href="/onboarding"
+          className="inline-block px-6 py-2.5 bg-text-primary text-surface-deep rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
         >
-          {currentLabel} ›
-        </button>
-      )}
+          Set up your teams
+        </Link>
+      </div>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Team chip with remove button
-// ---------------------------------------------------------------------------
-
-function TeamChip({
-  team,
-  variant = "default",
-  onRemove,
-}: {
-  team: UserFavoriteItem;
-  variant?: "default" | "rival" | "follow";
-  onRemove: () => void;
-}) {
-  const [removing, setRemoving] = useState(false);
-
-  const handleRemove = async () => {
-    setRemoving(true);
-    try {
-      await removeFavorite(team.team_id, team.relation_type);
-      onRemove();
-    } catch (err) {
-      console.error("Failed to remove:", err);
-    } finally {
-      setRemoving(false);
-    }
-  };
-
-  const colorClasses =
-    variant === "rival"
-      ? "bg-red-500/15 text-red-400 border-red-500/30"
-      : variant === "follow"
-      ? "bg-accent-brand/15 text-accent-brand border-accent-brand/30"
-      : "bg-surface-elevated text-text-primary border-surface-border";
-
-  return (
-    <span
-      className={`inline-flex items-center gap-1 ${colorClasses} px-2 py-0.5 rounded-lg text-[11px] font-medium border transition-opacity ${
-        removing ? "opacity-50" : ""
-      }`}
-    >
-      {team.logo_url && (
-        <img src={team.logo_url} alt="" className="w-3.5 h-3.5 object-contain" />
-      )}
-      {team.team_name}
-      <button
-        onClick={handleRemove}
-        disabled={removing}
-        className="ml-0.5 text-current opacity-40 hover:opacity-100 transition-opacity disabled:opacity-20"
-        title="Remove"
-      >
-        ×
-      </button>
-    </span>
   );
 }

@@ -589,6 +589,9 @@ export interface FeedResponse {
   limit: number;
   offset: number;
   has_more: boolean;
+  // Present when my_teams_only=true
+  my_teams_only?: boolean;
+  requires_auth?: boolean;
   // Present when user is authenticated
   personalized?: boolean;
   personalization?: {

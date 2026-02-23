@@ -476,12 +476,14 @@ export async function fetchFeed(params?: {
   limit?: number;
   offset?: number;
   sport?: string;
+  my_teams_only?: boolean;
 }): Promise<FeedResponse> {
   const searchParams = new URLSearchParams();
 
   if (params?.limit) searchParams.set("limit", params.limit.toString());
   if (params?.offset) searchParams.set("offset", params.offset.toString());
   if (params?.sport) searchParams.set("sport", params.sport);
+  if (params?.my_teams_only) searchParams.set("my_teams_only", "true");
 
   const query = searchParams.toString();
   return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`);

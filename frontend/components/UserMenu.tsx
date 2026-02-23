@@ -82,7 +82,7 @@ export default function UserMenu() {
           </div>
 
           <Link
-            href="/my-stuff"
+            href="/preferences"
             onClick={() => setIsOpen(false)}
             className="block px-4 py-2 text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
           >

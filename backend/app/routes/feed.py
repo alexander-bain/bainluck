@@ -47,6 +47,7 @@ async def get_feed(
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
     include_events: bool = Query(True, description="Include game events in feed"),
     include_futures: bool = Query(True, description="Include futures markets in feed"),
+    my_teams_only: bool = Query(False, description="Filter to only the user's followed teams"),
     db: AsyncSession = Depends(get_db),
     user: Optional[User] = Depends(get_optional_user),
 ):
@@ -69,6 +70,18 @@ async def get_feed(
     """
     now = datetime.now(timezone.utc)
 
+    # my_teams_only requires authentication
+    if my_teams_only and not user:
+        return {
+            "items": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "has_more": False,
+            "my_teams_only": True,
+            "requires_auth": True,
+        }
+
     # Load personalization context (one DB query for all user data)
     ctx = await _load_personalization_context(db, user)
 
@@ -76,7 +89,7 @@ async def get_feed(
 
     # === SCORE EVENTS ===
     if include_events:
-        event_items = await _score_events(db, now, sport, ctx)
+        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only)
         feed_items.extend(event_items)
 
     # === ENRICH EVENTS WITH TEAM DATA ===
@@ -102,7 +115,7 @@ async def get_feed(
 
     # === SCORE FUTURES ===
     if include_futures:
-        futures_items = await _score_futures(db, now, sport, ctx)
+        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only)
         feed_items.extend(futures_items)
 
     # === RANK AND PAGINATE ===
@@ -114,8 +127,10 @@ async def get_feed(
     # Without this, futures can dominate (they get "resolving soon" + "multi source"
     # bonuses that events don't have).
     # For anonymous users, enforce a stronger event bias (events are the core product).
-    is_anonymous = not ctx.is_authenticated
-    feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=0.6 if is_anonymous else 0.4)
+    # Skip diversity enforcement for my_teams_only — show everything matching.
+    if not my_teams_only:
+        is_anonymous = not ctx.is_authenticated
+        feed_items = _ensure_feed_diversity(feed_items, limit, event_pct=0.6 if is_anonymous else 0.4)
 
     total = len(feed_items)
     paginated = feed_items[offset:offset + limit]
@@ -131,6 +146,9 @@ async def get_feed(
         "offset": offset,
         "has_more": (offset + limit) < total,
     }
+
+    if my_teams_only:
+        response["my_teams_only"] = True
 
     # Include personalization metadata if authenticated
     if ctx.is_authenticated:
@@ -219,6 +237,7 @@ async def _score_events(
     now: datetime,
     sport_filter: Optional[str],
     ctx: PersonalizationContext,
+    my_teams_only: bool = False,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -228,9 +247,15 @@ async def _score_events(
     Opening odds are accurate enough for ranking — the full aggregated odds
     are shown when the user clicks through to the event detail page.
     """
-    # Tighter time windows than the full events list to keep query fast
-    recent_cutoff = now - timedelta(hours=6)
-    upcoming_cutoff = now + timedelta(hours=12)
+    # Wider time windows for my_teams_only — users want to see all their
+    # team's upcoming games and recent results.
+    if my_teams_only:
+        recent_cutoff = now - timedelta(hours=24)
+        upcoming_cutoff = now + timedelta(days=7)
+    else:
+        # Tighter time windows than the full events list to keep query fast
+        recent_cutoff = now - timedelta(hours=6)
+        upcoming_cutoff = now + timedelta(hours=12)
     # Guard against events incorrectly stuck in "live" status with future
     # commence_times (e.g., from Scores API returning upcoming events as
     # completed=False). Only include "live" events that have actually started.
@@ -271,7 +296,14 @@ async def _score_events(
 
     # Score each event using stored opening odds (no snapshot query needed)
     scored_items = []
+    user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
     for event in events:
+        # my_teams_only: skip events that don't involve the user's teams
+        if my_teams_only:
+            event_team_ids = {event.home_team_id, event.away_team_id} - {None}
+            if not event_team_ids & user_team_ids:
+                continue
+
         opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
         opening_away_prob = float(event.opening_away_probability) if event.opening_away_probability else None
 
@@ -316,7 +348,11 @@ async def _score_events(
         # surface it even at lower base scores.
         # Anonymous threshold: 20 means tier 1 events always pass (tier 1 = 20),
         # tier 2 need some signal (close, live, starting soon), tier 3-4 need a lot.
-        min_score = 10 if p_result.is_personalized else 20
+        # my_teams_only: show ALL their team's games regardless of score.
+        if my_teams_only:
+            min_score = 0
+        else:
+            min_score = 10 if p_result.is_personalized else 20
         if personalized_score < min_score:
             continue
 
@@ -391,6 +427,7 @@ async def _score_futures(
     now: datetime,
     sport_filter: Optional[str],
     ctx: PersonalizationContext,
+    my_teams_only: bool = False,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -538,6 +575,13 @@ async def _score_futures(
 
         # Apply personalization multiplier
         outcome_team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
+
+        # my_teams_only: skip futures that don't involve the user's teams
+        if my_teams_only:
+            user_team_ids = set(ctx.team_relations.keys())
+            if not set(outcome_team_ids) & user_team_ids:
+                continue
+
         outcome_names = [o.name for o in market.outcomes if o.name]
         p_result = compute_futures_multiplier(
             ctx=ctx,
