@@ -351,16 +351,28 @@ async def _score_futures(
     ctx: PersonalizationContext,
 ) -> list[dict]:
     """Score and format futures markets for the feed."""
-    # Fetch open futures with outcomes — prioritize higher-tier markets
+    # Fetch open futures with outcomes.
+    # Exclude game-level prediction market futures (event_id IS NOT NULL) — these
+    # are already linked to events and shown as win probability trend lines on
+    # event detail pages. Including them here wastes feed slots and crowds out
+    # championship, weather, entertainment, and politics futures.
+    #
+    # Order by resolution_date proximity: markets resolving soonest are most
+    # timely and actionable. NULLs (no resolution date) go last.
     query = (
         select(FuturesMarket)
         .options(
             selectinload(FuturesMarket.outcomes),
             selectinload(FuturesMarket.sport),
         )
-        .where(FuturesMarket.status == "open")
-        .order_by(FuturesMarket.market_tier.asc().nulls_last())
-        .limit(100)  # Cap to keep response fast
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+        )
+        .order_by(
+            FuturesMarket.resolution_date.asc().nulls_last(),
+        )
+        .limit(300)  # Enough to get category diversity from 24K+ markets
     )
 
     if sport_filter:
@@ -437,11 +449,13 @@ async def _score_futures(
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
-        # Anonymous futures need a high bar — only show futures with real action
-        # (leader changes, major movement, source divergence). Without this, generic
-        # championship futures with "resolving soon" + "multi_source" bonuses flood
-        # the anonymous feed with uncompelling content.
-        min_score = 10 if p_result.is_personalized else 40
+        # Anonymous futures threshold: now that game-level PM markets (which scored
+        # 50+ via market_tier=1 + resolving_soon + multi_source) are excluded, real
+        # championship/weather/politics futures need a lower bar. With market_tier=None
+        # (scored as tier 5 = 2 pts), even a "resolving soon + multi-source + major league"
+        # market only scores 37. Threshold 25 requires at least one meaningful signal
+        # (resolving soon, movement, or multi-source) beyond just being a major league.
+        min_score = 10 if p_result.is_personalized else 25
         if personalized_score < min_score:
             continue
 
