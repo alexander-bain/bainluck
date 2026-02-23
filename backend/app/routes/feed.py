@@ -41,7 +41,7 @@ router = APIRouter()
 
 @router.get("")
 async def get_feed(
-    limit: int = Query(100, description="Number of feed items to return", ge=1, le=500),
+    limit: int = Query(200, description="Number of feed items to return", ge=1, le=10000),
     offset: int = Query(0, description="Offset for pagination", ge=0),
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
     include_events: bool = Query(True, description="Include game events in feed"),
@@ -350,12 +350,13 @@ async def _score_futures(
     sport_filter: Optional[str],
     ctx: PersonalizationContext,
 ) -> list[dict]:
-    """Score and format futures markets for the feed."""
+    """Score and format futures markets for the feed.
+
+    Uses per-category queries to guarantee diversity. A single big query
+    sorted by resolution_date is dominated by crypto's 8,955 five-minute
+    markets, so we query each category separately.
+    """
     # === BASE FILTERS ===
-    # Three filters prevent game-level markets from flooding the feed:
-    # 1. Exclude event-linked markets (event_id IS NOT NULL)
-    # 2. Exclude past-resolution markets (status="open" after resolution)
-    # 3. Exclude matchup-named markets (" vs " / " vs. ")
     base_filters = [
         FuturesMarket.status == "open",
         FuturesMarket.event_id.is_(None),
@@ -372,38 +373,29 @@ async def _score_futures(
         selectinload(FuturesMarket.sport),
     ]
 
-    # === TWO-PASS FETCH for category diversity ===
-    # Pass 1: Soonest-resolving across all categories (timely content)
-    # Pass 2: Per-category queries for non-sports (politics, crypto, weather, etc.)
-    #   A single non-sports query fails because crypto's 8,955 markets with
-    #   5-minute resolution dates consume the entire LIMIT before politics,
-    #   weather, or entertainment markets are loaded.
-    NON_SPORTS_CATEGORIES = [
+    # === PER-CATEGORY FETCH ===
+    # Query each category separately to guarantee diversity.
+    # Without this, crypto micro-markets (5-min resolution) consume all
+    # slots when sorted by resolution_date.
+    ALL_CATEGORIES = [
+        # Sports
+        "basketball", "football", "baseball", "hockey", "golf", "tennis",
+        "soccer", "mma", "boxing", "motorsports", "esports", "cricket",
+        "rugby", "aussierules", "horse_racing", "olympics", "lacrosse",
+        "chess", "poker", "darts",
+        # Non-sports
         "politics", "crypto", "weather", "entertainment",
         "economics", "tech", "geopolitics", "culture",
+        # Catch-all
+        "other",
     ]
 
-    query_timely = (
-        select(FuturesMarket)
-        .options(*base_options)
-        .where(*base_filters)
-        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-        .limit(500)
-    )
+    PER_CATEGORY_LIMIT = 500
 
-    if sport_filter:
-        sport_condition = or_(
-            FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
-            FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
-        )
-        query_timely = query_timely.where(sport_condition)
+    seen_ids: set[int] = set()
+    markets: list = []
 
-    result_timely = await db.execute(query_timely)
-    timely_markets = result_timely.scalars().unique().all()
-
-    # Per-category queries for non-sports (50 per category = 400 max)
-    non_sports_markets = []
-    for cat in NON_SPORTS_CATEGORIES:
+    for cat in ALL_CATEGORIES:
         if sport_filter and cat.lower() not in sport_filter.lower():
             continue
         cat_query = (
@@ -414,15 +406,37 @@ async def _score_futures(
                 FuturesMarket.llm_sport_category == cat,
             )
             .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-            .limit(50)
+            .limit(PER_CATEGORY_LIMIT)
         )
-        cat_result = await db.execute(cat_query)
-        non_sports_markets.extend(cat_result.scalars().unique().all())
 
-    # Merge and deduplicate
-    seen_ids = set()
-    markets = []
-    for m in list(timely_markets) + list(non_sports_markets):
+        if sport_filter:
+            # Also match on external_id for sport-key-based filtering
+            cat_query = cat_query.where(
+                or_(
+                    FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
+                    FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
+                )
+            )
+
+        cat_result = await db.execute(cat_query)
+        for m in cat_result.scalars().unique().all():
+            if m.id not in seen_ids:
+                seen_ids.add(m.id)
+                markets.append(m)
+
+    # Also query uncategorized markets (llm_sport_category IS NULL)
+    null_query = (
+        select(FuturesMarket)
+        .options(*base_options)
+        .where(
+            *base_filters,
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+        .limit(100)
+    )
+    null_result = await db.execute(null_query)
+    for m in null_result.scalars().unique().all():
         if m.id not in seen_ids:
             seen_ids.add(m.id)
             markets.append(m)
@@ -490,16 +504,9 @@ async def _score_futures(
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
-        # Anonymous futures threshold: with market_tier=None (scored as tier 5 = 2 pts),
-        # the threshold must be low enough that high-interest categories pass:
-        #   politics/crypto/economics (major_league +10) → 12 pts → PASS
-        #   weather/entertainment (secondary +5) + resolving_30d (+8) → 15 → PASS
-        #   unknown category, no signals → 2 pts → FAIL (good)
-        # The diversity enforcement at the feed level (60% events for anonymous)
-        # prevents futures from dominating even with this lower threshold.
-        min_score = 10 if p_result.is_personalized else 12
-        if personalized_score < min_score:
-            continue
+        # Include all scored futures — no minimum threshold.
+        # The per-category query structure already guarantees diversity.
+        # The feed-level pagination (limit param) controls how many are returned.
 
         # Find the actual biggest mover (with sign) for reason generation
         top_mover_name = highlight_result.top_mover_name
@@ -571,21 +578,6 @@ async def _score_futures(
             item["personalization_reasons"] = p_result.reasons
 
         scored_items.append(item)
-
-    # === PER-CATEGORY CAP ===
-    # Prevent any single category from dominating the futures feed.
-    # Without this, crypto (8,955 markets) or basketball (5,022) can
-    # fill every slot, crowding out politics, weather, entertainment, etc.
-    MAX_PER_CATEGORY = 30
-    category_counts: dict[str, int] = {}
-    capped_items = []
-    for item in scored_items:
-        cat = item["data"].get("llm_sport_category") or "other"
-        current = category_counts.get(cat, 0)
-        if current < MAX_PER_CATEGORY:
-            capped_items.append(item)
-            category_counts[cat] = current + 1
-    scored_items = capped_items
 
     return scored_items
 
