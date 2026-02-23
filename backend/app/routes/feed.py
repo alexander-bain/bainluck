@@ -41,7 +41,7 @@ router = APIRouter()
 
 @router.get("")
 async def get_feed(
-    limit: int = Query(200, description="Number of feed items to return", ge=1, le=10000),
+    limit: int = Query(200, description="Number of feed items to return", ge=1, le=50000),
     offset: int = Query(0, description="Offset for pagination", ge=0),
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
     include_events: bool = Query(True, description="Include game events in feed"),
@@ -390,8 +390,6 @@ async def _score_futures(
         "other",
     ]
 
-    PER_CATEGORY_LIMIT = 2000
-
     seen_ids: set[int] = set()
     markets: list = []
 
@@ -406,7 +404,6 @@ async def _score_futures(
                 FuturesMarket.llm_sport_category == cat,
             )
             .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-            .limit(PER_CATEGORY_LIMIT)
         )
 
         if sport_filter:
@@ -433,7 +430,6 @@ async def _score_futures(
             FuturesMarket.llm_sport_category.is_(None),
         )
         .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-        .limit(100)
     )
     null_result = await db.execute(null_query)
     for m in null_result.scalars().unique().all():
