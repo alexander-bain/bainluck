@@ -976,7 +976,28 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {/* Win Probability Chart — primary chart, shown first */}
+      {/* Score Differential Chart - combines projected spread and actual score diff */}
+      {historyData?.history && historyData.history.length > 0 && (
+        <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
+          <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
+            Score Differential
+          </h3>
+          <ScoreDifferentialChart
+            history={historyData.history}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+            commenceTime={event.commence_time}
+            isLive={effectivelyLive}
+            bookmakerHistory={historyData?.bookmaker_history}
+            scoreHistory={historyData?.score_history}
+            currentHomeScore={event.home_score}
+            currentAwayScore={event.away_score}
+            eventStatus={event.status}
+          />
+        </div>
+      )}
+
+      {/* Trend Chart */}
       <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
         <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
           Win Probability
@@ -1018,27 +1039,6 @@ export default function EventPage({ params }: EventPageProps) {
           />
         )}
       </div>
-
-      {/* Score Differential Chart — secondary, compact */}
-      {historyData?.history && historyData.history.length > 0 && (
-        <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
-          <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
-            Score Differential
-          </h3>
-          <ScoreDifferentialChart
-            history={historyData.history}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            commenceTime={event.commence_time}
-            isLive={effectivelyLive}
-            bookmakerHistory={historyData?.bookmaker_history}
-            scoreHistory={historyData?.score_history}
-            currentHomeScore={event.home_score}
-            currentAwayScore={event.away_score}
-            eventStatus={event.status}
-          />
-        </div>
-      )}
 
       {/* Win Probabilities by Sportsbook */}
       {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (

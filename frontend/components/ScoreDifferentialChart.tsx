@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import {
   ComposedChart,
   Line,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -19,14 +20,6 @@ import type {
   ScoreHistoryPoint,
 } from "@/lib/types";
 
-/**
- * Same pastel palette as OddsChart for consistent bookmaker colors.
- */
-const BOOKMAKER_COLORS = [
-  "#93c5fd", "#fca5a5", "#86efac", "#c4b5fd", "#fdba74", "#67e8f9",
-  "#f9a8d4", "#fde047", "#a5b4fc", "#6ee7b7", "#fda4af", "#a5f3fc",
-];
-
 interface ScoreDifferentialChartProps {
   history: OddsHistoryPoint[];
   homeTeam: string;
@@ -38,7 +31,7 @@ interface ScoreDifferentialChartProps {
   currentHomeScore?: number | null;
   currentAwayScore?: number | null;
   eventStatus?: string;
-  /** When true, chart fills its parent container height instead of using fixed h-48 */
+  /** When true, chart fills its parent container height instead of using fixed h-64 */
   fillContainer?: boolean;
 }
 
@@ -60,7 +53,6 @@ interface ChartDataPoint {
 /**
  * Combined chart showing projected score differential (spread) and actual score difference.
  * Y-axis centered at 0. Positive = home team leading, negative = away team leading.
- * Bookmaker lines use distinct pastel colors with click-to-highlight.
  */
 export default function ScoreDifferentialChart({
   history,
@@ -86,7 +78,6 @@ export default function ScoreDifferentialChart({
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
   const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
-  // (highlight state removed — labels were taking too much space)
 
   // Filter projected history based on time range
   const filteredHistory = useMemo(() => {
@@ -142,16 +133,6 @@ export default function ScoreDifferentialChart({
     () => Object.keys(filteredBookmakerHistory),
     [filteredBookmakerHistory]
   );
-
-  // Stable bookmaker color assignment
-  const bookmakerColorMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    const allBooks = Object.keys(bookmakerHistory ?? {});
-    allBooks.forEach((bk, i) => {
-      map[bk] = BOOKMAKER_COLORS[i % BOOKMAKER_COLORS.length];
-    });
-    return map;
-  }, [bookmakerHistory]);
 
   const hasProjectedScoreData = useMemo(() => {
     if (!history || history.length === 0) return false;
@@ -314,18 +295,12 @@ export default function ScoreDifferentialChart({
     allDiffValues.length > 0
       ? Math.ceil(Math.max(...allDiffValues.map(Math.abs)) + 2)
       : 10;
+  // Make symmetric around 0, rounding up to nearest 5
   const domainMax = Math.ceil(maxAbs / 5) * 5;
 
+  // Short team names for axis labels
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
-
-  // (no highlight logic — all lines at base visual weight)
-
-  const formatDiff = (val: number) => {
-    if (val === 0) return "Even";
-    const leader = val > 0 ? homeShort : awayShort;
-    return `${leader} +${Math.abs(val).toFixed(1)}`;
-  };
 
   // Custom tooltip
   const CustomTooltip = ({
@@ -342,62 +317,60 @@ export default function ScoreDifferentialChart({
     }>;
     label?: string;
   }) => {
-    if (!active || !payload || payload.length === 0) return null;
+    if (active && payload && payload.length) {
+      const projectedEntry = payload.find(
+        (e) => e.dataKey === "projectedDiff" && e.value !== null
+      );
+      const actualEntry = payload.find(
+        (e) => e.dataKey === "actualDiff" && e.value !== null
+      );
+      const bookmakerEntries = payload.filter(
+        (e) =>
+          e.dataKey !== "projectedDiff" &&
+          e.dataKey !== "actualDiff" &&
+          e.value !== null
+      );
 
-    const projectedEntry = payload.find(
-      (e) => e.dataKey === "projectedDiff" && e.value !== null
-    );
-    const actualEntry = payload.find(
-      (e) => e.dataKey === "actualDiff" && e.value !== null
-    );
-    const bookmakerEntries = payload.filter(
-      (e) =>
-        e.dataKey !== "projectedDiff" &&
-        e.dataKey !== "actualDiff" &&
-        e.value !== null
-    );
+      const formatDiff = (val: number) => {
+        if (val === 0) return "Even";
+        const leader = val > 0 ? homeShort : awayShort;
+        return `${leader} +${Math.abs(val).toFixed(1)}`;
+      };
 
-    return (
-      <div className="bg-white/95 backdrop-blur-sm p-3 rounded-lg shadow-xl border border-gray-200 max-w-xs">
-        <p className="text-xs font-medium text-gray-500 mb-2">{label}</p>
-        {projectedEntry && (
-          <p className="text-sm font-semibold text-emerald-600">
-            Projected: {formatDiff(projectedEntry.value)}
-          </p>
-        )}
-        {actualEntry && (
-          <p className="text-sm font-semibold text-orange-600">
-            Actual: {formatDiff(actualEntry.value)}
-          </p>
-        )}
-        {bookmakerEntries.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-gray-100 space-y-0.5">
-            {bookmakerEntries.map((entry) => {
-              const bookmaker = entry.dataKey.replace("_diff", "");
-              const color = bookmakerColorMap[bookmaker] ?? "#9ca3af";
-              return (
-                <div key={bookmaker} className="flex items-center justify-between gap-3">
-                  <span className="text-xs text-gray-500 flex items-center gap-1.5">
-                    <span
-                      className="inline-block w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: color }}
-                    />
-                    {bookmaker}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {formatDiff(entry.value)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
+      return (
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
+          <p className="text-xs text-gray-500 mb-2">{label}</p>
+          {projectedEntry && (
+            <p className="text-sm font-semibold text-emerald-600">
+              Projected: {formatDiff(projectedEntry.value)}
+            </p>
+          )}
+          {actualEntry && (
+            <p className="text-sm font-semibold text-orange-600">
+              Actual: {formatDiff(actualEntry.value)}
+            </p>
+          )}
+          {bookmakerEntries.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
+              {bookmakerEntries.map((entry) => {
+                const bookmaker = entry.dataKey.replace("_diff", "");
+                return (
+                  <p key={bookmaker} className="text-xs text-gray-500">
+                    {bookmaker}: {formatDiff(entry.value)}
+                  </p>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
   };
 
   return (
-    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}>
+    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-4"}>
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
         {TIME_RANGE_OPTIONS.map((option) => (
@@ -424,16 +397,16 @@ export default function ScoreDifferentialChart({
       </div>
 
       {/* Chart */}
-      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-48"}>
+      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-64"}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
             margin={{ top: 5, right: 10, left: fillContainer ? 5 : 0, bottom: 5 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
               dataKey="time"
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 10, fill: "#6b7280" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
               interval="preserveStartEnd"
@@ -441,7 +414,7 @@ export default function ScoreDifferentialChart({
             />
             <YAxis
               domain={[-domainMax, domainMax]}
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 10, fill: "#6b7280" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
               tickFormatter={(value: number) => {
@@ -451,14 +424,11 @@ export default function ScoreDifferentialChart({
             />
             <ReferenceLine
               y={0}
-              stroke="#d1d5db"
-              strokeWidth={1}
+              stroke="#9ca3af"
+              strokeWidth={1.5}
               strokeDasharray="4 4"
             />
-            <Tooltip
-              content={<CustomTooltip />}
-              cursor={{ stroke: "#d1d5db", strokeWidth: 1, strokeDasharray: "3 3" }}
-            />
+            <Tooltip content={<CustomTooltip />} />
             <Legend
               wrapperStyle={{ fontSize: "12px" }}
               iconType="circle"
@@ -484,25 +454,20 @@ export default function ScoreDifferentialChart({
               ]}
             />
 
-            {/* Individual bookmaker lines — distinct pastel colors */}
-            {bookmakers.map((bookmaker) => {
-              const color = bookmakerColorMap[bookmaker] ?? "#d1d5db";
-              return (
-                <Line
-                  key={`${bookmaker}_diff`}
-                  type="monotone"
-                  dataKey={`${bookmaker}_diff`}
-                  stroke={color}
-                  strokeWidth={1.25}
-                  opacity={0.5}
-                  dot={false}
-                  activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 1 }}
-                  connectNulls
-                  legendType="none"
-                  isAnimationActive={false}
-                />
-              );
-            })}
+            {/* Individual bookmaker lines */}
+            {bookmakers.map((bookmaker) => (
+              <Line
+                key={`${bookmaker}_diff`}
+                type="monotone"
+                dataKey={`${bookmaker}_diff`}
+                stroke="rgba(156, 163, 175, 0.4)"
+                strokeWidth={1}
+                dot={false}
+                activeDot={{ r: 3, fill: "#9ca3af" }}
+                connectNulls
+                legendType="none"
+              />
+            ))}
 
             {/* Projected score differential (spread) */}
             {hasProjectedScoreData && (
@@ -512,11 +477,9 @@ export default function ScoreDifferentialChart({
                 name="Projected Spread"
                 stroke="#10b981"
                 strokeWidth={2.5}
-                opacity={1}
                 dot={false}
-                activeDot={{ r: 5, fill: "#10b981", stroke: "#fff", strokeWidth: 1.5 }}
+                activeDot={{ r: 5 }}
                 connectNulls
-                isAnimationActive={false}
               />
             )}
 
@@ -528,23 +491,27 @@ export default function ScoreDifferentialChart({
                 name="Actual Score Diff"
                 stroke="#f97316"
                 strokeWidth={2.5}
-                opacity={1}
                 dot={false}
-                activeDot={{ r: 5, fill: "#f97316", stroke: "#fff", strokeWidth: 1.5 }}
+                activeDot={{ r: 5 }}
                 connectNulls
-                isAnimationActive={false}
               />
             )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Legend + axis labels */}
-      <div className="flex flex-wrap items-center justify-between text-xs text-text-muted px-2 shrink-0">
+      {/* Axis labels */}
+      <div className="flex justify-between text-xs text-text-muted px-2 shrink-0">
         <span>+ = {homeShort} leading</span>
         <span>- = {awayShort} leading</span>
       </div>
-      {/* Sportsbooks identified via tooltip on hover — no legend labels needed */}
+
+      {/* Info about gray lines */}
+      {bookmakers.length > 0 && (
+        <p className="text-xs text-text-muted text-center shrink-0">
+          Gray lines show individual sportsbooks
+        </p>
+      )}
     </div>
   );
 }

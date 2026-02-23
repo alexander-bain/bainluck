@@ -22,35 +22,15 @@ import type {
   WinProbSourceMeta,
 } from "@/lib/types";
 
-/**
- * Soft color palette for individual sportsbook lines.
- * Each book gets a distinct pastel so you can trace it across the chart.
- * Ordered to maximize contrast between adjacent books.
- */
-const BOOKMAKER_COLORS = [
-  "#93c5fd", // light blue
-  "#fca5a5", // light red
-  "#86efac", // light green
-  "#c4b5fd", // light purple
-  "#fdba74", // light orange
-  "#67e8f9", // light cyan
-  "#f9a8d4", // light pink
-  "#fde047", // light yellow
-  "#a5b4fc", // light indigo
-  "#6ee7b7", // light emerald
-  "#fda4af", // light rose
-  "#a5f3fc", // light teal
-];
-
-/** Fallback source configs — frontend overrides to avoid team color conflicts */
+/** Fallback source configs when win_prob_sources metadata isn't available */
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
-  betting: { display_name: "Betting Odds", color: "#1f2937", dash_pattern: null, type: "market" },
+  betting: { display_name: "Betting Odds", color: "#374151", dash_pattern: null, type: "market" },
   espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3", type: "model" },
   stat_model: { display_name: "Bain Luck Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
-  kalshi: { display_name: "Kalshi", color: "#06b6d4", dash_pattern: "8 4", type: "market" },
-  polymarket: { display_name: "Polymarket", color: "#ec4899", dash_pattern: "8 4", type: "market" },
-  moneypuck: { display_name: "MoneyPuck", color: "#eab308", dash_pattern: "4 4", type: "model" },
-  fangraphs: { display_name: "MLB Model", color: "#14b8a6", dash_pattern: "4 4", type: "model" },
+  kalshi: { display_name: "Kalshi", color: "#22c55e", dash_pattern: "8 4", type: "market" },
+  polymarket: { display_name: "Polymarket", color: "#3b82f6", dash_pattern: "8 4", type: "market" },
+  moneypuck: { display_name: "MoneyPuck", color: "#10b981", dash_pattern: "4 4", type: "model" },
+  fangraphs: { display_name: "FanGraphs", color: "#06b6d4", dash_pattern: "4 4", type: "model" },
 };
 
 interface OddsChartProps {
@@ -105,10 +85,9 @@ interface ResolvedSource {
 /**
  * Win probability chart showing multiple labeled sources.
  *
- * All lines always visible — sportsbooks get distinct pastel colors,
- * model/market sources get bold saturated colors. Hover-to-highlight:
- * clicking a legend item highlights that line and dims everything else.
- * Crosshair + tooltip on hover for precise reading.
+ * Each source (Betting Odds, ESPN, Statistical Model, etc.) gets its own
+ * clearly labeled line. Market sources use solid lines, model sources use
+ * dashed lines. The betting odds line also gets an area fill.
  */
 export default function OddsChart({
   history,
@@ -136,8 +115,6 @@ export default function OddsChart({
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
   const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
 
-  // (highlight state removed — labels were taking too much space)
-
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
@@ -162,6 +139,8 @@ export default function OddsChart({
   }, [bookmakerHistory, timeRange, commenceTime]);
 
   // Build the list of all sources to display (betting + model sources)
+  // Betting odds always included as first source when history data exists.
+  // Model sources come from winProbHistory (new) or espnHistory (legacy).
   const resolvedSources = useMemo((): ResolvedSource[] => {
     const sources: ResolvedSource[] = [];
 
@@ -180,6 +159,7 @@ export default function OddsChart({
     }
 
     if (winProbHistory && Object.keys(winProbHistory).length > 0) {
+      // Use the new multi-source data
       for (const [key, points] of Object.entries(winProbHistory)) {
         if (points.length === 0) continue;
         const meta = winProbSources?.[key];
@@ -188,14 +168,14 @@ export default function OddsChart({
           key,
           dataKey: `wp_${key}_delta`,
           displayName: meta?.display_name ?? fallback?.display_name ?? key,
-          // Frontend fallback colors take precedence to avoid team color conflicts
-          color: fallback?.color ?? meta?.color ?? "#6b7280",
-          dashPattern: fallback?.dash_pattern ?? meta?.dash_pattern ?? "4 4",
+          color: meta?.color ?? fallback?.color ?? "#6b7280",
+          dashPattern: meta?.dash_pattern ?? fallback?.dash_pattern ?? "4 4",
           type: meta?.type ?? fallback?.type ?? "model",
           snapshotCount: points.length,
         });
       }
     } else if (espnHistory && espnHistory.length > 0) {
+      // Legacy: use espnHistory directly
       sources.push({
         key: "espn",
         dataKey: "espnDelta",
@@ -210,7 +190,7 @@ export default function OddsChart({
     return sources;
   }, [history, winProbHistory, winProbSources, espnHistory]);
 
-  // Non-betting sources
+  // Non-betting sources (model sources rendered as separate chart lines)
   const modelSources = useMemo(
     () => resolvedSources.filter((s) => s.key !== "betting"),
     [resolvedSources]
@@ -245,17 +225,6 @@ export default function OddsChart({
     () => Object.keys(filteredBookmakerHistory),
     [filteredBookmakerHistory]
   );
-
-  // Assign each bookmaker a stable color from the palette
-  const bookmakerColorMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    // Use ALL bookmakers (not just filtered) for stable color assignment
-    const allBooks = Object.keys(bookmakerHistory ?? {});
-    allBooks.forEach((bk, i) => {
-      map[bk] = BOOKMAKER_COLORS[i % BOOKMAKER_COLORS.length];
-    });
-    return map;
-  }, [bookmakerHistory]);
 
   // Transform data: convert probabilities to delta from 50%
   const chartData: ChartDataPoint[] = useMemo(() => {
@@ -401,15 +370,13 @@ export default function OddsChart({
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
-  // Custom Y-axis tick formatter
+  // Custom Y-axis tick formatter: shows probability for each team
   const formatYTick = (value: number): string => {
     const prob = 50 + Math.abs(value);
     return `${prob}%`;
   };
 
-  // (no highlight logic — all lines at base visual weight)
-
-  // Custom tooltip
+  // Custom tooltip showing actual probabilities
   const CustomTooltip = ({
     active,
     payload,
@@ -424,81 +391,75 @@ export default function OddsChart({
     }>;
     label?: string;
   }) => {
-    if (!active || !payload || payload.length === 0) return null;
+    if (active && payload && payload.length) {
+      const formatProb = (delta: number) => {
+        const homeProb = delta + 50;
+        const awayProb = 100 - homeProb;
+        return `${homeTeam}: ${homeProb.toFixed(1)}% | ${awayTeam}: ${awayProb.toFixed(1)}%`;
+      };
 
-    // Find entries for each resolved source
-    const sourceEntries = resolvedSources
-      .map((source) => {
-        const entry = payload.find(
-          (e) => e.dataKey === source.dataKey && e.value !== null
-        );
-        return entry ? { ...source, value: entry.value } : null;
-      })
-      .filter((e): e is ResolvedSource & { value: number } => e !== null);
+      // Find entries for each resolved source
+      const sourceEntries = resolvedSources
+        .map((source) => {
+          const entry = payload.find(
+            (e) => e.dataKey === source.dataKey && e.value !== null
+          );
+          return entry ? { ...source, value: entry.value } : null;
+        })
+        .filter((e): e is ResolvedSource & { value: number } => e !== null);
 
-    const bookmakerEntries = payload.filter(
-      (e) =>
-        e.dataKey !== "homeDelta" &&
-        !e.dataKey.startsWith("wp_") &&
-        e.dataKey !== "espnDelta" &&
-        e.value !== null
-    );
+      const bookmakerEntries = payload.filter(
+        (e) =>
+          e.dataKey !== "homeDelta" &&
+          !e.dataKey.startsWith("wp_") &&
+          e.dataKey !== "espnDelta" &&
+          e.value !== null
+      );
 
-    return (
-      <div className="bg-white/95 backdrop-blur-sm p-3 rounded-lg shadow-xl border border-gray-200 max-w-sm">
-        <p className="text-xs font-medium text-gray-500 mb-2">{label}</p>
-        {/* Sources — betting first, bold */}
-        {sourceEntries.length > 0 && (
-          <div className={bookmakerEntries.length > 0 ? "pb-2 mb-2 border-b border-gray-100" : ""}>
-            {sourceEntries.map((source) => {
-              const homeProb = source.value + 50;
-              const isBetting = source.key === "betting";
-              return (
-                <div key={source.key} className="flex items-center justify-between gap-3 mb-0.5">
-                  <span className={`text-xs flex items-center gap-1.5 ${isBetting ? "text-gray-800 font-semibold" : "text-gray-500"}`}>
-                    <span
-                      className="inline-block w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: source.color }}
-                    />
+      return (
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-sm">
+          <p className="text-xs text-gray-500 mb-2">{label}</p>
+          {/* All sources, grouped */}
+          {sourceEntries.length > 0 && (
+            <div className="space-y-1">
+              {sourceEntries.map((source) => (
+                <div key={source.key}>
+                  <p className="text-xs text-text-muted mb-0.5">
                     {source.displayName}
-                  </span>
-                  <span
-                    className={`text-xs ${isBetting ? "font-bold text-gray-900" : "font-semibold"}`}
-                    style={!isBetting ? { color: source.color } : undefined}
+                    <span className="text-text-muted ml-1">
+                      ({source.type})
+                    </span>
+                  </p>
+                  <p
+                    className={`text-xs font-medium ${source.key === "betting" ? "text-sm font-semibold text-gray-800" : ""}`}
+                    style={source.key !== "betting" ? { color: source.color } : undefined}
                   >
-                    {homeProb.toFixed(1)}% / {(100 - homeProb).toFixed(1)}%
-                  </span>
+                    {formatProb(source.value)}
+                  </p>
                 </div>
-              );
-            })}
-          </div>
-        )}
-        {/* Bookmaker entries with their individual colors */}
-        {bookmakerEntries.length > 0 && (
-          <div className="space-y-0.5 max-h-40 overflow-y-auto">
-            {bookmakerEntries.map((entry) => {
-              const bookmaker = entry.dataKey.replace("_delta", "");
-              const homeProb = entry.value + 50;
-              const color = bookmakerColorMap[bookmaker] ?? "#9ca3af";
-              return (
-                <div key={bookmaker} className="flex items-center justify-between gap-3">
-                  <span className="text-xs text-gray-500 flex items-center gap-1.5">
-                    <span
-                      className="inline-block w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: color }}
-                    />
-                    {bookmaker}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {homeProb.toFixed(0)}% / {(100 - homeProb).toFixed(0)}%
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
+              ))}
+            </div>
+          )}
+          {bookmakerEntries.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
+              {bookmakerEntries.map((entry) => {
+                const bookmaker = entry.dataKey.replace("_delta", "");
+                const homeProb = entry.value + 50;
+                const awayProb = 100 - homeProb;
+                return (
+                  <p key={bookmaker} className="text-xs text-gray-500">
+                    {bookmaker}: {homeProb.toFixed(0)}% /{" "}
+                    {awayProb.toFixed(0)}%
+                  </p>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
   };
 
   return (
@@ -546,19 +507,19 @@ export default function OddsChart({
                 <stop
                   offset={gradientOffset}
                   stopColor="#22c55e"
-                  stopOpacity={0.15}
+                  stopOpacity={0.25}
                 />
                 <stop
                   offset={gradientOffset}
                   stopColor="#3b82f6"
-                  stopOpacity={0.15}
+                  stopOpacity={0.25}
                 />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
               dataKey="time"
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 10, fill: "#6b7280" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
               interval={
@@ -569,7 +530,7 @@ export default function OddsChart({
             <YAxis
               domain={[-50, 50]}
               ticks={[-50, -25, 0, 25, 50]}
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 10, fill: "#6b7280" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
               tickFormatter={formatYTick}
@@ -577,41 +538,33 @@ export default function OddsChart({
             {/* 50% reference line */}
             <ReferenceLine
               y={0}
-              stroke="#d1d5db"
-              strokeWidth={1}
+              stroke="#9ca3af"
+              strokeWidth={1.5}
               strokeDasharray="4 4"
               label={{
                 value: "50%",
                 position: "right",
-                style: { fontSize: 10, fill: "#d1d5db" },
+                style: { fontSize: 10, fill: "#9ca3af" },
               }}
             />
-            <Tooltip
-              content={<CustomTooltip />}
-              cursor={{ stroke: "#d1d5db", strokeWidth: 1, strokeDasharray: "3 3" }}
-            />
+            <Tooltip content={<CustomTooltip />} />
 
-            {/* Individual bookmaker lines — distinct pastel colors, always visible */}
-            {bookmakers.map((bookmaker) => {
-              const color = bookmakerColorMap[bookmaker] ?? "#d1d5db";
-              return (
-                <Line
-                  key={`${bookmaker}_delta`}
-                  type="monotone"
-                  dataKey={`${bookmaker}_delta`}
-                  stroke={color}
-                  strokeWidth={1.25}
-                  opacity={0.5}
-                  dot={false}
-                  activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 1 }}
-                  connectNulls
-                  legendType="none"
-                  isAnimationActive={false}
-                />
-              );
-            })}
+            {/* Individual bookmaker lines - thin grey */}
+            {bookmakers.map((bookmaker) => (
+              <Line
+                key={`${bookmaker}_delta`}
+                type="monotone"
+                dataKey={`${bookmaker}_delta`}
+                stroke="rgba(156, 163, 175, 0.4)"
+                strokeWidth={1}
+                dot={false}
+                activeDot={{ r: 3, fill: "#9ca3af" }}
+                connectNulls
+                legendType="none"
+              />
+            ))}
 
-            {/* Model/market source lines — saturated colors, dashed */}
+            {/* Model source lines (ESPN, stat model, etc.) — dashed */}
             {modelSources.map((source) => (
               <Line
                 key={source.dataKey}
@@ -619,13 +572,11 @@ export default function OddsChart({
                 dataKey={source.dataKey}
                 name={source.displayName}
                 stroke={source.color}
-                strokeWidth={2}
+                strokeWidth={2.5}
                 strokeDasharray={source.dashPattern ?? undefined}
-                opacity={0.75}
                 dot={false}
-                activeDot={{ r: 5, fill: source.color, stroke: "#fff", strokeWidth: 1.5 }}
+                activeDot={{ r: 4, fill: source.color }}
                 connectNulls
-                isAnimationActive={false}
               />
             ))}
 
@@ -636,17 +587,15 @@ export default function OddsChart({
                 dataKey="espnDelta"
                 name="ESPN Model"
                 stroke="#f97316"
-                strokeWidth={2}
+                strokeWidth={2.5}
                 strokeDasharray="6 3"
-                opacity={0.75}
                 dot={false}
-                activeDot={{ r: 5, fill: "#f97316", stroke: "#fff", strokeWidth: 1.5 }}
+                activeDot={{ r: 4, fill: "#f97316" }}
                 connectNulls
-                isAnimationActive={false}
               />
             )}
 
-            {/* Area fill — very subtle, fades more when highlighting */}
+            {/* Area fill between betting odds line and 50% */}
             <Area
               type="monotone"
               dataKey="homeDelta"
@@ -657,53 +606,76 @@ export default function OddsChart({
               isAnimationActive={false}
             />
 
-            {/* Betting odds line — hero: thickest, darkest, always on top */}
+            {/* Betting odds line — solid, on top */}
             <Line
               type="monotone"
               dataKey="homeDelta"
               name="Betting Odds"
-              stroke="#1f2937"
-              strokeWidth={3}
-              opacity={1}
+              stroke="#374151"
+              strokeWidth={2.5}
               dot={false}
-              activeDot={{ r: 6, fill: "#1f2937", stroke: "#fff", strokeWidth: 2 }}
+              activeDot={{ r: 5, fill: "#374151" }}
               connectNulls
-              isAnimationActive={false}
             />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Compact legend — named sources only, sportsbooks identified via tooltip */}
+      {/* Source legend — always shown, all sources labeled, links to models page */}
       {resolvedSources.length > 0 && (
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
           {resolvedSources.map((source) => {
             const inner = (
-              <span className="flex items-center gap-1.5">
+              <>
                 <svg width="20" height="4" className="shrink-0">
                   <line
                     x1="0" y1="2" x2="20" y2="2"
                     stroke={source.color}
-                    strokeWidth={source.key === "betting" ? "3" : "2"}
+                    strokeWidth="2.5"
                     strokeDasharray={source.dashPattern ?? undefined}
                   />
                 </svg>
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-gray-500 hover:text-gray-700">
                   {source.displayName}
                   <span className="text-text-muted ml-0.5">({source.type})</span>
                 </span>
-              </span>
+              </>
             );
             return eventId ? (
-              <Link key={source.key} href={`/events/${eventId}/models`} className="hover:opacity-70 transition-opacity">
+              <Link
+                key={source.key}
+                href={`/events/${eventId}/models`}
+                className="flex items-center gap-1.5 hover:underline"
+              >
                 {inner}
               </Link>
             ) : (
-              <div key={source.key}>{inner}</div>
+              <div key={source.key} className="flex items-center gap-1.5">
+                {inner}
+              </div>
             );
           })}
+          {bookmakers.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <svg width="20" height="4" className="shrink-0">
+                <line
+                  x1="0" y1="2" x2="20" y2="2"
+                  stroke="rgba(156, 163, 175, 0.4)"
+                  strokeWidth="1"
+                />
+              </svg>
+              <span className="text-xs text-text-muted">
+                Individual sportsbooks
+              </span>
+            </div>
+          )}
         </div>
       )}
+
+      {/* Tap for details */}
+      <p className="text-xs text-text-muted text-center shrink-0">
+        Tap/hover for details
+      </p>
     </div>
   );
 }
