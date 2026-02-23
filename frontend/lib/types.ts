@@ -466,9 +466,12 @@ export interface OscarsNominee {
   name: string;
   probability: number;
   american_odds: number | null;
+  opening_probability: number | null;
   movement_24h: number | null;
   rank: number;
   sources: Record<string, number>;
+  is_winner: boolean;
+  last_updated: string | null;
 }
 
 export interface OscarsCategory {
@@ -493,9 +496,28 @@ export interface OscarsTriviaMarket {
 
 export interface OscarsResponse {
   ceremony_date: string;
+  ceremony_status: "pre" | "live" | "post";
   categories: OscarsCategory[];
   trivia: OscarsTriviaMarket[];
   total_categories: number;
+  biggest_movers: OscarsBiggestMover[];
+  film_nominations: OscarsFilmData[];
+  llm_previews: Record<string, string>;
+}
+
+export interface OscarsFilmData {
+  film_name: string;
+  nominations: { category_key: string; category_name: string; probability: number; rank: number }[];
+  total_nominations: number;
+  expected_wins: number;
+}
+
+export interface OscarsBiggestMover {
+  name: string;
+  category_key: string;
+  category_name: string;
+  movement_24h: number;
+  probability: number;
 }
 
 // Unified Feed types

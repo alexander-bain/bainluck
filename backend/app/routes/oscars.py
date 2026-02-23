@@ -5,10 +5,13 @@ Aggregates prediction market odds (Polymarket + Kalshi) for the 98th Academy Awa
 groups by award category, merges cross-source nominees, and orders by ceremony presentation.
 """
 
+import asyncio
 import logging
 import re
+import time
 import unicodedata
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
@@ -22,6 +25,11 @@ from app.utils.odds_math import probability_to_american
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Ceremony start: March 2, 2026 at 8:00 PM ET (01:00 UTC March 3)
+_CEREMONY_START = datetime(2026, 3, 3, 1, 0, 0, tzinfo=timezone.utc)
+# Ceremony end: ~11:30 PM ET (approximate 3.5h show)
+_CEREMONY_END = datetime(2026, 3, 3, 4, 30, 0, tzinfo=timezone.utc)
 
 # Ceremony presentation order (98th Academy Awards, March 2, 2026)
 CEREMONY_ORDER = {
@@ -54,6 +62,12 @@ CEREMONY_ORDER = {
 MAJOR_CATEGORIES = {
     "best_picture", "best_director", "best_actor", "best_actress",
     "best_supporting_actor", "best_supporting_actress",
+}
+
+# Person categories — these are about people, not films (used for film aggregation)
+PERSON_CATEGORIES = {
+    "best_actor", "best_actress", "best_supporting_actor",
+    "best_supporting_actress", "best_director",
 }
 
 # Display names for category keys
@@ -123,7 +137,7 @@ _CATEGORY_PATTERNS = [
 
 
 def _strip_diacritics(s: str) -> str:
-    """Remove accent marks: é→e, á→a, ü→u, etc."""
+    """Remove accent marks: e->e, a->a, u->u, etc."""
     return "".join(
         c for c in unicodedata.normalize("NFD", s)
         if unicodedata.category(c) != "Mn"
@@ -162,20 +176,50 @@ def _match_key(name: str) -> str:
     """
     clean = _normalize_nominee_name(name)
     # Take the part before " - " or " for " (strips film/role info)
-    clean = re.split(r"\s+[-–]\s+|\s+for\s+", clean, maxsplit=1)[0]
-    # Strip diacritics (é→e, ñ→n, etc.)
+    clean = re.split(r"\s+[-\u2013]\s+|\s+for\s+", clean, maxsplit=1)[0]
+    # Strip diacritics (e->e, n->n, etc.)
     clean = _strip_diacritics(clean)
     # Lowercase
     clean = clean.lower()
     # Strip "the " prefix
     clean = re.sub(r"^the\s+", "", clean)
-    # Strip subtitle after colon ("F1: The Movie" → "F1")
+    # Strip subtitle after colon ("F1: The Movie" -> "F1")
     clean = clean.split(":")[0].strip()
     # Strip non-alphanumeric except spaces
     clean = re.sub(r"[^a-z0-9\s]", "", clean).strip()
     # Collapse whitespace
     clean = re.sub(r"\s+", " ", clean)
     return clean
+
+
+def _get_ceremony_status() -> str:
+    """Determine ceremony status based on current time."""
+    now = datetime.now(timezone.utc)
+    if now < _CEREMONY_START:
+        return "pre"
+    elif now <= _CEREMONY_END:
+        return "live"
+    else:
+        return "post"
+
+
+# ============================================================================
+# LLM preview cache (in-memory, 4h TTL)
+# ============================================================================
+
+_LLM_CACHE: dict[str, tuple[str, float]] = {}  # key -> (text, timestamp)
+_LLM_CACHE_TTL = 4 * 3600  # 4 hours
+
+
+def _get_cached(key: str) -> str | None:
+    entry = _LLM_CACHE.get(key)
+    if entry and time.time() - entry[1] < _LLM_CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def _set_cached(key: str, value: str) -> None:
+    _LLM_CACHE[key] = (value, time.time())
 
 
 # Max nominees to return per category
@@ -276,11 +320,11 @@ async def get_oscars(
 
                 prob = float(outcome.current_probability)
 
-                # Skip Kalshi entries at exactly 0.5 — illiquid binary markets with no signal
+                # Skip Kalshi entries at exactly 0.5 -- illiquid binary markets with no signal
                 if source == "kalshi" and prob == 0.5:
                     continue
 
-                # Skip "Tie" outcomes — not useful for the landing page
+                # Skip "Tie" outcomes -- not useful for the landing page
                 raw_name = outcome.name.strip()
                 if raw_name.lower() == "tie":
                     continue
@@ -297,6 +341,9 @@ async def get_oscars(
                         "sources": {},
                         "probabilities": [],
                         "movement_24h": None,
+                        "opening_probability": None,
+                        "is_winner": False,
+                        "last_updated": None,
                     }
 
                 nominee_data[key]["sources"][source] = round(prob, 3)
@@ -309,15 +356,33 @@ async def get_oscars(
                     if existing is None or abs(change) > abs(existing):
                         nominee_data[key]["movement_24h"] = round(change, 4)
 
+                # Track opening probability (take the first non-null one)
+                if outcome.opening_probability is not None and nominee_data[key]["opening_probability"] is None:
+                    nominee_data[key]["opening_probability"] = round(float(outcome.opening_probability), 3)
+
+                # Track winner status (any source marking it as winner)
+                if outcome.is_winner:
+                    nominee_data[key]["is_winner"] = True
+
+                # Track most recent last_updated
+                if outcome.last_updated is not None:
+                    existing_ts = nominee_data[key]["last_updated"]
+                    if existing_ts is None or outcome.last_updated > existing_ts:
+                        nominee_data[key]["last_updated"] = outcome.last_updated
+
         # Compute average probability
         nominees = []
         for data in nominee_data.values():
             avg_prob = sum(data["probabilities"]) / len(data["probabilities"])
+            last_updated = data["last_updated"]
             nominees.append({
                 "name": data["name"],
                 "probability": avg_prob,
                 "movement_24h": data["movement_24h"],
                 "sources": data["sources"],
+                "opening_probability": data["opening_probability"],
+                "is_winner": data["is_winner"],
+                "last_updated": last_updated.isoformat() if last_updated else None,
             })
 
         # Sort by probability descending, cap at max nominees
@@ -354,9 +419,115 @@ async def get_oscars(
     # Sort categories by ceremony order
     categories.sort(key=lambda c: c["ceremony_order"])
 
+    # ========================================================================
+    # Biggest movers — top 5 nominees across all categories by |movement_24h|
+    # ========================================================================
+    all_movers = []
+    for cat in categories:
+        for nom in cat["nominees"]:
+            if nom["movement_24h"] is not None and abs(nom["movement_24h"]) >= 0.005:
+                all_movers.append({
+                    "name": nom["name"],
+                    "category_key": cat["key"],
+                    "category_name": cat["name"],
+                    "movement_24h": nom["movement_24h"],
+                    "probability": nom["probability"],
+                })
+    all_movers.sort(key=lambda m: abs(m["movement_24h"]), reverse=True)
+    biggest_movers = all_movers[:5]
+
+    # ========================================================================
+    # Film-centric aggregation — group nominees across non-person categories
+    # ========================================================================
+    film_map: dict[str, list] = {}
+    for cat in categories:
+        if cat["key"] in PERSON_CATEGORIES:
+            continue
+        for nom in cat["nominees"]:
+            # Use the part before " - " as the film name
+            film_name = nom["name"].split(" - ")[0].strip()
+            film_map.setdefault(film_name, []).append({
+                "category_key": cat["key"],
+                "category_name": cat["name"],
+                "probability": nom["probability"],
+                "rank": nom["rank"],
+            })
+
+    film_nominations = [
+        {
+            "film_name": name,
+            "nominations": noms,
+            "total_nominations": len(noms),
+            "expected_wins": round(sum(n["probability"] for n in noms), 2),
+        }
+        for name, noms in film_map.items()
+        if len(noms) >= 2  # Only show films with 2+ nominations
+    ]
+    film_nominations.sort(key=lambda f: f["expected_wins"], reverse=True)
+
+    # ========================================================================
+    # LLM previews — generate for major categories (async, cached)
+    # ========================================================================
+    llm_previews: dict[str, str] = {}
+
+    async def _generate_preview(cat: dict) -> tuple[str, str | None]:
+        """Generate or retrieve cached LLM preview for a category."""
+        cache_key = f"oscars_preview_{cat['key']}"
+        cached = _get_cached(cache_key)
+        if cached is not None:
+            return cat["key"], cached
+
+        try:
+            from app.services.llm import generate_oscars_category_preview
+            top_nominees = [
+                {
+                    "name": n["name"],
+                    "probability": n["probability"],
+                    "movement_24h": n["movement_24h"],
+                    "opening_probability": n["opening_probability"],
+                }
+                for n in cat["nominees"][:5]
+            ]
+            result = generate_oscars_category_preview(cat["name"], top_nominees)
+            if result:
+                _set_cached(cache_key, result)
+            return cat["key"], result
+        except Exception as e:
+            logger.warning("LLM preview failed for %s: %s", cat["key"], e)
+            return cat["key"], None
+
+    # Generate previews for major categories only
+    major_cats = [c for c in categories if c["is_major"]]
+    if major_cats:
+        preview_tasks = [_generate_preview(c) for c in major_cats]
+        results = await asyncio.gather(*preview_tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, tuple) and r[1] is not None:
+                llm_previews[r[0]] = r[1]
+
+    # Generate movers summary
+    if biggest_movers:
+        movers_cache_key = "oscars_movers_summary"
+        cached_movers = _get_cached(movers_cache_key)
+        if cached_movers:
+            llm_previews["biggest_movers"] = cached_movers
+        else:
+            try:
+                from app.services.llm import generate_oscars_movers_summary
+                movers_text = generate_oscars_movers_summary(biggest_movers)
+                if movers_text:
+                    _set_cached(movers_cache_key, movers_text)
+                    llm_previews["biggest_movers"] = movers_text
+            except Exception as e:
+                logger.warning("LLM movers summary failed: %s", e)
+
     return {
         "ceremony_date": "2026-03-02T00:00:00-08:00",
+        "ceremony_status": _get_ceremony_status(),
         "categories": categories,
         "trivia": trivia_markets,
         "total_categories": len(categories),
+        "biggest_movers": biggest_movers,
+        "film_nominations": film_nominations,
+        "llm_previews": llm_previews,
     }

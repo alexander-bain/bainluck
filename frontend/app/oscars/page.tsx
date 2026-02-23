@@ -3,12 +3,30 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { fetchOscarsData } from "@/lib/api";
-import type { OscarsResponse, OscarsCategory } from "@/lib/types";
-import { MAJOR_CATEGORIES, PERSON_CATEGORIES, CATEGORY_EMOJI } from "@/lib/oscarsData";
+import { fetchOscarsData, fetchFuturesHistory } from "@/lib/api";
+import type {
+  OscarsResponse,
+  OscarsCategory,
+  OscarsNominee,
+  OscarsFilmData,
+  OscarsBiggestMover,
+  FuturesOutcomeHistory,
+} from "@/lib/types";
 import {
-  searchMovie, searchPerson, getTrailers, posterUrl, headshotUrl,
+  MAJOR_CATEGORIES,
+  PERSON_CATEGORIES,
+  CATEGORY_EMOJI,
+  CEREMONY_ORDER,
+} from "@/lib/oscarsData";
+import {
+  searchMovie,
+  searchPerson,
+  getTrailers,
+  posterUrl,
+  headshotUrl,
 } from "@/lib/tmdb";
+import { FuturesChart } from "@/components/FuturesChart";
+import OscarsModal from "@/components/OscarsModal";
 
 // ============================================================================
 // Types
@@ -34,6 +52,12 @@ export default function OscarsPage() {
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<Record<string, NomineeImage>>({});
   const [trailers, setTrailers] = useState<Record<string, NomineeTrailer>>({});
+  const [modalCategory, setModalCategory] = useState<OscarsCategory | null>(
+    null
+  );
+  const [historyByCategory, setHistoryByCategory] = useState<
+    Record<string, FuturesOutcomeHistory[]>
+  >({});
 
   // Phase 1: Fetch odds data
   useEffect(() => {
@@ -43,12 +67,25 @@ export default function OscarsPage() {
         const result = await fetchOscarsData();
         setData(result);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load Oscars data");
+        setError(
+          err instanceof Error ? err.message : "Failed to load Oscars data"
+        );
       } finally {
         setLoading(false);
       }
     }
     load();
+
+    // If ceremony_status is "live", poll more frequently
+    const interval = setInterval(
+      () => {
+        fetchOscarsData()
+          .then(setData)
+          .catch(() => {});
+      },
+      data?.ceremony_status === "live" ? 30_000 : 120_000
+    );
+    return () => clearInterval(interval);
   }, []);
 
   // Phase 2: Progressive TMDB enrichment
@@ -60,7 +97,6 @@ export default function OscarsPage() {
 
       for (const cat of data!.categories) {
         const isPerson = PERSON_CATEGORIES.has(cat.key);
-        // Enrich top nominees for major categories, top 3 for craft
         const topN = MAJOR_CATEGORIES.has(cat.key) ? cat.nominees.length : 3;
 
         for (const nominee of cat.nominees.slice(0, topN)) {
@@ -82,12 +118,10 @@ export default function OscarsPage() {
               })
             );
           } else {
-            // Extract movie name (strip " - Director" etc.)
-            const movieName = nominee.name.split(/\s+[-–]\s+/)[0].trim();
+            const movieName = nominee.name.split(/\s+[-\u2013]\s+/)[0].trim();
             searches.push(
               searchMovie(movieName, 2025).then(async (result) => {
                 if (!result) {
-                  // Retry without year constraint
                   const retry = await searchMovie(movieName);
                   if (retry?.poster_path) {
                     setImages((prev) => ({
@@ -111,7 +145,6 @@ export default function OscarsPage() {
                     },
                   }));
                 }
-                // Fetch trailers for Best Picture nominees
                 if (cat.key === "best_picture") {
                   const vids = await getTrailers(result.id);
                   if (vids.length > 0) {
@@ -133,12 +166,60 @@ export default function OscarsPage() {
     enrichImages();
   }, [data]);
 
+  // Phase 3: Fetch history data for major categories
+  useEffect(() => {
+    if (!data) return;
+
+    const majorCats = data.categories.filter((c) => c.is_major);
+    for (const cat of majorCats) {
+      if (cat.market_ids[0] && !historyByCategory[cat.key]) {
+        fetchFuturesHistory(cat.market_ids[0], 168)
+          .then((h) => {
+            if (h?.outcomes) {
+              setHistoryByCategory((prev) => ({
+                ...prev,
+                [cat.key]: h.outcomes,
+              }));
+            }
+          })
+          .catch(() => {});
+      }
+    }
+  }, [data]);
+
   // Derived data
   const bestPicture = data?.categories.find((c) => c.key === "best_picture");
-  const majorCategories = data?.categories.filter(
-    (c) => c.is_major && c.key !== "best_picture"
-  ) || [];
+  const majorCategories =
+    data?.categories.filter((c) => c.is_major && c.key !== "best_picture") ||
+    [];
   const craftCategories = data?.categories.filter((c) => !c.is_major) || [];
+
+  // Ceremony mode helpers
+  const ceremonyStatus = data?.ceremony_status ?? "pre";
+  const isLive = ceremonyStatus === "live";
+  const isPost = ceremonyStatus === "post";
+
+  // Post-ceremony scorecard
+  const scorecard = isPost
+    ? (() => {
+        let correct = 0;
+        let total = 0;
+        for (const cat of data?.categories ?? []) {
+          const winner = cat.nominees.find((n) => n.is_winner);
+          if (winner) {
+            total++;
+            if (winner.rank === 1) correct++;
+          }
+        }
+        return { correct, total, accuracy: total > 0 ? Math.round((correct / total) * 100) : 0 };
+      })()
+    : null;
+
+  // Frontrunner trailer for Best Picture
+  const bpFrontrunner = bestPicture?.nominees[0];
+  const bpTrailerKey = bpFrontrunner
+    ? trailers[`best_picture_${bpFrontrunner.name}`]?.youtubeKey
+    : undefined;
 
   return (
     <div className="min-h-screen">
@@ -156,10 +237,17 @@ export default function OscarsPage() {
           <h1 className="text-3xl sm:text-4xl font-bold text-[#D4AF37] tracking-tight">
             98th Academy Awards
           </h1>
-          <p className="text-text-secondary mt-2 text-lg">March 2, 2026</p>
+          <p className="text-text-secondary mt-2 text-lg">
+            {isLive
+              ? "LIVE NOW"
+              : isPost
+                ? "Ceremony Complete"
+                : "March 2, 2026"}
+          </p>
 
-          {/* Countdown */}
-          <Countdown targetDate="2026-03-02T20:00:00-05:00" />
+          {!isLive && !isPost && (
+            <Countdown targetDate="2026-03-02T20:00:00-05:00" />
+          )}
 
           <p className="text-xs text-text-muted mt-4">
             Odds from Polymarket &amp; Kalshi
@@ -185,21 +273,44 @@ export default function OscarsPage() {
               No Oscar markets found yet.
             </p>
             <p className="text-sm text-text-muted mt-1">
-              Markets typically appear on Polymarket and Kalshi a few weeks before the ceremony.
+              Markets typically appear on Polymarket and Kalshi a few weeks
+              before the ceremony.
             </p>
           </div>
         )}
 
-        {/* Best Picture Spotlight */}
+        {/* Post-ceremony scorecard */}
+        {isPost && scorecard && scorecard.total > 0 && (
+          <div className="bg-surface-card rounded-xl border border-[#D4AF37]/30 p-5 text-center">
+            <div className="text-3xl font-mono font-bold text-[#D4AF37]">
+              {scorecard.correct}/{scorecard.total}
+            </div>
+            <div className="text-sm text-text-secondary mt-1">
+              predictions correct &mdash; {scorecard.accuracy}% accuracy
+            </div>
+          </div>
+        )}
+
+        {/* Biggest Movers Strip (Feature #4) */}
+        {data && data.biggest_movers && data.biggest_movers.length > 0 && (
+          <BiggestMoversStrip
+            movers={data.biggest_movers}
+            summary={data.llm_previews?.biggest_movers}
+          />
+        )}
+
+        {/* Best Picture Spotlight (Feature #2 + #9 + #10) */}
         {bestPicture && (
           <BestPictureSection
             category={bestPicture}
             images={images}
             trailers={trailers}
+            trailerKey={bpTrailerKey}
+            onCategoryClick={() => setModalCategory(bestPicture)}
           />
         )}
 
-        {/* Major Awards */}
+        {/* Major Awards (Features #1, #3, #5, #6, #10) */}
         {majorCategories.length > 0 && (
           <section>
             <h2 className="text-title-2 text-text-primary mb-4">
@@ -211,13 +322,28 @@ export default function OscarsPage() {
                   key={cat.key}
                   category={cat}
                   images={images}
+                  historyData={historyByCategory[cat.key]}
+                  llmPreview={data?.llm_previews?.[cat.key]}
+                  ceremonyStatus={ceremonyStatus}
+                  onClick={() => setModalCategory(cat)}
                 />
               ))}
             </div>
           </section>
         )}
 
-        {/* Craft Awards */}
+        {/* Film-Centric View (Feature #7) */}
+        {data &&
+          data.film_nominations &&
+          data.film_nominations.length > 0 && (
+            <FilmCentricSection
+              films={data.film_nominations}
+              images={images}
+              isPost={isPost}
+            />
+          )}
+
+        {/* Craft Awards (Feature #6 — modal trigger) */}
         {craftCategories.length > 0 && (
           <section>
             <h2 className="text-title-2 text-text-primary mb-4">
@@ -225,7 +351,12 @@ export default function OscarsPage() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {craftCategories.map((cat) => (
-                <CraftCategoryCard key={cat.key} category={cat} />
+                <CraftCategoryCard
+                  key={cat.key}
+                  category={cat}
+                  ceremonyStatus={ceremonyStatus}
+                  onClick={() => setModalCategory(cat)}
+                />
               ))}
             </div>
           </section>
@@ -247,21 +378,29 @@ export default function OscarsPage() {
                     {market.name}
                   </h3>
                   <div className="space-y-2">
-                    {market.top_outcomes.map((outcome, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between gap-3"
-                      >
-                        <span className="text-sm text-text-secondary truncate">
-                          {outcome.name}
-                        </span>
-                        <span className="text-sm font-mono font-bold text-text-primary flex-shrink-0">
-                          {outcome.probability
-                            ? `${Math.round(outcome.probability * 100)}%`
-                            : "-"}
-                        </span>
-                      </div>
-                    ))}
+                    {market.top_outcomes.map(
+                      (
+                        outcome: {
+                          name: string;
+                          probability: number | null;
+                        },
+                        idx: number
+                      ) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between gap-3"
+                        >
+                          <span className="text-sm text-text-secondary truncate">
+                            {outcome.name}
+                          </span>
+                          <span className="text-sm font-mono font-bold text-text-primary flex-shrink-0">
+                            {outcome.probability
+                              ? `${Math.round(outcome.probability * 100)}%`
+                              : "-"}
+                          </span>
+                        </div>
+                      )
+                    )}
                   </div>
                 </div>
               ))}
@@ -276,6 +415,18 @@ export default function OscarsPage() {
           </div>
         )}
       </div>
+
+      {/* Modal (Feature #6) */}
+      {modalCategory && (
+        <OscarsModal
+          isOpen={!!modalCategory}
+          onClose={() => setModalCategory(null)}
+          category={modalCategory}
+          images={images}
+          historyData={historyByCategory[modalCategory.key]}
+          llmPreview={data?.llm_previews?.[modalCategory.key]}
+        />
+      )}
     </div>
   );
 }
@@ -336,54 +487,147 @@ function Countdown({ targetDate }: { targetDate: string }) {
 }
 
 // ============================================================================
-// Best Picture Spotlight
+// Biggest Movers Strip (Feature #4)
+// ============================================================================
+
+function BiggestMoversStrip({
+  movers,
+  summary,
+}: {
+  movers: OscarsBiggestMover[];
+  summary?: string;
+}) {
+  return (
+    <section className="bg-surface-card rounded-xl border border-surface-border p-4">
+      <h3 className="text-body-strong text-text-primary mb-3 flex items-center gap-2">
+        <span>&#x1F4C8;</span> Biggest Movers (24h)
+      </h3>
+      <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
+        {movers.map((mover, idx) => {
+          const pctChange = Math.round(Math.abs(mover.movement_24h) * 100);
+          const isUp = mover.movement_24h > 0;
+          const isBig = Math.abs(mover.movement_24h) >= 0.05;
+          const icon = isUp
+            ? isBig
+              ? "\uD83D\uDD25"
+              : "\u2B06\uFE0F"
+            : isBig
+              ? "\u2744\uFE0F"
+              : "\u2B07\uFE0F";
+
+          return (
+            <div
+              key={idx}
+              className="flex-shrink-0 bg-surface-elevated rounded-lg px-3 py-2 min-w-[140px]"
+            >
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="text-sm">{icon}</span>
+                <span
+                  className={`text-sm font-mono font-bold ${
+                    isUp ? "text-green-500" : "text-red-400"
+                  }`}
+                >
+                  {isUp ? "+" : "-"}
+                  {pctChange}%
+                </span>
+              </div>
+              <div className="text-xs text-text-primary truncate font-medium">
+                {mover.name}
+              </div>
+              <div className="text-micro text-text-muted truncate">
+                {mover.category_name}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {summary && (
+        <p className="text-xs text-text-secondary italic mt-2">{summary}</p>
+      )}
+    </section>
+  );
+}
+
+// ============================================================================
+// Best Picture Spotlight (Feature #2 poster race, #9 trailer, #10 gold shimmer)
 // ============================================================================
 
 function BestPictureSection({
   category,
   images,
   trailers,
+  trailerKey,
+  onCategoryClick,
 }: {
   category: OscarsCategory;
   images: Record<string, NomineeImage>;
   trailers: Record<string, NomineeTrailer>;
+  trailerKey?: string;
+  onCategoryClick: () => void;
 }) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-4">
         <h2 className="text-title-2 text-[#D4AF37]">Best Picture</h2>
-        {category.market_ids[0] && (
-          <Link
-            href={`/futures/${category.market_ids[0]}`}
-            className="text-xs text-text-muted hover:text-text-secondary transition-colors ml-auto"
-          >
-            Full market &rarr;
-          </Link>
-        )}
+        <button
+          onClick={onCategoryClick}
+          className="text-xs text-text-muted hover:text-text-secondary transition-colors ml-auto"
+        >
+          Deep dive &rarr;
+        </button>
       </div>
 
-      {/* Poster row — horizontal scroll on mobile */}
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0 md:flex-wrap md:justify-center">
+      {/* Trailer embed (Feature #9) */}
+      {trailerKey && (
+        <div className="mb-4 rounded-xl overflow-hidden aspect-video max-w-xl mx-auto border border-[#D4AF37]/20">
+          <iframe
+            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=0&rel=0`}
+            className="w-full h-full"
+            allowFullScreen
+            title="Frontrunner trailer"
+          />
+        </div>
+      )}
+
+      {/* Poster race — pyramid on desktop, scroll on mobile (Feature #2) */}
+      <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0 md:flex-wrap md:justify-center md:items-end">
         {category.nominees.map((nominee) => {
           const cacheKey = `best_picture_${nominee.name}`;
           const img = images[cacheKey];
           const trailer = trailers[cacheKey];
           const pct = Math.round(nominee.probability * 100);
+          const isFrontrunner = nominee.rank === 1;
+          const isTop3 = nominee.rank <= 3;
+
+          // Pyramid sizing
+          const widthClass = isFrontrunner
+            ? "w-[160px] md:w-[180px]"
+            : isTop3
+              ? "w-[130px] md:w-[150px]"
+              : "w-[110px] md:w-[120px]";
 
           return (
             <div
               key={nominee.name}
-              className="flex-shrink-0 w-[120px] md:w-[140px] group"
+              className={`flex-shrink-0 ${widthClass} group ${
+                !isFrontrunner && !isTop3 ? "md:opacity-85" : ""
+              } ${isTop3 && !isFrontrunner ? "md:opacity-95" : ""}`}
             >
               {/* Poster */}
-              <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-surface-elevated border border-surface-border group-hover:border-[#D4AF37]/50 transition-colors">
+              <div
+                className={`relative aspect-[2/3] rounded-lg overflow-hidden bg-surface-elevated transition-colors ${
+                  isFrontrunner
+                    ? "border-2 border-[#D4AF37] shadow-lg shadow-[#D4AF37]/10"
+                    : "border border-surface-border group-hover:border-[#D4AF37]/50"
+                }`}
+              >
                 {img ? (
                   <Image
                     src={img.url}
                     alt={nominee.name}
                     fill
                     className="object-cover transition-opacity duration-500"
-                    sizes="140px"
+                    sizes="180px"
                     unoptimized
                   />
                 ) : (
@@ -392,10 +636,22 @@ function BestPictureSection({
                   </div>
                 )}
 
+                {/* Gold shimmer on frontrunner (Feature #10) */}
+                {isFrontrunner && (
+                  <div className="gold-shimmer absolute inset-0 pointer-events-none rounded-lg" />
+                )}
+
                 {/* Rank badge */}
                 {nominee.rank <= 3 && (
                   <div className="absolute top-1.5 left-1.5 bg-black/70 backdrop-blur-sm text-[#D4AF37] text-xs font-bold px-1.5 py-0.5 rounded">
                     #{nominee.rank}
+                  </div>
+                )}
+
+                {/* Winner badge (ceremony mode) */}
+                {nominee.is_winner && (
+                  <div className="absolute top-1.5 right-1.5 bg-green-600/90 text-white text-xs font-bold px-1.5 py-0.5 rounded">
+                    WINNER
                   </div>
                 )}
 
@@ -422,7 +678,7 @@ function BestPictureSection({
                   {nominee.name}
                 </div>
                 <MovementBadge movement={nominee.movement_24h} />
-                <SourceDots sources={nominee.sources} />
+                <SourceDisplay sources={nominee.sources} />
               </div>
             </div>
           );
@@ -433,156 +689,446 @@ function BestPictureSection({
 }
 
 // ============================================================================
-// Major Category Card
+// Major Category Card (Features #1, #3, #5, #10)
 // ============================================================================
 
 function MajorCategoryCard({
   category,
   images,
+  historyData,
+  llmPreview,
+  ceremonyStatus,
+  onClick,
 }: {
   category: OscarsCategory;
   images: Record<string, NomineeImage>;
+  historyData?: FuturesOutcomeHistory[];
+  llmPreview?: string;
+  ceremonyStatus: string;
+  onClick: () => void;
 }) {
   const emoji = CATEGORY_EMOJI[category.key] || "";
+  const top2 = category.nominees.slice(0, 2);
+  const isH2H =
+    top2.length === 2 &&
+    Math.abs(top2[0].probability - top2[1].probability) <= 0.1;
+
+  // Ceremony mode: check if this category has a winner
+  const winner = category.nominees.find((n) => n.is_winner);
+  const hasWinner = !!winner;
+  const frontrunnerPredicted = hasWinner && winner.rank === 1;
 
   return (
-    <Link href={`/futures/${category.market_ids[0]}`}>
-      <div className="bg-surface-card rounded-xl border border-surface-border border-l-4 border-l-[#D4AF37] p-4 hover:shadow-card-hover transition-shadow cursor-pointer h-full">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-lg">{emoji}</span>
-          <h3 className="text-body-strong text-text-primary">{category.name}</h3>
+    <div
+      onClick={onClick}
+      className={`bg-surface-card rounded-xl border border-l-4 p-4 hover:shadow-card-hover transition-shadow cursor-pointer h-full ${
+        hasWinner
+          ? "border-green-500/40 border-l-green-500"
+          : "border-surface-border border-l-[#D4AF37]"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-lg">{emoji}</span>
+        <h3 className="text-body-strong text-text-primary">{category.name}</h3>
+        {hasWinner && (
+          <span
+            className={`text-xs px-1.5 py-0.5 rounded font-medium ml-auto ${
+              frontrunnerPredicted
+                ? "bg-green-500/15 text-green-400"
+                : "bg-red-500/15 text-red-400"
+            }`}
+          >
+            {frontrunnerPredicted ? "Predicted" : "Upset!"}
+          </span>
+        )}
+        {!hasWinner && (
           <span className="text-xs text-text-muted ml-auto">
             #{category.ceremony_order}
           </span>
-        </div>
-
-        <div className="space-y-2.5">
-          {category.nominees.slice(0, 5).map((nominee) => {
-            const cacheKey = `${category.key}_${nominee.name}`;
-            const img = images[cacheKey];
-            const pct = Math.round(nominee.probability * 100);
-            const isLeader = nominee.rank === 1;
-
-            return (
-              <div key={nominee.name} className="flex items-center gap-3">
-                {/* Headshot / initial */}
-                <div className="w-8 h-8 rounded-full overflow-hidden bg-surface-elevated flex-shrink-0 flex items-center justify-center">
-                  {img ? (
-                    <Image
-                      src={img.url}
-                      alt={nominee.name}
-                      width={32}
-                      height={32}
-                      className="object-cover w-full h-full"
-                      unoptimized
-                    />
-                  ) : (
-                    <span className="text-xs text-text-muted font-bold">
-                      {nominee.name.charAt(0)}
-                    </span>
-                  )}
-                </div>
-
-                {/* Name + bar */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span
-                      className={`text-sm truncate ${
-                        isLeader
-                          ? "text-text-primary font-semibold"
-                          : "text-text-secondary"
-                      }`}
-                    >
-                      {nominee.name}
-                    </span>
-                    <span className="text-sm font-mono font-bold text-text-primary flex-shrink-0">
-                      {pct}%
-                    </span>
-                  </div>
-                  {/* Probability bar */}
-                  <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${Math.min(pct, 100)}%`,
-                        backgroundColor: isLeader ? "#D4AF37" : "#475569",
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <MovementBadge movement={nominee.movement_24h} />
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Source badges */}
-        {category.nominees[0] && (
-          <div className="mt-3 pt-2 border-t border-surface-border">
-            <SourceDots sources={category.nominees[0].sources} />
-          </div>
         )}
       </div>
-    </Link>
+
+      {/* LLM preview (Phase 7) */}
+      {llmPreview && (
+        <p className="text-xs text-text-secondary italic mb-2 line-clamp-2">
+          {llmPreview}
+        </p>
+      )}
+
+      {/* Head-to-Head when top 2 are within 10% (Feature #5) */}
+      {isH2H && !hasWinner && (
+        <HeadToHead
+          nominee1={top2[0]}
+          nominee2={top2[1]}
+          categoryKey={category.key}
+          images={images}
+        />
+      )}
+
+      {/* Nominee list */}
+      <div className="space-y-2.5">
+        {category.nominees.slice(0, 5).map((nominee) => {
+          const cacheKey = `${category.key}_${nominee.name}`;
+          const img = images[cacheKey];
+          const pct = Math.round(nominee.probability * 100);
+          const isLeader = nominee.rank === 1;
+          const isWinner = nominee.is_winner;
+
+          return (
+            <div
+              key={nominee.name}
+              className={`flex items-center gap-3 relative ${
+                isWinner ? "bg-green-500/5 rounded-lg px-1 -mx-1" : ""
+              }`}
+            >
+              {/* Gold shimmer on frontrunner (Feature #10) */}
+              {isLeader && !hasWinner && (
+                <div className="gold-shimmer absolute inset-0 pointer-events-none rounded-lg" />
+              )}
+
+              {/* Headshot / initial */}
+              <div className="w-8 h-8 rounded-full overflow-hidden bg-surface-elevated flex-shrink-0 flex items-center justify-center relative z-[1]">
+                {img ? (
+                  <Image
+                    src={img.url}
+                    alt={nominee.name}
+                    width={32}
+                    height={32}
+                    className="object-cover w-full h-full"
+                    unoptimized
+                  />
+                ) : (
+                  <span className="text-xs text-text-muted font-bold">
+                    {nominee.name.charAt(0)}
+                  </span>
+                )}
+              </div>
+
+              {/* Name + bar */}
+              <div className="flex-1 min-w-0 relative z-[1]">
+                <div className="flex items-center justify-between gap-2 mb-0.5">
+                  <span
+                    className={`text-sm truncate ${
+                      isLeader || isWinner
+                        ? "text-text-primary font-semibold"
+                        : "text-text-secondary"
+                    }`}
+                  >
+                    {nominee.name}
+                    {isWinner && (
+                      <span className="ml-1 text-green-500 text-xs">
+                        &#x2713;
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-sm font-mono font-bold text-text-primary flex-shrink-0">
+                    {pct}%
+                  </span>
+                </div>
+                <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(pct, 100)}%`,
+                      backgroundColor: isWinner
+                        ? "#22c55e"
+                        : isLeader
+                          ? "#D4AF37"
+                          : "#475569",
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="relative z-[1]">
+                <MovementBadge movement={nominee.movement_24h} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Source badges + disagreement callout (Feature #3) */}
+      {category.nominees[0] && (
+        <div className="mt-3 pt-2 border-t border-surface-border">
+          <SourceDisplay sources={category.nominees[0].sources} />
+        </div>
+      )}
+
+      {/* Inline trend chart (Feature #1) */}
+      {historyData && historyData.length > 0 && (
+        <div className="mt-3">
+          <FuturesChart historyData={historyData} mini goldTheme height={80} />
+        </div>
+      )}
+    </div>
   );
 }
 
 // ============================================================================
-// Craft Category Card (compact, all expanded)
+// Head-to-Head Matchup (Feature #5)
 // ============================================================================
 
-function CraftCategoryCard({ category }: { category: OscarsCategory }) {
-  const emoji = CATEGORY_EMOJI[category.key] || "";
+function HeadToHead({
+  nominee1,
+  nominee2,
+  categoryKey,
+  images,
+}: {
+  nominee1: OscarsNominee;
+  nominee2: OscarsNominee;
+  categoryKey: string;
+  images: Record<string, NomineeImage>;
+}) {
+  const img1 = images[`${categoryKey}_${nominee1.name}`];
+  const img2 = images[`${categoryKey}_${nominee2.name}`];
+  const pct1 = Math.round(nominee1.probability * 100);
+  const pct2 = Math.round(nominee2.probability * 100);
 
   return (
-    <Link href={`/futures/${category.market_ids[0]}`}>
-      <div className="bg-surface-card rounded-xl border border-surface-border p-3 hover:shadow-card-hover transition-shadow cursor-pointer h-full">
-        <div className="flex items-center gap-2 mb-2">
-          <span>{emoji}</span>
-          <h3 className="text-caption-strong text-text-primary">
-            {category.name}
-          </h3>
+    <div className="flex items-center gap-2 mb-3 bg-surface-elevated/50 rounded-lg p-2.5">
+      {/* Left side */}
+      <div className="flex-1 text-center">
+        <div className="w-10 h-10 rounded-full overflow-hidden bg-surface-elevated mx-auto mb-1 flex items-center justify-center">
+          {img1 ? (
+            <Image
+              src={img1.url}
+              alt={nominee1.name}
+              width={40}
+              height={40}
+              className="object-cover w-full h-full"
+              unoptimized
+            />
+          ) : (
+            <span className="text-sm font-bold text-text-muted">
+              {nominee1.name.charAt(0)}
+            </span>
+          )}
+        </div>
+        <div className="text-lg font-mono font-bold text-[#D4AF37]">
+          {pct1}%
+        </div>
+        <div className="text-xs text-text-secondary truncate">
+          {nominee1.name}
+        </div>
+      </div>
+
+      {/* VS divider */}
+      <div className="flex-shrink-0 text-xs font-bold text-[#D4AF37]/60 uppercase">
+        vs
+      </div>
+
+      {/* Right side */}
+      <div className="flex-1 text-center">
+        <div className="w-10 h-10 rounded-full overflow-hidden bg-surface-elevated mx-auto mb-1 flex items-center justify-center">
+          {img2 ? (
+            <Image
+              src={img2.url}
+              alt={nominee2.name}
+              width={40}
+              height={40}
+              className="object-cover w-full h-full"
+              unoptimized
+            />
+          ) : (
+            <span className="text-sm font-bold text-text-muted">
+              {nominee2.name.charAt(0)}
+            </span>
+          )}
+        </div>
+        <div className="text-lg font-mono font-bold text-text-primary">
+          {pct2}%
+        </div>
+        <div className="text-xs text-text-secondary truncate">
+          {nominee2.name}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Film-Centric Cross-Category View (Feature #7)
+// ============================================================================
+
+function FilmCentricSection({
+  films,
+  images,
+  isPost,
+}: {
+  films: OscarsFilmData[];
+  images: Record<string, NomineeImage>;
+  isPost: boolean;
+}) {
+  return (
+    <section>
+      <h2 className="text-title-2 text-text-primary mb-1">By Film</h2>
+      <p className="text-sm text-text-secondary mb-4">
+        How many Oscars could each film win?
+      </p>
+      <div className="space-y-3">
+        {films.slice(0, 10).map((film) => {
+          const posterKey = `best_picture_${film.film_name}`;
+          const img = images[posterKey];
+
+          return (
+            <div
+              key={film.film_name}
+              className="bg-surface-card rounded-xl border border-surface-border p-3 flex gap-3"
+            >
+              {/* Small poster */}
+              <div className="w-12 h-16 rounded overflow-hidden bg-surface-elevated flex-shrink-0">
+                {img ? (
+                  <Image
+                    src={img.url}
+                    alt={film.film_name}
+                    width={48}
+                    height={64}
+                    className="object-cover w-full h-full"
+                    unoptimized
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-text-muted text-lg">
+                    &#x1F3AC;
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <h3 className="text-sm font-semibold text-text-primary truncate">
+                    {film.film_name}
+                  </h3>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-sm font-mono font-bold text-[#D4AF37]">
+                      {film.expected_wins.toFixed(1)}
+                    </div>
+                    <div className="text-micro text-text-muted">
+                      {isPost ? "actual" : "expected"} wins
+                    </div>
+                  </div>
+                </div>
+
+                {/* Category chips */}
+                <div className="flex flex-wrap gap-1">
+                  {film.nominations.map((nom) => {
+                    const catEmoji = CATEGORY_EMOJI[nom.category_key] || "";
+                    const pct = Math.round(nom.probability * 100);
+                    const isLeader = nom.rank === 1;
+
+                    return (
+                      <span
+                        key={nom.category_key}
+                        className={`text-micro px-1.5 py-0.5 rounded ${
+                          isLeader
+                            ? "bg-[#D4AF37]/15 text-[#D4AF37]"
+                            : "bg-surface-elevated text-text-secondary"
+                        }`}
+                        title={nom.category_name}
+                      >
+                        {catEmoji} {pct}%
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <div className="text-micro text-text-muted mt-1">
+                  {film.total_nominations} nomination
+                  {film.total_nominations !== 1 ? "s" : ""}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// Craft Category Card (Feature #6 — modal trigger)
+// ============================================================================
+
+function CraftCategoryCard({
+  category,
+  ceremonyStatus,
+  onClick,
+}: {
+  category: OscarsCategory;
+  ceremonyStatus: string;
+  onClick: () => void;
+}) {
+  const emoji = CATEGORY_EMOJI[category.key] || "";
+  const winner = category.nominees.find((n) => n.is_winner);
+  const hasWinner = !!winner;
+
+  return (
+    <div
+      onClick={onClick}
+      className={`bg-surface-card rounded-xl border p-3 hover:shadow-card-hover transition-shadow cursor-pointer h-full ${
+        hasWinner
+          ? "border-green-500/30"
+          : "border-surface-border"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span>{emoji}</span>
+        <h3 className="text-caption-strong text-text-primary">
+          {category.name}
+        </h3>
+        {hasWinner ? (
+          <span className="text-micro text-green-400 ml-auto">&#x2713;</span>
+        ) : (
           <span className="text-micro text-text-muted ml-auto">
             #{category.ceremony_order}
           </span>
-        </div>
-
-        <div className="space-y-1.5">
-          {category.nominees.slice(0, 5).map((nominee) => {
-            const pct = Math.round(nominee.probability * 100);
-            const isLeader = nominee.rank === 1;
-
-            return (
-              <div key={nominee.name} className="flex items-center gap-2">
-                <span
-                  className={`text-xs truncate flex-1 ${
-                    isLeader ? "text-text-primary font-medium" : "text-text-secondary"
-                  }`}
-                >
-                  {nominee.name}
-                </span>
-
-                {/* Mini bar */}
-                <div className="w-16 h-1 bg-surface-elevated rounded-full overflow-hidden flex-shrink-0">
-                  <div
-                    className="h-full rounded-full"
-                    style={{
-                      width: `${Math.min(pct, 100)}%`,
-                      backgroundColor: isLeader ? "#D4AF37" : "#475569",
-                    }}
-                  />
-                </div>
-
-                <span className="text-xs font-mono font-bold text-text-primary w-8 text-right flex-shrink-0">
-                  {pct}%
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        )}
       </div>
-    </Link>
+
+      <div className="space-y-1.5">
+        {category.nominees.slice(0, 5).map((nominee) => {
+          const pct = Math.round(nominee.probability * 100);
+          const isLeader = nominee.rank === 1;
+          const isWinner = nominee.is_winner;
+
+          return (
+            <div key={nominee.name} className="flex items-center gap-2">
+              <span
+                className={`text-xs truncate flex-1 ${
+                  isLeader || isWinner
+                    ? "text-text-primary font-medium"
+                    : "text-text-secondary"
+                }`}
+              >
+                {nominee.name}
+                {isWinner && (
+                  <span className="ml-1 text-green-500">&#x2713;</span>
+                )}
+              </span>
+
+              {/* Mini bar */}
+              <div className="w-16 h-1 bg-surface-elevated rounded-full overflow-hidden flex-shrink-0">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.min(pct, 100)}%`,
+                    backgroundColor: isWinner
+                      ? "#22c55e"
+                      : isLeader
+                        ? "#D4AF37"
+                        : "#475569",
+                  }}
+                />
+              </div>
+
+              <span className="text-xs font-mono font-bold text-text-primary w-8 text-right flex-shrink-0">
+                {pct}%
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -595,6 +1141,14 @@ function MovementBadge({ movement }: { movement: number | null }) {
 
   const isUp = movement > 0;
   const pct = Math.abs(Math.round(movement * 100));
+  const isBig = Math.abs(movement) >= 0.05;
+  const icon = isUp
+    ? isBig
+      ? "\uD83D\uDD25"
+      : ""
+    : isBig
+      ? "\u2744\uFE0F"
+      : "";
 
   return (
     <span
@@ -602,15 +1156,34 @@ function MovementBadge({ movement }: { movement: number | null }) {
         isUp ? "text-green-500" : "text-red-400"
       }`}
     >
-      {isUp ? "+" : "-"}{pct}%
+      {icon}
+      {isUp ? "+" : "-"}
+      {pct}%
     </span>
   );
 }
 
-function SourceDots({ sources }: { sources: Record<string, number> }) {
+function SourceDisplay({ sources }: { sources: Record<string, number> }) {
   const sourceNames = Object.keys(sources);
   if (sourceNames.length === 0) return null;
 
+  // Source disagreement callout (Feature #3)
+  const pm = sources["polymarket"];
+  const kl = sources["kalshi"];
+  if (
+    pm !== undefined &&
+    kl !== undefined &&
+    Math.abs(pm - kl) > 0.05
+  ) {
+    return (
+      <span className="text-xs text-amber-400">
+        &#x26A0;&#xFE0F; Markets split: PM {Math.round(pm * 100)}% vs KL{" "}
+        {Math.round(kl * 100)}%
+      </span>
+    );
+  }
+
+  // Normal source dots
   return (
     <div className="flex items-center gap-1.5 mt-1">
       {sourceNames.map((src) => (
@@ -619,7 +1192,11 @@ function SourceDots({ sources }: { sources: Record<string, number> }) {
           className="text-micro-xs text-text-muted uppercase"
           title={`${src}: ${Math.round(sources[src] * 100)}%`}
         >
-          {src === "polymarket" ? "PM" : src === "kalshi" ? "KL" : src.toUpperCase().slice(0, 2)}
+          {src === "polymarket"
+            ? "PM"
+            : src === "kalshi"
+              ? "KL"
+              : src.toUpperCase().slice(0, 2)}
         </span>
       ))}
     </div>

@@ -1320,6 +1320,126 @@ Explanation:"""
         return None
 
 
+def generate_oscars_category_preview(
+    category_name: str,
+    nominees: list[dict],
+) -> Optional[str]:
+    """
+    Generate a 1-2 sentence casual preview of an Oscar race.
+
+    Args:
+        category_name: e.g. "Best Picture"
+        nominees: Top 5 nominees with keys: name, probability, movement_24h, opening_probability
+
+    Returns:
+        1-2 sentence preview string, or None if LLM unavailable.
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    if not nominees:
+        return None
+
+    # Build structured nominee data
+    lines = []
+    for n in nominees[:5]:
+        pct = round(n["probability"] * 100, 1) if n["probability"] else 0
+        parts = [f"{n['name']}: {pct}%"]
+        if n.get("movement_24h") and abs(n["movement_24h"]) >= 0.005:
+            direction = "+" if n["movement_24h"] > 0 else ""
+            parts.append(f"(24h: {direction}{round(n['movement_24h'] * 100, 1)}%)")
+        if n.get("opening_probability"):
+            parts.append(f"(opened at {round(n['opening_probability'] * 100, 1)}%)")
+        lines.append(" ".join(parts))
+
+    nominee_text = "\n".join(lines)
+
+    prompt = f"""Write a 1-2 sentence casual preview of this Oscar race for {category_name}.
+
+Nominees (with current odds):
+{nominee_text}
+
+Rules:
+- Mention specific names and percentages from the data above
+- Note if odds are shifting, if there's a clear frontrunner, or if it's tight
+- Be conversational but specific — no generic filler
+- Do NOT give betting advice
+- Start directly with the preview
+
+Preview:"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.2,
+        )
+        result = response.choices[0].message.content.strip()
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+        return result
+    except Exception as e:
+        logger.error(f"Oscars category preview error: {e}")
+        return None
+
+
+def generate_oscars_movers_summary(
+    movers: list[dict],
+) -> Optional[str]:
+    """
+    Generate a 1-sentence summary of the biggest Oscars odds movements.
+
+    Args:
+        movers: List of dicts with keys: name, category_name, movement_24h, probability
+
+    Returns:
+        1-sentence summary, or None if LLM unavailable.
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    if not movers:
+        return None
+
+    lines = []
+    for m in movers[:5]:
+        direction = "+" if m["movement_24h"] > 0 else ""
+        pct = round(m["movement_24h"] * 100, 1)
+        lines.append(f"{m['name']} ({m['category_name']}): {direction}{pct}%")
+
+    movers_text = "\n".join(lines)
+
+    prompt = f"""Write exactly 1 sentence summarizing today's biggest Oscars odds movements.
+
+Movers:
+{movers_text}
+
+Rules:
+- Be specific about names and numbers
+- Casual tone, no hedging
+- Start directly
+
+Summary:"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.2,
+        )
+        result = response.choices[0].message.content.strip()
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+        return result
+    except Exception as e:
+        logger.error(f"Oscars movers summary error: {e}")
+        return None
+
+
 def generate_related_futures_summary(
     home_team: str,
     away_team: str,
