@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_optional_user
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
-from app.models.models import User, UserFavorite, UserPreference, UserPin
+from app.models.models import User, UserFavorite, UserPreference, UserPin, Team
 from app.services import get_db
 from app.utils import (
     compute_highlight,
@@ -186,12 +186,30 @@ async def _load_personalization_context(
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
+    # Load roster player names from followed teams for player-futures matching
+    roster_player_names: set[str] = set()
+    followed_team_ids = [
+        tid for tid, rels in team_relations.items()
+        if "follow" in rels or "local" in rels or "alma_mater" in rels
+    ]
+    if followed_team_ids:
+        teams_result = await db.execute(
+            select(Team.roster_players).where(
+                Team.id.in_(followed_team_ids),
+                Team.roster_players.isnot(None),
+            )
+        )
+        for (roster,) in teams_result.all():
+            if isinstance(roster, list):
+                roster_player_names.update(name.lower() for name in roster if name)
+
     return PersonalizationContext(
         team_relations=team_relations,
         team_weights=team_weights,
         sport_affinities=sport_affinities,
         pinned_event_ids=pinned_event_ids,
         pinned_futures_ids=pinned_futures_ids,
+        roster_player_names=roster_player_names,
         is_authenticated=True,
     )
 
@@ -276,6 +294,8 @@ async def _score_events(
             opening_over_under=float(event.opening_over_under) if event.opening_over_under else None,
             opening_favorite=event.opening_favorite,
             now=now,
+            home_team_name=event.home_team_name,
+            away_team_name=event.away_team_name,
         )
 
         base_score = highlight_result.score
@@ -518,11 +538,14 @@ async def _score_futures(
 
         # Apply personalization multiplier
         outcome_team_ids = [o.team_id for o in market.outcomes if o.team_id is not None]
+        outcome_names = [o.name for o in market.outcomes if o.name]
         p_result = compute_futures_multiplier(
             ctx=ctx,
             sport_category=market.llm_sport_category,
             outcome_team_ids=outcome_team_ids,
             futures_market_id=market.id,
+            sport_key=market.sport.key if market.sport else None,
+            outcome_names=outcome_names,
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 

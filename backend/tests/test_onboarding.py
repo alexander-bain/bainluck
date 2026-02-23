@@ -110,16 +110,45 @@ class TestMetroAliasExpansion:
 class TestSportAffinityExpansion:
     """Tests for _expand_sport_affinities()."""
 
-    def test_basic_expansion(self):
-        """Football should expand to NFL and NCAAF."""
+    def test_legacy_football_expansion(self):
+        """Legacy 'football' key should still expand to NFL and NCAAF."""
         result = _expand_sport_affinities({"football": 1.0})
         assert "americanfootball_nfl" in result
         assert "americanfootball_ncaaf" in result
         assert result["americanfootball_nfl"] == 1.0
         assert result["americanfootball_ncaaf"] == 1.0
 
-    def test_basketball_expansion(self):
-        """Basketball should expand to NBA, NCAAB, WNCAAB."""
+    def test_split_nfl_expansion(self):
+        """New 'nfl' key should expand to just NFL."""
+        result = _expand_sport_affinities({"nfl": 1.0})
+        assert "americanfootball_nfl" in result
+        assert "americanfootball_ncaaf" not in result
+        assert result["americanfootball_nfl"] == 1.0
+
+    def test_split_college_football_expansion(self):
+        """New 'college_football' key should expand to just NCAAF."""
+        result = _expand_sport_affinities({"college_football": 0.3})
+        assert "americanfootball_ncaaf" in result
+        assert "americanfootball_nfl" not in result
+        assert result["americanfootball_ncaaf"] == 0.3
+
+    def test_split_nba_expansion(self):
+        """New 'nba' key should expand to just NBA."""
+        result = _expand_sport_affinities({"nba": 1.0})
+        assert "basketball_nba" in result
+        assert "basketball_ncaab" not in result
+        assert result["basketball_nba"] == 1.0
+
+    def test_split_college_basketball_expansion(self):
+        """New 'college_basketball' key should expand to NCAAB + WNCAAB."""
+        result = _expand_sport_affinities({"college_basketball": 0.3})
+        assert "basketball_ncaab" in result
+        assert "basketball_wncaab" in result
+        assert "basketball_nba" not in result
+        assert all(v == 0.3 for v in result.values())
+
+    def test_legacy_basketball_expansion(self):
+        """Legacy 'basketball' should expand to NBA, NCAAB, WNCAAB."""
         result = _expand_sport_affinities({"basketball": 0.3})
         assert "basketball_nba" in result
         assert "basketball_ncaab" in result
@@ -129,11 +158,12 @@ class TestSportAffinityExpansion:
     def test_multiple_sports(self):
         """Multiple sports should all expand correctly."""
         result = _expand_sport_affinities({
-            "football": 1.0,
+            "nfl": 1.0,
+            "college_football": 0.1,
             "hockey": 0.3,
         })
         assert result["americanfootball_nfl"] == 1.0
-        assert result["americanfootball_ncaaf"] == 1.0
+        assert result["americanfootball_ncaaf"] == 0.1
         assert result["icehockey_nhl"] == 0.3
 
     def test_unknown_sport_passthrough(self):
@@ -160,22 +190,23 @@ class TestSportAffinityExpansion:
 class TestSportAffinityCompression:
     """Tests for _compress_sport_affinities()."""
 
-    def test_basic_compression(self):
-        """Backend keys should compress to frontend categories."""
+    def test_basic_compression_split_keys(self):
+        """Backend keys should compress to split frontend categories (nfl, college_football)."""
         result = _compress_sport_affinities({
             "americanfootball_nfl": 1.0,
-            "americanfootball_ncaaf": 1.0,
+            "americanfootball_ncaaf": 0.3,
         })
-        assert result == {"football": 1.0}
+        assert result == {"nfl": 1.0, "college_football": 0.3}
 
-    def test_max_value_wins(self):
-        """When multiple keys map to same category, max value wins."""
+    def test_basketball_split_compression(self):
+        """Basketball backend keys compress to split nba/college_basketball."""
         result = _compress_sport_affinities({
             "basketball_nba": 1.0,
             "basketball_ncaab": 0.3,
             "basketball_wncaab": 0.1,
         })
-        assert result == {"basketball": 1.0}
+        # nba=1.0, college_basketball=max(0.3, 0.1)=0.3
+        assert result == {"nba": 1.0, "college_basketball": 0.3}
 
     def test_multiple_categories(self):
         """Multiple categories should compress independently."""
@@ -184,7 +215,7 @@ class TestSportAffinityCompression:
             "basketball_nba": 0.3,
             "icehockey_nhl": 0.1,
         })
-        assert result == {"football": 1.0, "basketball": 0.3, "hockey": 0.1}
+        assert result == {"nfl": 1.0, "nba": 0.3, "hockey": 0.1}
 
     def test_unknown_keys_skipped(self):
         """Unknown backend keys should be skipped in compression."""
@@ -192,19 +223,27 @@ class TestSportAffinityCompression:
             "americanfootball_nfl": 1.0,
             "unknown_sport_xyz": 0.5,
         })
-        assert result == {"football": 1.0}
+        assert result == {"nfl": 1.0}
         assert "unknown_sport_xyz" not in result
 
     def test_empty_input(self):
         """Empty input should return empty dict."""
         assert _compress_sport_affinities({}) == {}
 
-    def test_roundtrip(self):
-        """Expand then compress should return the original values."""
-        original = {"football": 1.0, "basketball": 0.3, "hockey": 0.1}
+    def test_roundtrip_split_keys(self):
+        """Expand then compress with split keys should roundtrip."""
+        original = {"nfl": 1.0, "college_football": 0.3, "hockey": 0.1}
         expanded = _expand_sport_affinities(original)
         compressed = _compress_sport_affinities(expanded)
         assert compressed == original
+
+    def test_legacy_roundtrip_produces_split_keys(self):
+        """Expand legacy 'football' then compress produces split keys."""
+        expanded = _expand_sport_affinities({"football": 1.0})
+        compressed = _compress_sport_affinities(expanded)
+        # Old "football" key expands to both NFL and NCAAF at 1.0,
+        # then compresses to split keys
+        assert compressed == {"nfl": 1.0, "college_football": 1.0}
 
 
 # =============================================================================
@@ -215,26 +254,34 @@ class TestSportAffinityCompression:
 class TestReverseMapping:
     """Tests for SPORT_KEY_TO_CATEGORY reverse mapping."""
 
-    def test_all_expansion_keys_mapped(self):
-        """Every key in SPORT_AFFINITY_MAPPING should have a reverse mapping."""
-        for category, keys in SPORT_AFFINITY_MAPPING.items():
-            for key in keys:
-                assert key in SPORT_KEY_TO_CATEGORY, (
-                    f"Missing reverse mapping for {key}"
-                )
-                assert SPORT_KEY_TO_CATEGORY[key] == category
+    def test_all_backend_keys_mapped(self):
+        """Every backend key used in SPORT_AFFINITY_MAPPING should have a reverse mapping."""
+        all_backend_keys = set()
+        for keys in SPORT_AFFINITY_MAPPING.values():
+            all_backend_keys.update(keys)
+        for key in all_backend_keys:
+            assert key in SPORT_KEY_TO_CATEGORY, (
+                f"Missing reverse mapping for {key}"
+            )
 
-    def test_nfl_maps_to_football(self):
-        assert SPORT_KEY_TO_CATEGORY["americanfootball_nfl"] == "football"
-
-    def test_nba_maps_to_basketball(self):
-        assert SPORT_KEY_TO_CATEGORY["basketball_nba"] == "basketball"
+    def test_split_keys_preferred(self):
+        """Split keys (nfl, college_football) should be preferred over legacy (football)."""
+        assert SPORT_KEY_TO_CATEGORY["americanfootball_nfl"] == "nfl"
+        assert SPORT_KEY_TO_CATEGORY["americanfootball_ncaaf"] == "college_football"
+        assert SPORT_KEY_TO_CATEGORY["basketball_nba"] == "nba"
+        assert SPORT_KEY_TO_CATEGORY["basketball_ncaab"] == "college_basketball"
+        assert SPORT_KEY_TO_CATEGORY["basketball_wncaab"] == "college_basketball"
 
     def test_nhl_maps_to_hockey(self):
         assert SPORT_KEY_TO_CATEGORY["icehockey_nhl"] == "hockey"
 
     def test_mlb_maps_to_baseball(self):
         assert SPORT_KEY_TO_CATEGORY["baseball_mlb"] == "baseball"
+
+    def test_non_sports_mapped(self):
+        """Non-sports categories should be mapped."""
+        assert SPORT_KEY_TO_CATEGORY["politics"] == "politics"
+        assert SPORT_KEY_TO_CATEGORY["entertainment"] == "entertainment"
 
 
 # =============================================================================

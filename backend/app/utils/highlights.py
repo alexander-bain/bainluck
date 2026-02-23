@@ -14,6 +14,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Literal
 import math
 
+from app.utils.league_classification import is_power_4_team
+
 
 # League tier definitions — the most important ranking signal for anonymous users.
 # Tier 1 = must-see (major US pro leagues, premier international soccer)
@@ -71,7 +73,9 @@ WEIGHTS = {
     "starting_soon_3h": 15,        # Starting in <3 hours
     "starting_soon_1h": 10,        # Starting in <1 hour (bonus)
     "tier_1_league": 20,           # Major league bonus (substantial — keeps big leagues on top)
-    "tier_2_league": 10,           # College/secondary league bonus
+    "tier_2_league": 10,           # College/secondary league bonus (Power 4 matchups)
+    "tier_2_power4_mixed": 5,      # Power 4 vs mid-major college
+    "tier_2_midmajor": 2,          # Mid-major vs mid-major college
     "tier_3_league": 0,            # Niche — no bonus, no penalty
     "tier_4_penalty": -15,         # Minor league penalty (pushes minor leagues down in feed)
     "recent_finish_upset": 20,     # Recently finished + upset
@@ -221,6 +225,9 @@ def compute_highlight(
     now: Optional[datetime] = None,
     # Level 2: Time-series metrics (optional — gracefully degrades to Level 1)
     time_series: Optional[TimeSeriesMetrics] = None,
+    # Team names for Power 4 scoring (optional)
+    home_team_name: Optional[str] = None,
+    away_team_name: Optional[str] = None,
 ) -> HighlightResult:
     """
     Compute highlight score and flags for an event.
@@ -282,8 +289,26 @@ def compute_highlight(
         result.score += WEIGHTS["tier_1_league"]
         result.reasons.append("tier_1")
     elif flags.league_tier == 2:
-        result.score += WEIGHTS["tier_2_league"]
-        result.reasons.append("tier_2")
+        # For college sports, differentiate Power 4 vs mid-major
+        is_college = sport_key and sport_key in (
+            "americanfootball_ncaaf", "basketball_ncaab", "basketball_wncaab",
+        )
+        if is_college and home_team_name and away_team_name:
+            home_p4 = is_power_4_team(home_team_name)
+            away_p4 = is_power_4_team(away_team_name)
+            if home_p4 and away_p4:
+                result.score += WEIGHTS["tier_2_league"]
+                result.reasons.append("tier_2")
+            elif home_p4 or away_p4:
+                result.score += WEIGHTS["tier_2_power4_mixed"]
+                result.reasons.append("tier_2_p4_mixed")
+            else:
+                result.score += WEIGHTS["tier_2_midmajor"]
+                result.reasons.append("tier_2_midmajor")
+        else:
+            # Non-college tier 2 (WNBA, MLS, MMA, etc.) or no team names
+            result.score += WEIGHTS["tier_2_league"]
+            result.reasons.append("tier_2")
     elif flags.league_tier == 3:
         result.score += WEIGHTS["tier_3_league"]
         result.reasons.append("tier_3")

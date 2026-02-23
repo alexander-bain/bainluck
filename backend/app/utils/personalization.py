@@ -20,12 +20,16 @@ Multiplier sources (applied additively, then clamped):
   + alma_mater:    up to +0.3  (user's college team)
   + sport_affinity: -0.3 to +0.5  (based on sport_affinities dict)
   + pinned_item:   +0.3  (user explicitly pinned this)
+  + minor_pro:     -0.2  (minor league with no team/sport affinity match)
+  + roster_player: +0.4  (futures about a player on a followed team's roster)
   = clamped to [0.3, 3.0]
 """
 
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
+
+from app.utils.league_classification import get_league_class
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,8 @@ ALMA_MATER_BONUS = 0.3   # User's college/university team
 RIVAL_LOSING_BONUS = 0.5 # Rival is currently losing (schadenfreude)
 RIVAL_PLAYING_BONUS = 0.2  # Rival is playing (interest even if not losing)
 PINNED_BONUS = 0.3        # User has this item pinned
+MINOR_PRO_PENALTY = -0.2  # Minor league with no team/sport affinity match
+ROSTER_PLAYER_BONUS = 0.4 # Futures about a player on a followed team's roster
 
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
@@ -67,6 +73,8 @@ class PersonalizationContext:
     pinned_event_ids: set[int] = field(default_factory=set)
     # Set of pinned futures market IDs
     pinned_futures_ids: set[int] = field(default_factory=set)
+    # Set of player names from followed teams' rosters (lowercased)
+    roster_player_names: set[str] = field(default_factory=set)
     # Whether this is a real user context (vs anonymous)
     is_authenticated: bool = False
 
@@ -155,6 +163,15 @@ def compute_event_multiplier(
                 bonus += LOW_AFFINITY_PENALTY
                 reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
 
+    # --- Minor pro league suppression ---
+    # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
+    # the user has no team or sport affinity match, suppress it.
+    if sport_key and not reasons:
+        league_class = get_league_class(sport_key)
+        if league_class == "pro_minor":
+            bonus += MINOR_PRO_PENALTY
+            reasons.append(f"minor_pro:{MINOR_PRO_PENALTY:.2f}")
+
     # --- Pinned item bonus ---
     if event_id and event_id in ctx.pinned_event_ids:
         bonus += PINNED_BONUS
@@ -175,19 +192,24 @@ def compute_futures_multiplier(
     sport_category: Optional[str],
     outcome_team_ids: list[int],
     futures_market_id: Optional[int] = None,
+    sport_key: Optional[str] = None,
+    outcome_names: Optional[list[str]] = None,
 ) -> PersonalizationResult:
     """Compute personalization multiplier for a futures market.
 
     Futures personalization is simpler than events:
     - Check if any outcome team is a user favorite
-    - Check sport affinity
+    - Check sport affinity (direct sport_key lookup preferred over category substring)
     - Check if pinned
+    - Check if outcome names match roster player names
 
     Args:
         ctx: Pre-loaded user context
         sport_category: LLM sport category (e.g., "basketball")
         outcome_team_ids: List of team_ids from FuturesOutcome records
         futures_market_id: Market ID for pin checking
+        sport_key: Full sport key (e.g., "basketball_nba") for direct affinity lookup
+        outcome_names: List of outcome names for roster player matching
 
     Returns:
         PersonalizationResult with multiplier and explanation reasons
@@ -221,10 +243,30 @@ def compute_futures_multiplier(
             bonus += ALMA_MATER_BONUS * weight
             reasons.append(f"alma_mater_futures:{ALMA_MATER_BONUS * weight:.2f}")
 
-    # --- Sport affinity (use category → sport_key mapping) ---
-    if sport_category and ctx.sport_affinities:
-        # Try matching sport_category against known sport_key prefixes
-        matched_affinity = _match_sport_affinity(sport_category, ctx.sport_affinities)
+    # --- Roster player matching ---
+    # Check if any outcome name contains a player from the user's followed teams
+    if ctx.roster_player_names and outcome_names:
+        for outcome_name in outcome_names:
+            if not outcome_name:
+                continue
+            name_lower = outcome_name.lower()
+            if any(player in name_lower for player in ctx.roster_player_names):
+                bonus += ROSTER_PLAYER_BONUS
+                reasons.append(f"roster_player:{ROSTER_PLAYER_BONUS:.2f}")
+                break  # One match is enough
+
+    # --- Sport affinity ---
+    # Prefer direct sport_key lookup over category substring matching.
+    # With split affinities (nfl vs college_football), a direct lookup on
+    # "americanfootball_nfl" correctly returns the NFL affinity, not the
+    # max of NFL + college football from substring matching on "football".
+    if ctx.sport_affinities:
+        matched_affinity = None
+        if sport_key:
+            matched_affinity = ctx.sport_affinities.get(sport_key)
+        if matched_affinity is None and sport_category:
+            matched_affinity = _match_sport_affinity(sport_category, ctx.sport_affinities)
+
         if matched_affinity is not None:
             if matched_affinity >= HIGH_AFFINITY_THRESHOLD:
                 bonus += HIGH_AFFINITY_BONUS

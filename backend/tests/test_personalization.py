@@ -13,6 +13,8 @@ from app.utils.personalization import (
     RIVAL_LOSING_BONUS,
     RIVAL_PLAYING_BONUS,
     PINNED_BONUS,
+    MINOR_PRO_PENALTY,
+    ROSTER_PLAYER_BONUS,
     HIGH_AFFINITY_BONUS,
     LOW_AFFINITY_PENALTY,
     MIN_MULTIPLIER,
@@ -35,6 +37,7 @@ def _basic_ctx(
     sport_affinities=None,
     pinned_event_ids=None,
     pinned_futures_ids=None,
+    roster_player_names=None,
 ) -> PersonalizationContext:
     """Authenticated context with optional overrides."""
     return PersonalizationContext(
@@ -43,6 +46,7 @@ def _basic_ctx(
         sport_affinities=sport_affinities or {},
         pinned_event_ids=pinned_event_ids or set(),
         pinned_futures_ids=pinned_futures_ids or set(),
+        roster_player_names=roster_player_names or set(),
         is_authenticated=True,
     )
 
@@ -440,3 +444,241 @@ class TestCombinedStacking:
         result = compute_event_multiplier(ctx, home_team_id=10, away_team_id=20, sport_key="basketball_nba")
         assert result.multiplier == 1.0
         assert not result.is_personalized
+
+
+# ============================================================================
+# Minor pro league suppression tests
+# ============================================================================
+
+class TestMinorProSuppression:
+    """Test minor pro league suppression for events."""
+
+    def test_minor_pro_no_affinity_suppressed(self):
+        """Minor pro league with no team/sport match gets penalty."""
+        ctx = _basic_ctx(sport_affinities={"basketball_nba": 1.0})
+        result = compute_event_multiplier(
+            ctx, home_team_id=10, away_team_id=20,
+            sport_key="americanfootball_xfl",
+        )
+        assert result.multiplier == pytest.approx(1.0 + MINOR_PRO_PENALTY)
+        assert any("minor_pro" in r for r in result.reasons)
+
+    def test_minor_pro_with_team_follow_not_suppressed(self):
+        """Minor pro league with a followed team gets NO penalty."""
+        ctx = _basic_ctx(
+            team_relations={10: {"follow"}},
+            team_weights={10: 1.0},
+        )
+        result = compute_event_multiplier(
+            ctx, home_team_id=10, away_team_id=20,
+            sport_key="americanfootball_cfl",
+        )
+        # Follow bonus applied, no minor pro penalty
+        assert result.multiplier == pytest.approx(1.0 + FOLLOW_BONUS)
+        assert not any("minor_pro" in r for r in result.reasons)
+
+    def test_minor_pro_with_sport_affinity_not_suppressed(self):
+        """Minor pro league with sport affinity gets NO penalty."""
+        ctx = _basic_ctx(sport_affinities={"americanfootball_xfl": 0.8})
+        result = compute_event_multiplier(
+            ctx, home_team_id=10, away_team_id=20,
+            sport_key="americanfootball_xfl",
+        )
+        # Sport boost applied, no minor pro penalty
+        assert result.multiplier == pytest.approx(1.0 + HIGH_AFFINITY_BONUS)
+        assert not any("minor_pro" in r for r in result.reasons)
+
+    def test_non_minor_pro_no_suppression(self):
+        """Major pro leagues don't get minor pro penalty."""
+        ctx = _basic_ctx()
+        result = compute_event_multiplier(
+            ctx, home_team_id=10, away_team_id=20,
+            sport_key="americanfootball_nfl",
+        )
+        assert result.multiplier == 1.0
+        assert not any("minor_pro" in r for r in result.reasons)
+
+    def test_college_league_no_suppression(self):
+        """College leagues don't get minor pro penalty."""
+        ctx = _basic_ctx()
+        result = compute_event_multiplier(
+            ctx, home_team_id=10, away_team_id=20,
+            sport_key="basketball_ncaab",
+        )
+        assert result.multiplier == 1.0
+        assert not any("minor_pro" in r for r in result.reasons)
+
+    def test_minor_pro_cfl(self):
+        """CFL gets suppressed when no match."""
+        ctx = _basic_ctx()
+        result = compute_event_multiplier(
+            ctx, home_team_id=10, away_team_id=20,
+            sport_key="americanfootball_cfl",
+        )
+        assert result.multiplier == pytest.approx(1.0 + MINOR_PRO_PENALTY)
+
+    def test_minor_pro_ahl(self):
+        """AHL gets suppressed when no match."""
+        ctx = _basic_ctx()
+        result = compute_event_multiplier(
+            ctx, home_team_id=10, away_team_id=20,
+            sport_key="icehockey_ahl",
+        )
+        assert result.multiplier == pytest.approx(1.0 + MINOR_PRO_PENALTY)
+
+
+# ============================================================================
+# Roster player matching tests (futures)
+# ============================================================================
+
+class TestRosterPlayerMatching:
+    """Test roster player matching for futures personalization."""
+
+    def test_roster_player_match_boosts(self):
+        """Futures about a player on a followed team's roster gets bonus."""
+        ctx = _basic_ctx(roster_player_names={"stefon diggs", "jalen hurts"})
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            outcome_names=["Will Stefon Diggs be suspended?"],
+        )
+        assert result.multiplier == pytest.approx(1.0 + ROSTER_PLAYER_BONUS)
+        assert any("roster_player" in r for r in result.reasons)
+
+    def test_roster_player_case_insensitive(self):
+        """Roster matching is case-insensitive."""
+        ctx = _basic_ctx(roster_player_names={"patrick mahomes"})
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            outcome_names=["Patrick Mahomes MVP"],
+        )
+        assert any("roster_player" in r for r in result.reasons)
+
+    def test_roster_player_no_match(self):
+        """No roster match = no bonus."""
+        ctx = _basic_ctx(roster_player_names={"stefon diggs"})
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            outcome_names=["Tom Brady retirement odds"],
+        )
+        assert not any("roster_player" in r for r in result.reasons)
+
+    def test_roster_player_stacks_with_team(self):
+        """Roster player bonus stacks with team follow bonus."""
+        ctx = _basic_ctx(
+            team_relations={10: {"follow"}},
+            team_weights={10: 1.0},
+            roster_player_names={"stefon diggs"},
+        )
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[10],
+            outcome_names=["Will Stefon Diggs be suspended?"],
+        )
+        expected = 1.0 + FOLLOW_BONUS + ROSTER_PLAYER_BONUS
+        assert result.multiplier == pytest.approx(expected)
+
+    def test_roster_player_empty_names(self):
+        """Empty outcome_names = no crash, no bonus."""
+        ctx = _basic_ctx(roster_player_names={"stefon diggs"})
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            outcome_names=[],
+        )
+        assert not any("roster_player" in r for r in result.reasons)
+
+    def test_roster_player_none_names(self):
+        """None outcome_names = no crash, no bonus."""
+        ctx = _basic_ctx(roster_player_names={"stefon diggs"})
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            outcome_names=None,
+        )
+        assert not any("roster_player" in r for r in result.reasons)
+
+    def test_roster_player_no_roster_data(self):
+        """No roster_player_names in context = no bonus."""
+        ctx = _basic_ctx()
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            outcome_names=["Stefon Diggs MVP"],
+        )
+        assert not any("roster_player" in r for r in result.reasons)
+
+    def test_roster_player_only_first_match(self):
+        """Multiple outcomes matching roster = only one bonus."""
+        ctx = _basic_ctx(roster_player_names={"stefon diggs", "jalen hurts"})
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            outcome_names=["Stefon Diggs suspension", "Jalen Hurts MVP"],
+        )
+        # Should only get one ROSTER_PLAYER_BONUS, not two
+        assert result.multiplier == pytest.approx(1.0 + ROSTER_PLAYER_BONUS)
+
+
+# ============================================================================
+# Direct sport_key lookup for futures tests
+# ============================================================================
+
+class TestFuturesSportKeyLookup:
+    """Test that futures prefers direct sport_key lookup over category substring."""
+
+    def test_direct_sport_key_used(self):
+        """When sport_key is provided, use direct lookup."""
+        ctx = _basic_ctx(sport_affinities={
+            "americanfootball_nfl": 1.0,
+            "americanfootball_ncaaf": 0.0,
+        })
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            sport_key="americanfootball_nfl",
+        )
+        # Direct lookup → 1.0 → HIGH_AFFINITY_BONUS
+        assert result.multiplier == pytest.approx(1.0 + HIGH_AFFINITY_BONUS)
+
+    def test_direct_sport_key_suppresses_college(self):
+        """College football market with low college affinity gets suppressed."""
+        ctx = _basic_ctx(sport_affinities={
+            "americanfootball_nfl": 1.0,
+            "americanfootball_ncaaf": 0.05,
+        })
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            sport_key="americanfootball_ncaaf",
+        )
+        # Direct lookup → 0.05 → LOW_AFFINITY_PENALTY
+        assert result.multiplier == pytest.approx(1.0 + LOW_AFFINITY_PENALTY)
+
+    def test_falls_back_to_category_when_no_sport_key(self):
+        """Without sport_key, falls back to category substring matching."""
+        ctx = _basic_ctx(sport_affinities={
+            "americanfootball_nfl": 1.0,
+            "americanfootball_ncaaf": 0.05,
+        })
+        result = compute_futures_multiplier(
+            ctx, sport_category="football",
+            outcome_team_ids=[],
+            sport_key=None,
+        )
+        # Category "football" substring matches both — takes max = 1.0
+        assert result.multiplier == pytest.approx(1.0 + HIGH_AFFINITY_BONUS)
+
+    def test_direct_lookup_with_unknown_key(self):
+        """Unknown sport_key falls back to category matching."""
+        ctx = _basic_ctx(sport_affinities={"basketball_nba": 0.8})
+        result = compute_futures_multiplier(
+            ctx, sport_category="basketball",
+            outcome_team_ids=[],
+            sport_key="basketball_obscure_league",
+        )
+        # sport_key "basketball_obscure_league" not in affinities
+        # Falls back to category "basketball" → matches "basketball_nba" → 0.8
+        assert result.multiplier == pytest.approx(1.0 + HIGH_AFFINITY_BONUS)

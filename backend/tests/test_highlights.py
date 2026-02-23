@@ -366,6 +366,67 @@ class TestComputeHighlightLeagueTiers:
         assert result.flags.league_tier == 2
         assert "tier_2" in result.reasons
 
+    def test_tier_2_college_power4_both(self, live_commence, now):
+        """Both Power 4 teams → full tier_2 bonus (+10)."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_ncaab",
+            home_team_name="Duke Blue Devils",
+            away_team_name="North Carolina Tar Heels",
+            now=now,
+        )
+        assert "tier_2" in result.reasons
+        assert result.score >= WEIGHTS["live"] + WEIGHTS["tier_2_league"]
+
+    def test_tier_2_college_power4_mixed(self, live_commence, now):
+        """One Power 4 + one mid-major → reduced tier_2 (+5)."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_ncaab",
+            home_team_name="Duke Blue Devils",
+            away_team_name="Gonzaga Bulldogs",
+            now=now,
+        )
+        assert "tier_2_p4_mixed" in result.reasons
+        assert result.score >= WEIGHTS["live"] + WEIGHTS["tier_2_power4_mixed"]
+
+    def test_tier_2_college_midmajor_both(self, live_commence, now):
+        """Both mid-major → minimal tier_2 bonus (+2)."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_ncaab",
+            home_team_name="Gonzaga Bulldogs",
+            away_team_name="Boise State Broncos",
+            now=now,
+        )
+        assert "tier_2_midmajor" in result.reasons
+        assert result.score >= WEIGHTS["live"] + WEIGHTS["tier_2_midmajor"]
+
+    def test_tier_2_college_no_team_names_full_bonus(self, live_commence, now):
+        """College game without team names → default full tier_2 bonus."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="americanfootball_ncaaf",
+            now=now,
+        )
+        assert "tier_2" in result.reasons
+        assert result.score >= WEIGHTS["live"] + WEIGHTS["tier_2_league"]
+
+    def test_tier_2_non_college_full_bonus(self, live_commence, now):
+        """Non-college tier 2 (e.g., WNBA) → always full tier_2 bonus."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_wnba",
+            now=now,
+        )
+        assert "tier_2" in result.reasons
+        assert result.score >= WEIGHTS["live"] + WEIGHTS["tier_2_league"]
+
     def test_tier_3_no_bonus(self, live_commence, now):
         result = compute_highlight(
             status="live",

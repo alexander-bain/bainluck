@@ -22,9 +22,11 @@ import type { TeamSearchResult, UserFavoriteItem, FuturesMarketDetailResponse } 
 
 // All categories (sports + beyond)
 const ALL_CATEGORIES: { key: string; label: string; emoji: string }[] = [
-  // Sports
-  { key: "football", label: "Football", emoji: "🏈" },
-  { key: "basketball", label: "Basketball", emoji: "🏀" },
+  // Sports — split pro vs college for football + basketball
+  { key: "nfl", label: "NFL", emoji: "🏈" },
+  { key: "college_football", label: "College Football", emoji: "🏈" },
+  { key: "nba", label: "NBA", emoji: "🏀" },
+  { key: "college_basketball", label: "College Basketball", emoji: "🏀" },
   { key: "baseball", label: "Baseball", emoji: "⚾" },
   { key: "hockey", label: "Hockey", emoji: "🏒" },
   { key: "soccer", label: "Soccer", emoji: "⚽" },

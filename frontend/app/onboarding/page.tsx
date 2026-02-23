@@ -34,10 +34,14 @@ const BEYOND_SPORTS_KEYS = new Set([
   "geopolitics", "culture",
 ]);
 
+// Parent keys that are split into pro/college sub-categories
+const SPLIT_PARENT_KEYS = new Set(["football", "basketball"]);
+
 // Sports to show in the grid — tier 1 + tier 2 from sportCategories.ts,
-// excluding non-sports categories (those go in Beyond Sports section below).
+// excluding non-sports categories (those go in Beyond Sports section below)
+// and parent keys that have been split (football, basketball).
 const ONBOARDING_SPORTS = SPORT_CATEGORIES.filter(
-  (s) => (s.tier === 1 || s.tier === 2) && !BEYOND_SPORTS_KEYS.has(s.key)
+  (s) => (s.tier === 1 || s.tier === 2) && !BEYOND_SPORTS_KEYS.has(s.key) && !SPLIT_PARENT_KEYS.has(s.key)
 );
 const ONBOARDING_BEYOND_SPORTS = SPORT_CATEGORIES.filter(
   (s) => BEYOND_SPORTS_KEYS.has(s.key)
@@ -52,10 +56,12 @@ function sportLabel(sportKey: string | null): string | null {
   return getLeagueDisplay(sportKey);
 }
 
-// Default affinities — Big 3 US sports default to "Love it"
+// Default affinities — Big US sports default to "Love it"
 const DEFAULT_AFFINITIES: Record<string, SportLevel> = {};
 for (const sport of ONBOARDING_SPORTS) {
-  if (["football", "basketball", "baseball"].includes(sport.key)) {
+  if (["nfl", "nba", "baseball"].includes(sport.key)) {
+    DEFAULT_AFFINITIES[sport.key] = 1.0;
+  } else if (["college_football", "college_basketball"].includes(sport.key)) {
     DEFAULT_AFFINITIES[sport.key] = 1.0;
   } else {
     DEFAULT_AFFINITIES[sport.key] = 0;
@@ -939,6 +945,14 @@ function StepSports({
   affinities: Record<string, SportLevel>;
   onChange: (key: string, value: SportLevel) => void;
 }) {
+  // Group split sub-categories under visual headers
+  const SPLIT_GROUPS: Record<string, { emoji: string; label: string; keys: string[] }> = {
+    "nfl": { emoji: "🏈", label: "Football", keys: ["nfl", "college_football"] },
+    "nba": { emoji: "🏀", label: "Basketball", keys: ["nba", "college_basketball"] },
+  };
+  const splitChildKeys = new Set(Object.values(SPLIT_GROUPS).flatMap(g => g.keys));
+  const seenGroups = new Set<string>();
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-text-primary mb-2">
@@ -950,6 +964,59 @@ function StepSports({
 
       <div className="space-y-3">
         {ONBOARDING_SPORTS.map((sport) => {
+          // If this is a split sub-category, render as part of a group
+          const groupKey = Object.keys(SPLIT_GROUPS).find(k =>
+            SPLIT_GROUPS[k].keys.includes(sport.key)
+          );
+
+          if (groupKey && !seenGroups.has(groupKey)) {
+            seenGroups.add(groupKey);
+            const group = SPLIT_GROUPS[groupKey];
+            return (
+              <div key={`group-${groupKey}`} className="space-y-1.5">
+                <div className="flex items-center gap-2 pl-1 pt-1">
+                  <span className="text-lg">{group.emoji}</span>
+                  <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                    {group.label}
+                  </span>
+                </div>
+                {group.keys.map((subKey) => {
+                  const subSport = ONBOARDING_SPORTS.find(s => s.key === subKey);
+                  if (!subSport) return null;
+                  const currentLevel = affinities[subSport.key] ?? 0;
+                  return (
+                    <div
+                      key={subSport.key}
+                      className="flex items-center justify-between bg-surface-card border border-surface-border rounded-xl px-4 py-3 ml-4"
+                    >
+                      <span className="text-sm font-medium text-text-primary">{subSport.name}</span>
+                      <div className="flex gap-1">
+                        {SPORT_LEVELS.map((level) => (
+                          <button
+                            key={level.value}
+                            onClick={() => onChange(subSport.key, level.value)}
+                            title={level.description}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                              currentLevel === level.value
+                                ? "bg-text-primary text-surface-deep"
+                                : "bg-surface-elevated text-text-secondary hover:bg-surface-elevated"
+                            }`}
+                          >
+                            {level.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          }
+
+          // Skip if already rendered as part of a group
+          if (groupKey && seenGroups.has(groupKey)) return null;
+
+          // Regular (non-split) sport row
           const currentLevel = affinities[sport.key] ?? 0;
           return (
             <div

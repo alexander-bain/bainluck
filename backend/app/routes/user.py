@@ -94,7 +94,12 @@ def _expand_location_query(query: str) -> list[str]:
 # For non-sports categories, these map to llm_sport_category / category_tag values
 # used by prediction markets (Polymarket, Kalshi).
 SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
-    # --- Sports ---
+    # --- Sports (split pro vs college for football + basketball) ---
+    "nfl": ["americanfootball_nfl"],
+    "college_football": ["americanfootball_ncaaf"],
+    "nba": ["basketball_nba"],
+    "college_basketball": ["basketball_ncaab", "basketball_wncaab"],
+    # Legacy keys — still accepted on input, map to the split keys' backend values
     "football": ["americanfootball_nfl", "americanfootball_ncaaf"],
     "basketball": ["basketball_nba", "basketball_ncaab", "basketball_wncaab"],
     "baseball": ["baseball_mlb"],
@@ -122,11 +127,19 @@ SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
     "culture": ["culture"],
 }
 
-# Reverse mapping for display: backend key → friendly category
+# Reverse mapping for display: backend key → friendly category.
+# Prefer split keys (nfl, college_football, etc.) over legacy keys (football, basketball).
 SPORT_KEY_TO_CATEGORY: dict[str, str] = {}
+# Legacy keys first (will be overwritten by split keys below)
+_LEGACY_AFFINITY_KEYS = {"football", "basketball"}
 for category, keys in SPORT_AFFINITY_MAPPING.items():
-    for key in keys:
-        SPORT_KEY_TO_CATEGORY[key] = category
+    if category in _LEGACY_AFFINITY_KEYS:
+        for key in keys:
+            if key not in SPORT_KEY_TO_CATEGORY:
+                SPORT_KEY_TO_CATEGORY[key] = category
+    else:
+        for key in keys:
+            SPORT_KEY_TO_CATEGORY[key] = category
 
 
 def _expand_sport_affinities(frontend_affinities: dict[str, float]) -> dict[str, float]:
@@ -152,8 +165,11 @@ def _compress_sport_affinities(backend_affinities: dict[str, float]) -> dict[str
     """Compress backend sport_key affinities back to user-friendly keys.
 
     Takes the max weight for each category.
-    Input: {"americanfootball_nfl": 1.0, "americanfootball_ncaaf": 1.0}
-    Output: {"football": 1.0}
+    Input: {"americanfootball_nfl": 1.0, "americanfootball_ncaaf": 0.3}
+    Output: {"nfl": 1.0, "college_football": 0.3}
+
+    Uses SPORT_KEY_TO_CATEGORY which prefers split keys (nfl, college_football,
+    nba, college_basketball) over legacy keys (football, basketball).
     """
     compressed: dict[str, float] = {}
     for backend_key, weight in backend_affinities.items():

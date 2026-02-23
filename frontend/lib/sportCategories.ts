@@ -34,12 +34,41 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["americanfootball_"],
     tier: 1,
   },
+  // Affinity-only sub-categories for pro vs college split
+  {
+    key: "nfl",
+    name: "NFL",
+    emoji: "🏈",
+    prefixes: [],  // Not used for prefix matching — affinity display only
+    tier: 1,
+  },
+  {
+    key: "college_football",
+    name: "College Football",
+    emoji: "🏈",
+    prefixes: [],
+    tier: 2,
+  },
   {
     key: "basketball",
     name: "Basketball",
     emoji: "🏀",
     prefixes: ["basketball_"],
     tier: 1,
+  },
+  {
+    key: "nba",
+    name: "NBA",
+    emoji: "🏀",
+    prefixes: [],
+    tier: 1,
+  },
+  {
+    key: "college_basketball",
+    name: "College Basketball",
+    emoji: "🏀",
+    prefixes: [],
+    tier: 2,
   },
   {
     key: "baseball",
