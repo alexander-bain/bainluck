@@ -443,6 +443,29 @@ class TestParseEvent:
         assert event.clock == "0:00"
         assert event.period == 4
 
+    def test_season_type_postseason(self, client):
+        """Parse season.type=3 (postseason) from ESPN event data."""
+        event_data = {**LIVE_EVENT, "season": {"type": 3, "year": 2026}}
+        event = client._parse_event(event_data)
+        assert event.season_type == 3
+
+    def test_season_type_regular(self, client):
+        """Parse season.type=2 (regular season) from ESPN event data."""
+        event_data = {**SCHEDULED_EVENT, "season": {"type": 2, "year": 2026}}
+        event = client._parse_event(event_data)
+        assert event.season_type == 2
+
+    def test_season_type_missing(self, client):
+        """season_type defaults to None when season data is missing."""
+        event = client._parse_event(LIVE_EVENT)
+        assert event.season_type is None
+
+    def test_season_type_non_integer_ignored(self, client):
+        """Non-integer season.type values are handled gracefully."""
+        event_data = {**LIVE_EVENT, "season": {"type": "postseason"}}
+        event = client._parse_event(event_data)
+        assert event.season_type is None
+
 
 # ── _parse_venue ────────────────────────────────────────────────────────
 

@@ -368,6 +368,17 @@ async def _sync_espn_live_events():
                                 event.broadcast_info = broadcast_str
                                 changed = True
 
+                        # Update importance from ESPN season type
+                        # (more reliable than LLM text classification)
+                        if ee.season_type is not None:
+                            espn_importance = {1: "exhibition", 2: "regular_season", 3: "playoff"}.get(ee.season_type)
+                            if espn_importance and event.llm_importance != espn_importance:
+                                # Don't downgrade "championship" to "playoff" —
+                                # LLM text match is more specific
+                                if not (event.llm_importance == "championship" and espn_importance == "playoff"):
+                                    event.llm_importance = espn_importance
+                                    changed = True
+
                         # Update ESPN win probability and save snapshot
                         if ee.home_win_probability is not None:
                             event.espn_win_prob_home = ee.home_win_probability
@@ -565,6 +576,13 @@ async def _sync_espn_live_events():
                         if ee.espn_id and not event.espn_id:
                             event.espn_id = ee.espn_id
                             stats["scheduled_espn_ids_set"] = stats.get("scheduled_espn_ids_set", 0) + 1
+
+                        # Update importance from ESPN season type for scheduled events too
+                        if ee.season_type is not None:
+                            espn_importance = {1: "exhibition", 2: "regular_season", 3: "playoff"}.get(ee.season_type)
+                            if espn_importance and event.llm_importance != espn_importance:
+                                if not (event.llm_importance == "championship" and espn_importance == "playoff"):
+                                    event.llm_importance = espn_importance
 
                 except Exception as e:
                     stats["errors"].append(f"scheduled_{sport_key}: {str(e)}")

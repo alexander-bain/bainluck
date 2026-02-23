@@ -52,14 +52,15 @@ LEAGUE_TIERS: dict[str, int] = {
     "soccer_mexico_ligamx": 3,
     "soccer_brazil_serie_a": 3,
     "boxing_boxing": 3,
-    "golf_masters_tournament_winner": 3,
-    "golf_pga_championship_winner": 3,
-    "golf_us_open_winner": 3,
-    "golf_the_open_championship_winner": 3,
-    "tennis_us_open": 3,
-    "tennis_french_open": 3,
-    "tennis_wimbledon": 3,
-    "tennis_australian_open": 3,
+    # Tennis Grand Slams and Golf Majors → tier 2 (they ARE the big moments)
+    "golf_masters_tournament_winner": 2,
+    "golf_pga_championship_winner": 2,
+    "golf_us_open_winner": 2,
+    "golf_the_open_championship_winner": 2,
+    "tennis_us_open": 2,
+    "tennis_french_open": 2,
+    "tennis_wimbledon": 2,
+    "tennis_australian_open": 2,
 }
 
 # Highlight score weights
@@ -80,6 +81,10 @@ WEIGHTS = {
     "tier_4_penalty": -15,         # Minor league penalty (pushes minor leagues down in feed)
     "recent_finish_upset": 20,     # Recently finished + upset
     "recent_finish": 5,            # Recently finished (24h)
+    # Event importance (from llm_importance / ESPN season type)
+    "championship": 25,            # Championship/final — always a big moment
+    "playoff": 15,                 # Playoff/postseason game — significant boost
+    "exhibition": -20,             # Preseason/all-star — deprioritize
     # Level 2: Time-series weights
     "high_volatility": 10,         # Line has been volatile (RMS of deltas > 0.06)
     "lead_changes": 8,             # Probability crossed 50% (per crossing, max 3)
@@ -130,6 +135,9 @@ class EventFlags:
     is_recently_finished: bool = False  # <24h
     is_upset: bool = False  # Closed + favorite switched
     league_tier: int = 4
+    # Event importance flags
+    is_playoff: bool = False
+    is_championship: bool = False
     # Level 2 flags
     is_volatile: bool = False
     has_lead_changes: bool = False
@@ -228,6 +236,8 @@ def compute_highlight(
     # Team names for Power 4 scoring (optional)
     home_team_name: Optional[str] = None,
     away_team_name: Optional[str] = None,
+    # Event importance (from llm_importance / ESPN season type)
+    importance: Optional[str] = None,
 ) -> HighlightResult:
     """
     Compute highlight score and flags for an event.
@@ -315,6 +325,19 @@ def compute_highlight(
     elif flags.league_tier == 4:
         result.score += WEIGHTS["tier_4_penalty"]
         result.reasons.append("tier_4")
+
+    # === Event importance ===
+    if importance == "championship":
+        flags.is_championship = True
+        result.score += WEIGHTS["championship"]
+        result.reasons.append("championship")
+    elif importance == "playoff":
+        flags.is_playoff = True
+        result.score += WEIGHTS["playoff"]
+        result.reasons.append("playoff")
+    elif importance == "exhibition":
+        result.score += WEIGHTS["exhibition"]
+        result.reasons.append("exhibition")
 
     # === Probability-based flags ===
     is_pre_game = not flags.is_live and status not in ("completed", "closed")
@@ -433,6 +456,8 @@ def compute_highlight(
         ("recent_momentum", "Odds shifting fast"),
         ("major_prob_swing", "Big line movement"),
         ("high_volatility", "Wild game"),
+        ("championship", "Championship game"),
+        ("playoff", "Playoff game"),
         ("live", "Live"),
         ("starting_very_soon", "Starting soon"),
         ("starting_soon", "Starting soon"),
@@ -477,6 +502,12 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
         return "Close matchup"
     if flags.is_live:
         return "Live"
+
+    # Importance labels (meaningful for pre-game events)
+    if flags.is_championship:
+        return "Championship game"
+    if flags.is_playoff:
+        return "Playoff game"
 
     # Pre-game: significant line movement is a real trend worth labeling
     if flags.probability_swing == "major":

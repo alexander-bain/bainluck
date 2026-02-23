@@ -96,6 +96,7 @@ class ESPNEvent:
     venue: Optional[ESPNVenue]
     broadcasts: list[str]
     home_win_probability: Optional[float]
+    season_type: Optional[int] = None  # 1=preseason, 2=regular, 3=postseason
 
 
 class ESPNAPIService:
@@ -383,6 +384,12 @@ class ESPNAPIService:
             date_str = event_data.get("date")
             date = datetime.fromisoformat(date_str.replace("Z", "+00:00")) if date_str else None
 
+            # Parse season type (1=preseason, 2=regular, 3=postseason)
+            season_type_val = None
+            season_type_raw = event_data.get("season", {}).get("type")
+            if isinstance(season_type_raw, int):
+                season_type_val = season_type_raw
+
             return ESPNEvent(
                 espn_id=str(event_data.get("id")),
                 name=event_data.get("name"),
@@ -399,6 +406,7 @@ class ESPNAPIService:
                 venue=venue,
                 broadcasts=broadcasts,
                 home_win_probability=home_win_prob,
+                season_type=season_type_val,
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")

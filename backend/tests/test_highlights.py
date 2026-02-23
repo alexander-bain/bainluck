@@ -870,7 +870,7 @@ class TestComputeHighlightExactScores:
         result = compute_highlight(
             status="scheduled",
             commence_time=far,
-            sport_key="tennis_us_open",
+            sport_key="soccer_mexico_ligamx",
             now=now,
         )
         assert result.score == 0
@@ -1242,3 +1242,152 @@ class TestLevel2Scoring:
             has_recent_momentum=True,
         ))
         assert get_highlight_label(result) == "Odds shifting fast"
+
+
+# =============================================================================
+# compute_highlight - Event Importance
+# =============================================================================
+class TestComputeHighlightImportance:
+    """Tests for event importance scoring (championship, playoff, exhibition)."""
+
+    def test_championship_adds_25_points(self, live_commence, now):
+        """Championship importance adds 25 points."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            importance="championship",
+            now=now,
+        )
+        assert "championship" in result.reasons
+        assert result.flags.is_championship
+        assert result.score >= WEIGHTS["championship"]
+
+    def test_playoff_adds_15_points(self, live_commence, now):
+        """Playoff importance adds 15 points."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            importance="playoff",
+            now=now,
+        )
+        assert "playoff" in result.reasons
+        assert result.flags.is_playoff
+        assert result.score >= WEIGHTS["playoff"]
+
+    def test_exhibition_subtracts_20_points(self, live_commence, now):
+        """Exhibition importance subtracts 20 points."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_nba",
+            importance="exhibition",
+            now=now,
+        )
+        assert "exhibition" in result.reasons
+        # Live (30) + tier 1 (20) + exhibition (-20) = 30
+        expected = WEIGHTS["live"] + WEIGHTS["tier_1_league"] + WEIGHTS["exhibition"]
+        assert result.score == expected
+        assert expected == 30
+
+    def test_regular_season_adds_nothing(self, live_commence, now):
+        """Regular season importance adds 0 points."""
+        result_regular = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            importance="regular_season",
+            now=now,
+        )
+        result_none = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            importance=None,
+            now=now,
+        )
+        assert result_regular.score == result_none.score
+
+    def test_none_importance_backward_compatible(self, live_commence, now):
+        """importance=None scores identically to omitting the parameter."""
+        result_with = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_nba",
+            importance=None,
+            now=now,
+        )
+        result_without = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_nba",
+            now=now,
+        )
+        assert result_with.score == result_without.score
+
+    def test_championship_tier1_very_high_score(self, live_commence, now):
+        """Championship + tier 1 league = very high base score."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="americanfootball_nfl",
+            importance="championship",
+            now=now,
+        )
+        expected = WEIGHTS["live"] + WEIGHTS["tier_1_league"] + WEIGHTS["championship"]
+        assert result.score == expected
+        assert expected == 75  # 30 + 20 + 25
+
+    def test_exhibition_tier1_low_score(self, live_commence, now):
+        """Exhibition + tier 1 = moderate score (preseason NFL shouldn't dominate)."""
+        result = compute_highlight(
+            status="live",
+            commence_time=live_commence,
+            sport_key="basketball_nba",
+            importance="exhibition",
+            now=now,
+        )
+        expected = WEIGHTS["live"] + WEIGHTS["tier_1_league"] + WEIGHTS["exhibition"]
+        assert result.score == expected
+        assert expected == 30  # 30 + 20 + (-20)
+
+    def test_playoff_nba_scheduled(self, far_future_commence, now):
+        """A far-future playoff NBA game still gets tier + playoff points."""
+        result = compute_highlight(
+            status="scheduled",
+            commence_time=far_future_commence,
+            sport_key="basketball_nba",
+            importance="playoff",
+            now=now,
+        )
+        expected = WEIGHTS["tier_1_league"] + WEIGHTS["playoff"]
+        assert result.score == expected
+        assert expected == 35  # 20 + 15
+
+
+class TestGetHighlightLabelImportance:
+    """Tests for importance-related labels."""
+
+    def test_championship_label_pregame(self):
+        """Pre-game championship event gets 'Championship game' label."""
+        result = HighlightResult(flags=EventFlags(is_championship=True))
+        assert get_highlight_label(result) == "Championship game"
+
+    def test_playoff_label_pregame(self):
+        """Pre-game playoff event gets 'Playoff game' label."""
+        result = HighlightResult(flags=EventFlags(is_playoff=True))
+        assert get_highlight_label(result) == "Playoff game"
+
+    def test_live_beats_championship_label(self):
+        """Live label takes priority over championship for live games."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            is_championship=True,
+        ))
+        assert get_highlight_label(result) == "Live"
+
+    def test_close_game_beats_playoff_label(self):
+        """Close game label takes priority over playoff for live games."""
+        result = HighlightResult(flags=EventFlags(
+            is_live=True,
+            is_close_matchup=True,
+            is_playoff=True,
+        ))
+        assert get_highlight_label(result) == "Close game"

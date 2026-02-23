@@ -328,6 +328,7 @@ async def _score_events(
             now=now,
             home_team_name=event.home_team_name,
             away_team_name=event.away_team_name,
+            importance=event.llm_importance,
         )
 
         base_score = highlight_result.score
