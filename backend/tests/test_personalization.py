@@ -17,6 +17,8 @@ from app.utils.personalization import (
     ROSTER_PLAYER_BONUS,
     HIGH_AFFINITY_BONUS,
     LOW_AFFINITY_PENALTY,
+    NAH_AFFINITY_PENALTY,
+    NAH_AFFINITY_THRESHOLD,
     MIN_MULTIPLIER,
     MAX_MULTIPLIER,
 )
@@ -240,11 +242,23 @@ class TestSportAffinity:
         result = compute_event_multiplier(ctx, home_team_id=10, away_team_id=20, sport_key="basketball_nba")
         assert result.multiplier == 1.0
 
-    def test_zero_affinity_suppresses(self):
-        """Explicit 0.0 affinity should suppress."""
+    def test_zero_affinity_strong_suppress(self):
+        """Explicit 0.0 affinity ('Nah') should get strong suppression."""
         ctx = _basic_ctx(sport_affinities={"icehockey_nhl": 0.0})
         result = compute_event_multiplier(ctx, home_team_id=10, away_team_id=20, sport_key="icehockey_nhl")
+        assert result.multiplier == pytest.approx(1.0 + NAH_AFFINITY_PENALTY)
+        assert any("sport_nah" in r for r in result.reasons)
+
+    def test_if_wild_affinity_mild_suppress(self):
+        """0.1 affinity ('If wild') should get mild suppression, not 'Nah' penalty."""
+        ctx = _basic_ctx(sport_affinities={"icehockey_nhl": 0.1})
+        result = compute_event_multiplier(ctx, home_team_id=10, away_team_id=20, sport_key="icehockey_nhl")
         assert result.multiplier == pytest.approx(1.0 + LOW_AFFINITY_PENALTY)
+        assert any("sport_suppress" in r for r in result.reasons)
+
+    def test_nah_stronger_than_if_wild(self):
+        """'Nah' (0.0) penalty should be stronger than 'If wild' (0.1)."""
+        assert NAH_AFFINITY_PENALTY < LOW_AFFINITY_PENALTY
 
 
 # ============================================================================
@@ -339,7 +353,7 @@ class TestFuturesPersonalization:
         assert result.multiplier == pytest.approx(1.0 + HIGH_AFFINITY_BONUS)
 
     def test_futures_low_sport_affinity(self):
-        ctx = _basic_ctx(sport_affinities={"baseball_mlb": 0.05})
+        ctx = _basic_ctx(sport_affinities={"baseball_mlb": 0.1})
         result = compute_futures_multiplier(ctx, sport_category="baseball", outcome_team_ids=[])
         assert result.multiplier == pytest.approx(1.0 + LOW_AFFINITY_PENALTY)
 
@@ -402,6 +416,10 @@ class TestSportAffinityMatching:
 
     def test_empty_affinities(self):
         assert _match_sport_affinity("basketball", {}) is None
+
+    def test_esports_match(self):
+        affinities = {"esports_lol": 0.0, "esports_csgo": 0.0}
+        assert _match_sport_affinity("esports", affinities) == 0.0
 
 
 # ============================================================================
@@ -647,21 +665,21 @@ class TestFuturesSportKeyLookup:
         """College football market with low college affinity gets suppressed."""
         ctx = _basic_ctx(sport_affinities={
             "americanfootball_nfl": 1.0,
-            "americanfootball_ncaaf": 0.05,
+            "americanfootball_ncaaf": 0.1,
         })
         result = compute_futures_multiplier(
             ctx, sport_category="football",
             outcome_team_ids=[],
             sport_key="americanfootball_ncaaf",
         )
-        # Direct lookup → 0.05 → LOW_AFFINITY_PENALTY
+        # Direct lookup → 0.1 → LOW_AFFINITY_PENALTY
         assert result.multiplier == pytest.approx(1.0 + LOW_AFFINITY_PENALTY)
 
     def test_falls_back_to_category_when_no_sport_key(self):
         """Without sport_key, falls back to category substring matching."""
         ctx = _basic_ctx(sport_affinities={
             "americanfootball_nfl": 1.0,
-            "americanfootball_ncaaf": 0.05,
+            "americanfootball_ncaaf": 0.1,
         })
         result = compute_futures_multiplier(
             ctx, sport_category="football",

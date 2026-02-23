@@ -125,9 +125,12 @@ async def _sync_espn_live_events():
         return False
 
     async def upsert_team(session, team_name, espn_team, sport_id):
-        """Create or update a Team record with ESPN enrichment data."""
+        """Create or update a Team record with ESPN enrichment data.
+
+        Returns the Team record (for linking back to events), or None.
+        """
         if not espn_team:
-            return
+            return None
         team_result = await session.execute(
             select(Team).where(
                 Team.name == team_name,
@@ -142,6 +145,7 @@ async def _sync_espn_live_events():
                 sport_id=sport_id,
             )
             session.add(team)
+            await session.flush()  # Assign team.id for FK linking
 
         # Update ESPN fields
         team.espn_id = espn_team.espn_id
@@ -175,6 +179,7 @@ async def _sync_espn_live_events():
             team.alternate_names = list(existing | alt_names)
 
         stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
+        return team
 
     def get_event_name_variations(event):
         """Get all name variations for an event's teams."""
@@ -321,8 +326,15 @@ async def _sync_espn_live_events():
                         changed = False
 
                         # Upsert team records with ESPN data (colors, logos)
-                        await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
-                        await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                        # and link team_ids on the event for personalization filtering
+                        home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
+                        away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                        if home_team and event.home_team_id != home_team.id:
+                            event.home_team_id = home_team.id
+                            changed = True
+                        if away_team and event.away_team_id != away_team.id:
+                            event.away_team_id = away_team.id
+                            changed = True
 
                         # Update ESPN ID
                         if ee.espn_id and event.espn_id != ee.espn_id:
@@ -557,8 +569,12 @@ async def _sync_espn_live_events():
                             continue
 
                         ee = matched_espn
-                        await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
-                        await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                        home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id)
+                        away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id)
+                        if home_team and event.home_team_id != home_team.id:
+                            event.home_team_id = home_team.id
+                        if away_team and event.away_team_id != away_team.id:
+                            event.away_team_id = away_team.id
 
                         # Correct commence_time from ESPN if significantly different
                         if ee.date and event.commence_time:

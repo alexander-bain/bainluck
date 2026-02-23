@@ -49,8 +49,10 @@ ROSTER_PLAYER_BONUS = 0.4 # Futures about a player on a followed team's roster
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
 LOW_AFFINITY_THRESHOLD = 0.2    # below this = suppress
+NAH_AFFINITY_THRESHOLD = 0.05   # at or below this = strong suppress ("Nah" = 0.0)
 HIGH_AFFINITY_BONUS = 0.5       # boost for high-affinity sports
-LOW_AFFINITY_PENALTY = -0.3     # penalty for low-affinity sports
+LOW_AFFINITY_PENALTY = -0.3     # penalty for low-affinity sports ("If wild" = 0.1)
+NAH_AFFINITY_PENALTY = -0.6     # stronger penalty for "Nah" (0.0) sports
 
 # Clamp range
 MIN_MULTIPLIER = 0.3
@@ -159,6 +161,9 @@ def compute_event_multiplier(
             if affinity >= HIGH_AFFINITY_THRESHOLD:
                 bonus += HIGH_AFFINITY_BONUS
                 reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
+            elif affinity <= NAH_AFFINITY_THRESHOLD:
+                bonus += NAH_AFFINITY_PENALTY
+                reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
             elif affinity < LOW_AFFINITY_THRESHOLD:
                 bonus += LOW_AFFINITY_PENALTY
                 reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
@@ -271,6 +276,9 @@ def compute_futures_multiplier(
             if matched_affinity >= HIGH_AFFINITY_THRESHOLD:
                 bonus += HIGH_AFFINITY_BONUS
                 reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
+            elif matched_affinity <= NAH_AFFINITY_THRESHOLD:
+                bonus += NAH_AFFINITY_PENALTY
+                reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
             elif matched_affinity < LOW_AFFINITY_THRESHOLD:
                 bonus += LOW_AFFINITY_PENALTY
                 reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
@@ -336,6 +344,11 @@ def _match_sport_affinity(
 
         # "mma" matches "mma_mixed_martial_arts"
         if category_lower == "mma" and "mma" in key_lower:
+            if best_match is None or affinity > best_match:
+                best_match = affinity
+
+        # "esports" matches "esports_lol", "esports_csgo", etc.
+        if category_lower == "esports" and "esports" in key_lower:
             if best_match is None or affinity > best_match:
                 best_match = affinity
 

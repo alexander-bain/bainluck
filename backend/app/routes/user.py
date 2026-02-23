@@ -116,6 +116,7 @@ SPORT_AFFINITY_MAPPING: dict[str, list[str]] = {
     "cricket": ["cricket_icc_world_cup", "cricket_test_match"],
     "rugby": ["rugbyleague_nrl", "rugbyunion_six_nations"],
     "motorsport": ["motorsport_formula1"],
+    "esports": ["esports_lol", "esports_csgo", "esports_dota2", "esports_valorant"],
     # --- Beyond Sports (prediction market categories) ---
     "politics": ["politics"],
     "entertainment": ["entertainment"],

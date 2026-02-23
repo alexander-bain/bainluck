@@ -297,11 +297,44 @@ async def _score_events(
     # Score each event using stored opening odds (no snapshot query needed)
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
+
+    # For my_teams_only: build a name-based lookup as fallback.
+    # Event.home_team_id/away_team_id may be NULL (not yet linked by ESPN sync),
+    # so we also match by team name to ensure the user sees their teams' games.
+    user_team_names: set[str] = set()
+    if my_teams_only and user_team_ids:
+        team_name_result = await db.execute(
+            select(Team.name, Team.alternate_names).where(Team.id.in_(user_team_ids))
+        )
+        for name, alt_names in team_name_result.all():
+            if name:
+                user_team_names.add(name.lower())
+            if alt_names and isinstance(alt_names, list):
+                for alt in alt_names:
+                    if alt:
+                        user_team_names.add(alt.lower())
+
     for event in events:
         # my_teams_only: skip events that don't involve the user's teams
         if my_teams_only:
+            # Try team_id matching first (fast, when IDs are linked)
             event_team_ids = {event.home_team_id, event.away_team_id} - {None}
-            if not event_team_ids & user_team_ids:
+            matched_by_id = bool(event_team_ids & user_team_ids)
+
+            # Fall back to name matching (handles events without team_id links)
+            matched_by_name = False
+            if not matched_by_id and user_team_names:
+                home_lower = (event.home_team_name or "").lower()
+                away_lower = (event.away_team_name or "").lower()
+                for team_name in user_team_names:
+                    if team_name in home_lower or home_lower in team_name:
+                        matched_by_name = True
+                        break
+                    if team_name in away_lower or away_lower in team_name:
+                        matched_by_name = True
+                        break
+
+            if not matched_by_id and not matched_by_name:
                 continue
 
         opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
@@ -462,6 +495,22 @@ async def _score_futures(
         selectinload(FuturesMarket.sport),
     ]
 
+    # For my_teams_only: build name-based lookup as fallback for unlinked team_ids.
+    user_team_names: set[str] = set()
+    if my_teams_only:
+        user_team_ids_set = set(ctx.team_relations.keys())
+        if user_team_ids_set:
+            team_name_result = await db.execute(
+                select(Team.name, Team.alternate_names).where(Team.id.in_(user_team_ids_set))
+            )
+            for name, alt_names in team_name_result.all():
+                if name:
+                    user_team_names.add(name.lower())
+                if alt_names and isinstance(alt_names, list):
+                    for alt in alt_names:
+                        if alt:
+                            user_team_names.add(alt.lower())
+
     # === PER-CATEGORY FETCH ===
     # Query each category separately to guarantee diversity.
     # Without this, crypto micro-markets (5-min resolution) consume all
@@ -589,7 +638,22 @@ async def _score_futures(
         # my_teams_only: skip futures that don't involve the user's teams
         if my_teams_only:
             user_team_ids = set(ctx.team_relations.keys())
-            if not set(outcome_team_ids) & user_team_ids:
+            matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
+
+            # Fall back to outcome name matching when team_ids aren't linked
+            matched_by_name = False
+            if not matched_by_id and user_team_names:
+                for o in market.outcomes:
+                    if o.name:
+                        outcome_lower = o.name.lower()
+                        for team_name in user_team_names:
+                            if team_name in outcome_lower or outcome_lower in team_name:
+                                matched_by_name = True
+                                break
+                    if matched_by_name:
+                        break
+
+            if not matched_by_id and not matched_by_name:
                 continue
 
         outcome_names = [o.name for o in market.outcomes if o.name]
