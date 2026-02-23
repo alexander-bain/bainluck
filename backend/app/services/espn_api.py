@@ -484,6 +484,46 @@ class ESPNAPIService:
 
         return result
 
+    async def get_team_roster(self, sport_key: str, team_id: str) -> list[dict]:
+        """
+        Fetch roster for an ESPN team.
+
+        Args:
+            sport_key: Our internal sport key (e.g., "basketball_nba")
+            team_id: ESPN team ID
+
+        Returns:
+            List of {"name": str, "position": str|None} dicts.
+        """
+        path = self._get_espn_path(sport_key)
+        if not path:
+            return []
+
+        sport, league = path
+        url = f"{ESPN_API_BASE}/{sport}/{league}/teams/{team_id}/roster"
+
+        data = await self._get(url)
+        if not data:
+            return []
+
+        athletes = []
+        for group in data.get("athletes", []):
+            # Grouped format: {"position": "Guards", "items": [...]}
+            if isinstance(group, dict) and "items" in group:
+                items = group["items"]
+            else:
+                # Flat format or single athlete dict
+                items = [group] if isinstance(group, dict) else []
+            for athlete in items:
+                name = athlete.get("fullName") or athlete.get("displayName")
+                if name:
+                    pos = athlete.get("position", {})
+                    pos_abbrev = pos.get("abbreviation") if isinstance(pos, dict) else None
+                    athletes.append({"name": name, "position": pos_abbrev})
+
+        logger.info(f"ESPN roster: {len(athletes)} players for team {team_id} ({sport_key})")
+        return athletes
+
     async def search_teams(
         self,
         query: str,

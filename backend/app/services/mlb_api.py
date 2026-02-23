@@ -249,6 +249,52 @@ class MLBAPIService:
 
         return entries
 
+    async def get_teams(self) -> list[dict]:
+        """
+        Get all MLB teams.
+
+        Returns:
+            List of team dicts with 'id', 'name', 'abbreviation', etc.
+        """
+        try:
+            resp = await self.client.get("/v1/teams", params={"sportId": 1})
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.error(f"MLB teams fetch failed: {e}")
+            return []
+
+        return data.get("teams", [])
+
+    async def get_team_roster(self, team_id: int) -> list[str]:
+        """
+        Get active roster player names for an MLB team.
+
+        Args:
+            team_id: MLB team ID.
+
+        Returns:
+            List of player full names.
+        """
+        try:
+            resp = await self.client.get(
+                f"/v1/teams/{team_id}/roster",
+                params={"rosterType": "active"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.error(f"MLB roster fetch failed for team {team_id}: {e}")
+            return []
+
+        names = []
+        for entry in data.get("roster", []):
+            person = entry.get("person", {})
+            name = person.get("fullName")
+            if name:
+                names.append(name)
+        return names
+
     async def find_game_pk_for_teams(
         self,
         home_team_name: str,

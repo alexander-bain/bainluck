@@ -1,74 +1,88 @@
-"""Roster and team sync task — fetches teams and player rosters from SportsDataIO.
+"""Roster sync task — fetches player rosters from ESPN + MLB Stats API.
 
-Two sync phases per sport:
-1. Team sync: Ensures all pro teams exist in the `teams` table with city/location data.
-   Creates missing teams from SportsDataIO's AllTeams endpoint. Backfills location on
-   existing teams if missing.
-2. Roster sync: Stores player names in Team.roster_players as a JSONB list, e.g.:
-   ["Jayson Tatum", "Jaylen Brown", "Derrick White", ...]
-   These names are used by the related-futures endpoint to match player outcomes
-   (MVP, DPOY, ROY, etc.) to the correct team.
+Uses ESPN's undocumented roster endpoints as the primary source for all sports
+except baseball (which uses the MLB Stats API). Team matching is via the
+`Team.espn_id` column already populated by the ESPN sync task.
+
+Stores player names in Team.roster_players as a JSONB list, e.g.:
+    ["Jayson Tatum", "Jaylen Brown", "Derrick White", ...]
+These names are used by the related-futures endpoint to match player outcomes
+(MVP, DPOY, ROY, etc.) to the correct team.
+
+Replaces the former SportsDataIO-powered roster sync ($50-75/mo) with free APIs.
 """
 
+import asyncio
 import logging
+import unicodedata
 from typing import Optional
 
 from sqlalchemy import select, update
 
 from app.tasks.base import get_task_session
-from app.services.sportsdata_api import (
-    SportsDataIOService,
-    SPORTSDATA_SPORT_MAPPING,
-    SPORTSDATA_ABBREV_TO_NAME,
-)
 
 logger = logging.getLogger(__name__)
 
+# Sports to sync rosters for.
+# ESPN covers all of these via the roster endpoint.
+# Baseball uses MLB Stats API instead (more reliable for MLB).
+ROSTER_SPORTS = [
+    "basketball_nba",
+    "americanfootball_nfl",
+    "icehockey_nhl",
+    "baseball_mlb",          # Uses MLB Stats API
+    "basketball_ncaab",      # College — NEW (SportsDataIO couldn't do this)
+    "americanfootball_ncaaf", # College — NEW
+    "basketball_wnba",
+    "soccer_usa_mls",
+]
+
+
+def _strip_diacritics(s: str) -> str:
+    """Remove accent marks: e.g. Skarsgard from Skarsgard, Doncic from Doncic."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _player_names_with_ascii(name: str) -> list[str]:
+    """Return a list containing the name and its ASCII variant (if different)."""
+    names = [name]
+    ascii_name = _strip_diacritics(name)
+    if ascii_name != name:
+        names.append(ascii_name)
+    return names
+
 
 async def _sync_rosters(sport_key: Optional[str] = None) -> dict:
-    """Sync teams and player rosters from SportsDataIO.
+    """Sync player rosters from ESPN + MLB Stats API.
 
     Args:
         sport_key: Our sport key (e.g., "basketball_nba"). If None, syncs all supported sports.
 
     Returns:
-        Summary dict with teams_created, teams_updated count and details.
+        Summary dict with update counts and details per sport.
     """
-    service = SportsDataIOService()
-    try:
-        return await _sync_rosters_impl(service, sport_key)
-    finally:
-        await service.close()
-
-
-async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[str]) -> dict:
-    """Implementation of team + roster sync."""
-    if not service.api_key:
-        return {"error": "SPORTSDATA_API_KEY not configured"}
-
-    # Determine which sports to sync
     if sport_key:
         sport_keys = [sport_key]
     else:
-        sport_keys = list(SPORTSDATA_SPORT_MAPPING.keys())
+        sport_keys = list(ROSTER_SPORTS)
 
     total_updated = 0
     total_players = 0
-    total_teams_created = 0
-    total_teams_backfilled = 0
+    total_skipped = 0
     details = []
 
     async with get_task_session() as session:
         from app.models import Sport, Team
 
         for our_key in sport_keys:
-            sd_sport = service.get_sportsdata_sport(our_key)
-            if not sd_sport:
+            if our_key not in ROSTER_SPORTS:
+                details.append({"sport": our_key, "status": "unsupported_sport"})
                 continue
 
-            logger.info(f"Syncing teams and rosters for {our_key} (SportsDataIO: {sd_sport})")
-
-            # Look up our Sport record to scope team matching
+            # Look up our Sport record
             sport_result = await session.execute(
                 select(Sport.id).where(Sport.key == our_key)
             )
@@ -78,217 +92,202 @@ async def _sync_rosters_impl(service: SportsDataIOService, sport_key: Optional[s
                 continue
             sport_id = sport_row.id
 
-            # Static name map for this sport (SportsDataIO abbrev → our team name)
-            name_map = SPORTSDATA_ABBREV_TO_NAME.get(sd_sport, {})
+            logger.info(f"Syncing rosters for {our_key}")
 
-            # =================================================================
-            # Phase 1: Team sync — ensure all pro teams exist
-            # =================================================================
-            # Also builds sd_abbrev → team_id mapping for Phase 2 roster sync.
-            # This bridges the abbreviation gap: ESPN sets Team.abbreviation
-            # which may differ from SportsDataIO abbreviations (e.g., WSH vs WAS).
-            teams_created = 0
-            teams_backfilled = 0
-            sd_abbrev_to_team_id: dict[str, int] = {}
-            sd_teams = await service.fetch_teams(sd_sport)
-
-            for sd_team in sd_teams:
-                abbrev = sd_team.get("key", "")
-                full_name = sd_team.get("full_name", "")
-                city = sd_team.get("city", "")
-
-                if not abbrev or not full_name:
-                    continue
-
-                # Try to find existing team by abbreviation
-                team_result = await session.execute(
-                    select(Team).where(
-                        Team.abbreviation == abbrev,
-                        Team.sport_id == sport_id,
-                    )
+            if our_key == "baseball_mlb":
+                sport_detail = await _sync_mlb_rosters(session, Team, sport_id)
+            else:
+                sport_detail = await _sync_espn_rosters(
+                    session, Team, sport_id, our_key
                 )
-                existing_team = team_result.scalar_one_or_none()
 
-                # Try by name map if abbreviation didn't match
-                if not existing_team and abbrev in name_map:
-                    team_result = await session.execute(
-                        select(Team).where(
-                            Team.name == name_map[abbrev],
-                            Team.sport_id == sport_id,
-                        )
-                    )
-                    existing_team = team_result.scalar_one_or_none()
-
-                # Try by full_name (SportsDataIO might use different abbreviation)
-                if not existing_team:
-                    team_result = await session.execute(
-                        select(Team).where(
-                            Team.name == full_name,
-                            Team.sport_id == sport_id,
-                        )
-                    )
-                    existing_team = team_result.scalar_one_or_none()
-
-                # Try by ILIKE on name_map value (handles minor formatting diffs
-                # like "St. Louis" vs "St Louis")
-                if not existing_team and abbrev in name_map:
-                    mapped_name = name_map[abbrev]
-                    team_result = await session.execute(
-                        select(Team).where(
-                            Team.name.ilike(f"%{mapped_name}%"),
-                            Team.sport_id == sport_id,
-                        )
-                    )
-                    existing_team = team_result.scalar_one_or_none()
-
-                if existing_team:
-                    sd_abbrev_to_team_id[abbrev] = existing_team.id
-                    # Backfill location if missing
-                    if not existing_team.location and city:
-                        await session.execute(
-                            update(Team)
-                            .where(Team.id == existing_team.id)
-                            .values(location=city)
-                        )
-                        teams_backfilled += 1
-                        logger.info(f"  Backfilled location for {existing_team.name}: {city}")
-                    # Backfill abbreviation if missing
-                    if not existing_team.abbreviation and abbrev:
-                        await session.execute(
-                            update(Team)
-                            .where(Team.id == existing_team.id)
-                            .values(abbreviation=abbrev)
-                        )
-                else:
-                    # Create new Team record from SportsDataIO data
-                    new_team = Team(
-                        name=full_name,
-                        abbreviation=abbrev,
-                        location=city,
-                        sport_id=sport_id,
-                    )
-                    session.add(new_team)
-                    await session.flush()
-                    sd_abbrev_to_team_id[abbrev] = new_team.id
-                    teams_created += 1
-                    logger.info(f"  Created Team: {full_name} ({abbrev}) in {city}")
-
-            total_teams_created += teams_created
-            total_teams_backfilled += teams_backfilled
-
-            if teams_created > 0 or teams_backfilled > 0:
-                logger.info(
-                    f"  {our_key} team sync: {teams_created} created, "
-                    f"{teams_backfilled} locations backfilled"
-                )
-            logger.info(
-                f"  {our_key} Phase 1: resolved {len(sd_abbrev_to_team_id)}/{len(sd_teams)} "
-                f"SportsDataIO teams to DB records"
-            )
-
-            # =================================================================
-            # Phase 2: Roster sync — update player names
-            # =================================================================
-            players = await service.fetch_all_players(sd_sport)
-            if not players:
-                details.append({
-                    "sport": our_key,
-                    "teams_created": teams_created,
-                    "teams_backfilled": teams_backfilled,
-                    "status": "no_player_data",
-                })
-                continue
-
-            # Group players by team abbreviation
-            team_players: dict[str, list[str]] = {}
-            for p in players:
-                abbrev = p["team_abbrev"]
-                # Use both full name and ASCII variant for matching coverage
-                names = {p["name"]}
-                if p.get("ascii_name") and p["ascii_name"] != p["name"]:
-                    names.add(p["ascii_name"])
-                team_players.setdefault(abbrev, []).extend(names)
-
-            # Update each team's roster_players
-            sport_updated = 0
-            unmatched = []
-            for abbrev, player_names in team_players.items():
-                # Deduplicate and sort
-                unique_names = sorted(set(player_names))
-
-                # Try 1: Use Phase 1 mapping (bridges ESPN/SportsDataIO abbrev gap)
-                team_id = sd_abbrev_to_team_id.get(abbrev)
-
-                # Try 2: Match by abbreviation + sport (fallback for teams
-                # not in Phase 1 fetch, e.g., expansion teams or data gaps)
-                if not team_id:
-                    team_result = await session.execute(
-                        select(Team.id).where(
-                            Team.abbreviation == abbrev,
-                            Team.sport_id == sport_id,
-                        )
-                    )
-                    team_row = team_result.first()
-                    team_id = team_row[0] if team_row else None
-
-                # Try 3: Static name map (hardcoded SportsDataIO abbrev → team name)
-                if not team_id and abbrev in name_map:
-                    team_result = await session.execute(
-                        select(Team.id).where(
-                            Team.name == name_map[abbrev],
-                            Team.sport_id == sport_id,
-                        )
-                    )
-                    team_row = team_result.first()
-                    team_id = team_row[0] if team_row else None
-
-                # Try 4: Create Team record if we have a name mapping but no DB record
-                # (This should rarely trigger now that Phase 1 creates teams upfront)
-                if not team_id and abbrev in name_map:
-                    new_team = Team(
-                        name=name_map[abbrev],
-                        abbreviation=abbrev,
-                        sport_id=sport_id,
-                    )
-                    session.add(new_team)
-                    await session.flush()
-                    team_id = new_team.id
-                    logger.info(f"  Created new Team record: {name_map[abbrev]} ({abbrev})")
-
-                if not team_id:
-                    unmatched.append(abbrev)
-                    continue
-
-                await session.execute(
-                    update(Team)
-                    .where(Team.id == team_id)
-                    .values(roster_players=unique_names)
-                )
-                sport_updated += 1
-                total_players += len(unique_names)
-
-            total_updated += sport_updated
-            sport_detail = {
-                "sport": our_key,
-                "teams_created": teams_created,
-                "teams_backfilled": teams_backfilled,
-                "teams_updated": sport_updated,
-                "total_teams_in_api": len(team_players),
-                "players_synced": sum(len(v) for v in team_players.values()),
-            }
-            if unmatched:
-                sport_detail["unmatched_abbreviations"] = unmatched
-                logger.warning(f"  {our_key}: {len(unmatched)} unmatched teams: {unmatched}")
+            sport_detail["sport"] = our_key
             details.append(sport_detail)
-            logger.info(
-                f"  {our_key}: updated {sport_updated}/{len(team_players)} teams, "
-                f"{sum(len(v) for v in team_players.values())} player names"
-            )
+            total_updated += sport_detail.get("teams_updated", 0)
+            total_players += sport_detail.get("players_synced", 0)
+            total_skipped += sport_detail.get("teams_skipped_no_espn_id", 0)
 
     return {
-        "teams_created": total_teams_created,
-        "teams_backfilled": total_teams_backfilled,
         "teams_updated": total_updated,
         "total_player_names": total_players,
+        "teams_skipped_no_espn_id": total_skipped,
         "sports": details,
     }
+
+
+async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> dict:
+    """Sync rosters for a sport using ESPN's roster endpoint.
+
+    Queries all Teams with espn_id set for this sport, fetches each roster
+    from ESPN, and writes to Team.roster_players.
+    """
+    from app.services.espn_api import get_espn_service
+
+    espn = get_espn_service()
+
+    # Get all teams with ESPN IDs for this sport
+    result = await session.execute(
+        select(Team).where(
+            Team.sport_id == sport_id,
+            Team.espn_id.isnot(None),
+        )
+    )
+    teams = result.scalars().all()
+
+    if not teams:
+        logger.warning(f"  {sport_key}: no teams with espn_id found")
+        return {"teams_updated": 0, "teams_skipped_no_espn_id": 0, "status": "no_teams_with_espn_id"}
+
+    # Count teams without ESPN IDs (for reporting)
+    total_result = await session.execute(
+        select(Team.id).where(Team.sport_id == sport_id)
+    )
+    total_teams = len(total_result.all())
+    skipped = total_teams - len(teams)
+
+    updated = 0
+    empty_rosters = 0
+    total_player_names = 0
+
+    for team in teams:
+        roster = await espn.get_team_roster(sport_key, team.espn_id)
+
+        if not roster:
+            # Write empty list to clear stale data
+            await session.execute(
+                update(Team)
+                .where(Team.id == team.id)
+                .values(roster_players=[])
+            )
+            empty_rosters += 1
+            logger.debug(f"  {team.name}: empty roster from ESPN")
+            continue
+
+        # Extract player names with ASCII variants
+        all_names = []
+        for player in roster:
+            all_names.extend(_player_names_with_ascii(player["name"]))
+
+        unique_names = sorted(set(all_names))
+
+        await session.execute(
+            update(Team)
+            .where(Team.id == team.id)
+            .values(roster_players=unique_names)
+        )
+        updated += 1
+        total_player_names += len(unique_names)
+
+        # Rate limit between roster fetches
+        await asyncio.sleep(0.3)
+
+    logger.info(
+        f"  {sport_key}: updated {updated}/{len(teams)} teams, "
+        f"{total_player_names} player names, {empty_rosters} empty rosters, "
+        f"{skipped} teams skipped (no espn_id)"
+    )
+
+    return {
+        "teams_updated": updated,
+        "teams_with_espn_id": len(teams),
+        "teams_skipped_no_espn_id": skipped,
+        "empty_rosters": empty_rosters,
+        "players_synced": total_player_names,
+    }
+
+
+async def _sync_mlb_rosters(session, Team, sport_id: int) -> dict:
+    """Sync MLB rosters using the MLB Stats API.
+
+    Fetches all MLB teams from the API, matches to our DB teams by name,
+    then fetches and stores each roster.
+    """
+    from app.services.mlb_api import MLBAPIService
+
+    service = MLBAPIService()
+    try:
+        return await _sync_mlb_rosters_impl(session, Team, sport_id, service)
+    finally:
+        await service.close()
+
+
+async def _sync_mlb_rosters_impl(session, Team, sport_id: int, service) -> dict:
+    """Implementation of MLB roster sync."""
+    mlb_teams = await service.get_teams()
+    if not mlb_teams:
+        logger.warning("  baseball_mlb: MLB Stats API returned no teams")
+        return {"teams_updated": 0, "status": "no_mlb_teams"}
+
+    # Get all our MLB teams from the DB
+    result = await session.execute(
+        select(Team).where(Team.sport_id == sport_id)
+    )
+    db_teams = result.scalars().all()
+
+    # Build lookup by name (lowercased) for matching
+    db_teams_by_name = {}
+    for t in db_teams:
+        db_teams_by_name[t.name.lower()] = t
+        # Also index by short name (e.g., "Yankees" from "New York Yankees")
+        parts = t.name.split()
+        if len(parts) >= 2:
+            db_teams_by_name[parts[-1].lower()] = t
+
+    updated = 0
+    unmatched_mlb = []
+    total_player_names = 0
+
+    for mlb_team in mlb_teams:
+        mlb_name = mlb_team.get("name", "")
+        mlb_id = mlb_team.get("id")
+        if not mlb_name or not mlb_id:
+            continue
+
+        # Match MLB team to our DB team
+        db_team = db_teams_by_name.get(mlb_name.lower())
+        if not db_team:
+            # Try suffix match (e.g., "Yankees" matches "New York Yankees")
+            mlb_parts = mlb_name.split()
+            if len(mlb_parts) >= 2:
+                db_team = db_teams_by_name.get(mlb_parts[-1].lower())
+
+        if not db_team:
+            unmatched_mlb.append(mlb_name)
+            continue
+
+        # Fetch roster
+        player_names = await service.get_team_roster(mlb_id)
+
+        # Add ASCII variants
+        all_names = []
+        for name in player_names:
+            all_names.extend(_player_names_with_ascii(name))
+
+        unique_names = sorted(set(all_names))
+
+        await session.execute(
+            update(Team)
+            .where(Team.id == db_team.id)
+            .values(roster_players=unique_names)
+        )
+        updated += 1
+        total_player_names += len(unique_names)
+
+        # Rate limit
+        await asyncio.sleep(0.3)
+
+    logger.info(
+        f"  baseball_mlb: updated {updated}/{len(mlb_teams)} teams, "
+        f"{total_player_names} player names"
+    )
+
+    result = {
+        "teams_updated": updated,
+        "mlb_teams_in_api": len(mlb_teams),
+        "players_synced": total_player_names,
+    }
+    if unmatched_mlb:
+        result["unmatched_mlb_teams"] = unmatched_mlb
+        logger.warning(f"  baseball_mlb: {len(unmatched_mlb)} unmatched: {unmatched_mlb}")
+
+    return result

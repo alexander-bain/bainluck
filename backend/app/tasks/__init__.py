@@ -302,11 +302,11 @@ def sync_mlb_win_probability(self):
     return _tracked_run("mlb_sync", _sync_mlb_win_probability())
 
 
-# --- Roster Sync (SportsDataIO) ---
+# --- Roster Sync (ESPN + MLB Stats API) ---
 
 @celery_app.task(bind=True, name="app.tasks.sync_rosters")
 def sync_rosters(self, sport_key: str = None):
-    """Sync player rosters from SportsDataIO to Team.roster_players."""
+    """Sync player rosters from ESPN + MLB Stats API to Team.roster_players."""
     from app.tasks.roster_sync import _sync_rosters
     return run_async(_sync_rosters(sport_key))
 
