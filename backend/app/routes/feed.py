@@ -191,6 +191,10 @@ async def _score_events(
     # Tighter time windows than the full events list to keep query fast
     recent_cutoff = now - timedelta(hours=6)
     upcoming_cutoff = now + timedelta(hours=12)
+    # Guard against events incorrectly stuck in "live" status with future
+    # commence_times (e.g., from Scores API returning upcoming events as
+    # completed=False). Only include "live" events that have actually started.
+    live_start_cutoff = now + timedelta(hours=1)  # Small buffer for clock drift
 
     query = (
         select(Event)
@@ -198,7 +202,10 @@ async def _score_events(
         .options(selectinload(Event.sport))
         .where(
             or_(
-                Event.status == "live",
+                and_(
+                    Event.status == "live",
+                    Event.commence_time <= live_start_cutoff,
+                ),
                 and_(
                     Event.status == "scheduled",
                     Event.commence_time >= now,

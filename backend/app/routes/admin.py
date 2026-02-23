@@ -3224,3 +3224,62 @@ async def patch_event(
 
     await db.commit()
     return {"event_id": event_id, "updated": updates}
+
+
+@router.post("/events/fix-live-statuses")
+async def fix_live_statuses(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    dry_run: bool = Query(False, description="Preview without making changes"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fix events incorrectly stuck in 'live' status.
+
+    Resets events to 'scheduled' if they are marked 'live' but their
+    commence_time is more than 1 hour in the future (clearly haven't started).
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=1)  # Buffer for clock drift
+
+    # Find events marked live but with future commence_time
+    result = await db.execute(
+        select(Event).where(
+            Event.status == "live",
+            Event.commence_time > cutoff,
+        )
+    )
+    bad_events = result.scalars().all()
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "events_to_fix": len(bad_events),
+            "samples": [
+                {
+                    "id": e.id,
+                    "external_id": e.external_id[:60] if e.external_id else None,
+                    "home_team": e.home_team_name,
+                    "away_team": e.away_team_name,
+                    "commence_time": e.commence_time.isoformat() if e.commence_time else None,
+                    "status": e.status,
+                }
+                for e in bad_events[:20]
+            ],
+        }
+
+    # Fix them
+    fixed_count = 0
+    for event in bad_events:
+        event.status = "scheduled"
+        fixed_count += 1
+
+    await db.commit()
+
+    return {
+        "fixed": fixed_count,
+        "message": f"Reset {fixed_count} events from 'live' to 'scheduled'",
+    }

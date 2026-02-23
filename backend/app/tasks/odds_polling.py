@@ -641,9 +641,36 @@ async def _poll_all_odds():
                                     elif team_name == away_team:
                                         away_score = score_val
 
-                            # Always update status, and update scores if available
-                            event_status = "completed" if is_completed else "live"
-                            update_values = {"status": event_status}
+                            # Determine status from scores API response.
+                            # CRITICAL: Only set "live" if the event has actually started.
+                            # The Scores API returns upcoming events with completed=False,
+                            # which would incorrectly set scheduled games to "live".
+                            score_commence_str = score_event.get("commence_time")
+                            if score_commence_str:
+                                try:
+                                    score_commence = datetime.fromisoformat(
+                                        score_commence_str.replace("Z", "+00:00")
+                                    )
+                                except (ValueError, TypeError):
+                                    score_commence = None
+                            else:
+                                score_commence = None
+
+                            if is_completed:
+                                event_status = "completed"
+                            elif score_commence and score_commence <= now:
+                                event_status = "live"
+                            elif home_score is not None and away_score is not None:
+                                # Has scores but no commence_time — trust that it's live
+                                event_status = "live"
+                            else:
+                                # Event hasn't started — skip status update entirely
+                                # Still update scores if present (shouldn't be, but safe)
+                                event_status = None
+
+                            update_values = {}
+                            if event_status is not None:
+                                update_values["status"] = event_status
 
                             if home_score is not None:
                                 update_values["home_score"] = home_score
@@ -669,11 +696,12 @@ async def _poll_all_odds():
                                     )
                                     session.add(score_snap)
 
-                            await session.execute(
-                                Event.__table__.update()
-                                .where(Event.external_id == external_id)
-                                .values(**update_values)
-                            )
+                            if update_values:
+                                await session.execute(
+                                    Event.__table__.update()
+                                    .where(Event.external_id == external_id)
+                                    .values(**update_values)
+                                )
                             scores_updated += 1
 
                             # Compute stat model for live events with score data.

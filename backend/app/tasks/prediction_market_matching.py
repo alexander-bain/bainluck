@@ -974,8 +974,10 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         # commence_time is missing or >30 days away (likely resolution date) — use now
         commence_time = now
 
-    # Determine status from market status
-    status = "live" if market.status in ("open", "active") else "scheduled"
+    # Determine status from commence_time, not market status.
+    # Prediction markets are "open" for trading weeks before game start,
+    # so market.status is not a reliable indicator of whether the game is live.
+    status = "live" if commence_time <= now else "scheduled"
 
     # Create a unique external_id from the prediction market
     external_id = f"pm_{market.source}_{market.external_id}"
