@@ -50,7 +50,7 @@ const ALL_CATEGORIES: { key: string; label: string; emoji: string }[] = [
 
 const LEVEL_OPTIONS = [
   { label: "Love it", value: 1.0 },
-  { label: "Playoffs only", value: 0.3 },
+  { label: "Big moments", value: 0.3 },
   { label: "If wild", value: 0.1 },
   { label: "Nah", value: 0 },
 ];

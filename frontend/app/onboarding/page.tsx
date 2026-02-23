@@ -23,7 +23,7 @@ type SportLevel = 1.0 | 0.3 | 0.1 | 0;
 
 const SPORT_LEVELS: { label: string; value: SportLevel; description: string }[] = [
   { label: "Love it", value: 1.0, description: "Always show" },
-  { label: "Playoffs", value: 0.3, description: "Playoffs only" },
+  { label: "Big moments", value: 0.3, description: "Big moments only" },
   { label: "If wild", value: 0.1, description: "Only if exciting" },
   { label: "Nah", value: 0, description: "Not for me" },
 ];

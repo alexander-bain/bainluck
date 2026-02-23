@@ -28,7 +28,7 @@ export function stepDown(current: number): number {
 
 export function getLevelLabel(value: number): string {
   if (value >= 0.8) return "Love it";
-  if (value >= 0.2) return "Playoffs only";
+  if (value >= 0.2) return "Big moments";
   if (value > 0) return "If wild";
   return "Nah";
 }
