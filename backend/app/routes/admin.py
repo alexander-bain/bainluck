@@ -3226,7 +3226,7 @@ async def patch_event(
     return {"event_id": event_id, "updated": updates}
 
 
-@router.post("/events/fix-live-statuses")
+@router.post("/fix-live-statuses")
 async def fix_live_statuses(
     secret: str = Query(..., description="Admin secret for authorization"),
     dry_run: bool = Query(False, description="Preview without making changes"),
