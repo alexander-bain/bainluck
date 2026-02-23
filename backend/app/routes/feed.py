@@ -390,7 +390,7 @@ async def _score_futures(
         "other",
     ]
 
-    PER_CATEGORY_LIMIT = 500
+    PER_CATEGORY_LIMIT = 2000
 
     seen_ids: set[int] = set()
     markets: list = []
