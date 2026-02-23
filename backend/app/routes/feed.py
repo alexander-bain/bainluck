@@ -41,7 +41,7 @@ router = APIRouter()
 
 @router.get("")
 async def get_feed(
-    limit: int = Query(200, description="Number of feed items to return", ge=1, le=50000),
+    limit: int = Query(200, description="Number of feed items to return", ge=1, le=5000),
     offset: int = Query(0, description="Offset for pagination", ge=0),
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
     include_events: bool = Query(True, description="Include game events in feed"),
@@ -377,6 +377,8 @@ async def _score_futures(
     # Query each category separately to guarantee diversity.
     # Without this, crypto micro-markets (5-min resolution) consume all
     # slots when sorted by resolution_date.
+    # Limit each category to PER_CAT_LIMIT markets to cap total DB load.
+    PER_CAT_LIMIT = 20
     ALL_CATEGORIES = [
         # Sports
         "basketball", "football", "baseball", "hockey", "golf", "tennis",
@@ -404,6 +406,7 @@ async def _score_futures(
                 FuturesMarket.llm_sport_category == cat,
             )
             .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+            .limit(PER_CAT_LIMIT)
         )
 
         if sport_filter:
@@ -430,6 +433,7 @@ async def _score_futures(
             FuturesMarket.llm_sport_category.is_(None),
         )
         .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+        .limit(PER_CAT_LIMIT)
     )
     null_result = await db.execute(null_query)
     for m in null_result.scalars().unique().all():

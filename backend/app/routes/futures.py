@@ -367,6 +367,135 @@ async def list_canonical_keys(
     }
 
 
+@router.get("/browse")
+async def browse_futures(
+    category: Optional[str] = Query(None, description="Filter by llm_sport_category"),
+    q: Optional[str] = Query(None, description="Search within market names"),
+    limit: int = Query(50, description="Results per page", ge=1, le=200),
+    offset: int = Query(0, description="Pagination offset", ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Paginated category browsing for the Search tab.
+
+    Returns markets with their top 3 outcomes, total count, and pagination info.
+    Designed for lazy-loading: only fetches data when a user clicks into a category.
+    """
+    base_filters = [
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= datetime.now(timezone.utc),
+        ),
+        ~FuturesMarket.name.ilike('% vs %'),
+        ~FuturesMarket.name.ilike('% vs. %'),
+    ]
+
+    if category:
+        base_filters.append(FuturesMarket.llm_sport_category == category)
+
+    if q:
+        base_filters.append(FuturesMarket.name.ilike(f"%{q}%"))
+
+    # Count total
+    count_query = select(func.count(FuturesMarket.id)).where(*base_filters)
+    total = (await db.execute(count_query)).scalar() or 0
+
+    # Fetch page
+    query = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(*base_filters)
+        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await db.execute(query)
+    markets = result.scalars().unique().all()
+
+    items = []
+    for market in markets:
+        sorted_outcomes = sorted(
+            market.outcomes,
+            key=lambda o: float(o.current_probability) if o.current_probability else 0,
+            reverse=True,
+        )
+        top3 = [
+            {
+                "id": o.id,
+                "name": o.name,
+                "probability": float(o.current_probability) if o.current_probability else None,
+                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+            }
+            for o in sorted_outcomes[:3]
+        ]
+        items.append({
+            "id": market.id,
+            "name": market.name,
+            "llm_sport_category": market.llm_sport_category,
+            "source": market.source,
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "top_outcomes": top3,
+            "outcome_count": len(market.outcomes),
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": (offset + limit) < total,
+    }
+
+
+@router.get("/categories")
+async def list_futures_categories(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lightweight category counts for the Search tab category grid.
+
+    Single GROUP BY query, no outcome loading. Returns [{key, count}].
+    """
+    now = datetime.now(timezone.utc)
+
+    query = (
+        select(
+            FuturesMarket.llm_sport_category,
+            func.count(FuturesMarket.id).label("count"),
+        )
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+            or_(
+                FuturesMarket.resolution_date.is_(None),
+                FuturesMarket.resolution_date >= now,
+            ),
+            ~FuturesMarket.name.ilike('% vs %'),
+            ~FuturesMarket.name.ilike('% vs. %'),
+        )
+        .group_by(FuturesMarket.llm_sport_category)
+        .order_by(func.count(FuturesMarket.id).desc())
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    categories = [
+        {
+            "key": row.llm_sport_category or "other",
+            "count": row.count,
+        }
+        for row in rows
+    ]
+
+    return {
+        "categories": categories,
+        "total": sum(r["count"] for r in categories),
+    }
+
+
 @router.get("")
 async def list_futures_markets(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
