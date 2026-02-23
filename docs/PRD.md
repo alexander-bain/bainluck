@@ -766,9 +766,12 @@ Different sports have different baseline dynamics:
 
 Also: game context from ESPN (quarter/period, time remaining, score margin) should influence ranking. A 52/48 game in the 4th quarter with 2 minutes left is wildly more interesting than 52/48 in the 1st quarter.
 
-**Data available today:** `espn_snapshots` has `period`, `clock`, `home_score`, `away_score`. Events have `llm_importance` (playoff/regular_season). Sport tiers exist in highlights.py.
+**Partially shipped (February 2026):**
+- [x] Event importance wired into scoring: `llm_importance` (championship +25, playoff +15, exhibition -20) feeds into `compute_highlight()`. A playoff NFL game scores 65 base vs 50 regular season.
+- [x] ESPN `season.type` parsing: sync task writes 1=exhibition, 2=regular_season, 3=playoff to `llm_importance` for both live and scheduled events. More reliable than LLM text classification.
+- [x] Tennis Grand Slams and golf Majors promoted from tier 3 to tier 2.
 
-**Data model work needed:** Sport-specific baseline distributions (what's a "normal" amount of volatility for NFL vs NBA vs MLB). Could be a config table or derived from historical data. Game-phase weighting functions per sport.
+**Data still needed:** Sport-specific baseline distributions (what's a "normal" amount of volatility for NFL vs NBA vs MLB). Could be a config table or derived from historical data. Game-phase weighting functions per sport.
 
 #### Level 4: Personalized ranking
 User favorites boost events featuring their teams. Recent viewing history could influence ranking (don't re-surface events they've already seen; boost sports they engage with).
