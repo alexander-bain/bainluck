@@ -8,20 +8,102 @@ import PersonalizedBadge from "./PersonalizedBadge";
 
 interface FeedCardProps {
   item: FeedItem;
+  onThumbsUp?: (category: string) => void;
+  onThumbsDown?: (category: string) => void;
+  category?: string;
 }
 
-export default function FeedCard({ item }: FeedCardProps) {
+export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: FeedCardProps) {
   if (item.type === "event") {
-    return <EventFeedCard item={item} data={item.data as FeedEventData} />;
+    return (
+      <EventFeedCard
+        item={item}
+        data={item.data as FeedEventData}
+        onThumbsUp={onThumbsUp}
+        onThumbsDown={onThumbsDown}
+        category={category}
+      />
+    );
   }
-  return <FuturesFeedCard item={item} data={item.data as FeedFuturesData} />;
+  return (
+    <FuturesFeedCard
+      item={item}
+      data={item.data as FeedFuturesData}
+      onThumbsUp={onThumbsUp}
+      onThumbsDown={onThumbsDown}
+      category={category}
+    />
+  );
+}
+
+// ============================================================================
+// Thumbs buttons — shared by both card types
+// ============================================================================
+
+function ThumbButtons({
+  category,
+  onThumbsUp,
+  onThumbsDown,
+}: {
+  category?: string;
+  onThumbsUp?: (category: string) => void;
+  onThumbsDown?: (category: string) => void;
+}) {
+  if (!category || (!onThumbsUp && !onThumbsDown)) return null;
+
+  return (
+    <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onThumbsUp?.(category);
+        }}
+        className="p-1 text-text-muted/40 hover:text-accent-live transition-colors rounded"
+        title="More like this"
+        aria-label="More like this"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M7 10v12" />
+          <path d="M15 5.88L14 10h5.83a2 2 0 011.92 2.56l-2.33 8A2 2 0 0117.5 22H4a2 2 0 01-2-2v-8a2 2 0 012-2h2.76a2 2 0 001.79-1.11L12 2a3.13 3.13 0 013 3.88z" />
+        </svg>
+      </button>
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onThumbsDown?.(category);
+        }}
+        className="p-1 text-text-muted/40 hover:text-accent-danger transition-colors rounded"
+        title="Less like this"
+        aria-label="Less like this"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 14V2" />
+          <path d="M9 18.12L10 14H4.17a2 2 0 01-1.92-2.56l2.33-8A2 2 0 016.5 2H20a2 2 0 012 2v8a2 2 0 01-2 2h-2.76a2 2 0 00-1.79 1.11L12 22a3.13 3.13 0 01-3-3.88z" />
+        </svg>
+      </button>
+    </div>
+  );
 }
 
 // ============================================================================
 // Event Feed Card
 // ============================================================================
 
-function EventFeedCard({ item, data }: { item: FeedItem; data: FeedEventData }) {
+function EventFeedCard({
+  item,
+  data,
+  onThumbsUp,
+  onThumbsDown,
+  category,
+}: {
+  item: FeedItem;
+  data: FeedEventData;
+  onThumbsUp?: (category: string) => void;
+  onThumbsDown?: (category: string) => void;
+  category?: string;
+}) {
   const isLive = data.status === "live";
   const isFinished = data.status === "completed" || data.status === "closed";
   const homeProb = data.current_odds?.home_probability ?? null;
@@ -100,6 +182,15 @@ function EventFeedCard({ item, data }: { item: FeedItem; data: FeedEventData }) 
             </div>
           )}
         </div>
+
+        {/* Bottom row: thumbs */}
+        <div className="flex items-center justify-end mt-1">
+          <ThumbButtons
+            category={category}
+            onThumbsUp={onThumbsUp}
+            onThumbsDown={onThumbsDown}
+          />
+        </div>
       </div>
     </Link>
   );
@@ -109,7 +200,19 @@ function EventFeedCard({ item, data }: { item: FeedItem; data: FeedEventData }) 
 // Futures Feed Card
 // ============================================================================
 
-function FuturesFeedCard({ item, data }: { item: FeedItem; data: FeedFuturesData }) {
+function FuturesFeedCard({
+  item,
+  data,
+  onThumbsUp,
+  onThumbsDown,
+  category,
+}: {
+  item: FeedItem;
+  data: FeedFuturesData;
+  onThumbsUp?: (category: string) => void;
+  onThumbsDown?: (category: string) => void;
+  category?: string;
+}) {
   const leader = data.top_outcomes?.[0];
   const leaderProb = leader?.probability;
 
@@ -187,6 +290,15 @@ function FuturesFeedCard({ item, data }: { item: FeedItem; data: FeedFuturesData
             ))}
           </div>
         )}
+
+        {/* Bottom row: thumbs */}
+        <div className="flex items-center justify-end mt-1">
+          <ThumbButtons
+            category={category}
+            onThumbsUp={onThumbsUp}
+            onThumbsDown={onThumbsDown}
+          />
+        </div>
       </div>
     </Link>
   );

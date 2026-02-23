@@ -8,7 +8,7 @@ import { useAnalytics } from "@/hooks";
 import PulseBadge from "./PulseBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
 
-type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned';
+type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
 interface EventCardProps {
   event: Event;

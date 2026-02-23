@@ -21,6 +21,8 @@ import type {
   UserPreferencesResponse,
   OnboardingSubmission,
   OscarsResponse,
+  FuturesBrowseResponse,
+  FuturesCategoriesResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -685,4 +687,35 @@ export async function updateSportAffinities(
  */
 export async function fetchOscarsData(): Promise<OscarsResponse> {
   return apiFetch<OscarsResponse>("/api/oscars");
+}
+
+// ============================================================================
+// Futures Browse API (Search tab category browsing)
+// ============================================================================
+
+/**
+ * Browse futures markets by category with pagination.
+ * Used by the Search tab for lazy-loading category sections.
+ */
+export async function fetchFuturesBrowse(params: {
+  category?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<FuturesBrowseResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.category) searchParams.set("category", params.category);
+  if (params.q) searchParams.set("q", params.q);
+  if (params.limit) searchParams.set("limit", params.limit.toString());
+  if (params.offset) searchParams.set("offset", params.offset.toString());
+
+  const query = searchParams.toString();
+  return apiFetch<FuturesBrowseResponse>(`/api/futures/browse${query ? `?${query}` : ""}`);
+}
+
+/**
+ * Fetch lightweight category counts for the Search tab grid.
+ */
+export async function fetchFuturesCategories(): Promise<FuturesCategoriesResponse> {
+  return apiFetch<FuturesCategoriesResponse>("/api/futures/categories");
 }

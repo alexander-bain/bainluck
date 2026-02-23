@@ -25,9 +25,9 @@ export default function BottomNav() {
     },
     {
       label: "My Stuff",
-      href: "/preferences",
+      href: "/my-stuff",
       icon: UserIcon,
-      isActive: pathname === "/preferences" || pathname === "/onboarding",
+      isActive: pathname === "/my-stuff" || pathname === "/preferences" || pathname === "/onboarding",
     },
   ];
 

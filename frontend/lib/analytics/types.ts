@@ -115,7 +115,7 @@ export interface EventCardClickParams {
   /** Is this game currently live? */
   is_live: boolean;
   /** Where on the page was this card? */
-  source_section: 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned';
+  source_section: 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
   /** Position in the list (0-indexed) */
   position_index: number;
   /** Time until game starts (minutes, negative if started) */

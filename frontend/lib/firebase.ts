@@ -132,7 +132,7 @@ function loadGIS(): Promise<void> {
 async function getGoogleAccessToken(): Promise<string> {
   await loadGIS();
 
-  return new Promise<string>((resolve, reject) => {
+  const tokenPromise = new Promise<string>((resolve, reject) => {
     // @ts-expect-error - google.accounts is loaded dynamically
     const google = window.google;
     if (!google?.accounts?.oauth2) {
@@ -152,10 +152,18 @@ async function getGoogleAccessToken(): Promise<string> {
           reject(new Error("No access token"));
         }
       },
+      error_callback: (error: { type: string; message?: string }) => {
+        // Fires when popup is closed, blocked, or fails before OAuth starts.
+        // Without this handler, closing the popup hangs the promise forever.
+        reject(new Error(`Google popup ${error.type}: ${error.message || "closed or blocked"}`));
+      },
     });
 
     client.requestAccessToken();
   });
+
+  // Safety net: 2-minute timeout covers slow typists but catches truly stuck popups
+  return withTimeout(tokenPromise, 120000, "Google sign-in popup");
 }
 
 /**

@@ -11,6 +11,7 @@ const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false }
 import SWRProvider from "@/components/SWRProvider";
 import { Analytics } from "@vercel/analytics/next";
 import BottomNav from "@/components/BottomNav";
+import DesktopNav from "@/components/DesktopNav";
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -58,6 +59,8 @@ export default function RootLayout({
                         Bain Luck
                       </span>
                     </Link>
+
+                    <DesktopNav />
 
                     <div className="flex items-center gap-3">
                       {/* Desktop: full search bar */}

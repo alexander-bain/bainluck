@@ -596,3 +596,37 @@ export interface FeedResponse {
     pinned_futures: number;
   };
 }
+
+// Futures browse types (Search tab)
+export interface FuturesBrowseItem {
+  id: number;
+  name: string;
+  llm_sport_category: string | null;
+  source: string | null;
+  resolution_date: string | null;
+  top_outcomes: {
+    id: number;
+    name: string;
+    probability: number | null;
+    movement: number | null;
+  }[];
+  outcome_count: number;
+}
+
+export interface FuturesBrowseResponse {
+  items: FuturesBrowseItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface FuturesCategoryItem {
+  key: string;
+  count: number;
+}
+
+export interface FuturesCategoriesResponse {
+  categories: FuturesCategoryItem[];
+  total: number;
+}

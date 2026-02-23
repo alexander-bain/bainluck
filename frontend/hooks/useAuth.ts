@@ -201,14 +201,7 @@ export function useAuth(): UseAuthResult {
           });
         }
         // If no backend auth (Chrome/Firefox tier 1 success), onAuthStateChanged
-        // will fire and update user state via the useEffect listener.
-
-        // Now subscribe to auth changes for token refresh (if not already subscribed)
-        onAuthChange((fbUser) => {
-          if (fbUser) {
-            setUser(mapFirebaseUser(fbUser));
-          }
-        });
+        // will fire and update user state via the useEffect listener above.
       }
     } catch (error) {
       console.error("[Auth] Sign-in error:", error);

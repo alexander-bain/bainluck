@@ -9,6 +9,7 @@ import { usePinnedEvents, usePinnedFutures } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SearchBar from "@/components/SearchBar";
+import CategoryBrowser from "@/components/CategoryBrowser";
 import type { SearchResponse, SearchSuggestion } from "@/lib/types";
 
 function SearchLoading() {
@@ -148,6 +149,11 @@ function SearchContent() {
         ) : (
           <SuggestionChips suggestions={suggestions} />
         )}
+
+        {/* Category browsing grid — the "comprehensive" discovery experience */}
+        <div className="mt-8">
+          <CategoryBrowser />
+        </div>
       </div>
     );
   }
