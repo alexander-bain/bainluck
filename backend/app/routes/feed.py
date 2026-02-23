@@ -33,6 +33,7 @@ from app.utils.personalization import (
     compute_event_multiplier,
     compute_futures_multiplier,
 )
+from app.routes.events import _build_team_lookup, _format_team_data
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,27 @@ async def get_feed(
     if include_events:
         event_items = await _score_events(db, now, sport, ctx)
         feed_items.extend(event_items)
+
+    # === ENRICH EVENTS WITH TEAM DATA ===
+    # _build_team_lookup is cached in-memory (5-min TTL, ~500 teams) — essentially free.
+    if feed_items:
+        all_team_names = []
+        for item in feed_items:
+            if item["type"] == "event":
+                d = item["data"]
+                all_team_names.append(d["home_team"])
+                all_team_names.append(d["away_team"])
+        if all_team_names:
+            team_lookup = await _build_team_lookup(db, all_team_names)
+            for item in feed_items:
+                if item["type"] == "event":
+                    d = item["data"]
+                    home_team = team_lookup.get(d["home_team"])
+                    away_team = team_lookup.get(d["away_team"])
+                    if home_team:
+                        d["home_team_data"] = _format_team_data(home_team)
+                    if away_team:
+                        d["away_team_data"] = _format_team_data(away_team)
 
     # === SCORE FUTURES ===
     if include_futures:

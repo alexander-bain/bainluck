@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
-import { getLeagueDisplay, getEmojiForLeague, getCategoryForFutures } from "@/lib/sportCategories";
+import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
 
 interface FeedCardProps {
@@ -34,6 +35,65 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
       category={category}
     />
   );
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/** Format commence_time as a short game time string. */
+function formatGameTime(commenceTime: string): string {
+  const now = new Date();
+  const game = new Date(commenceTime);
+  const diffMs = game.getTime() - now.getTime();
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  // Already started or in the past
+  if (diffMs <= 0) return "";
+
+  const timeStr = game.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  // Same calendar day
+  const isToday =
+    game.getDate() === now.getDate() &&
+    game.getMonth() === now.getMonth() &&
+    game.getFullYear() === now.getFullYear();
+  if (isToday) return `Today ${timeStr}`;
+
+  // Next calendar day
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow =
+    game.getDate() === tomorrow.getDate() &&
+    game.getMonth() === tomorrow.getMonth() &&
+    game.getFullYear() === tomorrow.getFullYear();
+  if (isTomorrow) return `Tomorrow ${timeStr}`;
+
+  // Within the week — show day name
+  if (diffHours < 168) {
+    const dayName = game.toLocaleDateString([], { weekday: "short" });
+    return `${dayName} ${timeStr}`;
+  }
+
+  // Further out — show date
+  const dateStr = game.toLocaleDateString([], { month: "short", day: "numeric" });
+  return `${dateStr} ${timeStr}`;
+}
+
+/** Format resolution date as a short string. */
+function formatResolutionDate(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = d.getTime() - now.getTime();
+  if (diffMs <= 0) return null;
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  if (diffDays < 1) return "Resolves today";
+  if (diffDays < 2) return "Resolves tomorrow";
+  if (diffDays < 7) {
+    return `Resolves ${d.toLocaleDateString([], { weekday: "short" })}`;
+  }
+  return `Resolves ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`;
 }
 
 // ============================================================================
@@ -88,6 +148,24 @@ function ThumbButtons({
 }
 
 // ============================================================================
+// Team logo — small inline logo with fallback
+// ============================================================================
+
+function TeamLogo({ url, name }: { url: string | null | undefined; name: string }) {
+  if (!url) return null;
+  return (
+    <Image
+      src={url}
+      alt={name}
+      width={20}
+      height={20}
+      className="rounded-sm flex-shrink-0"
+      unoptimized
+    />
+  );
+}
+
+// ============================================================================
 // Event Feed Card
 // ============================================================================
 
@@ -106,8 +184,27 @@ function EventFeedCard({
 }) {
   const isLive = data.status === "live";
   const isFinished = data.status === "completed" || data.status === "closed";
+  const isScheduled = data.status === "scheduled";
   const homeProb = data.current_odds?.home_probability ?? null;
   const awayProb = data.current_odds?.away_probability ?? null;
+  const hasScore = (isLive || isFinished) && data.home_score !== null && data.away_score !== null;
+
+  // Team colors for probability bar
+  const homeColor = data.home_team_data?.primary_color ?? null;
+  const awayColor = data.away_team_data?.primary_color ?? null;
+
+  // Sport emoji
+  const sportEmoji = data.sport ? getEmojiForLeague(data.sport) : null;
+  const leagueName = data.sport ? getLeagueDisplay(data.sport) : null;
+
+  // Game time for scheduled events
+  const gameTime = isScheduled ? formatGameTime(data.commence_time) : null;
+
+  // Opening odds context for live games
+  const openedContext =
+    isLive && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
+      ? `Opened ${Math.round(data.opening_odds.home_probability * 100)}/${Math.round(data.opening_odds.away_probability * 100)}`
+      : null;
 
   return (
     <Link href={`/events/${data.id}`}>
@@ -117,17 +214,17 @@ function EventFeedCard({
         ${isLive ? "ring-1 ring-accent-live/20" : ""}
         ${isFinished ? "opacity-70 hover:opacity-100" : ""}
       `}>
-        {/* Top row: badges */}
-        <div className="flex items-center justify-between gap-2 mb-1.5">
+        {/* Top row: league + badges + game time/score */}
+        <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-1.5 min-w-0">
             {isLive && (
-              <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0">
+              <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
                 LIVE
               </span>
             )}
             {item.headline && !isLive && (
-              <span className="bg-accent-warning/15 text-accent-warning px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0">
+              <span className="bg-accent-warning/15 text-accent-warning px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 {item.headline}
               </span>
             )}
@@ -136,55 +233,95 @@ function EventFeedCard({
               multiplier={item.multiplier}
               personalizationReasons={item.personalization_reasons}
             />
-            {data.sport && (
-              <span className="text-[10px] text-text-muted uppercase tracking-wider truncate">
-                {getLeagueDisplay(data.sport)}
+            {leagueName && (
+              <span className="text-[11px] text-text-muted tracking-wide truncate">
+                {sportEmoji && <span className="mr-0.5">{sportEmoji}</span>}
+                {leagueName}
               </span>
             )}
           </div>
 
-          {(isLive || isFinished) && data.home_score !== null && data.away_score !== null && (
-            <span className={`text-sm font-mono font-bold flex-shrink-0 ${
+          {/* Right side: game time for scheduled, score for live/finished */}
+          {hasScore ? (
+            <span className={`text-base font-mono font-bold flex-shrink-0 ${
               isLive ? "text-accent-live" : "text-text-primary"
             }`}>
               {data.home_score} - {data.away_score}
             </span>
-          )}
+          ) : gameTime ? (
+            <span className="text-[11px] text-text-secondary font-medium flex-shrink-0">
+              {gameTime}
+            </span>
+          ) : null}
         </div>
 
-        {/* Main row: teams + probability */}
+        {/* Main row: teams with logos + probability */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-text-primary truncate">
-              {data.away_team} <span className="text-text-muted font-normal">at</span> {data.home_team}
+            {/* Away team */}
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <TeamLogo url={data.away_team_data?.logo_small} name={data.away_team} />
+              <span className={`text-sm font-medium truncate ${
+                awayProb !== null && awayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
+              }`}>
+                {data.away_team}
+              </span>
             </div>
-            <p className="text-[11px] text-text-muted mt-0.5 truncate">{item.reason}</p>
+            {/* Home team */}
+            <div className="flex items-center gap-1.5">
+              <TeamLogo url={data.home_team_data?.logo_small} name={data.home_team} />
+              <span className={`text-sm font-medium truncate ${
+                homeProb !== null && homeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
+              }`}>
+                {data.home_team}
+              </span>
+            </div>
           </div>
 
           {homeProb !== null && awayProb !== null && (
             <div className="flex-shrink-0 text-right">
-              <div className="flex items-center gap-1">
-                <span className={`font-mono text-sm font-bold ${homeProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
-                  {formatProbability(homeProb)}
-                </span>
-                <span className="text-[10px] text-text-muted">-</span>
-                <span className={`font-mono text-sm font-bold ${awayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
-                  {formatProbability(awayProb)}
-                </span>
+              {/* Away prob */}
+              <div className={`font-mono text-sm font-bold mb-0.5 ${awayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
+                {formatProbability(awayProb)}
               </div>
-              {/* Mini probability bar */}
-              <div className="w-16 h-1 rounded-full bg-surface-border mt-1 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-accent-brand transition-all"
-                  style={{ width: `${Math.round((homeProb) * 100)}%` }}
-                />
+              {/* Home prob */}
+              <div className={`font-mono text-sm font-bold ${homeProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
+                {formatProbability(homeProb)}
               </div>
             </div>
           )}
         </div>
 
-        {/* Bottom row: thumbs */}
-        <div className="flex items-center justify-end mt-1">
+        {/* Probability bar — uses team colors when available */}
+        {homeProb !== null && awayProb !== null && (
+          <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex">
+            <div
+              className="h-full transition-all rounded-l-full"
+              style={{
+                width: `${Math.round(awayProb * 100)}%`,
+                backgroundColor: awayColor || "var(--color-text-muted)",
+                opacity: awayColor ? 0.7 : 0.3,
+              }}
+            />
+            <div
+              className="h-full transition-all rounded-r-full"
+              style={{
+                width: `${Math.round(homeProb * 100)}%`,
+                backgroundColor: homeColor || "var(--color-accent-brand)",
+                opacity: homeColor ? 0.7 : 0.5,
+              }}
+            />
+          </div>
+        )}
+
+        {/* Bottom row: reason + context + thumbs */}
+        <div className="flex items-center justify-between gap-2 mt-1.5">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <p className="text-xs text-text-secondary truncate">{item.reason}</p>
+            {openedContext && (
+              <span className="text-[10px] text-text-muted flex-shrink-0">{openedContext}</span>
+            )}
+          </div>
           <ThumbButtons
             category={category}
             onThumbsUp={onThumbsUp}
@@ -216,14 +353,22 @@ function FuturesFeedCard({
   const leader = data.top_outcomes?.[0];
   const leaderProb = leader?.probability;
 
+  // Category emoji
+  const catKey = data.llm_sport_category ?? "";
+  const catEmoji = catKey ? getEmojiForCategory(catKey) : "📊";
+  const catName = catKey ? getNameForCategory(catKey) : "Futures";
+
+  // Resolution date
+  const resolvesText = formatResolutionDate(data.resolution_date);
+
   return (
     <Link href={`/futures/${data.id}`}>
       <div className="rounded-card border border-surface-border bg-surface-card p-3 hover:bg-surface-elevated transition-all cursor-pointer">
         {/* Top row */}
-        <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-1.5 min-w-0">
             {item.headline && (
-              <span className="bg-accent-futures/15 text-accent-futures px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0">
+              <span className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 {item.headline}
               </span>
             )}
@@ -232,18 +377,24 @@ function FuturesFeedCard({
               multiplier={item.multiplier}
               personalizationReasons={item.personalization_reasons}
             />
-            <span className="text-[10px] text-text-muted uppercase tracking-wider truncate">
-              {data.llm_sport_category
-                ? `${data.llm_sport_category.charAt(0).toUpperCase()}${data.llm_sport_category.slice(1)}`
-                : "Futures"}
+            <span className="text-[11px] text-text-muted tracking-wide truncate">
+              <span className="mr-0.5">{catEmoji}</span>
+              {catName}
             </span>
           </div>
 
-          {data.source_count > 1 && (
-            <span className="text-[10px] bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium flex-shrink-0">
-              {data.source_count} sources
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {resolvesText && (
+              <span className="text-[10px] text-text-muted">
+                {resolvesText}
+              </span>
+            )}
+            {data.source_count > 1 && (
+              <span className="text-[10px] bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium">
+                {data.source_count} sources
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Main row */}
@@ -252,7 +403,7 @@ function FuturesFeedCard({
             <div className="text-sm font-medium text-text-primary truncate">
               {data.name}
             </div>
-            <p className="text-[11px] text-text-muted mt-0.5 truncate">{item.reason}</p>
+            <p className="text-xs text-text-secondary mt-0.5 truncate">{item.reason}</p>
           </div>
 
           {leader && leaderProb !== null && (

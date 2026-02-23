@@ -192,6 +192,52 @@ export default function HomePage() {
   }, [feedData]);
 
   // =========================================================================
+  // Group feed items into visual sections
+  // =========================================================================
+
+  const feedSections = useMemo(() => {
+    if (!feedData || feedData.items.length === 0) return [];
+
+    const now = new Date();
+    const threeHoursMs = 3 * 60 * 60 * 1000;
+
+    const liveNow: FeedItem[] = [];
+    const startingSoon: FeedItem[] = [];
+    const topMarkets: FeedItem[] = [];
+    const moreGames: FeedItem[] = [];
+
+    for (const item of feedData.items) {
+      if (item.type === "futures") {
+        topMarkets.push(item);
+      } else {
+        const data = item.data as FeedEventData;
+        if (data.status === "live") {
+          liveNow.push(item);
+        } else if (data.status === "scheduled") {
+          const gameTime = new Date(data.commence_time);
+          const untilMs = gameTime.getTime() - now.getTime();
+          if (untilMs > 0 && untilMs <= threeHoursMs) {
+            startingSoon.push(item);
+          } else {
+            moreGames.push(item);
+          }
+        } else {
+          // completed/closed
+          moreGames.push(item);
+        }
+      }
+    }
+
+    const sections: { key: string; emoji: string; title: string; accent: string; items: FeedItem[] }[] = [];
+    if (liveNow.length > 0) sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });
+    if (startingSoon.length > 0) sections.push({ key: "soon", emoji: "\u23F0", title: "Starting Soon", accent: "text-text-secondary", items: startingSoon });
+    if (topMarkets.length > 0) sections.push({ key: "markets", emoji: "\uD83D\uDCCA", title: "Top Markets", accent: "text-accent-futures", items: topMarkets });
+    if (moreGames.length > 0) sections.push({ key: "more", emoji: "\uD83C\uDFDF\uFE0F", title: "More Games", accent: "text-text-secondary", items: moreGames });
+
+    return sections;
+  }, [feedData]);
+
+  // =========================================================================
   // Render
   // =========================================================================
 
@@ -272,29 +318,42 @@ export default function HomePage() {
               {/* Onboarding CTA */}
               <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
 
-              {/* Flat ranked feed */}
-              <div
-                className="grid gap-3"
-                style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
-              >
-                {feedData.items.map((item) => {
-                  const key = item.type === "event"
-                    ? `feed-event-${(item.data as FeedEventData).id}`
-                    : `feed-futures-${(item.data as FeedFuturesData).id}`;
-                  const category = item.type === "event"
-                    ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
-                    : (item.data as FeedFuturesData).llm_sport_category ?? "other";
-                  return (
-                    <FeedCard
-                      key={key}
-                      item={item}
-                      onThumbsUp={handleThumbsUp}
-                      onThumbsDown={handleThumbsDown}
-                      category={category}
-                    />
-                  );
-                })}
-              </div>
+              {/* Grouped feed sections */}
+              {feedSections.map((section) => (
+                <section key={section.key}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm">{section.emoji}</span>
+                    <h2 className={`text-sm font-semibold ${section.accent}`}>
+                      {section.title}
+                    </h2>
+                    <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                      {section.items.length}
+                    </span>
+                  </div>
+                  <div
+                    className="grid gap-3"
+                    style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                  >
+                    {section.items.map((item) => {
+                      const key = item.type === "event"
+                        ? `feed-event-${(item.data as FeedEventData).id}`
+                        : `feed-futures-${(item.data as FeedFuturesData).id}`;
+                      const category = item.type === "event"
+                        ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
+                        : (item.data as FeedFuturesData).llm_sport_category ?? "other";
+                      return (
+                        <FeedCard
+                          key={key}
+                          item={item}
+                          onThumbsUp={handleThumbsUp}
+                          onThumbsDown={handleThumbsDown}
+                          category={category}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
             </div>
           )}
 

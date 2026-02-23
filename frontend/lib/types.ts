@@ -542,6 +542,8 @@ export interface FeedEventData {
     away_probability: number | null;
     favorite: string | null;
   };
+  home_team_data?: TeamData;
+  away_team_data?: TeamData;
 }
 
 export interface FeedFuturesOutcome {
