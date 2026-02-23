@@ -102,7 +102,7 @@ export default function HomePage() {
   } = useSWR(
     ["feed", selectedCategory, selectedSport],
     () => fetchFeed({
-      limit: 100,
+      limit: 500,
       sport: selectedSport ?? selectedCategory ?? undefined,
     }),
     { refreshInterval: 30000 }

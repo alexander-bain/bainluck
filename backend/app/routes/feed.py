@@ -41,7 +41,7 @@ router = APIRouter()
 
 @router.get("")
 async def get_feed(
-    limit: int = Query(20, description="Number of feed items to return", ge=1, le=100),
+    limit: int = Query(100, description="Number of feed items to return", ge=1, le=500),
     offset: int = Query(0, description="Offset for pagination", ge=0),
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
     include_events: bool = Query(True, description="Include game events in feed"),
@@ -217,7 +217,7 @@ async def _score_events(
                 ),
             )
         )
-        .limit(200)  # Safety cap
+        .limit(500)  # Safety cap
     )
 
     if sport_filter:
@@ -388,7 +388,7 @@ async def _score_futures(
         .options(*base_options)
         .where(*base_filters)
         .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-        .limit(150)
+        .limit(500)
     )
 
     if sport_filter:
@@ -401,7 +401,7 @@ async def _score_futures(
     result_timely = await db.execute(query_timely)
     timely_markets = result_timely.scalars().unique().all()
 
-    # Per-category queries for non-sports (10 per category = 80 max)
+    # Per-category queries for non-sports (50 per category = 400 max)
     non_sports_markets = []
     for cat in NON_SPORTS_CATEGORIES:
         if sport_filter and cat.lower() not in sport_filter.lower():
@@ -414,7 +414,7 @@ async def _score_futures(
                 FuturesMarket.llm_sport_category == cat,
             )
             .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-            .limit(10)
+            .limit(50)
         )
         cat_result = await db.execute(cat_query)
         non_sports_markets.extend(cat_result.scalars().unique().all())
@@ -576,7 +576,7 @@ async def _score_futures(
     # Prevent any single category from dominating the futures feed.
     # Without this, crypto (8,955 markets) or basketball (5,022) can
     # fill every slot, crowding out politics, weather, entertainment, etc.
-    MAX_PER_CATEGORY = 5
+    MAX_PER_CATEGORY = 30
     category_counts: dict[str, int] = {}
     capped_items = []
     for item in scored_items:
