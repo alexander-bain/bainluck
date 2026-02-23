@@ -256,29 +256,72 @@ def _build_summary_context(
     return "\n".join(parts)
 
 
-def build_llm_prompt(analysis: LineMovementAnalysis) -> str:
+def build_llm_prompt(
+    analysis: LineMovementAnalysis,
+    injuries: Optional[list[dict]] = None,
+    news_headlines: Optional[list[str]] = None,
+    game_context: Optional[dict] = None,
+) -> str:
     """
     Build the LLM prompt to explain line movements.
 
+    Args:
+        analysis: The line movement analysis with summary_context
+        injuries: List of injury dicts with player_name, team_name, status, injury_type
+        news_headlines: List of recent news headline strings
+        game_context: Dict with home_team, away_team, home_score, away_score, period, clock
+
     Returns a prompt string ready to send to GPT-4o-mini.
     """
+    # Build context sections
+    context_sections = []
+
+    if injuries:
+        lines = ["Known injury report:"]
+        for inj in injuries[:10]:  # Cap at 10 to keep prompt manageable
+            parts = [f"  - {inj['player_name']} ({inj['team_name']}): {inj['status']}"]
+            if inj.get("injury_type") and inj["injury_type"] != "Unknown":
+                parts[0] += f" — {inj['injury_type']}"
+            lines.append(parts[0])
+        context_sections.append("\n".join(lines))
+
+    if news_headlines:
+        lines = ["Recent headlines:"]
+        for headline in news_headlines[:5]:
+            lines.append(f"  - {headline}")
+        context_sections.append("\n".join(lines))
+
+    if game_context:
+        home = game_context.get("home_team", "Home")
+        away = game_context.get("away_team", "Away")
+        h_score = game_context.get("home_score")
+        a_score = game_context.get("away_score")
+        period = game_context.get("period")
+        clock = game_context.get("clock")
+        parts = []
+        if h_score is not None and a_score is not None:
+            parts.append(f"Score: {home} {h_score} - {away} {a_score}")
+        if period:
+            parts.append(f"Period: {period}")
+        if clock:
+            parts.append(f"Clock: {clock}")
+        if parts:
+            context_sections.append("Live game state: " + " | ".join(parts))
+
+    extra_context = ""
+    if context_sections:
+        extra_context = "\n\n" + "\n\n".join(context_sections) + "\n"
+
     return f"""You are a sports betting analyst explaining odds movements to casual fans who want to understand what's happening, not get betting advice.
 
-Given the following odds movement data, explain WHY the line likely moved. Consider common causes:
-- Injury reports or player status changes (questionable, out, returning)
-- Lineup announcements or rotation changes
-- Weather conditions (outdoor sports)
-- Sharp money / professional bettor action
-- Public betting trends
-- Matchup-specific factors (rest days, travel, back-to-back games)
-- Recent team performance and momentum
-- Referee/umpire assignments (if significant)
+Given the following odds movement data, explain WHY the line likely moved.
 
-{analysis.summary_context}
+{analysis.summary_context}{extra_context}
 
 Instructions:
 - Write 2-3 concise sentences explaining the most likely reason(s) for the movement
 - Focus on the single biggest movement if there are multiple
+- Use the injury and news information provided when explaining the movement. Only reference specific injuries/news if they are listed above. Do not fabricate injury information.
 - Be specific to the sport and teams when possible
 - Use language casual fans understand (avoid jargon like "steam move" or "RLM")
 - If the movement is during a live game, focus on in-game factors (scoring runs, momentum, key plays)

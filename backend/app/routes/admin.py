@@ -2201,7 +2201,7 @@ async def get_canonical_key_status(
 
 
 # ---------------------------------------------------------------------------
-# Roster Sync (SportsDataIO)
+# Roster Sync (ESPN + MLB Stats API)
 # ---------------------------------------------------------------------------
 
 @router.post("/rosters/sync")
@@ -2209,7 +2209,7 @@ async def trigger_roster_sync(
     secret: str = Query(..., description="Admin secret for authorization"),
     sport_key: Optional[str] = Query(None, description="Sport key (e.g., 'basketball_nba'). If omitted, syncs all supported sports."),
 ):
-    """Trigger roster sync from SportsDataIO (runs as background Celery task).
+    """Trigger roster sync from ESPN + MLB Stats API (runs as background Celery task).
 
     Fetches player rosters and stores them on Team.roster_players for use
     in related-futures player name matching.

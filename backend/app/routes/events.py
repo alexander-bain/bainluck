@@ -1850,7 +1850,7 @@ async def get_related_futures(
                         if escaped.lower() not in [p.lower() for p in patterns]:
                             patterns.append(escaped)
                             team_patterns.append(escaped)
-            # Add roster player names from SportsDataIO (e.g., "Jayson Tatum")
+            # Add roster player names from ESPN/MLB API (e.g., "Jayson Tatum")
             roster = team_row.roster_players
             if roster and isinstance(roster, list):
                 for player_name in roster:
@@ -2427,12 +2427,19 @@ async def get_line_movement_analysis(
     if cached_analysis:
         # Check if still valid
         if cached_analysis.expires_at is None or cached_analysis.expires_at > now:
+            # Extract stored context metadata if available
+            stored_movement_data = cached_analysis.movement_data or []
+            stored_context = None
+            if isinstance(stored_movement_data, dict):
+                stored_context = stored_movement_data.get("context")
+                stored_movement_data = stored_movement_data.get("movements", [])
             return {
                 "event_id": event_id,
-                "movements": cached_analysis.movement_data or [],
+                "movements": stored_movement_data,
                 "explanation": cached_analysis.explanation,
                 "disagreement_explanation": cached_analysis.disagreement_explanation,
                 "disagreement_data": cached_analysis.disagreement_data,
+                "context": stored_context,
                 "cached": True,
                 "created_at": cached_analysis.created_at.isoformat(),
             }
@@ -2496,8 +2503,49 @@ async def get_line_movement_analysis(
 
     # Generate AI explanation if significant movements found
     explanation = None
+    injuries_data = None
+    news_headlines = None
+    game_context = None
+
     if analysis.movements:
-        prompt = build_llm_prompt(analysis)
+        # Fetch real context from ESPN for grounded explanations
+        if event.espn_id and event.sport:
+            try:
+                from app.services.espn_api import ESPNAPIService
+                espn = ESPNAPIService()
+                ctx = await espn.get_event_context(event.sport.key, event.espn_id)
+                if ctx.get("injuries"):
+                    injuries_data = [
+                        {
+                            "player_name": i.player_name,
+                            "team_name": i.team_name,
+                            "status": i.status,
+                            "injury_type": i.injury_type,
+                        }
+                        for i in ctx["injuries"]
+                    ]
+                if ctx.get("news"):
+                    news_headlines = [n.headline for n in ctx["news"][:5]]
+                await espn.close()
+            except Exception as e:
+                logger.warning(f"ESPN context fetch failed for event {event_id}: {e}")
+
+        if event.status == "live":
+            game_context = {
+                "home_team": event.home_team_name,
+                "away_team": event.away_team_name,
+                "home_score": event.home_score,
+                "away_score": event.away_score,
+                "period": event.period,
+                "clock": event.game_clock,
+            }
+
+        prompt = build_llm_prompt(
+            analysis,
+            injuries=injuries_data,
+            news_headlines=news_headlines,
+            game_context=game_context,
+        )
         try:
             from app.services.llm import generate_line_movement_explanation
             explanation = generate_line_movement_explanation(prompt)
@@ -2568,9 +2616,22 @@ async def get_line_movement_analysis(
 
     expires_at = (now + ttl) if ttl else None
 
+    # Build context metadata for response
+    context_meta = {
+        "injuries_count": len(injuries_data) if injuries_data else 0,
+        "news_count": len(news_headlines) if news_headlines else 0,
+        "has_game_state": bool(game_context),
+    }
+
+    # Store movements + context together in movement_data JSONB
+    cache_data = {
+        "movements": movements_data,
+        "context": context_meta,
+    }
+
     # Upsert cached analysis
     if cached_analysis:
-        cached_analysis.movement_data = movements_data
+        cached_analysis.movement_data = cache_data
         cached_analysis.explanation = explanation
         cached_analysis.disagreement_explanation = disagreement_explanation
         cached_analysis.disagreement_data = disagreement_data
@@ -2578,7 +2639,7 @@ async def get_line_movement_analysis(
     else:
         new_analysis = LineMovementModel(
             event_id=event_id,
-            movement_data=movements_data,
+            movement_data=cache_data,
             explanation=explanation,
             disagreement_explanation=disagreement_explanation,
             disagreement_data=disagreement_data,
@@ -2598,6 +2659,7 @@ async def get_line_movement_analysis(
         "explanation": explanation,
         "disagreement_explanation": disagreement_explanation,
         "disagreement_data": disagreement_data,
+        "context": context_meta,
         "cached": False,
         "created_at": now.isoformat(),
     }

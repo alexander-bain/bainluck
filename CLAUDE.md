@@ -26,7 +26,7 @@
 - **The Odds API** (the-odds-api.com) - Sports odds data (~$119/mo)
 - **Kalshi** (kalshi.com) - Prediction market data (futures with timing info, free)
 - **Polymarket** (polymarket.com) - Prediction market data (sports + politics/entertainment/crypto, free, no API key)
-- **SportsDataIO** (sportsdata.io) - **Being replaced** by ESPN + free league APIs (too expensive for the value provided). Roster sync will migrate to ESPN roster endpoints. Code still exists but `SPORTSDATA_API_KEY` is no longer set.
+- **SportsDataIO** (sportsdata.io) - **Removed.** Roster sync migrated to ESPN + MLB Stats API. `sportsdata_api.py` deleted.
 - **MySportsFeeds** (mysportsfeeds.com) - Injuries, lineup changes, transactions, game context (pending personal account approval). Key enabler for "Why Did the Line Move?" feature. Affordable alternative to SportsDataIO for structured sports data with timestamps.
 - **MLB Stats API** (statsapi.mlb.com) - Live baseball win probability, schedules, play-by-play (free, no API key)
 - **ESPN** (undocumented API) - Team colors, logos, live game data, win probability, rosters, injuries, news (free, unreliable)
@@ -59,8 +59,7 @@ bainluck/
 │   │   ├── services/
 │   │   │   ├── odds_api.py      # The Odds API client
 │   │   │   ├── kalshi_api.py    # Kalshi prediction market client
-│   │   │   ├── espn_api.py      # ESPN API client
-│   │   │   ├── sportsdata_api.py # SportsDataIO API client
+│   │   │   ├── espn_api.py      # ESPN API client (teams, scores, injuries, news)
 │   │   │   ├── mlb_api.py       # MLB Stats API client
 │   │   │   ├── firebase_auth.py # Firebase Admin SDK
 │   │   │   ├── llm.py           # OpenAI GPT-4o-mini integration
@@ -93,6 +92,7 @@ bainluck/
 │   │       ├── futures_highlights.py # Futures market ranking
 │   │       ├── win_probability.py # Statistical win prob model
 │   │       ├── odds_filtering.py  # Stale bookmaker filter
+│   │       ├── line_movement.py # Line movement detection + LLM prompt building
 │   │       ├── futures_categorization.py # Rules + LLM categorization
 │   │       ├── team_linking.py  # Team name matching utilities
 │   │       └── prediction_market_matching.py  # Game-level market detection + matching
@@ -190,7 +190,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1557+ pytest items across 19 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1591+ pytest items across 20 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (26 tests: detection thresholds, direction classification, prompt building with injuries/news/game context). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117+ tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -219,7 +219,7 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `ADMIN_SECRET` - Optional: protect admin endpoints
 - `SENTRY_DSN` - From sentry.io (optional - enables error tracking + performance monitoring)
 - `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
-- `SPORTSDATA_API_KEY` - From sportsdata.io (**deprecated** — being replaced by ESPN + free league APIs)
+- `SPORTSDATA_API_KEY` - **Removed** — no longer needed (roster sync uses ESPN + MLB Stats API)
 - `MYSPORTSFEEDS_API_KEY` - From mysportsfeeds.com (optional — enables structured injury/lineup data for "Why Did the Line Move?", pending account approval)
 - `FIREBASE_PROJECT_ID` - Firebase project ID (optional - enables auth)
 - `FIREBASE_SERVICE_ACCOUNT_JSON` - Full service account JSON string (optional - for admin operations)
@@ -545,23 +545,14 @@ bainluck_pinnedEvents    // Array of event IDs
 bainluck_pinnedFutures   // Array of futures market IDs
 ```
 
-### SportsDataIO Integration (Deprecated — Migrating to ESPN + Free APIs)
-SportsDataIO provides structured sports data: rosters, injuries (trial tier scrambled), standings, schedules. **Being replaced** due to cost — ESPN roster endpoints + free league APIs (MLB Stats API, NHL Web API) provide equivalent roster data at zero cost. MySportsFeeds (pending account approval) will fill the structured injury/lineup data gap for the "Why Did the Line Move?" feature.
-
-**Status:** Code still exists but `SPORTSDATA_API_KEY` is no longer set. Roster sync will be migrated to ESPN roster endpoints (see Current Priorities). The `sportsdata_api.py` client and `roster_sync.py` task will be rewritten to use ESPN as the primary data source.
-
-**Purpose:** Player name matching for related-futures. Stored on `Team.roster_players` JSONB column.
-
-**API Client:** `backend/app/services/sportsdata_api.py`
-- Auth: `SPORTSDATA_API_KEY` env var → `Ocp-Apim-Subscription-Key` header
-- Sport mapping: `SPORTSDATA_SPORT_MAPPING` (NBA, NFL, NHL, MLB, NCAAB, NCAAF, WNCAAB, MLS)
-- Base URL: `https://api.sportsdata.io/{version}/{sport}/scores/json/{path}`
+### SportsDataIO Integration (Removed)
+SportsDataIO previously provided roster data. **Fully replaced** by ESPN roster endpoints + MLB Stats API at zero cost. The `sportsdata_api.py` client has been deleted. `SPORTSDATA_API_KEY` is no longer needed.
 
 **Roster Sync:** `backend/app/tasks/roster_sync.py` (`_sync_rosters`)
+- Uses ESPN `/teams/{id}/roster` endpoint for NBA, NFL, NHL, NCAAB, NCAAF, WNBA, MLS, EPL
+- Uses MLB Stats API for baseball
 - Beat schedule: daily at 7:00 AM UTC (`sync-rosters-daily`)
-- Fetches all active players per sport, groups by team abbreviation
-- Stores deduplicated, sorted player name list (including ASCII variants from DraftKingsName)
-- Current coverage: NBA 26/30 teams, NHL 20/32, NFL 2/32 (abbreviation mismatch issue)
+- Stores deduplicated, sorted player name list on `Team.roster_players` JSONB column
 
 **Admin endpoints:**
 ```bash
@@ -572,11 +563,6 @@ curl -X POST "https://api.bainluck.com/api/admin/rosters/sync?secret=any&sport_k
 # Check task status
 curl "https://api.bainluck.com/api/admin/rosters/task/{task_id}?secret=any"
 ```
-
-**Known issues:**
-- ~~NFL matches only 2/32 teams~~ **Fixed**: Phase 1 now builds `sd_abbrev → team_id` mapping, bridging the ESPN/SportsDataIO abbreviation gap. Run roster sync to verify: `curl -X POST "https://api.bainluck.com/api/admin/rosters/sync?secret=any&sport_key=americanfootball_nfl"`
-- College sports return no data on trial tier
-- MLB returns "sport_not_found" (may be offseason or requires different API version). MLB abbreviation map (30 teams) now added to `SPORTSDATA_ABBREV_TO_NAME`.
 
 ### Related Futures (Event → Futures Linking)
 Shows championship odds, MVP odds, and award futures relevant to teams playing in a specific game.
@@ -1089,8 +1075,8 @@ These are the current focus. Resist the urge to build new features until these a
 16. 🟢 **Sport category disambiguation (shipped)** — `_score_candidates` uses `llm_sport_category` (already populated for both Kalshi and Polymarket) to add sport-match scoring bonus (+5) via `_SPORT_CATEGORY_TO_KEY_PREFIX` mapping. Prevents cross-sport mislinks.
 17. 🟢 **Oscars landing page (shipped)** — `/oscars` page with 24 award categories, cross-source odds aggregation (Polymarket + Kalshi), TMDB movie posters/headshots, ceremony countdown, gold-themed design. Backend at `GET /api/oscars`. Diacritics-aware nominee dedup, Kalshi 0.5 noise filter, probability normalization. See Oscars Landing Page section above.
 18. 🟢 **Event importance scoring + ESPN season type (shipped)** — `compute_highlight()` reads `llm_importance` with championship (+25), playoff (+15), exhibition (-20) weights. ESPN sync parses `season.type` and writes to `llm_importance`. Tennis Grand Slams and golf Majors promoted to tier 2. Playoff NFL scores 65 base (was 50), preseason NBA drops to 30 (was 50). 17 new tests.
-19. 📋 **Migrate roster sync from SportsDataIO to ESPN** — SportsDataIO is too expensive. ESPN's undocumented roster endpoints (`/teams/{espn_id}/roster`) cover all major sports at zero cost. MLB Stats API already provides rosters. Rewrite `roster_sync.py` to use ESPN as primary source, MLB Stats API for baseball. Removes `SPORTSDATA_API_KEY` dependency.
-20. 📋 **"Why Did the Line Move?" v1** — The highest-value upcoming feature. Detect significant odds movements (>3% in <1hr for pre-game, or momentum shifts during live games). Cross-reference with: (a) ESPN injury/news endpoints (free, immediate), (b) MySportsFeeds structured injury/lineup data with timestamps (pending account approval), (c) live game context (score changes, key plays, momentum). Feed correlation data to GPT-4o-mini to generate explanations like "Lakers line moved from -3 to +1 after LeBron listed as questionable" or "Odds shifted after back-to-back turnovers in the 4th quarter." Live games need more than injury data — play-by-play context, momentum shifts, foul trouble, pitching changes, etc. all drive line movement.
+19. 🟢 **Migrate roster sync from SportsDataIO to ESPN (shipped)** — `roster_sync.py` already uses ESPN + MLB Stats API as primary sources. Deleted `sportsdata_api.py` (321 lines of dead code). `SPORTSDATA_API_KEY` env var no longer needed.
+20. 🟢 **"Why Did the Line Move?" v1 — ESPN context enrichment (shipped)** — The full pipeline was already deployed (detection in `line_movement.py`, LLM explanation in `llm.py`, caching in `LineMovementAnalysis`, endpoint at `GET /events/{id}/line-movement`, frontend in `LineMovementExplainer.tsx`). This phase adds **real data** to the LLM prompt: ESPN injury reports (`get_event_context()` in `espn_api.py`), news headlines, and live game state (score/period/clock). Prompt instructs LLM to only reference listed injuries — no fabrication. Response includes `context` metadata (injuries_count, news_count, has_game_state). 26 new line movement tests + 8 ESPN parsing tests (84 total in both files).
 21. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
 22. 📋 Sport-specific Pulse normalization (different ceilings per sport)
 23. 🟡 **TV Mode v2 (designed, prototype built)** — Fullscreen second-screen experience for live games, elections, award shows, and ambient futures. Browser-first (`/tv` route). Cascaded density hierarchy: Phone shows Pulse ring + multi-source chart + context + related futures. iPad shows 3-column layout (chart + context sidebar + other games). TV is maximal with score-by-period, Pulse component breakdown, source comparison strip, sparklines in other-game cards, expanded trending futures. Ambient mode auto-rotates through futures during downtime. Prototype at `tv-mode-prototype.jsx`, full design plan at `docs/tv-mode-plan.md`. iOS v2 features documented (Live Activities, Dynamic Island, StandBy, Apple Watch, widgets, haptics, Siri). See TV Mode section in Key Features below.
@@ -1141,7 +1127,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 14 modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`, `roster_sync.py`, `team_linking.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
-- ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced.
+- ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced. **Later:** `sportsdata_api.py` deleted, roster sync migrated to ESPN + MLB Stats API.
 - ✅ Test coverage for core algorithms: 1533+ backend (pytest items) + 117+ frontend = 1650+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (126, incl. Level 2 time-series, event importance), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (50, incl. season type), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
@@ -1174,6 +1160,8 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Oscars landing page: `/oscars` page with 24 award categories, cross-source odds aggregation (Polymarket + Kalshi), TMDB movie posters/headshots via Bearer token auth, ceremony countdown, gold-themed design. Backend `GET /api/oscars` with diacritics dedup, Kalshi 0.5 noise filter, probability normalization, boxing false positive filter, NegRisk trivia dedup.
 - ✅ My Stuff / Preferences restructure: My Stuff (`/my-stuff`) rewritten from preferences editor to team-filtered feed (3 states: sign-in, onboarding, team feed via `my_teams_only` API param). Preferences editor moved to `/preferences`. Backend `my_teams_only` param on `/api/feed` with wider time windows (24h/7d), team filtering, no min score, no diversity enforcement. UserMenu "Preferences" links to `/preferences`.
 - ✅ Event importance scoring + ESPN season type: `compute_highlight()` now reads `llm_importance` field with championship (+25), playoff (+15), exhibition (-20) weights. ESPN sync parses `season.type` (1=pre, 2=regular, 3=post) and writes to `llm_importance` for live + scheduled events (won't downgrade championship to playoff). Tennis Grand Slams and golf Majors promoted from tier 3 to tier 2. 17 new tests (126 highlights + 50 ESPN parsing).
+- ✅ Roster sync SportsDataIO → ESPN migration: Deleted `sportsdata_api.py` (321 lines). `roster_sync.py` already uses ESPN + MLB Stats API. `SPORTSDATA_API_KEY` no longer needed.
+- ✅ "Why Did the Line Move?" ESPN context enrichment: Added `get_event_context()` to `espn_api.py` (parses injuries + news from `/summary` endpoint). Enriched `build_llm_prompt()` with real injury reports, news headlines, and live game state (score/period/clock). Prompt instructs LLM to only reference listed data. Response includes `context` metadata. 26 line movement tests + 8 ESPN parsing tests (84 total).
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1184,7 +1172,7 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 1633+ tests (1516+ backend + 117+ frontend) but initially had very few
+- Test suite now has 1667+ tests (1550+ backend + 117+ frontend) but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 

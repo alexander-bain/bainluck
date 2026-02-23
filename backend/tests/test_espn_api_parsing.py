@@ -497,3 +497,165 @@ class TestParseVenue:
         assert venue.city is None
         assert venue.state is None
         assert venue.capacity is None
+
+
+# ── _parse_injuries ───────────────────────────────────────────────────
+
+
+# Fixtures for injury/news parsing
+SUMMARY_WITH_INJURIES = {
+    "injuries": [
+        {
+            "team": {"displayName": "Boston Celtics"},
+            "injuries": [
+                {
+                    "athlete": {
+                        "displayName": "Jaylen Brown",
+                        "position": {"abbreviation": "SF"},
+                    },
+                    "status": "Day-To-Day",
+                    "details": {"type": "Knee"},
+                },
+                {
+                    "athlete": {
+                        "displayName": "Kristaps Porzingis",
+                        "position": {"abbreviation": "C"},
+                    },
+                    "status": "Out",
+                    "details": {"type": "Ankle"},
+                },
+            ],
+        },
+        {
+            "team": {"displayName": "Los Angeles Lakers"},
+            "injuries": [
+                {
+                    "athlete": {"displayName": "LeBron James"},
+                    "status": "Questionable",
+                    "details": {"type": "Back"},
+                },
+            ],
+        },
+    ],
+}
+
+SUMMARY_WITH_NEWS = {
+    "news": {
+        "articles": [
+            {"headline": "LeBron James listed as doubtful", "published": "2026-02-20T12:00:00Z"},
+            {"headline": "Celtics extend winning streak to 8", "published": "2026-02-20T10:00:00Z"},
+        ],
+    },
+}
+
+
+class TestParseInjuries:
+    """Tests for ESPN injury data parsing."""
+
+    def test_parse_injuries_basic(self, client):
+        """Standard injury data with multiple teams and players."""
+        injuries = client._parse_injuries(SUMMARY_WITH_INJURIES)
+        assert len(injuries) == 3
+
+        # First player
+        assert injuries[0].player_name == "Jaylen Brown"
+        assert injuries[0].team_name == "Boston Celtics"
+        assert injuries[0].status == "Day-To-Day"
+        assert injuries[0].injury_type == "Knee"
+        assert injuries[0].position == "SF"
+
+        # Third player (different team)
+        assert injuries[2].player_name == "LeBron James"
+        assert injuries[2].team_name == "Los Angeles Lakers"
+        assert injuries[2].status == "Questionable"
+
+    def test_parse_injuries_empty(self, client):
+        """Missing injuries key returns empty list."""
+        injuries = client._parse_injuries({})
+        assert injuries == []
+
+    def test_parse_injuries_partial_data(self, client):
+        """Missing athlete fields handled gracefully."""
+        data = {
+            "injuries": [
+                {
+                    "team": {"displayName": "Team A"},
+                    "injuries": [
+                        {
+                            "athlete": {},  # No displayName
+                            "status": "Out",
+                        },
+                        {
+                            "athlete": {"displayName": "Good Player"},
+                            "status": "Probable",
+                            # No details dict
+                        },
+                    ],
+                },
+            ],
+        }
+        injuries = client._parse_injuries(data)
+        # First athlete has no name → skipped
+        # Second athlete has name → kept with Unknown injury_type
+        assert len(injuries) == 1
+        assert injuries[0].player_name == "Good Player"
+        assert injuries[0].injury_type == "Unknown"
+
+    def test_parse_injuries_no_position(self, client):
+        """Athlete without position data returns None position."""
+        data = {
+            "injuries": [
+                {
+                    "team": {"displayName": "Team B"},
+                    "injuries": [
+                        {
+                            "athlete": {"displayName": "No Pos Player"},
+                            "status": "Out",
+                            "details": {"type": "Hamstring"},
+                        },
+                    ],
+                },
+            ],
+        }
+        injuries = client._parse_injuries(data)
+        assert len(injuries) == 1
+        assert injuries[0].position is None
+
+
+# ── _parse_news ───────────────────────────────────────────────────────
+
+
+class TestParseNews:
+    """Tests for ESPN news headline parsing."""
+
+    def test_parse_news_basic(self, client):
+        """Standard articles with headlines and timestamps."""
+        news = client._parse_news(SUMMARY_WITH_NEWS)
+        assert len(news) == 2
+        assert news[0].headline == "LeBron James listed as doubtful"
+        assert news[0].published == "2026-02-20T12:00:00Z"
+        assert news[1].headline == "Celtics extend winning streak to 8"
+
+    def test_parse_news_empty(self, client):
+        """Missing news key returns empty list."""
+        news = client._parse_news({})
+        assert news == []
+
+    def test_parse_news_no_articles(self, client):
+        """News key present but no articles."""
+        news = client._parse_news({"news": {}})
+        assert news == []
+
+    def test_parse_news_skips_empty_headlines(self, client):
+        """Articles with empty headline strings are skipped."""
+        data = {
+            "news": {
+                "articles": [
+                    {"headline": "", "published": "2026-02-20T12:00:00Z"},
+                    {"headline": "Valid headline"},
+                ],
+            },
+        }
+        news = client._parse_news(data)
+        assert len(news) == 1
+        assert news[0].headline == "Valid headline"

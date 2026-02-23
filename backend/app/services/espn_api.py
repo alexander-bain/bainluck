@@ -79,6 +79,23 @@ class ESPNVenue:
 
 
 @dataclass
+class ESPNInjury:
+    """Injury data from ESPN summary endpoint."""
+    player_name: str
+    team_name: str
+    status: str           # "Out", "Day-To-Day", "Questionable", "Probable"
+    injury_type: str      # "Knee", "Hamstring", etc.
+    position: Optional[str] = None
+
+
+@dataclass
+class ESPNNewsHeadline:
+    """News headline from ESPN summary endpoint."""
+    headline: str
+    published: Optional[str] = None
+
+
+@dataclass
 class ESPNEvent:
     """Event/game data from ESPN."""
     espn_id: str
@@ -491,6 +508,77 @@ class ESPNAPIService:
             })
 
         return result
+
+    async def get_event_context(
+        self, sport_key: str, event_id: str
+    ) -> dict:
+        """
+        Get injury reports and news headlines for an event.
+
+        Uses the /summary endpoint (same as get_event) and parses the
+        injuries and news sections for line movement context.
+
+        Args:
+            sport_key: Our internal sport key
+            event_id: ESPN event ID
+
+        Returns:
+            {"injuries": list[ESPNInjury], "news": list[ESPNNewsHeadline]}
+        """
+        path = self._get_espn_path(sport_key)
+        if not path:
+            return {"injuries": [], "news": []}
+
+        sport, league = path
+        url = f"{ESPN_API_BASE}/{sport}/{league}/summary?event={event_id}"
+
+        data = await self._get(url)
+        if not data:
+            return {"injuries": [], "news": []}
+
+        injuries = self._parse_injuries(data)
+        news = self._parse_news(data)
+
+        return {"injuries": injuries, "news": news}
+
+    def _parse_injuries(self, summary_data: dict) -> list[ESPNInjury]:
+        """Parse injury data from ESPN summary response."""
+        injuries = []
+        for team_group in summary_data.get("injuries", []):
+            team_name = team_group.get("team", {}).get("displayName", "")
+            for item in team_group.get("injuries", []):
+                athlete = item.get("athlete", {})
+                player_name = athlete.get("displayName", "")
+                if not player_name:
+                    continue
+                status = item.get("status", "Unknown")
+                injury_type = item.get("details", {}).get("type", "Unknown") if isinstance(item.get("details"), dict) else "Unknown"
+                position = athlete.get("position", {}).get("abbreviation") if isinstance(athlete.get("position"), dict) else None
+                injuries.append(ESPNInjury(
+                    player_name=player_name,
+                    team_name=team_name,
+                    status=status,
+                    injury_type=injury_type,
+                    position=position,
+                ))
+        return injuries
+
+    def _parse_news(self, summary_data: dict) -> list[ESPNNewsHeadline]:
+        """Parse news headlines from ESPN summary response."""
+        headlines = []
+        articles = summary_data.get("news", {}).get("articles", [])
+        if not isinstance(articles, list):
+            return []
+        for article in articles:
+            headline = article.get("headline", "")
+            if not headline:
+                continue
+            published = article.get("published")
+            headlines.append(ESPNNewsHeadline(
+                headline=headline,
+                published=published,
+            ))
+        return headlines
 
     async def get_team_roster(self, sport_key: str, team_id: str) -> list[dict]:
         """
