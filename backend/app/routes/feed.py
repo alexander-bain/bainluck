@@ -567,6 +567,21 @@ async def _score_futures(
 
         scored_items.append(item)
 
+    # === PER-CATEGORY CAP ===
+    # Prevent any single category from dominating the futures feed.
+    # Without this, crypto (8,955 markets) or basketball (5,022) can
+    # fill every slot, crowding out politics, weather, entertainment, etc.
+    MAX_PER_CATEGORY = 5
+    category_counts: dict[str, int] = {}
+    capped_items = []
+    for item in scored_items:
+        cat = item["data"].get("llm_sport_category") or "other"
+        current = category_counts.get(cat, 0)
+        if current < MAX_PER_CATEGORY:
+            capped_items.append(item)
+            category_counts[cat] = current + 1
+    scored_items = capped_items
+
     return scored_items
 
 
