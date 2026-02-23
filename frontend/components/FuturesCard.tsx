@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbability, formatAmericanOdds } from "@/lib/api";
 import { getEmojiForCategory, getEmojiForLeague } from "@/lib/sportCategories";
+import PersonalizedBadge from "./PersonalizedBadge";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -11,6 +12,12 @@ interface FuturesCardProps {
   isPinned?: boolean;
   onPinToggle?: (futuresId: number) => void;
   pinDisabled?: boolean;
+  /** Whether this item was personalized by the feed */
+  personalized?: boolean;
+  /** Personalization multiplier */
+  multiplier?: number;
+  /** Personalization reason strings */
+  personalizationReasons?: string[];
 }
 
 function formatSportName(sportKey: string | null, sportName: string | null): string {
@@ -40,6 +47,9 @@ export default function FuturesCard({
   isPinned = false,
   onPinToggle,
   pinDisabled = false,
+  personalized,
+  multiplier,
+  personalizationReasons,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
   const topOutcomes = outcomes.slice(0, 5);
@@ -74,6 +84,11 @@ export default function FuturesCard({
                 {market.category}
               </span>
             )}
+            <PersonalizedBadge
+              personalized={personalized}
+              multiplier={multiplier}
+              personalizationReasons={personalizationReasons}
+            />
           </div>
 
           <div className="flex items-center gap-1.5 flex-shrink-0">

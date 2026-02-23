@@ -6,6 +6,7 @@ import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import PulseBadge from "./PulseBadge";
+import PersonalizedBadge from "./PersonalizedBadge";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned';
 
@@ -24,6 +25,12 @@ interface EventCardProps {
   onPinToggle?: (eventId: number) => void;
   /** Whether max pins has been reached (disable pin button) */
   pinDisabled?: boolean;
+  /** Whether this item was personalized by the feed */
+  personalized?: boolean;
+  /** Personalization multiplier */
+  multiplier?: number;
+  /** Personalization reason strings */
+  personalizationReasons?: string[];
 }
 
 export default function EventCard({
@@ -35,6 +42,9 @@ export default function EventCard({
   isPinned = false,
   onPinToggle,
   pinDisabled = false,
+  personalized,
+  multiplier,
+  personalizationReasons,
 }: EventCardProps) {
   const { trackEventCardClick } = useAnalytics();
 
@@ -112,6 +122,11 @@ export default function EventCard({
                 {highlightLabel}
               </span>
             )}
+            <PersonalizedBadge
+              personalized={personalized}
+              multiplier={multiplier}
+              personalizationReasons={personalizationReasons}
+            />
           </div>
 
           <div className="flex items-center gap-1.5 flex-shrink-0">

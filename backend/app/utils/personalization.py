@@ -1,6 +1,6 @@
 """Personalization scoring for the unified feed.
 
-Computes a multiplier (typically 0.5x–2.0x) applied to each feed item's
+Computes a multiplier (typically 0.5x–3.0x) applied to each feed item's
 base interestingness score based on the user's preferences, favorite teams,
 sport affinities, and team relationships (follow, local, alma_mater, rival).
 
@@ -14,13 +14,13 @@ Design principles:
 
 Multiplier sources (applied additively, then clamped):
   base: 1.0
-  + team_in_event: up to +0.5  (favorite team is playing)
+  + team_in_event: up to +0.8  (favorite team is playing)
   + rival_losing:  up to +0.5  (rival team is losing)
   + local_team:    up to +0.3  (team from user's home market)
   + alma_mater:    up to +0.3  (user's college team)
-  + sport_affinity: -0.5 to +0.2  (based on sport_affinities dict)
+  + sport_affinity: -0.3 to +0.5  (based on sport_affinities dict)
   + pinned_item:   +0.3  (user explicitly pinned this)
-  = clamped to [0.3, 2.0]
+  = clamped to [0.3, 3.0]
 """
 
 import logging
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 
 # Team relationship multiplier bonuses
-FOLLOW_BONUS = 0.5       # User explicitly follows this team
+FOLLOW_BONUS = 0.8       # User explicitly follows this team
 LOCAL_BONUS = 0.3         # Team is from user's home market
 ALMA_MATER_BONUS = 0.3   # User's college/university team
 RIVAL_LOSING_BONUS = 0.5 # Rival is currently losing (schadenfreude)
@@ -43,12 +43,12 @@ PINNED_BONUS = 0.3        # User has this item pinned
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
 LOW_AFFINITY_THRESHOLD = 0.2    # below this = suppress
-HIGH_AFFINITY_BONUS = 0.2       # boost for high-affinity sports
-LOW_AFFINITY_PENALTY = -0.5     # penalty for low-affinity sports
+HIGH_AFFINITY_BONUS = 0.5       # boost for high-affinity sports
+LOW_AFFINITY_PENALTY = -0.3     # penalty for low-affinity sports
 
 # Clamp range
 MIN_MULTIPLIER = 0.3
-MAX_MULTIPLIER = 2.0
+MAX_MULTIPLIER = 3.0
 
 
 @dataclass

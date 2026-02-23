@@ -4,6 +4,11 @@
  * Provides reactive auth state, sign-in/sign-out methods,
  * and a getToken() function for authenticated API calls.
  *
+ * Performance optimization: Firebase SDK (~200KB) is only loaded when
+ * there's a previously-signed-in user (localStorage marker) or when
+ * the user explicitly clicks Sign In. Anonymous visitors pay zero
+ * Firebase cost on initial page load.
+ *
  * When Firebase is not configured, all values indicate
  * "not authenticated" and auth methods are no-ops.
  */
@@ -22,6 +27,10 @@ import {
 } from "@/lib/firebase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// localStorage key indicating user has previously signed in.
+// When absent, Firebase SDK loading is deferred until explicit sign-in.
+const SIGNED_IN_MARKER = "bainluck_previouslySignedIn";
 
 export interface AuthUser {
   uid: string;
@@ -73,19 +82,72 @@ async function registerWithBackend(idToken: string): Promise<void> {
   }
 }
 
+/**
+ * Check if user has previously signed in (localStorage marker).
+ * Safe for SSR — returns false when window is undefined.
+ */
+function hasPreviouslySignedIn(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(SIGNED_IN_MARKER) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setSignedInMarker(value: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) {
+      localStorage.setItem(SIGNED_IN_MARKER, "true");
+    } else {
+      localStorage.removeItem(SIGNED_IN_MARKER);
+    }
+  } catch {
+    // localStorage unavailable (private browsing, etc.)
+  }
+}
+
 export function useAuth(): UseAuthResult {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const isAuthAvailable = isFirebaseConfigured();
   const tokenRef = useRef<string | null>(null);
 
-  // Subscribe to Firebase auth state (onAuthChange is async — SDK loads lazily)
+  // Subscribe to Firebase auth state.
+  //
+  // Performance optimization: If the user has never signed in before
+  // (no localStorage marker), skip Firebase SDK loading entirely.
+  // This saves ~200KB parse + 200-300ms for anonymous visitors.
+  // The SDK will be loaded on-demand when they click Sign In.
   useEffect(() => {
     if (!isAuthAvailable) {
       setIsLoading(false);
       return;
     }
 
+    // Check for backend auth data first (Safari ITP fallback)
+    const backendUser = getBackendAuthUser();
+    if (backendUser) {
+      setUser({
+        uid: backendUser.uid,
+        email: backendUser.email,
+        displayName: backendUser.displayName,
+        photoURL: backendUser.photoURL,
+      });
+      setIsLoading(false);
+      setSignedInMarker(true);
+      // Still subscribe to Firebase for token refresh, but don't block
+    }
+
+    // If no previous sign-in, skip Firebase SDK loading
+    if (!hasPreviouslySignedIn() && !backendUser) {
+      console.log("[Auth] No previous sign-in detected, deferring Firebase SDK");
+      setIsLoading(false);
+      return;
+    }
+
+    // User has previously signed in — load Firebase and subscribe
     let unsubscribe: (() => void) | null = null;
     let cancelled = false;
 
@@ -94,6 +156,9 @@ export function useAuth(): UseAuthResult {
       console.log("[Auth]", fbUser ? `signed in as ${fbUser.email}` : "not signed in");
       setUser(mapFirebaseUser(fbUser));
       setIsLoading(false);
+      if (fbUser) {
+        setSignedInMarker(true);
+      }
     }).then((unsub) => {
       if (cancelled) {
         unsub();
@@ -116,6 +181,7 @@ export function useAuth(): UseAuthResult {
       const idToken = await firebaseSignInWithGoogle();
       if (idToken) {
         tokenRef.current = idToken;
+        setSignedInMarker(true);
 
         // Register with backend (best-effort, don't block user state update)
         registerWithBackend(idToken);
@@ -136,6 +202,13 @@ export function useAuth(): UseAuthResult {
         }
         // If no backend auth (Chrome/Firefox tier 1 success), onAuthStateChanged
         // will fire and update user state via the useEffect listener.
+
+        // Now subscribe to auth changes for token refresh (if not already subscribed)
+        onAuthChange((fbUser) => {
+          if (fbUser) {
+            setUser(mapFirebaseUser(fbUser));
+          }
+        });
       }
     } catch (error) {
       console.error("[Auth] Sign-in error:", error);
@@ -147,6 +220,7 @@ export function useAuth(): UseAuthResult {
     await firebaseSignOut();
     tokenRef.current = null;
     setUser(null);
+    setSignedInMarker(false);
   }, []);
 
   // Get fresh token for API calls

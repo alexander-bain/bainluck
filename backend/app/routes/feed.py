@@ -41,7 +41,7 @@ router = APIRouter()
 
 @router.get("")
 async def get_feed(
-    limit: int = Query(20, description="Number of feed items to return", ge=1, le=50),
+    limit: int = Query(20, description="Number of feed items to return", ge=1, le=100),
     offset: int = Query(0, description="Offset for pagination", ge=0),
     sport: Optional[str] = Query(None, description="Filter by sport category (e.g., basketball, football)"),
     include_events: bool = Query(True, description="Include game events in feed"),
