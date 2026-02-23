@@ -86,11 +86,8 @@ function MyTeamsFeed() {
     { refreshInterval: 15000 },
   );
 
-  // State B: Authenticated but no teams followed
+  // State B check (must be after all hooks)
   const teamCount = feedData?.personalization?.team_count ?? null;
-  if (feedData && teamCount === 0) {
-    return <OnboardingPrompt />;
-  }
 
   // Pinned events from feed data
   const feedEventIds = useMemo(() => {
@@ -216,6 +213,11 @@ function MyTeamsFeed() {
 
     return sections;
   }, [feedData]);
+
+  // State B: Authenticated but no teams followed
+  if (feedData && teamCount === 0) {
+    return <OnboardingPrompt />;
+  }
 
   return (
     <div className="space-y-5">
@@ -353,7 +355,7 @@ function OnboardingPrompt() {
           Follow some teams to get started
         </h2>
         <p className="text-sm text-text-secondary mb-6 max-w-xs mx-auto">
-          Tell us your favorite teams and we'll show their games and championship odds here.
+          Tell us your favorite teams and we&apos;ll show their games and championship odds here.
         </p>
         <Link
           href="/onboarding"
