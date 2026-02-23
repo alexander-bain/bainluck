@@ -352,14 +352,15 @@ async def _score_futures(
 ) -> list[dict]:
     """Score and format futures markets for the feed."""
     # Fetch open futures with outcomes.
-    # Exclude game-level prediction market futures (event_id IS NOT NULL) — these
-    # are already linked to events and shown as win probability trend lines on
-    # event detail pages. Including them here wastes feed slots and crowds out
-    # championship, weather, entertainment, and politics futures.
-    #
-    # Also exclude markets past their resolution date — thousands of Polymarket
-    # game-level markets remain "open" status weeks after the game ended. Without
-    # this filter, they consume all the LIMIT slots since we order by resolution_date.
+    # Three filters to prevent game-level markets from flooding the feed:
+    # 1. Exclude event-linked markets (event_id IS NOT NULL) — already shown as
+    #    win probability trend lines on event detail pages.
+    # 2. Exclude past-resolution markets — thousands remain status="open" weeks
+    #    after resolution, consuming LIMIT slots.
+    # 3. Exclude matchup-named markets (" vs " / " vs. ") — game-level PM markets
+    #    from Polymarket/Kalshi (basketball, esports, soccer, tennis matches)
+    #    resolve in hours, always beating championship/politics/crypto futures in
+    #    the resolution_date sort.
     #
     # Order by resolution_date proximity: markets resolving soonest are most
     # timely and actionable. NULLs (no resolution date) go last.
@@ -376,11 +377,13 @@ async def _score_futures(
                 FuturesMarket.resolution_date.is_(None),
                 FuturesMarket.resolution_date >= now,
             ),
+            ~FuturesMarket.name.ilike('% vs %'),
+            ~FuturesMarket.name.ilike('% vs. %'),
         )
         .order_by(
             FuturesMarket.resolution_date.asc().nulls_last(),
         )
-        .limit(300)  # Enough to get category diversity from 24K+ markets
+        .limit(300)  # Enough to get category diversity from remaining markets
     )
 
     if sport_filter:
