@@ -565,32 +565,50 @@ curl "https://api.bainluck.com/api/admin/rosters/task/{task_id}?secret=any"
 ```
 
 ### Related Futures (Event → Futures Linking)
-Shows championship odds, MVP odds, and award futures relevant to teams playing in a specific game.
+Shows championship odds, MVP odds, award futures, upcoming game moneylines, and game-specific stat props relevant to teams playing in a specific game. The "Bigger Picture" section on event detail pages.
 
 **Endpoint:** `GET /api/events/{id}/related-futures`
 
 **Matching strategy (hybrid):**
 1. **Name ILIKE** — Team names, short names (≥4 chars), alternate names, and roster player names matched against `FuturesOutcome.name`
 2. **team_id lookup** — Supplementary matching via `FuturesOutcome.team_id` (populated by backfill task)
-3. Combined via OR for maximum recall
+3. **Market name ILIKE** — Team names matched against `FuturesMarket.name` for game props where outcome names are generic ("Over 218.5")
+4. Combined via OR for maximum recall
 
 **Sport filtering (triple strategy via OR):**
 - `FuturesMarket.external_id LIKE prefix%` (e.g., "basketball%")
 - `FuturesMarket.llm_sport_category` matches mapped category
 - `FuturesMarket.sport_id` matches compatible sport IDs
 
+**Game-specific stat prop filtering (backend):**
+Stat prop markets (e.g., "Boston at Golden State: Points") are tied to a single game. The backend filters these so they only appear on the correct event's detail page. Detection uses `_GAME_STAT_PROP_RE` (regex matching ": Points", ": Rebounds", ": Double Doubles", etc.). Matching uses `event_id` equality or ±6h temporal proximity on `commence_time`/`resolution_date`. Game moneylines (e.g., "Lakers vs Nuggets") are NOT filtered — they pass through as "Upcoming Games" context. Season-long markets (championship, MVP, awards) always show.
+
 **Key helpers** (in `events.py`):
 - `_SPORT_PREFIX_TO_LLM_CATEGORY` — Maps sport key prefixes to LLM categories
+- `_GAME_STAT_PROP_RE` / `_GAME_MATCHUP_RE` — Module-level compiled regex for game-specific market detection
+- `_is_stat_prop_market()` / `_stat_prop_matches_event()` — Per-request closures using event commence_time
 - `_team_name_patterns()` — Builds ILIKE-safe patterns from team names
 - `_escape_like()` — Escapes `%`, `_`, `\` for safe ILIKE patterns
 
-**Frontend:** `RelatedFutures.tsx` — "Bigger Picture" section on event detail page with team-colored borders, logos, probability bars, tier icons, player name display. Summary-first collapsed design when LLM summary is available; falls back to expanded team sections when no summary.
+**Frontend tier system (`effectiveTier()` in `RelatedFutures.tsx`):**
+Pattern-based tier detection overrides backend `market_tier` when needed. Checked in priority order:
+1. **Tier 6 (stat props)**: `STAT_PROP_PATTERNS` — ": Points", ": Rebounds", ": Double Doubles", etc. + "Team at Team: Stat" format. Displayed as Player Stats cards with semi-circular SVG gauges and headshots.
+2. **Tier 5 (game markets)**: `GAME_MARKET_PATTERNS` — "vs.", "–", "Moneyline", "Game N". Displayed in dense 2-column Upcoming Games grid.
+3. **Tier 3 (awards)**: `AWARD_PATTERNS` — 18 patterns including MVP, Golden Boot/Glove, Cy Young, Rookie, Player of Year, etc. Displayed as player-centric rows with headshots. Deduplicated by `normalizeName(outcome) + "::" + shortAwardLabel(market)`.
+4. **Tier 4 (downgraded)**: `NOT_CHAMPIONSHIP_PATTERNS` — 14 patterns preventing non-championship markets from being hero cards (Win Totals, Make Playoffs, Seeding, Over/Under wins, Cover of NBA 2K, etc.)
+5. **Tier 1-2 (backend)**: Trust backend `market_tier` for championship/conference if no pattern overrides.
+
+**Title Comparison bar:** Uses `findBestChampionship()` which prefers markets with "championship" in the name over other tier-1 markets, preventing "Make Playoffs" (94%) from displaying instead of actual championship odds (2%).
+
+**Cross-sport false positive prevention:** `GameMarketsGrid` verifies the market name contains the team name (or short name ≥4 chars) before displaying. Catches backend sport-filter leaks like hockey markets appearing on basketball event pages.
+
+**Player headshots:** `PlayerHeadshot` component with priority chain: `matched_player.headshot` (direct ESPN URL from roster) → ESPN `espn_id` → Wikipedia → colored initials fallback. The `matched_player` metadata comes from `Team.roster_players` JSONB (populated by daily roster sync).
 
 **LLM Summary:** `generate_related_futures_summary()` in `llm.py` generates a 2-3 sentence casual summary of championship/award implications using GPT-4o-mini. Cached in `LineMovementAnalysis` table with `analysis_type="related_futures"`. TTL: 2 hours for live/scheduled games, never expires for completed. Returned as `"summary": str | null` in the endpoint response. Gracefully degrades when `OPENAI_API_KEY` is not set.
 
 **Files:**
-- Backend endpoint: `backend/app/routes/events.py` (related-futures section + LLM summary caching)
-- Frontend component: `frontend/components/RelatedFutures.tsx`
+- Backend endpoint: `backend/app/routes/events.py` (related-futures section + stat prop filtering + LLM summary caching)
+- Frontend component: `frontend/components/RelatedFutures.tsx` (~1200 lines — tier detection, stat prop cards, award cards, game grid, headshots, dedup)
 - LLM generation: `backend/app/services/llm.py` (`generate_related_futures_summary`)
 - Team linking utility: `backend/app/utils/team_linking.py`
 - Tests: `backend/tests/test_team_linking.py` (11 tests for helpers)
@@ -1083,7 +1101,8 @@ These are the current focus. Resist the urge to build new features until these a
 24. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
 25. 🟢 **NFL roster sync fix (shipped)** — Phase 1 team sync builds `sd_abbrev → team_id` mapping that Phase 2 roster sync uses as primary lookup, bridging the ESPN/SportsDataIO abbreviation gap. Added ILIKE fallback for formatting diffs, MLB abbreviation map (30 teams). Should fix 2/32 → 32/32 NFL matching.
 26. 🟢 **Related futures Phase 4 (shipped)** — LLM "Bigger Picture" summary on related-futures endpoint. GPT-4o-mini generates 2-3 sentence casual summary of championship/award implications. Cached in `LineMovementAnalysis` with 2h TTL (never expires for completed games). Frontend summary-first collapsed design with "See all N futures" toggle.
-27. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
+27. 🟢 **Bigger Picture visual redesign (shipped)** — Tier-grouped display with pattern-based `effectiveTier()` overriding backend `market_tier`. Championship hero cards, award rows with ESPN headshots (`PlayerHeadshot` component: headshot URL → espn_id → Wikipedia → initials), stat prop cards with semi-circular SVG gauges, dense 2-col upcoming games grid. Award dedup by player+award combo key. NOT_CHAMPIONSHIP_PATTERNS (14 patterns) prevents misclassified hero cards (Win Totals, Make Playoffs, Seeding, etc.). Title Comparison prefers "championship" in market name. Backend stat prop filter ensures game-specific stats only show on correct event page (±6h temporal proximity or event_id match). Frontend cross-sport false positive check on game grid (team name must appear in market name).
+28. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
 28. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
 29. 🟡 **Database size & retention strategy (evaluating)** — The `odds_snapshots`, `futures_odds_snapshots`, and `win_prob_snapshots` tables grow ~10-20K net rows/day after write-time dedup. Current mitigation: lossless snapshot collapse (Phase 1 shipped — pure SQL, constant memory) reduces row count 50-90% for events >48h old. **No auto-deletion** — we want to preserve full history. Future options under evaluation: (a) pre-game snapshot thinning (keep 1/hour for >24h before game), (b) populate `odds_aggregated` table with 1-hour buckets for completed events then archive raw snapshots to cold storage, (c) tiered retention by event tier (Tier 1 full history, Tier 3-4 for 30 days), (d) futures cleanup for resolved markets after 6 months. The current collapse strategy buys 2-3 years of runway. Need to spend more time evaluating solutions — the priority is not losing data we might want later. See `backend/app/tasks/retention.py` for collapse implementation.
 
@@ -1157,6 +1176,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Stale bookmaker filter improvements: `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) via `_effective_time()`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new).
 - ✅ Prediction market matching hardening: prop/spread outcome filter (`_is_prop_or_spread_outcome`) prevents O/U, spread, and player prop outcomes from being matched as moneyline. Orphaned `win_prob_snapshots` now deleted on unlink/re-link (Phase 1.5 + admin endpoint). NCAAB/NCAAF ticker fragment matching (`extract_ticker_fragments` + `_score_fragment_match`) disambiguates among multiple same-sport candidates. Time window tightened from ±6h to ±3h with ticker game date. 291 tests (up from 259).
 - ✅ Related futures Phase 4 — LLM "Bigger Picture" summary: `generate_related_futures_summary()` in `llm.py` produces 2-3 sentence casual summary of championship/award implications using GPT-4o-mini. Cached in `LineMovementAnalysis` table with `analysis_type="related_futures"` (2h TTL, never expires for completed games). Frontend summary-first collapsed design in `RelatedFutures.tsx` with "See all N futures" toggle.
+- ✅ Bigger Picture visual redesign (v3-v6): Tier-grouped layout with pattern-based `effectiveTier()` (6 tiers: championship hero → conference → award rows with ESPN headshots → division → game grid → stat prop cards with SVG gauges). PlayerHeadshot component (headshot URL → espn_id → Wikipedia → initials). Award dedup by player+award combo key across sources. NOT_CHAMPIONSHIP_PATTERNS (14 patterns) downgrades misclassified markets. Title Comparison prefers markets with "championship" in name. Backend `_is_stat_prop_market()` filter ensures game-specific stats (points, rebounds, double-doubles, etc.) only appear on correct event page via ±6h temporal proximity or event_id match. Frontend GameMarketsGrid team name verification catches cross-sport false positives.
 - ✅ Oscars landing page: `/oscars` page with 24 award categories, cross-source odds aggregation (Polymarket + Kalshi), TMDB movie posters/headshots via Bearer token auth, ceremony countdown, gold-themed design. Backend `GET /api/oscars` with diacritics dedup, Kalshi 0.5 noise filter, probability normalization, boxing false positive filter, NegRisk trivia dedup.
 - ✅ My Stuff / Preferences restructure: My Stuff (`/my-stuff`) rewritten from preferences editor to team-filtered feed (3 states: sign-in, onboarding, team feed via `my_teams_only` API param). Preferences editor moved to `/preferences`. Backend `my_teams_only` param on `/api/feed` with wider time windows (24h/7d), team filtering, no min score, no diversity enforcement. UserMenu "Preferences" links to `/preferences`.
 - ✅ Event importance scoring + ESPN season type: `compute_highlight()` now reads `llm_importance` field with championship (+25), playoff (+15), exhibition (-20) weights. ESPN sync parses `season.type` (1=pre, 2=regular, 3=post) and writes to `llm_importance` for live + scheduled events (won't downgrade championship to playoff). Tennis Grand Slams and golf Majors promoted from tier 3 to tier 2. 17 new tests (126 highlights + 50 ESPN parsing).
