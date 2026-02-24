@@ -1119,11 +1119,15 @@ async def _poll_live_prediction_market_prices():
                             if last_price is not None:
                                 last_price = last_price / 100.0
 
-                            # Calculate probability from mid-market
-                            if yes_bid is not None and yes_ask is not None:
-                                prob = (yes_bid + yes_ask) / 2
-                            elif last_price is not None:
+                            # Prefer last_price (actual traded price) over
+                            # bid/ask midpoint. The midpoint oscillates wildly
+                            # when the spread widens/narrows on illiquid markets,
+                            # creating a jagged chart line that doesn't reflect
+                            # real probability changes.
+                            if last_price is not None and 0 < last_price < 1:
                                 prob = last_price
+                            elif yes_bid is not None and yes_ask is not None:
+                                prob = (yes_bid + yes_ask) / 2
                             else:
                                 continue
 
@@ -1200,18 +1204,16 @@ async def _poll_live_prediction_market_prices():
                         for pm in poly_markets:
                             condition_id = pm.get("conditionId", "")
 
-                            # Parse outcomePrices (stringified JSON array)
+                            # Parse outcomePrices and outcomes (both stringified JSON arrays)
                             prices_raw = pm.get("outcomePrices", "[]")
+                            outcomes_raw = pm.get("outcomes", "[]")
                             try:
                                 prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
+                                outcomes_names = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
                             except (json.JSONDecodeError, TypeError):
                                 continue
 
                             if not prices:
-                                continue
-
-                            prob = float(prices[0])
-                            if prob <= 0 or prob >= 1:
                                 continue
 
                             # Find matching outcome by condition_id
@@ -1224,6 +1226,41 @@ async def _poll_live_prediction_market_prices():
                             )
                             outcome = outcome_result.scalar_one_or_none()
                             if not outcome:
+                                continue
+
+                            # Determine the correct price for this outcome.
+                            #
+                            # Polymarket outcomePrices is parallel to outcomes:
+                            #   outcomes: ["Team A", "Team B"]  →  prices: [0.6, 0.4]
+                            #
+                            # For NegRisk events, each sub-market has outcomes
+                            # ["Yes", "No"] where prices[0] = "Yes" probability
+                            # for that specific team. prices[0] is always correct.
+                            #
+                            # For non-NegRisk binary markets with team-name outcomes
+                            # (e.g., outcomes: ["Warriors", "Celtics"]), prices[0]
+                            # corresponds to the FIRST listed team, not necessarily
+                            # the team our outcome record represents. We must match
+                            # by name to get the right price.
+                            prob = float(prices[0])  # default
+
+                            if (
+                                len(outcomes_names) >= 2
+                                and len(prices) >= 2
+                                and outcome.name
+                                and outcomes_names[0].lower().strip() not in ("yes", "no", "")
+                            ):
+                                # Non-generic outcome names — find which price
+                                # index corresponds to this outcome's team
+                                outcome_name_lower = outcome.name.lower().strip()
+                                for idx, oname in enumerate(outcomes_names):
+                                    if idx < len(prices) and _fuzzy_team_match(
+                                        outcome_name_lower, oname
+                                    ):
+                                        prob = float(prices[idx])
+                                        break
+
+                            if prob <= 0 or prob >= 1:
                                 continue
 
                             # Update outcome probability

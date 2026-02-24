@@ -443,6 +443,11 @@ export interface LineMovementResponse {
     source: string;
     divergence: number;
   } | null;
+  context: {
+    injuries_count: number;
+    news_count: number;
+    has_game_state: boolean;
+  } | null;
   cached: boolean;
   created_at: string;
 }

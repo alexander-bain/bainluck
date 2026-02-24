@@ -68,9 +68,17 @@ export default function LineMovementExplainer({
 
           {/* AI Explanation */}
           {data.explanation && (
-            <p className="text-sm text-text-primary leading-relaxed mb-3">
-              {data.explanation}
-            </p>
+            <div className="mb-3">
+              <p className="text-sm text-text-primary leading-relaxed">
+                {data.explanation}
+              </p>
+              {/* Show context quality indicator when no real data was available */}
+              {data.context && !data.context.injuries_count && !data.context.news_count && !data.context.has_game_state && (
+                <p className="text-xs text-text-muted mt-1">
+                  Limited context available for this game
+                </p>
+              )}
+            </div>
           )}
 
           {/* Movement Details */}

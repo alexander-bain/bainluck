@@ -312,6 +312,29 @@ def build_llm_prompt(
     if context_sections:
         extra_context = "\n\n" + "\n\n".join(context_sections) + "\n"
 
+    # Determine how much context we actually have
+    has_injuries = bool(injuries)
+    has_news = bool(news_headlines)
+    has_game_state = bool(game_context and game_context.get("home_score") is not None)
+    has_any_context = has_injuries or has_news or has_game_state
+
+    # Context-aware instructions:
+    # When we have no concrete context, the LLM should acknowledge
+    # the movement without fabricating explanations.
+    if has_any_context:
+        context_instructions = """- Write 2-3 concise sentences explaining the most likely reason(s) for the movement
+- Focus on the single biggest movement if there are multiple
+- Use the injury and news information provided when explaining the movement. Only reference specific injuries/news if they are listed above. Do not fabricate injury information.
+- Be specific to the sport and teams when possible
+- If the movement is during a live game, focus on in-game factors (scoring runs, momentum, key plays)
+- If pre-game, focus on news/injury/lineup factors"""
+    else:
+        context_instructions = """- Write 1-2 concise sentences describing the movement factually (which direction, which team benefited, how large the shift was)
+- Do NOT speculate about causes. Do not say "likely due to" or "probably because" — we don't have enough data to explain why.
+- Do NOT mention scoring runs, key plays, injuries, lineup changes, or any other cause unless that information was provided above.
+- Simply describe what happened to the odds. Example: "The line shifted 8% toward the Lakers over the past hour, moving from a toss-up to a clear Lakers lean."
+- It's OK to note that the reason is unclear — that's better than guessing."""
+
     return f"""You are a sports betting analyst explaining odds movements to casual fans who want to understand what's happening, not get betting advice.
 
 Given the following odds movement data, explain WHY the line likely moved.
@@ -319,13 +342,8 @@ Given the following odds movement data, explain WHY the line likely moved.
 {analysis.summary_context}{extra_context}
 
 Instructions:
-- Write 2-3 concise sentences explaining the most likely reason(s) for the movement
-- Focus on the single biggest movement if there are multiple
-- Use the injury and news information provided when explaining the movement. Only reference specific injuries/news if they are listed above. Do not fabricate injury information.
-- Be specific to the sport and teams when possible
+{context_instructions}
 - Use language casual fans understand (avoid jargon like "steam move" or "RLM")
-- If the movement is during a live game, focus on in-game factors (scoring runs, momentum, key plays)
-- If pre-game, focus on news/injury/lineup factors
 - Do NOT give betting advice or suggest what users should bet on
 - Do NOT use phrases like "I think" or "In my opinion"
 - Start directly with the explanation (no preamble)
