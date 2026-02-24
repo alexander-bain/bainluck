@@ -568,6 +568,12 @@ export interface FeedFuturesData {
   top_outcomes: FeedFuturesOutcome[];
   outcome_count: number;
   canonical_market_key: string | null;
+  matched_outcomes?: {
+    name: string;
+    probability: number | null;
+    rank: number | null;
+    movement: number | null;
+  }[];
 }
 
 export interface FeedItem {

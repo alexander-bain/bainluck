@@ -176,40 +176,30 @@ function MyTeamsFeed() {
   const feedSections = useMemo(() => {
     if (!feedData || feedData.items.length === 0) return [];
 
-    const now = new Date();
-    const threeHoursMs = 3 * 60 * 60 * 1000;
-
     const liveNow: FeedItem[] = [];
-    const startingSoon: FeedItem[] = [];
-    const topMarkets: FeedItem[] = [];
-    const moreGames: FeedItem[] = [];
+    const upcoming: FeedItem[] = [];
+    const yourMarkets: FeedItem[] = [];
 
     for (const item of feedData.items) {
       if (item.type === "futures") {
-        topMarkets.push(item);
+        yourMarkets.push(item);
       } else {
         const data = item.data as FeedEventData;
         if (data.status === "live") {
           liveNow.push(item);
-        } else if (data.status === "scheduled") {
-          const gameTime = new Date(data.commence_time);
-          const untilMs = gameTime.getTime() - now.getTime();
-          if (untilMs > 0 && untilMs <= threeHoursMs) {
-            startingSoon.push(item);
-          } else {
-            moreGames.push(item);
-          }
         } else {
-          moreGames.push(item);
+          upcoming.push(item);
         }
       }
     }
 
     const sections: { key: string; emoji: string; title: string; accent: string; items: FeedItem[] }[] = [];
-    if (liveNow.length > 0) sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });
-    if (startingSoon.length > 0) sections.push({ key: "soon", emoji: "\u23F0", title: "Starting Soon", accent: "text-text-secondary", items: startingSoon });
-    if (topMarkets.length > 0) sections.push({ key: "markets", emoji: "\uD83D\uDCCA", title: "Top Markets", accent: "text-accent-futures", items: topMarkets });
-    if (moreGames.length > 0) sections.push({ key: "more", emoji: "\uD83C\uDFDF\uFE0F", title: "More Games", accent: "text-text-secondary", items: moreGames });
+    if (liveNow.length > 0)
+      sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });
+    if (upcoming.length > 0)
+      sections.push({ key: "upcoming", emoji: "\uD83C\uDFDF\uFE0F", title: "Upcoming", accent: "text-text-secondary", items: upcoming });
+    if (yourMarkets.length > 0)
+      sections.push({ key: "markets", emoji: "\uD83D\uDCCA", title: "Your Markets", accent: "text-accent-futures", items: yourMarkets });
 
     return sections;
   }, [feedData]);

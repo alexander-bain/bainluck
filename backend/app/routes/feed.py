@@ -503,6 +503,7 @@ async def _score_futures(
 
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_names = {n.lower() for n in (my_team_names or [])}
+    user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
     # === PER-CATEGORY FETCH ===
     # Query each category separately to guarantee diversity.
@@ -630,7 +631,6 @@ async def _score_futures(
 
         # my_teams_only: skip futures that don't involve the user's teams
         if my_teams_only:
-            user_team_ids = set(ctx.team_relations.keys())
             matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
 
             # Fall back to outcome name matching when team_ids aren't linked
@@ -648,6 +648,27 @@ async def _score_futures(
 
             if not matched_by_id and not matched_by_name:
                 continue
+
+        # Collect matched outcome details for "why is this here?" context
+        matched_outcomes_list = []
+        if my_teams_only and user_team_ids:
+            for o in market.outcomes:
+                is_match = False
+                if o.team_id and o.team_id in user_team_ids:
+                    is_match = True
+                elif user_team_names and o.name:
+                    outcome_lower = o.name.lower()
+                    for team_name in user_team_names:
+                        if team_name in outcome_lower or outcome_lower in team_name:
+                            is_match = True
+                            break
+                if is_match:
+                    matched_outcomes_list.append({
+                        "name": o.name,
+                        "probability": float(o.current_probability) if o.current_probability else None,
+                        "rank": o.rank,
+                        "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                    })
 
         outcome_names = [o.name for o in market.outcomes if o.name]
         p_result = compute_futures_multiplier(
@@ -710,6 +731,9 @@ async def _score_futures(
             "outcome_count": len(market.outcomes),
             "canonical_market_key": market.canonical_market_key,
         }
+
+        if matched_outcomes_list:
+            futures_data["matched_outcomes"] = matched_outcomes_list
 
         # Sort time: higher-tier markets and markets resolving soon get priority
         sort_time = now.timestamp()

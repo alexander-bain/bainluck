@@ -404,6 +404,21 @@ function FuturesFeedCard({
               {data.name}
             </div>
             <p className="text-xs text-text-secondary mt-0.5 truncate">{item.reason}</p>
+            {data.matched_outcomes && data.matched_outcomes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+                {data.matched_outcomes.slice(0, 3).map((mo, i) => (
+                  <span key={i} className="text-xs text-text-secondary">
+                    <span className="font-medium text-text-primary">{mo.name}</span>
+                    {mo.probability !== null && (
+                      <span className="ml-1 font-mono text-text-muted">
+                        {mo.rank != null && `#${mo.rank} \u00B7 `}
+                        {Math.round(mo.probability * 100)}%
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {leader && leaderProb !== null && (
