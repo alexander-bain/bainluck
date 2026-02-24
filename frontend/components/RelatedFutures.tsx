@@ -28,6 +28,58 @@ const TIER_CONFIG: Record<number, { label: string; icon: string }> = {
 
 const DEFAULT_COLOR = "#6B7280";
 
+/** Game-level market name patterns — these are individual matchup markets, not futures */
+const GAME_MARKET_PATTERNS = [
+  /\bvs\.?\s/i,           // "Team A vs. Team B" or "Team A vs Team B"
+  /\s–\s/,                // "Team A – Team B" (en-dash)
+  /more\s+markets$/i,     // "... - More Markets" (Polymarket suffix)
+  /moneyline$/i,          // "Game X Moneyline"
+  /\bgame\s+\d/i,         // "Game 1", "Game 7"
+];
+
+/** Award market name patterns */
+const AWARD_PATTERNS = [
+  /\bmvp\b/i,
+  /\bgolden\s+boot\b/i,
+  /\bgolden\s+glove\b/i,
+  /\bcyoung\b|cy\s+young/i,
+  /\bnewcomer\b|\brookie\b/i,
+  /player\s+of\s+(the\s+)?year/i,
+  /\bballon\b/i,
+  /\bbest\s+(actor|actress|picture|director|supporting)\b/i,
+];
+
+/**
+ * Determine the effective display tier for a future, using name-based detection
+ * as a fallback when market_tier from the backend may be wrong or null.
+ */
+function effectiveTier(f: RelatedFuture): number {
+  // If the name looks like a game-level market, always treat as tier 5
+  if (f.market_name && GAME_MARKET_PATTERNS.some((p) => p.test(f.market_name))) {
+    return 5;
+  }
+  // If the name looks like an award, treat as tier 3
+  if (f.market_name && AWARD_PATTERNS.some((p) => p.test(f.market_name))) {
+    return 3;
+  }
+  // Trust the backend tier if it's set
+  if (f.market_tier && f.market_tier >= 1 && f.market_tier <= 5) {
+    return f.market_tier;
+  }
+  // Default: generic market
+  return 5;
+}
+
+/**
+ * Clean up market name for display — strip redundant suffixes and prefixes.
+ */
+function cleanMarketName(name: string): string {
+  return name
+    .replace(/\s*-\s*More Markets$/i, "")
+    .replace(/\s*-\s*Moneyline$/i, "")
+    .trim();
+}
+
 /** Format American odds */
 function formatOdds(odds: number | null | undefined): string {
   if (odds === null || odds === undefined) return "";
@@ -87,7 +139,8 @@ function HeroFutureCard({
   future: RelatedFuture;
   teamColor: string;
 }) {
-  const tier = future.market_tier ? TIER_CONFIG[future.market_tier] : null;
+  const tierNum = effectiveTier(future);
+  const tier = TIER_CONFIG[tierNum] || null;
 
   return (
     <Link
@@ -108,7 +161,7 @@ function HeroFutureCard({
             </span>
           </div>
           <div className="text-xs text-text-secondary leading-snug">
-            {future.market_name}
+            {cleanMarketName(future.market_name)}
           </div>
         </div>
         <SourceBadge source={future.source} />
@@ -196,7 +249,7 @@ function AwardCard({
         <div className="flex items-center gap-1.5">
           <span className="text-[10px]">⭐</span>
           <span className="text-[11px] text-text-muted truncate">
-            {future.market_name}
+            {cleanMarketName(future.market_name)}
           </span>
         </div>
       </div>
@@ -418,14 +471,13 @@ function TeamColumn({
   teamColor: string;
   teamLogo?: string;
 }) {
-  const championship = futures.filter((f) => f.market_tier === 1);
-  const conference = futures.filter(
-    (f) => f.market_tier === 2 || f.market_tier === 4
-  );
-  const awards = futures.filter((f) => f.market_tier === 3);
-  const games = futures.filter(
-    (f) => f.market_tier === 5 || !f.market_tier
-  );
+  const championship = futures.filter((f) => effectiveTier(f) === 1);
+  const conference = futures.filter((f) => {
+    const t = effectiveTier(f);
+    return t === 2 || t === 4;
+  });
+  const awards = futures.filter((f) => effectiveTier(f) === 3);
+  const games = futures.filter((f) => effectiveTier(f) === 5);
 
   const shortName = teamName.split(" ").pop() || teamName;
 
@@ -538,8 +590,8 @@ export default function RelatedFutures({
   const hasSummary = !!summary;
 
   // Find championship futures for the comparison bar
-  const homeChamp = home_team_futures.find((f) => f.market_tier === 1);
-  const awayChamp = away_team_futures.find((f) => f.market_tier === 1);
+  const homeChamp = home_team_futures.find((f) => effectiveTier(f) === 1);
+  const awayChamp = away_team_futures.find((f) => effectiveTier(f) === 1);
   const showTitleComparison = !!(homeChamp && awayChamp);
 
   const hColor = homeTeamColor || DEFAULT_COLOR;
