@@ -82,6 +82,31 @@ function formatGameTime(commenceTime: string): string {
   return `${dateStr} ${timeStr}`;
 }
 
+/** Format a finished game's date for staleness context. */
+function formatFinishedDate(commenceTime: string): string {
+  const game = new Date(commenceTime);
+  const now = new Date();
+
+  const isToday =
+    game.getDate() === now.getDate() &&
+    game.getMonth() === now.getMonth() &&
+    game.getFullYear() === now.getFullYear();
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday =
+    game.getDate() === yesterday.getDate() &&
+    game.getMonth() === yesterday.getMonth() &&
+    game.getFullYear() === yesterday.getFullYear();
+
+  const timeStr = game.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  if (isToday) return `Today ${timeStr}`;
+  if (isYesterday) return `Yesterday ${timeStr}`;
+
+  return game.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
 /** Format resolution date as a short string. */
 function formatResolutionDate(dateStr: string | null): string | null {
   if (!dateStr) return null;
@@ -225,11 +250,22 @@ function EventFeedCard({
   // Game time for scheduled events
   const gameTime = isScheduled ? formatGameTime(data.commence_time) : null;
 
-  // Opening odds context for live games only
+  // Date/time for finished events (staleness context)
+  const finishedTime = isFinished ? formatFinishedDate(data.commence_time) : null;
+
+  // Opening odds context for live games
   const openedContext =
-    isLive && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
+    (isLive || isFinished) && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
       ? `Opened ${Math.round(data.opening_odds.home_probability * 100)}/${Math.round(data.opening_odds.away_probability * 100)}`
       : null;
+
+  // For the probability bar: finished events show opening odds, others show current
+  const barHomeProb = isFinished
+    ? (data.opening_odds?.home_probability ?? null)
+    : displayHomeProb;
+  const barAwayProb = isFinished
+    ? (data.opening_odds?.away_probability ?? null)
+    : displayAwayProb;
 
   return (
     <Link href={`/events/${data.id}`}>
@@ -293,6 +329,10 @@ function EventFeedCard({
             <span className="text-[11px] text-text-secondary font-medium flex-shrink-0">
               {gameTime}
             </span>
+          ) : finishedTime ? (
+            <span className="text-[11px] text-text-muted font-medium flex-shrink-0">
+              {finishedTime}
+            </span>
           ) : null}
         </div>
 
@@ -347,13 +387,13 @@ function EventFeedCard({
           )}
         </div>
 
-        {/* Probability bar — uses team colors when available */}
-        {displayHomeProb !== null && displayAwayProb !== null && (
+        {/* Probability bar — current odds for live/scheduled, opening odds for finished */}
+        {barHomeProb !== null && barAwayProb !== null && (
           <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex">
             <div
               className="h-full transition-all rounded-l-full"
               style={{
-                width: `${Math.round(displayAwayProb * 100)}%`,
+                width: `${Math.round(barAwayProb * 100)}%`,
                 backgroundColor: awayColor || "var(--color-text-muted)",
                 opacity: awayColor ? 0.7 : 0.3,
               }}
@@ -361,7 +401,7 @@ function EventFeedCard({
             <div
               className="h-full transition-all rounded-r-full"
               style={{
-                width: `${Math.round(displayHomeProb * 100)}%`,
+                width: `${Math.round(barHomeProb * 100)}%`,
                 backgroundColor: homeColor || "var(--color-accent-brand)",
                 opacity: homeColor ? 0.7 : 0.5,
               }}
@@ -370,19 +410,33 @@ function EventFeedCard({
         )}
 
         {/* Bottom row: reason + context + thumbs */}
-        <div className="flex items-center justify-between gap-2 mt-1.5">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <p className={`text-xs text-text-secondary ${isFinished ? "" : "truncate"}`}>{item.reason}</p>
-            {openedContext && (
-              <span className="text-[10px] text-text-muted flex-shrink-0">{openedContext}</span>
-            )}
+        {(item.reason || openedContext) && (
+          <div className="flex items-center justify-between gap-2 mt-1.5">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              {item.reason && (
+                <p className={`text-xs text-text-secondary ${isFinished ? "" : "truncate"}`}>{item.reason}</p>
+              )}
+              {openedContext && (
+                <span className="text-[10px] text-text-muted flex-shrink-0">{openedContext}</span>
+              )}
+            </div>
+            <ThumbButtons
+              category={category}
+              onThumbsUp={onThumbsUp}
+              onThumbsDown={onThumbsDown}
+            />
           </div>
-          <ThumbButtons
-            category={category}
-            onThumbsUp={onThumbsUp}
-            onThumbsDown={onThumbsDown}
-          />
-        </div>
+        )}
+        {/* Thumbs-only row when no reason or context */}
+        {!item.reason && !openedContext && (
+          <div className="flex items-center justify-end mt-1">
+            <ThumbButtons
+              category={category}
+              onThumbsUp={onThumbsUp}
+              onThumbsDown={onThumbsDown}
+            />
+          </div>
+        )}
       </div>
     </Link>
   );

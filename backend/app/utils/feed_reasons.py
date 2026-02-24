@@ -2,7 +2,8 @@
 Template-based reason generation for the unified feed.
 
 Generates 1-line explanations for why a feed item is interesting.
-Templates first, LLM upgrade later (roadmap item #12).
+Returns empty string when the card UI already tells the story — avoids
+repeating scores, odds, or team names visible on the card.
 """
 
 from typing import Optional
@@ -22,94 +23,83 @@ def generate_event_reason(
     """
     Generate a one-line explanation for why an event is interesting.
 
-    Returns a human-readable reason string for the feed card.
+    Returns a human-readable reason string for the feed card, or empty
+    string when the card's visual elements (score, odds bar, badges)
+    already convey the information.
     """
     reasons = set(highlight_reasons)
 
-    # Upset scenarios (most interesting)
-    if "upset" in reasons:
-        if home_score is not None and away_score is not None:
-            winner = home_team if home_score > away_score else away_team
-            loser = away_team if home_score > away_score else home_team
-            return f"{winner} upset {loser} {home_score}-{away_score}"
-        return f"Upset result in {away_team} at {home_team}"
+    # ── Finished events ──────────────────────────────────────────
+    # Card shows: score (winner bolded) + opening odds bar + "Opened X/Y".
+    # Only add text for genuinely insightful context.
+    if status in ("completed", "closed"):
+        if "upset" in reasons:
+            if home_score is not None and away_score is not None and opening_home_prob is not None:
+                if home_score > away_score:
+                    winner_opening_prob = opening_home_prob
+                else:
+                    winner_opening_prob = 1 - opening_home_prob
+                pct = round(winner_opening_prob * 100)
+                return f"Won as {pct}% underdog"
+            return "Upset result"
+        if "major_prob_swing" in reasons:
+            if opening_home_prob is not None and home_probability is not None:
+                change = home_probability - opening_home_prob
+                direction_team = home_team if change > 0 else away_team
+                pct_change = abs(round(change * 100))
+                return f"{direction_team} odds shifted {pct_change}% during the game"
+            return ""
+        # Non-upset finished: card UI (score + opening odds) tells the story
+        return ""
 
-    if "favorite_switched" in reasons and status == "live":
-        if opening_home_prob is not None and home_probability is not None:
-            # Determine who was the original favorite
-            if opening_home_prob > 0.5:
-                orig_fav = home_team
-                underdog = away_team
-            else:
-                orig_fav = away_team
-                underdog = home_team
-            score_str = ""
-            if home_score is not None and away_score is not None:
-                score_str = f" ({home_score}-{away_score})"
-            return f"{underdog} leading against favored {orig_fav}{score_str}"
-        return f"Underdog leading in {away_team} at {home_team}"
+    # ── Live events ──────────────────────────────────────────────
+    if status == "live":
+        if "favorite_switched" in reasons:
+            if opening_home_prob is not None:
+                if opening_home_prob > 0.5:
+                    underdog = away_team
+                else:
+                    underdog = home_team
+                return f"{underdog} leading as underdog"
+            return "Underdog leading"
 
-    # Close live games
-    if status == "live" and "very_close" in reasons:
-        prob_display = ""
-        if home_probability is not None:
-            home_pct = round(home_probability * 100)
-            prob_display = f" ({home_pct}-{100 - home_pct})"
-        score_str = ""
-        if home_score is not None and away_score is not None:
-            score_str = f" {home_score}-{away_score},"
-        return f"{away_team} at {home_team},{score_str} virtually even{prob_display}"
+        if "very_close" in reasons:
+            return "Virtually even"
 
-    if status == "live" and "close_matchup" in reasons:
-        score_str = ""
-        if home_score is not None and away_score is not None:
-            score_str = f" {home_score}-{away_score},"
-        return f"{away_team} at {home_team},{score_str} tight game"
+        if "close_matchup" in reasons:
+            return "Tight game"
 
-    # Major probability swing
+        if "major_prob_swing" in reasons:
+            if opening_home_prob is not None and home_probability is not None:
+                change = home_probability - opening_home_prob
+                direction_team = home_team if change > 0 else away_team
+                pct_change = abs(round(change * 100))
+                return f"{direction_team} odds shifted {pct_change}%"
+            return ""
+
+        # Generic live — LIVE badge is sufficient
+        return ""
+
+    # ── Upcoming/scheduled events ────────────────────────────────
     if "major_prob_swing" in reasons:
         if opening_home_prob is not None and home_probability is not None:
             change = home_probability - opening_home_prob
             direction_team = home_team if change > 0 else away_team
             pct_change = abs(round(change * 100))
-            return f"{direction_team} odds improved {pct_change}% since open"
-        return f"Significant line movement in {away_team} at {home_team}"
+            return f"{direction_team} odds shifted {pct_change}% since open"
+        return ""
 
-    # Starting soon + close
     if "starting_soon" in reasons and "close_matchup" in reasons:
-        prob_display = ""
-        if home_probability is not None:
-            home_pct = round(home_probability * 100)
-            prob_display = f" at {home_pct}-{100 - home_pct}"
-        return f"{away_team} at {home_team} starting soon{prob_display}"
+        return "Starting soon \u2014 close matchup"
 
-    # Starting soon
     if "starting_very_soon" in reasons:
-        return f"{away_team} at {home_team} starting in under an hour"
+        return "Starting in under an hour"
+
     if "starting_soon" in reasons:
-        return f"{away_team} at {home_team} starting soon"
+        return "Starting soon"
 
-    # Live game (generic)
-    if "live" in reasons:
-        score_str = ""
-        if home_score is not None and away_score is not None:
-            score_str = f" ({home_score}-{away_score})"
-        return f"{away_team} at {home_team} is live{score_str}"
-
-    # Recently finished
-    if "recent_finish" in reasons:
-        if home_score is not None and away_score is not None:
-            winner = home_team if home_score > away_score else away_team
-            loser = away_team if home_score > away_score else home_team
-            return f"{winner} beat {loser} {max(home_score, away_score)}-{min(home_score, away_score)}"
-        return f"{away_team} at {home_team} recently finished"
-
-    # Fallback
-    if home_probability is not None:
-        home_pct = round(home_probability * 100)
-        return f"{away_team} at {home_team} ({home_pct}-{100 - home_pct})"
-
-    return f"{away_team} at {home_team}"
+    # Fallback — the card shows teams and odds, no need for text
+    return ""
 
 
 def generate_futures_reason(

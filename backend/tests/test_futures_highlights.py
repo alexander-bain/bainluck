@@ -283,9 +283,11 @@ class TestFeedReasons:
             highlight_reasons=["upset", "recent_finish"],
             home_score=95,
             away_score=110,
+            opening_home_prob=0.65,
         )
-        assert "Celtics" in reason
-        assert "upset" in reason.lower() or "110" in reason
+        # Away team (Celtics) won → winner_opening_prob = 1 - 0.65 = 0.35
+        assert "35%" in reason
+        assert "underdog" in reason.lower()
 
     def test_event_live_close_reason(self):
         from app.utils.feed_reasons import generate_event_reason
@@ -300,8 +302,7 @@ class TestFeedReasons:
             home_score=88,
             away_score=90,
         )
-        assert "Celtics" in reason or "Lakers" in reason
-        assert "even" in reason.lower() or "48" in reason
+        assert "even" in reason.lower()
 
     def test_futures_leader_change_reason(self):
         from app.utils.feed_reasons import generate_futures_reason
