@@ -27,14 +27,24 @@ export function hasTMDBToken(): boolean {
   return !!process.env.NEXT_PUBLIC_TMDB_API_KEY;
 }
 
-/** TMDB fetch with Bearer token auth (supports Read Access Token). */
+/** TMDB fetch — auto-detects v3 API Key vs v4 Read Access Token. */
 async function tmdbFetch(path: string, params?: URLSearchParams): Promise<Response> {
   const token = getToken();
   if (!token) throw new Error("No TMDB token");
-  const qs = params ? `?${params}` : "";
-  return fetch(`${TMDB_BASE}${path}${qs}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+
+  const isV4Token = token.startsWith("eyJ"); // v4 Read Access Tokens are JWTs
+  const qs = params ?? new URLSearchParams();
+
+  if (isV4Token) {
+    // v4: Bearer token in header
+    return fetch(`${TMDB_BASE}${path}?${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } else {
+    // v3: API key as query parameter
+    qs.set("api_key", token);
+    return fetch(`${TMDB_BASE}${path}?${qs}`);
+  }
 }
 
 // ============================================================================
