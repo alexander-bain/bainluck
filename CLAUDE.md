@@ -142,6 +142,7 @@ bainluck/
 |------|---------|
 | `backend/app/tasks/` | Celery tasks package: odds polling, Pulse, ESPN sync, retention |
 | `backend/app/utils/highlights.py` | Highlight scoring, flags, and labels |
+| `backend/app/utils/feed_reasons.py` | Feed card reason text generation (non-repetitive, context-aware) |
 | `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
 | `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
@@ -289,8 +290,8 @@ Scores events 0–100 to decide what appears in the homepage Highlights section.
 4-tier system that ensures major leagues dominate the anonymous feed:
 - **Tier 1** (+20 pts): NBA, NFL, MLB, NHL, EPL, La Liga, Champions League
 - **Tier 2** (+10 pts): NCAAF, NCAAB, WNBA, MLS, Bundesliga, Serie A, Ligue 1, MMA, tennis Grand Slams, golf Majors
-- **Tier 3** (0 pts): Liga MX, Brazilian Serie A, boxing
-- **Tier 4** (-15 pts): Everything not in the map (minor leagues, obscure international)
+- **Tier 3** (-5 pts): Liga MX, Brazilian Serie A, boxing — small penalty keeps them below threshold without other signals
+- **Tier 4** (-45 pts): Everything not in the map (minor leagues, obscure international, regular-season tennis/golf)
 
 **Event importance scoring:**
 The `llm_importance` field on events (populated by ESPN `season.type` and LLM text classification) feeds into `compute_highlight()`:
@@ -301,7 +302,18 @@ The `llm_importance` field on events (populated by ESPN `season.type` and LLM te
 
 A playoff NFL game scores 30 (live) + 20 (tier 1) + 15 (playoff) = **65** base. A preseason NBA game scores 30 + 20 + (-20) = **30** base. A far-future playoff NBA game scores 20 (tier 1) + 15 (playoff) = **35** even without any odds signals.
 
-**Files:** `backend/app/utils/highlights.py`, `backend/app/utils/futures_highlights.py`, `frontend/app/page.tsx` (feed rendering)
+**Feed sections (homepage):** Live Now → Just Happened → Upcoming → Top Markets. Completed events surface for 24h with Pulse-based score boost (≥80 Pulse: +25 pts, ≥60: +15 pts). Sections replace the earlier Highlights/Live/Upcoming/Starting Soon split.
+
+**Feed min_score thresholds:**
+- Anonymous/default: 30 (events) / 40 (futures)
+- Personalized with positive affinity: 10
+- "If it's wild" sports (0.1 affinity): 55 — requires genuinely unusual event, not just live+close
+- "Nah" sports (0.0 affinity): **hard filtered** — skipped entirely unless championship/playoff
+- My Teams (`my_teams_only=true`): 0 (show everything for followed teams)
+
+**Feed reason text:** `backend/app/utils/feed_reasons.py` generates one-line explanations. Returns empty string when the card UI already tells the story — avoids repeating scores (finished events), odds (upcoming events), or team names visible on the card. Only adds text for genuinely insightful context: upset quantification ("Won as 35% underdog"), line movement ("Lakers odds shifted 15%"), game state ("Virtually even", "Tight game"), or timing ("Starting soon").
+
+**Files:** `backend/app/utils/highlights.py`, `backend/app/utils/futures_highlights.py`, `backend/app/utils/feed_reasons.py`, `frontend/app/page.tsx` (feed rendering), `frontend/components/FeedCard.tsx` (card rendering)
 
 ### Odds Polling
 - Live games: Every 30 seconds
@@ -312,9 +324,9 @@ A playoff NFL game scores 30 (live) + 20 (tier 1) + 15 (playoff) = **65** base. 
 
 ### Probability Display by Game Status
 Different game statuses show different probability data to users:
-- **Scheduled**: Current betting consensus (`current_odds`)
-- **Live**: Current live odds (big) + "Opened X/Y" reference from `opening_odds` (small)
-- **Completed/Closed**: Opening odds (pre-game consensus) + Pulse excitement score
+- **Scheduled**: Current betting consensus (`current_odds`) with probability bar
+- **Live**: Current live odds (big) + "Opened X/Y" reference from `opening_odds` (small) + probability bar
+- **Completed/Closed**: Score with winner bolded + opening odds probability bar (shows what was expected) + "Opened X/Y" label + date/time for freshness context. No probability numbers — the score tells the story. Reason text only appears for genuinely insightful context (e.g., "Won as 35% underdog" for upsets), otherwise hidden.
 
 **Opening odds** are the last pregame consensus — `_maybe_set_opening_odds` in `tasks/odds_polling.py` updates them with the cross-bookmaker average on every poll while the event is scheduled, then freezes when the game starts. Stored on the `Event` model.
 
@@ -1082,7 +1094,7 @@ These are the current focus. Resist the urge to build new features until these a
 5. 🟢 **Auth & Personalization Phase 2 (shipped)** — 5-step onboarding flow (location → follow teams → alma maters → sports+beyond → rivals) with metro alias expansion, sport affinity key mapping, batch save endpoint, preferences display page, homepage CTA banner, inline favorites CRUD, non-sports categories (politics, entertainment, crypto, etc.). Team search falls back to events table and auto-creates Team records for college teams. See onboarding details in Auth & Personalization section above.
 6. 🟢 **Auth & Personalization Phase 3 (shipped)** — Personalized feed scoring: team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting, personalization badges ("Your team", "Local", "Alma mater", "Rival losing"), unified interestingness feed combining events + futures.
 7. 🟢 **Ranking Level 2 (shipped)** — Time-series aware scoring using `compute_time_series_metrics()` from odds_snapshots. Computes volatility (RMS of consecutive deltas), lead changes (50% crossings), and recent momentum (30-min window). Batch SQL query for live events. New labels: "Lead change", "Odds shifting fast", "Wild game". 21 new tests.
-8. 🟢 **Anonymous feed ranking overhaul (shipped)** — 4-tier league system: Tier 1 (+20 pts): NBA/NFL/MLB/NHL/EPL/La Liga/UCL. Tier 2 (+10): NCAAF/NCAAB/WNBA/MLS/Bundesliga/Serie A/MMA. Tier 3 (0): mid-tier international. Tier 4 (-15 penalty): everything else (minor leagues). Expanded from 7 to 30+ league entries. Anonymous min_score raised from 20 to 25. Prevents minor league hockey from dominating the feed.
+8. 🟢 **Anonymous feed ranking overhaul (shipped)** — 4-tier league system: Tier 1 (+20 pts): NBA/NFL/MLB/NHL/EPL/La Liga/UCL. Tier 2 (+10): NCAAF/NCAAB/WNBA/MLS/Bundesliga/Serie A/MMA. Tier 3 (-5): mid-tier international. Tier 4 (-45 penalty): everything else (minor leagues, regular-season tennis/golf). Expanded from 7 to ~70 league entries. Anonymous min_score raised to 30. Regular tennis demoted to tier 4. Prevents minor league and obscure events from appearing.
 9. 🟢 **MLB Stats API integration (shipped)** — Live baseball win probability from MLB's official API (`statsapi.mlb.com`). No API key needed. Celery task polls every 2 min during live games. Replaces FanGraphs stub. 33 tests.
 10. 🟢 **Divergence badge (shipped)** — Frontend detects when prediction market odds (Kalshi/Polymarket) diverge >5% from sportsbook consensus. Purple badge for >10% gap, blue for >5%. On event detail page data freshness strip.
 11. 🟢 **Non-sports tier promotion (shipped)** — Politics, Entertainment, Crypto promoted from tier 3 to tier 2 in `sportCategories.ts` frontend categorization.
@@ -1153,7 +1165,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
 - ✅ Auth & Personalization Phase 2 (shipped): 5-step onboarding flow (`/onboarding`) — location, follow teams, alma maters, sports+beyond (20 categories incl. politics/entertainment/crypto), rivals. Team search falls back to events table and auto-creates Team records for college teams. Inline favorites CRUD on preferences page. 31+ tests.
 - ✅ Auth & Personalization Phase 3 (shipped): Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting. Personalization badges ("Your team", "Local", "Alma mater", "Rival losing"). Unified interestingness feed combining events + futures on homepage.
-- ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to single "Right Now" feed ranked by interestingness score. Feed items include events and futures, with personalization overlay for authenticated users.
+- ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to ranked feed with visual sections (Live Now, Just Happened, Upcoming, Top Markets). Feed items include events and futures, with personalization overlay for authenticated users. Completed events surface with Pulse-based scoring boost.
 - ✅ Prediction market → event matching: Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. Live game price polling every 2 min via `poll_live_prediction_markets` (targeted — only fetches prices for linked live-event markets from Kalshi/Polymarket APIs). Ticker abbreviation parsing (`extract_teams_from_ticker`) for generic-named Kalshi markets. 223 tests covering ticker detection, abbreviation parsing, name building, false positive prevention, sport prefix mapping, ticker fallback, live poll wiring.
 - ✅ ESPN matching resilience + wall-clock fallback: Multi-signal ESPN matching (ESPN ID → name → commence_time proximity) for both live and scheduled events. Wall-clock time estimation fallback for stat model when ESPN sync misses (common for college teams). Odds polling path relaxed to use fallback automatically. 16 new tests (67 total win probability tests).
 - ✅ Task-level monitoring dashboard: `redis_state.py` metrics system tracks success/failure/duration/output per task in Redis. Dashboard at `GET /api/admin/celery/dashboard` with health classification. 7 key tasks instrumented via `_tracked_run()`.
@@ -1163,7 +1175,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Divergence badge: Frontend detects when prediction market odds (Kalshi/Polymarket) diverge >5% from sportsbook consensus. Purple badge for >10% gap, blue for >5%.
 - ✅ Non-sports tier promotion: Politics, Entertainment, Crypto promoted from tier 3 to tier 2 in frontend categorization.
 - ✅ Safari auth 3-tier fallback: signInWithCredential (4s) → backend custom token + signInWithCustomToken (4s) → backend-only PyJWT session token. Prevents hanging on Safari ITP. Auth persistence switched to `browserLocalPersistence` (localStorage) from IndexedDB.
-- ✅ Anonymous feed ranking overhaul: 4-tier league system (Tier 1 +20 pts, Tier 4 -15 penalty), expanded from 7 to 30+ league entries, anonymous min_score raised to 25. Prevents minor league games from dominating.
+- ✅ Anonymous feed ranking overhaul: 4-tier league system (Tier 1 +20 pts, Tier 3 -5, Tier 4 -45 penalty), expanded to ~70 league entries, anonymous min_score raised to 30. Regular-season tennis/golf demoted to tier 4. Prevents minor league and obscure events from appearing.
 - ✅ MoneyPuck stub: Source config entry for future NHL advanced stats integration.
 - ✅ Typeahead search: `SearchBar` component with 200ms debounce, keyboard navigation, integrated into layout header. Backend `GET /api/events/typeahead` endpoint. Mobile search icon + desktop inline bar.
 - ✅ "Market Was Wrong" page: `GET /api/market-moves` endpoint + `/market-moves` frontend page showing post-game championship odds shifts.
@@ -1182,6 +1194,11 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Event importance scoring + ESPN season type: `compute_highlight()` now reads `llm_importance` field with championship (+25), playoff (+15), exhibition (-20) weights. ESPN sync parses `season.type` (1=pre, 2=regular, 3=post) and writes to `llm_importance` for live + scheduled events (won't downgrade championship to playoff). Tennis Grand Slams and golf Majors promoted from tier 3 to tier 2. 17 new tests (126 highlights + 50 ESPN parsing).
 - ✅ Roster sync SportsDataIO → ESPN migration: Deleted `sportsdata_api.py` (321 lines). `roster_sync.py` already uses ESPN + MLB Stats API. `SPORTSDATA_API_KEY` no longer needed.
 - ✅ "Why Did the Line Move?" ESPN context enrichment: Added `get_event_context()` to `espn_api.py` (parses injuries + news from `/summary` endpoint). Enriched `build_llm_prompt()` with real injury reports, news headlines, and live game state (score/period/clock). Prompt instructs LLM to only reference listed data. Response includes `context` metadata. 26 line movement tests + 8 ESPN parsing tests (84 total).
+- ✅ Feed quality tightening: Regular-season tennis demoted from tier 3 to tier 4. Tier 3 penalty changed from 0 to -5. Tier 4 penalty increased from -15 to -45. Anonymous min_score raised from 25 to 30. ~70 league entries in LEAGUE_TIERS (up from 30+). Events without odds data skipped in feed.
+- ✅ Personalized feed hard filters: "Nah" sports (0.0 affinity) hard-filtered — skipped entirely unless championship/playoff importance. "If it's wild" sports (0.1 affinity) require min_score 55 — live+close alone isn't enough.
+- ✅ Homepage section redesign: "Starting Soon" and "More Games" merged into single "Upcoming" section. New "Just Happened" section for completed events (24h window) with Pulse-based scoring boost (+25 for Pulse ≥80, +15 for ≥60). Section order: Live Now → Just Happened → Upcoming → Top Markets.
+- ✅ Finished event card redesign: Shows expected vs actual — opening odds probability bar (what was expected) + score with winner bolded (what happened) + date/time for freshness. No probability numbers on finished cards. Non-repetitive reason text: returns empty string for generic cases, only shows genuinely insightful context ("Won as 35% underdog", "Starting soon", line movement). Applies to all statuses — upcoming events no longer repeat odds in reason text, live events no longer repeat score.
+- ✅ Bigger Picture v5-v6 redesign: Tier-grouped visual hierarchy with 6 tiers (championship → conference → awards → downgraded → game markets → stat props). Upcoming games grid, player stat gauges with headshots, tiered border styling. Title odds fix prevents "Make Playoffs" from displaying instead of championship odds.
 </details>
 
 See `docs/PRD.md` for full roadmap.
