@@ -272,6 +272,32 @@ function AwardCard({
   );
 }
 
+/**
+ * Extract opponent name from a game-level market name by stripping
+ * the current team's name and common suffixes.
+ */
+function extractOpponent(marketName: string, teamName: string): string {
+  const teamWords = teamName.split(" ");
+  const shortName = teamWords[teamWords.length - 1] || teamName;
+
+  // Escape regex special chars in team names
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  return marketName
+    .replace(/ - More Markets$/i, "")
+    .replace(/\s*-\s*Moneyline$/i, "")
+    .replace(new RegExp(`^${esc(teamName)}\\s+vs\\.?\\s+`, "i"), "")
+    .replace(new RegExp(`\\s+vs\\.?\\s+${esc(teamName)}$`, "i"), "")
+    .replace(new RegExp(`^${esc(shortName)}\\s+vs\\.?\\s+`, "i"), "")
+    .replace(new RegExp(`\\s+vs\\.?\\s+${esc(shortName)}$`, "i"), "")
+    // Also handle en-dash separator
+    .replace(new RegExp(`^${esc(teamName)}\\s+–\\s+`, "i"), "")
+    .replace(new RegExp(`\\s+–\\s+${esc(teamName)}$`, "i"), "")
+    .replace(new RegExp(`^${esc(shortName)}\\s+–\\s+`, "i"), "")
+    .replace(new RegExp(`\\s+–\\s+${esc(shortName)}$`, "i"), "")
+    .trim();
+}
+
 // ─── GAME GRID: Dense 2-col cells for matchup markets ───
 function GameMarketsGrid({
   futures,
@@ -285,40 +311,54 @@ function GameMarketsGrid({
   const [expanded, setExpanded] = useState(false);
   if (futures.length === 0) return null;
 
+  // --- Filter and deduplicate ---
+  // 1. Remove resolved/illiquid markets (0% or 100%)
+  const meaningful = futures.filter((f) => {
+    const p = f.probability;
+    if (p === null || p === undefined) return false;
+    if (p <= 0.02 || p >= 0.98) return false; // effectively 0% or 100%
+    return true;
+  });
+
+  // 2. Deduplicate by opponent name — keep the one with highest relevance_score
+  const opponentMap = new Map<string, RelatedFuture>();
+  for (const f of meaningful) {
+    const opponent = extractOpponent(f.market_name, teamName).toLowerCase();
+    const existing = opponentMap.get(opponent);
+    if (
+      !existing ||
+      (f.relevance_score || 0) > (existing.relevance_score || 0)
+    ) {
+      opponentMap.set(opponent, f);
+    }
+  }
+  const deduped = Array.from(opponentMap.values());
+
   // Sort: favored games first
-  const sorted = [...futures].sort(
+  const sorted = deduped.sort(
     (a, b) => (b.probability || 0) - (a.probability || 0)
   );
+
+  if (sorted.length === 0) return null;
+
   const COLLAPSED_COUNT = 6;
   const visible = expanded ? sorted : sorted.slice(0, COLLAPSED_COUNT);
-
-  // Build patterns to strip the team's own name from market names
-  const teamWords = teamName.split(" ");
-  const shortName = teamWords[teamWords.length - 1] || teamName;
 
   return (
     <div>
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-[10px]">📈</span>
         <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-          Game markets
+          Game-by-game odds
         </span>
         <span className="text-[10px] text-text-muted/50">
-          ({futures.length})
+          ({sorted.length})
         </span>
       </div>
 
       <div className="grid grid-cols-2 gap-1.5">
         {visible.map((f) => {
-          // Extract opponent from market name
-          const opponent = f.market_name
-            .replace(/ - More Markets$/i, "")
-            .replace(new RegExp(`^${teamName}\\s+vs\\.?\\s+`, "i"), "")
-            .replace(new RegExp(`\\s+vs\\.?\\s+${teamName}$`, "i"), "")
-            .replace(new RegExp(`^${shortName}\\s+vs\\.?\\s+`, "i"), "")
-            .replace(new RegExp(`\\s+vs\\.?\\s+${shortName}$`, "i"), "")
-            .trim();
-
+          const opponent = extractOpponent(f.market_name, teamName);
           const prob = f.probability || 0;
           const favored = prob > 0.5;
           const barPct = Math.min(100, prob * 100);
@@ -372,7 +412,7 @@ function GameMarketsGrid({
         })}
       </div>
 
-      {futures.length > COLLAPSED_COUNT && (
+      {sorted.length > COLLAPSED_COUNT && (
         <button
           onClick={(e) => {
             e.preventDefault();
@@ -382,7 +422,7 @@ function GameMarketsGrid({
         >
           {expanded
             ? "Show less"
-            : `+${futures.length - COLLAPSED_COUNT} more games`}
+            : `+${sorted.length - COLLAPSED_COUNT} more games`}
         </button>
       )}
     </div>
