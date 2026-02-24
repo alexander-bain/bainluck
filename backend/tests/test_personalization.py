@@ -19,7 +19,6 @@ from app.utils.personalization import (
     LOW_AFFINITY_PENALTY,
     NAH_AFFINITY_PENALTY,
     NAH_AFFINITY_THRESHOLD,
-    UNMENTIONED_SPORT_PENALTY,
     MIN_MULTIPLIER,
     MAX_MULTIPLIER,
 )
@@ -233,11 +232,10 @@ class TestSportAffinity:
         assert result.multiplier == 1.0
 
     def test_no_affinity_for_sport(self):
-        """Sport not in user's affinities = unmentioned penalty (user onboarded and didn't pick it)."""
+        """Sport not in user's affinities = no adjustment."""
         ctx = _basic_ctx(sport_affinities={"basketball_nba": 1.0})
         result = compute_event_multiplier(ctx, home_team_id=10, away_team_id=20, sport_key="icehockey_nhl")
-        assert result.multiplier == pytest.approx(1.0 + UNMENTIONED_SPORT_PENALTY)
-        assert any("sport_unmentioned" in r for r in result.reasons)
+        assert result.multiplier == 1.0
 
     def test_empty_affinities(self):
         ctx = _basic_ctx(sport_affinities={})
@@ -474,15 +472,14 @@ class TestMinorProSuppression:
     """Test minor pro league suppression for events."""
 
     def test_minor_pro_no_affinity_suppressed(self):
-        """Minor pro league with no team/sport match gets unmentioned penalty."""
+        """Minor pro league with no team/sport match gets penalty."""
         ctx = _basic_ctx(sport_affinities={"basketball_nba": 1.0})
         result = compute_event_multiplier(
             ctx, home_team_id=10, away_team_id=20,
             sport_key="americanfootball_xfl",
         )
-        # XFL is unmentioned (no "americanfootball" prefix in affinities)
-        assert result.multiplier == pytest.approx(1.0 + UNMENTIONED_SPORT_PENALTY)
-        assert any("sport_unmentioned" in r for r in result.reasons)
+        assert result.multiplier == pytest.approx(1.0 + MINOR_PRO_PENALTY)
+        assert any("minor_pro" in r for r in result.reasons)
 
     def test_minor_pro_with_team_follow_not_suppressed(self):
         """Minor pro league with a followed team gets NO penalty."""

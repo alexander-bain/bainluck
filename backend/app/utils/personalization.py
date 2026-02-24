@@ -45,7 +45,6 @@ RIVAL_PLAYING_BONUS = 0.2  # Rival is playing (interest even if not losing)
 PINNED_BONUS = 0.3        # User has this item pinned
 MINOR_PRO_PENALTY = -0.2  # Minor league with no team/sport affinity match
 ROSTER_PLAYER_BONUS = 0.4 # Futures about a player on a followed team's roster
-UNMENTIONED_SPORT_PENALTY = -0.4  # Sport not in user's affinities at all (they onboarded and didn't pick it)
 
 # Sport affinity thresholds
 HIGH_AFFINITY_THRESHOLD = 0.5   # sport_affinities value above this = boost
@@ -158,10 +157,6 @@ def compute_event_multiplier(
     # --- Sport affinity ---
     if sport_key and ctx.sport_affinities:
         affinity = ctx.sport_affinities.get(sport_key)
-        # Exact key miss — try prefix matching (e.g., "cricket_test_match"
-        # shares the "cricket" root with "cricket_ipl" if the user had it).
-        if affinity is None:
-            affinity = _find_affinity_by_prefix(sport_key, ctx.sport_affinities)
         if affinity is not None:
             if affinity >= HIGH_AFFINITY_THRESHOLD:
                 bonus += HIGH_AFFINITY_BONUS
@@ -172,19 +167,13 @@ def compute_event_multiplier(
             elif affinity < LOW_AFFINITY_THRESHOLD:
                 bonus += LOW_AFFINITY_PENALTY
                 reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
-        else:
-            # Sport not mentioned at all in user's affinities — treat as
-            # uninterested. Without this, cricket/minor leagues sneak through
-            # because "no opinion" was treated as neutral (1.0x).
-            bonus += UNMENTIONED_SPORT_PENALTY
-            reasons.append(f"sport_unmentioned:{UNMENTIONED_SPORT_PENALTY:.2f}")
 
     # --- Minor pro league suppression ---
     # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
     # the user has no team or sport affinity match, suppress it.
     if sport_key and not reasons:
         league_class = get_league_class(sport_key)
-        if league_class in ("pro_minor", "other"):
+        if league_class == "pro_minor":
             bonus += MINOR_PRO_PENALTY
             reasons.append(f"minor_pro:{MINOR_PRO_PENALTY:.2f}")
 
@@ -364,32 +353,3 @@ def _match_sport_affinity(
                 best_match = affinity
 
     return best_match
-
-
-def _find_affinity_by_prefix(
-    sport_key: str,
-    sport_affinities: dict[str, float],
-) -> Optional[float]:
-    """Find affinity for a sport_key by matching the sport root prefix.
-
-    Example: "icehockey_sweden_allsvenskan" shares the "icehockey" root with
-    "icehockey_nhl". If the user has an affinity for "icehockey_nhl", we can
-    infer their general feeling about hockey and apply it to Swedish hockey too.
-
-    Returns the max affinity among matching keys, or None if no prefix match.
-    """
-    if not sport_key or not sport_affinities:
-        return None
-
-    # Extract the sport root: "icehockey" from "icehockey_nhl",
-    # "americanfootball" from "americanfootball_nfl", "cricket" from "cricket_ipl"
-    root = sport_key.split("_")[0]
-    if not root:
-        return None
-
-    best = None
-    for affinity_key, value in sport_affinities.items():
-        if affinity_key.split("_")[0] == root:
-            if best is None or value > best:
-                best = value
-    return best
