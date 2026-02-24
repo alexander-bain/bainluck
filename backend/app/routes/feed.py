@@ -301,8 +301,10 @@ async def _score_events(
     """
     # Wider time windows for my_teams_only — users want to see all their
     # team's upcoming games and recent results.
+    # 72h completed window ensures yesterday's and weekend games are visible
+    # when checking on Monday morning (24h was too tight — games disappeared).
     if my_teams_only:
-        recent_cutoff = now - timedelta(hours=24)
+        recent_cutoff = now - timedelta(hours=72)
         upcoming_cutoff = now + timedelta(days=7)
     else:
         # Tighter time windows than the full events list to keep query fast
