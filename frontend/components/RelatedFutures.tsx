@@ -1124,13 +1124,14 @@ function TeamColumn({
   });
   const rawAwards = activeFutures.filter((f) => effectiveTier(f) === 3);
   const awards = deduplicateAwards(rawAwards);
-  const games = activeFutures.filter((f) => effectiveTier(f) === 5);
+  // Game markets (tier 5) are intentionally excluded — they're game-specific
+  // moneylines from other events, which belong on their own event pages.
   const statProps = activeFutures.filter((f) => effectiveTier(f) === 6);
 
   const shortName = teamName.split(" ").pop() || teamName;
 
   // Count active items (post-filter)
-  const activeCount = championship.length + conference.length + awards.length + games.length + statProps.length;
+  const activeCount = championship.length + conference.length + awards.length + statProps.length;
   if (activeCount === 0) return null;
 
   return (
@@ -1191,13 +1192,6 @@ function TeamColumn({
             ))}
           </div>
         )}
-
-        {/* Game markets — dense 2-col grid */}
-        <GameMarketsGrid
-          futures={games}
-          teamColor={teamColor}
-          teamName={teamName}
-        />
 
         {/* Stat props — player stat cards with gauges */}
         <StatPropsSection futures={statProps} teamColor={teamColor} sportKey={sportKey} />
