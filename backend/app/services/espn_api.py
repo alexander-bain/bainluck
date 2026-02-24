@@ -615,7 +615,16 @@ class ESPNAPIService:
                 if name:
                     pos = athlete.get("position", {})
                     pos_abbrev = pos.get("abbreviation") if isinstance(pos, dict) else None
-                    athletes.append({"name": name, "position": pos_abbrev})
+                    entry: dict = {"name": name, "position": pos_abbrev}
+                    # Extract ESPN player ID and headshot URL
+                    athlete_id = str(athlete.get("id", "")) if athlete.get("id") else None
+                    if athlete_id:
+                        entry["espn_id"] = athlete_id
+                    headshot = athlete.get("headshot", {})
+                    headshot_href = headshot.get("href") if isinstance(headshot, dict) else None
+                    if headshot_href:
+                        entry["headshot"] = headshot_href
+                    athletes.append(entry)
 
         logger.info(f"ESPN roster: {len(athletes)} players for team {team_id} ({sport_key})")
         return athletes

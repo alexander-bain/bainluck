@@ -7,6 +7,8 @@ import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import PulseBadge from "./PulseBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
+import EntityImage from "./EntityImage";
+import { isInternationalSport, flagUrl } from "@/lib/images";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -92,6 +94,11 @@ export default function EventCard({
   // Team colors
   const homeColor = event.home_team_data?.primary_color || "#94A3B8";
   const awayColor = event.away_team_data?.primary_color || "#64748B";
+
+  // International sport detection — show flags instead of team logos
+  const showFlags = isInternationalSport(event.sport);
+  const homeFlagUrl = showFlags ? flagUrl(event.home_team) : null;
+  const awayFlagUrl = showFlags ? flagUrl(event.away_team) : null;
 
   // Short team names (last word) for compact display
   const homeShort = event.home_team.split(" ").pop() || event.home_team;
@@ -207,7 +214,16 @@ export default function EventCard({
           {/* Home team */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              {event.home_team_data?.logo_small ? (
+              {homeFlagUrl ? (
+                <img
+                  src={homeFlagUrl}
+                  alt={event.home_team}
+                  width={20}
+                  height={15}
+                  loading="lazy"
+                  className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
+                />
+              ) : event.home_team_data?.logo_small ? (
                 <img
                   src={event.home_team_data.logo_small}
                   alt=""
@@ -260,7 +276,16 @@ export default function EventCard({
           {/* Away team */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              {event.away_team_data?.logo_small ? (
+              {awayFlagUrl ? (
+                <img
+                  src={awayFlagUrl}
+                  alt={event.away_team}
+                  width={20}
+                  height={15}
+                  loading="lazy"
+                  className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
+                />
+              ) : event.away_team_data?.logo_small ? (
                 <img
                   src={event.away_team_data.logo_small}
                   alt=""

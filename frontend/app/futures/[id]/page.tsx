@@ -14,6 +14,8 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { FuturesChart } from "@/components/FuturesChart";
+import EntityImage from "@/components/EntityImage";
+import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -424,6 +426,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               hasHistory={historyData?.outcomes.some(
                 (h) => h.outcome_id === outcome.id
               ) ?? false}
+              marketCategory={market?.llm_sport_category}
+              marketName={market?.name}
             />
           ))}
         </div>
@@ -487,6 +491,8 @@ function OutcomeRow({
   isSelected,
   onToggleSelect,
   hasHistory,
+  marketCategory,
+  marketName,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -494,9 +500,18 @@ function OutcomeRow({
   isSelected: boolean;
   onToggleSelect: () => void;
   hasHistory: boolean;
+  marketCategory?: string | null;
+  marketName?: string;
 }) {
   const change = outcome.probability_change_24h;
   const rankChange = outcome.rank_change_24h;
+
+  // Entity image detection
+  const isCrypto = isCryptoCategory(marketCategory ?? null);
+  const isNonSports = isNonSportsCategory(marketCategory ?? null);
+  const isIntl = isInternationalSport(marketCategory ?? null);
+  const coinName = isCrypto ? (extractCoinName(outcome.name) || extractCoinName(marketName || "")) : null;
+  const outcomeFlag = isIntl ? flagUrl(outcome.name) : null;
 
   return (
     <div
@@ -556,17 +571,33 @@ function OutcomeRow({
       )}
 
       {/* Name */}
-      <div className="flex-1 min-w-0">
-        <span
-          className={`text-sm truncate block ${
-            isLeader ? "font-semibold text-text-primary" : "text-text-primary"
-          }`}
-        >
-          {outcome.name}
-        </span>
-        {outcome.is_winner && (
-          <span className="text-xs text-emerald-600 font-medium">Winner</span>
-        )}
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        {coinName ? (
+          <EntityImage type="crypto" name={coinName} size={24} />
+        ) : outcomeFlag ? (
+          <img
+            src={outcomeFlag}
+            alt={outcome.name}
+            width={24}
+            height={18}
+            loading="lazy"
+            className="rounded-sm flex-shrink-0"
+          />
+        ) : isNonSports && !isCrypto ? (
+          <EntityImage type="wikipedia" name={outcome.name} size={24} />
+        ) : null}
+        <div className="min-w-0">
+          <span
+            className={`text-sm truncate block ${
+              isLeader ? "font-semibold text-text-primary" : "text-text-primary"
+            }`}
+          >
+            {outcome.name}
+          </span>
+          {outcome.is_winner && (
+            <span className="text-xs text-emerald-600 font-medium">Winner</span>
+          )}
+        </div>
       </div>
 
       {/* Opening vs Current comparison */}

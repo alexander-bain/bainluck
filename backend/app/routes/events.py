@@ -1828,6 +1828,8 @@ async def get_related_futures(
     # Look up Team records for alternate names, roster players, AND team_ids
     home_team_ids = set()
     away_team_ids = set()
+    # Build player metadata lookup: name_lower → {espn_id, headshot}
+    player_metadata: dict[str, dict] = {}
     for team_name, patterns, team_patterns, id_set in [
         (event.home_team_name, home_patterns, home_team_patterns, home_team_ids),
         (event.away_team_name, away_patterns, away_team_patterns, away_team_ids),
@@ -1853,7 +1855,19 @@ async def get_related_futures(
             # Add roster player names from ESPN/MLB API (e.g., "Jayson Tatum")
             roster = team_row.roster_players
             if roster and isinstance(roster, list):
-                for player_name in roster:
+                for item in roster:
+                    if isinstance(item, dict):
+                        player_name = item.get("name")
+                        # Store metadata for player image enrichment
+                        if player_name and (item.get("espn_id") or item.get("headshot")):
+                            player_metadata[player_name.lower()] = {
+                                k: v for k, v in item.items()
+                                if k in ("espn_id", "headshot", "name")
+                            }
+                    elif isinstance(item, str):
+                        player_name = item
+                    else:
+                        continue
                     if isinstance(player_name, str) and len(player_name) >= 4:
                         escaped = _escape_like(player_name)
                         if escaped.lower() not in [p.lower() for p in patterns]:
@@ -2008,6 +2022,11 @@ async def get_related_futures(
             "next_update_expected": next_update.isoformat(),
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         }
+
+        # Add matched player metadata (ESPN headshot) when outcome matches a roster player
+        matched = player_metadata.get(outcome.name.lower())
+        if matched:
+            entry["matched_player"] = matched
 
         if side == "home":
             home_futures.append(entry)

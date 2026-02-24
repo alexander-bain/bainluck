@@ -5,6 +5,8 @@ import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbability, formatAmericanOdds } from "@/lib/api";
 import { getEmojiForCategory, getEmojiForLeague } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
+import EntityImage from "./EntityImage";
+import { isCryptoCategory, isNonSportsCategory, extractCoinName } from "@/lib/images";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -135,6 +137,8 @@ export default function FuturesCard({
               rank={index + 1}
               isLeader={index === 0}
               isResolved={isResolved}
+              marketCategory={market.llm_sport_category}
+              marketName={market.name}
             />
           ))}
 
@@ -166,25 +170,40 @@ function OutcomeRow({
   rank,
   isLeader,
   isResolved,
+  marketCategory,
+  marketName,
 }: {
   outcome: FuturesOutcome;
   rank: number;
   isLeader: boolean;
   isResolved: boolean;
+  marketCategory?: string | null;
+  marketName?: string;
 }) {
   const movement = outcome.movement ?? outcome.probability_change_24h;
   const prob = outcome.probability ?? 0;
 
+  // Determine entity image type
+  const isCrypto = isCryptoCategory(marketCategory ?? null);
+  const isNonSports = isNonSportsCategory(marketCategory ?? null);
+  const coinName = isCrypto ? (extractCoinName(outcome.name) || extractCoinName(marketName || "")) : null;
+
   return (
     <div className="flex items-center gap-2">
-      {/* Rank */}
-      <span className={`w-5 h-5 flex items-center justify-center text-[10px] rounded flex-shrink-0 ${
-        isLeader
-          ? "bg-accent-warning/15 text-accent-warning font-bold"
-          : "text-text-muted"
-      }`}>
-        {rank}
-      </span>
+      {/* Rank or Entity Image */}
+      {coinName ? (
+        <EntityImage type="crypto" name={coinName} size={20} className="flex-shrink-0" />
+      ) : isNonSports && !isCrypto ? (
+        <EntityImage type="wikipedia" name={outcome.name} size={20} className="flex-shrink-0" />
+      ) : (
+        <span className={`w-5 h-5 flex items-center justify-center text-[10px] rounded flex-shrink-0 ${
+          isLeader
+            ? "bg-accent-warning/15 text-accent-warning font-bold"
+            : "text-text-muted"
+        }`}>
+          {rank}
+        </span>
+      )}
 
       {/* Name + mini bar */}
       <div className="flex-1 min-w-0">

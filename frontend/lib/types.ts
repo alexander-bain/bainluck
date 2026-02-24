@@ -359,6 +359,11 @@ export interface RelatedFuture {
   last_updated: string | null;
   next_update_expected: string;
   resolution_date: string | null;
+  matched_player?: {
+    name: string;
+    espn_id?: string;
+    headshot?: string;
+  };
 }
 
 export interface RelatedFuturesResponse {

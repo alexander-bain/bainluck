@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import type { RelatedFuture, RelatedFuturesResponse } from "@/lib/types";
 import { fetchRelatedFutures, formatProbability } from "@/lib/api";
+import EntityImage from "./EntityImage";
 
 interface RelatedFuturesProps {
   eventId: number;
@@ -108,7 +109,15 @@ function FutureRow({
 
       {/* Player name (for MVP/award outcomes) */}
       {isPlayerOutcome && (
-        <div className="text-sm text-text-primary font-medium mb-0.5">
+        <div className="flex items-center gap-1.5 text-sm text-text-primary font-medium mb-0.5">
+          {future.matched_player?.espn_id && (
+            <EntityImage
+              type="player"
+              name={future.outcome_name}
+              espnId={future.matched_player.espn_id}
+              size={22}
+            />
+          )}
           {future.outcome_name}
         </div>
       )}

@@ -262,7 +262,15 @@ async def _load_personalization_context(
         )
         for (roster,) in teams_result.all():
             if isinstance(roster, list):
-                roster_player_names.update(name.lower() for name in roster if name)
+                for item in roster:
+                    if isinstance(item, dict):
+                        name = item.get("name")
+                    elif isinstance(item, str):
+                        name = item
+                    else:
+                        continue
+                    if name:
+                        roster_player_names.add(name.lower())
 
     return PersonalizationContext(
         team_relations=team_relations,

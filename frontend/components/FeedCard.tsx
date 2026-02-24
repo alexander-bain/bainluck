@@ -6,6 +6,8 @@ import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
+import EntityImage from "./EntityImage";
+import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -151,15 +153,15 @@ function ThumbButtons({
 // Team logo — small inline logo with fallback
 // ============================================================================
 
-function TeamLogo({ url, name, color }: { url: string | null | undefined; name: string; color?: string | null }) {
+function TeamLogo({ url, name, color, isFlag }: { url: string | null | undefined; name: string; color?: string | null; isFlag?: boolean }) {
   if (url) {
     return (
       <Image
         src={url}
         alt={name}
         width={20}
-        height={20}
-        className="rounded-sm flex-shrink-0"
+        height={isFlag ? 15 : 20}
+        className={`flex-shrink-0 ${isFlag ? "rounded-sm" : "rounded-sm"}`}
         unoptimized
       />
     );
@@ -202,6 +204,11 @@ function EventFeedCard({
   // Team colors for probability bar
   const homeColor = data.home_team_data?.primary_color ?? null;
   const awayColor = data.away_team_data?.primary_color ?? null;
+
+  // International sport detection — show flags instead of team logos
+  const showFlags = isInternationalSport(data.sport);
+  const homeFlagImgUrl = showFlags ? flagUrl(data.home_team) : null;
+  const awayFlagImgUrl = showFlags ? flagUrl(data.away_team) : null;
 
   // Sport emoji
   const sportEmoji = data.sport ? getEmojiForLeague(data.sport) : null;
@@ -270,7 +277,7 @@ function EventFeedCard({
           <div className="flex-1 min-w-0">
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
-              <TeamLogo url={data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} />
+              <TeamLogo url={awayFlagImgUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={!!awayFlagImgUrl} />
               <span className={`text-sm font-medium truncate ${
                 awayProb !== null && awayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
               }`}>
@@ -279,7 +286,7 @@ function EventFeedCard({
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
-              <TeamLogo url={data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} />
+              <TeamLogo url={homeFlagImgUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={!!homeFlagImgUrl} />
               <span className={`text-sm font-medium truncate ${
                 homeProb !== null && homeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
               }`}>
@@ -368,6 +375,11 @@ function FuturesFeedCard({
   const catEmoji = catKey ? getEmojiForCategory(catKey) : "📊";
   const catName = catKey ? getNameForCategory(catKey) : "Futures";
 
+  // Entity image detection
+  const isCrypto = isCryptoCategory(catKey || null);
+  const isNonSports = isNonSportsCategory(catKey || null);
+  const leaderCoinName = isCrypto && leader ? (extractCoinName(leader.name) || extractCoinName(data.name)) : null;
+
   // Resolution date
   const resolvesText = formatResolutionDate(data.resolution_date);
 
@@ -436,7 +448,13 @@ function FuturesFeedCard({
               <div className="font-mono text-sm font-bold text-text-primary">
                 {formatProbability(leaderProb)}
               </div>
-              <div className="text-[11px] text-text-muted truncate max-w-[100px]">
+              <div className="flex items-center justify-end gap-1 text-[11px] text-text-muted truncate max-w-[100px]">
+                {leaderCoinName && (
+                  <EntityImage type="crypto" name={leaderCoinName} size={14} />
+                )}
+                {isNonSports && !isCrypto && leader && (
+                  <EntityImage type="wikipedia" name={leader.name} size={14} />
+                )}
                 {leader.name}
               </div>
               {leader.movement !== null && leader.movement !== undefined && leader.movement !== 0 && (

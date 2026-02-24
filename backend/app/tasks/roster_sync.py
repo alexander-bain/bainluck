@@ -163,20 +163,41 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
             logger.debug(f"  {team.name}: empty roster from ESPN")
             continue
 
-        # Extract player names with ASCII variants
-        all_names = []
+        # Extract player names with ASCII variants + metadata
+        all_entries: list = []
+        seen_names = set()
         for player in roster:
-            all_names.extend(_player_names_with_ascii(player["name"]))
+            name = player["name"]
+            if name in seen_names:
+                continue
+            seen_names.add(name)
 
-        unique_names = sorted(set(all_names))
+            # Store rich dict for players with ESPN metadata
+            entry: dict = {"name": name}
+            if player.get("position"):
+                entry["position"] = player["position"]
+            if player.get("espn_id"):
+                entry["espn_id"] = player["espn_id"]
+            if player.get("headshot"):
+                entry["headshot"] = player["headshot"]
+            all_entries.append(entry)
+
+            # Also store plain ASCII variant string for ILIKE matching
+            ascii_name = _strip_diacritics(name)
+            if ascii_name != name and ascii_name not in seen_names:
+                seen_names.add(ascii_name)
+                all_entries.append(ascii_name)
+
+        # Sort dicts by name, strings alphabetically
+        all_entries.sort(key=lambda x: x["name"] if isinstance(x, dict) else x)
 
         await session.execute(
             update(Team)
             .where(Team.id == team.id)
-            .values(roster_players=unique_names)
+            .values(roster_players=all_entries)
         )
         updated += 1
-        total_player_names += len(unique_names)
+        total_player_names += len(all_entries)
 
         # Rate limit between roster fetches
         await asyncio.sleep(0.3)

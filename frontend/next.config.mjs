@@ -19,6 +19,18 @@ const nextConfig = {
         protocol: "https",
         hostname: "image.tmdb.org",
       },
+      {
+        protocol: "https",
+        hostname: "flagcdn.com",
+      },
+      {
+        protocol: "https",
+        hostname: "upload.wikimedia.org",
+      },
+      {
+        protocol: "https",
+        hostname: "coin-images.coingecko.com",
+      },
     ],
   },
 };
