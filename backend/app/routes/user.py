@@ -935,6 +935,34 @@ def _team_name_patterns(full_name: str) -> list[str]:
     return patterns
 
 
+def _strict_team_name_matches(user_team: str, candidate: str) -> bool:
+    """Check if a user's followed team name matches a candidate outcome name.
+
+    Uses suffix-word matching to prevent false positives like "Bears" (from
+    "Brown Bears") matching "Chicago Bears".
+
+    Same logic as feed._team_name_matches, duplicated here to avoid
+    cross-module coupling.
+    """
+    user_lower = user_team.lower().strip()
+    cand_lower = candidate.lower().strip()
+    if not user_lower or not cand_lower:
+        return False
+    if user_lower == cand_lower:
+        return True
+    # user team name appears in candidate (safe — full name is specific)
+    if user_lower in cand_lower:
+        return True
+    # candidate appears in user team (dangerous — require suffix word match)
+    if cand_lower in user_lower:
+        user_words = user_lower.split()
+        cand_words = cand_lower.split()
+        if len(cand_words) <= len(user_words):
+            if user_words[-len(cand_words):] == cand_words:
+                return True
+    return False
+
+
 async def _query_team_futures(
     team_ids: list[int],
     db: AsyncSession,
@@ -943,6 +971,11 @@ async def _query_team_futures(
     """Shared logic for querying futures outcomes matched to a set of teams.
 
     Returns dict with keys: items, teams (list of team dicts), total_count.
+
+    Uses team_id matching (primary) plus full-name ILIKE (fallback).
+    Alternate names and short suffixes are NOT used for ILIKE to prevent
+    false positives (e.g., "Bears" matching "Chicago Bears" when the user
+    follows "Brown Bears").
     """
     if not team_ids:
         return {"items": [], "teams": [], "total_count": 0}
@@ -956,32 +989,44 @@ async def _query_team_futures(
     if not teams:
         return {"items": [], "teams": [], "total_count": 0}
 
-    # Build ILIKE patterns from all team names + alternate_names
+    # Build ILIKE patterns from FULL team names only — no alternate_names,
+    # no short suffixes.  This prevents "Bears" (from "Brown Bears") from
+    # matching "Chicago Bears" or "Eagles" matching "Philadelphia Eagles".
     ilike_patterns: list[str] = []
-    for t in teams.values():
-        ilike_patterns.extend(_team_name_patterns(t.name))
-        if t.alternate_names:
-            for alt in t.alternate_names:
-                if isinstance(alt, str) and len(alt) >= 4:
-                    ilike_patterns.extend(_team_name_patterns(alt))
-
-    # De-duplicate patterns (case-insensitive)
     seen_lower: set[str] = set()
-    unique_patterns: list[str] = []
-    for p in ilike_patterns:
-        if p.lower() not in seen_lower:
-            seen_lower.add(p.lower())
-            unique_patterns.append(p)
+    for t in teams.values():
+        if t.name:
+            escaped = _escape_like(t.name.strip())
+            if escaped.lower() not in seen_lower:
+                seen_lower.add(escaped.lower())
+                ilike_patterns.append(escaped)
 
-    # Build OR conditions: team_id match OR name ILIKE match
+    # Build OR conditions: team_id match OR full-name ILIKE match
     conditions = [FuturesOutcome.team_id.in_(team_ids)]
-    for pattern in unique_patterns:
+    for pattern in ilike_patterns:
         conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
 
-    # Query futures outcomes from open, non-game-level markets
+    # Subquery: count outcomes per market (for ranking context like "#3 of 30")
+    outcome_count_sq = (
+        select(
+            FuturesOutcome.market_id,
+            func.count().label("outcome_total"),
+        )
+        .group_by(FuturesOutcome.market_id)
+        .subquery()
+    )
+
+    # Query futures outcomes from open, non-game-level markets.
+    # Overfetch (limit * 5) since some ILIKE matches will be rejected by
+    # the stricter post-filter.
     query = (
-        select(FuturesOutcome, FuturesMarket)
+        select(
+            FuturesOutcome,
+            FuturesMarket,
+            outcome_count_sq.c.outcome_total,
+        )
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
         .where(
             and_(
                 FuturesMarket.status == "open",
@@ -995,29 +1040,13 @@ async def _query_team_futures(
         )
     )
 
-    # Get total count first (without limit)
-    count_query = (
-        select(func.count())
-        .select_from(FuturesOutcome)
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .where(
-            and_(
-                FuturesMarket.status == "open",
-                FuturesMarket.event_id.is_(None),
-                or_(*conditions),
-            )
-        )
-    )
-    count_result = await db.execute(count_query)
-    total_count = count_result.scalar() or 0
-
-    # Fetch limited results
-    result = await db.execute(query.limit(limit))
+    result = await db.execute(query.limit(limit * 5))
     rows = result.all()
 
-    # For each outcome, figure out which followed team matched
+    # For each outcome, figure out which followed team matched.
+    # Uses strict suffix-word matching to prevent false positives.
     def _find_matched_team(outcome: FuturesOutcome) -> dict | None:
-        # Direct team_id match
+        # Direct team_id match (always correct)
         if outcome.team_id and outcome.team_id in teams:
             t = teams[outcome.team_id]
             return {
@@ -1026,26 +1055,21 @@ async def _query_team_futures(
                 "logo_small": t.logo_url_small or t.logo_url,
                 "primary_color": t.primary_color,
             }
-        # Name ILIKE match — find which team matches
-        outcome_lower = (outcome.name or "").lower()
+        # Name matching — use strict suffix-word logic to prevent
+        # "Bears" (from "Brown Bears") matching "Chicago Bears".
+        outcome_name = outcome.name or ""
         for t in teams.values():
-            patterns_for_team = _team_name_patterns(t.name)
-            if t.alternate_names:
-                for alt in t.alternate_names:
-                    if isinstance(alt, str) and len(alt) >= 4:
-                        patterns_for_team.extend(_team_name_patterns(alt))
-            for pat in patterns_for_team:
-                if pat.lower() in outcome_lower:
-                    return {
-                        "id": t.id,
-                        "name": t.name,
-                        "logo_small": t.logo_url_small or t.logo_url,
-                        "primary_color": t.primary_color,
-                    }
+            if _strict_team_name_matches(t.name, outcome_name):
+                return {
+                    "id": t.id,
+                    "name": t.name,
+                    "logo_small": t.logo_url_small or t.logo_url,
+                    "primary_color": t.primary_color,
+                }
         return None
 
     items = []
-    for outcome, market in rows:
+    for outcome, market, outcome_total in rows:
         matched = _find_matched_team(outcome)
         if not matched:
             continue  # Skip if we can't determine which team matched
@@ -1064,9 +1088,13 @@ async def _query_team_futures(
             "probability": prob,
             "probability_change_24h": change,
             "rank": outcome.rank,
+            "total_outcomes": outcome_total,
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
             "matched_team": matched,
         })
+
+        if len(items) >= limit:
+            break
 
     # Build teams list for share link
     teams_list = [
@@ -1080,10 +1108,10 @@ async def _query_team_futures(
     ]
 
     return {
-        "items": items[:limit],
+        "items": items,
         "teams": teams_list,
         "team_ids": list(teams.keys()),
-        "total_count": total_count,
+        "total_count": len(items),
     }
 
 

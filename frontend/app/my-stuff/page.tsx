@@ -74,7 +74,7 @@ function MyTeamsFeed() {
     isMaxReached: isFuturesMaxReached,
   } = usePinnedFutures();
 
-  // Fetch team-only feed
+  // Fetch team-only feed (events only — team futures section handles futures)
   const {
     data: feedData,
     error: feedError,
@@ -82,14 +82,14 @@ function MyTeamsFeed() {
     mutate: refreshFeed,
   } = useSWR(
     "my-teams-feed",
-    () => fetchFeed({ limit: 100, my_teams_only: true }),
+    () => fetchFeed({ limit: 100, my_teams_only: true, include_futures: false }),
     { refreshInterval: 15000 },
   );
 
   // Fetch team futures ("Your Teams' Odds")
   const { data: teamFuturesData } = useSWR(
     "my-team-futures",
-    () => fetchMyTeamFutures(20),
+    () => fetchMyTeamFutures(30),
     { refreshInterval: 300000 }, // 5 min
   );
 
@@ -179,24 +179,26 @@ function MyTeamsFeed() {
       .filter((f): f is FuturesMarketDetailResponse => f !== undefined);
   }, [fetchedPinnedFutures, pinnedFuturesIds]);
 
-  // Group feed items into sections
+  // Group feed items into sections: Live → Upcoming → Recently Completed
   const feedSections = useMemo(() => {
     if (!feedData || feedData.items.length === 0) return [];
 
     const liveNow: FeedItem[] = [];
     const upcoming: FeedItem[] = [];
-    const yourMarkets: FeedItem[] = [];
+    const recentlyCompleted: FeedItem[] = [];
 
     for (const item of feedData.items) {
       if (item.type === "futures") {
-        yourMarkets.push(item);
+        // Skip futures from feed — team futures section handles them
+        continue;
+      }
+      const data = item.data as FeedEventData;
+      if (data.status === "live") {
+        liveNow.push(item);
+      } else if (data.status === "completed" || data.status === "closed") {
+        recentlyCompleted.push(item);
       } else {
-        const data = item.data as FeedEventData;
-        if (data.status === "live") {
-          liveNow.push(item);
-        } else {
-          upcoming.push(item);
-        }
+        upcoming.push(item);
       }
     }
 
@@ -205,8 +207,8 @@ function MyTeamsFeed() {
       sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });
     if (upcoming.length > 0)
       sections.push({ key: "upcoming", emoji: "\uD83C\uDFDF\uFE0F", title: "Upcoming", accent: "text-text-secondary", items: upcoming });
-    if (yourMarkets.length > 0)
-      sections.push({ key: "markets", emoji: "\uD83D\uDCCA", title: "Your Markets", accent: "text-accent-futures", items: yourMarkets });
+    if (recentlyCompleted.length > 0)
+      sections.push({ key: "completed", emoji: "\u2705", title: "Recently Completed", accent: "text-text-muted", items: recentlyCompleted });
 
     return sections;
   }, [feedData]);
@@ -216,6 +218,11 @@ function MyTeamsFeed() {
     return <OnboardingPrompt />;
   }
 
+  const hasEvents = feedSections.length > 0;
+  const hasFutures = teamFuturesData && teamFuturesData.items.length > 0;
+  const hasPinned = pinnedEvents.length > 0 || pinnedFutures.length > 0;
+  const hasContent = hasEvents || hasFutures || hasPinned;
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -224,7 +231,7 @@ function MyTeamsFeed() {
           <h1 className="text-xl font-bold text-text-primary">My Teams</h1>
           {feedData?.matched_teams && feedData.matched_teams.length > 0 && (
             <p className="text-xs text-text-muted mt-0.5">
-              {feedData.matched_teams.join(" · ")}
+              {feedData.matched_teams.join(" \u00B7 ")}
             </p>
           )}
         </div>
@@ -253,7 +260,7 @@ function MyTeamsFeed() {
       {/* Content */}
       {feedData && !feedData.requires_auth && (
         <>
-          {feedData.items.length === 0 ? (
+          {!hasContent ? (
             <div className="text-center py-12">
               <p className="text-sm text-text-secondary mb-1">
                 No games or markets right now for your teams
@@ -265,7 +272,7 @@ function MyTeamsFeed() {
           ) : (
             <div className="space-y-6">
               {/* Pinned Section */}
-              {(pinnedEvents.length > 0 || pinnedFutures.length > 0) && (
+              {hasPinned && (
                 <section>
                   <div className="flex items-center gap-2 mb-3">
                     <span className="text-sm">&#128204;</span>
@@ -304,16 +311,7 @@ function MyTeamsFeed() {
                 </section>
               )}
 
-              {/* Your Teams' Odds Section */}
-              {teamFuturesData && teamFuturesData.items.length > 0 && (
-                <TeamFuturesSection
-                  items={teamFuturesData.items}
-                  teamIds={teamFuturesData.team_ids}
-                  totalCount={teamFuturesData.total_count}
-                />
-              )}
-
-              {/* Grouped feed sections */}
+              {/* Event sections: Live → Upcoming → Recently Completed */}
               {feedSections.map((section) => (
                 <section key={section.key}>
                   <div className="flex items-center gap-2 mb-3">
@@ -347,6 +345,15 @@ function MyTeamsFeed() {
                   </div>
                 </section>
               ))}
+
+              {/* Your Teams' Odds Section */}
+              {hasFutures && (
+                <TeamFuturesSection
+                  items={teamFuturesData!.items}
+                  teamIds={teamFuturesData!.team_ids}
+                  totalCount={teamFuturesData!.total_count}
+                />
+              )}
             </div>
           )}
         </>
@@ -356,10 +363,10 @@ function MyTeamsFeed() {
 }
 
 // ---------------------------------------------------------------------------
-// Your Teams' Odds section
+// Your Teams' Odds section — grouped by market type with context
 // ---------------------------------------------------------------------------
 
-const INITIAL_SHOW = 6;
+const INITIAL_SHOW = 8;
 
 function TeamFuturesSection({
   items,
@@ -373,7 +380,50 @@ function TeamFuturesSection({
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const displayed = expanded ? items : items.slice(0, INITIAL_SHOW);
+  // Group by market type for better organization
+  const grouped = useMemo(() => {
+    const championships: TeamFutureItem[] = [];
+    const awards: TeamFutureItem[] = [];
+    const other: TeamFutureItem[] = [];
+
+    for (const item of items) {
+      const name = (item.market_name || "").toLowerCase();
+      const tier = item.market_tier;
+      if (
+        tier === 1 ||
+        name.includes("champion") ||
+        name.includes("winner") ||
+        name.includes("world series") ||
+        name.includes("super bowl") ||
+        name.includes("stanley cup") ||
+        name.includes("finals")
+      ) {
+        championships.push(item);
+      } else if (
+        name.includes("mvp") ||
+        name.includes("award") ||
+        name.includes("player") ||
+        name.includes("rookie") ||
+        name.includes("defensive") ||
+        name.includes("coach") ||
+        name.includes("cy young") ||
+        name.includes("heisman")
+      ) {
+        awards.push(item);
+      } else {
+        other.push(item);
+      }
+    }
+
+    return { championships, awards, other };
+  }, [items]);
+
+  // Flatten for display: championships first, then awards, then other
+  const orderedItems = useMemo(() => {
+    return [...grouped.championships, ...grouped.awards, ...grouped.other];
+  }, [grouped]);
+
+  const displayed = expanded ? orderedItems : orderedItems.slice(0, INITIAL_SHOW);
 
   const handleShare = useCallback(async () => {
     const url = `${window.location.origin}/share/my-odds?teams=${teamIds.join(",")}`;
@@ -382,7 +432,6 @@ function TeamFuturesSection({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for browsers without clipboard API
       window.prompt("Copy this link:", url);
     }
   }, [teamIds]);
@@ -407,13 +456,55 @@ function TeamFuturesSection({
         </button>
       </div>
 
-      <div className="space-y-1">
-        {displayed.map((item) => (
-          <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
-        ))}
-      </div>
+      {/* Championship odds */}
+      {grouped.championships.length > 0 && displayed.some(i => grouped.championships.includes(i)) && (
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-widest text-text-muted mb-1.5 px-1">
+            Championships
+          </p>
+          <div className="space-y-0.5">
+            {displayed
+              .filter(i => grouped.championships.includes(i))
+              .map(item => (
+                <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+              ))}
+          </div>
+        </div>
+      )}
 
-      {items.length > INITIAL_SHOW && (
+      {/* Award/player odds */}
+      {grouped.awards.length > 0 && displayed.some(i => grouped.awards.includes(i)) && (
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-widest text-text-muted mb-1.5 px-1">
+            Awards &amp; Players
+          </p>
+          <div className="space-y-0.5">
+            {displayed
+              .filter(i => grouped.awards.includes(i))
+              .map(item => (
+                <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Other markets */}
+      {grouped.other.length > 0 && displayed.some(i => grouped.other.includes(i)) && (
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-widest text-text-muted mb-1.5 px-1">
+            Other Markets
+          </p>
+          <div className="space-y-0.5">
+            {displayed
+              .filter(i => grouped.other.includes(i))
+              .map(item => (
+                <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+              ))}
+          </div>
+        </div>
+      )}
+
+      {orderedItems.length > INITIAL_SHOW && (
         <button
           onClick={() => setExpanded(!expanded)}
           className="mt-2 text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity w-full text-center py-1"
@@ -432,21 +523,34 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
   const change = item.probability_change_24h;
   const probStr = prob !== null ? `${Math.round(prob * 100)}%` : "-";
 
-  let changeStr = "";
-  let changeColor = "text-text-muted";
-  if (change !== null && change !== 0) {
-    const sign = change > 0 ? "+" : "";
-    changeStr = `${sign}${(change * 100).toFixed(1)}%`;
-    changeColor = change > 0 ? "text-green-500" : "text-red-500";
+  let changeEl: React.ReactNode = null;
+  if (change !== null && change !== 0 && Math.abs(change) >= 0.001) {
+    const isUp = change > 0;
+    changeEl = (
+      <span className={`text-[11px] font-medium ${isUp ? "text-accent-live" : "text-accent-danger"}`}>
+        {isUp ? "\u2191" : "\u2193"} {Math.abs(change * 100).toFixed(1)}%
+      </span>
+    );
   }
 
-  // Truncate market name for compact display
-  const marketName = (item.market_name || "").replace(/\s*Winner\s*$/i, "").replace(/\s*20\d{2}(-\d{2})?$/i, "");
+  // Make market name more readable
+  const marketName = (item.market_name || "")
+    .replace(/\s*Winner\s*$/i, "")
+    .replace(/\s*20\d{2}(-\d{2})?\s*$/i, "")
+    .replace(/\s*20\d{2}-\d{2}\s*/i, " ")
+    .trim();
+
+  // Build rank context if available
+  const rankStr = item.rank && item.total_outcomes
+    ? `#${item.rank} of ${item.total_outcomes}`
+    : item.rank
+      ? `#${item.rank}`
+      : null;
 
   return (
     <Link
       href={`/futures/${item.market_id}`}
-      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-elevated transition-colors group"
+      className="flex items-center gap-3 px-2.5 py-2 rounded-lg hover:bg-surface-elevated transition-colors group"
     >
       {/* Team logo */}
       <div className="w-6 h-6 flex-shrink-0">
@@ -466,26 +570,26 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
         )}
       </div>
 
-      {/* Market name */}
+      {/* Market info */}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-text-primary truncate">
-          {marketName}
+          <span className="font-medium">{item.outcome_name}</span>
+          <span className="text-text-muted"> &mdash; </span>
+          <span className="text-text-secondary">{marketName}</span>
         </p>
-        <p className="text-[11px] text-text-muted truncate">
-          {item.outcome_name}
-        </p>
-      </div>
-
-      {/* Probability */}
-      <div className="text-right flex-shrink-0">
-        <p className="text-sm font-semibold text-text-primary font-mono tabular-nums">
-          {probStr}
-        </p>
-        {changeStr && (
-          <p className={`text-[11px] font-medium ${changeColor} font-mono tabular-nums`}>
-            {changeStr}
+        {rankStr && (
+          <p className="text-[11px] text-text-muted">
+            Ranked {rankStr}
           </p>
         )}
+      </div>
+
+      {/* Probability + movement */}
+      <div className="text-right flex-shrink-0 flex items-center gap-1.5">
+        {changeEl}
+        <p className="text-sm font-semibold text-text-primary font-mono tabular-nums min-w-[2.5rem] text-right">
+          {probStr}
+        </p>
       </div>
     </Link>
   );

@@ -660,6 +660,7 @@ export interface TeamFutureItem {
   probability: number | null;
   probability_change_24h: number | null;
   rank: number | null;
+  total_outcomes: number | null;
   resolution_date: string | null;
   matched_team: {
     id: number;
