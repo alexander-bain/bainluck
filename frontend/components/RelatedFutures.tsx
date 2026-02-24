@@ -15,6 +15,7 @@ interface RelatedFuturesProps {
   awayTeamColor?: string;
   homeTeamLogo?: string;
   awayTeamLogo?: string;
+  sportKey?: string;
 }
 
 /** Tier display config */
@@ -273,31 +274,64 @@ function HeroFutureCard({
   );
 }
 
+/**
+ * Extract a short award label from a market name.
+ * e.g., "NBA Most Valuable Player" → "MVP"
+ * e.g., "NBA Rookie of the Year" → "Rookie of the Year"
+ */
+function shortAwardLabel(marketName: string): string {
+  const cleaned = cleanMarketName(marketName);
+  // Common abbreviations
+  if (/\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP";
+  if (/\brookie\s+of\s+the\s+year\b/i.test(cleaned)) return "Rookie of the Year";
+  if (/\bdefensive\s+player/i.test(cleaned)) return "DPOY";
+  if (/\bmost\s+improved/i.test(cleaned)) return "Most Improved";
+  if (/\bsixth\s+man/i.test(cleaned)) return "6th Man";
+  if (/\bcy\s*young/i.test(cleaned)) return "Cy Young";
+  if (/\bgolden\s+boot/i.test(cleaned)) return "Golden Boot";
+  if (/\bgolden\s+glove/i.test(cleaned)) return "Golden Glove";
+  if (/\bballon/i.test(cleaned)) return "Ballon d'Or";
+  if (/\bheisman/i.test(cleaned)) return "Heisman";
+  if (/\bcoach\s+of\s+the\s+year/i.test(cleaned)) return "Coach of the Year";
+  // Fallback: strip league prefix (e.g., "NBA" from "NBA MVP")
+  return cleaned.replace(/^(NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB|NCAAF)\s+/i, "");
+}
+
 // ─── AWARD CARD: MVP / individual awards ───
 function AwardCard({
   future,
   teamColor,
+  sportKey,
 }: {
   future: RelatedFuture;
   teamColor: string;
+  sportKey?: string;
 }) {
+  const awardLabel = shortAwardLabel(future.market_name);
+
   return (
     <Link
       href={`/futures/${future.market_id}`}
-      className="flex items-center gap-3 rounded-lg p-3 group transition-colors bg-surface-elevated/40 border border-surface-elevated hover:bg-surface-elevated/70"
+      className="flex items-center gap-3 rounded-xl p-3 group transition-all duration-200 hover:scale-[1.005]"
+      style={{
+        background: `linear-gradient(135deg, ${teamColor}10, transparent)`,
+        border: `1px solid ${teamColor}20`,
+      }}
     >
-      {/* Player avatar */}
+      {/* Player headshot — 48px for prominence */}
       {future.matched_player?.espn_id ? (
         <EntityImage
           type="player"
           name={future.outcome_name}
           espnId={future.matched_player.espn_id}
-          size={36}
+          sport={sportKey}
+          size={48}
+          fallbackColor={teamColor}
         />
       ) : (
         <div
-          className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-          style={{ backgroundColor: `${teamColor}25`, color: teamColor }}
+          className="w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
+          style={{ backgroundColor: `${teamColor}20`, color: teamColor }}
         >
           {future.outcome_name
             ?.split(" ")
@@ -308,13 +342,15 @@ function AwardCard({
       )}
 
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-text-primary truncate">
+        {/* Player name — primary, large */}
+        <div className="text-[15px] font-bold text-text-primary truncate leading-tight">
           {future.outcome_name}
         </div>
-        <div className="flex items-center gap-1.5">
+        {/* Award label — secondary */}
+        <div className="flex items-center gap-1 mt-0.5">
           <span className="text-[10px]">⭐</span>
-          <span className="text-[11px] text-text-muted truncate">
-            {cleanMarketName(future.market_name)}
+          <span className="text-[11px] text-text-muted truncate font-medium">
+            {awardLabel}
           </span>
         </div>
       </div>
@@ -322,7 +358,7 @@ function AwardCard({
       <div className="text-right shrink-0">
         <div className="flex items-center gap-1.5 justify-end">
           <span
-            className="text-lg font-bold tabular-nums"
+            className="text-xl font-bold tabular-nums"
             style={{ color: teamColor }}
           >
             {formatProbability(future.probability)}
@@ -494,7 +530,35 @@ function GameMarketsGrid({
   );
 }
 
-// ─── STAT PROPS: Grouped by stat category with emoji ───
+/**
+ * Extract the line number from an outcome name.
+ * e.g., "Over 218.5" → 218.5, "Under 48.5" → 48.5, "Yes" → null
+ */
+function extractLine(outcomeName: string): number | null {
+  const match = outcomeName.match(/(\d+\.?\d*)/);
+  return match ? parseFloat(match[1]) : null;
+}
+
+/**
+ * Check if outcome is "Over" side.
+ */
+function isOver(outcomeName: string): boolean {
+  return /^over\b/i.test(outcomeName.trim());
+}
+
+/** A paired stat prop: Over + Under for the same market */
+interface StatPair {
+  category: string;
+  config: { emoji: string; label: string };
+  line: number | null;
+  overProb: number | null;
+  underProb: number | null;
+  overFuture: RelatedFuture;
+  underFuture: RelatedFuture | null;
+  marketId: number;
+}
+
+// ─── STAT PROPS: Over/Under gauge visualization ───
 function StatPropsSection({
   futures,
   teamColor,
@@ -515,28 +579,48 @@ function StatPropsSection({
 
   if (meaningful.length === 0) return null;
 
-  // Group by stat category
-  const groups = new Map<string, RelatedFuture[]>();
+  // Group by market_id to pair Over/Under outcomes
+  const marketMap = new Map<number, RelatedFuture[]>();
   for (const f of meaningful) {
-    const cat = extractStatCategory(f.market_name);
-    const existing = groups.get(cat) || [];
+    const existing = marketMap.get(f.market_id) || [];
     existing.push(f);
-    groups.set(cat, existing);
+    marketMap.set(f.market_id, existing);
   }
 
-  // Sort groups by size (most markets first), then items within by probability
-  const sortedGroups = Array.from(groups.entries())
-    .sort((a, b) => b[1].length - a[1].length)
-    .map(([cat, items]) => ({
-      category: cat,
-      config: getStatConfig(cat),
-      items: items.sort((a, b) => (b.probability || 0) - (a.probability || 0)),
-    }));
+  // Build stat pairs
+  const pairs: StatPair[] = [];
+  marketMap.forEach((outcomes, marketId) => {
+    const cat = extractStatCategory(outcomes[0].market_name);
+    const config = getStatConfig(cat);
 
-  const COLLAPSED_GROUPS = 3;
-  const visibleGroups = expanded
-    ? sortedGroups
-    : sortedGroups.slice(0, COLLAPSED_GROUPS);
+    const overOutcome = outcomes.find((o: RelatedFuture) => isOver(o.outcome_name));
+    const underOutcome = outcomes.find(
+      (o: RelatedFuture) => /^under\b/i.test(o.outcome_name.trim())
+    );
+    // Use whichever we have as primary
+    const primary = overOutcome || outcomes[0];
+    const line = extractLine(primary.outcome_name);
+
+    pairs.push({
+      category: cat,
+      config,
+      line,
+      overProb: overOutcome?.probability ?? null,
+      underProb: underOutcome?.probability ?? null,
+      overFuture: primary,
+      underFuture: underOutcome || null,
+      marketId,
+    });
+  });
+
+  // Sort: by category name for grouping, then by line
+  pairs.sort((a, b) => {
+    if (a.category !== b.category) return a.category.localeCompare(b.category);
+    return (a.line || 0) - (b.line || 0);
+  });
+
+  const COLLAPSED_COUNT = 4;
+  const visible = expanded ? pairs : pairs.slice(0, COLLAPSED_COUNT);
 
   return (
     <div>
@@ -546,57 +630,86 @@ function StatPropsSection({
           Player & team stats
         </span>
         <span className="text-[10px] text-text-muted/50">
-          ({meaningful.length})
+          ({pairs.length})
         </span>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        {visibleGroups.map(({ category, config, items }) => (
-          <div
-            key={category}
-            className="rounded-lg p-2.5 bg-surface-elevated/30 border border-surface-elevated/50"
-          >
-            {/* Stat header with emoji */}
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="text-base">{config.emoji}</span>
-              <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
-                {config.label}
-              </span>
-            </div>
+      <div className="space-y-1.5">
+        {visible.map((pair) => {
+          const overPct = pair.overProb !== null ? pair.overProb * 100 : 50;
+          const leansOver = overPct >= 50;
 
-            {/* Outcomes within this stat */}
-            <div className="space-y-1">
-              {items.slice(0, 3).map((f) => {
-                const prob = f.probability || 0;
-                return (
-                  <Link
-                    key={f.outcome_id}
-                    href={`/futures/${f.market_id}`}
-                    className="flex items-center justify-between gap-1 group"
+          return (
+            <Link
+              key={pair.marketId}
+              href={`/futures/${pair.marketId}`}
+              className="block rounded-lg p-2.5 group transition-colors bg-surface-elevated/30 border border-surface-elevated/50 hover:bg-surface-elevated/60"
+            >
+              {/* Top row: emoji + stat label + line number */}
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">{pair.config.emoji}</span>
+                  <span className="text-xs font-semibold text-text-secondary">
+                    {pair.config.label}
+                  </span>
+                </div>
+                {pair.line !== null && (
+                  <span className="text-xs font-bold text-text-primary tabular-nums">
+                    {pair.line}
+                  </span>
+                )}
+              </div>
+
+              {/* Over/Under gauge bar */}
+              <div className="relative h-5 rounded-full overflow-hidden bg-surface-elevated flex">
+                {/* Over side */}
+                <div
+                  className="h-full flex items-center justify-start pl-1.5 transition-all duration-500"
+                  style={{
+                    width: `${overPct}%`,
+                    backgroundColor: leansOver
+                      ? `${teamColor}30`
+                      : `${teamColor}12`,
+                  }}
+                >
+                  <span
+                    className="text-[10px] font-bold tabular-nums whitespace-nowrap"
+                    style={{
+                      color: leansOver ? teamColor : "var(--text-muted)",
+                    }}
                   >
-                    <span className="text-[11px] text-text-muted truncate group-hover:text-text-secondary transition-colors">
-                      {f.outcome_name}
-                    </span>
-                    <span
-                      className="text-[12px] font-bold tabular-nums shrink-0"
-                      style={{ color: teamColor }}
-                    >
-                      {Math.round(prob * 100)}%
-                    </span>
-                  </Link>
-                );
-              })}
-              {items.length > 3 && (
-                <span className="text-[10px] text-text-muted/50">
-                  +{items.length - 3} more
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
+                    O {Math.round(overPct)}%
+                  </span>
+                </div>
+                {/* Under side */}
+                <div
+                  className="h-full flex-1 flex items-center justify-end pr-1.5"
+                  style={{
+                    backgroundColor: !leansOver
+                      ? "rgba(156,163,175,0.2)"
+                      : "rgba(156,163,175,0.08)",
+                  }}
+                >
+                  <span
+                    className="text-[10px] font-bold tabular-nums whitespace-nowrap"
+                    style={{
+                      color: !leansOver
+                        ? "var(--text-secondary)"
+                        : "var(--text-muted)",
+                    }}
+                  >
+                    U {Math.round(100 - overPct)}%
+                  </span>
+                </div>
+                {/* Center line marker */}
+                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-surface-card/60" />
+              </div>
+            </Link>
+          );
+        })}
       </div>
 
-      {sortedGroups.length > COLLAPSED_GROUPS && (
+      {pairs.length > COLLAPSED_COUNT && (
         <button
           onClick={(e) => {
             e.preventDefault();
@@ -606,7 +719,7 @@ function StatPropsSection({
         >
           {expanded
             ? "Show less"
-            : `+${sortedGroups.length - COLLAPSED_GROUPS} more stats`}
+            : `+${pairs.length - COLLAPSED_COUNT} more stats`}
         </button>
       )}
     </div>
@@ -689,11 +802,13 @@ function TeamColumn({
   futures,
   teamColor,
   teamLogo,
+  sportKey,
 }: {
   teamName: string;
   futures: RelatedFuture[];
   teamColor: string;
   teamLogo?: string;
+  sportKey?: string;
 }) {
   const championship = futures.filter((f) => effectiveTier(f) === 1);
   const conference = futures.filter((f) => {
@@ -752,7 +867,7 @@ function TeamColumn({
           />
         ))}
 
-        {/* Awards — player-centric rows */}
+        {/* Awards — player-centric rows with headshots */}
         {awards.length > 0 && (
           <div className="space-y-1.5">
             {awards.map((f) => (
@@ -760,6 +875,7 @@ function TeamColumn({
                 key={f.outcome_id}
                 future={f}
                 teamColor={teamColor}
+                sportKey={sportKey}
               />
             ))}
           </div>
@@ -799,6 +915,7 @@ export default function RelatedFutures({
   awayTeamColor,
   homeTeamLogo,
   awayTeamLogo,
+  sportKey,
 }: RelatedFuturesProps) {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const { data, error, isLoading } = useSWR<RelatedFuturesResponse>(
@@ -832,12 +949,14 @@ export default function RelatedFutures({
         futures={home_team_futures}
         teamColor={hColor}
         teamLogo={homeTeamLogo}
+        sportKey={sportKey}
       />
       <TeamColumn
         teamName={awayTeam}
         futures={away_team_futures}
         teamColor={aColor}
         teamLogo={awayTeamLogo}
+        sportKey={sportKey}
       />
     </div>
   );

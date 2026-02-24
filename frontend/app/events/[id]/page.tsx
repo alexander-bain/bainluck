@@ -1084,6 +1084,7 @@ export default function EventPage({ params }: EventPageProps) {
         awayTeamColor={event.away_team_data?.primary_color || undefined}
         homeTeamLogo={event.home_team_data?.logo_small || undefined}
         awayTeamLogo={event.away_team_data?.logo_small || undefined}
+        sportKey={event.sport || undefined}
       />
     </div>
   );
