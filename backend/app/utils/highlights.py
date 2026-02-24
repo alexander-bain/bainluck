@@ -42,6 +42,10 @@ LEAGUE_TIERS: dict[str, int] = {
     "soccer_france_ligue_one": 2,
     "soccer_uefa_europa_league": 2,
     "mma_mixed_martial_arts": 2,
+    "cricket_t20_world_cup": 2,          # Major international tournament
+    "cricket_icc_world_cup": 2,          # Major international tournament
+    "soccer_fifa_world_cup": 1,          # Biggest sporting event
+    "soccer_conmebol_copa_libertadores": 2,
     # Olympics — always tier 1 during the Games
     "icehockey_olympics": 1,
     "basketball_olympics": 1,
@@ -50,19 +54,46 @@ LEAGUE_TIERS: dict[str, int] = {
     "curling_olympics": 2,
     # Tier 3: Niche but legit
     "soccer_mexico_ligamx": 3,
+    "soccer_brazil_campeonato": 3,
     "soccer_brazil_serie_a": 3,
     "boxing_boxing": 3,
-    # Tier 4: Preseason/spring training (explicit to avoid defaulting)
+    "soccer_netherlands_eredivisie": 3,
+    "soccer_portugal_primeira_liga": 3,
+    "soccer_efl_champ": 3,              # English Championship (2nd division)
+    "soccer_fa_cup": 3,
+    "soccer_uefa_europa_conference_league": 3,
+    "cricket_international_t20": 3,      # Regular T20s (not World Cup)
+    "cricket_test_match": 3,
+    "rugby_nrl": 3,
+    "rugbyleague_nrl": 3,
+    "rugbyunion_six_nations": 3,
+    "aussierules_afl": 3,
+    "basketball_euroleague": 3,
+    # Tier 4: Preseason/spring training + minor leagues (explicit)
     "baseball_mlb_preseason": 4,
-    # Tennis Grand Slams and Golf Majors → tier 2 (they ARE the big moments)
-    "golf_masters_tournament_winner": 2,
-    "golf_pga_championship_winner": 2,
-    "golf_us_open_winner": 2,
-    "golf_the_open_championship_winner": 2,
+    "soccer_england_league1": 4,         # English League 1 (3rd division)
+    "soccer_england_league2": 4,         # English League 2 (4th division)
+    "icehockey_liiga": 4,               # Finnish top league
+    "icehockey_mestis": 4,              # Finnish 2nd division
+    "icehockey_ahl": 4,                 # AHL (NHL minor league)
+    "icehockey_sweden_allsvenskan": 4,  # Swedish 2nd division
+    "icehockey_sweden_hockey_league": 4, # SHL
+    # Tennis: Grand Slams → tier 2, regular tour → tier 3
     "tennis_us_open": 2,
     "tennis_french_open": 2,
     "tennis_wimbledon": 2,
     "tennis_australian_open": 2,
+    "tennis_atp_aus_open_singles": 2,
+    "tennis_wta_aus_open_singles": 2,
+    "tennis_atp_dubai": 3,              # Regular ATP tour event
+    "tennis_wta_dubai": 3,
+    "tennis_atp_qatar_open": 3,
+    "tennis_wta_qatar_open": 3,
+    # Golf Majors → tier 2
+    "golf_masters_tournament_winner": 2,
+    "golf_pga_championship_winner": 2,
+    "golf_us_open_winner": 2,
+    "golf_the_open_championship_winner": 2,
 }
 
 # Highlight score weights
@@ -80,7 +111,9 @@ WEIGHTS = {
     "tier_2_power4_mixed": 5,      # Power 4 vs mid-major college
     "tier_2_midmajor": 2,          # Mid-major vs mid-major college
     "tier_3_league": 0,            # Niche — no bonus, no penalty
-    "tier_4_penalty": -15,         # Minor league penalty (pushes minor leagues down in feed)
+    "tier_4_penalty": -45,         # Minor league penalty — tier 4 should never appear for anonymous
+                                   # users unless championship/playoff. Live+close only gives 55,
+                                   # so -45 keeps score at ~10 (well below min_score 25).
     "recent_finish_upset": 20,     # Recently finished + upset
     "recent_finish": 5,            # Recently finished (24h)
     # Event importance (from llm_importance / ESPN season type)

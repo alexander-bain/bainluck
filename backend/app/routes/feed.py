@@ -400,6 +400,12 @@ async def _score_events(
         opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
         opening_away_prob = float(event.opening_away_probability) if event.opening_away_probability else None
 
+        # Skip events with no odds — the whole point of the site is probabilities.
+        # Events can exist without odds if they were discovered but haven't been
+        # polled yet, or if all bookmakers were filtered as stale.
+        if opening_home_prob is None:
+            continue
+
         # For scoring, use opening odds as "current" — good enough for ranking.
         # The highlight scorer detects closeness, upset potential, etc. from these.
         current_home_prob = opening_home_prob

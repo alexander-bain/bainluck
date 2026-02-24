@@ -137,6 +137,7 @@ class TestComputeHighlightLive:
         result = compute_highlight(
             status="live",
             commence_time=live_commence,
+            sport_key="basketball_nba",
             current_home_prob=0.55,
             opening_favorite="away",
             now=now,
@@ -1154,6 +1155,7 @@ class TestLevel2Scoring:
         result = compute_highlight(
             status="live",
             commence_time=now - timedelta(hours=1),
+            sport_key="basketball_nba",
             current_home_prob=0.50,
             now=now,
             time_series=ts,
@@ -1258,6 +1260,7 @@ class TestComputeHighlightImportance:
         result = compute_highlight(
             status="live",
             commence_time=live_commence,
+            sport_key="basketball_nba",
             importance="championship",
             now=now,
         )
@@ -1270,6 +1273,7 @@ class TestComputeHighlightImportance:
         result = compute_highlight(
             status="live",
             commence_time=live_commence,
+            sport_key="basketball_nba",
             importance="playoff",
             now=now,
         )
