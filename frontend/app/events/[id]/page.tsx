@@ -460,7 +460,6 @@ export default function EventPage({ params }: EventPageProps) {
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
   const gameIsBlowout = isLive && isBlowout(homeProb);
   const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
-  const bothTeamsHaveLogos = !!(event.home_team_data?.logo_large && event.away_team_data?.logo_large);
 
   // Analyze sources from history data
   const sourceAnalysis = analyzeSourcesFromHistory(historyData?.bookmaker_history);
@@ -714,15 +713,22 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Home Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {bothTeamsHaveLogos && (
+              {event.home_team_data?.logo_large ? (
                 <img
-                  src={event.home_team_data!.logo_large!}
+                  src={event.home_team_data.logo_large}
                   alt=""
                   width={32}
                   height={32}
                   loading="lazy"
                   className="w-8 h-8 object-contain"
                 />
+              ) : (
+                <div
+                  className="w-8 h-8 rounded flex-shrink-0 flex items-center justify-center text-xs font-bold text-white/90"
+                  style={{ backgroundColor: event.home_team_data?.primary_color || "#94A3B8" }}
+                >
+                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                </div>
               )}
               <div>
                 <h2 className={`text-xl font-semibold ${homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>
@@ -763,15 +769,22 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Away Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {bothTeamsHaveLogos && (
+              {event.away_team_data?.logo_large ? (
                 <img
-                  src={event.away_team_data!.logo_large!}
+                  src={event.away_team_data.logo_large}
                   alt=""
                   width={32}
                   height={32}
                   loading="lazy"
                   className="w-8 h-8 object-contain"
                 />
+              ) : (
+                <div
+                  className="w-8 h-8 rounded flex-shrink-0 flex items-center justify-center text-xs font-bold text-white/90"
+                  style={{ backgroundColor: event.away_team_data?.primary_color || "#64748B" }}
+                >
+                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                </div>
               )}
               <div>
                 <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>

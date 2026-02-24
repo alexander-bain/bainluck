@@ -40,6 +40,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _team_name_matches(user_team: str, candidate: str) -> bool:
+    """Check if a user's followed team name matches a candidate team name.
+
+    The safe direction (user's full team name found inside candidate) is kept
+    as-is since full names are specific enough.  The dangerous direction (short
+    candidate found inside the longer user team name) requires the candidate to
+    match the *trailing words* of the user's team name.  This prevents
+    "Celtic" matching "Boston Celtics" and "England" matching "New England
+    Patriots" while still allowing "Celtics" and "Patriots" to match.
+    """
+    user_lower = user_team.lower().strip()
+    cand_lower = candidate.lower().strip()
+    if not user_lower or not cand_lower:
+        return False
+    if user_lower == cand_lower:
+        return True
+    # user team name appears in candidate (safe — full name is specific)
+    if user_lower in cand_lower:
+        return True
+    # candidate appears in user team (dangerous — require suffix word match)
+    if cand_lower in user_lower:
+        user_words = user_lower.split()
+        cand_words = cand_lower.split()
+        if len(cand_words) <= len(user_words):
+            if user_words[-len(cand_words):] == cand_words:
+                return True
+    return False
+
+
 @router.get("")
 async def get_feed(
     limit: int = Query(200, description="Number of feed items to return", ge=1, le=5000),
@@ -313,12 +342,6 @@ async def _score_events(
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
 
-    # For my_teams_only: build a name-based lookup as fallback.
-    # Event.home_team_id/away_team_id may be NULL (not yet linked by ESPN sync),
-    # so we also match by team name to ensure the user sees their teams' games.
-    # Uses only full Team.name (not alternate_names) to avoid false positives.
-    user_team_names = {n.lower() for n in (my_team_names or [])}
-
     for event in events:
         # my_teams_only: skip events that don't involve the user's teams
         if my_teams_only:
@@ -328,14 +351,14 @@ async def _score_events(
 
             # Fall back to name matching (handles events without team_id links)
             matched_by_name = False
-            if not matched_by_id and user_team_names:
-                home_lower = (event.home_team_name or "").lower()
-                away_lower = (event.away_team_name or "").lower()
-                for team_name in user_team_names:
-                    if team_name in home_lower or home_lower in team_name:
+            if not matched_by_id and my_team_names:
+                home_name = event.home_team_name or ""
+                away_name = event.away_team_name or ""
+                for team_name in (my_team_names or []):
+                    if _team_name_matches(team_name, home_name):
                         matched_by_name = True
                         break
-                    if team_name in away_lower or away_lower in team_name:
+                    if _team_name_matches(team_name, away_name):
                         matched_by_name = True
                         break
 
@@ -502,7 +525,6 @@ async def _score_futures(
     ]
 
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
-    user_team_names = {n.lower() for n in (my_team_names or [])}
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
     # === PER-CATEGORY FETCH ===
@@ -635,12 +657,11 @@ async def _score_futures(
 
             # Fall back to outcome name matching when team_ids aren't linked
             matched_by_name = False
-            if not matched_by_id and user_team_names:
+            if not matched_by_id and my_team_names:
                 for o in market.outcomes:
                     if o.name:
-                        outcome_lower = o.name.lower()
-                        for team_name in user_team_names:
-                            if team_name in outcome_lower or outcome_lower in team_name:
+                        for team_name in (my_team_names or []):
+                            if _team_name_matches(team_name, o.name):
                                 matched_by_name = True
                                 break
                     if matched_by_name:
@@ -656,10 +677,9 @@ async def _score_futures(
                 is_match = False
                 if o.team_id and o.team_id in user_team_ids:
                     is_match = True
-                elif user_team_names and o.name:
-                    outcome_lower = o.name.lower()
-                    for team_name in user_team_names:
-                        if team_name in outcome_lower or outcome_lower in team_name:
+                elif my_team_names and o.name:
+                    for team_name in (my_team_names or []):
+                        if _team_name_matches(team_name, o.name):
                             is_match = True
                             break
                 if is_match:

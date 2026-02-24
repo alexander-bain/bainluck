@@ -92,7 +92,6 @@ export default function EventCard({
   // Team colors
   const homeColor = event.home_team_data?.primary_color || "#94A3B8";
   const awayColor = event.away_team_data?.primary_color || "#64748B";
-  const bothTeamsHaveLogos = !!(event.home_team_data?.logo_small && event.away_team_data?.logo_small);
 
   // Short team names (last word) for compact display
   const homeShort = event.home_team.split(" ").pop() || event.home_team;
@@ -208,15 +207,22 @@ export default function EventCard({
           {/* Home team */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              {bothTeamsHaveLogos && (
+              {event.home_team_data?.logo_small ? (
                 <img
-                  src={event.home_team_data!.logo_small!}
+                  src={event.home_team_data.logo_small}
                   alt=""
                   width={20}
                   height={20}
                   loading="lazy"
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
+              ) : (
+                <div
+                  className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+                  style={{ backgroundColor: homeColor }}
+                >
+                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                </div>
               )}
               <span className={`text-sm font-medium truncate ${
                 homeFavorite ? "text-text-primary" : "text-text-secondary"
@@ -254,15 +260,22 @@ export default function EventCard({
           {/* Away team */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              {bothTeamsHaveLogos && (
+              {event.away_team_data?.logo_small ? (
                 <img
-                  src={event.away_team_data!.logo_small!}
+                  src={event.away_team_data.logo_small}
                   alt=""
                   width={20}
                   height={20}
                   loading="lazy"
                   className="w-5 h-5 object-contain flex-shrink-0"
                 />
+              ) : (
+                <div
+                  className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+                  style={{ backgroundColor: awayColor }}
+                >
+                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                </div>
               )}
               <span className={`text-sm font-medium truncate ${
                 !homeFavorite ? "text-text-primary" : "text-text-secondary"

@@ -151,17 +151,27 @@ function ThumbButtons({
 // Team logo — small inline logo with fallback
 // ============================================================================
 
-function TeamLogo({ url, name }: { url: string | null | undefined; name: string }) {
-  if (!url) return null;
+function TeamLogo({ url, name, color }: { url: string | null | undefined; name: string; color?: string | null }) {
+  if (url) {
+    return (
+      <Image
+        src={url}
+        alt={name}
+        width={20}
+        height={20}
+        className="rounded-sm flex-shrink-0"
+        unoptimized
+      />
+    );
+  }
+  const initials = name.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase();
   return (
-    <Image
-      src={url}
-      alt={name}
-      width={20}
-      height={20}
-      className="rounded-sm flex-shrink-0"
-      unoptimized
-    />
+    <div
+      className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+      style={{ backgroundColor: color || "#6b7280" }}
+    >
+      {initials}
+    </div>
   );
 }
 
@@ -260,7 +270,7 @@ function EventFeedCard({
           <div className="flex-1 min-w-0">
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
-              <TeamLogo url={data.away_team_data?.logo_small} name={data.away_team} />
+              <TeamLogo url={data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} />
               <span className={`text-sm font-medium truncate ${
                 awayProb !== null && awayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
               }`}>
@@ -269,7 +279,7 @@ function EventFeedCard({
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
-              <TeamLogo url={data.home_team_data?.logo_small} name={data.home_team} />
+              <TeamLogo url={data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} />
               <span className={`text-sm font-medium truncate ${
                 homeProb !== null && homeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
               }`}>
