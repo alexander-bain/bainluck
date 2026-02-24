@@ -452,14 +452,29 @@ async def _score_events(
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
-        # Lower the threshold for positively personalized items — if the user
-        # follows a team, surface it even at lower base scores.
-        # But don't lower it when personalization is negative (sport suppression) —
-        # otherwise "Nah" sports still sneak through the lowered threshold.
-        # Anonymous threshold: 30 means tier 1 events need at least one signal
-        # (live, close, starting soon) beyond just being a major league game.
-        # my_teams_only: show ALL their team's games regardless of score.
-        if my_teams_only:
+        # --- "Nah" sport hard filter ---
+        # If the user explicitly said "Nah" to this sport, don't show it
+        # UNLESS it's a championship or playoff game.  A user who said "Nah"
+        # to soccer shouldn't see Champions League regular matches, but a
+        # World Cup Final is a genuine cultural event worth surfacing.
+        is_nah = any("sport_nah" in r for r in p_result.reasons)
+        if is_nah and not my_teams_only:
+            if importance not in ("championship", "playoff"):
+                continue
+            # Championship/playoff in a "Nah" sport: override but explain
+            personalized_score = max(personalized_score, 35)
+
+        # --- "If it's wild" sport — higher bar ---
+        # The user said "If it's wild" (affinity 0.1) — only show if something
+        # genuinely unusual is happening (upset, lead change, big swing, playoff).
+        # A live close game alone isn't enough.
+        is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
+        if is_low_affinity and not my_teams_only:
+            # Require a genuinely notable game — live+close+tier1 = 75 * 0.7 = 52
+            # isn't enough. Need upset(+20), lead change(+8), big swing(+15),
+            # or playoff(+15) to clear the bar.
+            min_score = 55
+        elif my_teams_only:
             min_score = 0
         elif p_result.is_personalized and p_result.multiplier >= 1.0:
             min_score = 10
@@ -742,6 +757,16 @@ async def _score_futures(
             outcome_names=outcome_names,
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
+
+        # --- "Nah" category hard filter for futures ---
+        is_nah = any("sport_nah" in r for r in p_result.reasons)
+        if is_nah and not my_teams_only:
+            continue  # No override for futures — no "championship" equivalent
+
+        # "If it's wild" — higher bar for low-affinity futures too
+        is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
+        if is_low_affinity and not my_teams_only and personalized_score < 55:
+            continue
 
         # Filter low-signal futures (my_teams_only shows everything)
         if not my_teams_only and personalized_score < 35:
