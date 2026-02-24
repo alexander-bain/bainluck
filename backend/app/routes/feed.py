@@ -8,6 +8,7 @@ based on their favorite teams, sport affinities, and pinned items.
 Anonymous users see the generic interestingness feed.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -233,10 +234,13 @@ async def _load_personalization_context(
     if not user:
         return PersonalizationContext()
 
-    # Load user favorites (team relationships)
-    favorites_result = await db.execute(
-        select(UserFavorite).where(UserFavorite.user_id == user.id)
+    # Load user favorites, preferences, and pins in parallel
+    favorites_result, prefs_result, pins_result = await asyncio.gather(
+        db.execute(select(UserFavorite).where(UserFavorite.user_id == user.id)),
+        db.execute(select(UserPreference).where(UserPreference.user_id == user.id)),
+        db.execute(select(UserPin).where(UserPin.user_id == user.id)),
     )
+
     favorites = favorites_result.scalars().all()
 
     team_relations: dict[int, set[str]] = {}
@@ -247,17 +251,9 @@ async def _load_personalization_context(
         team_relations[fav.team_id].add(fav.relation_type)
         team_weights[fav.team_id] = float(fav.weight) if fav.weight else 1.0
 
-    # Load user preferences (sport affinities)
-    prefs_result = await db.execute(
-        select(UserPreference).where(UserPreference.user_id == user.id)
-    )
     prefs = prefs_result.scalar_one_or_none()
     sport_affinities = prefs.sport_affinities if prefs and prefs.sport_affinities else {}
 
-    # Load user pins
-    pins_result = await db.execute(
-        select(UserPin).where(UserPin.user_id == user.id)
-    )
     pins = pins_result.scalars().all()
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
@@ -623,73 +619,46 @@ async def _score_futures(
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
-    # === PER-CATEGORY FETCH ===
-    # Query each category separately to guarantee diversity.
-    # Without this, crypto micro-markets (5-min resolution) consume all
-    # slots when sorted by resolution_date.
-    # Limit each category to PER_CAT_LIMIT markets to cap total DB load.
+    # === SINGLE QUERY WITH ROW_NUMBER() PARTITION ===
+    # Instead of 29 per-category queries (~90 round-trips with selectinload),
+    # use a single query with ROW_NUMBER() OVER (PARTITION BY category) to
+    # get the top PER_CAT_LIMIT markets per category in one round-trip.
     PER_CAT_LIMIT = 10
-    ALL_CATEGORIES = [
-        # Sports
-        "basketball", "football", "baseball", "hockey", "golf", "tennis",
-        "soccer", "mma", "boxing", "motorsports", "esports", "cricket",
-        "rugby", "aussierules", "horse_racing", "olympics", "lacrosse",
-        "chess", "poker", "darts",
-        # Non-sports
-        "politics", "crypto", "weather", "entertainment",
-        "economics", "tech", "geopolitics", "culture",
-        # Catch-all
-        "other",
-    ]
 
-    seen_ids: set[int] = set()
-    markets: list = []
+    # Step 1: Subquery to assign row numbers per category
+    category_col = func.coalesce(
+        FuturesMarket.llm_sport_category, "__null__"
+    )
+    row_num = func.row_number().over(
+        partition_by=category_col,
+        order_by=FuturesMarket.resolution_date.asc().nulls_last(),
+    ).label("_rn")
 
-    for cat in ALL_CATEGORIES:
-        if sport_filter and cat.lower() not in sport_filter.lower():
-            continue
-        cat_query = (
-            select(FuturesMarket)
-            .options(*base_options)
-            .where(
-                *base_filters,
-                FuturesMarket.llm_sport_category == cat,
+    id_filters = list(base_filters)
+    if sport_filter:
+        id_filters.append(
+            or_(
+                FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
+                FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
             )
-            .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-            .limit(PER_CAT_LIMIT)
         )
 
-        if sport_filter:
-            # Also match on external_id for sport-key-based filtering
-            cat_query = cat_query.where(
-                or_(
-                    FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
-                    FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
-                )
-            )
+    subq = (
+        select(FuturesMarket.id, row_num)
+        .where(*id_filters)
+        .subquery()
+    )
 
-        cat_result = await db.execute(cat_query)
-        for m in cat_result.scalars().unique().all():
-            if m.id not in seen_ids:
-                seen_ids.add(m.id)
-                markets.append(m)
-
-    # Also query uncategorized markets (llm_sport_category IS NULL)
-    null_query = (
+    # Step 2: Load full market objects (with outcomes + sport) for the top N per category
+    main_query = (
         select(FuturesMarket)
         .options(*base_options)
-        .where(
-            *base_filters,
-            FuturesMarket.llm_sport_category.is_(None),
-        )
-        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
-        .limit(PER_CAT_LIMIT)
+        .join(subq, FuturesMarket.id == subq.c.id)
+        .where(subq.c._rn <= PER_CAT_LIMIT)
     )
-    null_result = await db.execute(null_query)
-    for m in null_result.scalars().unique().all():
-        if m.id not in seen_ids:
-            seen_ids.add(m.id)
-            markets.append(m)
+
+    result = await db.execute(main_query)
+    markets = list(result.scalars().unique().all())
 
     if not markets:
         return []
@@ -888,8 +857,20 @@ async def _score_futures(
     return scored_items
 
 
+_canonical_source_counts_cache: Optional[dict[str, int]] = None
+_canonical_source_counts_ts: float = 0.0
+_CANONICAL_CACHE_TTL = 300  # 5 minutes
+
+
 async def _get_canonical_source_counts(db: AsyncSession) -> dict[str, int]:
-    """Get source count for each canonical market key."""
+    """Get source count for each canonical market key (cached 5 min)."""
+    import time
+
+    global _canonical_source_counts_cache, _canonical_source_counts_ts
+    now = time.time()
+    if _canonical_source_counts_cache is not None and (now - _canonical_source_counts_ts) < _CANONICAL_CACHE_TTL:
+        return _canonical_source_counts_cache
+
     result = await db.execute(
         select(
             FuturesMarket.canonical_market_key,
@@ -898,7 +879,10 @@ async def _get_canonical_source_counts(db: AsyncSession) -> dict[str, int]:
         .where(FuturesMarket.canonical_market_key.isnot(None))
         .group_by(FuturesMarket.canonical_market_key)
     )
-    return {row.canonical_market_key: row.source_count for row in result.all()}
+    cache = {row.canonical_market_key: row.source_count for row in result.all()}
+    _canonical_source_counts_cache = cache
+    _canonical_source_counts_ts = now
+    return cache
 
 
 def _ensure_feed_diversity(
