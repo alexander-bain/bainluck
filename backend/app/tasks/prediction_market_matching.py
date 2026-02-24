@@ -39,6 +39,76 @@ from app.utils.prediction_market_matching import (
 
 logger = logging.getLogger(__name__)
 
+# ── Consensus inversion detection ─────────────────────────────────────────────
+# Prediction market data sometimes gets stored with inverted home/away mapping
+# due to outcome-order mismatches or matchup parsing errors. This threshold
+# detects probable inversions by comparing against the sportsbook consensus.
+# If the prediction market home_prob and (1 - home_prob) are compared to
+# consensus, and the FLIPPED version is closer, we flip it.
+
+INVERSION_THRESHOLD = 0.30  # 30% — if flipping brings it 30%+ closer to consensus
+
+
+async def _check_and_fix_inversion(
+    session, event_id: int, home_prob: float, source: str,
+) -> float:
+    """
+    Compare prediction market home_prob against sportsbook consensus.
+    If the probability appears inverted (flipping it brings it much closer
+    to consensus), return the flipped value. Otherwise return as-is.
+
+    This catches systematic inversions from yes_is_home mismatches,
+    outcome-order bugs, and matchup parsing errors.
+    """
+    from app.models.models import Event, OddsSnapshot
+
+    event = await session.get(Event, event_id)
+    if not event:
+        return home_prob
+
+    # Get sportsbook consensus: latest odds snapshot first, opening odds as fallback
+    consensus = None
+
+    # Try latest odds snapshot (most accurate for live/recent games)
+    latest_snap = await session.execute(
+        select(OddsSnapshot.home_win_probability)
+        .where(
+            OddsSnapshot.event_id == event_id,
+            OddsSnapshot.home_win_probability.isnot(None),
+        )
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(1)
+    )
+    snap_prob = latest_snap.scalar_one_or_none()
+    if snap_prob is not None:
+        consensus = float(snap_prob)
+
+    # Fallback to opening odds (always available, set pre-game)
+    if consensus is None and event.opening_home_probability is not None:
+        consensus = float(event.opening_home_probability)
+
+    if consensus is None or consensus <= 0.01 or consensus >= 0.99:
+        return home_prob  # No reliable consensus to compare against
+
+    # Compare: is the raw or flipped version closer to consensus?
+    raw_diff = abs(home_prob - consensus)
+    flipped = 1.0 - home_prob
+    flipped_diff = abs(flipped - consensus)
+
+    # Only flip if: (a) flipping brings it significantly closer, and
+    # (b) the raw value is far enough from consensus to be suspicious
+    if raw_diff > INVERSION_THRESHOLD and flipped_diff < raw_diff * 0.5:
+        logger.warning(
+            "Inversion detected for event %d source=%s: "
+            "raw=%.3f consensus=%.3f flipped=%.3f (raw_diff=%.3f > %.2f, "
+            "flipped_diff=%.3f). Using flipped value.",
+            event_id, source, home_prob, consensus, flipped,
+            raw_diff, INVERSION_THRESHOLD, flipped_diff,
+        )
+        return flipped
+
+    return home_prob
+
 
 # SQL LIKE patterns for Kalshi game tickers (e.g., "kxnbagame%")
 # Used to directly query game-level markets without scanning all markets.
@@ -528,6 +598,11 @@ async def _match_prediction_markets(limit: int = 500):
                     home_prob = yes_prob
                 else:
                     home_prob = 1.0 - yes_prob
+
+                # Cross-check against sportsbook consensus to catch inversions
+                home_prob = await _check_and_fix_inversion(
+                    session, market.event_id, home_prob, market.source,
+                )
                 away_prob = 1.0 - home_prob
 
                 # Write to win_prob_snapshots with deduplication
@@ -1324,6 +1399,11 @@ async def _poll_live_prediction_market_prices():
                     home_prob = yes_prob
                 else:
                     home_prob = 1.0 - yes_prob
+
+                # Cross-check against sportsbook consensus to catch inversions
+                home_prob = await _check_and_fix_inversion(
+                    session, event.id, home_prob, market.source,
+                )
                 away_prob = 1.0 - home_prob
 
                 # Write snapshot with deduplication
@@ -1484,6 +1564,24 @@ async def _backfill_polymarket_win_prob_history(
                 len(history), market_id, event_id,
             )
 
+            # Check for inversion against sportsbook consensus ONCE before
+            # writing the entire history (avoids N queries in the loop).
+            # Use a mid-history sample point to determine if we need to flip.
+            sample_idx = len(history) // 2
+            sample_price = history[sample_idx].get("p") if history else None
+            needs_flip = False
+            if sample_price is not None:
+                sample_yes = float(sample_price)
+                if 0 < sample_yes < 1:
+                    if yes_is_home:
+                        sample_home = sample_yes
+                    else:
+                        sample_home = 1.0 - sample_yes
+                    checked = await _check_and_fix_inversion(
+                        session, event_id, sample_home, "polymarket",
+                    )
+                    needs_flip = abs(checked - sample_home) > 0.01
+
             # Write win_prob_snapshots from price history
             for point in history:
                 ts = point.get("t")
@@ -1499,6 +1597,10 @@ async def _backfill_polymarket_win_prob_history(
                     home_prob = yes_prob
                 else:
                     home_prob = 1.0 - yes_prob
+
+                # Apply inversion fix if detected from sample
+                if needs_flip:
+                    home_prob = 1.0 - home_prob
                 away_prob = 1.0 - home_prob
 
                 captured_at = datetime.fromtimestamp(ts, tz=timezone.utc)

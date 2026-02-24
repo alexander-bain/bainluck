@@ -2945,6 +2945,118 @@ async def unlink_prediction_market(
     }
 
 
+@router.post("/prediction-markets/fix-inversions")
+async def fix_inverted_prediction_market_snapshots(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    event_id: int = Query(..., description="Event.id to fix inversions for"),
+    source: Optional[str] = Query(None, description="Source to fix (kalshi/polymarket). If omitted, fixes both."),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fix inverted win_prob_snapshots for a specific event.
+
+    Compares prediction market snapshots against the sportsbook consensus
+    (from odds_snapshots) and flips any that appear inverted.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import Event, WinProbSnapshot, OddsSnapshot
+    import statistics
+
+    # Load event for consensus
+    event = await db.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+
+    # Get sportsbook consensus: latest odds snapshot or opening odds
+    consensus = None
+    latest_snap = await db.execute(
+        select(OddsSnapshot.home_win_probability)
+        .where(
+            OddsSnapshot.event_id == event_id,
+            OddsSnapshot.home_win_probability.isnot(None),
+        )
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(1)
+    )
+    snap_prob = latest_snap.scalar_one_or_none()
+    if snap_prob is not None:
+        consensus = float(snap_prob)
+    elif event.opening_home_probability is not None:
+        consensus = float(event.opening_home_probability)
+
+    if consensus is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No sportsbook consensus available for this event",
+        )
+
+    # Query prediction market snapshots
+    sources_filter = [source] if source else ["kalshi", "polymarket"]
+    result = await db.execute(
+        select(WinProbSnapshot)
+        .where(
+            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.source.in_(sources_filter),
+        )
+        .order_by(WinProbSnapshot.captured_at)
+    )
+    snapshots = result.scalars().all()
+
+    if not snapshots:
+        return {
+            "status": "no_snapshots",
+            "event_id": event_id,
+            "message": "No prediction market snapshots found for this event",
+        }
+
+    # Check if snapshots are inverted: compare median snapshot against consensus
+    probs = [float(s.home_win_probability) for s in snapshots if s.home_win_probability is not None]
+    if not probs:
+        return {"status": "no_valid_probs", "event_id": event_id}
+
+    median_prob = statistics.median(probs)
+    raw_diff = abs(median_prob - consensus)
+    flipped_diff = abs((1.0 - median_prob) - consensus)
+
+    if raw_diff <= 0.25 or flipped_diff >= raw_diff:
+        return {
+            "status": "not_inverted",
+            "event_id": event_id,
+            "consensus": round(consensus, 4),
+            "median_pm_prob": round(median_prob, 4),
+            "raw_diff": round(raw_diff, 4),
+            "flipped_diff": round(flipped_diff, 4),
+            "snapshot_count": len(snapshots),
+            "message": "Snapshots appear correct (not inverted)",
+        }
+
+    # Flip all snapshots
+    flipped_count = 0
+    for snap in snapshots:
+        if snap.home_win_probability is not None:
+            old_home = float(snap.home_win_probability)
+            snap.home_win_probability = round(1.0 - old_home, 4)
+            snap.away_win_probability = round(old_home, 4)
+            flipped_count += 1
+
+    await db.commit()
+
+    return {
+        "status": "fixed",
+        "event_id": event_id,
+        "sources": sources_filter,
+        "consensus": round(consensus, 4),
+        "median_before_flip": round(median_prob, 4),
+        "median_after_flip": round(1.0 - median_prob, 4),
+        "raw_diff": round(raw_diff, 4),
+        "flipped_diff": round(flipped_diff, 4),
+        "snapshots_flipped": flipped_count,
+        "total_snapshots": len(snapshots),
+    }
+
+
 @router.post("/prediction-markets/link")
 async def manual_link_prediction_market(
     secret: str = Query(..., description="Admin secret for authorization"),
