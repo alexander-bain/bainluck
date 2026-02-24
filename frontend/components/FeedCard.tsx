@@ -201,13 +201,13 @@ function EventFeedCard({
   const awayProb = data.current_odds?.away_probability ?? null;
   const hasScore = (isLive || isFinished) && data.home_score !== null && data.away_score !== null;
 
-  // For finished events, show opening odds (pre-game consensus) instead of current
-  const displayHomeProb = isFinished
-    ? (data.opening_odds?.home_probability ?? null)
-    : homeProb;
-  const displayAwayProb = isFinished
-    ? (data.opening_odds?.away_probability ?? null)
-    : awayProb;
+  // Determine winner for finished events
+  const homeWon = isFinished && data.home_score != null && data.away_score != null && data.home_score > data.away_score;
+  const awayWon = isFinished && data.home_score != null && data.away_score != null && data.away_score > data.home_score;
+
+  // For finished events, don't show probabilities — the score tells the story
+  const displayHomeProb = isFinished ? null : homeProb;
+  const displayAwayProb = isFinished ? null : awayProb;
 
   // Team colors for probability bar
   const homeColor = data.home_team_data?.primary_color ?? null;
@@ -225,9 +225,9 @@ function EventFeedCard({
   // Game time for scheduled events
   const gameTime = isScheduled ? formatGameTime(data.commence_time) : null;
 
-  // Opening odds context for live games
+  // Opening odds context for live games only
   const openedContext =
-    (isLive || isFinished) && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
+    isLive && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
       ? `Opened ${Math.round(data.opening_odds.home_probability * 100)}/${Math.round(data.opening_odds.away_probability * 100)}`
       : null;
 
@@ -237,7 +237,6 @@ function EventFeedCard({
         rounded-card border border-surface-border bg-surface-card
         p-3 hover:bg-surface-elevated transition-all cursor-pointer
         ${isLive ? "ring-1 ring-accent-live/20" : ""}
-        ${isFinished ? "opacity-70 hover:opacity-100" : ""}
       `}>
         {/* Top row: league + badges + game time/score */}
         <div className="flex items-center justify-between gap-2 mb-2">
@@ -286,10 +285,8 @@ function EventFeedCard({
           </div>
 
           {/* Right side: game time for scheduled, score for live/finished */}
-          {hasScore ? (
-            <span className={`text-base font-mono font-bold flex-shrink-0 ${
-              isLive ? "text-accent-live" : "text-text-primary"
-            }`}>
+          {hasScore && !isFinished ? (
+            <span className="text-base font-mono font-bold flex-shrink-0 text-accent-live">
               {data.home_score} - {data.away_score}
             </span>
           ) : gameTime ? (
@@ -305,20 +302,34 @@ function EventFeedCard({
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
               <TeamLogo url={awayFlagImgUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={!!awayFlagImgUrl} />
-              <span className={`text-sm font-medium truncate ${
-                displayAwayProb !== null && displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
+              <span className={`text-sm truncate ${
+                isFinished
+                  ? (awayWon ? "font-semibold text-text-primary" : "text-text-muted")
+                  : `font-medium ${displayAwayProb !== null && displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
               }`}>
                 {data.away_team}
               </span>
+              {isFinished && data.away_score != null && (
+                <span className={`ml-auto font-mono text-sm ${awayWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
+                  {data.away_score}
+                </span>
+              )}
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
               <TeamLogo url={homeFlagImgUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={!!homeFlagImgUrl} />
-              <span className={`text-sm font-medium truncate ${
-                displayHomeProb !== null && displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
+              <span className={`text-sm truncate ${
+                isFinished
+                  ? (homeWon ? "font-semibold text-text-primary" : "text-text-muted")
+                  : `font-medium ${displayHomeProb !== null && displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
               }`}>
                 {data.home_team}
               </span>
+              {isFinished && data.home_score != null && (
+                <span className={`ml-auto font-mono text-sm ${homeWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
+                  {data.home_score}
+                </span>
+              )}
             </div>
           </div>
 
@@ -361,7 +372,7 @@ function EventFeedCard({
         {/* Bottom row: reason + context + thumbs */}
         <div className="flex items-center justify-between gap-2 mt-1.5">
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            <p className="text-xs text-text-secondary truncate">{item.reason}</p>
+            <p className={`text-xs text-text-secondary ${isFinished ? "" : "truncate"}`}>{item.reason}</p>
             {openedContext && (
               <span className="text-[10px] text-text-muted flex-shrink-0">{openedContext}</span>
             )}
