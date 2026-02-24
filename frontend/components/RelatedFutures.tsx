@@ -564,13 +564,21 @@ function GameMarketsGrid({
   if (futures.length === 0) return null;
 
   // --- Filter and deduplicate ---
-  // 1. Remove resolved/illiquid markets (0% or 100%) AND past games
+  const teamShort = teamName.split(" ").pop()?.toLowerCase() || "";
+  const teamFull = teamName.toLowerCase();
+
+  // 1. Remove resolved/illiquid, past games, and cross-sport false positives
   const meaningful = futures.filter((f) => {
     const p = f.probability;
     if (p === null || p === undefined) return false;
     if (p <= 0.02 || p >= 0.98) return false; // effectively 0% or 100%
     // Filter out past games
     if (f.resolution_date && isPastDate(f.resolution_date)) return false;
+    // Verify market name actually contains this team (catches cross-sport leaks)
+    const mLower = (f.market_name || "").toLowerCase();
+    if (teamShort.length >= 4 && !mLower.includes(teamShort) && !mLower.includes(teamFull)) {
+      return false;
+    }
     return true;
   });
 
