@@ -446,15 +446,19 @@ async def _score_events(
         )
         personalized_score = min(100, int(base_score * p_result.multiplier))
 
-        # Lower the threshold for personalized items — if the user follows a team,
-        # surface it even at lower base scores.
+        # Lower the threshold for positively personalized items — if the user
+        # follows a team, surface it even at lower base scores.
+        # But don't lower it when personalization is negative (sport suppression) —
+        # otherwise "Nah" sports still sneak through the lowered threshold.
         # Anonymous threshold: 25 means tier 1 events need at least one signal
         # (live, close, starting soon) beyond just being a major league game.
         # my_teams_only: show ALL their team's games regardless of score.
         if my_teams_only:
             min_score = 0
+        elif p_result.is_personalized and p_result.multiplier >= 1.0:
+            min_score = 10
         else:
-            min_score = 10 if p_result.is_personalized else 25
+            min_score = 25
         if personalized_score < min_score:
             continue
 
