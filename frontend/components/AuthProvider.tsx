@@ -29,18 +29,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const analytics = useAnalyticsContext();
 
-  // Wire up the API client's auth token getter
-  useEffect(() => {
-    if (auth.isAuthenticated) {
-      setAuthTokenGetter(auth.getToken);
-    } else {
-      setAuthTokenGetter(null);
-    }
+  // Wire up the API client's auth token getter DURING RENDER (not in useEffect).
+  //
+  // Why: React fires child effects before parent effects. If we set the token
+  // getter in a useEffect, SWR's initial fetch in a child component (e.g.,
+  // MyTeamsFeed) fires BEFORE this effect runs, causing the first API request
+  // to go without an auth token. By setting it during render, the token getter
+  // is available before any child effects fire.
+  //
+  // This is safe because setAuthTokenGetter just assigns a module-level
+  // variable — no DOM mutations or observable side effects.
+  setAuthTokenGetter(auth.isAuthenticated ? auth.getToken : null);
 
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
       setAuthTokenGetter(null);
     };
-  }, [auth.isAuthenticated, auth.getToken]);
+  }, []);
 
   // Sync auth state with analytics
   useEffect(() => {

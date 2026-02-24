@@ -250,8 +250,11 @@ function MyTeamsFeed() {
       {/* Loading */}
       {feedLoading && !feedData && <SkeletonGrid count={4} />}
 
+      {/* Still waiting for auth token — show skeleton instead of misleading "No games" */}
+      {feedData?.requires_auth && <SkeletonGrid count={4} />}
+
       {/* Content */}
-      {feedData && (
+      {feedData && !feedData.requires_auth && (
         <>
           {feedData.items.length === 0 ? (
             <div className="text-center py-12">
