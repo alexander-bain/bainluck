@@ -208,6 +208,69 @@ function SourceBadge({ source }: { source: string | null | undefined }) {
   );
 }
 
+/**
+ * Player headshot component — uses direct headshot URL, ESPN ID, or Wikipedia fallback.
+ * Priority: 1. Direct headshot URL  2. ESPN via espn_id  3. Wikipedia  4. Initials
+ */
+function PlayerHeadshot({
+  name,
+  matchedPlayer,
+  sportKey,
+  teamColor,
+  size = 48,
+}: {
+  name: string;
+  matchedPlayer?: RelatedFuture["matched_player"];
+  sportKey?: string;
+  teamColor: string;
+  size?: number;
+}) {
+  // 1. Direct headshot URL from roster data (most reliable)
+  if (matchedPlayer?.headshot) {
+    return (
+      <img
+        src={matchedPlayer.headshot}
+        alt={name}
+        width={size}
+        height={size}
+        loading="lazy"
+        className="rounded-full object-cover flex-shrink-0"
+        style={{ width: size, height: size }}
+        onError={(e) => {
+          // On error, hide the image and show initials
+          (e.target as HTMLImageElement).style.display = "none";
+          const fallback = (e.target as HTMLImageElement).nextElementSibling;
+          if (fallback) (fallback as HTMLElement).style.display = "flex";
+        }}
+      />
+    );
+  }
+
+  // 2. ESPN headshot via espn_id
+  if (matchedPlayer?.espn_id) {
+    return (
+      <EntityImage
+        type="player"
+        name={name}
+        espnId={matchedPlayer.espn_id}
+        sport={sportKey}
+        size={size}
+        fallbackColor={teamColor}
+      />
+    );
+  }
+
+  // 3. Wikipedia fallback
+  return (
+    <EntityImage
+      type="wikipedia"
+      name={name}
+      size={size}
+      fallbackColor={teamColor}
+    />
+  );
+}
+
 // ─── HERO CARD: Championship / Conference / Division futures ───
 function HeroFutureCard({
   future,
@@ -230,7 +293,7 @@ function HeroFutureCard({
     >
       {/* Header: tier + market name + source */}
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 mb-1">
             {tier && <span className="text-[10px]">{tier.icon}</span>}
             <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">
@@ -297,13 +360,31 @@ function shortAwardLabel(marketName: string): string {
   if (/\brookie\s+of\s+the\s+year\b/i.test(cleaned)) return "Rookie of the Year";
   if (/\bdefensive\s+player/i.test(cleaned)) return "DPOY";
   if (/\bmost\s+improved/i.test(cleaned)) return "Most Improved";
-  if (/\bsixth\s+man/i.test(cleaned)) return "6th Man";
+  if (/\bsixth\s+man\b|\b6th\s+man\b/i.test(cleaned)) return "6th Man";
   if (/\bcy\s*young/i.test(cleaned)) return "Cy Young";
   if (/\bgolden\s+boot/i.test(cleaned)) return "Golden Boot";
   if (/\bgolden\s+glove/i.test(cleaned)) return "Golden Glove";
   if (/\bballon/i.test(cleaned)) return "Ballon d'Or";
   if (/\bheisman/i.test(cleaned)) return "Heisman";
   if (/\bcoach\s+of\s+the\s+year/i.test(cleaned)) return "Coach of the Year";
+  if (/rebounds?\s*per\s*game\s*leader/i.test(cleaned)) return "Rebounds Leader";
+  if (/assists?\s*per\s*game\s*leader/i.test(cleaned)) return "Assists Leader";
+  if (/points?\s*per\s*game\s*leader/i.test(cleaned)) return "Scoring Leader";
+  if (/\bscoring\s+(leader|title|champion)/i.test(cleaned)) return "Scoring Leader";
+  if (/\bhome\s+run\s+(leader|king)/i.test(cleaned)) return "HR Leader";
+  if (/\bper\s+game\s+leader/i.test(cleaned)) {
+    // Extract the stat name: "NBA Rebounds Per Game Leader" → "Rebounds Leader"
+    const statMatch = cleaned.match(/(\w+)\s+per\s+game\s+leader/i);
+    if (statMatch) return `${statMatch[1]} Leader`;
+    return "Per Game Leader";
+  }
+  if (/\bleader\b/i.test(cleaned)) {
+    // "NBA Steals Leader" → "Steals Leader"
+    const statMatch = cleaned.match(/(\w+)\s+leader/i);
+    if (statMatch && !/nba|nfl|nhl|mlb|mls/i.test(statMatch[1])) {
+      return `${statMatch[1]} Leader`;
+    }
+  }
   // Fallback: strip league prefix (e.g., "NBA" from "NBA MVP")
   return cleaned.replace(/^(NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB|NCAAF)\s+/i, "");
 }
@@ -329,34 +410,24 @@ function AwardCard({
         border: `1px solid ${teamColor}20`,
       }}
     >
-      {/* Player headshot — 48px, ESPN first, Wikipedia fallback */}
-      {future.matched_player?.espn_id ? (
-        <EntityImage
-          type="player"
-          name={future.outcome_name}
-          espnId={future.matched_player.espn_id}
-          sport={sportKey}
-          size={48}
-          fallbackColor={teamColor}
-        />
-      ) : (
-        <EntityImage
-          type="wikipedia"
-          name={future.outcome_name}
-          size={48}
-          fallbackColor={teamColor}
-        />
-      )}
+      {/* Player headshot — 48px, tries headshot URL → ESPN → Wikipedia → initials */}
+      <PlayerHeadshot
+        name={future.outcome_name}
+        matchedPlayer={future.matched_player}
+        sportKey={sportKey}
+        teamColor={teamColor}
+        size={48}
+      />
 
       <div className="min-w-0 flex-1">
         {/* Player name — primary, large */}
-        <div className="text-[15px] font-bold text-text-primary truncate leading-tight">
+        <div className="text-[15px] font-bold text-text-primary leading-tight">
           {future.outcome_name}
         </div>
-        {/* Award label — secondary */}
+        {/* Award label — secondary, NO truncation */}
         <div className="flex items-center gap-1 mt-0.5">
           <span className="text-[10px]">⭐</span>
-          <span className="text-[11px] text-text-muted truncate font-medium">
+          <span className="text-[11px] text-text-muted font-medium leading-snug">
             {awardLabel}
           </span>
         </div>
@@ -406,6 +477,18 @@ function extractOpponent(marketName: string, teamName: string): string {
     .trim();
 }
 
+/**
+ * Check if a resolution_date is in the past.
+ */
+function isPastDate(dateStr: string | null): boolean {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  const now = new Date();
+  // Set to start of today for day-level comparison
+  now.setHours(0, 0, 0, 0);
+  return d < now;
+}
+
 // ─── GAME GRID: Dense 2-col cells for matchup markets ───
 function GameMarketsGrid({
   futures,
@@ -420,11 +503,13 @@ function GameMarketsGrid({
   if (futures.length === 0) return null;
 
   // --- Filter and deduplicate ---
-  // 1. Remove resolved/illiquid markets (0% or 100%)
+  // 1. Remove resolved/illiquid markets (0% or 100%) AND past games
   const meaningful = futures.filter((f) => {
     const p = f.probability;
     if (p === null || p === undefined) return false;
     if (p <= 0.02 || p >= 0.98) return false; // effectively 0% or 100%
+    // Filter out past games
+    if (f.resolution_date && isPastDate(f.resolution_date)) return false;
     return true;
   });
 
@@ -442,10 +527,16 @@ function GameMarketsGrid({
   }
   const deduped = Array.from(opponentMap.values());
 
-  // Sort: favored games first
-  const sorted = deduped.sort(
-    (a, b) => (b.probability || 0) - (a.probability || 0)
-  );
+  // Sort: soonest games first (by resolution_date), then by probability
+  const sorted = deduped.sort((a, b) => {
+    // Games with dates come first, sorted chronologically
+    if (a.resolution_date && b.resolution_date) {
+      return new Date(a.resolution_date).getTime() - new Date(b.resolution_date).getTime();
+    }
+    if (a.resolution_date && !b.resolution_date) return -1;
+    if (!a.resolution_date && b.resolution_date) return 1;
+    return (b.probability || 0) - (a.probability || 0);
+  });
 
   if (sorted.length === 0) return null;
 
@@ -457,7 +548,7 @@ function GameMarketsGrid({
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-[10px]">📈</span>
         <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-          Game-by-game odds
+          Upcoming games
         </span>
         <span className="text-[10px] text-text-muted/50">
           ({sorted.length})
@@ -489,6 +580,16 @@ function GameMarketsGrid({
 
               {/* Content */}
               <div className="relative">
+                {/* Date first — context for the matchup */}
+                {f.resolution_date && (
+                  <div className="text-[9px] text-text-muted/70 font-medium mb-0.5">
+                    {new Date(f.resolution_date).toLocaleDateString("en-US", {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </div>
+                )}
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-xs text-text-secondary truncate">
                     {opponent}
@@ -516,15 +617,6 @@ function GameMarketsGrid({
                       )}
                   </div>
                 </div>
-                {/* Game date from resolution_date */}
-                {f.resolution_date && (
-                  <div className="text-[9px] text-text-muted/60 mt-0.5">
-                    {new Date(f.resolution_date).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </div>
-                )}
               </div>
             </Link>
           );
@@ -590,7 +682,64 @@ interface StatRow {
   matchedPlayer?: RelatedFuture["matched_player"];
 }
 
-// ─── STAT PROPS: Player-centric stat lines ───
+/**
+ * Semi-circular gauge for stat prop probability.
+ * Shows a colored arc from 0-100% with the percentage in the center.
+ */
+function StatGauge({
+  probability,
+  teamColor,
+  size = 52,
+}: {
+  probability: number;
+  teamColor: string;
+  size?: number;
+}) {
+  const pct = Math.round(probability * 100);
+  const radius = (size - 6) / 2;
+  const circumference = Math.PI * radius; // half circle
+  const offset = circumference * (1 - probability);
+
+  return (
+    <div className="flex flex-col items-center" style={{ width: size, height: size * 0.65 }}>
+      <svg
+        width={size}
+        height={size * 0.55}
+        viewBox={`0 0 ${size} ${size * 0.55}`}
+        className="overflow-visible"
+      >
+        {/* Background arc */}
+        <path
+          d={`M 3 ${size * 0.52} A ${radius} ${radius} 0 0 1 ${size - 3} ${size * 0.52}`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="4"
+          className="text-surface-elevated"
+          strokeLinecap="round"
+        />
+        {/* Colored arc */}
+        <path
+          d={`M 3 ${size * 0.52} A ${radius} ${radius} 0 0 1 ${size - 3} ${size * 0.52}`}
+          fill="none"
+          stroke={teamColor}
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={`${circumference}`}
+          strokeDashoffset={`${offset}`}
+          style={{ opacity: pct >= 50 ? 0.85 : 0.5, transition: "stroke-dashoffset 0.5s ease" }}
+        />
+      </svg>
+      <span
+        className="text-[13px] font-bold tabular-nums -mt-1.5"
+        style={{ color: pct >= 50 ? teamColor : "var(--text-muted)" }}
+      >
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
+// ─── STAT PROPS: Player stat cards with gauges ───
 function StatPropsSection({
   futures,
   teamColor,
@@ -662,11 +811,11 @@ function StatPropsSection({
         </span>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {visibleGroups.map(({ category, config, rows }) => (
           <div key={category}>
             {/* Category header */}
-            <div className="flex items-center gap-1.5 mb-1.5">
+            <div className="flex items-center gap-1.5 mb-2">
               <span className="text-sm">{config.emoji}</span>
               <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
                 {config.label}
@@ -676,89 +825,63 @@ function StatPropsSection({
               </span>
             </div>
 
-            {/* Player rows */}
-            <div className="space-y-1">
-              {rows.slice(0, ROWS_PER_GROUP).map((row) => {
-                const pct = Math.round(row.probability * 100);
-                const barWidth = Math.max(4, pct);
-
-                return (
-                  <Link
-                    key={`${row.marketId}-${row.outcomeName}`}
-                    href={`/futures/${row.marketId}`}
-                    className="flex items-center gap-2 rounded-lg px-2 py-1.5 group transition-colors hover:bg-surface-elevated/40"
-                  >
-                    {/* Player headshot or initials — 28px */}
-                    {row.playerName && (
-                      row.matchedPlayer?.espn_id ? (
-                        <EntityImage
-                          type="player"
-                          name={row.playerName}
-                          espnId={row.matchedPlayer.espn_id}
-                          sport={sportKey}
-                          size={28}
-                          fallbackColor={teamColor}
-                        />
-                      ) : (
-                        <div
-                          className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
-                          style={{
-                            backgroundColor: `${teamColor}15`,
-                            color: teamColor,
-                          }}
-                        >
-                          {row.playerName
-                            .split(" ")
-                            .map((w) => w[0])
-                            .join("")
-                            .slice(0, 2)}
-                        </div>
-                      )
-                    )}
-
-                    {/* Name + line */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-xs font-medium text-text-primary truncate">
-                          {row.playerName || (row.isTeamTotal ? "Total" : row.outcomeName)}
-                        </span>
-                        {row.line && (
-                          <span className="text-[10px] font-bold text-text-muted tabular-nums shrink-0">
-                            {row.line}
-                          </span>
-                        )}
-                      </div>
-                      {/* Mini probability bar */}
-                      <div className="h-1 rounded-full bg-surface-elevated overflow-hidden mt-0.5 max-w-[120px]">
-                        <div
-                          className="h-full rounded-full transition-all duration-300"
-                          style={{
-                            width: `${barWidth}%`,
-                            backgroundColor: teamColor,
-                            opacity: pct > 60 ? 0.7 : 0.4,
-                          }}
-                        />
-                      </div>
+            {/* Player stat cards — horizontal scroll on mobile */}
+            <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
+              {rows.slice(0, ROWS_PER_GROUP).map((row) => (
+                <Link
+                  key={`${row.marketId}-${row.outcomeName}`}
+                  href={`/futures/${row.marketId}`}
+                  className="flex-shrink-0 rounded-xl p-2.5 group transition-all duration-200 hover:scale-[1.02] text-center"
+                  style={{
+                    background: `linear-gradient(135deg, ${teamColor}08, transparent)`,
+                    border: `1px solid ${teamColor}15`,
+                    width: 110,
+                  }}
+                >
+                  {/* Player headshot — small */}
+                  {row.playerName && (
+                    <div className="flex justify-center mb-1.5">
+                      <PlayerHeadshot
+                        name={row.playerName}
+                        matchedPlayer={row.matchedPlayer}
+                        sportKey={sportKey}
+                        teamColor={teamColor}
+                        size={36}
+                      />
                     </div>
+                  )}
 
-                    {/* Probability */}
-                    <span
-                      className="text-xs font-bold tabular-nums shrink-0"
-                      style={{
-                        color: pct >= 60 ? teamColor : "var(--text-muted)",
-                      }}
+                  {/* Player name */}
+                  <div className="text-[11px] font-semibold text-text-primary truncate leading-tight">
+                    {row.playerName || (row.isTeamTotal ? "Team" : "—")}
+                  </div>
+
+                  {/* Stat line — hero element */}
+                  {row.line && (
+                    <div
+                      className="text-lg font-black tabular-nums mt-0.5 leading-none"
+                      style={{ color: teamColor }}
                     >
-                      {pct}%
-                    </span>
-                  </Link>
-                );
-              })}
-              {rows.length > ROWS_PER_GROUP && (
-                <span className="text-[10px] text-text-muted/50 pl-2">
-                  +{rows.length - ROWS_PER_GROUP} more
-                </span>
-              )}
+                      {row.line}
+                    </div>
+                  )}
+
+                  {/* Gauge */}
+                  <div className="flex justify-center mt-1">
+                    <StatGauge
+                      probability={row.probability}
+                      teamColor={teamColor}
+                      size={48}
+                    />
+                  </div>
+                </Link>
+              ))}
             </div>
+            {rows.length > ROWS_PER_GROUP && (
+              <span className="text-[10px] text-text-muted/50 mt-1 inline-block">
+                +{rows.length - ROWS_PER_GROUP} more
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -850,6 +973,26 @@ function TitleComparison({
   );
 }
 
+/**
+ * Deduplicate award futures by player name.
+ * When a player appears in multiple award markets (e.g., MVP on Polymarket AND Kalshi),
+ * keep only the one with the highest probability to avoid cluttering the UI.
+ */
+function deduplicateAwards(futures: RelatedFuture[]): RelatedFuture[] {
+  const playerMap = new Map<string, RelatedFuture>();
+  for (const f of futures) {
+    const key = f.outcome_name.toLowerCase();
+    const existing = playerMap.get(key);
+    if (
+      !existing ||
+      (f.probability || 0) > (existing.probability || 0)
+    ) {
+      playerMap.set(key, f);
+    }
+  }
+  return Array.from(playerMap.values());
+}
+
 // ─── TEAM COLUMN: Tier-grouped display ───
 function TeamColumn({
   teamName,
@@ -869,7 +1012,8 @@ function TeamColumn({
     const t = effectiveTier(f);
     return t === 2 || t === 4;
   });
-  const awards = futures.filter((f) => effectiveTier(f) === 3);
+  const rawAwards = futures.filter((f) => effectiveTier(f) === 3);
+  const awards = deduplicateAwards(rawAwards);
   const games = futures.filter((f) => effectiveTier(f) === 5);
   const statProps = futures.filter((f) => effectiveTier(f) === 6);
 
@@ -921,7 +1065,7 @@ function TeamColumn({
           />
         ))}
 
-        {/* Awards — player-centric rows with headshots */}
+        {/* Awards — player-centric rows with headshots (deduplicated) */}
         {awards.length > 0 && (
           <div className="space-y-1.5">
             {awards.map((f) => (
@@ -942,7 +1086,7 @@ function TeamColumn({
           teamName={teamName}
         />
 
-        {/* Stat props — player-centric rows */}
+        {/* Stat props — player stat cards with gauges */}
         <StatPropsSection futures={statProps} teamColor={teamColor} sportKey={sportKey} />
       </div>
     </div>
@@ -955,8 +1099,9 @@ function TeamColumn({
  * Tier-grouped display:
  * - Title Odds comparison bar (always visible when both teams have championship futures)
  * - Championship/Conference futures as hero cards with gradient tints
- * - Award futures as player-centric rows with headshots
- * - Game markets as dense 2-column grid cells
+ * - Award futures as player-centric rows with headshots (deduplicated)
+ * - Game markets as dense 2-column grid cells (past games filtered out)
+ * - Stat props as player cards with semi-circular gauges
  *
  * When an LLM summary is available, shows summary-first with details collapsed.
  * Falls back to expanded team columns when no summary exists.
