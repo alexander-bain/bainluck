@@ -155,18 +155,24 @@ def compute_event_multiplier(
                 reasons.append(f"rival_playing:{RIVAL_PLAYING_BONUS:.2f}")
 
     # --- Sport affinity ---
+    # If the user has sport affinities set (completed onboarding), apply
+    # their preferences. When no matching affinity is found for a sport,
+    # treat it as implicit "Nah" — the user went through onboarding and
+    # didn't express interest in this sport.
     if sport_key and ctx.sport_affinities:
         affinity = _lookup_sport_affinity(sport_key, ctx.sport_affinities)
-        if affinity is not None:
-            if affinity >= HIGH_AFFINITY_THRESHOLD:
-                bonus += HIGH_AFFINITY_BONUS
-                reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
-            elif affinity <= NAH_AFFINITY_THRESHOLD:
-                bonus += NAH_AFFINITY_PENALTY
-                reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
-            elif affinity < LOW_AFFINITY_THRESHOLD:
-                bonus += LOW_AFFINITY_PENALTY
-                reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
+        if affinity is None:
+            # Sport not in user's affinities at all — implicit "Nah"
+            affinity = 0.0
+        if affinity >= HIGH_AFFINITY_THRESHOLD:
+            bonus += HIGH_AFFINITY_BONUS
+            reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
+        elif affinity <= NAH_AFFINITY_THRESHOLD:
+            bonus += NAH_AFFINITY_PENALTY
+            reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
+        elif affinity < LOW_AFFINITY_THRESHOLD:
+            bonus += LOW_AFFINITY_PENALTY
+            reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
 
     # --- Minor pro league suppression ---
     # If the event is from a minor pro league (XFL, CFL, AHL, etc.) and
@@ -268,20 +274,23 @@ def compute_futures_multiplier(
     if ctx.sport_affinities:
         matched_affinity = None
         if sport_key:
-            matched_affinity = ctx.sport_affinities.get(sport_key)
+            matched_affinity = _lookup_sport_affinity(sport_key, ctx.sport_affinities)
         if matched_affinity is None and sport_category:
             matched_affinity = _match_sport_affinity(sport_category, ctx.sport_affinities)
 
-        if matched_affinity is not None:
-            if matched_affinity >= HIGH_AFFINITY_THRESHOLD:
-                bonus += HIGH_AFFINITY_BONUS
-                reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
-            elif matched_affinity <= NAH_AFFINITY_THRESHOLD:
-                bonus += NAH_AFFINITY_PENALTY
-                reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
-            elif matched_affinity < LOW_AFFINITY_THRESHOLD:
-                bonus += LOW_AFFINITY_PENALTY
-                reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
+        # If user has affinities but nothing matched, treat as implicit "Nah"
+        if matched_affinity is None:
+            matched_affinity = 0.0
+
+        if matched_affinity >= HIGH_AFFINITY_THRESHOLD:
+            bonus += HIGH_AFFINITY_BONUS
+            reasons.append(f"sport_boost:{HIGH_AFFINITY_BONUS:.2f}")
+        elif matched_affinity <= NAH_AFFINITY_THRESHOLD:
+            bonus += NAH_AFFINITY_PENALTY
+            reasons.append(f"sport_nah:{NAH_AFFINITY_PENALTY:.2f}")
+        elif matched_affinity < LOW_AFFINITY_THRESHOLD:
+            bonus += LOW_AFFINITY_PENALTY
+            reasons.append(f"sport_suppress:{LOW_AFFINITY_PENALTY:.2f}")
 
     # --- Pinned item bonus ---
     if futures_market_id and futures_market_id in ctx.pinned_futures_ids:

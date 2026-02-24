@@ -232,10 +232,14 @@ class TestSportAffinity:
         assert result.multiplier == 1.0
 
     def test_no_affinity_for_sport(self):
-        """Sport not in user's affinities = no adjustment."""
+        """Sport not in user's affinities = implicit 'Nah' (suppressed).
+        When a user has set sport affinities (completed onboarding) but
+        a sport isn't in their preferences, it means they didn't express
+        interest — treat as implicit 'Nah'."""
         ctx = _basic_ctx(sport_affinities={"basketball_nba": 1.0})
         result = compute_event_multiplier(ctx, home_team_id=10, away_team_id=20, sport_key="icehockey_nhl")
-        assert result.multiplier == 1.0
+        assert result.multiplier == pytest.approx(1.0 + NAH_AFFINITY_PENALTY)
+        assert "sport_nah" in result.reasons[0]
 
     def test_empty_affinities(self):
         ctx = _basic_ctx(sport_affinities={})
@@ -472,14 +476,16 @@ class TestMinorProSuppression:
     """Test minor pro league suppression for events."""
 
     def test_minor_pro_no_affinity_suppressed(self):
-        """Minor pro league with no team/sport match gets penalty."""
+        """Minor pro league with no team/sport match gets implicit 'Nah' penalty.
+        The sport_nah penalty (-0.6) is stronger than minor_pro (-0.2),
+        so sport_nah takes precedence when the user has affinities set."""
         ctx = _basic_ctx(sport_affinities={"basketball_nba": 1.0})
         result = compute_event_multiplier(
             ctx, home_team_id=10, away_team_id=20,
             sport_key="americanfootball_xfl",
         )
-        assert result.multiplier == pytest.approx(1.0 + MINOR_PRO_PENALTY)
-        assert any("minor_pro" in r for r in result.reasons)
+        assert result.multiplier == pytest.approx(1.0 + NAH_AFFINITY_PENALTY)
+        assert any("sport_nah" in r for r in result.reasons)
 
     def test_minor_pro_with_team_follow_not_suppressed(self):
         """Minor pro league with a followed team gets NO penalty."""

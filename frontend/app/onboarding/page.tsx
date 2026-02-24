@@ -417,9 +417,7 @@ export default function OnboardingPage() {
       follow_teams: followTeams.map((t) => ({ team_id: t.id })),
       alma_mater_teams: almaMaterTeams.map((t) => ({ team_id: t.id })),
       rival_teams: rivalTeams.map((t) => ({ team_id: t.id })),
-      sport_affinities: Object.fromEntries(
-        Object.entries(sportAffinities).filter(([, v]) => v > 0)
-      ),
+      sport_affinities: sportAffinities,
       raw_inputs: {
         location_query: locationQuery,
         follow_selections: followTeams.map((t) => t.name),
