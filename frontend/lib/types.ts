@@ -549,6 +549,13 @@ export interface FeedEventData {
   };
   home_team_data?: TeamData;
   away_team_data?: TeamData;
+  highlight?: {
+    label: string;
+  };
+  pulse?: {
+    score: number;
+    label: string;
+  };
 }
 
 export interface FeedFuturesOutcome {

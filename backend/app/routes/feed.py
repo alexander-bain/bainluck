@@ -40,6 +40,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _pulse_label(score: int) -> str:
+    """Short Pulse label for feed display."""
+    if score >= 90:
+        return "Incredible"
+    if score >= 81:
+        return "Must-Watch"
+    if score >= 71:
+        return "Exciting"
+    if score >= 61:
+        return "Engaging"
+    if score >= 51:
+        return "Competitive"
+    return "Steady"
+
+
 def _team_name_matches(user_team: str, candidate: str) -> bool:
     """Check if a user's followed team name matches a candidate team name.
 
@@ -308,7 +323,7 @@ async def _score_events(
         upcoming_cutoff = now + timedelta(days=7)
     else:
         # Tighter time windows than the full events list to keep query fast
-        recent_cutoff = now - timedelta(hours=6)
+        recent_cutoff = now - timedelta(hours=24)
         upcoming_cutoff = now + timedelta(hours=12)
     # Guard against events incorrectly stuck in "live" status with future
     # commence_times (e.g., from Scores API returning upcoming events as
@@ -440,6 +455,17 @@ async def _score_events(
 
         base_score = highlight_result.score
 
+        # Boost completed events that had high Pulse scores — these are the
+        # "fascinating outcomes" worth surfacing even hours later.
+        if event.status in ("completed", "closed") and event.raw_gei:
+            pulse_score = max(1, min(100, round(float(event.raw_gei) * 100)))
+            if pulse_score >= 80:
+                base_score += 25  # Must-Watch / Incredible — always surface
+                highlight_result.reasons.append("high_pulse")
+            elif pulse_score >= 60:
+                base_score += 15  # Engaging / Exciting — good boost
+                highlight_result.reasons.append("good_pulse")
+
         # Apply personalization multiplier
         p_result = compute_event_multiplier(
             ctx=ctx,
@@ -521,6 +547,19 @@ async def _score_events(
                 "home_probability": opening_home_prob,
                 "away_probability": opening_away_prob,
                 "favorite": event.opening_favorite,
+            }
+
+        # Include highlight metadata (label, flags) for frontend display
+        label = get_highlight_label(highlight_result)
+        if label:
+            event_data["highlight"] = {"label": label}
+
+        # Include Pulse score for completed/closed events
+        if event.status in ("completed", "closed") and event.raw_gei:
+            raw_score = max(1, min(100, round(float(event.raw_gei) * 100)))
+            event_data["pulse"] = {
+                "score": raw_score,
+                "label": _pulse_label(raw_score),
             }
 
         # Compute sort time: live games first (far future), then by commence_time

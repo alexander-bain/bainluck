@@ -201,6 +201,14 @@ function EventFeedCard({
   const awayProb = data.current_odds?.away_probability ?? null;
   const hasScore = (isLive || isFinished) && data.home_score !== null && data.away_score !== null;
 
+  // For finished events, show opening odds (pre-game consensus) instead of current
+  const displayHomeProb = isFinished
+    ? (data.opening_odds?.home_probability ?? null)
+    : homeProb;
+  const displayAwayProb = isFinished
+    ? (data.opening_odds?.away_probability ?? null)
+    : awayProb;
+
   // Team colors for probability bar
   const homeColor = data.home_team_data?.primary_color ?? null;
   const awayColor = data.away_team_data?.primary_color ?? null;
@@ -219,7 +227,7 @@ function EventFeedCard({
 
   // Opening odds context for live games
   const openedContext =
-    isLive && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
+    (isLive || isFinished) && data.opening_odds?.home_probability != null && data.opening_odds?.away_probability != null
       ? `Opened ${Math.round(data.opening_odds.home_probability * 100)}/${Math.round(data.opening_odds.away_probability * 100)}`
       : null;
 
@@ -240,9 +248,28 @@ function EventFeedCard({
                 LIVE
               </span>
             )}
-            {item.headline && !isLive && (
+            {isFinished && (
+              <span className="bg-surface-elevated text-text-muted px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
+                FINAL
+              </span>
+            )}
+            {data.highlight?.label && (
+              <span className={`px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0 ${
+                isFinished
+                  ? "bg-accent-brand/15 text-accent-brand"
+                  : "bg-accent-warning/15 text-accent-warning"
+              }`}>
+                {data.highlight.label}
+              </span>
+            )}
+            {item.headline && !isLive && !data.highlight?.label && (
               <span className="bg-accent-warning/15 text-accent-warning px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 {item.headline}
+              </span>
+            )}
+            {data.pulse && (
+              <span className="bg-accent-brand/10 text-accent-brand px-1.5 py-0.5 rounded text-[11px] font-medium flex-shrink-0">
+                Pulse {data.pulse.score}
               </span>
             )}
             <PersonalizedBadge
@@ -279,7 +306,7 @@ function EventFeedCard({
             <div className="flex items-center gap-1.5 mb-0.5">
               <TeamLogo url={awayFlagImgUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={!!awayFlagImgUrl} />
               <span className={`text-sm font-medium truncate ${
-                awayProb !== null && awayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
+                displayAwayProb !== null && displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
               }`}>
                 {data.away_team}
               </span>
@@ -288,34 +315,34 @@ function EventFeedCard({
             <div className="flex items-center gap-1.5">
               <TeamLogo url={homeFlagImgUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={!!homeFlagImgUrl} />
               <span className={`text-sm font-medium truncate ${
-                homeProb !== null && homeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
+                displayHomeProb !== null && displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"
               }`}>
                 {data.home_team}
               </span>
             </div>
           </div>
 
-          {homeProb !== null && awayProb !== null && (
+          {displayHomeProb !== null && displayAwayProb !== null && (
             <div className="flex-shrink-0 text-right">
               {/* Away prob */}
-              <div className={`font-mono text-sm font-bold mb-0.5 ${awayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
-                {formatProbability(awayProb)}
+              <div className={`font-mono text-sm font-bold mb-0.5 ${displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
+                {formatProbability(displayAwayProb)}
               </div>
               {/* Home prob */}
-              <div className={`font-mono text-sm font-bold ${homeProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
-                {formatProbability(homeProb)}
+              <div className={`font-mono text-sm font-bold ${displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
+                {formatProbability(displayHomeProb)}
               </div>
             </div>
           )}
         </div>
 
         {/* Probability bar — uses team colors when available */}
-        {homeProb !== null && awayProb !== null && (
+        {displayHomeProb !== null && displayAwayProb !== null && (
           <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex">
             <div
               className="h-full transition-all rounded-l-full"
               style={{
-                width: `${Math.round(awayProb * 100)}%`,
+                width: `${Math.round(displayAwayProb * 100)}%`,
                 backgroundColor: awayColor || "var(--color-text-muted)",
                 opacity: awayColor ? 0.7 : 0.3,
               }}
@@ -323,7 +350,7 @@ function EventFeedCard({
             <div
               className="h-full transition-all rounded-r-full"
               style={{
-                width: `${Math.round(homeProb * 100)}%`,
+                width: `${Math.round(displayHomeProb * 100)}%`,
                 backgroundColor: homeColor || "var(--color-accent-brand)",
                 opacity: homeColor ? 0.7 : 0.5,
               }}
