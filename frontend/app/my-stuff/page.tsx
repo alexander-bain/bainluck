@@ -223,7 +223,14 @@ function MyTeamsFeed() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-text-primary">My Teams</h1>
+        <div>
+          <h1 className="text-xl font-bold text-text-primary">My Teams</h1>
+          {feedData?.matched_teams && feedData.matched_teams.length > 0 && (
+            <p className="text-xs text-text-muted mt-0.5">
+              {feedData.matched_teams.join(" · ")}
+            </p>
+          )}
+        </div>
         <Link
           href="/preferences"
           className="text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity"

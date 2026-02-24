@@ -85,11 +85,23 @@ async def get_feed(
     # Load personalization context (one DB query for all user data)
     ctx = await _load_personalization_context(db, user)
 
+    # Build team name set once (used by both scoring functions + response).
+    # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
+    # alternate_names (short forms like "Bears", "Brown") which cause false
+    # positives: "bears" matching "chicago bears", "brown" matching "browns".
+    my_team_names: list[str] = []
+    if my_teams_only and user and ctx.team_relations:
+        team_ids = list(ctx.team_relations.keys())
+        team_name_result = await db.execute(
+            select(Team.name).where(Team.id.in_(team_ids))
+        )
+        my_team_names = [name for (name,) in team_name_result.all() if name]
+
     feed_items = []
 
     # === SCORE EVENTS ===
     if include_events:
-        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only)
+        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names)
         feed_items.extend(event_items)
 
     # === ENRICH EVENTS WITH TEAM DATA ===
@@ -115,7 +127,7 @@ async def get_feed(
 
     # === SCORE FUTURES ===
     if include_futures:
-        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only)
+        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names)
         feed_items.extend(futures_items)
 
     # === RANK AND PAGINATE ===
@@ -149,6 +161,8 @@ async def get_feed(
 
     if my_teams_only:
         response["my_teams_only"] = True
+        if my_team_names:
+            response["matched_teams"] = my_team_names
 
     # Include personalization metadata if authenticated
     if ctx.is_authenticated:
@@ -238,6 +252,7 @@ async def _score_events(
     sport_filter: Optional[str],
     ctx: PersonalizationContext,
     my_teams_only: bool = False,
+    my_team_names: Optional[list] = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -301,18 +316,8 @@ async def _score_events(
     # For my_teams_only: build a name-based lookup as fallback.
     # Event.home_team_id/away_team_id may be NULL (not yet linked by ESPN sync),
     # so we also match by team name to ensure the user sees their teams' games.
-    user_team_names: set[str] = set()
-    if my_teams_only and user_team_ids:
-        team_name_result = await db.execute(
-            select(Team.name, Team.alternate_names).where(Team.id.in_(user_team_ids))
-        )
-        for name, alt_names in team_name_result.all():
-            if name:
-                user_team_names.add(name.lower())
-            if alt_names and isinstance(alt_names, list):
-                for alt in alt_names:
-                    if alt:
-                        user_team_names.add(alt.lower())
+    # Uses only full Team.name (not alternate_names) to avoid false positives.
+    user_team_names = {n.lower() for n in (my_team_names or [])}
 
     for event in events:
         # my_teams_only: skip events that don't involve the user's teams
@@ -470,6 +475,7 @@ async def _score_futures(
     sport_filter: Optional[str],
     ctx: PersonalizationContext,
     my_teams_only: bool = False,
+    my_team_names: Optional[list] = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -495,21 +501,8 @@ async def _score_futures(
         selectinload(FuturesMarket.sport),
     ]
 
-    # For my_teams_only: build name-based lookup as fallback for unlinked team_ids.
-    user_team_names: set[str] = set()
-    if my_teams_only:
-        user_team_ids_set = set(ctx.team_relations.keys())
-        if user_team_ids_set:
-            team_name_result = await db.execute(
-                select(Team.name, Team.alternate_names).where(Team.id.in_(user_team_ids_set))
-            )
-            for name, alt_names in team_name_result.all():
-                if name:
-                    user_team_names.add(name.lower())
-                if alt_names and isinstance(alt_names, list):
-                    for alt in alt_names:
-                        if alt:
-                            user_team_names.add(alt.lower())
+    # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
+    user_team_names = {n.lower() for n in (my_team_names or [])}
 
     # === PER-CATEGORY FETCH ===
     # Query each category separately to guarantee diversity.

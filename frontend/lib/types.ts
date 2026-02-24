@@ -592,6 +592,7 @@ export interface FeedResponse {
   // Present when my_teams_only=true
   my_teams_only?: boolean;
   requires_auth?: boolean;
+  matched_teams?: string[];
   // Present when user is authenticated
   personalized?: boolean;
   personalization?: {
