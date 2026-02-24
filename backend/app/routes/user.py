@@ -972,10 +972,10 @@ async def _query_team_futures(
 
     Returns dict with keys: items, teams (list of team dicts), total_count.
 
-    Matching strategy (3 layers):
-    1. team_id — direct FK link (most reliable)
-    2. Full team name ILIKE — e.g., "Boston Celtics" in outcome name
-    3. Roster player name ILIKE — e.g., "Jayson Tatum" in MVP/award outcomes
+    Two-query approach for fast execution:
+    1. Team query — team_id FK + full team name ILIKE (championships, etc.)
+    2. Award query — fetch outcomes from award-like markets, match roster
+       player names in Python (MVP, Clutch Player, etc.)
 
     Game-level markets (spreads, O/U, matchups) are filtered out by both
     event_id and name patterns.
@@ -995,9 +995,9 @@ async def _query_team_futures(
     # Build ILIKE patterns from FULL team names only — no alternate_names,
     # no short suffixes.  This prevents "Bears" (from "Brown Bears") from
     # matching "Chicago Bears" or "Eagles" matching "Philadelphia Eagles".
-    ilike_patterns: list[str] = []
+    team_patterns: list[str] = []
     seen_lower: set[str] = set()
-    # Map player name (lower) → team ID for _find_matched_team
+    # Build roster player name → team ID map (for Python-side matching)
     player_to_team_id: dict[str, int] = {}
 
     for t in teams.values():
@@ -1005,12 +1005,9 @@ async def _query_team_futures(
             escaped = _escape_like(t.name.strip())
             if escaped.lower() not in seen_lower:
                 seen_lower.add(escaped.lower())
-                ilike_patterns.append(escaped)
+                team_patterns.append(escaped)
 
-        # Add roster player names for matching player award markets.
-        # This is the same pattern used by the related-futures endpoint
-        # (events.py) which successfully matches players like "Jayson Tatum"
-        # to award markets like "NBA MVP", "Clutch Player of the Year", etc.
+        # Collect roster player names for Python-side matching (not SQL ILIKE)
         roster = t.roster_players
         if roster and isinstance(roster, list):
             for item in roster:
@@ -1021,16 +1018,7 @@ async def _query_team_futures(
                 else:
                     continue
                 if isinstance(player_name, str) and len(player_name) >= 4:
-                    escaped = _escape_like(player_name)
-                    if escaped.lower() not in seen_lower:
-                        seen_lower.add(escaped.lower())
-                        ilike_patterns.append(escaped)
-                        player_to_team_id[player_name.lower()] = t.id
-
-    # Build OR conditions: team_id match OR ILIKE match (team + player names)
-    conditions = [FuturesOutcome.team_id.in_(team_ids)]
-    for pattern in ilike_patterns:
-        conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
+                    player_to_team_id[player_name.lower()] = t.id
 
     # Subquery: count outcomes per market (for ranking context like "#3 of 30")
     outcome_count_sq = (
@@ -1042,36 +1030,57 @@ async def _query_team_futures(
         .subquery()
     )
 
-    # Query futures outcomes from open, non-game-level markets.
-    # Overfetch (limit * 8) since roster ILIKE matches will produce more
-    # candidates that get filtered by the stricter post-filter.
-    query = (
-        select(
-            FuturesOutcome,
-            FuturesMarket,
-            outcome_count_sq.c.outcome_total,
-        )
+    # Common market-level filters
+    market_base_filters = [
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        # Filter game-level markets by name pattern (some have event_id=None)
+        ~FuturesMarket.name.ilike("% vs %"),
+        ~FuturesMarket.name.ilike("% vs. %"),
+    ]
+
+    # ── Query 1: Team matching (team_id + team name ILIKE) ──
+    # Fast — only team names in OR conditions, no roster players.
+    team_conditions = [FuturesOutcome.team_id.in_(team_ids)]
+    for pattern in team_patterns:
+        team_conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
+
+    query1 = (
+        select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total)
         .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
         .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
-        .where(
-            and_(
-                FuturesMarket.status == "open",
-                FuturesMarket.event_id.is_(None),  # Exclude linked game-level markets
-                # Filter out game-level markets by name pattern (some have
-                # event_id=None because they weren't linked by the matcher)
-                ~FuturesMarket.name.ilike("% vs %"),
-                ~FuturesMarket.name.ilike("% vs. %"),
-                or_(*conditions),
-            )
-        )
+        .where(and_(*market_base_filters, or_(*team_conditions)))
         .order_by(
             func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
             FuturesOutcome.current_probability.desc().nulls_last(),
         )
+        .limit(limit * 5)
     )
+    result1 = await db.execute(query1)
+    rows1 = result1.all()
 
-    result = await db.execute(query.limit(limit * 8))
-    rows = result.all()
+    # ── Query 2: Award markets — fetch all outcomes, match players in Python ──
+    # Only runs if we have roster players to match against.
+    rows2 = []
+    if player_to_team_id:
+        award_keywords = [
+            "MVP", "Player of the Year", "Rookie of the Year",
+            "Defensive Player", "Coach of the Year", "Cy Young",
+            "Heisman", "Most Improved", "Sixth Man", "Clutch",
+            "Finals MVP", "All-Star",
+        ]
+        award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
+
+        query2 = (
+            select(FuturesOutcome, FuturesMarket, outcome_count_sq.c.outcome_total)
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .outerjoin(outcome_count_sq, FuturesMarket.id == outcome_count_sq.c.market_id)
+            .where(and_(*market_base_filters, or_(*award_filters)))
+            .order_by(FuturesOutcome.current_probability.desc().nulls_last())
+            .limit(500)  # Award markets are few — fetch all outcomes
+        )
+        result2 = await db.execute(query2)
+        rows2 = result2.all()
 
     # For each outcome, figure out which followed team matched.
     # Uses strict suffix-word matching + roster player matching.
@@ -1110,11 +1119,11 @@ async def _query_team_futures(
                     }
         return None
 
+    # Process both result sets: team matches (query 1) + award matches (query 2)
     items = []
     seen_market_ids: set[int] = set()  # Deduplicate: one outcome per market
-    for outcome, market, outcome_total in rows:
+    for outcome, market, outcome_total in list(rows1) + list(rows2):
         # Skip if we already have an outcome from this market
-        # (prevents duplicate entries when both team name and player name match)
         if market.id in seen_market_ids:
             continue
 
