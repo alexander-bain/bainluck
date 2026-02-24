@@ -78,17 +78,19 @@ LEAGUE_TIERS: dict[str, int] = {
     "icehockey_ahl": 4,                 # AHL (NHL minor league)
     "icehockey_sweden_allsvenskan": 4,  # Swedish 2nd division
     "icehockey_sweden_hockey_league": 4, # SHL
-    # Tennis: Grand Slams → tier 2, regular tour → tier 3
+    # Tennis: Grand Slams → tier 2, regular tour → tier 4
+    # Regular ATP/WTA tour events are not interesting to the anonymous US audience.
+    # Grand Slams ARE the moments casual fans care about.
     "tennis_us_open": 2,
     "tennis_french_open": 2,
     "tennis_wimbledon": 2,
     "tennis_australian_open": 2,
     "tennis_atp_aus_open_singles": 2,
     "tennis_wta_aus_open_singles": 2,
-    "tennis_atp_dubai": 3,              # Regular ATP tour event
-    "tennis_wta_dubai": 3,
-    "tennis_atp_qatar_open": 3,
-    "tennis_wta_qatar_open": 3,
+    "tennis_atp_dubai": 4,              # Regular ATP tour event
+    "tennis_wta_dubai": 4,
+    "tennis_atp_qatar_open": 4,
+    "tennis_wta_qatar_open": 4,
     # Golf Majors → tier 2
     "golf_masters_tournament_winner": 2,
     "golf_pga_championship_winner": 2,
@@ -110,10 +112,10 @@ WEIGHTS = {
     "tier_2_league": 10,           # College/secondary league bonus (Power 4 matchups)
     "tier_2_power4_mixed": 5,      # Power 4 vs mid-major college
     "tier_2_midmajor": 2,          # Mid-major vs mid-major college
-    "tier_3_league": 0,            # Niche — no bonus, no penalty
+    "tier_3_league": -5,            # Niche — small penalty to keep below threshold without other signals
     "tier_4_penalty": -45,         # Minor league penalty — tier 4 should never appear for anonymous
                                    # users unless championship/playoff. Live+close only gives 55,
-                                   # so -45 keeps score at ~10 (well below min_score 25).
+                                   # so -45 keeps score at ~10 (well below min_score 30).
     "recent_finish_upset": 20,     # Recently finished + upset
     "recent_finish": 5,            # Recently finished (24h)
     # Event importance (from llm_importance / ESPN season type)

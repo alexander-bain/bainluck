@@ -456,7 +456,7 @@ async def _score_events(
         # follows a team, surface it even at lower base scores.
         # But don't lower it when personalization is negative (sport suppression) —
         # otherwise "Nah" sports still sneak through the lowered threshold.
-        # Anonymous threshold: 25 means tier 1 events need at least one signal
+        # Anonymous threshold: 30 means tier 1 events need at least one signal
         # (live, close, starting soon) beyond just being a major league game.
         # my_teams_only: show ALL their team's games regardless of score.
         if my_teams_only:
@@ -464,7 +464,7 @@ async def _score_events(
         elif p_result.is_personalized and p_result.multiplier >= 1.0:
             min_score = 10
         else:
-            min_score = 25
+            min_score = 30
         if personalized_score < min_score:
             continue
 

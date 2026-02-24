@@ -878,7 +878,7 @@ class TestComputeHighlightExactScores:
             now=now,
         )
         assert result.score == 0
-        assert result.reasons == ["tier_3"]  # Tier 3 has no score bonus/penalty
+        assert result.reasons == ["tier_3"]  # Tier 3 has -5 penalty, clamped to 0
 
 
 # =============================================================================
