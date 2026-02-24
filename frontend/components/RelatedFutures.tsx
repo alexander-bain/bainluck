@@ -28,6 +28,40 @@ const TIER_CONFIG: Record<number, { label: string; icon: string }> = {
 
 const DEFAULT_COLOR = "#6B7280";
 
+/** Stat prop market patterns — "Team at Team: Stat Category" from Kalshi */
+const STAT_PROP_PATTERNS = [
+  /:\s*(points|assists|rebounds|steals|blocks|three\s*pointers?|3-?pointers?|turnovers|strikeouts|hits|runs|home\s*runs|goals|saves|sacks|passing\s*yards|rushing\s*yards|receiving\s*yards|touchdowns|completions|interceptions|aces|double\s*faults|kills)/i,
+  /\bat\b.*:\s*\w/i,       // "Team at Team: Something" (Kalshi game stat format)
+];
+
+/** Stat category config — emoji + display name */
+const STAT_CATEGORIES: Record<string, { emoji: string; label: string }> = {
+  points: { emoji: "🏀", label: "Points" },
+  assists: { emoji: "🤝", label: "Assists" },
+  rebounds: { emoji: "💪", label: "Rebounds" },
+  steals: { emoji: "🖐️", label: "Steals" },
+  blocks: { emoji: "🚫", label: "Blocks" },
+  "three pointers": { emoji: "🎯", label: "3-Pointers" },
+  "3-pointers": { emoji: "🎯", label: "3-Pointers" },
+  threepointers: { emoji: "🎯", label: "3-Pointers" },
+  turnovers: { emoji: "🔄", label: "Turnovers" },
+  strikeouts: { emoji: "⚾", label: "Strikeouts" },
+  hits: { emoji: "🏏", label: "Hits" },
+  runs: { emoji: "🏃", label: "Runs" },
+  "home runs": { emoji: "💣", label: "Home Runs" },
+  goals: { emoji: "⚽", label: "Goals" },
+  saves: { emoji: "🧤", label: "Saves" },
+  sacks: { emoji: "🏈", label: "Sacks" },
+  "passing yards": { emoji: "🎯", label: "Pass Yds" },
+  "rushing yards": { emoji: "🏃", label: "Rush Yds" },
+  "receiving yards": { emoji: "📡", label: "Rec Yds" },
+  touchdowns: { emoji: "🏈", label: "TDs" },
+  completions: { emoji: "✅", label: "Comp" },
+  interceptions: { emoji: "🔴", label: "INTs" },
+  aces: { emoji: "🎾", label: "Aces" },
+  kills: { emoji: "⚡", label: "Kills" },
+};
+
 /** Game-level market name patterns — these are individual matchup markets, not futures */
 const GAME_MARKET_PATTERNS = [
   /\bvs\.?\s/i,           // "Team A vs. Team B" or "Team A vs Team B"
@@ -52,14 +86,22 @@ const AWARD_PATTERNS = [
 /**
  * Determine the effective display tier for a future, using name-based detection
  * as a fallback when market_tier from the backend may be wrong or null.
+ *
+ * Returns 1-5 for standard tiers, 6 for stat props (special display).
  */
 function effectiveTier(f: RelatedFuture): number {
+  if (!f.market_name) return 5;
+
+  // Stat props get their own tier (6) for special display treatment
+  if (STAT_PROP_PATTERNS.some((p) => p.test(f.market_name))) {
+    return 6;
+  }
   // If the name looks like a game-level market, always treat as tier 5
-  if (f.market_name && GAME_MARKET_PATTERNS.some((p) => p.test(f.market_name))) {
+  if (GAME_MARKET_PATTERNS.some((p) => p.test(f.market_name))) {
     return 5;
   }
   // If the name looks like an award, treat as tier 3
-  if (f.market_name && AWARD_PATTERNS.some((p) => p.test(f.market_name))) {
+  if (AWARD_PATTERNS.some((p) => p.test(f.market_name))) {
     return 3;
   }
   // Trust the backend tier if it's set
@@ -68,6 +110,29 @@ function effectiveTier(f: RelatedFuture): number {
   }
   // Default: generic market
   return 5;
+}
+
+/**
+ * Extract stat category from a stat prop market name.
+ * e.g. "Boston at Golden State: Three Pointers" → "three pointers"
+ */
+function extractStatCategory(marketName: string): string {
+  const colonMatch = marketName.match(/:\s*(.+?)$/i);
+  if (colonMatch) return colonMatch[1].trim().toLowerCase();
+  return "other";
+}
+
+/**
+ * Look up emoji + display name for a stat category.
+ */
+function getStatConfig(category: string): { emoji: string; label: string } {
+  // Try exact match first
+  if (STAT_CATEGORIES[category]) return STAT_CATEGORIES[category];
+  // Try partial match
+  for (const [key, config] of Object.entries(STAT_CATEGORIES)) {
+    if (category.includes(key) || key.includes(category)) return config;
+  }
+  return { emoji: "📊", label: category.charAt(0).toUpperCase() + category.slice(1) };
 }
 
 /**
@@ -429,6 +494,125 @@ function GameMarketsGrid({
   );
 }
 
+// ─── STAT PROPS: Grouped by stat category with emoji ───
+function StatPropsSection({
+  futures,
+  teamColor,
+}: {
+  futures: RelatedFuture[];
+  teamColor: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (futures.length === 0) return null;
+
+  // Filter out resolved/illiquid
+  const meaningful = futures.filter((f) => {
+    const p = f.probability;
+    if (p === null || p === undefined) return false;
+    if (p <= 0.02 || p >= 0.98) return false;
+    return true;
+  });
+
+  if (meaningful.length === 0) return null;
+
+  // Group by stat category
+  const groups = new Map<string, RelatedFuture[]>();
+  for (const f of meaningful) {
+    const cat = extractStatCategory(f.market_name);
+    const existing = groups.get(cat) || [];
+    existing.push(f);
+    groups.set(cat, existing);
+  }
+
+  // Sort groups by size (most markets first), then items within by probability
+  const sortedGroups = Array.from(groups.entries())
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([cat, items]) => ({
+      category: cat,
+      config: getStatConfig(cat),
+      items: items.sort((a, b) => (b.probability || 0) - (a.probability || 0)),
+    }));
+
+  const COLLAPSED_GROUPS = 3;
+  const visibleGroups = expanded
+    ? sortedGroups
+    : sortedGroups.slice(0, COLLAPSED_GROUPS);
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-[10px]">📊</span>
+        <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+          Player & team stats
+        </span>
+        <span className="text-[10px] text-text-muted/50">
+          ({meaningful.length})
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {visibleGroups.map(({ category, config, items }) => (
+          <div
+            key={category}
+            className="rounded-lg p-2.5 bg-surface-elevated/30 border border-surface-elevated/50"
+          >
+            {/* Stat header with emoji */}
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-base">{config.emoji}</span>
+              <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
+                {config.label}
+              </span>
+            </div>
+
+            {/* Outcomes within this stat */}
+            <div className="space-y-1">
+              {items.slice(0, 3).map((f) => {
+                const prob = f.probability || 0;
+                return (
+                  <Link
+                    key={f.outcome_id}
+                    href={`/futures/${f.market_id}`}
+                    className="flex items-center justify-between gap-1 group"
+                  >
+                    <span className="text-[11px] text-text-muted truncate group-hover:text-text-secondary transition-colors">
+                      {f.outcome_name}
+                    </span>
+                    <span
+                      className="text-[12px] font-bold tabular-nums shrink-0"
+                      style={{ color: teamColor }}
+                    >
+                      {Math.round(prob * 100)}%
+                    </span>
+                  </Link>
+                );
+              })}
+              {items.length > 3 && (
+                <span className="text-[10px] text-text-muted/50">
+                  +{items.length - 3} more
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {sortedGroups.length > COLLAPSED_GROUPS && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }}
+          className="text-[11px] text-blue-500 hover:text-blue-400 font-medium mt-2 transition-colors"
+        >
+          {expanded
+            ? "Show less"
+            : `+${sortedGroups.length - COLLAPSED_GROUPS} more stats`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── TITLE ODDS COMPARISON BAR ───
 function TitleComparison({
   homeChamp,
@@ -518,6 +702,7 @@ function TeamColumn({
   });
   const awards = futures.filter((f) => effectiveTier(f) === 3);
   const games = futures.filter((f) => effectiveTier(f) === 5);
+  const statProps = futures.filter((f) => effectiveTier(f) === 6);
 
   const shortName = teamName.split(" ").pop() || teamName;
 
@@ -586,6 +771,9 @@ function TeamColumn({
           teamColor={teamColor}
           teamName={teamName}
         />
+
+        {/* Stat props — grouped by category with emoji */}
+        <StatPropsSection futures={statProps} teamColor={teamColor} />
       </div>
     </div>
   );
