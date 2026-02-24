@@ -93,6 +93,23 @@ const AWARD_PATTERNS = [
   /\ball[- ]?star\s+mvp\b/i, // "All-Star MVP"
   /\bscoring\s+(leader|title|champion)/i, // "Scoring Leader"
   /\bhome\s+run\s+(leader|king)/i,        // "Home Run Leader"
+  /\bcover\s+of\b/i,        // "Cover of NBA 2K"
+  /\b2k\b/i,                // "NBA 2K" cover
+  /\bnba2k\b/i,             // "NBA2K"
+];
+
+/**
+ * Markets that should NEVER be classified as championship/conference hero cards,
+ * even if the backend tier says so. These get downgraded to tier 4 (division/other).
+ */
+const NOT_CHAMPIONSHIP_PATTERNS = [
+  /\bwin\s+total/i,          // "NBA Season Win Totals"
+  /\bover\/under\b/i,        // "Season Over/Under"
+  /\bregular\s+season\s+wins/i,
+  /\bcover\s+of\b/i,         // "Cover of NBA 2K"
+  /\b2k\b/i,                 // "NBA 2K"
+  /\bplayoff\s+appearance/i,  // "Make Playoffs?"
+  /\bmake\s+playoffs/i,
 ];
 
 /**
@@ -115,6 +132,10 @@ function effectiveTier(f: RelatedFuture): number {
   // If the name looks like an award, treat as tier 3
   if (AWARD_PATTERNS.some((p) => p.test(f.market_name))) {
     return 3;
+  }
+  // Prevent non-championship markets from being hero cards
+  if (NOT_CHAMPIONSHIP_PATTERNS.some((p) => p.test(f.market_name))) {
+    return 4; // Division/other tier — shows as hero but smaller
   }
   // Trust the backend tier if it's set
   if (f.market_tier && f.market_tier >= 1 && f.market_tier <= 5) {
@@ -163,6 +184,11 @@ function formatOdds(odds: number | null | undefined): string {
   return odds > 0 ? `+${odds}` : `${odds}`;
 }
 
+/** Normalize a name for deduplication: lowercase, trim, collapse whitespace */
+function normalizeName(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
 /** Movement pill — colored badge with arrow */
 function MovementPill({ change }: { change: number | null | undefined }) {
   if (change === null || change === undefined || !Number.isFinite(change)) return null;
@@ -208,6 +234,16 @@ function SourceBadge({ source }: { source: string | null | undefined }) {
   );
 }
 
+/** Multi-source badge — shows when multiple sources agree on a market */
+function MultiSourceBadge({ sources }: { sources: string[] }) {
+  if (sources.length <= 1) return null;
+  return (
+    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400">
+      {sources.length} sources
+    </span>
+  );
+}
+
 /**
  * Player headshot component — uses direct headshot URL, ESPN ID, or Wikipedia fallback.
  * Priority: 1. Direct headshot URL  2. ESPN via espn_id  3. Wikipedia  4. Initials
@@ -237,10 +273,8 @@ function PlayerHeadshot({
         className="rounded-full object-cover flex-shrink-0"
         style={{ width: size, height: size }}
         onError={(e) => {
-          // On error, hide the image and show initials
+          // On error, hide the image — initials already render as sibling
           (e.target as HTMLImageElement).style.display = "none";
-          const fallback = (e.target as HTMLImageElement).nextElementSibling;
-          if (fallback) (fallback as HTMLElement).style.display = "flex";
         }}
       />
     );
@@ -280,7 +314,7 @@ function HeroFutureCard({
   teamColor: string;
 }) {
   const tierNum = effectiveTier(future);
-  const tier = TIER_CONFIG[tierNum] || null;
+  const tier = TIER_CONFIG[tierNum] || TIER_CONFIG[4];
 
   return (
     <Link
@@ -372,14 +406,14 @@ function shortAwardLabel(marketName: string): string {
   if (/points?\s*per\s*game\s*leader/i.test(cleaned)) return "Scoring Leader";
   if (/\bscoring\s+(leader|title|champion)/i.test(cleaned)) return "Scoring Leader";
   if (/\bhome\s+run\s+(leader|king)/i.test(cleaned)) return "HR Leader";
+  if (/\bcover\s+of\b.*\b2k\b/i.test(cleaned)) return "NBA 2K Cover";
+  if (/\b2k\b.*\bcover\b/i.test(cleaned)) return "NBA 2K Cover";
   if (/\bper\s+game\s+leader/i.test(cleaned)) {
-    // Extract the stat name: "NBA Rebounds Per Game Leader" → "Rebounds Leader"
     const statMatch = cleaned.match(/(\w+)\s+per\s+game\s+leader/i);
     if (statMatch) return `${statMatch[1]} Leader`;
     return "Per Game Leader";
   }
   if (/\bleader\b/i.test(cleaned)) {
-    // "NBA Steals Leader" → "Steals Leader"
     const statMatch = cleaned.match(/(\w+)\s+leader/i);
     if (statMatch && !/nba|nfl|nhl|mlb|mls/i.test(statMatch[1])) {
       return `${statMatch[1]} Leader`;
@@ -394,10 +428,12 @@ function AwardCard({
   future,
   teamColor,
   sportKey,
+  sourceCount,
 }: {
   future: RelatedFuture;
   teamColor: string;
   sportKey?: string;
+  sourceCount?: number;
 }) {
   const awardLabel = shortAwardLabel(future.market_name);
 
@@ -424,12 +460,17 @@ function AwardCard({
         <div className="text-[15px] font-bold text-text-primary leading-tight">
           {future.outcome_name}
         </div>
-        {/* Award label — secondary, NO truncation */}
-        <div className="flex items-center gap-1 mt-0.5">
+        {/* Award label + source info — secondary, NO truncation */}
+        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
           <span className="text-[10px]">⭐</span>
           <span className="text-[11px] text-text-muted font-medium leading-snug">
             {awardLabel}
           </span>
+          {sourceCount && sourceCount > 1 && (
+            <span className="text-[9px] text-purple-400/80 font-medium">
+              ({sourceCount} sources)
+            </span>
+          )}
         </div>
       </div>
 
@@ -454,6 +495,7 @@ function AwardCard({
 /**
  * Extract opponent name from a game-level market name by stripping
  * the current team's name and common suffixes.
+ * Handles: "Team A vs. Team B", "Team A – Team B", "Team A at Team B"
  */
 function extractOpponent(marketName: string, teamName: string): string {
   const teamWords = teamName.split(" ");
@@ -462,19 +504,25 @@ function extractOpponent(marketName: string, teamName: string): string {
   // Escape regex special chars in team names
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  return marketName
+  let result = marketName
     .replace(/ - More Markets$/i, "")
-    .replace(/\s*-\s*Moneyline$/i, "")
-    .replace(new RegExp(`^${esc(teamName)}\\s+vs\\.?\\s+`, "i"), "")
-    .replace(new RegExp(`\\s+vs\\.?\\s+${esc(teamName)}$`, "i"), "")
-    .replace(new RegExp(`^${esc(shortName)}\\s+vs\\.?\\s+`, "i"), "")
-    .replace(new RegExp(`\\s+vs\\.?\\s+${esc(shortName)}$`, "i"), "")
-    // Also handle en-dash separator
-    .replace(new RegExp(`^${esc(teamName)}\\s+–\\s+`, "i"), "")
-    .replace(new RegExp(`\\s+–\\s+${esc(teamName)}$`, "i"), "")
-    .replace(new RegExp(`^${esc(shortName)}\\s+–\\s+`, "i"), "")
-    .replace(new RegExp(`\\s+–\\s+${esc(shortName)}$`, "i"), "")
-    .trim();
+    .replace(/\s*-\s*Moneyline$/i, "");
+
+  // Try all separator patterns: "vs.", "vs", "–", "at"
+  for (const name of [teamName, shortName]) {
+    const escaped = esc(name);
+    // "Team vs. Opponent" or "Team vs Opponent"
+    result = result.replace(new RegExp(`^${escaped}\\s+vs\\.?\\s+`, "i"), "");
+    result = result.replace(new RegExp(`\\s+vs\\.?\\s+${escaped}$`, "i"), "");
+    // "Team – Opponent" (en-dash)
+    result = result.replace(new RegExp(`^${escaped}\\s+–\\s+`, "i"), "");
+    result = result.replace(new RegExp(`\\s+–\\s+${escaped}$`, "i"), "");
+    // "Team at Opponent"
+    result = result.replace(new RegExp(`^${escaped}\\s+at\\s+`, "i"), "");
+    result = result.replace(new RegExp(`\\s+at\\s+${escaped}$`, "i"), "");
+  }
+
+  return result.trim();
 }
 
 /**
@@ -516,7 +564,9 @@ function GameMarketsGrid({
   // 2. Deduplicate by opponent name — keep the one with highest relevance_score
   const opponentMap = new Map<string, RelatedFuture>();
   for (const f of meaningful) {
-    const opponent = extractOpponent(f.market_name, teamName).toLowerCase();
+    const opponent = normalizeName(extractOpponent(f.market_name, teamName));
+    // Skip entries where opponent extraction failed (opponent = full market name)
+    if (opponent.length > 40) continue;
     const existing = opponentMap.get(opponent);
     if (
       !existing ||
@@ -529,7 +579,6 @@ function GameMarketsGrid({
 
   // Sort: soonest games first (by resolution_date), then by probability
   const sorted = deduped.sort((a, b) => {
-    // Games with dates come first, sorted chronologically
     if (a.resolution_date && b.resolution_date) {
       return new Date(a.resolution_date).getTime() - new Date(b.resolution_date).getTime();
     }
@@ -684,7 +733,6 @@ interface StatRow {
 
 /**
  * Semi-circular gauge for stat prop probability.
- * Shows a colored arc from 0-100% with the percentage in the center.
  */
 function StatGauge({
   probability,
@@ -781,13 +829,36 @@ function StatPropsSection({
     groups.set(cat, existing);
   }
 
+  // Deduplicate within each group: per player, keep highest line
+  // (e.g., "Pritchard: 2+" and "Pritchard: 1+" → keep "Pritchard: 2+" since it's the more interesting bet)
+  const dedupedGroups = new Map<string, StatRow[]>();
+  groups.forEach((rows, cat) => {
+    const playerBest = new Map<string, StatRow>();
+    for (const row of rows) {
+      const playerKey = normalizeName(row.playerName || row.outcomeName);
+      const existing = playerBest.get(playerKey);
+      if (!existing) {
+        playerBest.set(playerKey, row);
+      } else {
+        // Keep the row with the more interesting (lower probability) line
+        // or the higher line number if probabilities are similar
+        const existingLine = parseFloat(existing.line || "0");
+        const newLine = parseFloat(row.line || "0");
+        if (newLine > existingLine) {
+          playerBest.set(playerKey, row);
+        }
+      }
+    }
+    dedupedGroups.set(cat, Array.from(playerBest.values()));
+  });
+
   // Sort groups by size, rows within by probability descending
   const sortedGroups: Array<{
     category: string;
     config: { emoji: string; label: string };
     rows: StatRow[];
   }> = [];
-  groups.forEach((rows, cat) => {
+  dedupedGroups.forEach((rows, cat) => {
     sortedGroups.push({
       category: cat,
       config: getStatConfig(cat),
@@ -974,23 +1045,42 @@ function TitleComparison({
 }
 
 /**
- * Deduplicate award futures by player name.
- * When a player appears in multiple award markets (e.g., MVP on Polymarket AND Kalshi),
- * keep only the one with the highest probability to avoid cluttering the UI.
+ * Deduplicate award futures by player name + award type combination.
+ * Same player in the same award type from different sources → merged (keep highest probability).
+ * Same player in different award types → kept separate.
+ * Also filters out near-0% entries (< 1%) and near-100% entries.
  */
-function deduplicateAwards(futures: RelatedFuture[]): RelatedFuture[] {
-  const playerMap = new Map<string, RelatedFuture>();
-  for (const f of futures) {
-    const key = f.outcome_name.toLowerCase();
-    const existing = playerMap.get(key);
-    if (
-      !existing ||
-      (f.probability || 0) > (existing.probability || 0)
-    ) {
-      playerMap.set(key, f);
+function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; sourceCount: number }[] {
+  // First filter out noise: very low or very high probability
+  const filtered = futures.filter((f) => {
+    const p = f.probability;
+    if (p === null || p === undefined) return false;
+    if (p < 0.01 || p > 0.99) return false;
+    return true;
+  });
+
+  // Deduplicate by normalized player name + award label combo
+  const dedupMap = new Map<string, { future: RelatedFuture; sources: Set<string> }>();
+  for (const f of filtered) {
+    const playerKey = normalizeName(f.outcome_name);
+    const awardKey = shortAwardLabel(f.market_name).toLowerCase();
+    const key = `${playerKey}::${awardKey}`;
+    const existing = dedupMap.get(key);
+    if (!existing) {
+      dedupMap.set(key, { future: f, sources: new Set([f.source || "unknown"]) });
+    } else {
+      existing.sources.add(f.source || "unknown");
+      // Keep the one with higher probability
+      if ((f.probability || 0) > (existing.future.probability || 0)) {
+        existing.future = f;
+      }
     }
   }
-  return Array.from(playerMap.values());
+
+  return Array.from(dedupMap.values()).map(({ future, sources }) => ({
+    future,
+    sourceCount: sources.size,
+  }));
 }
 
 // ─── TEAM COLUMN: Tier-grouped display ───
@@ -1007,19 +1097,28 @@ function TeamColumn({
   teamLogo?: string;
   sportKey?: string;
 }) {
-  const championship = futures.filter((f) => effectiveTier(f) === 1);
-  const conference = futures.filter((f) => {
+  // Filter out near-100% and near-0% entries globally (resolved markets)
+  const activeFutures = futures.filter((f) => {
+    const p = f.probability;
+    if (p === null || p === undefined) return true; // keep if no probability
+    return p > 0.01 && p < 0.99;
+  });
+
+  const championship = activeFutures.filter((f) => effectiveTier(f) === 1);
+  const conference = activeFutures.filter((f) => {
     const t = effectiveTier(f);
     return t === 2 || t === 4;
   });
-  const rawAwards = futures.filter((f) => effectiveTier(f) === 3);
+  const rawAwards = activeFutures.filter((f) => effectiveTier(f) === 3);
   const awards = deduplicateAwards(rawAwards);
-  const games = futures.filter((f) => effectiveTier(f) === 5);
-  const statProps = futures.filter((f) => effectiveTier(f) === 6);
+  const games = activeFutures.filter((f) => effectiveTier(f) === 5);
+  const statProps = activeFutures.filter((f) => effectiveTier(f) === 6);
 
   const shortName = teamName.split(" ").pop() || teamName;
 
-  if (futures.length === 0) return null;
+  // Count active items (post-filter)
+  const activeCount = championship.length + conference.length + awards.length + games.length + statProps.length;
+  if (activeCount === 0) return null;
 
   return (
     <div className="flex-1 min-w-0">
@@ -1042,7 +1141,7 @@ function TeamColumn({
           {shortName}
         </h4>
         <span className="text-[10px] text-text-muted">
-          {futures.length} market{futures.length !== 1 ? "s" : ""}
+          {activeCount} market{activeCount !== 1 ? "s" : ""}
         </span>
       </div>
 
@@ -1068,12 +1167,13 @@ function TeamColumn({
         {/* Awards — player-centric rows with headshots (deduplicated) */}
         {awards.length > 0 && (
           <div className="space-y-1.5">
-            {awards.map((f) => (
+            {awards.map(({ future: f, sourceCount }) => (
               <AwardCard
-                key={f.outcome_id}
+                key={`${f.outcome_id}-${f.market_id}`}
                 future={f}
                 teamColor={teamColor}
                 sportKey={sportKey}
+                sourceCount={sourceCount}
               />
             ))}
           </div>
@@ -1095,16 +1195,6 @@ function TeamColumn({
 
 /**
  * Related Futures — "Bigger Picture" section on event detail page.
- *
- * Tier-grouped display:
- * - Title Odds comparison bar (always visible when both teams have championship futures)
- * - Championship/Conference futures as hero cards with gradient tints
- * - Award futures as player-centric rows with headshots (deduplicated)
- * - Game markets as dense 2-column grid cells (past games filtered out)
- * - Stat props as player cards with semi-circular gauges
- *
- * When an LLM summary is available, shows summary-first with details collapsed.
- * Falls back to expanded team columns when no summary exists.
  */
 export default function RelatedFutures({
   eventId,
