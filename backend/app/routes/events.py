@@ -1,5 +1,6 @@
 """Events API endpoints."""
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -23,6 +24,7 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
+from app.utils.prediction_market_matching import is_kalshi_game_ticker
 
 router = APIRouter()
 
@@ -1717,6 +1719,20 @@ _SPORT_PREFIX_TO_LLM_CATEGORY = {
     "boxing": "boxing",
 }
 
+# Regex patterns for detecting game-specific markets (stat props and matchups).
+# These are compiled once at module level, not per-request.
+_GAME_STAT_PROP_RE = re.compile(
+    r":\s*(?:points|assists|rebounds|steals|blocks|three\s*pointers?|"
+    r"3-?pointers?|turnovers|strikeouts|hits|runs|home\s*runs|goals|"
+    r"saves|sacks|passing\s*yards|rushing\s*yards|receiving\s*yards|"
+    r"touchdowns|completions|interceptions|aces|double\s*faults|kills)",
+    re.IGNORECASE,
+)
+_GAME_MATCHUP_RE = re.compile(
+    r"\bvs\.?\s|\s–\s|\bat\b.*:\s*\w",
+    re.IGNORECASE,
+)
+
 
 def _escape_like(s: str) -> str:
     """Escape special LIKE/ILIKE characters for safe pattern matching."""
@@ -1952,12 +1968,57 @@ async def get_related_futures(
     away_futures = []
     seen_ids = set()
 
+    # ── Game-specific market filtering ───────────────────────────────
+    # Game-specific markets (stat props, game moneylines) should only appear
+    # on the event page they belong to, NOT on all events for the same teams.
+    # Season-long markets (championship, MVP, awards) always show.
+    event_commence_time = event.commence_time
+    # ±6 hour window for temporal proximity matching
+    GAME_TIME_WINDOW = timedelta(hours=6)
+
+    def _is_game_specific_market(mkt: FuturesMarket) -> bool:
+        """Check if a market is game-specific (stat prop or game-level)."""
+        # Markets explicitly linked to an event are always game-specific
+        if mkt.event_id is not None:
+            return True
+        # Kalshi game tickers are always game-specific
+        if is_kalshi_game_ticker(mkt.external_id):
+            return True
+        name = mkt.name or ""
+        # Stat prop patterns in the market name (e.g., "Boston at GSW: Points")
+        if _GAME_STAT_PROP_RE.search(name):
+            return True
+        # Game matchup patterns + low tier (avoids false positives on "X vs Y" awards)
+        if _GAME_MATCHUP_RE.search(name) and (mkt.market_tier or 5) >= 5:
+            return True
+        return False
+
+    def _game_market_matches_event(mkt: FuturesMarket) -> bool:
+        """Check if a game-specific market belongs to THIS event."""
+        # Direct event_id link is the strongest signal
+        if mkt.event_id is not None:
+            return mkt.event_id == event_id
+        # Temporal proximity: market commence_time or resolution_date near event time
+        if event_commence_time:
+            for dt in (mkt.commence_time, mkt.resolution_date):
+                if dt:
+                    diff = abs((dt - event_commence_time).total_seconds())
+                    if diff <= GAME_TIME_WINDOW.total_seconds():
+                        return True
+        # No timing info available — exclude to be safe (prevents leaking
+        # stat props from other games onto this event page)
+        return False
+
     for outcome in outcomes:
         if outcome.id in seen_ids:
             continue
         seen_ids.add(outcome.id)
 
         market = outcome.market
+
+        # ── Filter game-specific markets that don't belong to this event ──
+        if _is_game_specific_market(market) and not _game_market_matches_event(market):
+            continue
 
         # Classify: team_id first (reliable for player outcomes), then name matching
         is_home = outcome.team_id in home_team_ids if outcome.team_id else False
