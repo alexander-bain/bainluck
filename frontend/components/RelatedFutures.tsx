@@ -82,6 +82,17 @@ const AWARD_PATTERNS = [
   /player\s+of\s+(the\s+)?year/i,
   /\bballon\b/i,
   /\bbest\s+(actor|actress|picture|director|supporting)\b/i,
+  /\bleader\b/i,            // "NBA Rebounds Per Game Leader"
+  /\bper\s+game\b/i,        // "Points Per Game"
+  /\bclutch\b/i,            // "Clutch Player of the Year"
+  /\bfinals\s+mvp\b/i,      // "Finals MVP"
+  /\b[ew]cf\s+mvp\b/i,      // "WCF MVP", "ECF MVP"
+  /\bmost\s+improved\b/i,   // "Most Improved Player"
+  /\bsixth\s+man\b/i,       // "Sixth Man"
+  /\b6th\s+man\b/i,         // "6th Man"
+  /\ball[- ]?star\s+mvp\b/i, // "All-Star MVP"
+  /\bscoring\s+(leader|title|champion)/i, // "Scoring Leader"
+  /\bhome\s+run\s+(leader|king)/i,        // "Home Run Leader"
 ];
 
 /**
@@ -318,7 +329,7 @@ function AwardCard({
         border: `1px solid ${teamColor}20`,
       }}
     >
-      {/* Player headshot — 48px for prominence */}
+      {/* Player headshot — 48px, ESPN first, Wikipedia fallback */}
       {future.matched_player?.espn_id ? (
         <EntityImage
           type="player"
@@ -329,16 +340,12 @@ function AwardCard({
           fallbackColor={teamColor}
         />
       ) : (
-        <div
-          className="w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
-          style={{ backgroundColor: `${teamColor}20`, color: teamColor }}
-        >
-          {future.outcome_name
-            ?.split(" ")
-            .map((w: string) => w[0])
-            .join("")
-            .slice(0, 2)}
-        </div>
+        <EntityImage
+          type="wikipedia"
+          name={future.outcome_name}
+          size={48}
+          fallbackColor={teamColor}
+        />
       )}
 
       <div className="min-w-0 flex-1">
@@ -481,32 +488,43 @@ function GameMarketsGrid({
               />
 
               {/* Content */}
-              <div className="relative flex items-center justify-between gap-1">
-                <span className="text-xs text-text-secondary truncate">
-                  {opponent}
-                </span>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span
-                    className="text-[13px] font-bold tabular-nums"
-                    style={{
-                      color: favored ? teamColor : "var(--text-muted)",
-                    }}
-                  >
-                    {Math.round(prob * 100)}%
+              <div className="relative">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs text-text-secondary truncate">
+                    {opponent}
                   </span>
-                  {f.probability_change_24h &&
-                    Math.abs(f.probability_change_24h) >= 0.005 && (
-                      <span
-                        className={`text-[9px] font-semibold ${
-                          f.probability_change_24h > 0
-                            ? "text-emerald-500"
-                            : "text-red-500"
-                        }`}
-                      >
-                        {f.probability_change_24h > 0 ? "↑" : "↓"}
-                      </span>
-                    )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span
+                      className="text-[13px] font-bold tabular-nums"
+                      style={{
+                        color: favored ? teamColor : "var(--text-muted)",
+                      }}
+                    >
+                      {Math.round(prob * 100)}%
+                    </span>
+                    {f.probability_change_24h &&
+                      Math.abs(f.probability_change_24h) >= 0.005 && (
+                        <span
+                          className={`text-[9px] font-semibold ${
+                            f.probability_change_24h > 0
+                              ? "text-emerald-500"
+                              : "text-red-500"
+                          }`}
+                        >
+                          {f.probability_change_24h > 0 ? "↑" : "↓"}
+                        </span>
+                      )}
+                  </div>
                 </div>
+                {/* Game date from resolution_date */}
+                {f.resolution_date && (
+                  <div className="text-[9px] text-text-muted/60 mt-0.5">
+                    {new Date(f.resolution_date).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </div>
+                )}
               </div>
             </Link>
           );
@@ -531,40 +549,56 @@ function GameMarketsGrid({
 }
 
 /**
- * Extract the line number from an outcome name.
- * e.g., "Over 218.5" → 218.5, "Under 48.5" → 48.5, "Yes" → null
+ * Parse a player stat outcome like "Derrick White: 12+" into parts.
+ * Also handles "Over 218.5" / "Under 48.5" for team-level totals.
  */
-function extractLine(outcomeName: string): number | null {
-  const match = outcomeName.match(/(\d+\.?\d*)/);
-  return match ? parseFloat(match[1]) : null;
+function parseStatOutcome(outcomeName: string): {
+  playerName: string | null;
+  line: string | null;
+  isTeamTotal: boolean;
+} {
+  // Team-level: "Over 218.5" or "Under 48.5"
+  if (/^(over|under)\b/i.test(outcomeName.trim())) {
+    const lineMatch = outcomeName.match(/([\d.]+\+?)/);
+    return {
+      playerName: null,
+      line: lineMatch ? lineMatch[1] : outcomeName.replace(/^(over|under)\s*/i, "").trim(),
+      isTeamTotal: true,
+    };
+  }
+  // Player-level: "Derrick White: 12+" or "Jaylen Brown: 4+"
+  const colonIdx = outcomeName.indexOf(":");
+  if (colonIdx > 0) {
+    return {
+      playerName: outcomeName.slice(0, colonIdx).trim(),
+      line: outcomeName.slice(colonIdx + 1).trim(),
+      isTeamTotal: false,
+    };
+  }
+  // Fallback: just a name or unknown
+  return { playerName: outcomeName, line: null, isTeamTotal: false };
 }
 
-/**
- * Check if outcome is "Over" side.
- */
-function isOver(outcomeName: string): boolean {
-  return /^over\b/i.test(outcomeName.trim());
-}
-
-/** A paired stat prop: Over + Under for the same market */
-interface StatPair {
-  category: string;
-  config: { emoji: string; label: string };
-  line: number | null;
-  overProb: number | null;
-  underProb: number | null;
-  overFuture: RelatedFuture;
-  underFuture: RelatedFuture | null;
+/** Parsed stat row for display */
+interface StatRow {
+  playerName: string | null;
+  line: string | null;
+  probability: number;
   marketId: number;
+  outcomeName: string;
+  isTeamTotal: boolean;
+  matchedPlayer?: RelatedFuture["matched_player"];
 }
 
-// ─── STAT PROPS: Over/Under gauge visualization ───
+// ─── STAT PROPS: Player-centric stat lines ───
 function StatPropsSection({
   futures,
   teamColor,
+  sportKey,
 }: {
   futures: RelatedFuture[];
   teamColor: string;
+  sportKey?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (futures.length === 0) return null;
@@ -579,137 +613,157 @@ function StatPropsSection({
 
   if (meaningful.length === 0) return null;
 
-  // Group by market_id to pair Over/Under outcomes
-  const marketMap = new Map<number, RelatedFuture[]>();
+  // Group by stat category, then build display rows
+  const groups = new Map<string, StatRow[]>();
   for (const f of meaningful) {
-    const existing = marketMap.get(f.market_id) || [];
-    existing.push(f);
-    marketMap.set(f.market_id, existing);
+    const cat = extractStatCategory(f.market_name);
+    const parsed = parseStatOutcome(f.outcome_name);
+    const row: StatRow = {
+      playerName: parsed.playerName,
+      line: parsed.line,
+      probability: f.probability || 0,
+      marketId: f.market_id,
+      outcomeName: f.outcome_name,
+      isTeamTotal: parsed.isTeamTotal,
+      matchedPlayer: f.matched_player,
+    };
+    const existing = groups.get(cat) || [];
+    existing.push(row);
+    groups.set(cat, existing);
   }
 
-  // Build stat pairs
-  const pairs: StatPair[] = [];
-  marketMap.forEach((outcomes, marketId) => {
-    const cat = extractStatCategory(outcomes[0].market_name);
-    const config = getStatConfig(cat);
-
-    const overOutcome = outcomes.find((o: RelatedFuture) => isOver(o.outcome_name));
-    const underOutcome = outcomes.find(
-      (o: RelatedFuture) => /^under\b/i.test(o.outcome_name.trim())
-    );
-    // Use whichever we have as primary
-    const primary = overOutcome || outcomes[0];
-    const line = extractLine(primary.outcome_name);
-
-    pairs.push({
+  // Sort groups by size, rows within by probability descending
+  const sortedGroups: Array<{
+    category: string;
+    config: { emoji: string; label: string };
+    rows: StatRow[];
+  }> = [];
+  groups.forEach((rows, cat) => {
+    sortedGroups.push({
       category: cat,
-      config,
-      line,
-      overProb: overOutcome?.probability ?? null,
-      underProb: underOutcome?.probability ?? null,
-      overFuture: primary,
-      underFuture: underOutcome || null,
-      marketId,
+      config: getStatConfig(cat),
+      rows: rows.sort((a, b) => b.probability - a.probability),
     });
   });
+  sortedGroups.sort((a, b) => b.rows.length - a.rows.length);
 
-  // Sort: by category name for grouping, then by line
-  pairs.sort((a, b) => {
-    if (a.category !== b.category) return a.category.localeCompare(b.category);
-    return (a.line || 0) - (b.line || 0);
-  });
-
-  const COLLAPSED_COUNT = 4;
-  const visible = expanded ? pairs : pairs.slice(0, COLLAPSED_COUNT);
+  const COLLAPSED_GROUPS = 3;
+  const ROWS_PER_GROUP = 4;
+  const visibleGroups = expanded
+    ? sortedGroups
+    : sortedGroups.slice(0, COLLAPSED_GROUPS);
 
   return (
     <div>
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-[10px]">📊</span>
         <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-          Player & team stats
-        </span>
-        <span className="text-[10px] text-text-muted/50">
-          ({pairs.length})
+          Player stats
         </span>
       </div>
 
-      <div className="space-y-1.5">
-        {visible.map((pair) => {
-          const overPct = pair.overProb !== null ? pair.overProb * 100 : 50;
-          const leansOver = overPct >= 50;
+      <div className="space-y-3">
+        {visibleGroups.map(({ category, config, rows }) => (
+          <div key={category}>
+            {/* Category header */}
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className="text-sm">{config.emoji}</span>
+              <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
+                {config.label}
+              </span>
+              <span className="text-[10px] text-text-muted/50">
+                ({rows.length})
+              </span>
+            </div>
 
-          return (
-            <Link
-              key={pair.marketId}
-              href={`/futures/${pair.marketId}`}
-              className="block rounded-lg p-2.5 group transition-colors bg-surface-elevated/30 border border-surface-elevated/50 hover:bg-surface-elevated/60"
-            >
-              {/* Top row: emoji + stat label + line number */}
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm">{pair.config.emoji}</span>
-                  <span className="text-xs font-semibold text-text-secondary">
-                    {pair.config.label}
-                  </span>
-                </div>
-                {pair.line !== null && (
-                  <span className="text-xs font-bold text-text-primary tabular-nums">
-                    {pair.line}
-                  </span>
-                )}
-              </div>
+            {/* Player rows */}
+            <div className="space-y-1">
+              {rows.slice(0, ROWS_PER_GROUP).map((row) => {
+                const pct = Math.round(row.probability * 100);
+                const barWidth = Math.max(4, pct);
 
-              {/* Over/Under gauge bar */}
-              <div className="relative h-5 rounded-full overflow-hidden bg-surface-elevated flex">
-                {/* Over side */}
-                <div
-                  className="h-full flex items-center justify-start pl-1.5 transition-all duration-500"
-                  style={{
-                    width: `${overPct}%`,
-                    backgroundColor: leansOver
-                      ? `${teamColor}30`
-                      : `${teamColor}12`,
-                  }}
-                >
-                  <span
-                    className="text-[10px] font-bold tabular-nums whitespace-nowrap"
-                    style={{
-                      color: leansOver ? teamColor : "var(--text-muted)",
-                    }}
+                return (
+                  <Link
+                    key={`${row.marketId}-${row.outcomeName}`}
+                    href={`/futures/${row.marketId}`}
+                    className="flex items-center gap-2 rounded-lg px-2 py-1.5 group transition-colors hover:bg-surface-elevated/40"
                   >
-                    O {Math.round(overPct)}%
-                  </span>
-                </div>
-                {/* Under side */}
-                <div
-                  className="h-full flex-1 flex items-center justify-end pr-1.5"
-                  style={{
-                    backgroundColor: !leansOver
-                      ? "rgba(156,163,175,0.2)"
-                      : "rgba(156,163,175,0.08)",
-                  }}
-                >
-                  <span
-                    className="text-[10px] font-bold tabular-nums whitespace-nowrap"
-                    style={{
-                      color: !leansOver
-                        ? "var(--text-secondary)"
-                        : "var(--text-muted)",
-                    }}
-                  >
-                    U {Math.round(100 - overPct)}%
-                  </span>
-                </div>
-                {/* Center line marker */}
-                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-surface-card/60" />
-              </div>
-            </Link>
-          );
-        })}
+                    {/* Player headshot or initials — 28px */}
+                    {row.playerName && (
+                      row.matchedPlayer?.espn_id ? (
+                        <EntityImage
+                          type="player"
+                          name={row.playerName}
+                          espnId={row.matchedPlayer.espn_id}
+                          sport={sportKey}
+                          size={28}
+                          fallbackColor={teamColor}
+                        />
+                      ) : (
+                        <div
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                          style={{
+                            backgroundColor: `${teamColor}15`,
+                            color: teamColor,
+                          }}
+                        >
+                          {row.playerName
+                            .split(" ")
+                            .map((w) => w[0])
+                            .join("")
+                            .slice(0, 2)}
+                        </div>
+                      )
+                    )}
+
+                    {/* Name + line */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-xs font-medium text-text-primary truncate">
+                          {row.playerName || (row.isTeamTotal ? "Total" : row.outcomeName)}
+                        </span>
+                        {row.line && (
+                          <span className="text-[10px] font-bold text-text-muted tabular-nums shrink-0">
+                            {row.line}
+                          </span>
+                        )}
+                      </div>
+                      {/* Mini probability bar */}
+                      <div className="h-1 rounded-full bg-surface-elevated overflow-hidden mt-0.5 max-w-[120px]">
+                        <div
+                          className="h-full rounded-full transition-all duration-300"
+                          style={{
+                            width: `${barWidth}%`,
+                            backgroundColor: teamColor,
+                            opacity: pct > 60 ? 0.7 : 0.4,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Probability */}
+                    <span
+                      className="text-xs font-bold tabular-nums shrink-0"
+                      style={{
+                        color: pct >= 60 ? teamColor : "var(--text-muted)",
+                      }}
+                    >
+                      {pct}%
+                    </span>
+                  </Link>
+                );
+              })}
+              {rows.length > ROWS_PER_GROUP && (
+                <span className="text-[10px] text-text-muted/50 pl-2">
+                  +{rows.length - ROWS_PER_GROUP} more
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
 
-      {pairs.length > COLLAPSED_COUNT && (
+      {sortedGroups.length > COLLAPSED_GROUPS && (
         <button
           onClick={(e) => {
             e.preventDefault();
@@ -719,7 +773,7 @@ function StatPropsSection({
         >
           {expanded
             ? "Show less"
-            : `+${pairs.length - COLLAPSED_COUNT} more stats`}
+            : `+${sortedGroups.length - COLLAPSED_GROUPS} more stats`}
         </button>
       )}
     </div>
@@ -888,8 +942,8 @@ function TeamColumn({
           teamName={teamName}
         />
 
-        {/* Stat props — grouped by category with emoji */}
-        <StatPropsSection futures={statProps} teamColor={teamColor} />
+        {/* Stat props — player-centric rows */}
+        <StatPropsSection futures={statProps} teamColor={teamColor} sportKey={sportKey} />
       </div>
     </div>
   );
