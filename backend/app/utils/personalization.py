@@ -156,7 +156,7 @@ def compute_event_multiplier(
 
     # --- Sport affinity ---
     if sport_key and ctx.sport_affinities:
-        affinity = ctx.sport_affinities.get(sport_key)
+        affinity = _lookup_sport_affinity(sport_key, ctx.sport_affinities)
         if affinity is not None:
             if affinity >= HIGH_AFFINITY_THRESHOLD:
                 bonus += HIGH_AFFINITY_BONUS
@@ -353,3 +353,37 @@ def _match_sport_affinity(
                 best_match = affinity
 
     return best_match
+
+
+def _lookup_sport_affinity(
+    sport_key: str,
+    sport_affinities: dict[str, float],
+) -> Optional[float]:
+    """Look up the user's affinity for a sport key.
+
+    Tries exact match first (fast path for common cases like "basketball_nba").
+    Falls back to prefix matching: "icehockey_sweden_allsvenskan" shares the
+    "icehockey_" prefix with "icehockey_nhl", so the user's NHL affinity
+    applies to all hockey leagues. Same for "cricket_ipl" matching
+    "cricket_test_match", etc.
+
+    Returns the best (max) affinity among matching keys, or None.
+    """
+    # Exact match (covers most cases)
+    exact = sport_affinities.get(sport_key)
+    if exact is not None:
+        return exact
+
+    # Prefix match: extract the sport root (e.g., "icehockey" from
+    # "icehockey_sweden_allsvenskan") and find any stored affinity key
+    # that shares the same root.
+    root = sport_key.split("_")[0]
+    if not root:
+        return None
+
+    best = None
+    for affinity_key, value in sport_affinities.items():
+        if affinity_key.startswith(root + "_") or affinity_key == root:
+            if best is None or value > best:
+                best = value
+    return best

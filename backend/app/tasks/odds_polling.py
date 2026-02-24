@@ -590,6 +590,9 @@ async def _poll_all_odds():
             # that may start one day and finish the next
             # Include "scheduled" events that have started - the scores API will
             # update their status to "live" or "completed" as appropriate
+            # Include "closed" events too — the staleness checker may close events
+            # before the Scores API reports final scores, especially for minor
+            # leagues. Including them here lets us backfill scores on the next poll.
             sports_needing_scores = await session.execute(
                 select(Sport.key)
                 .join(Event)
@@ -597,7 +600,7 @@ async def _poll_all_odds():
                     Sport.active == True,
                     Event.commence_time <= now,  # Event has started
                     Event.commence_time >= now - timedelta(days=3),  # Within last 3 days
-                    Event.status.in_(["scheduled", "live", "completed"]),  # Include scheduled events that started
+                    Event.status.in_(["scheduled", "live", "completed", "closed"]),
                 )
                 .distinct()
             )
