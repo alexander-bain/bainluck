@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { fetchEventsByIds, fetchFuturesByIds, fetchFeed } from "@/lib/api";
+import { useAuthContext } from "@/components/AuthProvider";
 import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -31,6 +32,9 @@ export default function HomePage() {
   useScrollDepth({ pageType: 'home' });
   useEngagementTime({ pageType: 'home' });
 
+  // Auth state — used to key SWR so the feed re-fetches when auth loads
+  const { user, isLoading: authLoading } = useAuthContext();
+
   // Pinned events
   const { pinnedIds, isPinned, togglePin, isMaxReached } = usePinnedEvents();
 
@@ -52,7 +56,10 @@ export default function HomePage() {
     isLoading: feedLoading,
     mutate: refreshFeed,
   } = useSWR(
-    "feed",
+    // Don't fetch until auth state is resolved — avoids caching the anonymous
+    // feed when the user is actually signed in (race condition).
+    // Key includes user UID so SWR re-fetches when auth state changes.
+    authLoading ? null : user ? ["feed", user.uid] : "feed-anon",
     () => fetchFeed({ limit: 200 }),
     { refreshInterval: 30000 }
   );
