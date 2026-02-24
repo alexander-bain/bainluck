@@ -9,12 +9,15 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select, delete, and_, or_, case, cast, String, union_all
+from sqlalchemy import select, delete, and_, or_, case, cast, func, String, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user
-from app.models.models import User, UserPin, UserFavorite, UserPreference, Team
+from app.models.models import (
+    User, UserPin, UserFavorite, UserPreference, Team,
+    FuturesMarket, FuturesOutcome,
+)
 from app.services.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -896,3 +899,250 @@ async def update_sport_affinities(
 
     logger.info(f"Updated sport affinities for user={user.id}: {len(expanded)} keys")
     return {"status": "updated"}
+
+
+# =============================================================================
+# Team Futures — aggregated futures for followed teams
+# =============================================================================
+
+def _escape_like(s: str) -> str:
+    """Escape special LIKE/ILIKE characters for safe pattern matching."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _team_name_patterns(full_name: str) -> list[str]:
+    """Build ILIKE-safe patterns for matching a team in outcome names.
+
+    Returns escaped patterns suitable for use in ILIKE '%pattern%' queries.
+    Includes full team name and short name (last word, if >= 4 chars).
+    """
+    if not full_name:
+        return []
+
+    patterns = []
+    escaped_full = _escape_like(full_name.strip())
+    patterns.append(escaped_full)
+
+    # Short name: last word (e.g., "Celtics" from "Boston Celtics")
+    parts = full_name.strip().split()
+    if len(parts) > 1:
+        short = parts[-1]
+        if len(short) >= 4:
+            escaped_short = _escape_like(short)
+            if escaped_short.lower() != escaped_full.lower():
+                patterns.append(escaped_short)
+
+    return patterns
+
+
+async def _query_team_futures(
+    team_ids: list[int],
+    db: AsyncSession,
+    limit: int = 20,
+) -> dict:
+    """Shared logic for querying futures outcomes matched to a set of teams.
+
+    Returns dict with keys: items, teams (list of team dicts), total_count.
+    """
+    if not team_ids:
+        return {"items": [], "teams": [], "total_count": 0}
+
+    # Load Team records for the provided IDs
+    result = await db.execute(
+        select(Team).where(Team.id.in_(team_ids))
+    )
+    teams = {t.id: t for t in result.scalars().all()}
+
+    if not teams:
+        return {"items": [], "teams": [], "total_count": 0}
+
+    # Build ILIKE patterns from all team names + alternate_names
+    ilike_patterns: list[str] = []
+    for t in teams.values():
+        ilike_patterns.extend(_team_name_patterns(t.name))
+        if t.alternate_names:
+            for alt in t.alternate_names:
+                if isinstance(alt, str) and len(alt) >= 4:
+                    ilike_patterns.extend(_team_name_patterns(alt))
+
+    # De-duplicate patterns (case-insensitive)
+    seen_lower: set[str] = set()
+    unique_patterns: list[str] = []
+    for p in ilike_patterns:
+        if p.lower() not in seen_lower:
+            seen_lower.add(p.lower())
+            unique_patterns.append(p)
+
+    # Build OR conditions: team_id match OR name ILIKE match
+    conditions = [FuturesOutcome.team_id.in_(team_ids)]
+    for pattern in unique_patterns:
+        conditions.append(FuturesOutcome.name.ilike(f"%{pattern}%"))
+
+    # Query futures outcomes from open, non-game-level markets
+    query = (
+        select(FuturesOutcome, FuturesMarket)
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(
+            and_(
+                FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),  # Exclude game-level markets
+                or_(*conditions),
+            )
+        )
+        .order_by(
+            func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
+            FuturesOutcome.current_probability.desc().nulls_last(),
+        )
+    )
+
+    # Get total count first (without limit)
+    count_query = (
+        select(func.count())
+        .select_from(FuturesOutcome)
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(
+            and_(
+                FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),
+                or_(*conditions),
+            )
+        )
+    )
+    count_result = await db.execute(count_query)
+    total_count = count_result.scalar() or 0
+
+    # Fetch limited results
+    result = await db.execute(query.limit(limit))
+    rows = result.all()
+
+    # For each outcome, figure out which followed team matched
+    def _find_matched_team(outcome: FuturesOutcome) -> dict | None:
+        # Direct team_id match
+        if outcome.team_id and outcome.team_id in teams:
+            t = teams[outcome.team_id]
+            return {
+                "id": t.id,
+                "name": t.name,
+                "logo_small": t.logo_url_small or t.logo_url,
+                "primary_color": t.primary_color,
+            }
+        # Name ILIKE match — find which team matches
+        outcome_lower = (outcome.name or "").lower()
+        for t in teams.values():
+            patterns_for_team = _team_name_patterns(t.name)
+            if t.alternate_names:
+                for alt in t.alternate_names:
+                    if isinstance(alt, str) and len(alt) >= 4:
+                        patterns_for_team.extend(_team_name_patterns(alt))
+            for pat in patterns_for_team:
+                if pat.lower() in outcome_lower:
+                    return {
+                        "id": t.id,
+                        "name": t.name,
+                        "logo_small": t.logo_url_small or t.logo_url,
+                        "primary_color": t.primary_color,
+                    }
+        return None
+
+    items = []
+    for outcome, market in rows:
+        matched = _find_matched_team(outcome)
+        if not matched:
+            continue  # Skip if we can't determine which team matched
+
+        prob = float(outcome.current_probability) if outcome.current_probability is not None else None
+        change = float(outcome.probability_change_24h) if outcome.probability_change_24h is not None else None
+
+        items.append({
+            "outcome_id": outcome.id,
+            "outcome_name": outcome.name,
+            "market_id": market.id,
+            "market_name": market.name,
+            "market_tier": market.market_tier,
+            "category": market.llm_sport_category,
+            "source": market.source,
+            "probability": prob,
+            "probability_change_24h": change,
+            "rank": outcome.rank,
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "matched_team": matched,
+        })
+
+    # Build teams list for share link
+    teams_list = [
+        {
+            "id": t.id,
+            "name": t.name,
+            "logo_small": t.logo_url_small or t.logo_url,
+            "primary_color": t.primary_color,
+        }
+        for t in teams.values()
+    ]
+
+    return {
+        "items": items[:limit],
+        "teams": teams_list,
+        "team_ids": list(teams.keys()),
+        "total_count": total_count,
+    }
+
+
+@router.get("/team-futures")
+async def get_team_futures(
+    limit: int = 20,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get futures outcomes for the current user's followed teams.
+
+    Returns outcomes ranked by |probability_change_24h|, tagged with
+    which followed team matched.
+    """
+    # Load user's followed team IDs (all relation types except rival)
+    result = await db.execute(
+        select(UserFavorite.team_id)
+        .where(
+            and_(
+                UserFavorite.user_id == user.id,
+                UserFavorite.relation_type != "rival",
+            )
+        )
+        .distinct()
+    )
+    team_ids = [row[0] for row in result.all()]
+
+    if not team_ids:
+        return {"items": [], "team_ids": [], "total_count": 0}
+
+    data = await _query_team_futures(team_ids, db, limit=min(limit, 50))
+    return data
+
+
+# Public share endpoint — mounted separately in main.py at /api/shared
+shared_router = APIRouter()
+
+
+@shared_router.get("/team-futures")
+async def get_shared_team_futures(
+    team_ids: str,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public endpoint: get futures outcomes for specified teams.
+
+    Used for share links — no auth required.
+    Query param team_ids is a comma-separated list of team IDs.
+    """
+    try:
+        parsed_ids = [int(x.strip()) for x in team_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="team_ids must be comma-separated integers")
+
+    if not parsed_ids:
+        raise HTTPException(status_code=400, detail="team_ids is required")
+
+    if len(parsed_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 teams")
+
+    data = await _query_team_futures(parsed_ids, db, limit=min(limit, 50))
+    return data

@@ -642,3 +642,36 @@ export interface FuturesCategoriesResponse {
   categories: FuturesCategoryItem[];
   total: number;
 }
+
+// Team Futures types (My Stuff → "Your Teams' Odds")
+export interface TeamFutureItem {
+  outcome_id: number;
+  outcome_name: string;
+  market_id: number;
+  market_name: string;
+  market_tier: number | null;
+  category: string | null;
+  source: string | null;
+  probability: number | null;
+  probability_change_24h: number | null;
+  rank: number | null;
+  resolution_date: string | null;
+  matched_team: {
+    id: number;
+    name: string;
+    logo_small: string | null;
+    primary_color: string | null;
+  };
+}
+
+export interface TeamFuturesResponse {
+  items: TeamFutureItem[];
+  team_ids: number[];
+  total_count: number;
+}
+
+export interface SharedTeamFuturesResponse {
+  items: TeamFutureItem[];
+  teams: Array<{ id: number; name: string; logo_small: string | null; primary_color: string | null }>;
+  total_count: number;
+}

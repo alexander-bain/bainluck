@@ -23,6 +23,8 @@ import type {
   OscarsResponse,
   FuturesBrowseResponse,
   FuturesCategoriesResponse,
+  TeamFuturesResponse,
+  SharedTeamFuturesResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -720,4 +722,39 @@ export async function fetchFuturesBrowse(params: {
  */
 export async function fetchFuturesCategories(): Promise<FuturesCategoriesResponse> {
   return apiFetch<FuturesCategoriesResponse>("/api/futures/categories");
+}
+
+// ============================================================================
+// Team Futures API (My Stuff → "Your Teams' Odds")
+// ============================================================================
+
+/**
+ * Fetch futures outcomes for the current user's followed teams.
+ * Requires auth.
+ */
+export async function fetchMyTeamFutures(
+  limit?: number
+): Promise<TeamFuturesResponse> {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", limit.toString());
+  const query = params.toString();
+  return apiFetch<TeamFuturesResponse>(
+    `/api/me/team-futures${query ? `?${query}` : ""}`
+  );
+}
+
+/**
+ * Fetch futures outcomes for specified teams (public, no auth).
+ * Used for share links.
+ */
+export async function fetchSharedTeamFutures(
+  teamIds: number[],
+  limit?: number
+): Promise<SharedTeamFuturesResponse> {
+  const params = new URLSearchParams();
+  params.set("team_ids", teamIds.join(","));
+  if (limit) params.set("limit", limit.toString());
+  return apiFetch<SharedTeamFuturesResponse>(
+    `/api/shared/team-futures?${params.toString()}`
+  );
 }

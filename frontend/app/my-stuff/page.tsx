@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
-import { fetchFeed } from "@/lib/api";
-import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import { fetchFeed, fetchMyTeamFutures } from "@/lib/api";
+import type { FeedItem, FeedEventData, FeedFuturesData, TeamFutureItem } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -84,6 +84,13 @@ function MyTeamsFeed() {
     "my-teams-feed",
     () => fetchFeed({ limit: 100, my_teams_only: true }),
     { refreshInterval: 15000 },
+  );
+
+  // Fetch team futures ("Your Teams' Odds")
+  const { data: teamFuturesData } = useSWR(
+    "my-team-futures",
+    () => fetchMyTeamFutures(20),
+    { refreshInterval: 300000 }, // 5 min
   );
 
   // State B check (must be after all hooks)
@@ -297,6 +304,15 @@ function MyTeamsFeed() {
                 </section>
               )}
 
+              {/* Your Teams' Odds Section */}
+              {teamFuturesData && teamFuturesData.items.length > 0 && (
+                <TeamFuturesSection
+                  items={teamFuturesData.items}
+                  teamIds={teamFuturesData.team_ids}
+                  totalCount={teamFuturesData.total_count}
+                />
+              )}
+
               {/* Grouped feed sections */}
               {feedSections.map((section) => (
                 <section key={section.key}>
@@ -336,6 +352,142 @@ function MyTeamsFeed() {
         </>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Your Teams' Odds section
+// ---------------------------------------------------------------------------
+
+const INITIAL_SHOW = 6;
+
+function TeamFuturesSection({
+  items,
+  teamIds,
+  totalCount,
+}: {
+  items: TeamFutureItem[];
+  teamIds: number[];
+  totalCount: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const displayed = expanded ? items : items.slice(0, INITIAL_SHOW);
+
+  const handleShare = useCallback(async () => {
+    const url = `${window.location.origin}/share/my-odds?teams=${teamIds.join(",")}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for browsers without clipboard API
+      window.prompt("Copy this link:", url);
+    }
+  }, [teamIds]);
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-sm">&#127919;</span>
+          <h2 className="text-sm font-semibold text-text-primary">
+            Your Teams&apos; Odds
+          </h2>
+          <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+            {totalCount}
+          </span>
+        </div>
+        <button
+          onClick={handleShare}
+          className="text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity"
+        >
+          {copied ? "Copied!" : "Share"}
+        </button>
+      </div>
+
+      <div className="space-y-1">
+        {displayed.map((item) => (
+          <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+        ))}
+      </div>
+
+      {items.length > INITIAL_SHOW && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="mt-2 text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity w-full text-center py-1"
+        >
+          {expanded
+            ? "Show less"
+            : `See all ${totalCount} futures \u2192`}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function TeamFutureRow({ item }: { item: TeamFutureItem }) {
+  const prob = item.probability;
+  const change = item.probability_change_24h;
+  const probStr = prob !== null ? `${Math.round(prob * 100)}%` : "-";
+
+  let changeStr = "";
+  let changeColor = "text-text-muted";
+  if (change !== null && change !== 0) {
+    const sign = change > 0 ? "+" : "";
+    changeStr = `${sign}${(change * 100).toFixed(1)}%`;
+    changeColor = change > 0 ? "text-green-500" : "text-red-500";
+  }
+
+  // Truncate market name for compact display
+  const marketName = (item.market_name || "").replace(/\s*Winner\s*$/i, "").replace(/\s*20\d{2}(-\d{2})?$/i, "");
+
+  return (
+    <Link
+      href={`/futures/${item.market_id}`}
+      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-elevated transition-colors group"
+    >
+      {/* Team logo */}
+      <div className="w-6 h-6 flex-shrink-0">
+        {item.matched_team.logo_small ? (
+          <img
+            src={item.matched_team.logo_small}
+            alt={item.matched_team.name}
+            className="w-6 h-6 object-contain"
+          />
+        ) : (
+          <div
+            className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+            style={{ backgroundColor: item.matched_team.primary_color || "#666" }}
+          >
+            {(item.matched_team.name || "?")[0]}
+          </div>
+        )}
+      </div>
+
+      {/* Market name */}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-text-primary truncate">
+          {marketName}
+        </p>
+        <p className="text-[11px] text-text-muted truncate">
+          {item.outcome_name}
+        </p>
+      </div>
+
+      {/* Probability */}
+      <div className="text-right flex-shrink-0">
+        <p className="text-sm font-semibold text-text-primary font-mono tabular-nums">
+          {probStr}
+        </p>
+        {changeStr && (
+          <p className={`text-[11px] font-medium ${changeColor} font-mono tabular-nums`}>
+            {changeStr}
+          </p>
+        )}
+      </div>
+    </Link>
   );
 }
 
