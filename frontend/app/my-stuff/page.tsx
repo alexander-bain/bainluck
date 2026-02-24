@@ -89,7 +89,7 @@ function MyTeamsFeed() {
   // Fetch team futures ("Your Teams' Odds")
   const { data: teamFuturesData } = useSWR(
     "my-team-futures",
-    () => fetchMyTeamFutures(30),
+    () => fetchMyTeamFutures(50),
     { refreshInterval: 300000 }, // 5 min
   );
 
@@ -366,7 +366,7 @@ function MyTeamsFeed() {
 // Your Teams' Odds section — grouped by market type with context
 // ---------------------------------------------------------------------------
 
-const INITIAL_SHOW = 8;
+const INITIAL_SHOW = 10;
 
 function TeamFuturesSection({
   items,
@@ -407,7 +407,10 @@ function TeamFuturesSection({
         name.includes("defensive") ||
         name.includes("coach") ||
         name.includes("cy young") ||
-        name.includes("heisman")
+        name.includes("heisman") ||
+        name.includes("improved") ||
+        name.includes("sixth man") ||
+        name.includes("clutch")
       ) {
         awards.push(item);
       } else {
@@ -436,6 +439,11 @@ function TeamFuturesSection({
     }
   }, [teamIds]);
 
+  // Build display groups from displayed items
+  const displayedChampionships = displayed.filter(i => grouped.championships.includes(i));
+  const displayedAwards = displayed.filter(i => grouped.awards.includes(i));
+  const displayedOther = displayed.filter(i => grouped.other.includes(i));
+
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
@@ -456,79 +464,80 @@ function TeamFuturesSection({
         </button>
       </div>
 
-      {/* Championship odds */}
-      {grouped.championships.length > 0 && displayed.some(i => grouped.championships.includes(i)) && (
-        <div className="mb-3">
-          <p className="text-[10px] uppercase tracking-widest text-text-muted mb-1.5 px-1">
-            Championships
-          </p>
-          <div className="space-y-0.5">
-            {displayed
-              .filter(i => grouped.championships.includes(i))
-              .map(item => (
-                <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
-              ))}
-          </div>
-        </div>
-      )}
+      <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
+        {/* Championship odds */}
+        {displayedChampionships.length > 0 && (
+          <FuturesGroup label="Championships" items={displayedChampionships} />
+        )}
 
-      {/* Award/player odds */}
-      {grouped.awards.length > 0 && displayed.some(i => grouped.awards.includes(i)) && (
-        <div className="mb-3">
-          <p className="text-[10px] uppercase tracking-widest text-text-muted mb-1.5 px-1">
-            Awards &amp; Players
-          </p>
-          <div className="space-y-0.5">
-            {displayed
-              .filter(i => grouped.awards.includes(i))
-              .map(item => (
-                <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
-              ))}
-          </div>
-        </div>
-      )}
+        {/* Award/player odds */}
+        {displayedAwards.length > 0 && (
+          <FuturesGroup
+            label="Awards & Players"
+            items={displayedAwards}
+            borderTop={displayedChampionships.length > 0}
+          />
+        )}
 
-      {/* Other markets */}
-      {grouped.other.length > 0 && displayed.some(i => grouped.other.includes(i)) && (
-        <div className="mb-3">
-          <p className="text-[10px] uppercase tracking-widest text-text-muted mb-1.5 px-1">
-            Other Markets
-          </p>
-          <div className="space-y-0.5">
-            {displayed
-              .filter(i => grouped.other.includes(i))
-              .map(item => (
-                <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
-              ))}
-          </div>
-        </div>
-      )}
+        {/* Other markets */}
+        {displayedOther.length > 0 && (
+          <FuturesGroup
+            label="Other Markets"
+            items={displayedOther}
+            borderTop={displayedChampionships.length > 0 || displayedAwards.length > 0}
+          />
+        )}
+      </div>
 
       {orderedItems.length > INITIAL_SHOW && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="mt-2 text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity w-full text-center py-1"
+          className="mt-2 text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity w-full text-center py-1.5"
         >
           {expanded
             ? "Show less"
-            : `See all ${totalCount} futures \u2192`}
+            : `See all ${totalCount} markets \u2192`}
         </button>
       )}
     </section>
   );
 }
 
+function FuturesGroup({
+  label,
+  items,
+  borderTop = false,
+}: {
+  label: string;
+  items: TeamFutureItem[];
+  borderTop?: boolean;
+}) {
+  return (
+    <div className={borderTop ? "border-t border-surface-border" : ""}>
+      <p className="text-[10px] uppercase tracking-widest text-text-muted px-3 pt-2.5 pb-1">
+        {label}
+      </p>
+      <div className="divide-y divide-surface-border/40">
+        {items.map(item => (
+          <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TeamFutureRow({ item }: { item: TeamFutureItem }) {
   const prob = item.probability;
   const change = item.probability_change_24h;
-  const probStr = prob !== null ? `${Math.round(prob * 100)}%` : "-";
+  const probPct = prob !== null ? Math.round(prob * 100) : null;
+  const probStr = probPct !== null ? `${probPct}%` : "-";
 
   let changeEl: React.ReactNode = null;
   if (change !== null && change !== 0 && Math.abs(change) >= 0.001) {
     const isUp = change > 0;
     changeEl = (
       <span className={`text-[11px] font-medium ${isUp ? "text-accent-live" : "text-accent-danger"}`}>
-        {isUp ? "\u2191" : "\u2193"} {Math.abs(change * 100).toFixed(1)}%
+        {isUp ? "\u2191" : "\u2193"}{Math.abs(change * 100).toFixed(1)}%
       </span>
     );
   }
@@ -540,7 +549,7 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
     .replace(/\s*20\d{2}-\d{2}\s*/i, " ")
     .trim();
 
-  // Build rank context if available
+  // Build rank context
   const rankStr = item.rank && item.total_outcomes
     ? `#${item.rank} of ${item.total_outcomes}`
     : item.rank
@@ -550,19 +559,19 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
   return (
     <Link
       href={`/futures/${item.market_id}`}
-      className="flex items-center gap-3 px-2.5 py-2 rounded-lg hover:bg-surface-elevated transition-colors group"
+      className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-elevated/50 transition-colors group"
     >
       {/* Team logo */}
-      <div className="w-6 h-6 flex-shrink-0">
+      <div className="w-7 h-7 flex-shrink-0">
         {item.matched_team.logo_small ? (
           <img
             src={item.matched_team.logo_small}
             alt={item.matched_team.name}
-            className="w-6 h-6 object-contain"
+            className="w-7 h-7 object-contain"
           />
         ) : (
           <div
-            className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white"
             style={{ backgroundColor: item.matched_team.primary_color || "#666" }}
           >
             {(item.matched_team.name || "?")[0]}
@@ -572,24 +581,34 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
 
       {/* Market info */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-text-primary truncate">
+        <p className="text-sm text-text-primary truncate leading-tight">
           <span className="font-medium">{item.outcome_name}</span>
-          <span className="text-text-muted"> &mdash; </span>
-          <span className="text-text-secondary">{marketName}</span>
         </p>
-        {rankStr && (
-          <p className="text-[11px] text-text-muted">
-            Ranked {rankStr}
-          </p>
+        <p className="text-[11px] text-text-muted truncate mt-0.5">
+          {marketName}
+          {rankStr && <span className="text-text-muted/70"> &middot; {rankStr}</span>}
+        </p>
+        {/* Probability bar */}
+        {probPct !== null && (
+          <div className="h-1 rounded-full bg-surface-border mt-1.5 overflow-hidden max-w-[140px]">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${Math.min(probPct, 100)}%`,
+                backgroundColor: item.matched_team.primary_color || "var(--accent-futures)",
+                opacity: 0.7,
+              }}
+            />
+          </div>
         )}
       </div>
 
       {/* Probability + movement */}
-      <div className="text-right flex-shrink-0 flex items-center gap-1.5">
-        {changeEl}
-        <p className="text-sm font-semibold text-text-primary font-mono tabular-nums min-w-[2.5rem] text-right">
+      <div className="flex flex-col items-end flex-shrink-0 gap-0.5">
+        <p className="text-sm font-bold text-text-primary font-mono tabular-nums">
           {probStr}
         </p>
+        {changeEl}
       </div>
     </Link>
   );

@@ -334,11 +334,33 @@ async def _score_events(
                 ),
             )
         )
-        .limit(500)  # Safety cap
     )
 
     if sport_filter:
         query = query.where(Sport.key.ilike(f"%{sport_filter}%"))
+
+    # For my_teams_only, push team filtering to SQL so we don't miss events
+    # beyond the safety cap (the 7-day window can have 1000+ events across
+    # all sports, but only ~20-40 involve the user's teams).
+    if my_teams_only:
+        team_conditions = []
+        user_team_ids_list = list(set(ctx.team_relations.keys())) if ctx.team_relations else []
+        if user_team_ids_list:
+            team_conditions.append(Event.home_team_id.in_(user_team_ids_list))
+            team_conditions.append(Event.away_team_id.in_(user_team_ids_list))
+        if my_team_names:
+            for tn in my_team_names:
+                escaped = tn.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                team_conditions.append(Event.home_team_name.ilike(f"%{escaped}%"))
+                team_conditions.append(Event.away_team_name.ilike(f"%{escaped}%"))
+        if team_conditions:
+            query = query.where(or_(*team_conditions))
+        else:
+            # No teams → nothing to show
+            return []
+        query = query.limit(200)  # Safety cap (user's teams only)
+    else:
+        query = query.limit(500)  # Safety cap (all events)
 
     result = await db.execute(query)
     events = result.scalars().all()
