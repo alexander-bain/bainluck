@@ -1725,7 +1725,8 @@ _GAME_STAT_PROP_RE = re.compile(
     r":\s*(?:points|assists|rebounds|steals|blocks|three\s*pointers?|"
     r"3-?pointers?|turnovers|strikeouts|hits|runs|home\s*runs|goals|"
     r"saves|sacks|passing\s*yards|rushing\s*yards|receiving\s*yards|"
-    r"touchdowns|completions|interceptions|aces|double\s*faults|kills)",
+    r"touchdowns|completions|interceptions|aces|double\s*faults|kills|"
+    r"double\s*doubles?|triple\s*doubles?)",
     re.IGNORECASE,
 )
 _GAME_MATCHUP_RE = re.compile(

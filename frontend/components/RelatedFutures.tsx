@@ -31,7 +31,7 @@ const DEFAULT_COLOR = "#6B7280";
 
 /** Stat prop market patterns — "Team at Team: Stat Category" from Kalshi */
 const STAT_PROP_PATTERNS = [
-  /:\s*(points|assists|rebounds|steals|blocks|three\s*pointers?|3-?pointers?|turnovers|strikeouts|hits|runs|home\s*runs|goals|saves|sacks|passing\s*yards|rushing\s*yards|receiving\s*yards|touchdowns|completions|interceptions|aces|double\s*faults|kills)/i,
+  /:\s*(points|assists|rebounds|steals|blocks|three\s*pointers?|3-?pointers?|turnovers|strikeouts|hits|runs|home\s*runs|goals|saves|sacks|passing\s*yards|rushing\s*yards|receiving\s*yards|touchdowns|completions|interceptions|aces|double\s*faults|kills|double\s*doubles?|triple\s*doubles?)/i,
   /\bat\b.*:\s*\w/i,       // "Team at Team: Something" (Kalshi game stat format)
 ];
 
@@ -61,6 +61,12 @@ const STAT_CATEGORIES: Record<string, { emoji: string; label: string }> = {
   interceptions: { emoji: "🔴", label: "INTs" },
   aces: { emoji: "🎾", label: "Aces" },
   kills: { emoji: "⚡", label: "Kills" },
+  "double doubles": { emoji: "✌️", label: "Double-Doubles" },
+  "double double": { emoji: "✌️", label: "Double-Doubles" },
+  doubledoubles: { emoji: "✌️", label: "Double-Doubles" },
+  "triple doubles": { emoji: "🔥", label: "Triple-Doubles" },
+  "triple double": { emoji: "🔥", label: "Triple-Doubles" },
+  tripledoubles: { emoji: "🔥", label: "Triple-Doubles" },
 };
 
 /** Game-level market name patterns — these are individual matchup markets, not futures */
@@ -110,6 +116,13 @@ const NOT_CHAMPIONSHIP_PATTERNS = [
   /\b2k\b/i,                 // "NBA 2K"
   /\bplayoff\s+appearance/i,  // "Make Playoffs?"
   /\bmake\s+playoffs/i,
+  /\bplayoff\s*berth/i,       // "Playoff Berth"
+  /\bto\s+make\b/i,           // "Team X To Make Playoffs"
+  /\bseeding\b/i,             // "NBA Seeding"
+  /\bseed\b/i,                // "#1 Seed"
+  /\bover\s+\d/i,             // "Over 48.5 Wins"
+  /\bunder\s+\d/i,            // "Under 48.5 Wins"
+  /\bexact\s+wins/i,          // "Exact Wins"
 ];
 
 /**
@@ -1223,9 +1236,19 @@ export default function RelatedFutures({
   const { home_team_futures, away_team_futures, summary } = data;
   const hasSummary = !!summary;
 
-  // Find championship futures for the comparison bar
-  const homeChamp = home_team_futures.find((f) => effectiveTier(f) === 1);
-  const awayChamp = away_team_futures.find((f) => effectiveTier(f) === 1);
+  // Find championship futures for the comparison bar.
+  // Prefer markets with "championship" in the name (most reliable signal),
+  // then fall back to any tier-1 market. This prevents "Make Playoffs" (94%)
+  // from being shown instead of the actual championship market (2%).
+  const CHAMPIONSHIP_NAME_RE = /\bchampionship\b|\bwin\s+(the\s+)?title\b|\btitle\s+winner\b|\bwin\s+it\s+all\b/i;
+  function findBestChampionship(futures: RelatedFuture[]): RelatedFuture | undefined {
+    const tier1 = futures.filter((f) => effectiveTier(f) === 1);
+    // Prefer market with "championship" in name
+    const named = tier1.find((f) => CHAMPIONSHIP_NAME_RE.test(f.market_name));
+    return named || tier1[0];
+  }
+  const homeChamp = findBestChampionship(home_team_futures);
+  const awayChamp = findBestChampionship(away_team_futures);
   const showTitleComparison = !!(homeChamp && awayChamp);
 
   const hColor = homeTeamColor || DEFAULT_COLOR;
