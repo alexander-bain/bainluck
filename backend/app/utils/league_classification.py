@@ -27,6 +27,10 @@ LEAGUE_CLASS: dict[str, str] = {
     "americanfootball_xfl": "pro_minor",
     "americanfootball_ufl": "pro_minor",
     "icehockey_ahl": "pro_minor",
+    "icehockey_sweden_allsvenskan": "pro_minor",
+    "icehockey_sweden_shl": "pro_minor",
+    "icehockey_finland_liiga": "pro_minor",
+    "icehockey_russia_khl": "pro_minor",
     "basketball_nbl": "pro_minor",
     "basketball_euroleague": "pro_minor",
     # International (top soccer leagues)

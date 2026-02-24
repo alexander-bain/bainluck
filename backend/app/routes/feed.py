@@ -400,6 +400,14 @@ async def _score_events(
         opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
         opening_away_prob = float(event.opening_away_probability) if event.opening_away_probability else None
 
+        # Skip completed/closed events with no useful data to display —
+        # no scores AND no win probabilities means an empty card.
+        if event.status in ("completed", "closed"):
+            has_scores = event.home_score is not None and event.away_score is not None
+            has_odds = opening_home_prob is not None
+            if not has_scores and not has_odds:
+                continue
+
         # For scoring, use opening odds as "current" — good enough for ranking.
         # The highlight scorer detects closeness, upset potential, etc. from these.
         current_home_prob = opening_home_prob
