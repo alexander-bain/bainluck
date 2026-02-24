@@ -12,7 +12,19 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return process.env.NEXT_PUBLIC_TMDB_API_KEY || null;
+  const token = process.env.NEXT_PUBLIC_TMDB_API_KEY || null;
+  if (!token) {
+    console.warn(
+      "[TMDB] NEXT_PUBLIC_TMDB_API_KEY not set — movie posters and headshots will not load. " +
+      "Set this env var in Vercel and redeploy."
+    );
+  }
+  return token;
+}
+
+/** Whether a TMDB token is available (useful for UI fallback messaging). */
+export function hasTMDBToken(): boolean {
+  return !!process.env.NEXT_PUBLIC_TMDB_API_KEY;
 }
 
 /** TMDB fetch with Bearer token auth (supports Read Access Token). */
@@ -85,6 +97,8 @@ export interface TMDBVideo {
  * Search for a movie by title. Returns the best match or null.
  */
 export async function searchMovie(name: string, year?: number): Promise<TMDBMovieResult | null> {
+  if (!getToken()) return null; // Skip cache + API when token is missing
+
   const cacheKey = `movie_${name}_${year || ""}`;
   const cached = cacheGet<TMDBMovieResult | null>(cacheKey);
   if (cached !== null) return cached;
@@ -109,6 +123,8 @@ export async function searchMovie(name: string, year?: number): Promise<TMDBMovi
  * Search for a person by name. Returns the best match or null.
  */
 export async function searchPerson(name: string): Promise<TMDBPersonResult | null> {
+  if (!getToken()) return null; // Skip cache + API when token is missing
+
   const cacheKey = `person_${name}`;
   const cached = cacheGet<TMDBPersonResult | null>(cacheKey);
   if (cached !== null) return cached;
@@ -132,6 +148,8 @@ export async function searchPerson(name: string): Promise<TMDBPersonResult | nul
  * Get trailers for a movie by TMDB ID.
  */
 export async function getTrailers(movieId: number): Promise<TMDBVideo[]> {
+  if (!getToken()) return []; // Skip when token is missing
+
   const cacheKey = `trailers_${movieId}`;
   const cached = cacheGet<TMDBVideo[]>(cacheKey);
   if (cached !== null) return cached;
