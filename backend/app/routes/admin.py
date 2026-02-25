@@ -4077,7 +4077,7 @@ async def team_identity_unmapped(
 async def clear_line_movement_cache(
     event_id: int,
     secret: str = Query(..., description="Admin secret for authorization"),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete cached line movement explanations for an event so they regenerate."""
     if not _check_admin_secret(secret):
