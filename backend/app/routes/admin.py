@@ -4072,3 +4072,29 @@ async def team_identity_unmapped(
         ],
     }
 
+
+@router.delete("/line-movement/cache/{event_id}")
+async def clear_line_movement_cache(
+    event_id: int,
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Delete cached line movement explanations for an event so they regenerate."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import LineMovementAnalysis
+
+    result = await db.execute(
+        select(LineMovementAnalysis).where(
+            LineMovementAnalysis.event_id == event_id,
+            LineMovementAnalysis.analysis_type == "line_movement",
+        )
+    )
+    rows = result.scalars().all()
+    for row in rows:
+        await db.delete(row)
+    await db.commit()
+
+    return {"deleted": len(rows), "event_id": event_id}
+
