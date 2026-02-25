@@ -246,14 +246,17 @@ CREATE TABLE teams (
     location VARCHAR(100),              -- ESPN location (city/region/school)
 
     -- ESPN + MLB Stats API enrichment
-    roster_players JSONB                -- ["Jayson Tatum", "Jaylen Brown", ...]
+    roster_players JSONB,               -- ["Jayson Tatum", "Jaylen Brown", ...]
+
+    -- StatPal enrichment
+    statpal_team_id VARCHAR(100)        -- StatPal's team identifier (indexed)
 );
 
 -- Individual games/matches
 CREATE TABLE events (
     id SERIAL PRIMARY KEY,
     sport_id INTEGER REFERENCES sports(id),
-    external_id VARCHAR(100) UNIQUE,
+    external_id VARCHAR(100) UNIQUE,    -- NULL for StatPal-created events until Odds API attaches
     home_team_id INTEGER REFERENCES teams(id),
     away_team_id INTEGER REFERENCES teams(id),
 
@@ -299,6 +302,11 @@ CREATE TABLE events (
     period VARCHAR(100),                -- "Q4", "2nd Half", "OT"
     espn_win_prob_home DECIMAL(5,4),    -- ESPN's model
     win_probability_sources JSONB,       -- {"espn": 0.65, "betting": 0.60}
+
+    -- StatPal enrichment (schedule-first architecture)
+    statpal_fixture_id VARCHAR(100),    -- StatPal fixture ID (indexed, primary lookup key)
+    statpal_end_time TIMESTAMP WITH TIME ZONE,  -- Expected game end time
+    commence_time_source VARCHAR(20),   -- 'odds_api', 'espn', 'statpal' (StatPal wins)
 
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -546,6 +554,27 @@ CREATE TABLE user_pins (
 );
 ```
 
+### Identity Tables
+
+```sql
+-- Cross-source team identity index (canonical identity resolution)
+CREATE TABLE team_identity_mapping (
+    id SERIAL PRIMARY KEY,
+    team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
+    source VARCHAR(30) NOT NULL,        -- 'odds_api', 'espn', 'statpal', 'kalshi', 'polymarket', 'futures', 'mlb'
+    source_id VARCHAR(200),             -- External ID from that source
+    source_name VARCHAR(300),           -- Team name as used by that source
+    source_abbreviation VARCHAR(20),    -- Abbreviation (e.g., 'BOS', 'LAL')
+    sport_key VARCHAR(50),              -- Scoped by sport (e.g., 'basketball_nba')
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    -- Unique constraints for upserts
+    UNIQUE(source, source_id, sport_key) WHERE source_id IS NOT NULL,
+    UNIQUE(source, source_name, sport_key) WHERE source_name IS NOT NULL
+);
+```
+
 ### Key Indexes
 
 ```sql
@@ -576,6 +605,16 @@ CREATE INDEX idx_futures_snapshots_outcome ON futures_odds_snapshots(outcome_id)
 -- Win probability
 CREATE INDEX idx_win_prob_event_source ON win_prob_snapshots(event_id, source);
 CREATE INDEX idx_win_prob_captured ON win_prob_snapshots(captured_at);
+
+-- Team identity
+CREATE INDEX idx_team_identity_team ON team_identity_mapping(team_id);
+CREATE INDEX idx_team_identity_source ON team_identity_mapping(source);
+CREATE INDEX idx_team_identity_name ON team_identity_mapping(source_name);
+CREATE INDEX idx_team_identity_sport ON team_identity_mapping(sport_key);
+
+-- StatPal lookups
+CREATE INDEX idx_events_statpal_fixture ON events(statpal_fixture_id);
+CREATE INDEX idx_teams_statpal ON teams(statpal_team_id);
 ```
 
 ---
@@ -1787,13 +1826,14 @@ These are the current focus. Resist the urge to build new features until these a
 15. ✅ **Roster sync migration** — SportsDataIO deleted, ESPN + MLB Stats API is primary.
 16. ✅ **Feed UX overhaul** — Sectioned feed (Live Now → Just Happened → Upcoming → Top Markets), non-repetitive reason text, finished event expected-vs-actual design.
 17. ✅ **Divergence badge** — Prediction market vs sportsbook divergence detection (>5% threshold).
+18. ✅ **Canonical identity migration** — Consolidated sport key translations (`sport_keys.py`), `TeamIdentityService` with 5-step resolution cascade, `team_identity_mapping` table, StatPal schedule-first event creation, 6 consumer modules integrated.
 
 ### Next — Features (in priority order)
 
-18. **Apple Sign-In** — Required by App Store policy. Also: change Firebase support email to support@bainluck.com.
-19. **Sport-specific Pulse normalization** — Different sports have different baseline volatility.
-20. **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant events.
-21. **Additional win prob sources** — MoneyPuck for NHL. Infrastructure ready (stub configured).
+19. **Apple Sign-In** — Required by App Store policy. Also: change Firebase support email to support@bainluck.com.
+20. **Sport-specific Pulse normalization** — Different sports have different baseline volatility.
+21. **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant events.
+22. **Additional win prob sources** — MoneyPuck for NHL. Infrastructure ready (stub configured).
 
 ### Later (Q2-Q4 2026)
 - iOS app launch with feed tab, search, and widgets
@@ -1866,6 +1906,7 @@ These are the current focus. Resist the urge to build new features until these a
 - Related futures Phase 4 — LLM "Bigger Picture" summary: GPT-4o-mini generates 2-3 sentence casual summary, cached in `LineMovementAnalysis` with 2h TTL. Frontend summary-first collapsed design.
 - Feed UX overhaul: Sectioned feed (Live Now → Just Happened → Upcoming → Top Markets), non-repetitive reason text in `feed_reasons.py`, finished event expected-vs-actual design (opening odds bar + score with winner bolded + date/time), "Nah" hard filter, "If it's wild" higher bar (min_score 55).
 - League tier expansion: ~70 league entries, Tier 3 (-5 pts), Tier 4 (-45 pts), regular tennis demoted to Tier 4, Pulse boost (+10) for finished events with high Pulse scores.
+- Canonical identity migration: Consolidated 10 sport key translation dicts into `sport_keys.py` (7 accessor functions, zero codebase imports). Built `TeamIdentityService` with 5-step resolution cascade and `team_identity_mapping` table. StatPal schedule-first event creation (`statpal_fixture_id`, `commence_time_source`). Integrated into 6 consumer modules (espn_sync, statpal_sync, sports, roster_sync, prediction_market_matching, team_linking) as supplement to existing fuzzy matching. Backfill task for one-time population from ESPN IDs, team names, and Kalshi abbreviations. 6 admin endpoints.
 </details>
 
 ---
