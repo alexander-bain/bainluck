@@ -86,7 +86,7 @@ class Event(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"), index=True)
-    external_id: Mapped[str] = mapped_column(String(100), unique=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String(100), unique=True)
     home_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
     away_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
 

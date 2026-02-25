@@ -177,6 +177,10 @@ class TestBeatScheduleCompleteness:
         "audit-canonical-keys-daily",
         "audit-prediction-market-links-daily",
         "audit-related-futures-daily",
+        "sync-statpal-schedules",
+        "sync-statpal-injuries",
+        "sync-statpal-live-plays",
+        "sync-statpal-rosters-daily",
     }
 
     def test_no_missing_entries(self):

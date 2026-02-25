@@ -343,9 +343,10 @@ async def _sync_espn_live_events():
 
                         # Correct commence_time from ESPN if significantly different
                         # The Odds API occasionally returns local times as UTC
+                        # Skip if StatPal set the commence_time (more reliable source)
                         if ee.date and event.commence_time:
                             time_diff = abs((ee.date - event.commence_time).total_seconds())
-                            if time_diff > 300:  # > 5 minutes difference
+                            if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":  # > 5 minutes difference
                                 logger.info(
                                     f"ESPN: Correcting commence_time for event {event.id} "
                                     f"({event.home_team_name} vs {event.away_team_name}): "
@@ -353,6 +354,7 @@ async def _sync_espn_live_events():
                                     f"(diff: {time_diff/3600:.1f}h)"
                                 )
                                 event.commence_time = ee.date
+                                event.commence_time_source = "espn"
                                 changed = True
 
                         # Update game clock
@@ -577,9 +579,10 @@ async def _sync_espn_live_events():
                             event.away_team_id = away_team.id
 
                         # Correct commence_time from ESPN if significantly different
+                        # Skip if StatPal set the commence_time (more reliable source)
                         if ee.date and event.commence_time:
                             time_diff = abs((ee.date - event.commence_time).total_seconds())
-                            if time_diff > 300:  # > 5 minutes
+                            if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":  # > 5 minutes
                                 logger.info(
                                     f"ESPN: Correcting commence_time for scheduled event {event.id} "
                                     f"({event.home_team_name} vs {event.away_team_name}): "
@@ -587,6 +590,7 @@ async def _sync_espn_live_events():
                                     f"(diff: {time_diff/3600:.1f}h)"
                                 )
                                 event.commence_time = ee.date
+                                event.commence_time_source = "espn"
                         if ee.broadcasts and not event.broadcast_info:
                             event.broadcast_info = ", ".join(ee.broadcasts)
                         if ee.espn_id and not event.espn_id:

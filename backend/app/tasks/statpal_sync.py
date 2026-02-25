@@ -58,6 +58,8 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     total_fixtures = 0
     details = []
 
+    total_created = 0
+
     try:
         async with get_task_session() as session:
             from app.models import Event, Sport
@@ -88,6 +90,8 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     live_by_teams[key] = f
 
                 sport_updated = 0
+                sport_created = 0
+                now = datetime.now(timezone.utc)
 
                 for fixture in fixtures:
                     if not fixture.home_team or not fixture.away_team:
@@ -105,7 +109,46 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     )
 
                     if not event:
-                        continue
+                        # NEW: Create event from StatPal fixture if it's in the future
+                        if not fixture.start_time or fixture.start_time <= now:
+                            continue  # Don't create events for past games
+
+                        event = Event(
+                            sport_id=sport_id,
+                            external_id=None,  # Will be filled by Odds API later
+                            home_team_name=fixture.home_team,
+                            away_team_name=fixture.away_team,
+                            commence_time=fixture.start_time,
+                            commence_time_source="statpal",
+                            statpal_fixture_id=fixture.fixture_id,
+                            status="scheduled",
+                        )
+                        session.add(event)
+                        await session.flush()  # Get the ID
+                        sport_created += 1
+
+                        logger.info(
+                            f"StatPal: created new event {event.id} for "
+                            f"{fixture.home_team} vs {fixture.away_team} "
+                            f"at {fixture.start_time}"
+                        )
+
+                        # Resolve team identities
+                        from app.services.team_identity import team_identity_service
+                        home_team = await team_identity_service.resolve_team(
+                            session, "statpal", our_key,
+                            source_name=fixture.home_team,
+                        )
+                        away_team = await team_identity_service.resolve_team(
+                            session, "statpal", our_key,
+                            source_name=fixture.away_team,
+                        )
+                        if home_team:
+                            event.home_team_id = home_team.id
+                        if away_team:
+                            event.away_team_id = away_team.id
+
+                        continue  # Skip enrichment below — we just created it
 
                     updated = False
 
@@ -120,9 +163,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                 f"{event.commence_time} -> {fixture.start_time}"
                             )
                             event.commence_time = fixture.start_time
+                            if hasattr(event, "commence_time_source"):
+                                event.commence_time_source = "statpal"
                             updated = True
-
-                    # Store StatPal fixture ID for play-by-play lookups
                     if fixture.fixture_id and not _get_statpal_id(event):
                         _set_statpal_id(event, fixture.fixture_id)
                         updated = True
@@ -152,10 +195,12 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         sport_updated += 1
 
                 total_updated += sport_updated
+                total_created += sport_created
                 details.append({
                     "sport": our_key,
                     "fixtures_fetched": len(fixtures),
                     "events_updated": sport_updated,
+                    "events_created": sport_created,
                     "live_games": len(live),
                 })
 
@@ -167,6 +212,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 
     return {
         "events_updated": total_updated,
+        "events_created": total_created,
         "total_fixtures_fetched": total_fixtures,
         "sports": details,
     }
