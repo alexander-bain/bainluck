@@ -254,6 +254,13 @@ def backfill_team_logos(self):
     return run_async(_backfill_team_logos())
 
 
+@celery_app.task(bind=True, name="app.tasks.cleanup_bad_espn_matches")
+def cleanup_bad_espn_matches(self):
+    """Validate existing ESPN ID assignments and clear bad matches."""
+    from app.tasks.espn_sync import _cleanup_bad_espn_matches
+    return run_async(_cleanup_bad_espn_matches())
+
+
 # --- Team Linking (Futures → Teams) ---
 
 @celery_app.task(bind=True, name="app.tasks.backfill_team_links")

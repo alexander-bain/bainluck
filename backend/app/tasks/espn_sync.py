@@ -3,6 +3,7 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 """
 
 import logging
+import unicodedata
 from datetime import datetime, timezone
 
 from sqlalchemy import select, distinct
@@ -13,6 +14,37 @@ from app.tasks.base import get_task_session, run_async
 from app.tasks.config import ESPN_SPORT_MAPPING
 
 logger = logging.getLogger(__name__)
+
+# Words to exclude from token-overlap scoring (common noise)
+_MATCH_STOPWORDS = frozenset({"the", "of", "at", "and", "de", "fc", "sc", "cf"})
+
+
+def _normalize_for_scoring(name: str) -> str:
+    """Normalize a team name for scoring: strip accents, lowercase, unify apostrophes."""
+    normalized = unicodedata.normalize("NFD", name)
+    normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    for ch in ("\u2018", "\u2019", "\u02BB", "\u02BC", "\u0060", "\u00B4", "\u2032"):
+        normalized = normalized.replace(ch, "'")
+    return normalized.lower().strip()
+
+
+def _team_name_match_score(name_a: str, name_b: str) -> float:
+    """Score team name match quality via word overlap. Returns 0.0-1.0.
+
+    Uses min-coverage: both sides need reasonable overlap. This prevents
+    partial location matches like "Eastern Kentucky" vs "Kentucky" (0.33)
+    and shared mascots like "Air Force Falcons" vs "Atlanta Falcons" (0.33).
+    """
+    if not name_a or not name_b:
+        return 0.0
+    words_a = set(_normalize_for_scoring(name_a).split()) - _MATCH_STOPWORDS
+    words_b = set(_normalize_for_scoring(name_b).split()) - _MATCH_STOPWORDS
+    if not words_a or not words_b:
+        return 0.0
+    overlap = words_a & words_b
+    if not overlap:
+        return 0.0
+    return min(len(overlap) / len(words_a), len(overlap) / len(words_b))
 
 
 async def _enrich_events_metadata(limit: int = 50):
@@ -698,21 +730,26 @@ async def _backfill_team_logos():
                         continue
 
                     # Build lookup of ESPN teams by various name forms
+                    # Skip et.name (mascot-only like "Buckeyes", "Bulldogs") and
+                    # et.nickname (often same as mascot) — these cause false positives
+                    # when multiple teams share a mascot.
                     espn_by_id = {}
                     espn_by_name = {}
                     for et in espn_teams:
                         espn_by_id[et.espn_id] = et
-                        for name in [et.display_name, et.name, et.short_name, et.nickname]:
-                            if name:
+                        for name in [et.display_name, et.short_name]:
+                            if name and len(name) >= 4:
                                 espn_by_name[name.lower()] = et
 
                     # Try to match our teams to ESPN teams
                     for team in teams_by_sport.get(sport_key, []):
                         matched_espn = None
+                        match_was_exact = False
 
                         # Match by ESPN ID first (most reliable)
                         if team.espn_id and team.espn_id in espn_by_id:
                             matched_espn = espn_by_id[team.espn_id]
+                            match_was_exact = True
                         else:
                             # Match by name
                             names_to_check = [team.name]
@@ -721,22 +758,29 @@ async def _backfill_team_logos():
 
                             for name in names_to_check:
                                 name_lower = name.lower()
-                                # Exact match
+                                # Exact match in dict (fast path)
                                 if name_lower in espn_by_name:
                                     matched_espn = espn_by_name[name_lower]
+                                    match_was_exact = True
                                     break
-                                # Substring match
+                                # Token-overlap scoring (replaces substring matching)
+                                best_score = 0.0
+                                best_et = None
                                 for espn_name, et in espn_by_name.items():
-                                    if name_lower in espn_name or espn_name in name_lower:
-                                        matched_espn = et
-                                        break
-                                if matched_espn:
+                                    score = _team_name_match_score(name, espn_name)
+                                    if score > best_score:
+                                        best_score = score
+                                        best_et = et
+                                if best_score > 0.5:
+                                    matched_espn = best_et
+                                    match_was_exact = False
                                     break
 
                         if matched_espn and matched_espn.logo_url:
                             team.logo_url_small = matched_espn.logo_url
                             team.logo_url_large = matched_espn.logo_url
-                            if not team.espn_id:
+                            # Only set espn_id from exact or ID matches, not fuzzy scoring
+                            if not team.espn_id and match_was_exact:
                                 team.espn_id = matched_espn.espn_id
                             if matched_espn.primary_color and not team.primary_color:
                                 color = matched_espn.primary_color
@@ -763,5 +807,127 @@ async def _backfill_team_logos():
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
         print(f"Team logo backfill error: {e}\n{traceback.format_exc()}")
+
+    return stats
+
+
+async def _cleanup_bad_espn_matches():
+    """One-time cleanup for Team records with incorrect ESPN ID assignments.
+
+    Validates each team's espn_id by looking up the ESPN team and comparing
+    names using _team_name_match_score(). Clears ESPN data (ID, logos, colors)
+    for teams that don't pass the threshold.
+    """
+    from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
+    from app.models.models import Team, Sport
+
+    stats = {
+        "teams_checked": 0,
+        "teams_valid": 0,
+        "teams_cleared": 0,
+        "errors": [],
+        "cleared_teams": [],
+    }
+
+    try:
+        async with get_task_session() as session:
+            # Load all teams with espn_id set, grouped by sport
+            result = await session.execute(
+                select(Team, Sport.key)
+                .join(Sport)
+                .where(Team.espn_id.isnot(None))
+            )
+            teams_with_espn = result.all()
+
+            if not teams_with_espn:
+                return {"status": "no_teams_with_espn_id", **stats}
+
+            # Group by sport key
+            teams_by_sport = {}
+            for team, sport_key in teams_with_espn:
+                if sport_key in SPORT_LEAGUE_MAP:
+                    teams_by_sport.setdefault(sport_key, []).append(team)
+
+            if not teams_by_sport:
+                return {"status": "no_espn_mapped_sports", **stats}
+
+            # Fetch ESPN teams for each sport and validate
+            espn = ESPNAPIService()
+            try:
+                for sport_key, teams in teams_by_sport.items():
+                    try:
+                        espn_teams = await espn.get_teams(sport_key)
+                    except Exception as e:
+                        stats["errors"].append(f"fetch_{sport_key}: {str(e)}")
+                        continue
+
+                    if not espn_teams:
+                        continue
+
+                    # Build espn_id → ESPN team lookup
+                    espn_by_id = {et.espn_id: et for et in espn_teams}
+
+                    for team in teams:
+                        stats["teams_checked"] += 1
+                        espn_team = espn_by_id.get(team.espn_id)
+
+                        if not espn_team:
+                            # ESPN ID not found in current API data — clear it
+                            logger.info(
+                                f"Cleanup: ESPN ID {team.espn_id} not found for "
+                                f"team '{team.name}' ({sport_key}) — clearing"
+                            )
+                            stats["teams_cleared"] += 1
+                            stats["cleared_teams"].append({
+                                "team": team.name,
+                                "espn_id": team.espn_id,
+                                "reason": "espn_id_not_found",
+                            })
+                            team.espn_id = None
+                            team.logo_url_small = None
+                            team.logo_url_large = None
+                            team.primary_color = None
+                            team.secondary_color = None
+                            continue
+
+                        # Validate name match
+                        espn_display = espn_team.display_name or espn_team.name or ""
+                        score = _team_name_match_score(team.name, espn_display)
+
+                        # Also check alternate names for a better score
+                        if team.alternate_names:
+                            for alt in team.alternate_names:
+                                alt_score = _team_name_match_score(alt, espn_display)
+                                if alt_score > score:
+                                    score = alt_score
+
+                        if score > 0.5:
+                            stats["teams_valid"] += 1
+                        else:
+                            logger.info(
+                                f"Cleanup: team '{team.name}' matched to ESPN "
+                                f"'{espn_display}' with score {score:.2f} — clearing"
+                            )
+                            stats["teams_cleared"] += 1
+                            stats["cleared_teams"].append({
+                                "team": team.name,
+                                "espn_id": team.espn_id,
+                                "espn_name": espn_display,
+                                "score": round(score, 2),
+                                "reason": "low_match_score",
+                            })
+                            team.espn_id = None
+                            team.logo_url_small = None
+                            team.logo_url_large = None
+                            team.primary_color = None
+                            team.secondary_color = None
+
+            finally:
+                await espn.close()
+
+    except Exception as e:
+        stats["errors"].append(f"Task error: {str(e)}")
+        import traceback
+        logger.error(f"Cleanup bad ESPN matches error: {e}\n{traceback.format_exc()}")
 
     return stats

@@ -659,3 +659,86 @@ class TestParseNews:
         news = client._parse_news(data)
         assert len(news) == 1
         assert news[0].headline == "Valid headline"
+
+
+# ── _team_name_match_score ─────────────────────────────────────────────
+
+
+class TestTeamNameMatchScore:
+    """Tests for team name token-overlap scoring used in logo backfill matching."""
+
+    def test_exact_match(self):
+        """Identical names → 1.0."""
+        from app.tasks.espn_sync import _team_name_match_score
+        assert _team_name_match_score("Ohio State Buckeyes", "Ohio State Buckeyes") == 1.0
+
+    def test_partial_location_rejected(self):
+        """'Eastern Kentucky Colonels' vs 'Kentucky Wildcats' → below 0.5."""
+        from app.tasks.espn_sync import _team_name_match_score
+        score = _team_name_match_score("Eastern Kentucky Colonels", "Kentucky Wildcats")
+        assert score < 0.5  # min(1/3, 1/2) = 0.33
+
+    def test_shared_mascot_rejected(self):
+        """'Air Force Falcons' vs 'Atlanta Falcons' → below 0.5."""
+        from app.tasks.espn_sync import _team_name_match_score
+        score = _team_name_match_score("Air Force Falcons", "Atlanta Falcons")
+        assert score < 0.5  # min(1/3, 1/2) = 0.33
+
+    def test_state_disambiguation(self):
+        """'South Carolina State Bulldogs' vs 'South Carolina Gamecocks' → at/below 0.5."""
+        from app.tasks.espn_sync import _team_name_match_score
+        score = _team_name_match_score("South Carolina State Bulldogs", "South Carolina Gamecocks")
+        assert score <= 0.5  # {south, carolina}: min(2/4, 2/3) = 0.5 — rejected by strict > threshold
+
+    def test_full_match_accepted(self):
+        """'Boston Celtics' vs 'Boston Celtics' → 1.0."""
+        from app.tasks.espn_sync import _team_name_match_score
+        assert _team_name_match_score("Boston Celtics", "Boston Celtics") == 1.0
+
+    def test_location_only_rejected(self):
+        """Single-word overlap: 'Boston' vs 'Boston Celtics' → 0.5 (at threshold, rejected by > 0.5)."""
+        from app.tasks.espn_sync import _team_name_match_score
+        score = _team_name_match_score("Boston", "Boston Celtics")
+        assert score <= 0.5  # min(1/1, 1/2) = 0.5 — rejected by strict > threshold
+
+    def test_empty_names(self):
+        """Empty/None → 0.0."""
+        from app.tasks.espn_sync import _team_name_match_score
+        assert _team_name_match_score("", "Boston Celtics") == 0.0
+        assert _team_name_match_score("Boston Celtics", "") == 0.0
+        assert _team_name_match_score(None, "Boston Celtics") == 0.0
+        assert _team_name_match_score("Boston", None) == 0.0
+
+    def test_stopwords_excluded(self):
+        """'FC Barcelona' vs 'Barcelona' → 1.0 (FC is stopword)."""
+        from app.tasks.espn_sync import _team_name_match_score
+        assert _team_name_match_score("FC Barcelona", "Barcelona") == 1.0
+
+    def test_unicode_normalized(self):
+        """Accented names match their unaccented equivalents."""
+        from app.tasks.espn_sync import _team_name_match_score
+        assert _team_name_match_score("Hernández FC", "Hernandez FC") == 1.0
+
+    def test_single_word_mascot_rejected(self):
+        """'Bulldogs' alone vs 'Georgia Bulldogs' → 0.5 (borderline)."""
+        from app.tasks.espn_sync import _team_name_match_score
+        score = _team_name_match_score("Bulldogs", "Georgia Bulldogs")
+        assert score == 0.5  # min(1/1, 1/2) = 0.5
+
+    def test_north_carolina_tar_heels(self):
+        """Full multi-word match should score 1.0."""
+        from app.tasks.espn_sync import _team_name_match_score
+        assert _team_name_match_score("North Carolina Tar Heels", "North Carolina Tar Heels") == 1.0
+
+    def test_wyoming_cowboys_vs_dallas_cowboys(self):
+        """'Wyoming Cowboys' vs 'Dallas Cowboys' → 0.5 (at threshold, rejected by > 0.5)."""
+        from app.tasks.espn_sync import _team_name_match_score
+        score = _team_name_match_score("Wyoming Cowboys", "Dallas Cowboys")
+        assert score <= 0.5  # {cowboys}: min(1/2, 1/2) = 0.5 — rejected by strict > threshold
+
+    def test_threshold_boundary_accepted(self):
+        """Scores above 0.5 should pass the > 0.5 threshold."""
+        from app.tasks.espn_sync import _team_name_match_score
+        # "Brown Bears" vs "Brown Bears" → 1.0 — well above threshold
+        score = _team_name_match_score("Brown Bears", "Brown Bears")
+        assert score > 0.5

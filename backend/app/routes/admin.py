@@ -1936,6 +1936,30 @@ async def get_espn_task_status(
     return response
 
 
+@router.post("/espn/cleanup-bad-matches")
+async def cleanup_bad_espn_matches(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """
+    Validate existing ESPN ID assignments and clear bad matches.
+
+    Fetches ESPN teams for each sport, compares team names using token-overlap
+    scoring, and clears ESPN data (ID, logos, colors) for teams below the
+    match threshold. Returns task_id for status checking.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import cleanup_bad_espn_matches as task
+
+    result = task.delay()
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "message": "Cleanup task queued. Check status at /api/admin/espn/task/{task_id}",
+    }
+
+
 @router.get("/celery/health")
 async def celery_health():
     """Check Celery worker health via heartbeat timestamp in Redis."""
