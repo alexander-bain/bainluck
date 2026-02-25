@@ -276,6 +276,25 @@ class TestBuildLLMPrompt:
         assert "Period: 4" in prompt
         assert "Clock: 4:32" in prompt
 
+    def test_prompt_game_context_only_no_speculation(self):
+        """Game state without injuries/news should not speculate about causes."""
+        analysis = _make_analysis()
+        ctx = {
+            "home_team": "Celtics",
+            "away_team": "Lakers",
+            "home_score": 87,
+            "away_score": 82,
+            "period": 4,
+            "clock": "4:32",
+        }
+        prompt = build_llm_prompt(analysis, game_context=ctx)
+        # Should NOT encourage focusing on in-game speculation
+        assert "focus on in-game factors" not in prompt.lower()
+        # Should instruct against vague speculation
+        assert "Do NOT speculate" in prompt
+        # Should instruct to describe factually
+        assert "describe what happened factually" in prompt.lower()
+
     def test_prompt_injuries_unknown_type_omitted(self):
         """Injury with 'Unknown' type should not show type detail."""
         analysis = _make_analysis()

@@ -339,13 +339,19 @@ def build_llm_prompt(
     # Context-aware instructions:
     # When we have no concrete context, the LLM should acknowledge
     # the movement without fabricating explanations.
-    if has_any_context:
+    if has_injuries or has_news:
         context_instructions = """- Write 2-3 concise sentences explaining the most likely reason(s) for the movement
 - Focus on the single biggest movement if there are multiple
 - Use the injury and news information provided when explaining the movement. Only reference specific injuries/news if they are listed above. Do not fabricate injury information.
 - Be specific to the sport and teams when possible
-- If the movement is during a live game, focus on in-game factors (scoring runs, momentum, key plays)
+- If the movement is during a live game, reference the current score and game state
 - If pre-game, focus on news/injury/lineup factors"""
+    elif has_game_state:
+        context_instructions = """- Write 2-3 concise sentences describing the movement and current game state
+- Reference the current score and period/quarter to give context for the shift
+- Do NOT speculate about specific causes (key plays, scoring runs, momentum swings) unless that information was provided above
+- Describe what happened factually: how the odds shifted and what the score is. Example: "With the Lakers up 15 in the third quarter, their odds have climbed from 60% to 82% since tip-off."
+- Do NOT say "possibly due to" or "likely because of" — describe the situation, not guesses"""
     else:
         context_instructions = """- Write 1-2 concise sentences describing the movement factually (which direction, which team benefited, how large the shift was)
 - Do NOT speculate about causes. Do not say "likely due to" or "probably because" — we don't have enough data to explain why.
@@ -353,9 +359,9 @@ def build_llm_prompt(
 - Simply describe what happened to the odds. Example: "The line shifted 8% toward the Lakers over the past hour, moving from a toss-up to a clear Lakers lean."
 - It's OK to note that the reason is unclear — that's better than guessing."""
 
-    return f"""You are a sports betting analyst explaining odds movements to casual fans who want to understand what's happening, not get betting advice.
+    return f"""You are a sports analyst describing odds movements to casual fans who want to understand what's happening, not get betting advice.
 
-Given the following odds movement data, explain WHY the line likely moved.
+Given the following odds movement data, describe what happened and provide context.
 
 {analysis.summary_context}{extra_context}
 
