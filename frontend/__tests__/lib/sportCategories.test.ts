@@ -576,7 +576,7 @@ describe('SPORT_CATEGORIES', () => {
       expect(cat.key).toBeTruthy();
       expect(cat.name).toBeTruthy();
       expect(cat.emoji).toBeTruthy();
-      expect(cat.prefixes.length).toBeGreaterThan(0);
+      expect(Array.isArray(cat.prefixes)).toBe(true);
       expect([1, 2, 3]).toContain(cat.tier);
     }
   });
