@@ -1549,3 +1549,43 @@ Summary:"""
     except Exception as e:
         logger.error(f"Related futures summary error: {e}")
         return None
+
+
+# =========================================================================
+# Audit matching — structured JSON responses for quality audits
+# =========================================================================
+
+def audit_match(prompt: str) -> Optional[dict]:
+    """
+    Send an audit prompt to GPT-4o-mini and parse a structured JSON response.
+
+    Used by the matching audit system to verify canonical key dedup,
+    prediction market → event links, and related futures coverage.
+
+    Args:
+        prompt: Full audit prompt expecting a JSON response.
+
+    Returns:
+        Parsed JSON dict, or None if LLM unavailable or parsing fails.
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+
+        raw = response.choices[0].message.content.strip()
+
+        import json
+        return json.loads(raw)
+
+    except Exception as e:
+        logger.error(f"Audit match LLM error: {e}")
+        return None

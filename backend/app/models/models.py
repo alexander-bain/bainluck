@@ -613,7 +613,7 @@ class LineMovementAnalysis(Base):
     __tablename__ = "line_movement_analyses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
+    event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("events.id"), index=True)
 
     # Movement data (snapshot of what triggered the analysis)
     movement_data: Mapped[Optional[dict]] = mapped_column(JSONB)
@@ -640,4 +640,4 @@ class LineMovementAnalysis(Base):
     # - Completed games: never (historical analysis)
 
     # Relationship
-    event: Mapped["Event"] = relationship()
+    event: Mapped[Optional["Event"]] = relationship()

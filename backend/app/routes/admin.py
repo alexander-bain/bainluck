@@ -1,7 +1,7 @@
 """Admin API endpoints for maintenance tasks."""
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -3394,4 +3394,240 @@ async def fix_live_statuses(
     return {
         "fixed": fixed_count,
         "message": f"Reset {fixed_count} events from 'live' to 'scheduled'",
+    }
+
+
+# =========================================================================
+# Matching Audit endpoints
+# =========================================================================
+
+@router.post("/audit/canonical-keys")
+async def trigger_audit_canonical_keys(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(50, description="Number of groups/markets to sample"),
+):
+    """Trigger canonical key dedup audit (runs as background Celery task)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import audit_canonical_keys
+    task = audit_canonical_keys.delay(limit)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": "Canonical key audit queued. Use /api/admin/audit/task/{task_id} to check status.",
+    }
+
+
+@router.post("/audit/prediction-market-links")
+async def trigger_audit_prediction_market_links(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(50, description="Number of links/markets to sample"),
+):
+    """Trigger prediction market → event link audit (background task)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import audit_prediction_market_links
+    task = audit_prediction_market_links.delay(limit)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": "Prediction market link audit queued. Use /api/admin/audit/task/{task_id} to check status.",
+    }
+
+
+@router.post("/audit/related-futures")
+async def trigger_audit_related_futures(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(30, description="Number of events/outcomes to sample"),
+):
+    """Trigger related futures coverage audit (background task)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import audit_related_futures
+    task = audit_related_futures.delay(limit)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": "Related futures audit queued. Use /api/admin/audit/task/{task_id} to check status.",
+    }
+
+
+@router.get("/audit/task/{task_id}")
+async def get_audit_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of an audit task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app as _celery
+
+    result = _celery.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+
+    if result.ready():
+        try:
+            response["result"] = result.result
+        except Exception as e:
+            response["error"] = str(e)
+
+    return response
+
+
+@router.get("/audit/canonical-keys")
+async def get_audit_canonical_keys(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get latest canonical key audit results."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import LineMovementAnalysis
+
+    result = await db.execute(
+        select(LineMovementAnalysis)
+        .where(LineMovementAnalysis.analysis_type == "audit_canonical")
+        .order_by(LineMovementAnalysis.created_at.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        return {"status": "no_data", "message": "No canonical key audit has been run yet."}
+
+    return {
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "summary": row.explanation,
+        **row.movement_data,
+    }
+
+
+@router.get("/audit/prediction-market-links")
+async def get_audit_prediction_market_links(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get latest prediction market link audit results."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import LineMovementAnalysis
+
+    result = await db.execute(
+        select(LineMovementAnalysis)
+        .where(LineMovementAnalysis.analysis_type == "audit_pred_market")
+        .order_by(LineMovementAnalysis.created_at.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        return {"status": "no_data", "message": "No prediction market link audit has been run yet."}
+
+    return {
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "summary": row.explanation,
+        **row.movement_data,
+    }
+
+
+@router.get("/audit/related-futures")
+async def get_audit_related_futures(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get latest related futures audit results."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import LineMovementAnalysis
+
+    result = await db.execute(
+        select(LineMovementAnalysis)
+        .where(LineMovementAnalysis.analysis_type == "audit_related_fut")
+        .order_by(LineMovementAnalysis.created_at.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        return {"status": "no_data", "message": "No related futures audit has been run yet."}
+
+    return {
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "summary": row.explanation,
+        **row.movement_data,
+    }
+
+
+@router.get("/audit/patterns")
+async def get_audit_patterns(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    days: int = Query(30, description="Look back period in days"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aggregate pattern_category across recent audit findings.
+
+    Shows recurring issues ranked by frequency, with suggested deterministic
+    rules to prevent them. When a pattern appears 3+ times, it's a strong
+    signal to add a deterministic rule.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import LineMovementAnalysis
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    result = await db.execute(
+        select(LineMovementAnalysis)
+        .where(
+            LineMovementAnalysis.analysis_type.in_([
+                "audit_canonical", "audit_pred_market", "audit_related_fut",
+            ]),
+            LineMovementAnalysis.created_at >= cutoff,
+        )
+        .order_by(LineMovementAnalysis.created_at.desc())
+    )
+    audit_rows = result.scalars().all()
+
+    # Aggregate patterns
+    pattern_counts: dict[str, dict] = {}
+    for row in audit_rows:
+        data = row.movement_data or {}
+        for finding in data.get("findings", []):
+            cat = finding.get("pattern_category")
+            if not cat or cat == "null":
+                continue
+            if cat not in pattern_counts:
+                pattern_counts[cat] = {
+                    "category": cat,
+                    "count": 0,
+                    "latest_suggestion": None,
+                    "audit_types": set(),
+                    "finding_types": set(),
+                }
+            pattern_counts[cat]["count"] += 1
+            rule = finding.get("suggested_rule")
+            if rule and rule != "null":
+                pattern_counts[cat]["latest_suggestion"] = rule
+            pattern_counts[cat]["audit_types"].add(data.get("audit_type", ""))
+            pattern_counts[cat]["finding_types"].add(finding.get("type", ""))
+
+    # Convert sets to lists for JSON and sort by count
+    patterns = sorted(pattern_counts.values(), key=lambda p: p["count"], reverse=True)
+    for p in patterns:
+        p["audit_types"] = sorted(p["audit_types"])
+        p["finding_types"] = sorted(p["finding_types"])
+
+    return {
+        "days": days,
+        "total_audit_runs": len(audit_rows),
+        "unique_patterns": len(patterns),
+        "patterns": patterns[:50],
     }

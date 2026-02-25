@@ -174,6 +174,9 @@ class TestBeatScheduleCompleteness:
         "sync-mlb-win-probability",
         "recategorize-other-daily",
         "backfill-canonical-keys-daily",
+        "audit-canonical-keys-daily",
+        "audit-prediction-market-links-daily",
+        "audit-related-futures-daily",
     }
 
     def test_no_missing_entries(self):

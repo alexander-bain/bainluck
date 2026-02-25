@@ -320,6 +320,29 @@ def collapse_snapshots(self, min_age_hours: int = 48, table: str = "odds", limit
     return run_async(_collapse_snapshots_impl(min_age_hours, table, limit))
 
 
+# --- Matching Audits ---
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.audit_canonical_keys")
+def audit_canonical_keys(self, limit: int = 50):
+    """Audit canonical key dedup quality with LLM verification."""
+    from app.tasks.matching_audit import _audit_canonical_keys_impl
+    return run_async(_audit_canonical_keys_impl(limit))
+
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.audit_prediction_market_links")
+def audit_prediction_market_links(self, limit: int = 50):
+    """Audit prediction market → event link quality with LLM verification."""
+    from app.tasks.matching_audit import _audit_prediction_market_links_impl
+    return run_async(_audit_prediction_market_links_impl(limit))
+
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.audit_related_futures")
+def audit_related_futures(self, limit: int = 30):
+    """Audit related futures coverage with LLM verification."""
+    from app.tasks.matching_audit import _audit_related_futures_impl
+    return run_async(_audit_related_futures_impl(limit))
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
@@ -436,6 +459,21 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_canonical_keys",
         "schedule": crontab(minute=30, hour=8),  # Daily at 8:30 AM UTC
         "kwargs": {"limit": 2000},
+    },
+    "audit-canonical-keys-daily": {
+        "task": "app.tasks.audit_canonical_keys",
+        "schedule": crontab(minute=0, hour=9),  # Daily at 9:00 AM UTC
+        "kwargs": {"limit": 50},
+    },
+    "audit-prediction-market-links-daily": {
+        "task": "app.tasks.audit_prediction_market_links",
+        "schedule": crontab(minute=15, hour=9),  # Daily at 9:15 AM UTC
+        "kwargs": {"limit": 50},
+    },
+    "audit-related-futures-daily": {
+        "task": "app.tasks.audit_related_futures",
+        "schedule": crontab(minute=30, hour=9),  # Daily at 9:30 AM UTC
+        "kwargs": {"limit": 30},
     },
 }
 
