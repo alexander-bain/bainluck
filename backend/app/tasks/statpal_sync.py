@@ -1,0 +1,639 @@
+"""StatPal sync task — schedules, injuries, game times, and play-by-play.
+
+StatPal serves as the canonical source for:
+1. **Event schedules** — fixture lists with accurate start times (corrects The Odds API time errors)
+2. **Rosters** — player names, positions, jersey numbers (supplements ESPN)
+3. **Injuries** — structured injury reports for "Why Did the Line Move?" context
+4. **Game start/end times** — authoritative window for when markets should be open/close
+5. **Play-by-play** — scoring plays and key events that explain probability movements
+
+The sync task runs on three cadences:
+- Schedules: hourly — upserts fixtures, corrects commence_time, populates end_time
+- Injuries: every 15 min — injury reports feed into line movement analysis
+- Live plays: every 60s — play-by-play for live games (scoring context for Pulse)
+"""
+
+import asyncio
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+from sqlalchemy import select, update, and_, or_
+
+from app.tasks.base import get_task_session
+from app.tasks.config import STATPAL_SPORT_MAPPING
+
+logger = logging.getLogger(__name__)
+
+
+async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
+    """Sync fixture schedules from StatPal for all mapped sports.
+
+    For each sport, fetches today's + upcoming fixtures and:
+    - Corrects commence_time on existing events (The Odds API sometimes has wrong times)
+    - Populates end_time for finished games (market close window)
+    - Stores StatPal fixture ID on events for later play-by-play lookups
+
+    Args:
+        sport_key: If provided, only sync this sport. Otherwise syncs all mapped sports.
+
+    Returns:
+        Summary dict with counts per sport.
+    """
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+
+    if sport_key:
+        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+    else:
+        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+
+    if not sport_keys:
+        return {"skipped": True, "reason": f"sport_key {sport_key!r} not in STATPAL_SPORT_MAPPING"}
+
+    service = StatPalAPIService()
+    total_updated = 0
+    total_fixtures = 0
+    details = []
+
+    try:
+        async with get_task_session() as session:
+            from app.models import Event, Sport
+
+            for our_key in sport_keys:
+                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+
+                # Find the Sport record
+                sport_result = await session.execute(
+                    select(Sport.id).where(Sport.key == our_key)
+                )
+                sport_row = sport_result.first()
+                if not sport_row:
+                    details.append({"sport": our_key, "status": "sport_not_found"})
+                    continue
+
+                sport_id = sport_row.id
+
+                # Fetch today's and upcoming fixtures
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                fixtures = await service.get_fixtures(statpal_sport, date=today)
+
+                # Also fetch live scores to get current game state
+                live = await service.get_live_scores(statpal_sport)
+                live_by_teams = {}
+                for f in live:
+                    key = _fixture_match_key(f.home_team, f.away_team)
+                    live_by_teams[key] = f
+
+                sport_updated = 0
+
+                for fixture in fixtures:
+                    if not fixture.home_team or not fixture.away_team:
+                        continue
+
+                    total_fixtures += 1
+
+                    # Find matching event in our DB by team names + time proximity
+                    match_key = _fixture_match_key(fixture.home_team, fixture.away_team)
+                    live_data = live_by_teams.get(match_key)
+
+                    # Query for matching event
+                    event = await _find_matching_event(
+                        session, Event, sport_id, fixture
+                    )
+
+                    if not event:
+                        continue
+
+                    updated = False
+
+                    # Correct commence_time if StatPal has a different (likely more accurate) time
+                    if fixture.start_time and event.commence_time:
+                        diff = abs((fixture.start_time - event.commence_time).total_seconds())
+                        # Only correct if >5 min difference (avoids timezone rounding)
+                        if diff > 300:
+                            logger.info(
+                                f"StatPal: correcting commence_time for event {event.id} "
+                                f"({event.home_team_name} vs {event.away_team_name}): "
+                                f"{event.commence_time} -> {fixture.start_time}"
+                            )
+                            event.commence_time = fixture.start_time
+                            updated = True
+
+                    # Store StatPal fixture ID for play-by-play lookups
+                    if fixture.fixture_id and not _get_statpal_id(event):
+                        _set_statpal_id(event, fixture.fixture_id)
+                        updated = True
+
+                    # Populate end_time for finished games (via win_probability_sources JSONB)
+                    if fixture.end_time and fixture.status == "finished":
+                        sources = event.win_probability_sources or {}
+                        if "statpal_end_time" not in sources:
+                            sources["statpal_end_time"] = fixture.end_time.isoformat()
+                            event.win_probability_sources = sources
+                            updated = True
+
+                    # Update scores from live data if available
+                    if live_data and live_data.status == "live":
+                        if live_data.home_score is not None:
+                            event.home_score = live_data.home_score
+                        if live_data.away_score is not None:
+                            event.away_score = live_data.away_score
+                        updated = True
+
+                    if updated:
+                        sport_updated += 1
+
+                total_updated += sport_updated
+                details.append({
+                    "sport": our_key,
+                    "fixtures_fetched": len(fixtures),
+                    "events_updated": sport_updated,
+                    "live_games": len(live),
+                })
+
+                # Rate limit between sports
+                await asyncio.sleep(0.5)
+
+    finally:
+        await service.close()
+
+    return {
+        "events_updated": total_updated,
+        "total_fixtures_fetched": total_fixtures,
+        "sports": details,
+    }
+
+
+async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
+    """Sync injury reports from StatPal for line movement analysis.
+
+    Injuries are stored in the LineMovementAnalysis table as structured context,
+    making them available for "Why Did the Line Move?" LLM explanations.
+
+    Args:
+        sport_key: If provided, only sync this sport.
+
+    Returns:
+        Summary dict with injury counts per sport.
+    """
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+
+    if sport_key:
+        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+    else:
+        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+
+    if not sport_keys:
+        return {"skipped": True, "reason": f"sport_key {sport_key!r} not in STATPAL_SPORT_MAPPING"}
+
+    service = StatPalAPIService()
+    total_injuries = 0
+    total_events_enriched = 0
+    details = []
+
+    try:
+        async with get_task_session() as session:
+            from app.models import Event, Sport
+
+            for our_key in sport_keys:
+                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+
+                # Find the Sport record
+                sport_result = await session.execute(
+                    select(Sport.id).where(Sport.key == our_key)
+                )
+                sport_row = sport_result.first()
+                if not sport_row:
+                    details.append({"sport": our_key, "status": "sport_not_found"})
+                    continue
+
+                sport_id = sport_row.id
+
+                injuries = await service.get_injuries(statpal_sport)
+                if not injuries:
+                    details.append({"sport": our_key, "injuries_fetched": 0, "events_enriched": 0})
+                    await asyncio.sleep(0.3)
+                    continue
+
+                # Group injuries by team name for efficient event lookup
+                injuries_by_team: dict[str, list] = {}
+                for inj in injuries:
+                    team_lower = inj.team.lower()
+                    if team_lower not in injuries_by_team:
+                        injuries_by_team[team_lower] = []
+                    injuries_by_team[team_lower].append(inj)
+
+                # Find upcoming/live events for this sport to attach injuries to
+                now = datetime.now(timezone.utc)
+                window_start = now - timedelta(hours=6)
+                window_end = now + timedelta(days=2)
+
+                result = await session.execute(
+                    select(Event).where(
+                        Event.sport_id == sport_id,
+                        Event.commence_time.between(window_start, window_end),
+                        Event.status.in_(["scheduled", "live"]),
+                    )
+                )
+                events = result.scalars().all()
+
+                sport_enriched = 0
+                for event in events:
+                    event_injuries = []
+
+                    # Match injuries to event by team name
+                    for team_name in [event.home_team_name, event.away_team_name]:
+                        team_lower = team_name.lower()
+                        # Check exact match and suffix match
+                        for key, team_injuries in injuries_by_team.items():
+                            if key == team_lower or key.endswith(team_lower.split()[-1]) or team_lower.endswith(key.split()[-1]):
+                                event_injuries.extend(team_injuries)
+
+                    if event_injuries:
+                        # Store injury context in win_probability_sources JSONB
+                        sources = event.win_probability_sources or {}
+                        sources["statpal_injuries"] = [
+                            {
+                                "player": inj.player_name,
+                                "team": inj.team,
+                                "status": inj.status,
+                                "type": inj.injury_type,
+                                "detail": inj.detail,
+                            }
+                            for inj in event_injuries[:10]  # Cap at 10 per event
+                        ]
+                        sources["statpal_injuries_updated"] = now.isoformat()
+                        event.win_probability_sources = sources
+                        sport_enriched += 1
+
+                total_injuries += len(injuries)
+                total_events_enriched += sport_enriched
+                details.append({
+                    "sport": our_key,
+                    "injuries_fetched": len(injuries),
+                    "events_enriched": sport_enriched,
+                })
+
+                await asyncio.sleep(0.3)
+
+    finally:
+        await service.close()
+
+    return {
+        "total_injuries": total_injuries,
+        "events_enriched": total_events_enriched,
+        "sports": details,
+    }
+
+
+async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
+    """Fetch play-by-play data for live games from StatPal.
+
+    Stores key scoring plays that explain probability movements. This data
+    feeds into the "Why Did the Line Move?" feature and provides game context
+    for Pulse calculations.
+
+    Args:
+        sport_key: If provided, only sync this sport.
+
+    Returns:
+        Summary dict with play counts.
+    """
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+
+    if sport_key:
+        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+    else:
+        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+
+    service = StatPalAPIService()
+    total_plays = 0
+    total_events = 0
+    details = []
+
+    try:
+        async with get_task_session() as session:
+            from app.models import Event, Sport
+
+            for our_key in sport_keys:
+                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+
+                sport_result = await session.execute(
+                    select(Sport.id).where(Sport.key == our_key)
+                )
+                sport_row = sport_result.first()
+                if not sport_row:
+                    continue
+
+                sport_id = sport_row.id
+
+                # Find live events with StatPal fixture IDs
+                result = await session.execute(
+                    select(Event).where(
+                        Event.sport_id == sport_id,
+                        Event.status == "live",
+                    )
+                )
+                live_events = result.scalars().all()
+
+                sport_plays = 0
+                sport_events = 0
+
+                for event in live_events:
+                    statpal_id = _get_statpal_id(event)
+                    if not statpal_id:
+                        continue
+
+                    plays = await service.get_play_by_play(statpal_sport, statpal_id)
+                    if not plays:
+                        continue
+
+                    # Store recent plays in win_probability_sources JSONB
+                    # Keep last 10 plays for context
+                    recent_plays = plays[-10:]
+                    sources = event.win_probability_sources or {}
+                    sources["statpal_plays"] = [
+                        {
+                            "period": p.period,
+                            "clock": p.clock,
+                            "description": p.description[:200],  # Truncate long descriptions
+                            "type": p.play_type,
+                            "team": p.team,
+                            "player": p.player,
+                            "home_score": p.home_score,
+                            "away_score": p.away_score,
+                        }
+                        for p in recent_plays
+                    ]
+                    sources["statpal_plays_updated"] = datetime.now(timezone.utc).isoformat()
+                    event.win_probability_sources = sources
+
+                    sport_plays += len(plays)
+                    sport_events += 1
+
+                    # Rate limit between games
+                    await asyncio.sleep(0.5)
+
+                total_plays += sport_plays
+                total_events += sport_events
+                if sport_events > 0:
+                    details.append({
+                        "sport": our_key,
+                        "live_events_with_plays": sport_events,
+                        "total_plays": sport_plays,
+                    })
+
+    finally:
+        await service.close()
+
+    return {
+        "total_plays": total_plays,
+        "live_events_with_plays": total_events,
+        "sports": details,
+    }
+
+
+async def _sync_statpal_rosters(sport_key: Optional[str] = None) -> dict:
+    """Sync team rosters from StatPal, supplementing ESPN data.
+
+    StatPal provides roster data with positions and jersey numbers. This
+    supplements the existing ESPN + MLB Stats API roster sync by providing
+    an additional data source with potentially better coverage for some sports.
+
+    Args:
+        sport_key: If provided, only sync this sport.
+
+    Returns:
+        Summary dict with update counts.
+    """
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+
+    if sport_key:
+        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+    else:
+        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+
+    service = StatPalAPIService()
+    total_updated = 0
+    details = []
+
+    try:
+        async with get_task_session() as session:
+            from app.models import Team, Sport
+
+            for our_key in sport_keys:
+                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+
+                sport_result = await session.execute(
+                    select(Sport.id).where(Sport.key == our_key)
+                )
+                sport_row = sport_result.first()
+                if not sport_row:
+                    details.append({"sport": our_key, "status": "sport_not_found"})
+                    continue
+
+                sport_id = sport_row.id
+
+                # Fetch teams from StatPal
+                statpal_teams = await service.get_teams(statpal_sport)
+                if not statpal_teams:
+                    details.append({"sport": our_key, "status": "no_teams_from_statpal"})
+                    continue
+
+                # Get our DB teams for matching
+                result = await session.execute(
+                    select(Team).where(Team.sport_id == sport_id)
+                )
+                db_teams = result.scalars().all()
+
+                # Build name lookup
+                db_by_name: dict[str, Team] = {}
+                for t in db_teams:
+                    db_by_name[t.name.lower()] = t
+                    parts = t.name.split()
+                    if len(parts) >= 2:
+                        db_by_name[parts[-1].lower()] = t
+
+                sport_updated = 0
+                for sp_team in statpal_teams:
+                    # Match StatPal team to our DB team
+                    db_team = db_by_name.get(sp_team.name.lower())
+                    if not db_team and sp_team.short_name:
+                        db_team = db_by_name.get(sp_team.short_name.lower())
+
+                    if not db_team:
+                        continue
+
+                    # Only update roster if we don't already have ESPN data
+                    # (ESPN is our primary source — StatPal supplements gaps)
+                    if db_team.roster_players:
+                        continue
+
+                    # Fetch roster
+                    players = await service.get_roster(statpal_sport, sp_team.team_id)
+                    if not players:
+                        continue
+
+                    # Build roster_players JSONB entries
+                    import unicodedata
+
+                    entries = []
+                    seen = set()
+                    for p in players:
+                        if p.name in seen:
+                            continue
+                        seen.add(p.name)
+
+                        entry = {"name": p.name}
+                        if p.position:
+                            entry["position"] = p.position
+                        entries.append(entry)
+
+                        # ASCII variant for matching
+                        ascii_name = "".join(
+                            c for c in unicodedata.normalize("NFD", p.name)
+                            if unicodedata.category(c) != "Mn"
+                        )
+                        if ascii_name != p.name and ascii_name not in seen:
+                            seen.add(ascii_name)
+                            entries.append(ascii_name)
+
+                    entries.sort(key=lambda x: x["name"] if isinstance(x, dict) else x)
+
+                    await session.execute(
+                        update(Team)
+                        .where(Team.id == db_team.id)
+                        .values(roster_players=entries)
+                    )
+                    sport_updated += 1
+
+                    await asyncio.sleep(0.3)
+
+                total_updated += sport_updated
+                details.append({
+                    "sport": our_key,
+                    "statpal_teams": len(statpal_teams),
+                    "teams_updated": sport_updated,
+                })
+
+    finally:
+        await service.close()
+
+    return {
+        "teams_updated": total_updated,
+        "sports": details,
+    }
+
+
+# =============================================================================
+# Helper functions
+# =============================================================================
+
+
+def _fixture_match_key(home: str, away: str) -> str:
+    """Create a normalized key for matching fixtures to events."""
+    return f"{home.lower().strip()}|{away.lower().strip()}"
+
+
+async def _find_matching_event(session, Event, sport_id: int, fixture) -> Optional:
+    """Find a matching Event record for a StatPal fixture.
+
+    Uses team name matching + time proximity (±6 hours) to find the best match.
+    """
+    if not fixture.home_team or not fixture.away_team:
+        return None
+
+    home_lower = fixture.home_team.lower()
+    away_lower = fixture.away_team.lower()
+
+    # Build time window
+    if fixture.start_time:
+        window_start = fixture.start_time - timedelta(hours=6)
+        window_end = fixture.start_time + timedelta(hours=6)
+    else:
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=1)
+        window_end = now + timedelta(days=7)
+
+    # Query for candidates
+    from sqlalchemy import func as sqlfunc
+
+    result = await session.execute(
+        select(Event).where(
+            Event.sport_id == sport_id,
+            Event.commence_time.between(window_start, window_end),
+            or_(
+                sqlfunc.lower(Event.home_team_name).contains(home_lower.split()[-1]),
+                sqlfunc.lower(Event.away_team_name).contains(away_lower.split()[-1]),
+            ),
+        ).limit(10)
+    )
+    candidates = result.scalars().all()
+
+    if not candidates:
+        return None
+
+    # Score candidates
+    best = None
+    best_score = -1
+
+    for event in candidates:
+        score = 0
+        ev_home = event.home_team_name.lower()
+        ev_away = event.away_team_name.lower()
+
+        # Team name matching
+        if home_lower in ev_home or ev_home in home_lower:
+            score += 2
+        elif home_lower.split()[-1] in ev_home:
+            score += 1
+
+        if away_lower in ev_away or ev_away in away_lower:
+            score += 2
+        elif away_lower.split()[-1] in ev_away:
+            score += 1
+
+        # Require both teams to match at some level
+        if score < 2:
+            continue
+
+        # Time proximity bonus
+        if fixture.start_time and event.commence_time:
+            diff_hours = abs((fixture.start_time - event.commence_time).total_seconds()) / 3600
+            if diff_hours < 1:
+                score += 3
+            elif diff_hours < 3:
+                score += 2
+            elif diff_hours < 6:
+                score += 1
+
+        if score > best_score:
+            best_score = score
+            best = event
+
+    return best
+
+
+def _get_statpal_id(event) -> Optional[str]:
+    """Get the StatPal fixture ID stored on an event."""
+    sources = event.win_probability_sources or {}
+    return sources.get("statpal_fixture_id")
+
+
+def _set_statpal_id(event, fixture_id: str):
+    """Store the StatPal fixture ID on an event."""
+    sources = event.win_probability_sources or {}
+    sources["statpal_fixture_id"] = fixture_id
+    event.win_probability_sources = sources

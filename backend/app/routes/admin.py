@@ -3631,3 +3631,165 @@ async def get_audit_patterns(
         "unique_patterns": len(patterns),
         "patterns": patterns[:50],
     }
+
+
+# =============================================================================
+# StatPal Integration
+# =============================================================================
+
+
+@router.post("/statpal/sync-schedules")
+async def trigger_statpal_schedule_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."),
+):
+    """
+    Trigger a StatPal schedule/fixture sync.
+
+    Fetches fixtures from StatPal, corrects commence_time errors from The Odds API,
+    populates end_time for finished games, and stores StatPal fixture IDs for
+    play-by-play lookups.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_statpal_schedules
+
+    try:
+        task = sync_statpal_schedules.delay(sport_key=sport_key)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"StatPal schedule sync queued{f' for {sport_key}' if sport_key else ' (all sports)'}. "
+                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.post("/statpal/sync-injuries")
+async def trigger_statpal_injury_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."),
+):
+    """
+    Trigger a StatPal injury report sync.
+
+    Fetches injury reports and attaches them to upcoming/live events for
+    "Why Did the Line Move?" context.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_statpal_injuries
+
+    try:
+        task = sync_statpal_injuries.delay(sport_key=sport_key)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"StatPal injury sync queued. "
+                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.post("/statpal/sync-plays")
+async def trigger_statpal_play_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(None, description="Sport key. If omitted, syncs all live games."),
+):
+    """
+    Trigger a StatPal play-by-play sync for live games.
+
+    Fetches recent plays from live games to provide context for probability
+    movements and Pulse calculations.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_statpal_live_plays
+
+    try:
+        task = sync_statpal_live_plays.delay(sport_key=sport_key)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"StatPal play-by-play sync queued. "
+                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.post("/statpal/sync-rosters")
+async def trigger_statpal_roster_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(None, description="Sport key. If omitted, syncs all."),
+):
+    """
+    Trigger a StatPal roster sync (supplements ESPN roster data).
+
+    Only updates teams that don't already have roster data from ESPN.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_statpal_rosters
+
+    try:
+        task = sync_statpal_rosters.delay(sport_key=sport_key)
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"StatPal roster sync queued. "
+                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/statpal/task/{task_id}")
+async def get_statpal_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check the status of a StatPal sync task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app
+
+    result = celery_app.AsyncResult(task_id)
+    response = {"task_id": task_id, "state": result.state}
+    if result.ready():
+        if result.successful():
+            response["result"] = result.result
+        else:
+            response["error"] = str(result.result)
+    return response
+
+
+@router.get("/statpal/status")
+async def statpal_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check StatPal integration status — API key configured, sport mapping, etc."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.statpal_api import is_available
+    from app.tasks.config import STATPAL_SPORT_MAPPING
+
+    return {
+        "api_key_configured": is_available(),
+        "mapped_sports": list(STATPAL_SPORT_MAPPING.keys()),
+        "endpoints": {
+            "sync_schedules": "POST /api/admin/statpal/sync-schedules",
+            "sync_injuries": "POST /api/admin/statpal/sync-injuries",
+            "sync_plays": "POST /api/admin/statpal/sync-plays",
+            "sync_rosters": "POST /api/admin/statpal/sync-rosters",
+            "task_status": "GET /api/admin/statpal/task/{task_id}",
+        },
+    }

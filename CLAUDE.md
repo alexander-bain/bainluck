@@ -28,6 +28,7 @@
 - **Polymarket** (polymarket.com) - Prediction market data (sports + politics/entertainment/crypto, free, no API key)
 - **SportsDataIO** (sportsdata.io) - **Removed.** Roster sync migrated to ESPN + MLB Stats API. `sportsdata_api.py` deleted.
 - **MySportsFeeds** (mysportsfeeds.com) - Injuries, lineup changes, transactions, game context (pending personal account approval). Key enabler for "Why Did the Line Move?" feature. Affordable alternative to SportsDataIO for structured sports data with timestamps.
+- **StatPal** (statpal.io) - Canonical schedules, rosters, injuries, play-by-play, team/player stats (~$99/mo). Covers NFL, NBA, MLB, NHL, soccer, PGA, cricket, esports, F1. 5-15s real-time latency, 300k calls/day. Corrects The Odds API commence_time errors, provides game end times, structured injury reports, and scoring plays context.
 - **MLB Stats API** (statsapi.mlb.com) - Live baseball win probability, schedules, play-by-play (free, no API key)
 - **ESPN** (undocumented API) - Team colors, logos, live game data, win probability, rosters, injuries, news (free, unreliable)
 - **TMDB** (themoviedb.org) - Movie posters, headshots, trailers for Oscars page (free tier, no API key needed for read — uses Read Access Token as Bearer auth)
@@ -61,6 +62,7 @@ bainluck/
 │   │   │   ├── kalshi_api.py    # Kalshi prediction market client
 │   │   │   ├── espn_api.py      # ESPN API client (teams, scores, injuries, news)
 │   │   │   ├── mlb_api.py       # MLB Stats API client
+│   │   │   ├── statpal_api.py   # StatPal API client (schedules, rosters, injuries, play-by-play)
 │   │   │   ├── firebase_auth.py # Firebase Admin SDK
 │   │   │   ├── llm.py           # OpenAI GPT-4o-mini integration
 │   │   │   └── database.py      # DB connection
@@ -84,7 +86,8 @@ bainluck/
 │   │   │   ├── roster_sync.py   # SportsDataIO roster sync
 │   │   │   ├── team_linking.py  # Futures outcome → team linking
 │   │   │   ├── prediction_market_matching.py  # Link game markets → events
-│   │   │   └── mlb_sync.py     # MLB Stats API win probability sync
+│   │   │   ├── mlb_sync.py     # MLB Stats API win probability sync
+│   │   │   └── statpal_sync.py # StatPal schedule/injury/play-by-play sync
 │   │   └── utils/
 │   │       ├── odds_math.py     # Probability conversions
 │   │       ├── pulse.py         # Game excitement algorithm
@@ -222,6 +225,7 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
 - `SPORTSDATA_API_KEY` - **Removed** — no longer needed (roster sync uses ESPN + MLB Stats API)
 - `MYSPORTSFEEDS_API_KEY` - From mysportsfeeds.com (optional — enables structured injury/lineup data for "Why Did the Line Move?", pending account approval)
+- `STATPAL_API_KEY` - From statpal.io (~$99/mo — enables schedule sync, roster enrichment, injury reports, play-by-play data)
 - `FIREBASE_PROJECT_ID` - Firebase project ID (optional - enables auth)
 - `FIREBASE_SERVICE_ACCOUNT_JSON` - Full service account JSON string (optional - for admin operations)
 

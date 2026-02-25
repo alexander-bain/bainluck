@@ -311,6 +311,36 @@ def sync_rosters(self, sport_key: str = None):
     return run_async(_sync_rosters(sport_key))
 
 
+# --- StatPal (Schedules, Injuries, Play-by-Play) ---
+
+@celery_app.task(bind=True, name="app.tasks.sync_statpal_schedules")
+def sync_statpal_schedules(self, sport_key: str = None):
+    """Sync fixture schedules from StatPal — corrects commence_time, populates end_time."""
+    from app.tasks.statpal_sync import _sync_statpal_schedules
+    return _tracked_run("statpal_schedules", _sync_statpal_schedules(sport_key))
+
+
+@celery_app.task(bind=True, name="app.tasks.sync_statpal_injuries")
+def sync_statpal_injuries(self, sport_key: str = None):
+    """Sync injury reports from StatPal for line movement context."""
+    from app.tasks.statpal_sync import _sync_statpal_injuries
+    return _tracked_run("statpal_injuries", _sync_statpal_injuries(sport_key))
+
+
+@celery_app.task(bind=True, name="app.tasks.sync_statpal_live_plays")
+def sync_statpal_live_plays(self, sport_key: str = None):
+    """Fetch play-by-play data from StatPal for live games."""
+    from app.tasks.statpal_sync import _sync_statpal_live_plays
+    return _tracked_run("statpal_plays", _sync_statpal_live_plays(sport_key))
+
+
+@celery_app.task(bind=True, name="app.tasks.sync_statpal_rosters")
+def sync_statpal_rosters(self, sport_key: str = None):
+    """Sync team rosters from StatPal (supplements ESPN roster data)."""
+    from app.tasks.statpal_sync import _sync_statpal_rosters
+    return run_async(_sync_statpal_rosters(sport_key))
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")
@@ -434,6 +464,22 @@ celery_app.conf.beat_schedule = {
     "sync-rosters-daily": {
         "task": "app.tasks.sync_rosters",
         "schedule": crontab(minute=0, hour=7),  # Daily at 7:00 AM UTC
+    },
+    "sync-statpal-schedules": {
+        "task": "app.tasks.sync_statpal_schedules",
+        "schedule": crontab(minute=40),  # Hourly at :40 — after event discovery (:15) and futures (:30)
+    },
+    "sync-statpal-injuries": {
+        "task": "app.tasks.sync_statpal_injuries",
+        "schedule": crontab(minute="10,25,40,55"),  # Every 15 min
+    },
+    "sync-statpal-live-plays": {
+        "task": "app.tasks.sync_statpal_live_plays",
+        "schedule": 60.0,  # Every 60 seconds — play-by-play for live games only
+    },
+    "sync-statpal-rosters-daily": {
+        "task": "app.tasks.sync_statpal_rosters",
+        "schedule": crontab(minute=30, hour=7),  # Daily at 7:30 AM UTC — after ESPN roster sync (7:00)
     },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",

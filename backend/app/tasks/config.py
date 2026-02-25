@@ -59,3 +59,20 @@ ESPN_SPORT_MAPPING = {
     "soccer_usa_mls": "soccer/usa.1",
     "soccer_epl": "soccer/eng.1",
 }
+
+# StatPal sport key mapping (our sport_key -> StatPal sport identifier)
+# StatPal uses v1 for American sports, v2 for soccer
+STATPAL_SPORT_MAPPING = {
+    "americanfootball_nfl": "nfl",
+    "basketball_nba": "nba",
+    "baseball_mlb": "mlb",
+    "icehockey_nhl": "nhl",
+    "soccer_epl": "soccer",
+    "soccer_usa_mls": "soccer",
+    "golf_pga": "pga",
+}
+
+# StatPal polling intervals
+STATPAL_SCHEDULE_POLL_INTERVAL = 3600      # 1 hour — fixture/schedule sync
+STATPAL_INJURY_POLL_INTERVAL = 900         # 15 min — injury reports
+STATPAL_LIVE_PLAY_POLL_INTERVAL = 60       # 1 min — play-by-play for live games
