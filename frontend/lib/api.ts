@@ -16,6 +16,7 @@ import type {
   SearchSuggestionsResponse,
   PulseRankingsResponse,
   RelatedFuturesResponse,
+  RelatedEventsResponse,
   FeedResponse,
   TeamSearchResult,
   UserPreferencesResponse,
@@ -420,6 +421,17 @@ export async function fetchRelatedFutures(
 ): Promise<RelatedFuturesResponse> {
   return apiFetch<RelatedFuturesResponse>(
     `/api/events/${eventId}/related-futures`
+  );
+}
+
+/**
+ * Fetch related events for a futures market (upcoming/recent games featuring contender teams)
+ */
+export async function fetchRelatedEvents(
+  marketId: number
+): Promise<RelatedEventsResponse> {
+  return apiFetch<RelatedEventsResponse>(
+    `/api/futures/${marketId}/related-events`
   );
 }
 

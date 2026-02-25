@@ -292,6 +292,7 @@ export interface FuturesMarket {
   category_tags?: string[];
   created_at: string | null;
   updated_at: string | null;
+  source_count?: number;
 }
 
 export interface FuturesMarketsResponse {
@@ -619,6 +620,35 @@ export interface FeedResponse {
     pinned_events: number;
     pinned_futures: number;
   };
+}
+
+// Related events on futures detail pages
+export interface RelatedEventLinkedTeam {
+  side: "home" | "away";
+  team_name: string;
+  outcome_name: string;
+  probability: number | null;
+  american_odds: number | null;
+  rank: number | null;
+}
+
+export interface RelatedEvent {
+  event_id: number;
+  home_team: string;
+  away_team: string;
+  commence_time: string;
+  status: "scheduled" | "live" | "completed" | "closed";
+  sport: string | null;
+  home_score: number | null;
+  away_score: number | null;
+  linked_teams: RelatedEventLinkedTeam[];
+}
+
+export interface RelatedEventsResponse {
+  market_id: number;
+  market_name: string;
+  events: RelatedEvent[];
+  total_count?: number;
 }
 
 // Futures browse types (Search tab)

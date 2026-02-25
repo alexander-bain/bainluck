@@ -173,7 +173,21 @@ async def get_feed(
     # === SCORE FUTURES ===
     if include_futures:
         futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names)
-        feed_items.extend(futures_items)
+
+        # Deduplicate futures by canonical_market_key — keep highest-scoring per group.
+        # Without this, "NBA Championship" from Polymarket, Kalshi, and Odds API
+        # all appear as separate cards in the feed.
+        seen_canonical: dict[str, dict] = {}
+        deduped: list[dict] = []
+        for fitem in futures_items:
+            key = fitem["data"].get("canonical_market_key")
+            if key is None:
+                deduped.append(fitem)  # No canonical key — can't dedup
+                continue
+            if key not in seen_canonical or fitem["score"] > seen_canonical[key]["score"]:
+                seen_canonical[key] = fitem
+        deduped.extend(seen_canonical.values())
+        feed_items.extend(deduped)
 
     # === RANK AND PAGINATE ===
     # Sort by score descending, then by recency as tiebreaker

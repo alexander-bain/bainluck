@@ -6,10 +6,11 @@ import useSWR from "swr";
 import {
   fetchFuturesMarket,
   fetchFuturesHistory,
+  fetchRelatedEvents,
   formatProbability,
   formatAmericanOdds,
 } from "@/lib/api";
-import type { FuturesOutcome } from "@/lib/types";
+import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
@@ -97,6 +98,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   } = useSWR(
     market ? ["futures-history", marketId] : null,
     () => fetchFuturesHistory(marketId, 168)
+  );
+
+  // Related events (upcoming/recent games featuring contender teams)
+  const { data: relatedEventsData } = useSWR(
+    market ? ["futures-related-events", marketId] : null,
+    () => fetchRelatedEvents(marketId),
+    { revalidateOnFocus: false }
   );
 
   // Sort outcomes
@@ -353,6 +361,21 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </div>
         )}
       </div>
+
+      {/* Games This Week */}
+      {relatedEventsData && relatedEventsData.events.length > 0 && (
+        <div className="bg-surface-card rounded-card shadow-card p-6">
+          <h2 className="text-title-3 font-semibold text-text-primary mb-4 flex items-center gap-2">
+            <span>📅</span>
+            Games This Week
+          </h2>
+          <div className="space-y-2">
+            {relatedEventsData.events.map((event) => (
+              <RelatedEventRow key={event.event_id} event={event} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Probability Chart (if history available) */}
       {historyData && historyData.outcomes.length > 0 && (
@@ -641,6 +664,98 @@ function OutcomeRow({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Compact row for a related event on the futures detail page
+ */
+function RelatedEventRow({ event }: { event: RelatedEvent }) {
+  const isLive = event.status === "live";
+  const isFinished = event.status === "completed" || event.status === "closed";
+  const hasScore = event.home_score !== null && event.away_score !== null;
+
+  // Format time
+  let timeLabel = "";
+  if (isLive) {
+    timeLabel = "Live";
+  } else if (isFinished) {
+    timeLabel = "Final";
+  } else {
+    const d = new Date(event.commence_time);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow = d.toDateString() === tomorrow.toDateString();
+    const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (isToday) {
+      timeLabel = `Today ${timeStr}`;
+    } else if (isTomorrow) {
+      timeLabel = `Tomorrow ${timeStr}`;
+    } else {
+      timeLabel = d.toLocaleDateString([], { weekday: "short" }) + ` ${timeStr}`;
+    }
+  }
+
+  return (
+    <Link
+      href={`/events/${event.event_id}`}
+      className="flex items-center gap-3 p-3 rounded-lg bg-slate/5 hover:bg-slate/10 transition-colors"
+    >
+      {/* Status indicator */}
+      <div className="w-16 flex-shrink-0">
+        {isLive ? (
+          <span className="flex items-center gap-1 text-xs font-semibold text-accent-live">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
+            LIVE
+          </span>
+        ) : isFinished ? (
+          <span className="text-xs font-semibold text-text-muted">FINAL</span>
+        ) : (
+          <span className="text-xs text-text-secondary">{timeLabel}</span>
+        )}
+      </div>
+
+      {/* Teams + score */}
+      <div className="flex-1 min-w-0">
+        <div className="text-sm text-text-primary truncate">
+          {hasScore ? (
+            <span>
+              <span className={isFinished && event.away_score! > event.home_score! ? "font-semibold" : ""}>
+                {event.away_team}
+              </span>
+              <span className="font-mono text-text-muted mx-1">
+                {event.away_score} - {event.home_score}
+              </span>
+              <span className={isFinished && event.home_score! > event.away_score! ? "font-semibold" : ""}>
+                {event.home_team}
+              </span>
+            </span>
+          ) : (
+            <span>
+              {event.away_team}
+              <span className="text-text-muted mx-1.5">at</span>
+              {event.home_team}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Linked team odds from this market */}
+      <div className="flex items-center gap-3 flex-shrink-0">
+        {event.linked_teams.map((lt) => (
+          <span key={lt.team_name} className="text-xs text-text-secondary">
+            <span className="font-medium text-text-primary">{lt.team_name.split(" ").pop()}</span>
+            {lt.probability !== null && (
+              <span className="ml-1 font-mono text-text-muted">
+                {Math.round(lt.probability * 100)}%
+              </span>
+            )}
+          </span>
+        ))}
+      </div>
+    </Link>
   );
 }
 
