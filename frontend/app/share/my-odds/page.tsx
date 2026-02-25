@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { fetchSharedTeamFutures } from "@/lib/api";
 import type { TeamFutureItem } from "@/lib/types";
 import { SkeletonGrid } from "@/components/SkeletonCard";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 export default function SharedMyOddsPage() {
   return (
@@ -17,6 +18,10 @@ export default function SharedMyOddsPage() {
 }
 
 function SharedMyOddsContent() {
+  usePageTracking({ pageType: 'share', pageTitle: 'Shared Team Odds' });
+  useScrollDepth({ pageType: 'share' });
+  useEngagementTime({ pageType: 'share' });
+
   const searchParams = useSearchParams();
   const teamsParam = searchParams.get("teams");
 

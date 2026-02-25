@@ -6,6 +6,7 @@ import { fetchPulseRankings } from "@/lib/api";
 import type { RankedEvent } from "@/lib/types";
 import PulseBadge from "@/components/PulseBadge";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 /**
  * Pulse Hall of Fame Page
@@ -13,6 +14,10 @@ import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
  * Shows the all-time highest and lowest Pulse games ever tracked.
  */
 export default function PulseHallOfFamePage() {
+  usePageTracking({ pageType: 'pulse_hof', pageTitle: 'Pulse Hall of Fame' });
+  useScrollDepth({ pageType: 'pulse_hof' });
+  useEngagementTime({ pageType: 'pulse_hof' });
+
   const [highest, setHighest] = useState<RankedEvent[]>([]);
   const [lowest, setLowest] = useState<RankedEvent[]>([]);
   const [loading, setLoading] = useState(true);

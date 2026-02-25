@@ -177,6 +177,11 @@ async def get_feed(
         # Deduplicate futures by canonical_market_key — keep highest-scoring per group.
         # Without this, "NBA Championship" from Polymarket, Kalshi, and Odds API
         # all appear as separate cards in the feed.
+        #
+        # Safety: verify top outcome names overlap before collapsing.  Two markets
+        # sharing a canonical key but with zero outcome overlap are likely a
+        # false positive (e.g., different award markets both keyed as
+        # "basketball:NBA:game_prop:2025-26").
         seen_canonical: dict[str, dict] = {}
         deduped: list[dict] = []
         for fitem in futures_items:
@@ -184,8 +189,18 @@ async def get_feed(
             if key is None:
                 deduped.append(fitem)  # No canonical key — can't dedup
                 continue
-            if key not in seen_canonical or fitem["score"] > seen_canonical[key]["score"]:
+            if key not in seen_canonical:
                 seen_canonical[key] = fitem
+            elif fitem["score"] > seen_canonical[key]["score"]:
+                # Verify outcome overlap before replacing
+                if _outcomes_overlap(seen_canonical[key], fitem):
+                    seen_canonical[key] = fitem
+                else:
+                    deduped.append(fitem)  # False positive — keep both
+            else:
+                # Lower score — still verify overlap before dropping
+                if not _outcomes_overlap(seen_canonical[key], fitem):
+                    deduped.append(fitem)  # False positive — keep both
         deduped.extend(seen_canonical.values())
         feed_items.extend(deduped)
 
@@ -975,3 +990,22 @@ def _ensure_feed_diversity(
             result.append(item)
 
     return result
+
+
+def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
+    """Check if two feed futures items have overlapping top outcome names.
+
+    Used as a safety check before deduplicating by canonical_market_key.
+    Returns True if at least 1 outcome name appears in both items' top
+    outcomes (case-insensitive).  Returns True if either item has no
+    outcomes (benefit of the doubt — can't disprove overlap).
+    """
+    outcomes_a = item_a.get("data", {}).get("top_outcomes", [])
+    outcomes_b = item_b.get("data", {}).get("top_outcomes", [])
+    if not outcomes_a or not outcomes_b:
+        return True  # Can't check — assume overlap
+    names_a = {o.get("name", "").lower().strip() for o in outcomes_a if o.get("name")}
+    names_b = {o.get("name", "").lower().strip() for o in outcomes_b if o.get("name")}
+    if not names_a or not names_b:
+        return True
+    return bool(names_a & names_b)

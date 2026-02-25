@@ -3,6 +3,7 @@
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory } from "@/lib/api";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import type { WinProbSourceMeta, ESPNHistoryPoint } from "@/lib/types";
@@ -56,6 +57,11 @@ interface ModelsPageProps {
 
 export default function ModelsPage({ params }: ModelsPageProps) {
   const eventId = parseInt(params.id, 10);
+
+  // Analytics hooks must be called before conditional returns
+  usePageTracking({ pageType: 'models', pageTitle: 'Win Probability Models' });
+  useScrollDepth({ pageType: 'models' });
+  useEngagementTime({ pageType: 'models' });
 
   const { data: event, error: eventError } = useSWR(
     `/api/events/${eventId}`,

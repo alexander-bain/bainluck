@@ -2,6 +2,8 @@
 Shared constants and configuration for Celery tasks.
 """
 
+from app.utils.sport_keys import ESPN_SPORT_MAPPING, STATPAL_SPORT_MAPPING  # noqa: F401 — re-exported
+
 # Adaptive polling state keys in Redis
 POLL_STATE_KEY = "bainluck:poll_state"
 LAST_ODDS_HASH_KEY = "bainluck:last_odds_hash"
@@ -46,31 +48,6 @@ MIN_HOURS_BEFORE_STALENESS_CHECK = 1.5  # Don't check staleness until match has 
 
 # Futures poll less frequently since they change slowly
 FUTURES_POLL_INTERVAL = 3600  # 1 hour default
-
-# ESPN sport key mapping (our sport_key -> ESPN sport identifier)
-ESPN_SPORT_MAPPING = {
-    "basketball_nba": "basketball/nba",
-    "basketball_ncaab": "basketball/mens-college-basketball",
-    "basketball_wncaab": "basketball/womens-college-basketball",
-    "americanfootball_nfl": "football/nfl",
-    "americanfootball_ncaaf": "football/college-football",
-    "icehockey_nhl": "hockey/nhl",
-    "baseball_mlb": "baseball/mlb",
-    "soccer_usa_mls": "soccer/usa.1",
-    "soccer_epl": "soccer/eng.1",
-}
-
-# StatPal sport key mapping (our sport_key -> StatPal sport identifier)
-# StatPal uses v1 for American sports, v2 for soccer
-STATPAL_SPORT_MAPPING = {
-    "americanfootball_nfl": "nfl",
-    "basketball_nba": "nba",
-    "baseball_mlb": "mlb",
-    "icehockey_nhl": "nhl",
-    "soccer_epl": "soccer",
-    "soccer_usa_mls": "soccer",
-    "golf_pga": "pga",
-}
 
 # StatPal polling intervals
 STATPAL_SCHEDULE_POLL_INTERVAL = 3600      # 1 hour — fixture/schedule sync

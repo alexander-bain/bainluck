@@ -8,6 +8,7 @@ import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCat
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
+import { useAnalyticsContext } from "@/components/Analytics";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -219,6 +220,7 @@ function EventFeedCard({
   onThumbsDown?: (category: string) => void;
   category?: string;
 }) {
+  const { track } = useAnalyticsContext();
   const isLive = data.status === "live";
   const isFinished = data.status === "completed" || data.status === "closed";
   const isScheduled = data.status === "scheduled";
@@ -268,7 +270,24 @@ function EventFeedCard({
     : displayAwayProb;
 
   return (
-    <Link href={`/events/${data.id}`}>
+    <Link href={`/events/${data.id}`} onClick={() => {
+      track('event_card_click', {
+        event_id: data.id,
+        sport: data.sport || 'unknown',
+        league: data.sport || 'unknown',
+        league_tier: 3,
+        home_team: data.home_team,
+        away_team: data.away_team,
+        status: data.status,
+        home_probability: homeProb,
+        away_probability: awayProb,
+        is_close_game: homeProb !== null && awayProb !== null && Math.abs(homeProb - awayProb) < 0.1,
+        is_live: isLive,
+        source_section: 'featured' as const,
+        position_index: 0,
+        minutes_to_start: Math.round((new Date(data.commence_time).getTime() - Date.now()) / 60000),
+      });
+    }}>
       <div className={`
         rounded-card border border-surface-border bg-surface-card
         p-3 hover:bg-surface-elevated transition-all cursor-pointer

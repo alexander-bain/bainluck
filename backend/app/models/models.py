@@ -61,6 +61,9 @@ class Team(Base):
     location: Mapped[Optional[str]] = mapped_column(String(100))  # ESPN "location" field (city/region/school)
     roster_players: Mapped[Optional[dict]] = mapped_column(JSONB)  # ["Jayson Tatum", "Jaylen Brown", ...]
 
+    # StatPal enrichment
+    statpal_team_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="teams")
     home_events: Mapped[list["Event"]] = relationship(
@@ -83,7 +86,7 @@ class Event(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"), index=True)
-    external_id: Mapped[str] = mapped_column(String(100), unique=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String(100), unique=True)
     home_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
     away_team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id"))
 
@@ -130,6 +133,11 @@ class Event(Base):
     period: Mapped[Optional[str]] = mapped_column(String(100))  # "Q4", "2nd Half", "OT", or schedule info
     espn_win_prob_home: Mapped[Optional[float]] = mapped_column(Numeric(5, 4))  # ESPN's model
     win_probability_sources: Mapped[Optional[dict]] = mapped_column(JSONB)  # {"espn": 0.65, "betting": 0.60}
+
+    # StatPal enrichment
+    statpal_fixture_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    statpal_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    commence_time_source: Mapped[Optional[str]] = mapped_column(String(20))  # 'odds_api', 'espn', 'statpal'
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
@@ -641,3 +649,27 @@ class LineMovementAnalysis(Base):
 
     # Relationship
     event: Mapped[Optional["Event"]] = relationship()
+
+
+class TeamIdentityMapping(Base):
+    """Maps team identities across external data sources.
+
+    Enables O(1) team lookups instead of fuzzy name matching on every poll.
+    Each row links a Team record to one external identifier (ESPN ID, Kalshi
+    abbreviation, Odds API name, etc.) scoped by sport_key.
+    """
+
+    __tablename__ = "team_identity_mapping"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    source_id: Mapped[Optional[str]] = mapped_column(String(200))
+    source_name: Mapped[Optional[str]] = mapped_column(String(300), index=True)
+    source_abbreviation: Mapped[Optional[str]] = mapped_column(String(20))
+    sport_key: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    team: Mapped["Team"] = relationship()

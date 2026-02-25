@@ -28,6 +28,7 @@ import {
 } from "@/lib/tmdb";
 import { FuturesChart } from "@/components/FuturesChart";
 import OscarsModal from "@/components/OscarsModal";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
 // Types
@@ -48,6 +49,10 @@ interface NomineeTrailer {
 // ============================================================================
 
 export default function OscarsPage() {
+  usePageTracking({ pageType: 'oscars', pageTitle: '98th Academy Awards Odds' });
+  useScrollDepth({ pageType: 'oscars' });
+  useEngagementTime({ pageType: 'oscars' });
+
   const [data, setData] = useState<OscarsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

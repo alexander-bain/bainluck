@@ -13,48 +13,15 @@ from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 from app.utils.team_linking import _normalize_name
-
-logger = logging.getLogger(__name__)
-
-
-# ── Kalshi game ticker detection ─────────────────────────────────────────────
-
-# Kalshi game-level event ticker prefixes.
-# These reliably identify game-level markets regardless of the event title.
-# e.g., "KXNBAGAME-26FEB19BOSGSW" → NBA game between BOS and GSW on Feb 19
-_KALSHI_GAME_TICKER_PREFIXES = (
-    "kxnbagame",     # NBA game
-    "kxnflgame",     # NFL game
-    "kxnhlgame",     # NHL game
-    "kxmlbgame",     # MLB game
-    "kxncaabgame",   # NCAAB (college basketball) game
-    "kxncaafgame",   # NCAAF (college football) game
-    "kxwnbagame",    # WNBA game
-    "kxmlsgame",     # MLS game
-    "kxsoccergame",  # Soccer game
-    "kxufcfight",    # UFC fight
-    "kxboxingfight", # Boxing fight
-    "kxlolgame",     # League of Legends esports game
-    "kxwohockey",    # Winter Olympics hockey
-    "kxwocurling",   # Winter Olympics curling
-    "kxsohockey",    # Summer Olympics hockey (field hockey)
-    "kxsobasketball", # Summer Olympics basketball
-    "kxsosoccer",    # Summer Olympics soccer
+from app.utils.sport_keys import (
+    KALSHI_GAME_TICKER_PREFIXES as _KALSHI_GAME_TICKER_PREFIXES,
+    KALSHI_TICKER_TO_SPORT_KEY as _TICKER_TO_SPORT_PREFIX,
+    LLM_CATEGORY_TO_SPORT_PREFIX as _SPORT_CATEGORY_TO_KEY_PREFIX,
+    get_sport_key_from_ticker as get_sport_prefix_from_ticker,
+    is_kalshi_game_ticker,
 )
 
-
-def is_kalshi_game_ticker(external_id: str) -> bool:
-    """
-    Check if a Kalshi external_id (event_ticker) indicates a game-level market.
-
-    Kalshi uses structured tickers like "KXNBAGAME-26FEB19BOSGSW" for NBA games.
-    This is the most reliable signal for game-level detection — more reliable
-    than name pattern matching.
-    """
-    if not external_id:
-        return False
-    ext_lower = external_id.lower()
-    return any(ext_lower.startswith(prefix) for prefix in _KALSHI_GAME_TICKER_PREFIXES)
+logger = logging.getLogger(__name__)
 
 
 # ── Game-level market detection ──────────────────────────────────────────────
@@ -719,75 +686,6 @@ def find_moneyline_outcome(
                 if 0 < prob < 1:
                     return (outcome, yes_is_home)
 
-    return None
-
-
-# ── Kalshi ticker → sport_key mapping for fallback matching ──────────────────
-# When a Kalshi game market has a generic name (e.g., "Professional Basketball Game")
-# and extract_matchup() fails, we can still match by sport + commence_time.
-# This maps ticker prefixes to The Odds API sport_key prefixes.
-
-_TICKER_TO_SPORT_PREFIX: dict[str, str] = {
-    "kxnbagame": "basketball_nba",
-    "kxnflgame": "americanfootball_nfl",
-    "kxnhlgame": "icehockey_nhl",
-    "kxmlbgame": "baseball_mlb",
-    "kxncaabgame": "basketball_ncaab",
-    "kxncaafgame": "americanfootball_ncaaf",
-    "kxwnbagame": "basketball_wnba",
-    "kxmlsgame": "soccer_usa_mls",
-    "kxsoccergame": "soccer",
-    "kxufcfight": "mma_mixed_martial_arts",
-    "kxboxingfight": "boxing_boxing",
-    "kxlolgame": "esports",
-    # Winter Olympics
-    "kxwohockey": "icehockey_olympics",
-    "kxwocurling": "curling_olympics",
-    # Summer Olympics
-    "kxsohockey": "fieldhockey_olympics",
-    "kxsobasketball": "basketball_olympics",
-    "kxsosoccer": "soccer_olympics",
-}
-
-
-# ── llm_sport_category → sport_key prefix mapping ────────────────────────────
-# Maps the llm_sport_category values (set by categorization rules or Kalshi
-# category passthrough) to The Odds API sport_key prefixes. Used during
-# event matching to prefer same-sport candidates.
-
-_SPORT_CATEGORY_TO_KEY_PREFIX: dict[str, str] = {
-    "basketball": "basketball",
-    "football": "americanfootball",
-    "soccer": "soccer",
-    "hockey": "icehockey",
-    "baseball": "baseball",
-    "golf": "golf",
-    "tennis": "tennis",
-    "mma": "mma",
-    "boxing": "boxing",
-    "cricket": "cricket",
-    "rugby": "rugby",
-    "motorsports": "motorsport",
-    "lacrosse": "lacrosse",
-    "esports": "esports",
-    "aussierules": "aussierules",
-    "olympics": "olympics",  # Will match sport keys like icehockey_olympics, basketball_olympics
-}
-
-
-def get_sport_prefix_from_ticker(external_id: str) -> Optional[str]:
-    """
-    Get the sport_key prefix for a Kalshi game ticker.
-
-    Returns a sport_key prefix (e.g., "basketball_nba") or None.
-    Used for fallback matching when name-based extraction fails.
-    """
-    if not external_id:
-        return None
-    ext_lower = external_id.lower()
-    for prefix, sport in _TICKER_TO_SPORT_PREFIX.items():
-        if ext_lower.startswith(prefix):
-            return sport
     return None
 
 

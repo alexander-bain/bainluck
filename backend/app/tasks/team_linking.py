@@ -73,12 +73,32 @@ async def link_outcome_to_team(
     """
     from app.utils.team_linking import match_outcome_to_team
 
-    # Step 1: Direct name match
+    # Step 1: Identity service fast path (indexed lookup)
+    from app.services.team_identity import team_identity_service
+    # Determine sport key from teams list (all teams in same category share a key)
+    identity_sport_key = ""
+    if teams:
+        identity_sport_key = teams[0].get("sport_key", "")
+    if identity_sport_key:
+        resolved = await team_identity_service.resolve_team(
+            session, "futures", identity_sport_key,
+            source_name=outcome_name,
+        )
+        if resolved:
+            return resolved.id
+
+    # Step 2: Direct name match
     team_id = match_outcome_to_team(outcome_name, teams)
     if team_id:
+        # Register for future instant lookups
+        if identity_sport_key:
+            await team_identity_service.register_team_identity(
+                session, team_id, "futures", identity_sport_key,
+                source_name=outcome_name,
+            )
         return team_id
 
-    # Step 2: LLM player-team classification
+    # Step 3: LLM player-team classification
     if use_llm:
         from app.services import llm
         if not llm.is_available():

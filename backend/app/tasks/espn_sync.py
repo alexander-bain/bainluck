@@ -336,6 +336,21 @@ async def _sync_espn_live_events():
                             event.away_team_id = away_team.id
                             changed = True
 
+                        # Register ESPN team identities for indexed lookups
+                        from app.services.team_identity import team_identity_service
+                        if home_team and ee.home_team:
+                            await team_identity_service.register_team_identity(
+                                session, home_team.id, "espn", sport_key,
+                                source_id=str(ee.home_team.espn_id) if ee.home_team.espn_id else None,
+                                source_name=ee.home_team.display_name or ee.home_team.name,
+                            )
+                        if away_team and ee.away_team:
+                            await team_identity_service.register_team_identity(
+                                session, away_team.id, "espn", sport_key,
+                                source_id=str(ee.away_team.espn_id) if ee.away_team.espn_id else None,
+                                source_name=ee.away_team.display_name or ee.away_team.name,
+                            )
+
                         # Update ESPN ID
                         if ee.espn_id and event.espn_id != ee.espn_id:
                             event.espn_id = ee.espn_id
@@ -343,9 +358,10 @@ async def _sync_espn_live_events():
 
                         # Correct commence_time from ESPN if significantly different
                         # The Odds API occasionally returns local times as UTC
+                        # Skip if StatPal set the commence_time (more reliable source)
                         if ee.date and event.commence_time:
                             time_diff = abs((ee.date - event.commence_time).total_seconds())
-                            if time_diff > 300:  # > 5 minutes difference
+                            if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":  # > 5 minutes difference
                                 logger.info(
                                     f"ESPN: Correcting commence_time for event {event.id} "
                                     f"({event.home_team_name} vs {event.away_team_name}): "
@@ -353,6 +369,7 @@ async def _sync_espn_live_events():
                                     f"(diff: {time_diff/3600:.1f}h)"
                                 )
                                 event.commence_time = ee.date
+                                event.commence_time_source = "espn"
                                 changed = True
 
                         # Update game clock
@@ -576,10 +593,26 @@ async def _sync_espn_live_events():
                         if away_team and event.away_team_id != away_team.id:
                             event.away_team_id = away_team.id
 
+                        # Register ESPN team identities for indexed lookups
+                        from app.services.team_identity import team_identity_service
+                        if home_team and ee.home_team:
+                            await team_identity_service.register_team_identity(
+                                session, home_team.id, "espn", sport_key,
+                                source_id=str(ee.home_team.espn_id) if ee.home_team.espn_id else None,
+                                source_name=ee.home_team.display_name or ee.home_team.name,
+                            )
+                        if away_team and ee.away_team:
+                            await team_identity_service.register_team_identity(
+                                session, away_team.id, "espn", sport_key,
+                                source_id=str(ee.away_team.espn_id) if ee.away_team.espn_id else None,
+                                source_name=ee.away_team.display_name or ee.away_team.name,
+                            )
+
                         # Correct commence_time from ESPN if significantly different
+                        # Skip if StatPal set the commence_time (more reliable source)
                         if ee.date and event.commence_time:
                             time_diff = abs((ee.date - event.commence_time).total_seconds())
-                            if time_diff > 300:  # > 5 minutes
+                            if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":  # > 5 minutes
                                 logger.info(
                                     f"ESPN: Correcting commence_time for scheduled event {event.id} "
                                     f"({event.home_team_name} vs {event.away_team_name}): "
@@ -587,6 +620,7 @@ async def _sync_espn_live_events():
                                     f"(diff: {time_diff/3600:.1f}h)"
                                 )
                                 event.commence_time = ee.date
+                                event.commence_time_source = "espn"
                         if ee.broadcasts and not event.broadcast_info:
                             event.broadcast_info = ", ".join(ee.broadcasts)
                         if ee.espn_id and not event.espn_id:

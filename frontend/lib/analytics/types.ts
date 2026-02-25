@@ -44,7 +44,11 @@ export interface ConsentSettings {
 // ============================================================================
 
 export interface PageViewParams {
-  page_type: 'home' | 'event_detail' | 'sport' | 'error';
+  page_type: 'home' | 'event_detail' | 'sport' | 'error'
+    | 'pulse' | 'pulse_hof' | 'about' | 'models'
+    | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
+    | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
+    | 'share';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -215,7 +219,11 @@ export interface ChartViewParams {
 // ============================================================================
 
 export interface ScrollDepthParams {
-  page_type: 'home' | 'event_detail' | 'sport';
+  page_type: 'home' | 'event_detail' | 'sport' | 'error'
+    | 'pulse' | 'pulse_hof' | 'about' | 'models'
+    | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
+    | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
+    | 'share';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -224,7 +232,11 @@ export interface ScrollDepthParams {
 }
 
 export interface TimeOnPageParams {
-  page_type: 'home' | 'event_detail' | 'sport';
+  page_type: 'home' | 'event_detail' | 'sport' | 'error'
+    | 'pulse' | 'pulse_hof' | 'about' | 'models'
+    | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
+    | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
+    | 'share';
   seconds: number;
   page_path: string;
   event_id?: number;
@@ -291,6 +303,32 @@ export interface LogoutParams {
 }
 
 // ============================================================================
+// Search Events
+// ============================================================================
+
+export interface SearchSubmitParams {
+  query: string;
+  results_count: number;
+  futures_count: number;
+}
+
+// ============================================================================
+// Onboarding Events
+// ============================================================================
+
+export interface OnboardingStepParams {
+  step: number;
+  step_name: 'location' | 'follow' | 'alma_maters' | 'interests' | 'rivals';
+  selections_count: number;
+}
+
+export interface OnboardingCompleteParams {
+  total_teams: number;
+  total_sports: number;
+  total_rivals: number;
+}
+
+// ============================================================================
 // Event Map (all events with their parameters)
 // ============================================================================
 
@@ -328,6 +366,13 @@ export interface AnalyticsEventMap {
   api_error: ApiErrorParams;
   retry_click: RetryClickParams;
   stale_data_view: StaleDataViewParams;
+
+  // Search
+  search_submit: SearchSubmitParams;
+
+  // Onboarding
+  onboarding_step: OnboardingStepParams;
+  onboarding_complete: OnboardingCompleteParams;
 
   // Account (future)
   sign_up: SignUpParams;

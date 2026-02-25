@@ -373,6 +373,14 @@ def audit_related_futures(self, limit: int = 30):
     return run_async(_audit_related_futures_impl(limit))
 
 
+# --- Team Identity Backfill ---
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
+def backfill_team_identities(self):
+    from app.tasks.team_identity_backfill import _backfill_team_identities
+    return run_async(_backfill_team_identities())
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
@@ -403,7 +411,7 @@ celery_app.conf.beat_schedule = {
     },
     "discover-new-events": {
         "task": "app.tasks.discover_events",
-        "schedule": crontab(minute="*/15"),
+        "schedule": crontab(minute="5,20,35,50"),  # Offset to run AFTER StatPal schedule sync
     },
     "compute-gei-batch": {
         "task": "app.tasks.compute_gei_batch",
@@ -467,7 +475,7 @@ celery_app.conf.beat_schedule = {
     },
     "sync-statpal-schedules": {
         "task": "app.tasks.sync_statpal_schedules",
-        "schedule": crontab(minute=40),  # Hourly at :40 — after event discovery (:15) and futures (:30)
+        "schedule": crontab(minute="0,15,30,45"),  # Every 15 min — runs BEFORE event discovery (:05/:20/:35/:50)
     },
     "sync-statpal-injuries": {
         "task": "app.tasks.sync_statpal_injuries",

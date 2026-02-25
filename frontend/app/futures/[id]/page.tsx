@@ -14,6 +14,7 @@ import type { FuturesOutcome, RelatedEvent } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { FuturesChart } from "@/components/FuturesChart";
 import EntityImage from "@/components/EntityImage";
 import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
@@ -71,6 +72,17 @@ type SortDirection = "asc" | "desc";
 
 export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketId = parseInt(params.id, 10);
+
+  // Analytics hooks must be called before conditional returns
+  usePageTracking({
+    pageType: 'futures_detail',
+    pageTitle: 'Futures Market',
+    additionalParams: { event_id: marketId },
+    deps: [marketId],
+  });
+  useScrollDepth({ pageType: 'futures_detail' });
+  useEngagementTime({ pageType: 'futures_detail' });
+
   const [sortField, setSortField] = useState<SortField>("probability");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [selectedOutcomes, setSelectedOutcomes] = useState<Set<number>>(new Set());

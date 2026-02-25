@@ -21,33 +21,7 @@ ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
 
 # Mapping from our sport keys to ESPN sport/league paths
-SPORT_LEAGUE_MAP = {
-    # Football
-    "americanfootball_nfl": ("football", "nfl"),
-    "americanfootball_ncaaf": ("football", "college-football"),
-    "americanfootball_cfl": ("football", "cfl"),
-    # Basketball
-    "basketball_nba": ("basketball", "nba"),
-    "basketball_wnba": ("basketball", "wnba"),
-    "basketball_ncaab": ("basketball", "mens-college-basketball"),
-    "basketball_wncaab": ("basketball", "womens-college-basketball"),
-    # Baseball
-    "baseball_mlb": ("baseball", "mlb"),
-    # Hockey
-    "icehockey_nhl": ("hockey", "nhl"),
-    # Soccer
-    "soccer_epl": ("soccer", "eng.1"),
-    "soccer_usa_mls": ("soccer", "usa.1"),
-    "soccer_uefa_champs_league": ("soccer", "uefa.champions"),
-    # Golf
-    "golf_pga": ("golf", "pga"),
-    "golf_lpga": ("golf", "lpga"),
-    # Tennis
-    "tennis_atp": ("tennis", "atp"),
-    "tennis_wta": ("tennis", "wta"),
-    # MMA
-    "mma_ufc": ("mma", "ufc"),
-}
+from app.utils.sport_keys import SPORT_LEAGUE_MAP  # noqa: E402
 
 
 @dataclass

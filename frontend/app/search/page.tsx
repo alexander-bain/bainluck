@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
-import { usePinnedEvents, usePinnedFutures } from "@/hooks";
+import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SearchBar from "@/components/SearchBar";
@@ -61,6 +61,12 @@ function SearchContent() {
   const pageParam = searchParams.get("page");
   const currentPage = pageParam ? parseInt(pageParam, 10) : 1;
 
+  // Analytics
+  const { track } = useAnalytics();
+  usePageTracking({ pageType: 'search', pageTitle: 'Search', deps: [query] });
+  useScrollDepth({ pageType: 'search' });
+  useEngagementTime({ pageType: 'search' });
+
   const [results, setResults] = useState<SearchResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +103,11 @@ function SearchContent() {
       .then((data) => {
         setResults(data);
         setIsLoading(false);
+        track('search_submit', {
+          query,
+          results_count: data.results?.length ?? 0,
+          futures_count: data.futures?.length ?? 0,
+        });
       })
       .catch((err) => {
         setError(err.message);

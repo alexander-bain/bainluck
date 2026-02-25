@@ -6,6 +6,7 @@ import { useAuthContext } from "@/components/AuthProvider";
 import { searchTeamsByLocation, searchTeams, submitOnboarding, fetchUserPreferences } from "@/lib/api";
 import { SPORT_CATEGORIES, getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import type { TeamSearchResult, OnboardingSubmission, UserFavoriteItem } from "@/lib/types";
+import { usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
 
 // =============================================================================
 // Types
@@ -79,6 +80,12 @@ export default function OnboardingPage() {
   const auth = useAuthContext();
   const { isAuthenticated, isLoading } = auth;
   const router = useRouter();
+  const { track } = useAnalytics();
+
+  // Analytics hooks must be called before conditional returns
+  usePageTracking({ pageType: 'onboarding', pageTitle: 'Get Started' });
+  useScrollDepth({ pageType: 'onboarding' });
+  useEngagementTime({ pageType: 'onboarding' });
 
   // Step state — 5 steps now
   const [step, setStep] = useState(1);
@@ -464,6 +471,11 @@ export default function OnboardingPage() {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await submitOnboarding(data, token);
+        track('onboarding_complete', {
+          total_teams: data.local_teams.length + data.follow_teams.length + data.alma_mater_teams.length,
+          total_sports: Object.values(sportAffinities).filter(v => v > 0).length,
+          total_rivals: rivalTeams.length,
+        });
         router.push("/?onboarded=1");
         return; // Success!
       } catch (err) {
@@ -501,7 +513,29 @@ export default function OnboardingPage() {
   // Navigation
   // =========================================================================
 
-  const goNext = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS));
+  const STEP_NAMES: Record<number, 'location' | 'follow' | 'alma_maters' | 'interests' | 'rivals'> = {
+    1: 'location', 2: 'follow', 3: 'alma_maters', 4: 'interests', 5: 'rivals',
+  };
+
+  const getStepSelections = (s: number): number => {
+    switch (s) {
+      case 1: return locationTeams.filter(t => t.selected).length;
+      case 2: return followTeams.length;
+      case 3: return almaMaterTeams.length;
+      case 4: return Object.values(sportAffinities).filter(v => v > 0).length;
+      case 5: return rivalTeams.length;
+      default: return 0;
+    }
+  };
+
+  const goNext = () => {
+    track('onboarding_step', {
+      step,
+      step_name: STEP_NAMES[step],
+      selections_count: getStepSelections(step),
+    });
+    setStep((s) => Math.min(s + 1, TOTAL_STEPS));
+  };
   const goBack = () => setStep((s) => Math.max(s - 1, 1));
   const skip = () => router.push("/");
 

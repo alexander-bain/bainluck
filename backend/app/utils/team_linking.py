@@ -189,32 +189,10 @@ def match_outcome_to_team(
 # Sport category → sport key mapping (for scoping team search)
 # =============================================================================
 
-# Maps llm_sport_category / categorization result to sport keys in the sports table
-SPORT_CATEGORY_TO_KEYS = {
-    "basketball": ["basketball_nba", "basketball_wnba", "basketball_ncaab", "basketball_wncaab"],
-    "football": ["americanfootball_nfl", "americanfootball_ncaaf"],
-    "baseball": ["baseball_mlb"],
-    "hockey": ["icehockey_nhl"],
-    "soccer": [
-        "soccer_epl", "soccer_usa_mls", "soccer_spain_la_liga",
-        "soccer_germany_bundesliga", "soccer_italy_serie_a",
-        "soccer_france_ligue_one", "soccer_uefa_champs_league",
-    ],
-    "golf": ["golf_pga"],
-    "tennis": ["tennis_atp", "tennis_wta"],
-    "mma": ["mma_mixed_martial_arts"],
-}
-
-
-def get_sport_keys_for_category(category: Optional[str]) -> Optional[list[str]]:
-    """
-    Get sport keys to scope team search for a given sport category.
-
-    Returns None if category is unknown (search all teams).
-    """
-    if not category:
-        return None
-    return SPORT_CATEGORY_TO_KEYS.get(category.lower())
+from app.utils.sport_keys import (  # noqa: E402
+    LLM_CATEGORY_TO_SPORT_KEYS as SPORT_CATEGORY_TO_KEYS,  # noqa: F401 — re-exported
+    get_sport_keys_for_category,  # noqa: F401 — re-exported
+)
 
 
 # =============================================================================

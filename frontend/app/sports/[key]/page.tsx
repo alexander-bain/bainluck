@@ -6,6 +6,7 @@ import { fetchEvents, fetchSports } from "@/lib/api";
 import EventCard from "@/components/EventCard";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 interface SportPageProps {
   params: { key: string };
@@ -13,6 +14,16 @@ interface SportPageProps {
 
 export default function SportPage({ params }: SportPageProps) {
   const sportKey = params.key;
+
+  // Analytics hooks must be called before conditional returns
+  usePageTracking({
+    pageType: 'sport',
+    pageTitle: `${sportKey} Odds`,
+    additionalParams: { sport: sportKey },
+    deps: [sportKey],
+  });
+  useScrollDepth({ pageType: 'sport' });
+  useEngagementTime({ pageType: 'sport' });
 
   // Fetch sport info
   const { data: sportsData } = useSWR("sports", fetchSports);
