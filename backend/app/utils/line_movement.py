@@ -261,6 +261,7 @@ def build_llm_prompt(
     injuries: Optional[list[dict]] = None,
     news_headlines: Optional[list[str]] = None,
     game_context: Optional[dict] = None,
+    team_stats: Optional[dict] = None,
 ) -> str:
     """
     Build the LLM prompt to explain line movements.
@@ -270,6 +271,7 @@ def build_llm_prompt(
         injuries: List of injury dicts with player_name, team_name, status, injury_type
         news_headlines: List of recent news headline strings
         game_context: Dict with home_team, away_team, home_score, away_score, period, clock
+        team_stats: Dict with home_stats and away_stats dicts (season stats like ppg, opp_ppg)
 
     Returns a prompt string ready to send to GPT-4o-mini.
     """
@@ -308,6 +310,22 @@ def build_llm_prompt(
         if parts:
             context_sections.append("Live game state: " + " | ".join(parts))
 
+    if team_stats:
+        stats_lines = ["Season stats:"]
+        home_s = team_stats.get("home_stats")
+        away_s = team_stats.get("away_stats")
+        home_name = team_stats.get("home_team", "Home")
+        away_name = team_stats.get("away_team", "Away")
+        for label, stats in [(home_name, home_s), (away_name, away_s)]:
+            if stats:
+                stat_parts = []
+                for key, val in list(stats.items())[:8]:
+                    stat_parts.append(f"{key}: {val}")
+                if stat_parts:
+                    stats_lines.append(f"  {label}: {', '.join(stat_parts)}")
+        if len(stats_lines) > 1:
+            context_sections.append("\n".join(stats_lines))
+
     extra_context = ""
     if context_sections:
         extra_context = "\n\n" + "\n\n".join(context_sections) + "\n"
@@ -316,7 +334,7 @@ def build_llm_prompt(
     has_injuries = bool(injuries)
     has_news = bool(news_headlines)
     has_game_state = bool(game_context and game_context.get("home_score") is not None)
-    has_any_context = has_injuries or has_news or has_game_state
+    has_any_context = has_injuries or has_news or has_game_state or bool(team_stats)
 
     # Context-aware instructions:
     # When we have no concrete context, the LLM should acknowledge

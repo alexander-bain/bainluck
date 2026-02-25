@@ -341,6 +341,20 @@ def sync_statpal_rosters(self, sport_key: str = None):
     return run_async(_sync_statpal_rosters(sport_key))
 
 
+@celery_app.task(bind=True, name="app.tasks.sync_statpal_standings")
+def sync_statpal_standings(self, sport_key: str = None):
+    """Sync league standings from StatPal."""
+    from app.tasks.statpal_sync import _sync_statpal_standings
+    return _tracked_run("statpal_standings", _sync_statpal_standings(sport_key))
+
+
+@celery_app.task(bind=True, name="app.tasks.sync_statpal_team_stats")
+def sync_statpal_team_stats(self, sport_key: str = None):
+    """Sync season-level team statistics from StatPal."""
+    from app.tasks.statpal_sync import _sync_statpal_team_stats
+    return _tracked_run("statpal_team_stats", _sync_statpal_team_stats(sport_key))
+
+
 # --- Snapshot Retention ---
 
 @celery_app.task(bind=True, soft_time_limit=1700, time_limit=1800, name="app.tasks.collapse_snapshots")
@@ -488,6 +502,14 @@ celery_app.conf.beat_schedule = {
     "sync-statpal-rosters-daily": {
         "task": "app.tasks.sync_statpal_rosters",
         "schedule": crontab(minute=30, hour=7),  # Daily at 7:30 AM UTC — after ESPN roster sync (7:00)
+    },
+    "sync-statpal-standings-daily": {
+        "task": "app.tasks.sync_statpal_standings",
+        "schedule": crontab(minute=0, hour=8),  # Daily at 8:00 AM UTC
+    },
+    "sync-statpal-team-stats-weekly": {
+        "task": "app.tasks.sync_statpal_team_stats",
+        "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Weekly Monday 9:00 AM UTC
     },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",

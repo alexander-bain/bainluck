@@ -450,6 +450,7 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
                             "player": p.player,
                             "home_score": p.home_score,
                             "away_score": p.away_score,
+                            "captured_at": datetime.now(timezone.utc).isoformat(),
                         }
                         for p in recent_plays
                     ]
@@ -731,3 +732,233 @@ def _set_statpal_id(event, fixture_id: str):
     sources = event.win_probability_sources or {}
     sources["statpal_fixture_id"] = fixture_id
     event.win_probability_sources = sources
+
+
+# =============================================================================
+# Standings sync
+# =============================================================================
+
+
+async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
+    """Sync league standings from StatPal and store on Team records.
+
+    Args:
+        sport_key: If provided, only sync this sport.
+
+    Returns:
+        Summary dict with update counts.
+    """
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+
+    if sport_key:
+        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+    else:
+        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+
+    service = StatPalAPIService()
+    total_updated = 0
+    details = []
+    now = datetime.now(timezone.utc)
+
+    try:
+        async with get_task_session() as session:
+            from app.models import Team, Sport
+
+            for our_key in sport_keys:
+                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+
+                sport_result = await session.execute(
+                    select(Sport.id).where(Sport.key == our_key)
+                )
+                sport_row = sport_result.first()
+                if not sport_row:
+                    details.append({"sport": our_key, "status": "sport_not_found"})
+                    continue
+
+                sport_id = sport_row.id
+
+                # Fetch standings from StatPal
+                standings_data = await service.get_standings(statpal_sport)
+                if not standings_data:
+                    details.append({"sport": our_key, "status": "no_standings"})
+                    continue
+
+                # Get our DB teams for matching
+                result = await session.execute(
+                    select(Team).where(Team.sport_id == sport_id)
+                )
+                db_teams = result.scalars().all()
+
+                # Build name lookup (lowercase name → Team)
+                db_by_name: dict[str, Team] = {}
+                for t in db_teams:
+                    db_by_name[t.name.lower()] = t
+                    if t.alternate_names:
+                        for alt in t.alternate_names:
+                            db_by_name[alt.lower()] = t
+
+                sport_updated = 0
+
+                # Parse standings — StatPal returns different formats per sport,
+                # so we handle the common structures
+                teams_list = []
+                if isinstance(standings_data, list):
+                    teams_list = standings_data
+                elif isinstance(standings_data, dict):
+                    # Common patterns: {"standings": [...]} or {"groups": [{"teams": [...]}]}
+                    if "standings" in standings_data:
+                        teams_list = standings_data["standings"]
+                    elif "groups" in standings_data:
+                        for group in standings_data.get("groups", []):
+                            teams_list.extend(group.get("teams", []))
+                    elif "teams" in standings_data:
+                        teams_list = standings_data["teams"]
+                    else:
+                        # Store raw data for inspection
+                        logger.info(f"Standings for {our_key}: unexpected format, keys={list(standings_data.keys())}")
+                        teams_list = []
+
+                for team_entry in teams_list:
+                    if not isinstance(team_entry, dict):
+                        continue
+
+                    # Try to match to our team
+                    team_name = (team_entry.get("name") or team_entry.get("team_name") or "").strip()
+                    if not team_name:
+                        continue
+
+                    db_team = db_by_name.get(team_name.lower())
+                    if not db_team:
+                        # Try suffix match (e.g., "Celtics" matches "Boston Celtics")
+                        last_word = team_name.split()[-1].lower()
+                        for key, t in db_by_name.items():
+                            if key.endswith(last_word) or last_word in key:
+                                db_team = t
+                                break
+
+                    if db_team:
+                        # Extract common standings fields
+                        parsed = {}
+                        for field in ["wins", "losses", "draws", "ties",
+                                      "points", "goals_for", "goals_against",
+                                      "goal_difference", "pct", "gb",
+                                      "conf_rank", "div_rank", "league_rank",
+                                      "conference", "division", "group"]:
+                            val = team_entry.get(field)
+                            if val is not None:
+                                parsed[field] = val
+
+                        # Compute win percentage if not provided
+                        if "pct" not in parsed and "wins" in parsed and "losses" in parsed:
+                            w = parsed["wins"]
+                            l = parsed["losses"]
+                            if w + l > 0:
+                                parsed["pct"] = f".{round(1000 * w / (w + l)):03d}"
+
+                        if parsed:
+                            db_team.standings_data = parsed
+                            db_team.standings_updated_at = now
+                            sport_updated += 1
+
+                total_updated += sport_updated
+                details.append({
+                    "sport": our_key,
+                    "teams_in_standings": len(teams_list),
+                    "teams_updated": sport_updated,
+                })
+
+                await asyncio.sleep(0.3)
+
+    finally:
+        await service.close()
+
+    return {
+        "total_teams_updated": total_updated,
+        "details": details,
+    }
+
+
+# =============================================================================
+# Team stats sync
+# =============================================================================
+
+
+async def _sync_statpal_team_stats(sport_key: Optional[str] = None) -> dict:
+    """Sync season-level team statistics from StatPal.
+
+    Args:
+        sport_key: If provided, only sync this sport.
+
+    Returns:
+        Summary dict with update counts.
+    """
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+
+    if sport_key:
+        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+    else:
+        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+
+    service = StatPalAPIService()
+    total_updated = 0
+    details = []
+    now = datetime.now(timezone.utc)
+
+    try:
+        async with get_task_session() as session:
+            from app.models import Team, Sport
+
+            for our_key in sport_keys:
+                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+
+                sport_result = await session.execute(
+                    select(Sport.id).where(Sport.key == our_key)
+                )
+                sport_row = sport_result.first()
+                if not sport_row:
+                    continue
+
+                sport_id = sport_row.id
+
+                # Get teams with statpal_team_id
+                result = await session.execute(
+                    select(Team).where(
+                        Team.sport_id == sport_id,
+                        Team.statpal_team_id.isnot(None),
+                    )
+                )
+                teams = result.scalars().all()
+
+                sport_updated = 0
+                for team in teams:
+                    stats_data = await service.get_team_stats(
+                        statpal_sport, team.statpal_team_id
+                    )
+                    if stats_data and isinstance(stats_data, dict):
+                        team.season_stats = stats_data
+                        team.season_stats_updated_at = now
+                        sport_updated += 1
+
+                    # Rate limit between teams
+                    await asyncio.sleep(0.5)
+
+                total_updated += sport_updated
+                details.append({
+                    "sport": our_key,
+                    "teams_with_statpal_id": len(teams),
+                    "teams_updated": sport_updated,
+                })
+
+    finally:
+        await service.close()
+
+    return {
+        "total_teams_updated": total_updated,
+        "details": details,
+    }

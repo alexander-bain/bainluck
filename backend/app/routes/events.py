@@ -1618,6 +1618,16 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
 
+    # Compute standings context for event detail
+    standings_context = _compute_standings_context(
+        team_lookup.get(event.home_team_name),
+        team_lookup.get(event.away_team_name),
+        event.home_team_name,
+        event.away_team_name,
+    )
+    if standings_context:
+        response["standings_context"] = standings_context
+
     if event.odds_snapshots:
         # Get the most recent snapshot for each bookmaker
         # (deduplication means different bookmakers may have different latest times)
@@ -1703,6 +1713,47 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         response["bookmaker_odds"] = bookmaker_odds_list
 
     return response
+
+
+# ── Scoring play extraction from StatPal play-by-play data ──────────────────
+
+_SCORING_PLAY_TYPES = {
+    "touchdown", "field_goal", "safety", "extra_point", "two_point_conversion",
+    "goal", "power_play_goal", "shorthanded_goal", "empty_net_goal",
+    "three_pointer", "dunk", "layup", "free_throw", "basket", "shot",
+    "home_run", "rbi_single", "rbi_double", "rbi_triple", "sacrifice_fly",
+    "run", "scoring", "score", "penalty_goal", "own_goal",
+}
+
+
+def extract_scoring_plays(raw_plays: list[dict]) -> list[dict]:
+    """
+    Filter StatPal play-by-play data to scoring plays with timestamps.
+
+    Only returns plays that have a captured_at timestamp (needed for chart placement)
+    and match scoring play types.
+    """
+    scoring_plays = []
+    for play in raw_plays:
+        play_type = (play.get("type") or "").lower()
+        is_scoring = (
+            play_type in _SCORING_PLAY_TYPES
+            or "score" in play_type
+            or "goal" in play_type
+            or "touchdown" in play_type
+        )
+        if is_scoring and play.get("captured_at"):
+            scoring_plays.append({
+                "timestamp": play["captured_at"],
+                "description": play.get("description", ""),
+                "team": play.get("team", ""),
+                "type": play.get("type", ""),
+                "home_score": play.get("home_score"),
+                "away_score": play.get("away_score"),
+                "period": play.get("period"),
+                "clock": play.get("clock"),
+            })
+    return scoring_plays
 
 
 # Regex patterns for detecting game-specific markets (stat props and matchups).
@@ -2421,6 +2472,11 @@ async def get_event_odds_history(
         # Table may not exist yet
         pass
 
+    # Extract scoring plays from StatPal play-by-play data
+    scoring_plays = extract_scoring_plays(
+        (event.win_probability_sources or {}).get("statpal_plays", [])
+    )
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -2431,6 +2487,7 @@ async def get_event_odds_history(
         "espn_history": espn_history,
         "win_prob_history": win_prob_history,
         "win_prob_sources": win_prob_sources_meta,
+        "scoring_plays": scoring_plays,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),
@@ -2589,6 +2646,29 @@ async def get_line_movement_analysis(
             except Exception as e:
                 logger.warning(f"ESPN context fetch failed for event {event_id}: {e}")
 
+        # Merge StatPal injuries (pre-fetched in DB) with ESPN injuries
+        statpal_injuries_raw = (event.win_probability_sources or {}).get("statpal_injuries", [])
+        if statpal_injuries_raw:
+            # Map StatPal keys to ESPN-format keys
+            statpal_injuries = [
+                {
+                    "player_name": inj.get("player", ""),
+                    "team_name": inj.get("team", ""),
+                    "status": inj.get("status", ""),
+                    "injury_type": inj.get("type", ""),
+                }
+                for inj in statpal_injuries_raw
+                if inj.get("player")
+            ]
+            if injuries_data:
+                # Dedup by player name — ESPN takes priority
+                espn_players = {inj["player_name"].lower() for inj in injuries_data}
+                for sp_inj in statpal_injuries:
+                    if sp_inj["player_name"].lower() not in espn_players:
+                        injuries_data.append(sp_inj)
+            else:
+                injuries_data = statpal_injuries
+
         if event.status == "live":
             game_context = {
                 "home_team": event.home_team_name,
@@ -2599,11 +2679,34 @@ async def get_line_movement_analysis(
                 "clock": event.game_clock,
             }
 
+        # Fetch team season stats for richer context
+        team_stats = None
+        try:
+            team_result = await db.execute(
+                select(Team).where(
+                    Team.name.in_([event.home_team_name, event.away_team_name])
+                )
+            )
+            teams = {t.name: t for t in team_result.scalars().all()}
+            home_t = teams.get(event.home_team_name)
+            away_t = teams.get(event.away_team_name)
+            if (home_t and getattr(home_t, "season_stats", None)) or \
+               (away_t and getattr(away_t, "season_stats", None)):
+                team_stats = {
+                    "home_team": event.home_team_name,
+                    "away_team": event.away_team_name,
+                    "home_stats": home_t.season_stats if home_t else None,
+                    "away_stats": away_t.season_stats if away_t else None,
+                }
+        except Exception as e:
+            logger.warning(f"Team stats fetch failed for event {event_id}: {e}")
+
         prompt = build_llm_prompt(
             analysis,
             injuries=injuries_data,
             news_headlines=news_headlines,
             game_context=game_context,
+            team_stats=team_stats,
         )
         try:
             from app.services.llm import generate_line_movement_explanation
@@ -2680,6 +2783,7 @@ async def get_line_movement_analysis(
         "injuries_count": len(injuries_data) if injuries_data else 0,
         "news_count": len(news_headlines) if news_headlines else 0,
         "has_game_state": bool(game_context),
+        "has_team_stats": bool(team_stats),
     }
 
     # Store movements + context together in movement_data JSONB
@@ -2850,15 +2954,99 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     return {k: v for k, v in full_lookup.items() if k in names_set}
 
 
+def _compute_standings_context(home_team, away_team, home_name: str, away_name: str) -> dict | None:
+    """Compute standings context text for an event.
+
+    Returns a dict with 'home', 'away' record strings and optional 'stakes' text,
+    or None if no standings data is available.
+    """
+    if not home_team and not away_team:
+        return None
+
+    context = {}
+
+    # Format record strings (e.g., "34-18, 2nd East")
+    for team, name, key in [(home_team, home_name, "home"), (away_team, away_name, "away")]:
+        if not team or not getattr(team, "standings_data", None):
+            continue
+        s = team.standings_data
+        parts = []
+        # Win-loss record
+        if "wins" in s and "losses" in s:
+            record = f"{s['wins']}-{s['losses']}"
+            if s.get("draws") or s.get("ties"):
+                record += f"-{s.get('draws') or s.get('ties')}"
+            parts.append(record)
+        # Conference/division rank
+        if s.get("conf_rank"):
+            conf = s.get("conference", "")
+            parts.append(f"#{s['conf_rank']} {conf}".strip())
+        elif s.get("div_rank"):
+            div = s.get("division", "")
+            parts.append(f"#{s['div_rank']} {div}".strip())
+        elif s.get("league_rank"):
+            parts.append(f"#{s['league_rank']}")
+        # Points (soccer)
+        if "points" in s and "wins" in s:
+            parts.append(f"{s['points']} pts")
+
+        if parts:
+            context[key] = ", ".join(parts)
+
+    if not context:
+        return None
+
+    # Compute simple stakes text via rules
+    stakes = None
+    if home_team and away_team:
+        hs = getattr(home_team, "standings_data", None) or {}
+        aws = getattr(away_team, "standings_data", None) or {}
+
+        # Same division rivals
+        if hs.get("division") and hs.get("division") == aws.get("division"):
+            hr = hs.get("div_rank")
+            ar = aws.get("div_rank")
+            if hr and ar and abs(hr - ar) <= 2:
+                stakes = "Division rivals"
+
+        # Fighting for top seed
+        if not stakes:
+            hr = hs.get("conf_rank") or hs.get("league_rank")
+            ar = aws.get("conf_rank") or aws.get("league_rank")
+            if hr and ar and hr <= 3 and ar <= 3:
+                stakes = "Top seed matchup"
+
+        # Games back context
+        if not stakes and hs.get("gb") is not None and aws.get("gb") is not None:
+            try:
+                diff = abs(float(hs["gb"]) - float(aws["gb"]))
+                if diff <= 2:
+                    stakes = f"{diff:.1f} games apart in standings".rstrip("0").rstrip(".")
+            except (ValueError, TypeError):
+                pass
+
+    if stakes:
+        context["stakes"] = stakes
+
+    return context
+
+
 def _format_team_data(team: Team) -> dict:
     """Format team data for API response."""
-    return {
+    data = {
         "primary_color": team.primary_color,
         "secondary_color": team.secondary_color,
         "logo_small": team.logo_url_small,
         "logo_large": team.logo_url_large,
         "record": team.current_record,
     }
+    # Include standings if available
+    if getattr(team, "standings_data", None):
+        data["standings"] = team.standings_data
+    # Include season stats if available
+    if getattr(team, "season_stats", None):
+        data["season_stats"] = team.season_stats
+    return data
 
 
 def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict = None) -> dict:

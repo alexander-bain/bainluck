@@ -4,6 +4,7 @@ Main odds polling tasks: poll_all_odds, poll_sport_odds, and snapshot helpers.
 
 import logging
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from sqlalchemy import select, func, case, or_, and_
 from sqlalchemy.dialects.postgresql import insert
@@ -30,6 +31,26 @@ from app.tasks.redis_state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def get_statpal_end_time(event) -> Optional[datetime]:
+    """
+    Extract StatPal end time from event — checks dedicated column first,
+    falls back to JSONB win_probability_sources storage.
+
+    Returns a timezone-aware datetime if found, else None.
+    """
+    statpal_end = getattr(event, "statpal_end_time", None)
+    if statpal_end:
+        return statpal_end
+    sources = getattr(event, "win_probability_sources", None) or {}
+    end_str = sources.get("statpal_end_time")
+    if end_str:
+        try:
+            return datetime.fromisoformat(end_str)
+        except (ValueError, TypeError):
+            pass
+    return None
 
 
 def get_max_duration_for_sport(sport_key: str) -> float:
@@ -86,6 +107,21 @@ async def detect_and_close_stale_events(session) -> int:
         try:
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
 
+            # Check StatPal end time first — definitive close signal
+            statpal_end = get_statpal_end_time(event)
+            if statpal_end and statpal_end <= now:
+                await session.execute(
+                    Event.__table__.update()
+                    .where(Event.id == event.id)
+                    .values(status="closed")
+                )
+                closed_count += 1
+                logger.info(
+                    f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
+                    f"as closed: statpal_end_time, {hours_since_start:.1f}h since start"
+                )
+                continue
+
             # Check if ANY bookmaker has provided odds recently
             # We need to find the most recently updated snapshot across all bookmakers
             # valid_until is updated when we see the same odds again; captured_at is when odds changed
@@ -135,11 +171,11 @@ async def detect_and_close_stale_events(session) -> int:
                     .values(status="closed")
                 )
                 closed_count += 1
-                print(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
+                logger.info(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
                       f"as closed: {close_reason}, {hours_since_start:.1f}h since start")
 
         except Exception as e:
-            print(f"Error checking staleness for event {event.id}: {e}")
+            logger.warning(f"Error checking staleness for event {event.id}: {e}")
             continue
 
     return closed_count

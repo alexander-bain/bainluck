@@ -315,3 +315,145 @@ class TestBuildLLMPrompt:
         prompt = build_llm_prompt(analysis, news_headlines=news)
         headline_lines = [line for line in prompt.split("\n") if line.strip().startswith("- Headline")]
         assert len(headline_lines) == 5
+
+
+# ── StatPal injury merging (A1) ───────────────────────────────────────
+
+class TestStatPalInjuryMerging:
+    """Tests for merging StatPal injuries into the LLM prompt.
+
+    The actual merge logic lives in events.py, but we verify that
+    build_llm_prompt handles mixed-source injury lists correctly.
+    """
+
+    def test_statpal_only_injuries_in_prompt(self):
+        """StatPal injuries (mapped to ESPN format) should appear in prompt."""
+        analysis = _make_analysis()
+        # StatPal injuries mapped to ESPN-format keys (as events.py does)
+        injuries = [
+            {"player_name": "Jayson Tatum", "team_name": "Celtics", "status": "Questionable", "injury_type": "Ankle"},
+        ]
+        prompt = build_llm_prompt(analysis, injuries=injuries)
+        assert "Jayson Tatum" in prompt
+        assert "Celtics" in prompt
+        assert "Questionable" in prompt
+        assert "Ankle" in prompt
+
+    def test_espn_and_statpal_dedup_in_prompt(self):
+        """When both ESPN and StatPal report the same player, only one entry should appear."""
+        analysis = _make_analysis()
+        # Simulate merged list: ESPN entry + StatPal entry for different players
+        injuries = [
+            {"player_name": "LeBron James", "team_name": "Lakers", "status": "Out", "injury_type": "Back"},
+            {"player_name": "Anthony Davis", "team_name": "Lakers", "status": "Day-To-Day", "injury_type": "Knee"},
+        ]
+        prompt = build_llm_prompt(analysis, injuries=injuries)
+        assert "LeBron James" in prompt
+        assert "Anthony Davis" in prompt
+        # Both should appear since they're different players
+        injury_lines = [line for line in prompt.split("\n") if line.strip().startswith("- ")]
+        # At least 2 injury lines
+        assert len([l for l in injury_lines if "LeBron" in l or "Anthony" in l]) == 2
+
+    def test_statpal_injuries_empty_player_skipped(self):
+        """StatPal injuries with empty player name should be skipped in merge."""
+        analysis = _make_analysis()
+        # Only valid injury should appear
+        injuries = [
+            {"player_name": "Marcus Smart", "team_name": "Grizzlies", "status": "Out", "injury_type": "Foot"},
+        ]
+        prompt = build_llm_prompt(analysis, injuries=injuries)
+        assert "Marcus Smart" in prompt
+        assert "Known injury report:" in prompt
+
+
+class TestTeamStatsInPrompt:
+    """Tests for team season stats enrichment in LLM prompt (C3)."""
+
+    def test_team_stats_included_in_prompt(self):
+        """Season stats for both teams should appear in the prompt."""
+        analysis = _make_analysis()
+        team_stats = {
+            "home_team": "Celtics",
+            "away_team": "Lakers",
+            "home_stats": {"ppg": 112.3, "opp_ppg": 106.1, "reb": 44.2},
+            "away_stats": {"ppg": 108.5, "opp_ppg": 110.2, "reb": 42.0},
+        }
+        prompt = build_llm_prompt(analysis, team_stats=team_stats)
+        assert "Season stats:" in prompt
+        assert "Celtics" in prompt
+        assert "112.3" in prompt
+        assert "Lakers" in prompt
+        assert "108.5" in prompt
+
+    def test_team_stats_partial_home_only(self):
+        """If only home team has stats, only home team stats appear."""
+        analysis = _make_analysis()
+        team_stats = {
+            "home_team": "Celtics",
+            "away_team": "Lakers",
+            "home_stats": {"ppg": 112.3},
+            "away_stats": None,
+        }
+        prompt = build_llm_prompt(analysis, team_stats=team_stats)
+        assert "Season stats:" in prompt
+        assert "Celtics" in prompt
+        assert "112.3" in prompt
+
+    def test_team_stats_none_excluded(self):
+        """When team_stats is None, no stats section appears."""
+        analysis = _make_analysis()
+        prompt = build_llm_prompt(analysis, team_stats=None)
+        assert "Season stats:" not in prompt
+
+    def test_team_stats_empty_dicts_excluded(self):
+        """When both team stats are None, no stats section appears."""
+        analysis = _make_analysis()
+        team_stats = {
+            "home_team": "Celtics",
+            "away_team": "Lakers",
+            "home_stats": None,
+            "away_stats": None,
+        }
+        prompt = build_llm_prompt(analysis, team_stats=team_stats)
+        assert "Season stats:" not in prompt
+
+    def test_team_stats_with_injuries_context(self):
+        """Team stats should appear alongside injuries — both are context."""
+        analysis = _make_analysis()
+        injuries = [
+            {"player_name": "Jaylen Brown", "team_name": "Celtics", "status": "Questionable", "injury_type": "Knee"},
+        ]
+        team_stats = {
+            "home_team": "Celtics",
+            "away_team": "Lakers",
+            "home_stats": {"ppg": 112.3},
+            "away_stats": {"ppg": 108.5},
+        }
+        prompt = build_llm_prompt(analysis, injuries=injuries, team_stats=team_stats)
+        assert "Known injury report:" in prompt
+        assert "Jaylen Brown" in prompt
+        assert "Season stats:" in prompt
+        assert "112.3" in prompt
+        # Should use context-aware instructions (not "do NOT speculate")
+        assert "Do NOT speculate" not in prompt
+
+    def test_team_stats_caps_at_8_keys(self):
+        """Stats should cap at 8 keys per team to keep prompt manageable."""
+        analysis = _make_analysis()
+        # Create stats with more than 8 keys
+        many_stats = {f"stat_{i}": float(i) for i in range(12)}
+        team_stats = {
+            "home_team": "Celtics",
+            "away_team": "Lakers",
+            "home_stats": many_stats,
+            "away_stats": None,
+        }
+        prompt = build_llm_prompt(analysis, team_stats=team_stats)
+        assert "Season stats:" in prompt
+        # Count stat entries for Celtics line
+        celtics_line = [l for l in prompt.split("\n") if "Celtics" in l and "stat_" in l]
+        assert len(celtics_line) == 1
+        # Should have at most 8 stat entries
+        stat_count = celtics_line[0].count("stat_")
+        assert stat_count <= 8

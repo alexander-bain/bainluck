@@ -734,8 +734,10 @@ export default function EventPage({ params }: EventPageProps) {
                 <h2 className={`text-xl font-semibold ${homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>
                   {event.home_team}
                 </h2>
-                {event.home_team_data?.record && (
-                  <span className="text-xs text-text-muted">{event.home_team_data.record}</span>
+                {(event.standings_context?.home || event.home_team_data?.record) && (
+                  <span className="text-xs text-text-muted">
+                    {event.standings_context?.home || event.home_team_data?.record}
+                  </span>
                 )}
               </div>
               {homeFavorite && homeProb && homeProb > 0.5 && (
@@ -766,6 +768,15 @@ export default function EventPage({ params }: EventPageProps) {
             awayColor={event.away_team_data?.primary_color || undefined}
           />
 
+          {/* Stakes context from standings */}
+          {event.standings_context?.stakes && (
+            <div className="text-center">
+              <span className="text-xs text-text-muted bg-graphite/5 px-2 py-0.5 rounded">
+                {event.standings_context.stakes}
+              </span>
+            </div>
+          )}
+
           {/* Away Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -790,8 +801,10 @@ export default function EventPage({ params }: EventPageProps) {
                 <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>
                   {event.away_team}
                 </h2>
-                {event.away_team_data?.record && (
-                  <span className="text-xs text-text-muted">{event.away_team_data.record}</span>
+                {(event.standings_context?.away || event.away_team_data?.record) && (
+                  <span className="text-xs text-text-muted">
+                    {event.standings_context?.away || event.away_team_data?.record}
+                  </span>
                 )}
               </div>
               {!homeFavorite && awayProb && awayProb > 0.5 && (
@@ -1047,6 +1060,7 @@ export default function EventPage({ params }: EventPageProps) {
             espnHistory={historyData?.espn_history}
             winProbHistory={historyData?.win_prob_history}
             winProbSources={historyData?.win_prob_sources}
+            scoringPlays={historyData?.scoring_plays}
             eventId={eventId}
             eventStatus={event.status}
           />

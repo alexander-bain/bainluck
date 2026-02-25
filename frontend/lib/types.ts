@@ -105,6 +105,17 @@ export interface TeamData {
   logo_small: string | null;       // Small logo URL
   logo_large: string | null;       // Large logo URL
   record: string | null;           // e.g. "34-18"
+  standings?: {
+    wins?: number;
+    losses?: number;
+    pct?: string;
+    conf_rank?: number;
+    div_rank?: number;
+    conference?: string;
+    division?: string;
+    games_behind?: number;
+  } | null;
+  season_stats?: Record<string, number | string> | null;
 }
 
 export interface Event {
@@ -127,6 +138,11 @@ export interface Event {
   home_team_data?: TeamData;
   away_team_data?: TeamData;
   win_probability_sources?: Record<string, { value: number; display_name: string; type: string; color: string }>;
+  standings_context?: {
+    home?: string;   // e.g. "34-18, 2nd East"
+    away?: string;   // e.g. "28-24, 7th West"
+    stakes?: string; // e.g. "Division rivals — 2 games apart"
+  } | null;
 }
 
 export interface EventsResponse {
@@ -223,8 +239,20 @@ export interface EventHistoryResponse {
   espn_history?: ESPNHistoryPoint[];
   win_prob_history?: Record<string, WinProbHistoryPoint[]>;
   win_prob_sources?: Record<string, WinProbSourceMeta>;
+  scoring_plays?: ScoringPlay[];
   points: number;
   espn_snapshot_count?: number;
+}
+
+export interface ScoringPlay {
+  timestamp: string;
+  description: string;
+  team: string;
+  type: string;
+  home_score: number | null;
+  away_score: number | null;
+  period?: string | null;
+  clock?: string | null;
 }
 
 export interface SportsResponse {

@@ -63,6 +63,10 @@ class Team(Base):
 
     # StatPal enrichment
     statpal_team_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    standings_data: Mapped[Optional[dict]] = mapped_column(JSONB)
+    standings_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    season_stats: Mapped[Optional[dict]] = mapped_column(JSONB)
+    season_stats_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     sport: Mapped["Sport"] = relationship(back_populates="teams")

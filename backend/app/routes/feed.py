@@ -574,6 +574,13 @@ async def _score_events(
                 "favorite": event.opening_favorite,
             }
 
+        # Include ended_at for completed/closed events (from StatPal)
+        if event.status in ("completed", "closed"):
+            from app.tasks.odds_polling import get_statpal_end_time
+            ended_at = get_statpal_end_time(event)
+            if ended_at:
+                event_data["ended_at"] = ended_at.isoformat()
+
         # Include highlight metadata (label, flags) for frontend display
         label = get_highlight_label(highlight_result)
         if label:

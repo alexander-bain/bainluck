@@ -5,6 +5,7 @@ import {
   ComposedChart,
   Line,
   Area,
+  Scatter,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,6 +22,7 @@ import type {
   ESPNHistoryPoint,
   WinProbHistoryPoint,
   WinProbSourceMeta,
+  ScoringPlay,
 } from "@/lib/types";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
@@ -47,6 +49,8 @@ interface OddsChartProps {
   winProbHistory?: Record<string, WinProbHistoryPoint[]>;
   /** Source metadata (display names, colors, types) */
   winProbSources?: Record<string, WinProbSourceMeta>;
+  /** Scoring plays from StatPal play-by-play for chart annotations */
+  scoringPlays?: ScoringPlay[];
   /** Event ID for analytics tracking */
   eventId?: number;
   /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
@@ -100,6 +104,7 @@ export default function OddsChart({
   espnHistory,
   winProbHistory,
   winProbSources,
+  scoringPlays,
   eventId,
   eventStatus,
   fillContainer = false,
@@ -346,6 +351,43 @@ export default function OddsChart({
     );
   }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, modelSources]);
 
+  // Build scoring play annotations that map to chart data points
+  const scoringPlayAnnotations = useMemo(() => {
+    if (!scoringPlays || scoringPlays.length === 0 || chartData.length === 0) return [];
+
+    return scoringPlays
+      .filter((play) => play.timestamp)
+      .map((play) => {
+        // Find the closest chart data point by timestamp
+        const playTime = parseISO(play.timestamp).getTime();
+        let closestIdx = 0;
+        let closestDist = Infinity;
+        for (let i = 0; i < chartData.length; i++) {
+          const dist = Math.abs(parseISO(chartData[i].timestamp).getTime() - playTime);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestIdx = i;
+          }
+        }
+        const closestPoint = chartData[closestIdx];
+        const yValue = closestPoint.homeDelta;
+        if (yValue === null) return null;
+
+        return {
+          time: closestPoint.time,
+          scoringPlayDelta: yValue,
+          description: play.description,
+          team: play.team,
+          type: play.type,
+          home_score: play.home_score,
+          away_score: play.away_score,
+          period: play.period,
+          clock: play.clock,
+        };
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+  }, [scoringPlays, chartData]);
+
   // Early return for empty history
   if (!history || history.length === 0) {
     return (
@@ -421,6 +463,26 @@ export default function OddsChart({
       return (
         <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-sm">
           <p className="text-xs text-gray-500 mb-2">{label}</p>
+          {/* Scoring play annotation */}
+          {scoringPlayAnnotations.length > 0 && (() => {
+            const match = scoringPlayAnnotations.find((p) => p.time === label);
+            if (!match) return null;
+            return (
+              <div className="mb-2 pb-2 border-b border-gray-100">
+                <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                  {match.description || match.type}
+                </p>
+                {match.home_score != null && match.away_score != null && (
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {match.period && `${match.period} `}
+                    {match.clock && `${match.clock} — `}
+                    Score: {match.home_score}-{match.away_score}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
           {/* All sources, grouped */}
           {sourceEntries.length > 0 && (
             <div className="space-y-1">
@@ -632,6 +694,30 @@ export default function OddsChart({
               activeDot={{ r: 5, fill: "#374151" }}
               connectNulls
             />
+
+            {/* Scoring play annotations — dots at key moments */}
+            {scoringPlayAnnotations.length > 0 && (
+              <Scatter
+                data={scoringPlayAnnotations}
+                dataKey="scoringPlayDelta"
+                fill="#ef4444"
+                shape={(props: { cx?: number; cy?: number; payload?: typeof scoringPlayAnnotations[number] }) => {
+                  const { cx = 0, cy = 0 } = props;
+                  return (
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={4}
+                      fill="#ef4444"
+                      stroke="#ffffff"
+                      strokeWidth={1.5}
+                      style={{ cursor: "pointer" }}
+                    />
+                  );
+                }}
+                legendType="none"
+              />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -681,6 +767,16 @@ export default function OddsChart({
               </svg>
               <span className="text-xs text-text-muted">
                 Individual sportsbooks
+              </span>
+            </div>
+          )}
+          {scoringPlayAnnotations.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <svg width="10" height="10" className="shrink-0">
+                <circle cx="5" cy="5" r="4" fill="#ef4444" stroke="#fff" strokeWidth="1" />
+              </svg>
+              <span className="text-xs text-text-muted">
+                Scoring plays
               </span>
             </div>
           )}

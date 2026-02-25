@@ -3,12 +3,14 @@
 Covers:
 - get_max_duration_for_sport: sport key → max duration lookup
 - _snapshots_are_equal: write-time dedup comparison logic
+- get_statpal_end_time: StatPal end time extraction (column + JSONB fallback)
 """
 
 import pytest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.tasks.odds_polling import get_max_duration_for_sport, _snapshots_are_equal
+from app.tasks.odds_polling import get_max_duration_for_sport, _snapshots_are_equal, get_statpal_end_time
 from app.tasks.config import SPORT_MAX_DURATIONS
 
 
@@ -168,3 +170,56 @@ class TestSnapshotsAreEqual:
             home_win_probability=None,
         )
         assert _snapshots_are_equal(snap, vals) is True
+
+
+# ── get_statpal_end_time ──────────────────────────────────────────────
+
+
+class TestGetStatpalEndTime:
+    """Tests for extracting StatPal end time from event objects."""
+
+    def test_column_value_returned(self):
+        """Dedicated column statpal_end_time should be returned directly."""
+        end = datetime(2026, 2, 25, 22, 0, tzinfo=timezone.utc)
+        event = SimpleNamespace(statpal_end_time=end, win_probability_sources=None)
+        assert get_statpal_end_time(event) == end
+
+    def test_jsonb_fallback(self):
+        """Falls back to win_probability_sources JSONB when column is None."""
+        event = SimpleNamespace(
+            statpal_end_time=None,
+            win_probability_sources={"statpal_end_time": "2026-02-25T22:00:00+00:00"},
+        )
+        result = get_statpal_end_time(event)
+        assert result is not None
+        assert result.year == 2026
+        assert result.month == 2
+        assert result.hour == 22
+
+    def test_neither_source_returns_none(self):
+        """Returns None when neither column nor JSONB has end time."""
+        event = SimpleNamespace(statpal_end_time=None, win_probability_sources={})
+        assert get_statpal_end_time(event) is None
+
+    def test_none_sources_returns_none(self):
+        """Returns None when win_probability_sources is None entirely."""
+        event = SimpleNamespace(statpal_end_time=None, win_probability_sources=None)
+        assert get_statpal_end_time(event) is None
+
+    def test_invalid_iso_string_returns_none(self):
+        """Invalid ISO string in JSONB should not crash, returns None."""
+        event = SimpleNamespace(
+            statpal_end_time=None,
+            win_probability_sources={"statpal_end_time": "not-a-date"},
+        )
+        assert get_statpal_end_time(event) is None
+
+    def test_column_preferred_over_jsonb(self):
+        """Column value takes priority when both exist."""
+        col_end = datetime(2026, 2, 25, 22, 0, tzinfo=timezone.utc)
+        event = SimpleNamespace(
+            statpal_end_time=col_end,
+            win_probability_sources={"statpal_end_time": "2026-02-25T23:00:00+00:00"},
+        )
+        result = get_statpal_end_time(event)
+        assert result == col_end  # Column value, not JSONB value

@@ -3790,8 +3790,56 @@ async def statpal_status(
             "sync_injuries": "POST /api/admin/statpal/sync-injuries",
             "sync_plays": "POST /api/admin/statpal/sync-plays",
             "sync_rosters": "POST /api/admin/statpal/sync-rosters",
+            "sync_standings": "POST /api/admin/statpal/sync-standings",
+            "sync_team_stats": "POST /api/admin/statpal/sync-team-stats",
             "task_status": "GET /api/admin/statpal/task/{task_id}",
         },
+    }
+
+
+@router.post("/statpal/sync-standings")
+async def trigger_statpal_standings_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(None, description="Optional: limit to one sport key"),
+):
+    """Trigger StatPal standings sync (daily task, runs at 8:00 AM UTC)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_statpal_standings
+
+    try:
+        task = sync_statpal_standings.delay(sport_key=sport_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {e}")
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": f"Standings sync queued. "
+                   f"Use /api/admin/statpal/task/{task.id} to check status.",
+    }
+
+
+@router.post("/statpal/sync-team-stats")
+async def trigger_statpal_team_stats_sync(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(None, description="Optional: limit to one sport key"),
+):
+    """Trigger StatPal team stats sync (weekly task, runs Monday 9:00 AM UTC)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import sync_statpal_team_stats
+
+    try:
+        task = sync_statpal_team_stats.delay(sport_key=sport_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {e}")
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": f"Team stats sync queued. "
+                   f"Use /api/admin/statpal/task/{task.id} to check status.",
     }
 
 
