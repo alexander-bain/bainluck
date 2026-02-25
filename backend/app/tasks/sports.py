@@ -189,6 +189,21 @@ async def _discover_events():
                                 f"event {event_id} ({event_data['home_team']} vs "
                                 f"{event_data['away_team']})"
                             )
+
+                            # Register Odds API identities for the attached event
+                            from app.services.team_identity import team_identity_service
+                            if statpal_event.home_team_id:
+                                await team_identity_service.register_team_identity(
+                                    session, statpal_event.home_team_id,
+                                    "odds_api", sport_key,
+                                    source_name=event_data["home_team"],
+                                )
+                            if statpal_event.away_team_id:
+                                await team_identity_service.register_team_identity(
+                                    session, statpal_event.away_team_id,
+                                    "odds_api", sport_key,
+                                    source_name=event_data["away_team"],
+                                )
                         else:
                             # Normal upsert (no StatPal match found)
                             stmt = insert(Event).values(
@@ -257,11 +272,31 @@ async def _discover_events():
                         }
                         new_team_names = all_team_names - existing_team_names
                         for team_name in new_team_names:
-                            session.add(Team(
+                            new_team = Team(
                                 name=team_name,
                                 sport_id=sport.id,
-                            ))
+                            )
+                            session.add(new_team)
                         if new_team_names:
+                            await session.flush()  # Get IDs for identity registration
+
+                            # Register Odds API identities for newly created teams
+                            from app.services.team_identity import team_identity_service
+                            for team_name in new_team_names:
+                                # Look up the team we just created
+                                team_result = await session.execute(
+                                    select(Team).where(
+                                        Team.name == team_name,
+                                        Team.sport_id == sport.id,
+                                    )
+                                )
+                                new_team_obj = team_result.scalar_one_or_none()
+                                if new_team_obj:
+                                    await team_identity_service.register_team_identity(
+                                        session, new_team_obj.id, "odds_api", sport_key,
+                                        source_name=team_name,
+                                    )
+
                             total_new_teams += len(new_team_names)
                             logger.info(
                                 f"Auto-created {len(new_team_names)} Team "

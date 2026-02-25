@@ -103,10 +103,21 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     match_key = _fixture_match_key(fixture.home_team, fixture.away_team)
                     live_data = live_by_teams.get(match_key)
 
-                    # Query for matching event
-                    event = await _find_matching_event(
-                        session, Event, sport_id, fixture
-                    )
+                    # Primary: lookup by StatPal fixture ID (fast, exact)
+                    event = None
+                    if fixture.fixture_id:
+                        fid_result = await session.execute(
+                            select(Event).where(
+                                Event.statpal_fixture_id == fixture.fixture_id
+                            )
+                        )
+                        event = fid_result.scalar_one_or_none()
+
+                    # Fallback: fuzzy team name + time proximity matching
+                    if not event:
+                        event = await _find_matching_event(
+                            session, Event, sport_id, fixture
+                        )
 
                     if not event:
                         # NEW: Create event from StatPal fixture if it's in the future
@@ -151,6 +162,23 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         continue  # Skip enrichment below — we just created it
 
                     updated = False
+
+                    # Resolve and register team identities for future indexed lookups
+                    from app.services.team_identity import team_identity_service
+                    home_team = await team_identity_service.resolve_team(
+                        session, "statpal", our_key,
+                        source_name=fixture.home_team,
+                    )
+                    away_team = await team_identity_service.resolve_team(
+                        session, "statpal", our_key,
+                        source_name=fixture.away_team,
+                    )
+                    if home_team and not event.home_team_id:
+                        event.home_team_id = home_team.id
+                        updated = True
+                    if away_team and not event.away_team_id:
+                        event.away_team_id = away_team.id
+                        updated = True
 
                     # Correct commence_time if StatPal has a different (likely more accurate) time
                     if fixture.start_time and event.commence_time:
@@ -526,6 +554,14 @@ async def _sync_statpal_rosters(sport_key: Optional[str] = None) -> dict:
 
                     if not db_team:
                         continue
+
+                    # Register identity mapping for future lookups
+                    from app.services.team_identity import team_identity_service
+                    await team_identity_service.register_team_identity(
+                        session, db_team.id, "statpal", our_key,
+                        source_id=sp_team.team_id if hasattr(sp_team, 'team_id') else None,
+                        source_name=sp_team.name,
+                    )
 
                     # Only update roster if we don't already have ESPN data
                     # (ESPN is our primary source — StatPal supplements gaps)

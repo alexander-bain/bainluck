@@ -39,6 +39,35 @@ from app.utils.prediction_market_matching import (
 
 logger = logging.getLogger(__name__)
 
+
+async def _register_market_team_identities(session, event_id, matchup, market):
+    """Register team identities after a successful market→event link.
+
+    When a prediction market is linked to an event, we know the team names
+    from both sources. Register these mappings so future lookups are instant.
+    """
+    from app.models.models import Event
+    from app.services.team_identity import team_identity_service
+
+    event = await session.get(Event, event_id)
+    if not event or not event.sport:
+        return
+
+    sport_key = event.sport.key if event.sport else ""
+    source = market.source  # "kalshi" or "polymarket"
+
+    # Register the event's team names with the identity service
+    if event.home_team_id and event.home_team_name:
+        await team_identity_service.register_team_identity(
+            session, event.home_team_id, source, sport_key,
+            source_name=matchup.team_a if matchup else event.home_team_name,
+        )
+    if event.away_team_id and event.away_team_name:
+        await team_identity_service.register_team_identity(
+            session, event.away_team_id, source, sport_key,
+            source_name=matchup.team_b if matchup else event.away_team_name,
+        )
+
 # ── Consensus inversion detection ─────────────────────────────────────────────
 # Prediction market data sometimes gets stored with inverted home/away mapping
 # due to outcome-order mismatches or matchup parsing errors. This threshold
@@ -226,6 +255,9 @@ async def _match_prediction_markets(limit: int = 500):
                     matched_event["home_team"], matched_event["away_team"],
                     market.external_id,
                 )
+                await _register_market_team_identities(
+                    session, matched_event["event_id"], matchup, market,
+                )
             else:
                 # No existing event found — try auto-creating one.
                 # This handles sports The Odds API doesn't cover (e.g., Olympics).
@@ -379,6 +411,9 @@ async def _match_prediction_markets(limit: int = 500):
                     market.source, market.name, matched_event["event_id"],
                     matched_event["home_team"], matched_event["away_team"],
                     matched_event["yes_is_home"],
+                )
+                await _register_market_team_identities(
+                    session, matched_event["event_id"], matchup, market,
                 )
                 # Queue Polymarket markets for price history backfill
                 if market.source == "polymarket":
