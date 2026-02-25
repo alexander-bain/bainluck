@@ -802,24 +802,53 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
 
                 sport_updated = 0
 
-                # Parse standings — StatPal returns different formats per sport,
-                # so we handle the common structures
+                # Parse standings — StatPal returns nested format:
+                # {"standings": {"tournament": {"league": [{"division": [{"team": [...]}]}]}}}
                 teams_list = []
                 if isinstance(standings_data, list):
                     teams_list = standings_data
                 elif isinstance(standings_data, dict):
-                    # Common patterns: {"standings": [...]} or {"groups": [{"teams": [...]}]}
-                    if "standings" in standings_data:
-                        teams_list = standings_data["standings"]
-                    elif "groups" in standings_data:
-                        for group in standings_data.get("groups", []):
-                            teams_list.extend(group.get("teams", []))
-                    elif "teams" in standings_data:
-                        teams_list = standings_data["teams"]
-                    else:
-                        # Store raw data for inspection
+                    inner = standings_data.get("standings", standings_data)
+                    if isinstance(inner, list):
+                        teams_list = inner
+                    elif isinstance(inner, dict):
+                        # Navigate: tournament.league[].division[].team[]
+                        tournament = inner.get("tournament", inner)
+                        if isinstance(tournament, dict):
+                            leagues = tournament.get("league", [])
+                            if isinstance(leagues, dict):
+                                leagues = [leagues]
+                            for league in leagues:
+                                if not isinstance(league, dict):
+                                    continue
+                                league_name = league.get("name", "")
+                                divisions = league.get("division", [])
+                                if isinstance(divisions, dict):
+                                    divisions = [divisions]
+                                for div in divisions:
+                                    if not isinstance(div, dict):
+                                        continue
+                                    div_name = div.get("name", "")
+                                    div_teams = div.get("team", [])
+                                    if isinstance(div_teams, dict):
+                                        div_teams = [div_teams]
+                                    for t in div_teams:
+                                        if isinstance(t, dict):
+                                            # Inject conference/division from structure
+                                            t["_conference"] = league_name
+                                            t["_division"] = div_name
+                                            teams_list.append(t)
+                        # Fallback: groups/teams patterns
+                        if not teams_list:
+                            if "groups" in inner:
+                                for group in inner.get("groups", []):
+                                    teams_list.extend(group.get("teams", []))
+                            elif "teams" in inner:
+                                teams_list = inner["teams"]
+                    if not teams_list:
                         logger.info(f"Standings for {our_key}: unexpected format, keys={list(standings_data.keys())}")
-                        teams_list = []
+
+                logger.info(f"Standings for {our_key}: parsed {len(teams_list)} teams")
 
                 for team_entry in teams_list:
                     if not isinstance(team_entry, dict):
@@ -839,29 +868,56 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                                 db_team = t
                                 break
 
-                    if db_team:
-                        # Extract common standings fields
-                        parsed = {}
-                        for field in ["wins", "losses", "draws", "ties",
-                                      "points", "goals_for", "goals_against",
-                                      "goal_difference", "pct", "gb",
-                                      "conf_rank", "div_rank", "league_rank",
-                                      "conference", "division", "group"]:
-                            val = team_entry.get(field)
-                            if val is not None:
-                                parsed[field] = val
+                    if not db_team:
+                        logger.debug(f"Standings: no match for '{team_name}' in {our_key}")
+                        continue
 
-                        # Compute win percentage if not provided
-                        if "pct" not in parsed and "wins" in parsed and "losses" in parsed:
-                            w = parsed["wins"]
-                            l = parsed["losses"]
-                            if w + l > 0:
-                                parsed["pct"] = f".{round(1000 * w / (w + l)):03d}"
+                    # Extract standings fields — map StatPal names to our canonical names
+                    parsed = {}
+                    # StatPal uses "won"/"lost", we normalize to "wins"/"losses"
+                    wins = team_entry.get("won") or team_entry.get("wins")
+                    losses = team_entry.get("lost") or team_entry.get("losses")
+                    if wins is not None:
+                        parsed["wins"] = int(wins)
+                    if losses is not None:
+                        parsed["losses"] = int(losses)
 
-                        if parsed:
-                            db_team.standings_data = parsed
-                            db_team.standings_updated_at = now
-                            sport_updated += 1
+                    # Direct fields
+                    for src, dst in [
+                        ("draws", "draws"), ("ties", "ties"),
+                        ("points", "points"),
+                        ("goals_for", "goals_for"), ("goals_against", "goals_against"),
+                        ("goal_difference", "goal_difference"),
+                        ("gb", "games_behind"),
+                        ("position", "conf_rank"),
+                        ("streak", "streak"),
+                        ("last_10", "last_10"),
+                        ("home_record", "home_record"),
+                        ("road_record", "road_record"),
+                    ]:
+                        val = team_entry.get(src)
+                        if val is not None:
+                            parsed[dst] = val
+
+                    # Win percentage — use StatPal's "percentage" or compute
+                    pct = team_entry.get("percentage") or team_entry.get("pct")
+                    if pct:
+                        parsed["pct"] = str(pct)
+                    elif "wins" in parsed and "losses" in parsed:
+                        w, l = parsed["wins"], parsed["losses"]
+                        if w + l > 0:
+                            parsed["pct"] = f".{round(1000 * w / (w + l)):03d}"
+
+                    # Conference/division from structure (injected during parsing)
+                    if team_entry.get("_conference"):
+                        parsed["conference"] = team_entry["_conference"]
+                    if team_entry.get("_division"):
+                        parsed["division"] = team_entry["_division"]
+
+                    if parsed:
+                        db_team.standings_data = parsed
+                        db_team.standings_updated_at = now
+                        sport_updated += 1
 
                 total_updated += sport_updated
                 details.append({
