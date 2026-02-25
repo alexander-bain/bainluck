@@ -202,7 +202,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1613+ pytest items across 21 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (26 tests: detection thresholds, direction classification, prompt building with injuries/news/game context), matching audit (22 tests: LLM helper, finding structures, task registration, schedule times). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1626+ pytest items across 21 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing, team name match scoring), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (26 tests: detection thresholds, direction classification, prompt building with injuries/news/game context), matching audit (22 tests: LLM helper, finding structures, task registration, schedule times). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117+ tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -655,6 +655,19 @@ ESPN's undocumented API provides team data (colors, logos) and live game info (c
 - Team colors/logos persist in the `teams` table and apply to all events (past and present) via name lookup
 - Mapped sports: NBA, NCAAB, WNCAAB, NFL, NCAAF, NHL, MLB, MLS, EPL (see `ESPN_SPORT_MAPPING` in `tasks/config.py`)
 
+**Team Logo Backfill (Celery task `backfill_team_logos`, every 6h):**
+Fills in logos/colors for teams missing them by matching against ESPN's `/teams` endpoint.
+
+**Matching strategy:** Token-overlap scoring via `_team_name_match_score()` in `espn_sync.py`. Splits both names into word sets, removes stopwords (`the`, `of`, `fc`, etc.), computes `min(overlap/words_a, overlap/words_b)`. Threshold: `> 0.5` (strictly greater). This prevents false positives from:
+- Shared mascots: "Air Force Falcons" vs "Atlanta Falcons" → score 0.33 (rejected)
+- Partial location: "Eastern Kentucky Colonels" vs "Kentucky Wildcats" → score 0.33 (rejected)
+- State disambiguation: "South Carolina State" vs "South Carolina" → score 0.5 (rejected at strict >)
+
+**Safety guards:**
+- ESPN lookup dict excludes `et.name` (mascot-only like "Buckeyes") and `et.nickname` — only uses `display_name` and `short_name`
+- `espn_id` is only set from exact dict matches or ESPN ID matches, never from fuzzy scoring — prevents bad IDs that live sync would reinforce
+- Live sync `names_match()` left unchanged — its two-team gate (both home AND away must match) already prevents false positives
+
 **Files:**
 - ESPN client: `backend/app/services/espn_api.py`
 - Celery sync task: `backend/app/tasks/espn_sync.py` (`_sync_espn_live_events`)
@@ -688,6 +701,10 @@ curl -X POST "https://api.bainluck.com/api/admin/espn/match-teams?secret=xxx&our
 curl -X POST "https://api.bainluck.com/api/admin/espn/fix-commence-times?secret=any&limit=500"
 # Check task status:
 curl "https://api.bainluck.com/api/admin/espn/task/{task_id}?secret=any"
+
+# Validate existing ESPN ID assignments and clear bad matches
+# (one-time cleanup — uses token-overlap scoring to detect mismatched logos)
+curl -X POST "https://api.bainluck.com/api/admin/espn/cleanup-bad-matches?secret=any"
 ```
 
 ### Authentication & Personalization
@@ -1354,7 +1371,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced. **Later:** `sportsdata_api.py` deleted, roster sync migrated to ESPN + MLB Stats API.
-- ✅ Test coverage for core algorithms: 1555+ backend (pytest items) + 117+ frontend = 1672+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (126, incl. Level 2 time-series, event importance), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (50, incl. season type), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33), matching audit (22). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1568+ backend (pytest items) + 117+ frontend = 1685+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (126, incl. Level 2 time-series, event importance), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (63, incl. season type, injury/news parsing, team name match scoring), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33), matching audit (22). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
@@ -1397,6 +1414,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Feed endpoint performance optimization (8-16x improvement, 5-10s → 0.6-1.2s): Three changes in `feed.py`: (a) replaced 29 sequential per-category futures queries with single `ROW_NUMBER() OVER (PARTITION BY llm_sport_category)` query (~95% fewer DB round-trips), (b) parallelized personalization queries (favorites, preferences, pins) with `asyncio.gather()`, (c) cached canonical source counts with 5-min TTL. No product trade-offs — the per-category LIMIT 10 was already in place.
 - ✅ Matching quality audits: Three daily LLM-based audits (canonical key dedup, prediction market→event links, related futures coverage) using GPT-4o-mini. Report-only Phase 1 — findings stored in `LineMovementAnalysis` with `pattern_category` and `suggested_rule` for systematic rule improvement. Pattern aggregation endpoint ranks recurring issues. 7 admin endpoints, 22 tests. ~$0.02/day cost.
 - ✅ Canonical identity migration (4 phases): Phase 1: consolidated 10 sport key translation dicts from 7 files into `utils/sport_keys.py` with 7 accessor functions and backward-compatible re-exports. Phase 2: built `TeamIdentityService` with 5-step resolution cascade (source_id → source_name → fuzzy mapping → fuzzy teams → None), `team_identity_mapping` table, backfill task, 6 admin endpoints. Phase 3: StatPal schedule-first event creation with `statpal_fixture_id` primary lookup, `commence_time_source` tracking, nullable `Event.external_id`. Phase 4: integrated identity service into 6 consumer modules (espn_sync, statpal_sync, sports, roster_sync, prediction_market_matching, team_linking) as a supplement to existing fuzzy matching — tries indexed lookup first, falls back to existing logic, registers mapping on success.
+- ✅ ESPN team logo matching fix: Replaced bidirectional substring matching in `_backfill_team_logos()` with token-overlap scoring (`_team_name_match_score()`, threshold `> 0.5`). Removed mascot-only names ("Buckeyes", "Bulldogs") from ESPN lookup dict. Guarded `espn_id` writes to exact/ID matches only. One-time cleanup task cleared 179 bad matches (637 checked, 458 valid). Admin endpoint `POST /api/admin/espn/cleanup-bad-matches`. 13 new tests.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1407,7 +1425,7 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 1667+ tests (1550+ backend + 117+ frontend) but initially had very few
+- Test suite now has 1680+ tests (1563+ backend + 117+ frontend) but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
