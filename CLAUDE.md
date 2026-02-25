@@ -65,6 +65,7 @@ bainluck/
 │   │   │   ├── statpal_api.py   # StatPal API client (schedules, rosters, injuries, play-by-play)
 │   │   │   ├── firebase_auth.py # Firebase Admin SDK
 │   │   │   ├── llm.py           # OpenAI GPT-4o-mini integration
+│   │   │   ├── team_identity.py # Canonical team identity resolution service
 │   │   │   └── database.py      # DB connection
 │   │   ├── config/
 │   │   │   └── win_prob_sources.py # Win probability source registry
@@ -87,6 +88,7 @@ bainluck/
 │   │   │   ├── team_linking.py  # Futures outcome → team linking
 │   │   │   ├── prediction_market_matching.py  # Link game markets → events
 │   │   │   ├── matching_audit.py # LLM-based matching quality audits
+│   │   │   ├── team_identity_backfill.py # One-time backfill of team identity mappings
 │   │   │   ├── mlb_sync.py     # MLB Stats API win probability sync
 │   │   │   └── statpal_sync.py # StatPal schedule/injury/play-by-play sync
 │   │   └── utils/
@@ -99,6 +101,7 @@ bainluck/
 │   │       ├── line_movement.py # Line movement detection + LLM prompt building
 │   │       ├── futures_categorization.py # Rules + LLM categorization
 │   │       ├── team_linking.py  # Team name matching utilities
+│   │       ├── sport_keys.py   # Canonical sport key translation maps (10 dicts, 7 functions)
 │   │       └── prediction_market_matching.py  # Game-level market detection + matching
 │   ├── alembic/                 # Database migrations
 │   └── requirements.txt
@@ -182,6 +185,9 @@ bainluck/
 | `docs/tv-mode-plan.md` | TV Mode design plan (layouts, iOS v2 features, implementation phases) |
 | `tv-mode-prototype.jsx` | Interactive TV Mode prototype (React, device switching, all layouts) |
 | `docs/PRD.md` | Full product requirements and roadmap |
+| `backend/app/utils/sport_keys.py` | Canonical sport key translations (10 dicts + 7 accessor functions, zero codebase imports) |
+| `backend/app/services/team_identity.py` | Canonical team identity resolution (5-step cascade, auto-registration) |
+| `backend/app/tasks/team_identity_backfill.py` | One-time backfill of `team_identity_mapping` from ESPN IDs, team names, Kalshi abbrevs |
 
 ---
 
@@ -967,6 +973,65 @@ curl "https://api.bainluck.com/api/admin/audit/patterns?secret=any&days=30"
 ### Team Auto-Creation from Events
 The `_discover_events()` task (runs every 15 min) now batch-creates Team records for any teams found in events that don't yet have entries in the `teams` table. This ensures college teams (Harvard, Brown, Stanford, etc.) get Team records even without ESPN scoreboard matching. The `search_teams` endpoint also falls back to searching the events table and auto-creating Team records for matches.
 
+### Canonical Identity System
+Centralized team identity resolution replacing ad-hoc fuzzy name matching scattered across 6+ consumer modules. Three layers:
+
+**1. Sport key translations (`utils/sport_keys.py`):**
+Pure data module with 10 translation dicts mapping between Odds API keys, ESPN paths, StatPal identifiers, Kalshi tickers, LLM categories, and win-prob model keys. 7 accessor functions. Imports nothing from the codebase — zero circular-import risk. Consumer modules import dicts or functions they need.
+
+**2. Team identity service (`services/team_identity.py`):**
+Singleton `TeamIdentityService` with 5-step resolution cascade:
+1. Exact match on `team_identity_mapping` by `(source, source_id, sport_key)`
+2. Exact match by `(source, source_name, sport_key)`
+3. Fuzzy name match on `team_identity_mapping.source_name` (any source, using `normalize_name()`)
+4. Fuzzy name match on `teams.name` / `teams.alternate_names`
+5. Return `None`
+
+Auto-registration: when fuzzy matching succeeds (steps 3-4), the mapping is registered so subsequent lookups are O(1) indexed. Sources: `odds_api`, `espn`, `statpal`, `kalshi`, `polymarket`, `futures`, `mlb`.
+
+**3. Schedule-first event creation (StatPal integration):**
+StatPal creates Event records ~1 week ahead with `statpal_fixture_id` (indexed). When Odds API later discovers the same game, `_discover_events()` in `sports.py` attaches the `external_id` to the existing event instead of creating a duplicate. `commence_time_source` tracks which system set the time — StatPal's times are preferred over Odds API.
+
+**Consumers (6 modules integrated):**
+- `espn_sync.py` — registers ESPN identities on team upsert
+- `statpal_sync.py` — primary lookup by `statpal_fixture_id`, registers on enrichment path
+- `sports.py` — registers Odds API identities on team auto-creation and StatPal attachment
+- `roster_sync.py` — identity service fast path for MLB matching before name-based fallback
+- `prediction_market_matching.py` — registers market team identities on successful link
+- `team_linking.py` — identity service fast path before name matching for futures outcomes
+
+**Supplement pattern:** The identity service supplements existing fuzzy matching — it doesn't replace it. Each consumer tries the identity service first (fast, indexed), falls back to existing matching logic, then registers the mapping on fallback success.
+
+**Backfill task** (`tasks/team_identity_backfill.py`): One-time population from ESPN IDs, team primary/alternate names, abbreviations, and Kalshi ticker abbreviations.
+
+**Files:**
+- Service: `backend/app/services/team_identity.py`
+- Backfill: `backend/app/tasks/team_identity_backfill.py`
+- Sport keys: `backend/app/utils/sport_keys.py`
+- Model: `TeamIdentityMapping` in `backend/app/models/models.py`
+- Tests: `backend/tests/test_sport_keys.py`, `backend/tests/test_team_identity.py`
+
+**Admin endpoints:**
+```bash
+# Check identity mapping status (total mappings, per-source counts)
+curl "https://api.bainluck.com/api/admin/team-identity/status?secret=any"
+
+# Trigger one-time backfill from existing data
+curl -X POST "https://api.bainluck.com/api/admin/team-identity/backfill?secret=any"
+
+# Search mappings across all sources
+curl "https://api.bainluck.com/api/admin/team-identity/search?q=celtics&secret=any"
+
+# View all mappings for a specific team
+curl "https://api.bainluck.com/api/admin/team-identity/team/123?secret=any"
+
+# Find teams without identity mappings
+curl "https://api.bainluck.com/api/admin/team-identity/unmapped?secret=any&sport_key=basketball_nba"
+
+# Check task status
+curl "https://api.bainluck.com/api/admin/team-identity/task/{task_id}?secret=any"
+```
+
 ### Oscars Landing Page
 Visual-first landing page for the 98th Academy Awards (March 2, 2026) at `/oscars`. Aggregates prediction market odds from Polymarket and Kalshi, enriched with movie posters and headshots from TMDB.
 
@@ -1076,7 +1141,16 @@ score_snapshots -- Score history during live games
 sports          -- Supported sports/leagues
 futures         -- Championship odds markets
 gei_percentiles -- Pulse percentile thresholds
+team_identity_mapping -- Cross-source team identity index (source, source_id/name, sport_key → team_id)
 ```
+
+**Identity columns on events:**
+- `statpal_fixture_id` - StatPal's unique fixture ID (indexed, enables schedule-first event creation)
+- `statpal_end_time` - Expected game end time from StatPal
+- `commence_time_source` - Which system set the time: `"statpal"`, `"espn"`, or `"odds_api"` (StatPal wins)
+
+**Identity columns on teams:**
+- `statpal_team_id` - StatPal's team identifier (indexed, used for roster/injury sync)
 
 **Pulse fields on events:**
 - `raw_gei` - Score/100 (e.g., 0.75 = score 75)
@@ -1322,6 +1396,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Bigger Picture v5-v6 redesign: Tier-grouped visual hierarchy with 6 tiers (championship → conference → awards → downgraded → game markets → stat props). Upcoming games grid, player stat gauges with headshots, tiered border styling. Title odds fix prevents "Make Playoffs" from displaying instead of championship odds.
 - ✅ Feed endpoint performance optimization (8-16x improvement, 5-10s → 0.6-1.2s): Three changes in `feed.py`: (a) replaced 29 sequential per-category futures queries with single `ROW_NUMBER() OVER (PARTITION BY llm_sport_category)` query (~95% fewer DB round-trips), (b) parallelized personalization queries (favorites, preferences, pins) with `asyncio.gather()`, (c) cached canonical source counts with 5-min TTL. No product trade-offs — the per-category LIMIT 10 was already in place.
 - ✅ Matching quality audits: Three daily LLM-based audits (canonical key dedup, prediction market→event links, related futures coverage) using GPT-4o-mini. Report-only Phase 1 — findings stored in `LineMovementAnalysis` with `pattern_category` and `suggested_rule` for systematic rule improvement. Pattern aggregation endpoint ranks recurring issues. 7 admin endpoints, 22 tests. ~$0.02/day cost.
+- ✅ Canonical identity migration (4 phases): Phase 1: consolidated 10 sport key translation dicts from 7 files into `utils/sport_keys.py` with 7 accessor functions and backward-compatible re-exports. Phase 2: built `TeamIdentityService` with 5-step resolution cascade (source_id → source_name → fuzzy mapping → fuzzy teams → None), `team_identity_mapping` table, backfill task, 6 admin endpoints. Phase 3: StatPal schedule-first event creation with `statpal_fixture_id` primary lookup, `commence_time_source` tracking, nullable `Event.external_id`. Phase 4: integrated identity service into 6 consumer modules (espn_sync, statpal_sync, sports, roster_sync, prediction_market_matching, team_linking) as a supplement to existing fuzzy matching — tries indexed lookup first, falls back to existing logic, registers mapping on success.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1409,6 +1484,12 @@ The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout)
 13. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** Task modules use `logging.getLogger(__name__)`. Some older code still uses `print()` instead — migrate to logger when touching those sections.
 
 14. **Feed loading is auth-gated intentionally**: The homepage SWR key blocks the feed fetch until Firebase auth resolves (`authLoading ? null : ...`). Do NOT "optimize" this by pre-fetching the anonymous feed — the personalized feed contains items NOT in the anonymous feed (team-boosted events, sport-affinity items, rival games), so pre-fetching would cause visible content swap. The server-side feed query is fast enough (~1s) that the auth wait is acceptable.
+
+15. **`sport_keys.py` imports nothing from the codebase**: This is intentional — it's a pure data module that cannot cause circular imports. If you add a new sport key translation, put it here. If it requires importing from the codebase, it belongs elsewhere.
+
+16. **Team identity service is a supplement, not a replacement**: The `TeamIdentityService` sits in front of existing fuzzy matching in each consumer module. Don't remove the fallback matching logic — the identity service only has mappings for teams it has previously resolved. New teams or new source names need the fuzzy fallback to register the mapping for next time.
+
+17. **`Event.external_id` is nullable (schedule-first architecture)**: StatPal creates Event records ~1 week ahead without an Odds API ID. `_discover_events()` in `sports.py` attaches the `external_id` later. Code that assumes all events have `external_id` will break on StatPal-created events. Use `statpal_fixture_id` for StatPal lookups.
 
 ---
 
