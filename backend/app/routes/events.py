@@ -3004,17 +3004,23 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
 
         # Same division rivals
         if hs.get("division") and hs.get("division") == aws.get("division"):
-            hr = hs.get("div_rank")
-            ar = aws.get("div_rank")
-            if hr and ar and abs(hr - ar) <= 2:
-                stakes = "Division rivals"
+            try:
+                hr = int(hs["div_rank"])
+                ar = int(aws["div_rank"])
+                if abs(hr - ar) <= 2:
+                    stakes = "Division rivals"
+            except (KeyError, ValueError, TypeError):
+                pass
 
         # Fighting for top seed
         if not stakes:
-            hr = hs.get("conf_rank") or hs.get("league_rank")
-            ar = aws.get("conf_rank") or aws.get("league_rank")
-            if hr and ar and hr <= 3 and ar <= 3:
-                stakes = "Top seed matchup"
+            try:
+                hr = int(hs.get("conf_rank") or hs.get("league_rank"))
+                ar = int(aws.get("conf_rank") or aws.get("league_rank"))
+                if hr <= 3 and ar <= 3:
+                    stakes = "Top seed matchup"
+            except (ValueError, TypeError):
+                pass
 
         # Games back context
         if not stakes and hs.get("gb") is not None and aws.get("gb") is not None:

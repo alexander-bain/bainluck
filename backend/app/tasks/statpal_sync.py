@@ -882,14 +882,24 @@ async def _sync_statpal_standings(sport_key: Optional[str] = None) -> dict:
                     if losses is not None:
                         parsed["losses"] = int(losses)
 
-                    # Direct fields
+                    # Direct fields — numeric
                     for src, dst in [
                         ("draws", "draws"), ("ties", "ties"),
                         ("points", "points"),
                         ("goals_for", "goals_for"), ("goals_against", "goals_against"),
                         ("goal_difference", "goal_difference"),
-                        ("gb", "games_behind"),
                         ("position", "conf_rank"),
+                    ]:
+                        val = team_entry.get(src)
+                        if val is not None:
+                            try:
+                                parsed[dst] = int(val)
+                            except (ValueError, TypeError):
+                                parsed[dst] = val
+
+                    # Direct fields — string/mixed
+                    for src, dst in [
+                        ("gb", "games_behind"),
                         ("streak", "streak"),
                         ("last_10", "last_10"),
                         ("home_record", "home_record"),
