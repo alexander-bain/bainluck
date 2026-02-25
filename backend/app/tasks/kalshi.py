@@ -17,20 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Map Kalshi game ticker prefixes to sport labels.
 # Used to detect game-level events and construct better market names.
-_KALSHI_GAME_TICKERS: dict[str, str] = {
-    "kxnbagame": "NBA",
-    "kxnflgame": "NFL",
-    "kxnhlgame": "NHL",
-    "kxmlbgame": "MLB",
-    "kxncaabgame": "NCAAB",
-    "kxncaafgame": "NCAAF",
-    "kxwnbagame": "WNBA",
-    "kxmlsgame": "MLS",
-    "kxsoccergame": "Soccer",
-    "kxufcfight": "UFC",
-    "kxboxingfight": "Boxing",
-    "kxlolgame": "LoL",
-}
+from app.utils.sport_keys import KALSHI_TICKER_TO_DISPLAY_LABEL as _KALSHI_GAME_TICKERS  # noqa: E402
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:

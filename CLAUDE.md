@@ -70,7 +70,7 @@ bainluck/
 │   │   │   └── win_prob_sources.py # Win probability source registry
 │   │   ├── dependencies/
 │   │   │   └── auth.py          # FastAPI auth dependencies
-│   │   ├── tasks/               # Celery tasks (modular package, 15 modules)
+│   │   ├── tasks/               # Celery tasks (modular package, 16 modules)
 │   │   │   ├── __init__.py      # Celery app, task definitions, beat schedule
 │   │   │   ├── config.py        # Shared constants (intervals, sport mapping)
 │   │   │   ├── base.py          # DB session helpers, run_async()
@@ -86,6 +86,7 @@ bainluck/
 │   │   │   ├── roster_sync.py   # SportsDataIO roster sync
 │   │   │   ├── team_linking.py  # Futures outcome → team linking
 │   │   │   ├── prediction_market_matching.py  # Link game markets → events
+│   │   │   ├── matching_audit.py # LLM-based matching quality audits
 │   │   │   ├── mlb_sync.py     # MLB Stats API win probability sync
 │   │   │   └── statpal_sync.py # StatPal schedule/injury/play-by-play sync
 │   │   └── utils/
@@ -170,6 +171,7 @@ bainluck/
 | `frontend/lib/tmdb.ts` | TMDB API client (movie posters, headshots, trailers) |
 | `backend/app/utils/prediction_market_matching.py` | Game-level market detection, ticker parsing, team matching |
 | `backend/app/tasks/prediction_market_matching.py` | Prediction market → event linking + snapshot writing |
+| `backend/app/tasks/matching_audit.py` | LLM-based matching quality audits (3 daily audits) |
 | `frontend/components/SearchBar.tsx` | Typeahead search with 200ms debounce and keyboard nav |
 | `frontend/app/market-moves/page.tsx` | "Market Was Wrong" page — post-game odds shifts |
 | `frontend/app/search/page.tsx` | Search results page |
@@ -194,7 +196,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1591+ pytest items across 20 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (26 tests: detection thresholds, direction classification, prompt building with injuries/news/game context). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1613+ pytest items across 21 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (26 tests: detection thresholds, direction classification, prompt building with injuries/news/game context), matching audit (22 tests: LLM helper, finding structures, task registration, schedule times). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117+ tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -911,6 +913,57 @@ curl -X POST "https://api.bainluck.com/api/admin/prediction-markets/backfill-his
 - `backend/app/tasks/prediction_market_matching.py` — Celery task: two-pass link + snapshot phases, both-teams gate, sport scoring, orphaned snapshot cleanup on unlink/re-link, fragment-based disambiguation, matchup-prioritized scan (Pass 2a/2b), Polymarket CLOB price history backfill on first link
 - `backend/tests/test_prediction_market_matching.py` — 291 tests (ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering, integration)
 
+### Matching Quality Audits (LLM-based)
+Three daily Celery tasks that use GPT-4o-mini to audit matching quality across the system. Each samples records, asks the LLM to verify correctness, and stores structured findings for admin review. Report-only (Phase 1) — no automatic corrections.
+
+**Three audit types:**
+
+1. **Canonical Key Dedup** (`audit_canonical`, 9:00 UTC) — Phase 1: checks groups sharing a `canonical_market_key` for false positives (different markets wrongly grouped). Phase 2: checks unkeyed markets for false negatives (should have a canonical key). Stores findings with `analysis_type="audit_canonical"`.
+
+2. **Prediction Market → Event Links** (`audit_pred_market`, 9:15 UTC) — Phase 1: verifies existing `event_id` links on `FuturesMarket` records (wrong game, wrong sport). Phase 2: finds unlinked game-level markets (name contains "vs", "at", or Kalshi game ticker patterns). Stores with `analysis_type="audit_pred_market"`.
+
+3. **Related Futures Coverage** (`audit_related_fut`, 9:30 UTC) — Phase 1: checks if major-sport events have championship futures for both teams. Phase 2: finds high-probability `FuturesOutcome` records missing `team_id`. Stores with `analysis_type="audit_related_fut"`.
+
+**Learnings log:** Each finding includes `pattern_category` (recurring issue ID) and `suggested_rule` (deterministic fix the LLM recommends). The patterns endpoint aggregates these across runs — when a pattern appears 3+ times, it's a strong signal to add a deterministic rule.
+
+**Storage:** Results stored in `LineMovementAnalysis` table (event_id nullable) with 7-day TTL. One row per audit run with all findings aggregated in `movement_data` JSONB.
+
+**Admin endpoints:**
+```bash
+# Trigger audits (background Celery task)
+curl -X POST "https://api.bainluck.com/api/admin/audit/canonical-keys?secret=any&limit=50"
+curl -X POST "https://api.bainluck.com/api/admin/audit/prediction-market-links?secret=any&limit=50"
+curl -X POST "https://api.bainluck.com/api/admin/audit/related-futures?secret=any&limit=30"
+
+# Check task status
+curl "https://api.bainluck.com/api/admin/audit/task/{task_id}?secret=any"
+
+# Get latest results
+curl "https://api.bainluck.com/api/admin/audit/canonical-keys?secret=any"
+curl "https://api.bainluck.com/api/admin/audit/prediction-market-links?secret=any"
+curl "https://api.bainluck.com/api/admin/audit/related-futures?secret=any"
+
+# Aggregate recurring patterns (ranked by frequency, with suggested rules)
+curl "https://api.bainluck.com/api/admin/audit/patterns?secret=any&days=30"
+```
+
+**Phase 2 graduation criteria (when to enable auto-fix):**
+1. Run audits 2+ weeks, manually spot-check ≥20 findings per type
+2. LLM accuracy ≥90% on verified findings
+3. Pattern distribution stabilizes (same top 5-10 patterns account for >80%)
+4. Prefer implementing deterministic rules from `suggested_rule` over auto-fix
+5. Only auto-fix reversible actions (clear canonical key, unlink event_id, set team_id)
+6. Dry run validation for 1 week before enabling real writes
+
+**Cost:** ~$0.02/day at current volumes (~24K tokens/day). Can increase sample sizes 10x and stay under $1/day.
+
+**Files:**
+- Audit tasks: `backend/app/tasks/matching_audit.py`
+- LLM helper: `backend/app/services/llm.py` (`audit_match`)
+- Task wrappers: `backend/app/tasks/__init__.py`
+- Admin endpoints: `backend/app/routes/admin.py` (audit section)
+- Tests: `backend/tests/test_matching_audit.py` (22 tests)
+
 ### Team Auto-Creation from Events
 The `_discover_events()` task (runs every 15 min) now batch-creates Team records for any teams found in events that don't yet have entries in the `teams` table. This ensures college teams (Harvard, Brown, Stanford, etc.) get Team records even without ESPN scoreboard matching. The `search_teams` endpoint also falls back to searching the events table and auto-creating Team records for matches.
 
@@ -1067,6 +1120,40 @@ https://api.bainluck.com/api/events/{id}/debug
 - **Components**: Functional React with hooks
 - **Commits**: Descriptive messages, reference session URLs
 
+### Analytics Instrumentation (MANDATORY)
+
+Every frontend page (`app/**/page.tsx`) MUST include GA4 analytics hooks. This is non-negotiable.
+
+**Minimum for every page (3 hooks, called before any conditional return):**
+```tsx
+import { usePageTracking, useScrollDepth, useEngagementTime } from '@/hooks';
+
+export default function MyPage() {
+  // These 3 hooks MUST be called before any conditional returns
+  usePageTracking({ pageType: 'my_page_type', pageTitle: 'Page Title' });
+  useScrollDepth({ pageType: 'my_page_type' });
+  useEngagementTime({ pageType: 'my_page_type' });
+
+  // ... rest of component (loading states, data fetching, etc.)
+}
+```
+
+**When adding a new page:**
+1. Add the page type to `page_type` union in `frontend/lib/analytics/types.ts` (3 places: `PageViewParams`, `ScrollDepthParams`, `TimeOnPageParams`)
+2. Add the 3 mandatory hooks to the page component
+3. For pages with user interactions, add `useAnalytics()` and call `track()` for key actions
+
+**When adding interactive features to existing pages:**
+- Use `const { track } = useAnalytics()` for custom event tracking
+- Existing tracking methods: `trackEventCardClick`, `trackCategoryFilter`, `trackChartTimeRange`, etc.
+- For new event types, add interface to `types.ts` and add to `AnalyticsEventMap`
+
+**Files:**
+- Types: `frontend/lib/analytics/types.ts`
+- Hooks: `frontend/hooks/usePageTracking.ts`, `useScrollDepth.ts`, `useEngagementTime.ts`, `useAnalytics.ts`
+- Context: `frontend/components/Analytics.tsx`
+- Core: `frontend/lib/analytics/core.ts`
+
 ---
 
 ## Deployment
@@ -1119,8 +1206,9 @@ These are the current focus. Resist the urge to build new features until these a
 26. 🟢 **Related futures Phase 4 (shipped)** — LLM "Bigger Picture" summary on related-futures endpoint. GPT-4o-mini generates 2-3 sentence casual summary of championship/award implications. Cached in `LineMovementAnalysis` with 2h TTL (never expires for completed games). Frontend summary-first collapsed design with "See all N futures" toggle.
 27. 🟢 **Bigger Picture visual redesign (shipped)** — Tier-grouped display with pattern-based `effectiveTier()` overriding backend `market_tier`. Championship hero cards, award rows with ESPN headshots (`PlayerHeadshot` component: headshot URL → espn_id → Wikipedia → initials), stat prop cards with semi-circular SVG gauges, dense 2-col upcoming games grid. Award dedup by player+award combo key. NOT_CHAMPIONSHIP_PATTERNS (14 patterns) prevents misclassified hero cards (Win Totals, Make Playoffs, Seeding, etc.). Title Comparison prefers "championship" in market name. Backend stat prop filter ensures game-specific stats only show on correct event page (±6h temporal proximity or event_id match). Frontend cross-sport false positive check on game grid (team name must appear in market name).
 28. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
-28. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
-29. 🟡 **Database size & retention strategy (evaluating)** — The `odds_snapshots`, `futures_odds_snapshots`, and `win_prob_snapshots` tables grow ~10-20K net rows/day after write-time dedup. Current mitigation: lossless snapshot collapse (Phase 1 shipped — pure SQL, constant memory) reduces row count 50-90% for events >48h old. **No auto-deletion** — we want to preserve full history. Future options under evaluation: (a) pre-game snapshot thinning (keep 1/hour for >24h before game), (b) populate `odds_aggregated` table with 1-hour buckets for completed events then archive raw snapshots to cold storage, (c) tiered retention by event tier (Tier 1 full history, Tier 3-4 for 30 days), (d) futures cleanup for resolved markets after 6 months. The current collapse strategy buys 2-3 years of runway. Need to spend more time evaluating solutions — the priority is not losing data we might want later. See `backend/app/tasks/retention.py` for collapse implementation.
+29. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
+30. 🟢 **Matching quality audits (shipped)** — Three daily LLM-based audits verify canonical key dedup, prediction market→event links, and related futures coverage. GPT-4o-mini samples records, checks correctness, stores findings with `pattern_category` and `suggested_rule` in `LineMovementAnalysis`. Pattern aggregation endpoint surfaces recurring issues. Report-only Phase 1; Phase 2 auto-fix gated on ≥90% accuracy over 2+ weeks. ~$0.02/day cost. 22 tests.
+31. 🟡 **Database size & retention strategy (evaluating)** — The `odds_snapshots`, `futures_odds_snapshots`, and `win_prob_snapshots` tables grow ~10-20K net rows/day after write-time dedup. Current mitigation: lossless snapshot collapse (Phase 1 shipped — pure SQL, constant memory) reduces row count 50-90% for events >48h old. **No auto-deletion** — we want to preserve full history. Future options under evaluation: (a) pre-game snapshot thinning (keep 1/hour for >24h before game), (b) populate `odds_aggregated` table with 1-hour buckets for completed events then archive raw snapshots to cold storage, (c) tiered retention by event tier (Tier 1 full history, Tier 3-4 for 30 days), (d) futures cleanup for resolved markets after 6 months. The current collapse strategy buys 2-3 years of runway. Need to spend more time evaluating solutions — the priority is not losing data we might want later. See `backend/app/tasks/retention.py` for collapse implementation.
 
 ### Horizon — AI-Native Sports Intelligence (ESPN + MySportsFeeds + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require sports data enrichment (rosters, injuries, standings, schedules from ESPN free API + MySportsFeeds) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -1135,6 +1223,35 @@ These are differentiated features that can't be built with odds data alone. They
 8. 📋 **"What's Actually at Stake"** — For each game, show concrete implications: "Win and they're 2 games up in the division. Lose and they drop to 4th." Needs: ESPN standings + schedule + playoff math.
 9. 📋 **Sharps vs Public** — If MySportsFeeds provides line movement + betting splits, surface when sharp money disagrees with public sentiment. Differentiated from existing tools by visual-first presentation.
 10. 📋 **Futures Postmortem** — At season end, show who "won" the futures market: early bettors on the champion, worst value bets, biggest surprises. Needs: full futures odds history + AI narrative generation.
+
+### Ideas Backlog (Feb 2026 brainstorm)
+
+**Design:**
+- 📋 **Sparklines on feed cards** — Tiny 40px SVG on each EventCard showing 24h odds trajectory. Communicates volatility at a glance without clicking through.
+- 📋 **Pulse glow on live cards** — Subtle border glow animation on homepage live cards, speed mapped to Pulse score (port of TV mode "breathing"). Feel which games are exciting before reading anything.
+- 📋 **Top-of-page scoreboard strip** — Horizontally scrollable strip above feed with compact live game chips (abbreviations + probability + score). Tap to jump to full card.
+- 📋 **Team color gradient card backgrounds** — Team colors as subtle gradient backgrounds on entire card, blending both teams' colors. Feed feels less like a data table.
+- 📋 **Futures outcome mini-bars** — Thin horizontal probability bars behind each outcome name on FuturesCard. Makes relative probability scannable without reading numbers.
+
+**Explain why it's interesting:**
+- 📋 **"As likely as..." analogies** — Translate probabilities into calibrated comparisons ("4% title chance — about the odds of flipping 5 heads in a row"). Library of ~20 analogies at probability levels. Show on futures detail pages.
+- 📋 **Historical precedent one-liners** — Use own snapshot history: "Teams trailing by 10+ in Q4 come back 8% of the time." Computed from stored data, LLM writes the sentence.
+- 📋 **"Since you last looked" diff** — Banner for returning users: "Since 3 hours ago: Thunder +3%, Celtics -2%, new MVP leader." Track last-visit timestamp in localStorage or user_preferences.
+- 📋 **Annotated chart moments** — Overlay key play-by-play moments on odds chart ("Interception at 2:34 Q4" next to probability cliff-drop). ESPN play-by-play data available during live games.
+- 📋 **Stakes explainer cards** — Pre-game context: "If the Celtics win, they clinch #1 seed. If they lose, they drop to 3rd." ESPN standings + playoff math + LLM. Lightweight version of "What's Actually at Stake" horizon item.
+
+**Matching:**
+- 📋 **Futures → events (reverse direction)** — Futures detail pages show relevant upcoming/recent events inline. "Celtics (22%) play tonight at 7:30 PM — currently leading 85-78." Already planned as Related Futures Phase 5.
+- 📋 **Cross-source canonical market identity** — Merge Polymarket "NBA Championship" + Kalshi "NBA Finals Winner" + Odds API "NBA Championship Winner 2025-26" into unified display showing "3 sources" while keeping raw data separate. Oscars page already does a version of this.
+- 📋 **Futures stake weighting for event importance** — If a team has >10% championship odds, every one of their games gets a highlight score multiplier derived from their futures probability. Connects the event and futures scoring systems that currently operate independently. Needs planning on exact formula.
+- *Already implemented: Player award → game matching (via roster_players ILIKE), conference/division futures → event linking (via market_tier).*
+
+**Wild:**
+- 📋 **Probability Replay** — After a game ends, "replay" the odds chart like a movie with a scrubber. Overlay ESPN play-by-play annotations at each inflection point. High-Pulse games become sharable highlights.
+- 📋 **"What If" simulator** — "What happens to championship odds if the Lakers win tonight?" Use historical futures snapshot correlations to estimate impact before the game.
+- 📋 **Prediction game (no real money)** — Users lock in probability predictions for futures. Track accuracy over time with calibration score. Leaderboard. Zero regulatory risk.
+- 📋 **Ambient mode for bars** — `/ambient` route designed for TVs in sports bars. Cycles through highest-Pulse games, auto-switches on exciting moments, futures ticker scrolling across bottom. "Powered by Bain Luck" in corner.
+- 📋 **Shareable probability snapshots** — "Share" button generates beautiful image card (OpenGraph-ready) with teams, logos, odds, Pulse, one-line reason. Optimized for iMessage/Twitter/Instagram stories.
 
 ### Completed
 <details>
@@ -1159,11 +1276,11 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 14 regression tests (including commence_time sanity check)
 - ✅ Opening odds now stores last pregame consensus (cross-bookmaker average, continuously updated while scheduled)
 - ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`. Phase 2: rewritten to pure SQL using PostgreSQL window functions (LAG, SUM, CTEs) for constant memory — fixes Heroku worker OOM (R14).
-- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 14 modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`, `roster_sync.py`, `team_linking.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
+- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 16 modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`, `roster_sync.py`, `team_linking.py`, `prediction_market_matching.py`, `matching_audit.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced. **Later:** `sportsdata_api.py` deleted, roster sync migrated to ESPN + MLB Stats API.
-- ✅ Test coverage for core algorithms: 1533+ backend (pytest items) + 117+ frontend = 1650+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (126, incl. Level 2 time-series, event importance), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (50, incl. season type), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1555+ backend (pytest items) + 117+ frontend = 1672+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (126, incl. Level 2 time-series, event importance), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (50, incl. season type), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33), matching audit (22). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
@@ -1203,6 +1320,8 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Homepage section redesign: "Starting Soon" and "More Games" merged into single "Upcoming" section. New "Just Happened" section for completed events (24h window) with Pulse-based scoring boost (+25 for Pulse ≥80, +15 for ≥60). Section order: Live Now → Just Happened → Upcoming → Top Markets.
 - ✅ Finished event card redesign: Shows expected vs actual — opening odds probability bar (what was expected) + score with winner bolded (what happened) + date/time for freshness. No probability numbers on finished cards. Non-repetitive reason text: returns empty string for generic cases, only shows genuinely insightful context ("Won as 35% underdog", "Starting soon", line movement). Applies to all statuses — upcoming events no longer repeat odds in reason text, live events no longer repeat score.
 - ✅ Bigger Picture v5-v6 redesign: Tier-grouped visual hierarchy with 6 tiers (championship → conference → awards → downgraded → game markets → stat props). Upcoming games grid, player stat gauges with headshots, tiered border styling. Title odds fix prevents "Make Playoffs" from displaying instead of championship odds.
+- ✅ Feed endpoint performance optimization (8-16x improvement, 5-10s → 0.6-1.2s): Three changes in `feed.py`: (a) replaced 29 sequential per-category futures queries with single `ROW_NUMBER() OVER (PARTITION BY llm_sport_category)` query (~95% fewer DB round-trips), (b) parallelized personalization queries (favorites, preferences, pins) with `asyncio.gather()`, (c) cached canonical source counts with 5-min TTL. No product trade-offs — the per-category LIMIT 10 was already in place.
+- ✅ Matching quality audits: Three daily LLM-based audits (canonical key dedup, prediction market→event links, related futures coverage) using GPT-4o-mini. Report-only Phase 1 — findings stored in `LineMovementAnalysis` with `pattern_category` and `suggested_rule` for systematic rule improvement. Pattern aggregation endpoint ranks recurring issues. 7 admin endpoints, 22 tests. ~$0.02/day cost.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1236,6 +1355,15 @@ Pinned events/futures use localStorage for anonymous users and sync to `user_pin
 
 ### Session-End Feedback Prompt
 At the end of long working sessions, run the feedback prompt (saved in `docs/feedback-prompt.md`) to get process feedback on priority alignment, prompting effectiveness, and blind spots.
+
+### Feed Endpoint Performance
+The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout) to 0.6-1.2s via three changes:
+
+1. **Single ROW_NUMBER query** — Replaced 29 sequential per-category futures queries (each with `selectinload` = ~90 DB round-trips) with one `ROW_NUMBER() OVER (PARTITION BY llm_sport_category)` query that returns top-N per category in a single pass.
+2. **Parallel personalization** — `asyncio.gather()` for favorites, preferences, and pins queries (were sequential).
+3. **Cached canonical source counts** — Process-level 5-min TTL cache for `_get_canonical_source_counts()` (aggregation query that rarely changes).
+
+**Design constraint — do NOT pre-fetch the anonymous feed for logged-in users.** The personalized feed is NOT a subset of the anonymous feed — it includes team-boosted events below the anonymous threshold, sport-affinity items, and rival games. Pre-fetching the anonymous feed would cause visible content swap when personalization loads, which is worse than waiting. The auth-gated SWR key in `page.tsx` (`authLoading ? null : ...`) is intentional. The server-side optimization makes this wait short enough (~1s) that it's fine.
 
 ---
 
@@ -1279,6 +1407,8 @@ At the end of long working sessions, run the feedback prompt (saved in `docs/fee
 12. **Safari breaks Firebase Auth** — `signInWithPopup`, `signInWithRedirect`, and `signInWithCredential` all fail on Safari due to ITP. The working solution is GIS `initTokenClient` (opens OAuth popup, returns access token) → backend exchanges for custom Firebase token → `signInWithCustomToken`. Do NOT attempt to use Firebase's native Google sign-in methods on Safari. The backend fallback endpoint `POST /api/auth/google-access-token` handles this. Requires `FIREBASE_SERVICE_ACCOUNT_JSON` to be set.
 
 13. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** Task modules use `logging.getLogger(__name__)`. Some older code still uses `print()` instead — migrate to logger when touching those sections.
+
+14. **Feed loading is auth-gated intentionally**: The homepage SWR key blocks the feed fetch until Firebase auth resolves (`authLoading ? null : ...`). Do NOT "optimize" this by pre-fetching the anonymous feed — the personalized feed contains items NOT in the anonymous feed (team-boosted events, sport-affinity items, rival games), so pre-fetching would cause visible content swap. The server-side feed query is fast enough (~1s) that the auth wait is acceptable.
 
 ---
 

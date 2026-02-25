@@ -127,8 +127,13 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         _set_statpal_id(event, fixture.fixture_id)
                         updated = True
 
-                    # Populate end_time for finished games (via win_probability_sources JSONB)
+                    # Populate end_time for finished games
                     if fixture.end_time and fixture.status == "finished":
+                        # Write to dedicated column
+                        if hasattr(event, "statpal_end_time") and not event.statpal_end_time:
+                            event.statpal_end_time = fixture.end_time
+                            updated = True
+                        # Also write to JSONB for backward compatibility
                         sources = event.win_probability_sources or {}
                         if "statpal_end_time" not in sources:
                             sources["statpal_end_time"] = fixture.end_time.isoformat()
@@ -628,12 +633,19 @@ async def _find_matching_event(session, Event, sport_id: int, fixture) -> Option
 
 def _get_statpal_id(event) -> Optional[str]:
     """Get the StatPal fixture ID stored on an event."""
+    # Prefer the dedicated column, fall back to JSONB
+    if hasattr(event, "statpal_fixture_id") and event.statpal_fixture_id:
+        return event.statpal_fixture_id
     sources = event.win_probability_sources or {}
     return sources.get("statpal_fixture_id")
 
 
 def _set_statpal_id(event, fixture_id: str):
     """Store the StatPal fixture ID on an event."""
+    # Write to dedicated column
+    if hasattr(event, "statpal_fixture_id"):
+        event.statpal_fixture_id = fixture_id
+    # Also write to JSONB for backward compatibility during migration
     sources = event.win_probability_sources or {}
     sources["statpal_fixture_id"] = fixture_id
     event.win_probability_sources = sources

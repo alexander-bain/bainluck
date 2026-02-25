@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
+import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
@@ -104,6 +105,7 @@ export default function OddsChart({
   fillContainer = false,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
+  const { track } = useAnalyticsContext();
 
   const hasPostStartData = useMemo(() => {
     if (!history || history.length === 0 || !commenceTime) return false;
@@ -469,7 +471,20 @@ export default function OddsChart({
         {TIME_RANGE_OPTIONS.map((option) => (
           <button
             key={option.value}
-            onClick={() => setTimeRange(option.value)}
+            onClick={() => {
+              const previousRange = timeRange;
+              setTimeRange(option.value);
+              if (eventId) {
+                track('chart_time_range', {
+                  chart_type: 'probability_trend',
+                  event_id: eventId,
+                  range: option.value,
+                  previous_range: previousRange,
+                  has_data: filteredHistory.length > 0,
+                  data_points_count: filteredHistory.length,
+                });
+              }
+            }}
             className={`font-medium rounded-full transition-colors ${
               fillContainer
                 ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${

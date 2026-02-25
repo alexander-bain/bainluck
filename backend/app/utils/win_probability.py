@@ -20,25 +20,16 @@ Sport-specific parameters:
 import math
 from typing import Optional
 
+from app.utils.sport_keys import (
+    ODDS_API_TO_WIN_PROB_KEY as _SPORT_KEY_ALIASES,  # noqa: F401 — re-exported for tests
+    normalize_to_win_prob_key as _normalize_sport_key,  # noqa: F401 — re-exported for tests
+)
+
 
 # Standard normal CDF using math.erfc (no scipy needed)
 def _norm_cdf(x: float) -> float:
     """Standard normal cumulative distribution function."""
     return 0.5 * math.erfc(-x / math.sqrt(2))
-
-
-# The Odds API uses different sport key prefixes than our internal convention.
-# Normalize to our canonical keys before lookup.
-_SPORT_KEY_ALIASES = {
-    "americanfootball_nfl": "football_nfl",
-    "americanfootball_ncaaf": "football_ncaaf",
-    "icehockey_nhl": "hockey_nhl",
-}
-
-
-def _normalize_sport_key(sport_key: str) -> str:
-    """Map Odds API sport keys to canonical keys used in SPORT_PARAMS."""
-    return _SPORT_KEY_ALIASES.get(sport_key, sport_key)
 
 
 # Sport-specific parameters

@@ -1,0 +1,289 @@
+"""Tests for the consolidated sport key translation module."""
+
+import pytest
+
+from app.utils.sport_keys import (
+    SPORT_LEAGUE_MAP,
+    ESPN_SPORT_MAPPING,
+    STATPAL_SPORT_MAPPING,
+    ODDS_API_TO_WIN_PROB_KEY,
+    SPORT_PREFIX_TO_LLM_CATEGORY,
+    LLM_CATEGORY_TO_SPORT_PREFIX,
+    KALSHI_TICKER_TO_SPORT_KEY,
+    KALSHI_GAME_TICKER_PREFIXES,
+    KALSHI_TICKER_TO_DISPLAY_LABEL,
+    LLM_CATEGORY_TO_SPORT_KEYS,
+    # accessor functions
+    get_espn_path,
+    normalize_to_win_prob_key,
+    get_sport_prefix_for_category,
+    get_sport_key_from_ticker,
+    is_kalshi_game_ticker,
+    get_sport_keys_for_category,
+    get_llm_category_for_prefix,
+)
+
+
+# =============================================================================
+# Dict sizes and sample entries
+# =============================================================================
+
+class TestDictContents:
+    """Verify each dict has the expected size and a few key entries."""
+
+    def test_sport_league_map_size(self):
+        assert len(SPORT_LEAGUE_MAP) == 17
+
+    def test_sport_league_map_sample_entries(self):
+        assert SPORT_LEAGUE_MAP["basketball_nba"] == ("basketball", "nba")
+        assert SPORT_LEAGUE_MAP["americanfootball_nfl"] == ("football", "nfl")
+        assert SPORT_LEAGUE_MAP["icehockey_nhl"] == ("hockey", "nhl")
+        assert SPORT_LEAGUE_MAP["soccer_epl"] == ("soccer", "eng.1")
+
+    def test_espn_sport_mapping_size(self):
+        assert len(ESPN_SPORT_MAPPING) == 9
+
+    def test_espn_sport_mapping_sample(self):
+        assert ESPN_SPORT_MAPPING["basketball_nba"] == "basketball/nba"
+        assert ESPN_SPORT_MAPPING["americanfootball_nfl"] == "football/nfl"
+
+    def test_statpal_sport_mapping_size(self):
+        assert len(STATPAL_SPORT_MAPPING) == 7
+
+    def test_statpal_sport_mapping_sample(self):
+        assert STATPAL_SPORT_MAPPING["americanfootball_nfl"] == "nfl"
+        assert STATPAL_SPORT_MAPPING["golf_pga"] == "pga"
+
+    def test_odds_api_to_win_prob_key_size(self):
+        assert len(ODDS_API_TO_WIN_PROB_KEY) == 3
+
+    def test_odds_api_to_win_prob_key_sample(self):
+        assert ODDS_API_TO_WIN_PROB_KEY["americanfootball_nfl"] == "football_nfl"
+        assert ODDS_API_TO_WIN_PROB_KEY["icehockey_nhl"] == "hockey_nhl"
+
+    def test_sport_prefix_to_llm_category_size(self):
+        assert len(SPORT_PREFIX_TO_LLM_CATEGORY) == 11
+
+    def test_sport_prefix_to_llm_category_sample(self):
+        assert SPORT_PREFIX_TO_LLM_CATEGORY["americanfootball"] == "football"
+        assert SPORT_PREFIX_TO_LLM_CATEGORY["icehockey"] == "hockey"
+
+    def test_llm_category_to_sport_prefix_size(self):
+        assert len(LLM_CATEGORY_TO_SPORT_PREFIX) == 16
+
+    def test_llm_category_to_sport_prefix_sample(self):
+        assert LLM_CATEGORY_TO_SPORT_PREFIX["football"] == "americanfootball"
+        assert LLM_CATEGORY_TO_SPORT_PREFIX["hockey"] == "icehockey"
+        assert LLM_CATEGORY_TO_SPORT_PREFIX["motorsports"] == "motorsport"
+
+    def test_kalshi_ticker_to_sport_key_size(self):
+        assert len(KALSHI_TICKER_TO_SPORT_KEY) == 17
+
+    def test_kalshi_ticker_to_sport_key_sample(self):
+        assert KALSHI_TICKER_TO_SPORT_KEY["kxnbagame"] == "basketball_nba"
+        assert KALSHI_TICKER_TO_SPORT_KEY["kxnflgame"] == "americanfootball_nfl"
+        assert KALSHI_TICKER_TO_SPORT_KEY["kxsosoccer"] == "soccer_olympics"
+
+    def test_kalshi_game_ticker_prefixes_size(self):
+        assert len(KALSHI_GAME_TICKER_PREFIXES) == 17
+
+    def test_kalshi_game_ticker_prefixes_is_tuple(self):
+        assert isinstance(KALSHI_GAME_TICKER_PREFIXES, tuple)
+
+    def test_kalshi_ticker_to_display_label_size(self):
+        assert len(KALSHI_TICKER_TO_DISPLAY_LABEL) == 12
+
+    def test_kalshi_ticker_to_display_label_sample(self):
+        assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxnbagame"] == "NBA"
+        assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxlolgame"] == "LoL"
+
+    def test_llm_category_to_sport_keys_size(self):
+        assert len(LLM_CATEGORY_TO_SPORT_KEYS) == 8
+
+    def test_llm_category_to_sport_keys_sample(self):
+        assert "basketball_nba" in LLM_CATEGORY_TO_SPORT_KEYS["basketball"]
+        assert "americanfootball_nfl" in LLM_CATEGORY_TO_SPORT_KEYS["football"]
+
+
+# =============================================================================
+# Cross-consistency
+# =============================================================================
+
+class TestCrossConsistency:
+    """Verify dicts are consistent with each other."""
+
+    def test_espn_mapping_keys_are_subset_of_sport_league_map(self):
+        """ESPN_SPORT_MAPPING keys should all be in SPORT_LEAGUE_MAP."""
+        assert set(ESPN_SPORT_MAPPING.keys()).issubset(set(SPORT_LEAGUE_MAP.keys()))
+
+    def test_kalshi_ticker_prefixes_match_ticker_to_sport_key(self):
+        """KALSHI_GAME_TICKER_PREFIXES should be exactly the keys of KALSHI_TICKER_TO_SPORT_KEY."""
+        assert set(KALSHI_GAME_TICKER_PREFIXES) == set(KALSHI_TICKER_TO_SPORT_KEY.keys())
+
+    def test_display_label_keys_are_subset_of_ticker_prefixes(self):
+        """KALSHI_TICKER_TO_DISPLAY_LABEL keys should all be in KALSHI_GAME_TICKER_PREFIXES."""
+        assert set(KALSHI_TICKER_TO_DISPLAY_LABEL.keys()).issubset(set(KALSHI_GAME_TICKER_PREFIXES))
+
+    def test_prefix_to_category_and_category_to_prefix_are_inverses(self):
+        """For keys present in both, mappings should round-trip."""
+        for prefix, category in SPORT_PREFIX_TO_LLM_CATEGORY.items():
+            if category in LLM_CATEGORY_TO_SPORT_PREFIX:
+                assert LLM_CATEGORY_TO_SPORT_PREFIX[category] == prefix
+
+
+# =============================================================================
+# Accessor functions
+# =============================================================================
+
+class TestGetEspnPath:
+    def test_known_key(self):
+        assert get_espn_path("basketball_nba") == ("basketball", "nba")
+
+    def test_unknown_key(self):
+        assert get_espn_path("unknown_sport") is None
+
+    def test_empty_string(self):
+        assert get_espn_path("") is None
+
+
+class TestNormalizeToWinProbKey:
+    def test_aliased_key(self):
+        assert normalize_to_win_prob_key("americanfootball_nfl") == "football_nfl"
+
+    def test_passthrough(self):
+        assert normalize_to_win_prob_key("basketball_nba") == "basketball_nba"
+
+    def test_unknown_passthrough(self):
+        assert normalize_to_win_prob_key("curling") == "curling"
+
+
+class TestGetSportPrefixForCategory:
+    def test_known_category(self):
+        assert get_sport_prefix_for_category("football") == "americanfootball"
+
+    def test_unknown_category(self):
+        assert get_sport_prefix_for_category("competitive_eating") is None
+
+    def test_empty_string(self):
+        assert get_sport_prefix_for_category("") is None
+
+
+class TestGetSportKeyFromTicker:
+    def test_nba_ticker(self):
+        assert get_sport_key_from_ticker("KXNBAGAME-26FEB19BOSGSW") == "basketball_nba"
+
+    def test_nfl_ticker(self):
+        assert get_sport_key_from_ticker("KXNFLGAME-26FEB01KCBUF") == "americanfootball_nfl"
+
+    def test_case_insensitive(self):
+        assert get_sport_key_from_ticker("kxnhlgame-26FEB10TORMON") == "icehockey_nhl"
+
+    def test_unknown_ticker(self):
+        assert get_sport_key_from_ticker("RANDOMTICKER-123") is None
+
+    def test_empty_string(self):
+        assert get_sport_key_from_ticker("") is None
+
+    def test_none(self):
+        assert get_sport_key_from_ticker(None) is None
+
+
+class TestIsKalshiGameTicker:
+    def test_nba_game(self):
+        assert is_kalshi_game_ticker("KXNBAGAME-26FEB19BOSGSW") is True
+
+    def test_ufc_fight(self):
+        assert is_kalshi_game_ticker("KXUFCFIGHT-26FEB20") is True
+
+    def test_non_game(self):
+        assert is_kalshi_game_ticker("KXCPI-2026-05") is False
+
+    def test_empty_string(self):
+        assert is_kalshi_game_ticker("") is False
+
+    def test_none(self):
+        assert is_kalshi_game_ticker(None) is False
+
+    def test_case_insensitive(self):
+        assert is_kalshi_game_ticker("kxmlbgame-26MAR15NYYBOS") is True
+
+
+class TestGetSportKeysForCategory:
+    def test_basketball(self):
+        result = get_sport_keys_for_category("basketball")
+        assert "basketball_nba" in result
+        assert "basketball_wnba" in result
+
+    def test_case_insensitive(self):
+        assert get_sport_keys_for_category("FOOTBALL") == get_sport_keys_for_category("football")
+
+    def test_unknown_category(self):
+        assert get_sport_keys_for_category("curling") is None
+
+    def test_none(self):
+        assert get_sport_keys_for_category(None) is None
+
+    def test_empty_string(self):
+        assert get_sport_keys_for_category("") is None
+
+
+class TestGetLlmCategoryForPrefix:
+    def test_known_prefix(self):
+        assert get_llm_category_for_prefix("americanfootball") == "football"
+
+    def test_passthrough(self):
+        assert get_llm_category_for_prefix("unknown_prefix") == "unknown_prefix"
+
+
+# =============================================================================
+# Backward-compatible re-exports
+# =============================================================================
+
+class TestBackwardCompatReExports:
+    """Verify that imports from original locations still resolve."""
+
+    def test_espn_sport_mapping_from_tasks_config(self):
+        from app.tasks.config import ESPN_SPORT_MAPPING as m
+        assert m is ESPN_SPORT_MAPPING
+
+    def test_statpal_sport_mapping_from_tasks_config(self):
+        from app.tasks.config import STATPAL_SPORT_MAPPING as m
+        assert m is STATPAL_SPORT_MAPPING
+
+    def test_sport_league_map_from_espn_api(self):
+        from app.services.espn_api import SPORT_LEAGUE_MAP as m
+        assert m is SPORT_LEAGUE_MAP
+
+    def test_normalize_sport_key_from_win_probability(self):
+        from app.utils.win_probability import _normalize_sport_key
+        # Function re-exported via alias — should produce same results
+        assert _normalize_sport_key("americanfootball_nfl") == "football_nfl"
+        assert _normalize_sport_key("basketball_nba") == "basketball_nba"
+
+    def test_sport_key_aliases_from_win_probability(self):
+        from app.utils.win_probability import _SPORT_KEY_ALIASES
+        assert _SPORT_KEY_ALIASES is ODDS_API_TO_WIN_PROB_KEY
+
+    def test_is_kalshi_game_ticker_from_prediction_market(self):
+        from app.utils.prediction_market_matching import is_kalshi_game_ticker as fn
+        assert fn("KXNBAGAME-123") is True
+
+    def test_get_sport_prefix_from_ticker_from_prediction_market(self):
+        from app.utils.prediction_market_matching import get_sport_prefix_from_ticker
+        assert get_sport_prefix_from_ticker("KXNBAGAME-123") == "basketball_nba"
+
+    def test_sport_category_to_keys_from_team_linking(self):
+        from app.utils.team_linking import SPORT_CATEGORY_TO_KEYS
+        assert SPORT_CATEGORY_TO_KEYS is LLM_CATEGORY_TO_SPORT_KEYS
+
+    def test_get_sport_keys_for_category_from_team_linking(self):
+        from app.utils.team_linking import get_sport_keys_for_category as fn
+        assert fn("basketball") is not None
+
+    def test_kalshi_game_tickers_from_kalshi_task(self):
+        from app.tasks.kalshi import _KALSHI_GAME_TICKERS
+        assert _KALSHI_GAME_TICKERS is KALSHI_TICKER_TO_DISPLAY_LABEL
+
+    def test_sport_prefix_to_llm_category_from_events(self):
+        from app.routes.events import _SPORT_PREFIX_TO_LLM_CATEGORY
+        assert _SPORT_PREFIX_TO_LLM_CATEGORY is SPORT_PREFIX_TO_LLM_CATEGORY

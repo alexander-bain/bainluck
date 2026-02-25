@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 /**
  * Pulse Explainer Page
@@ -9,6 +10,10 @@ import Link from "next/link";
  * with visual examples for each excitement level.
  */
 export default function PulseExplainerPage() {
+  usePageTracking({ pageType: 'pulse', pageTitle: 'What is Pulse?' });
+  useScrollDepth({ pageType: 'pulse' });
+  useEngagementTime({ pageType: 'pulse' });
+
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       {/* Hero Section */}

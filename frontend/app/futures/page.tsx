@@ -9,6 +9,7 @@ import FuturesCard from "@/components/FuturesCard";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { formatProbability } from "@/lib/api";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
   getEmojiForCategory,
   getNameForCategory,
@@ -32,6 +33,10 @@ interface SportGroup {
 }
 
 export default function FuturesPage() {
+  usePageTracking({ pageType: 'futures', pageTitle: 'Championship & Futures Odds' });
+  useScrollDepth({ pageType: 'futures' });
+  useEngagementTime({ pageType: 'futures' });
+
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
   const [expandedSports, setExpandedSports] = useState<Set<string>>(new Set());
   const [expandedSubcategories, setExpandedSubcategories] = useState<Set<string>>(new Set());

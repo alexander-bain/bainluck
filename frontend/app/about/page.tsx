@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 /**
  * About Page
@@ -8,6 +9,10 @@ import Link from "next/link";
  * Explains what Bain Luck is and its mission.
  */
 export default function AboutPage() {
+  usePageTracking({ pageType: 'about', pageTitle: 'About Bain Luck' });
+  useScrollDepth({ pageType: 'about' });
+  useEngagementTime({ pageType: 'about' });
+
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       {/* Hero Section */}

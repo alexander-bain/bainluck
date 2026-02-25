@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { fetchTypeahead } from "@/lib/api";
 import type { TypeaheadSuggestion } from "@/lib/api";
+import { useAnalyticsContext } from "@/components/Analytics";
 
 interface SearchBarProps {
   /** Initial query value */
@@ -26,6 +27,7 @@ export default function SearchBar({
   compact = false,
 }: SearchBarProps) {
   const router = useRouter();
+  const { track } = useAnalyticsContext();
   const [query, setQuery] = useState(initialQuery);
   const [suggestions, setSuggestions] = useState<TypeaheadSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -89,6 +91,14 @@ export default function SearchBar({
   const selectSuggestion = (suggestion: TypeaheadSuggestion) => {
     setIsOpen(false);
     setQuery("");
+
+    track('navigation_click', {
+      click_type: 'footer_link' as const,
+      from_page: 'search',
+      to_page: suggestion.type === 'event' ? `/events/${suggestion.event_id}`
+        : suggestion.type === 'futures' ? `/futures/${suggestion.market_id}`
+        : `/search?q=${suggestion.text}`,
+    });
 
     switch (suggestion.type) {
       case "team":

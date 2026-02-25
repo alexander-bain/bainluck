@@ -25,6 +25,7 @@ from app.utils import (
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
+from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY
 
 router = APIRouter()
 
@@ -1703,21 +1704,6 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     return response
 
-
-# Sport key prefix → LLM sport category mapping for futures market filtering
-_SPORT_PREFIX_TO_LLM_CATEGORY = {
-    "americanfootball": "football",
-    "basketball": "basketball",
-    "icehockey": "hockey",
-    "baseball": "baseball",
-    "soccer": "soccer",
-    "mma": "mma",
-    "golf": "golf",
-    "tennis": "tennis",
-    "cricket": "cricket",
-    "rugby": "rugby",
-    "boxing": "boxing",
-}
 
 # Regex patterns for detecting game-specific markets (stat props and matchups).
 # These are compiled once at module level, not per-request.

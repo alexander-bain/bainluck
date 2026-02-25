@@ -472,9 +472,18 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
     from app.models import FuturesMarket, FuturesOutcome
     from app.utils.futures_categorization import (
         categorize_by_rules, detect_league, infer_sport_from_league,
-        generate_category_tags,
+        generate_category_tags, detect_season, compute_canonical_market_key,
     )
     from app.services import llm
+
+    def _refresh_canonical_key(market):
+        """Recompute canonical_market_key after category/league changes."""
+        sport_key = market.external_id if market.source == "odds_api" else None
+        league = market.llm_league or detect_league(market.name, sport_key)
+        season = detect_season(market.name, league, market.resolution_date)
+        market.canonical_market_key = compute_canonical_market_key(
+            market.llm_sport_category, league, market.category, season,
+        )
 
     BATCH_SIZE = 25  # Small batches to stay within memory quota
     target_label = from_category or "other/NULL"
@@ -554,6 +563,7 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
                                 market.name, category, market.llm_league,
                                 market.category,
                             )
+                            _refresh_canonical_key(market)
                             stats["reclassified"] += 1
                             stats["reclassified_by_rules"] += 1
                             stats["by_category"][category] = (
@@ -584,6 +594,7 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
                                     market.name, sport, league,
                                     market.category,
                                 )
+                                _refresh_canonical_key(market)
                                 stats["reclassified"] += 1
                                 stats["reclassified_by_league"] += 1
                                 stats["by_category"][sport] = (
@@ -626,6 +637,7 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
                                 market.name, result_cat, market.llm_league,
                                 market.category,
                             )
+                            _refresh_canonical_key(market)
                             stats["reclassified"] += 1
                             stats["reclassified_by_llm"] += 1
                             stats["by_category"][result_cat] = (
@@ -674,6 +686,7 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
                             if result_cat not in tags:
                                 tags = sorted(set(tags) | {result_cat})
                             market.category_tags = tags
+                            _refresh_canonical_key(market)
                             stats["reclassified"] += 1
                             stats["reclassified_by_open_ended"] += 1
                             stats["by_category"][result_cat] = (

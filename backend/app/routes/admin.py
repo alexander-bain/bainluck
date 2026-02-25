@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -3793,3 +3793,210 @@ async def statpal_status(
             "task_status": "GET /api/admin/statpal/task/{task_id}",
         },
     }
+
+
+# =============================================================================
+# Team Identity endpoints
+# =============================================================================
+
+
+@router.get("/team-identity/status")
+async def team_identity_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Count mappings by source, total mapped teams, unmapped teams."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func as sqlfunc
+    from app.models import TeamIdentityMapping, Team
+
+    # Count by source
+    source_counts = await db.execute(
+        select(TeamIdentityMapping.source, sqlfunc.count(TeamIdentityMapping.id))
+        .group_by(TeamIdentityMapping.source)
+    )
+    by_source = {row[0]: row[1] for row in source_counts.all()}
+
+    # Total mapped team IDs
+    mapped_count = await db.execute(
+        select(sqlfunc.count(sqlfunc.distinct(TeamIdentityMapping.team_id)))
+    )
+    total_mapped = mapped_count.scalar() or 0
+
+    # Total teams
+    total_teams = await db.execute(select(sqlfunc.count(Team.id)))
+    total = total_teams.scalar() or 0
+
+    return {
+        "total_teams": total,
+        "mapped_teams": total_mapped,
+        "unmapped_teams": total - total_mapped,
+        "mappings_by_source": by_source,
+        "total_mappings": sum(by_source.values()),
+    }
+
+
+@router.post("/team-identity/backfill")
+async def trigger_team_identity_backfill(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Trigger one-time backfill of team identity mappings from existing data."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_team_identities
+    try:
+        task = backfill_team_identities.delay()
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": f"Team identity backfill queued. "
+                       f"Use /api/admin/team-identity/task/{task.id} to check status.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+
+
+@router.get("/team-identity/task/{task_id}")
+async def team_identity_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check team identity task status."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app as app
+    result = app.AsyncResult(task_id)
+    response = {"task_id": task_id, "state": result.state}
+    if result.state == "SUCCESS":
+        response["result"] = result.result
+    elif result.state == "FAILURE":
+        response["error"] = str(result.result)
+    return response
+
+
+@router.get("/team-identity/search")
+async def team_identity_search(
+    q: str = Query(..., description="Search query for team name"),
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search team identity mappings across all sources."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import TeamIdentityMapping, Team
+
+    result = await db.execute(
+        select(TeamIdentityMapping, Team.name).join(
+            Team, TeamIdentityMapping.team_id == Team.id,
+        ).where(
+            or_(
+                TeamIdentityMapping.source_name.ilike(f"%{q}%"),
+                TeamIdentityMapping.source_abbreviation.ilike(f"%{q}%"),
+                TeamIdentityMapping.source_id.ilike(f"%{q}%"),
+            )
+        ).order_by(Team.name).limit(50)
+    )
+
+    rows = result.all()
+    return {
+        "query": q,
+        "count": len(rows),
+        "results": [
+            {
+                "mapping_id": mapping.id,
+                "team_id": mapping.team_id,
+                "team_name": team_name,
+                "source": mapping.source,
+                "source_id": mapping.source_id,
+                "source_name": mapping.source_name,
+                "source_abbreviation": mapping.source_abbreviation,
+                "sport_key": mapping.sport_key,
+            }
+            for mapping, team_name in rows
+        ],
+    }
+
+
+@router.get("/team-identity/team/{team_id}")
+async def team_identity_detail(
+    team_id: int,
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """All identity mappings for a specific team."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models import TeamIdentityMapping, Team
+
+    # Get team info
+    team_result = await db.execute(select(Team).where(Team.id == team_id))
+    team = team_result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # Get mappings
+    mapping_result = await db.execute(
+        select(TeamIdentityMapping).where(
+            TeamIdentityMapping.team_id == team_id,
+        ).order_by(TeamIdentityMapping.source)
+    )
+    mappings = mapping_result.scalars().all()
+
+    return {
+        "team": {
+            "id": team.id,
+            "name": team.name,
+            "abbreviation": team.abbreviation,
+            "espn_id": team.espn_id,
+            "alternate_names": team.alternate_names,
+        },
+        "mappings": [
+            {
+                "id": m.id,
+                "source": m.source,
+                "source_id": m.source_id,
+                "source_name": m.source_name,
+                "source_abbreviation": m.source_abbreviation,
+                "sport_key": m.sport_key,
+                "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+            }
+            for m in mappings
+        ],
+    }
+
+
+@router.get("/team-identity/unmapped")
+async def team_identity_unmapped(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    sport_key: str = Query(None, description="Filter by sport key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Teams with no identity mappings."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.team_identity import TeamIdentityService
+    service = TeamIdentityService()
+    teams = await service.get_unmapped_teams(db, sport_key=sport_key)
+
+    return {
+        "count": len(teams),
+        "sport_key": sport_key,
+        "teams": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "abbreviation": t.abbreviation,
+                "espn_id": t.espn_id,
+                "sport_id": t.sport_id,
+            }
+            for t in teams
+        ],
+    }
+

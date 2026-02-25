@@ -373,6 +373,14 @@ def audit_related_futures(self, limit: int = 30):
     return run_async(_audit_related_futures_impl(limit))
 
 
+# --- Team Identity Backfill ---
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
+def backfill_team_identities(self):
+    from app.tasks.team_identity_backfill import _backfill_team_identities
+    return run_async(_backfill_team_identities())
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")

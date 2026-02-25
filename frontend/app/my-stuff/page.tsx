@@ -10,13 +10,18 @@ import FeedCard from "@/components/FeedCard";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import { getCategoryForLeague } from "@/lib/sportCategories";
-import { usePinnedEvents, usePinnedFutures } from "@/hooks";
+import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchEventsByIds, fetchFuturesByIds } from "@/lib/api";
 import type { Event, FuturesMarketDetailResponse } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 
 export default function MyStuffPage() {
+  // Analytics hooks must be called before conditional returns
+  usePageTracking({ pageType: 'my_stuff', pageTitle: 'My Teams' });
+  useScrollDepth({ pageType: 'my_stuff' });
+  useEngagementTime({ pageType: 'my_stuff' });
+
   const { isAuthenticated, isLoading: authLoading, signInWithGoogle } = useAuthContext();
 
   // State A: Not authenticated

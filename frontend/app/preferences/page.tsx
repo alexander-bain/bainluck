@@ -11,7 +11,7 @@ import {
   fetchEventsByIds,
   fetchFuturesByIds,
 } from "@/lib/api";
-import { usePinnedEvents, usePinnedFutures } from "@/hooks";
+import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useCategoryInterests, getLevelLabel } from "@/hooks/useCategoryInterests";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -56,6 +56,10 @@ const LEVEL_OPTIONS = [
 ];
 
 export default function PreferencesPage() {
+  usePageTracking({ pageType: 'preferences', pageTitle: 'Preferences' });
+  useScrollDepth({ pageType: 'preferences' });
+  useEngagementTime({ pageType: 'preferences' });
+
   const { user, isAuthenticated, isLoading: authLoading, signOut } = useAuthContext();
   const router = useRouter();
   const { interests, setInterest } = useCategoryInterests();

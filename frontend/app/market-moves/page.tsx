@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchMarketMoves } from "@/lib/api";
 import type { MarketMovesItem } from "@/lib/api";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 /**
  * "The Market Was Wrong" Page
@@ -12,6 +13,10 @@ import type { MarketMovesItem } from "@/lib/api";
  * A daily highlight reel of when the betting market got it wrong.
  */
 export default function MarketMovesPage() {
+  usePageTracking({ pageType: 'market_moves', pageTitle: 'The Market Was Wrong' });
+  useScrollDepth({ pageType: 'market_moves' });
+  useEngagementTime({ pageType: 'market_moves' });
+
   const [items, setItems] = useState<MarketMovesItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
