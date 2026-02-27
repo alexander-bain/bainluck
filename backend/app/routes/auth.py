@@ -6,6 +6,7 @@ and profile management.
 """
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.dependencies.auth import get_current_user
 from app.models.models import User, UserPreference
 from app.services.database import get_db
-from app.services.firebase_auth import verify_id_token, is_configured, get_or_create_firebase_user, create_custom_token
+from app.services.firebase_auth import verify_id_token, is_configured, get_or_create_firebase_user, create_custom_token, verify_apple_id_token
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,13 @@ class GoogleAuthRequest(BaseModel):
 class GoogleAccessTokenRequest(BaseModel):
     """Request body for Google access token exchange."""
     access_token: str
+
+
+class AppleAuthRequest(BaseModel):
+    """Request body for Apple Sign-In."""
+    id_token: str              # Apple-issued JWT
+    first_name: Optional[str] = None  # Only sent on first authorization
+    last_name: Optional[str] = None   # Only sent on first authorization
 
 
 class UserProfileResponse(BaseModel):
@@ -59,9 +67,14 @@ class UpdateProfileRequest(BaseModel):
 @router.get("/status")
 async def auth_status():
     """Check if authentication is configured."""
+    providers = []
+    if is_configured():
+        providers.append("google")
+    if os.getenv("APPLE_SERVICES_ID"):
+        providers.append("apple")
     return {
         "auth_configured": is_configured(),
-        "providers": ["google"] if is_configured() else [],
+        "providers": providers,
     }
 
 
@@ -246,6 +259,124 @@ async def google_access_token_sign_in(
         "email": email,
         "name": name,
         "picture": picture,
+        "expires_in": 28800,  # 8 hours
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "photo_url": user.photo_url,
+            "onboarding_completed": onboarding_completed,
+            "created_at": user.created_at.isoformat(),
+        },
+    }
+
+
+@router.post("/apple")
+async def apple_sign_in(
+    body: AppleAuthRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Verify an Apple id_token and exchange for Firebase credentials.
+
+    Flow: Apple JS SDK popup → id_token → verify against Apple JWKS →
+    get/create Firebase user → create custom token + session token.
+
+    Apple only sends the user's name on the FIRST authorization. After that,
+    only `sub` and `email` are in the JWT. The frontend must pass
+    first_name/last_name from the initial response.
+    """
+    apple_services_id = os.getenv("APPLE_SERVICES_ID")
+    if not apple_services_id:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Apple Sign-In not configured",
+        )
+
+    # Verify the Apple id_token JWT
+    claims = verify_apple_id_token(body.id_token, apple_services_id)
+    if not claims:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired Apple id_token",
+        )
+
+    email = claims.get("email")
+    apple_sub = claims.get("sub")
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Apple token missing email claim",
+        )
+
+    # Build display name from first auth data (only available once)
+    display_name = None
+    if body.first_name or body.last_name:
+        parts = [p for p in [body.first_name, body.last_name] if p]
+        display_name = " ".join(parts) if parts else None
+
+    # Get or create Firebase user (uses email lookup to match existing accounts)
+    firebase_uid = get_or_create_firebase_user(email, display_name, None)
+    if not firebase_uid:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Firebase not configured or user creation failed",
+        )
+
+    # Create custom token for frontend signInWithCustomToken
+    custom_token = create_custom_token(firebase_uid)
+    if not custom_token:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create custom token (service account may not be configured)",
+        )
+
+    # Upsert user in our database
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.preferences))
+        .where(User.firebase_uid == firebase_uid)
+    )
+    user = result.scalar_one_or_none()
+
+    if user:
+        if email:
+            user.email = email
+        if display_name and not user.display_name:
+            user.display_name = display_name
+    else:
+        user = User(
+            firebase_uid=firebase_uid,
+            email=email,
+            display_name=display_name,
+            photo_url=None,  # Apple doesn't provide profile photos
+        )
+        db.add(user)
+        await db.flush()
+
+        prefs = UserPreference(user_id=user.id)
+        db.add(prefs)
+
+    onboarding_completed = False
+    if user.preferences:
+        onboarding_completed = user.preferences.onboarding_completed
+
+    logger.info(f"Apple sign-in: uid={firebase_uid}, email={email}, apple_sub={apple_sub}")
+
+    # Create backend session token for Safari ITP fallback
+    from app.services.firebase_auth import create_session_token
+    fallback_id_token = create_session_token(
+        uid=firebase_uid, email=email, name=display_name, picture=None
+    )
+
+    return {
+        "custom_token": custom_token,
+        "id_token": fallback_id_token,
+        "uid": firebase_uid,
+        "email": email,
+        "name": display_name,
+        "picture": None,
         "expires_in": 28800,  # 8 hours
         "user": {
             "id": user.id,

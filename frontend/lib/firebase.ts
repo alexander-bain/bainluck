@@ -2,14 +2,15 @@
  * Firebase configuration and initialization.
  *
  * Google sign-in uses Google Identity Services (GIS) to get an access token
- * via OAuth popup. Then tries Firebase signInWithCredential. If that fails
+ * via OAuth popup. Apple sign-in uses Apple's JS SDK to get an id_token
+ * via popup. Both then try Firebase signInWithCredential. If that fails
  * (e.g., Safari ITP blocking Identity Platform), falls back to exchanging
- * the access token through our backend for a Firebase custom token.
+ * the token through our backend for a Firebase custom token.
  *
  * Safari ITP can block requests to identitytoolkit.googleapis.com, which
  * affects both signInWithCredential AND signInWithCustomToken. When both
  * fail, we fall back to a "backend-only" auth mode where the backend
- * verifies the Google token and we store the session locally.
+ * verifies the token and we store the session locally.
  *
  * PERFORMANCE: Firebase SDK (~200KB) is loaded lazily via dynamic import()
  * so it doesn't block initial page render. The SDK loads on first auth
@@ -28,6 +29,7 @@ const firebaseConfig = {
 };
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+const APPLE_CLIENT_ID = process.env.NEXT_PUBLIC_APPLE_CLIENT_ID;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // localStorage key for backend-only auth fallback (Safari ITP)
@@ -124,6 +126,33 @@ function loadGIS(): Promise<void> {
   });
 
   return gisLoadPromise;
+}
+
+/**
+ * Load Apple Sign-In JS SDK.
+ */
+let appleSDKLoaded = false;
+let appleSDKLoadPromise: Promise<void> | null = null;
+
+function loadAppleSDK(): Promise<void> {
+  if (appleSDKLoaded) return Promise.resolve();
+  if (appleSDKLoadPromise) return appleSDKLoadPromise;
+
+  appleSDKLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src =
+      "https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js";
+    script.async = true;
+    script.onload = () => {
+      appleSDKLoaded = true;
+      resolve();
+    };
+    script.onerror = () =>
+      reject(new Error("Failed to load Apple Sign-In SDK"));
+    document.head.appendChild(script);
+  });
+
+  return appleSDKLoadPromise;
 }
 
 /**
@@ -258,6 +287,91 @@ export function getBackendAuthUser(): {
 }
 
 /**
+ * Backend exchange response shape (shared by Google and Apple endpoints).
+ */
+interface BackendExchangeData {
+  custom_token?: string;
+  id_token?: string;
+  uid?: string;
+  email?: string;
+  name?: string;
+  picture?: string;
+  expires_in?: number;
+}
+
+/**
+ * Handle tier 2+3 of the auth flow: backend custom token → signInWithCustomToken,
+ * falling back to backend-only auth if Firebase client SDK is fully blocked.
+ *
+ * Shared by Google and Apple sign-in flows. Returns the ID token on success,
+ * null on failure.
+ */
+async function handleBackendExchange(
+  authInstance: Auth,
+  backendData: BackendExchangeData
+): Promise<string | null> {
+  if (!backendData?.uid) {
+    console.error("[Firebase] No uid in backend response");
+    return null;
+  }
+
+  const { signInWithCustomToken } = await import("firebase/auth");
+
+  // ALWAYS store backend auth as a safety net BEFORE trying signInWithCustomToken.
+  // On Safari, signInWithCustomToken may succeed momentarily but the Firebase
+  // session can be killed by ITP. Having backend auth stored means the
+  // onAuthChange listener can recover when Firebase reports no user.
+  if (backendData.id_token) {
+    storeBackendAuth({
+      uid: backendData.uid,
+      email: backendData.email || null,
+      displayName: backendData.name || null,
+      photoURL: backendData.picture || null,
+      idToken: backendData.id_token,
+      expiresAt: Date.now() + (backendData.expires_in || 3600) * 1000,
+    });
+  }
+
+  // Try signInWithCustomToken (also needs identitytoolkit — may fail on Safari)
+  if (backendData.custom_token) {
+    try {
+      const result = await withTimeout(
+        signInWithCustomToken(authInstance, backendData.custom_token),
+        4000,
+        "signInWithCustomToken"
+      );
+      console.log(
+        "[Firebase] signInWithCustomToken succeeded for",
+        result.user.email || result.user.uid
+      );
+      // Note: we do NOT clear backend auth here. Safari ITP can kill the
+      // Firebase session at any time, and we need the fallback available.
+      return await result.user.getIdToken();
+    } catch (customTokenError: unknown) {
+      const ctError = customTokenError as { code?: string; message?: string };
+      console.warn(
+        "[Firebase] signInWithCustomToken also failed:",
+        ctError.message || ctError.code,
+        "- using backend-only auth"
+      );
+    }
+  }
+
+  // Backend-only auth (Safari ITP fully blocks Firebase)
+  // Backend auth was already stored above. Return the token.
+  if (backendData.id_token) {
+    console.log(
+      "[Firebase] Using backend-only auth for",
+      backendData.email || backendData.uid
+    );
+    return backendData.id_token;
+  }
+
+  console.error("[Firebase] Backend response missing id_token for fallback auth");
+  return null;
+}
+
+/**
  * Sign in with Google.
  *
  * Opens the Google OAuth consent popup via GIS, then tries three approaches:
@@ -279,7 +393,6 @@ export async function signInWithGoogle(): Promise<string | null> {
   const {
     GoogleAuthProvider,
     signInWithCredential,
-    signInWithCustomToken,
   } = await import("firebase/auth");
 
   try {
@@ -306,16 +419,8 @@ export async function signInWithGoogle(): Promise<string | null> {
       );
     }
 
-    // Attempt 2: Exchange via backend → get user info + custom token
-    let backendData: {
-      custom_token?: string;
-      id_token?: string;
-      uid?: string;
-      email?: string;
-      name?: string;
-      picture?: string;
-      expires_in?: number;
-    } | null = null;
+    // Attempt 2+3: Exchange via backend → custom token → fallback
+    let backendData: BackendExchangeData | null = null;
 
     try {
       const resp = await withTimeout(
@@ -340,59 +445,131 @@ export async function signInWithGoogle(): Promise<string | null> {
       return null;
     }
 
-    if (!backendData?.uid) {
-      console.error("[Firebase] No uid in backend response");
+    return await handleBackendExchange(authInstance, backendData!);
+  } catch (error) {
+    console.error("[Firebase] Sign-in error:", error);
+    return null;
+  }
+}
+
+/**
+ * Sign in with Apple.
+ *
+ * Opens the Apple Sign-In popup via Apple JS SDK, then tries three approaches:
+ * 1. signInWithCredential with OAuthProvider('apple.com') (Chrome/Firefox)
+ * 2. Backend POST /api/auth/apple → custom token → signInWithCustomToken
+ * 3. Backend-only auth (Safari ITP fallback)
+ *
+ * Apple only sends the user's name on the FIRST authorization. It's captured
+ * from the popup response and sent to the backend for storage.
+ *
+ * Returns the Firebase/backend ID token on success, null on failure.
+ */
+export async function signInWithApple(): Promise<string | null> {
+  const authInstance = await getFirebaseAuth();
+  if (!authInstance || !APPLE_CLIENT_ID) {
+    console.error("[Firebase] Auth not initialized or missing APPLE_CLIENT_ID");
+    return null;
+  }
+
+  try {
+    console.log("[Firebase] Opening Apple sign-in popup...");
+    await loadAppleSDK();
+
+    const appleID = window.AppleID;
+    if (!appleID?.auth) {
+      console.error("[Firebase] Apple Sign-In SDK not available");
       return null;
     }
 
-    // ALWAYS store backend auth as a safety net BEFORE trying signInWithCustomToken.
-    // On Safari, signInWithCustomToken may succeed momentarily but the Firebase
-    // session can be killed by ITP. Having backend auth stored means the
-    // onAuthChange listener can recover when Firebase reports no user.
-    if (backendData.id_token) {
-      storeBackendAuth({
-        uid: backendData.uid,
-        email: backendData.email || null,
-        displayName: backendData.name || null,
-        photoURL: backendData.picture || null,
-        idToken: backendData.id_token,
-        expiresAt: Date.now() + (backendData.expires_in || 3600) * 1000,
-      });
-    }
+    appleID.auth.init({
+      clientId: APPLE_CLIENT_ID,
+      scope: "name email",
+      redirectURI: window.location.origin,
+      usePopup: true,
+    });
 
-    // Try signInWithCustomToken (also needs identitytoolkit — may fail on Safari)
-    if (backendData.custom_token) {
-      try {
-        const result = await withTimeout(
-          signInWithCustomToken(authInstance, backendData.custom_token),
-          4000,
-          "signInWithCustomToken"
-        );
-        console.log("[Firebase] signInWithCustomToken succeeded for", result.user.email || result.user.uid);
-        // Note: we do NOT clear backend auth here. Safari ITP can kill the
-        // Firebase session at any time, and we need the fallback available.
-        return await result.user.getIdToken();
-      } catch (customTokenError: unknown) {
-        const ctError = customTokenError as { code?: string; message?: string };
-        console.warn(
-          "[Firebase] signInWithCustomToken also failed:",
-          ctError.message || ctError.code,
-          "- using backend-only auth"
-        );
+    const appleResponse = await appleID.auth.signIn();
+    const appleIdToken = appleResponse.authorization.id_token;
+    const appleUser = appleResponse.user; // Only present on first auth
+    console.log("[Firebase] Got Apple id_token");
+
+    // Attempt 1: signInWithCredential with Apple OAuthProvider (Chrome/Firefox)
+    try {
+      const { OAuthProvider, signInWithCredential } = await import("firebase/auth");
+      const provider = new OAuthProvider("apple.com");
+      const credential = provider.credential({ idToken: appleIdToken });
+      const result = await withTimeout(
+        signInWithCredential(authInstance, credential),
+        4000,
+        "signInWithCredential (Apple)"
+      );
+      console.log(
+        "[Firebase] Apple signInWithCredential succeeded for",
+        result.user.email || result.user.uid
+      );
+
+      // If we got the user's name on first auth, send it to the backend
+      // so it gets stored (Firebase credential flow doesn't always persist it)
+      if (appleUser?.name?.firstName || appleUser?.name?.lastName) {
+        const idToken = await result.user.getIdToken();
+        fetch(`${API_URL}/api/auth/apple`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id_token: appleIdToken,
+            first_name: appleUser.name?.firstName,
+            last_name: appleUser.name?.lastName,
+          }),
+        }).catch(() => {
+          // Best-effort name capture — don't block sign-in
+        });
+        return idToken;
       }
+
+      return await result.user.getIdToken();
+    } catch (credError: unknown) {
+      const authError = credError as { code?: string; message?: string };
+      console.warn(
+        "[Firebase] Apple signInWithCredential failed:",
+        authError.message || authError.code,
+        "- trying backend exchange..."
+      );
     }
 
-    // Attempt 3: Backend-only auth (Safari ITP fully blocks Firebase)
-    // Backend auth was already stored above. Return the token.
-    if (backendData.id_token) {
-      console.log("[Firebase] Using backend-only auth for", backendData.email || backendData.uid);
-      return backendData.id_token;
+    // Attempt 2+3: Exchange via backend → custom token → fallback
+    let backendData: BackendExchangeData | null = null;
+
+    try {
+      const resp = await withTimeout(
+        fetch(`${API_URL}/api/auth/apple`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id_token: appleIdToken,
+            first_name: appleUser?.name?.firstName,
+            last_name: appleUser?.name?.lastName,
+          }),
+        }),
+        8000,
+        "backend Apple token exchange"
+      );
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        console.error("[Firebase] Backend Apple exchange failed:", resp.status, text);
+        return null;
+      }
+
+      backendData = await resp.json();
+    } catch (fetchError) {
+      console.error("[Firebase] Backend Apple exchange fetch failed:", fetchError);
+      return null;
     }
 
-    console.error("[Firebase] Backend response missing id_token for fallback auth");
-    return null;
+    return await handleBackendExchange(authInstance, backendData!);
   } catch (error) {
-    console.error("[Firebase] Sign-in error:", error);
+    console.error("[Firebase] Apple sign-in error:", error);
     return null;
   }
 }

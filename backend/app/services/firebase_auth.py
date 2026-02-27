@@ -216,3 +216,41 @@ def _get_session_signing_key() -> Optional[str]:
 def is_configured() -> bool:
     """Check if Firebase Auth is configured and initialized."""
     return _init_firebase()
+
+
+# --- Apple Sign-In JWT verification ---
+
+_apple_jwks_client = None
+
+
+def verify_apple_id_token(id_token: str, client_id: str) -> Optional[dict]:
+    """
+    Verify an Apple id_token JWT against Apple's JWKS endpoint.
+
+    Apple Sign-In issues RS256-signed JWTs. We verify them by fetching
+    Apple's public keys from their JWKS endpoint and validating the
+    signature, audience (our Services ID), and issuer.
+
+    Returns decoded claims dict (sub, email, etc.) or None on failure.
+    """
+    global _apple_jwks_client
+    import jwt as pyjwt
+
+    try:
+        if _apple_jwks_client is None:
+            _apple_jwks_client = pyjwt.PyJWKClient(
+                "https://appleid.apple.com/auth/keys", cache_keys=True
+            )
+
+        signing_key = _apple_jwks_client.get_signing_key_from_jwt(id_token)
+        decoded = pyjwt.decode(
+            id_token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=client_id,
+            issuer="https://appleid.apple.com",
+        )
+        return decoded
+    except Exception as e:
+        logger.warning(f"Apple id_token verification failed: {e}")
+        return None

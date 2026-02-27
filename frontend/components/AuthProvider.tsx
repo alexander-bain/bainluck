@@ -19,6 +19,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   isAuthAvailable: boolean;
   signInWithGoogle: () => Promise<void>;
+  signInWithApple: () => Promise<void>;
   signOut: () => Promise<void>;
   getToken: () => Promise<string | null>;
 }

@@ -19,6 +19,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   isFirebaseConfigured,
   signInWithGoogle as firebaseSignInWithGoogle,
+  signInWithApple as firebaseSignInWithApple,
   signOut as firebaseSignOut,
   getIdToken,
   onAuthChange,
@@ -45,6 +46,7 @@ interface UseAuthResult {
   isAuthenticated: boolean;
   isAuthAvailable: boolean;
   signInWithGoogle: () => Promise<void>;
+  signInWithApple: () => Promise<void>;
   signOut: () => Promise<void>;
   getToken: () => Promise<string | null>;
 }
@@ -208,6 +210,37 @@ export function useAuth(): UseAuthResult {
     }
   }, [isAuthAvailable]);
 
+  // Sign in with Apple popup, then register with backend
+  const signInWithApple = useCallback(async (): Promise<void> => {
+    if (!isAuthAvailable) return;
+
+    try {
+      const idToken = await firebaseSignInWithApple();
+      if (idToken) {
+        tokenRef.current = idToken;
+        setSignedInMarker(true);
+
+        // Register with backend (best-effort, don't block user state update)
+        registerWithBackend(idToken);
+
+        // Immediately update user state from backend auth data.
+        // On Safari with ITP, Firebase's onAuthStateChanged may never fire.
+        const backendUser = getBackendAuthUser();
+        if (backendUser) {
+          console.log("[Auth] Setting user state from backend auth (Apple):", backendUser.email);
+          setUser({
+            uid: backendUser.uid,
+            email: backendUser.email,
+            displayName: backendUser.displayName,
+            photoURL: backendUser.photoURL,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("[Auth] Apple sign-in error:", error);
+    }
+  }, [isAuthAvailable]);
+
   // Sign out
   const signOut = useCallback(async (): Promise<void> => {
     await firebaseSignOut();
@@ -230,6 +263,7 @@ export function useAuth(): UseAuthResult {
     isAuthenticated: !!user,
     isAuthAvailable,
     signInWithGoogle,
+    signInWithApple,
     signOut,
     getToken,
   };
