@@ -26,49 +26,50 @@ def _check_admin_secret(secret: str) -> bool:
 
 
 @router.post("/pulse/recalculate")
-async def recalculate_pulse(
+@router.post("/ei/recalculate")
+async def recalculate_ei(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(100, description="Max events to process per batch"),
-    force: bool = Query(False, description="Force recalculation even if Pulse already exists"),
+    force: bool = Query(False, description="Force recalculation even if EI already exists"),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Trigger Pulse recalculation for completed events.
+    Trigger EI (Excitement Index) recalculation for completed events.
 
-    - If force=False: Only processes events without Pulse scores
-    - If force=True: Clears existing Pulse data and recalculates all
+    - If force=False: Only processes events without EI scores
+    - If force=True: Clears existing EI data and recalculates all
 
     This is useful for:
-    - Initial backfill after deploying Pulse
+    - Initial backfill after deploying EI
     - Recalculating after algorithm changes
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.utils.pulse import calculate_pulse, PulseDataPoint
+    from app.utils.excitement_index import calculate_ei, EIDataPoint
     from app.models import OddsSnapshot
 
-    # If force mode, clear existing Pulse data first
+    # If force mode, clear existing EI data first
     cleared_count = 0
     if force:
         result = await db.execute(
             update(Event)
             .where(
                 Event.status.in_(["completed", "closed"]),
-                Event.raw_gei.isnot(None),
+                Event.raw_ei.isnot(None),
             )
-            .values(raw_gei=None, gei_components=None, gei_computed_at=None)
+            .values(raw_ei=None, ei_metadata=None, ei_computed_at=None)
         )
         cleared_count = result.rowcount
         await db.commit()
 
-    # Find finished events without Pulse
+    # Find finished events without EI
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             Event.status.in_(["completed", "closed"]),
-            Event.raw_gei.is_(None),
+            Event.raw_ei.is_(None),
         )
         .order_by(Event.commence_time.desc())
         .limit(limit)
@@ -101,12 +102,12 @@ async def recalculate_pulse(
             if len(snapshots) < 3:
                 continue
 
-            # Convert to PulseDataPoint objects
+            # Convert to EIDataPoint objects
             data_points = [
-                PulseDataPoint(
+                EIDataPoint(
                     captured_at=s.captured_at,
                     home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
-                    bookmaker=s.bookmaker,
+                    source=s.bookmaker,
                 )
                 for s in snapshots
             ]
@@ -114,17 +115,17 @@ async def recalculate_pulse(
             game_end = max(s.captured_at for s in snapshots)
             sport_key = event.sport.key if event.sport else "unknown"
 
-            pulse_result = calculate_pulse(
+            ei_result = calculate_ei(
                 snapshots=data_points,
                 game_start=event.commence_time,
                 current_time=game_end,
                 sport_key=sport_key,
             )
 
-            if pulse_result and pulse_result.data_quality != "minimal":
-                event.raw_gei = pulse_result.score / 100.0
-                event.gei_components = pulse_result.components.to_json()
-                event.gei_computed_at = datetime.now(timezone.utc)
+            if ei_result and ei_result.data_quality != "minimal":
+                event.raw_ei = ei_result.score / 100.0
+                event.ei_metadata = ei_result.metadata.to_json()
+                event.ei_computed_at = datetime.now(timezone.utc)
                 processed += 1
 
         except Exception as e:
@@ -139,7 +140,7 @@ async def recalculate_pulse(
         select(Event.id)
         .where(
             Event.status.in_(["completed", "closed"]),
-            Event.raw_gei.is_(None),
+            Event.raw_ei.is_(None),
         )
     )
     remaining = len(remaining_result.all())
@@ -157,22 +158,23 @@ async def recalculate_pulse(
 
 
 @router.get("/pulse/status")
-async def pulse_status(
+@router.get("/ei/status")
+async def ei_status(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Get the current status of Pulse calculations.
+    Get the current status of EI (Excitement Index) calculations.
 
-    Returns counts of events with and without Pulse scores.
+    Returns counts of events with and without EI scores.
     """
     from sqlalchemy import func
 
-    # Count events by Pulse status
+    # Count events by EI status
     result = await db.execute(
         select(
             Event.status,
-            func.count().filter(Event.raw_gei.isnot(None)).label("with_pulse"),
-            func.count().filter(Event.raw_gei.is_(None)).label("without_pulse"),
+            func.count().filter(Event.raw_ei.isnot(None)).label("with_ei"),
+            func.count().filter(Event.raw_ei.is_(None)).label("without_ei"),
         )
         .group_by(Event.status)
     )
@@ -182,18 +184,18 @@ async def pulse_status(
     total_with = 0
     total_without = 0
 
-    for status, with_pulse, without_pulse in rows:
+    for status, with_ei, without_ei in rows:
         status_counts[status] = {
-            "with_pulse": with_pulse,
-            "without_pulse": without_pulse,
+            "with_ei": with_ei,
+            "without_ei": without_ei,
         }
-        total_with += with_pulse
-        total_without += without_pulse
+        total_with += with_ei
+        total_without += without_ei
 
     return {
         "total": {
-            "with_pulse": total_with,
-            "without_pulse": total_without,
+            "with_ei": total_with,
+            "without_ei": total_without,
         },
         "by_status": status_counts,
         "completion_pct": round(total_with / (total_with + total_without) * 100, 1) if (total_with + total_without) > 0 else 0,
@@ -1056,61 +1058,60 @@ async def futures_metadata_status(
 
 
 @router.get("/pulse/distributions")
-async def pulse_distributions(
+@router.get("/ei/distributions")
+async def ei_distributions(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Analyze the distribution of Pulse scores and components across all scored events.
+    Analyze the distribution of EI scores and metadata across all scored events.
 
-    Returns histograms and statistics for the overall score and each component
-    (heart_rate, amplitude, arrhythmia, vitals), plus saturation analysis.
+    Returns histograms and statistics for the overall score and EI metadata
+    (raw_ei, lead_changes, comeback_factor).
     No auth required - diagnostic/read-only.
     """
     import json
     from sqlalchemy import func
 
-    # Fetch all events with Pulse data
+    # Fetch all events with EI data
     result = await db.execute(
         select(
             Event.id,
-            Event.raw_gei,
-            Event.gei_components,
+            Event.raw_ei,
+            Event.ei_metadata,
             Event.status,
         )
-        .where(Event.raw_gei.isnot(None))
-        .order_by(Event.raw_gei.desc())
+        .where(Event.raw_ei.isnot(None))
+        .order_by(Event.raw_ei.desc())
     )
     rows = result.all()
 
     if not rows:
-        return {"status": "no_data", "message": "No events with Pulse scores found"}
+        return {"status": "no_data", "message": "No events with EI scores found"}
 
     scores = []
-    components = {
-        "heart_rate": [],
-        "amplitude": [],
-        "arrhythmia": [],
-        "vitals": [],
-        "time_weight": [],
+    # EI metadata fields (new format)
+    metadata_fields = {
+        "raw_ei": [],
+        "comeback_factor": [],
     }
     lead_changes_list = []
     by_status = {}
 
-    for event_id, raw_gei, gei_components_str, status in rows:
-        score = max(1, min(100, round(float(raw_gei) * 100)))
+    for event_id, raw_ei, ei_metadata_str, status in rows:
+        score = max(1, min(100, round(float(raw_ei) * 100)))
         scores.append(score)
 
         # Count by event status
         by_status[status] = by_status.get(status, 0) + 1
 
-        if gei_components_str:
+        if ei_metadata_str:
             try:
-                comp = json.loads(gei_components_str) if isinstance(gei_components_str, str) else gei_components_str
-                for key in components:
-                    if key in comp:
-                        components[key].append(float(comp[key]))
-                if "lead_changes" in comp:
-                    lead_changes_list.append(int(comp["lead_changes"]))
+                meta = json.loads(ei_metadata_str) if isinstance(ei_metadata_str, str) else ei_metadata_str
+                for key in metadata_fields:
+                    if key in meta:
+                        metadata_fields[key].append(float(meta[key]))
+                if "lead_changes" in meta:
+                    lead_changes_list.append(int(meta["lead_changes"]))
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
@@ -1155,28 +1156,18 @@ async def pulse_distributions(
         ("90-100%", 0.9, 1.01),  # 1.01 to include exactly 1.0
     ]
 
-    # Saturation analysis: how many are at 100% (>=0.99)
-    saturation = {}
-    for key, vals in components.items():
-        if vals:
-            at_max = sum(1 for v in vals if v >= 0.99)
-            saturation[key] = {
-                "at_100_pct": at_max,
-                "at_100_pct_ratio": round(at_max / len(vals) * 100, 1),
-            }
-
-    # Pulse status distribution
+    # EI status distribution
     status_labels = {
-        "flatline": (1, 20),
-        "weak": (21, 40),
-        "steady": (41, 60),
-        "strong": (61, 80),
-        "racing": (81, 100),
+        "flat": (1, 20),
+        "quiet": (21, 40),
+        "competitive": (41, 60),
+        "exciting": (61, 80),
+        "incredible": (81, 100),
     }
-    pulse_status_dist = {}
+    ei_status_dist = {}
     for label, (lo, hi) in status_labels.items():
         count = sum(1 for s in scores if lo <= s <= hi)
-        pulse_status_dist[label] = {
+        ei_status_dist[label] = {
             "count": count,
             "pct": round(count / len(scores) * 100, 1),
         }
@@ -1187,16 +1178,15 @@ async def pulse_distributions(
         "score": {
             "stats": compute_stats(scores),
             "histogram": compute_histogram(scores, score_buckets),
-            "status_distribution": pulse_status_dist,
+            "status_distribution": ei_status_dist,
         },
-        "components": {
+        "metadata": {
             key: {
                 "stats": compute_stats(vals),
                 "histogram": compute_histogram(vals, comp_buckets),
             }
-            for key, vals in components.items()
+            for key, vals in metadata_fields.items()
         },
-        "saturation": saturation,
         "lead_changes": {
             "stats": compute_stats(lead_changes_list),
             "distribution": {

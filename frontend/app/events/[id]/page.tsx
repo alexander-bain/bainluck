@@ -851,85 +851,87 @@ export default function EventPage({ params }: EventPageProps) {
           )}
         </div>
 
-        {/* Pulse - Game Excitement Metric (compact) */}
-        {(isFinished || isLive) && event.pulse && (
+        {/* Excitement Index (EI) - Game Excitement Metric (compact) */}
+        {(isFinished || isLive) && (event.ei || event.pulse) && (() => {
+          const ei = (event.ei || event.pulse)!;
+          return (
           <div className={`mt-4 py-3 px-4 rounded-lg border ${
-            event.pulse.score >= 81
+            ei.score >= 81
               ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-500/30"
-              : event.pulse.score >= 61
+              : ei.score >= 61
               ? "bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200"
-              : event.pulse.score >= 41
+              : ei.score >= 41
               ? "bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200"
               : "bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200"
           }`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <h3 className={`text-sm font-semibold flex items-center gap-2 ${
-                  event.pulse.score >= 81
+                  ei.score >= 81
                     ? "text-red-800"
-                    : event.pulse.score >= 61
+                    : ei.score >= 61
                     ? "text-orange-800"
-                    : event.pulse.score >= 41
+                    : ei.score >= 41
                     ? "text-amber-800"
                     : "text-text-secondary-700"
                 }`}>
-                  {event.pulse.emoji} {isLive ? "Live Pulse" : "Game Pulse"}
+                  {ei.emoji} {isLive ? "Live Excitement" : "Excitement Index"}
                   {isLive && (
                     <span className="w-2 h-2 rounded-full bg-red-500/150 animate-pulse" />
                   )}
                 </h3>
                 <span className={`text-sm font-medium ${
-                  event.pulse.score >= 81
+                  ei.score >= 81
                     ? "text-red-400"
-                    : event.pulse.score >= 61
+                    : ei.score >= 61
                     ? "text-orange-700"
-                    : event.pulse.score >= 41
+                    : ei.score >= 41
                     ? "text-amber-700"
                     : "text-text-secondary-600"
                 }`}>
-                  — {event.pulse.label}
+                  — {ei.label}
                 </span>
               </div>
               <span className={`px-2.5 py-0.5 rounded-full text-sm font-bold ${
-                event.pulse.score >= 81
+                ei.score >= 81
                   ? "bg-red-200 text-red-800"
-                  : event.pulse.score >= 61
+                  : ei.score >= 61
                   ? "bg-orange-200 text-orange-800"
-                  : event.pulse.score >= 41
+                  : ei.score >= 41
                   ? "bg-amber-200 text-amber-800"
                   : "bg-surface-border text-text-secondary-700"
               }`}>
-                {event.pulse.score} / 100
+                {ei.score} / 100
               </span>
             </div>
 
-            {/* Pulse Components Breakdown - inline */}
-            {event.pulse.components && (
+            {/* EI Metadata Breakdown - inline */}
+            {ei.metadata && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 pt-2 border-t border-slate-200/60 text-xs">
-                <Tooltip content="How often odds shifted significantly during the game" position="top">
+                <Tooltip content="Cumulative probability distance — how much the odds traveled" position="top">
                   <span className="text-text-secondary-500 cursor-help">
-                    HR <span className="font-mono font-semibold text-text-secondary-700">{Math.round(event.pulse.components.heart_rate * 100)}%</span>
+                    Travel <span className="font-mono font-semibold text-text-secondary-700">{ei.metadata.raw_ei.toFixed(2)}</span>
                   </span>
                 </Tooltip>
-                <Tooltip content="How large the probability swings were" position="top">
-                  <span className="text-text-secondary-500 cursor-help">
-                    Amp <span className="font-mono font-semibold text-text-secondary-700">{Math.round(event.pulse.components.amplitude * 100)}%</span>
-                  </span>
-                </Tooltip>
-                <Tooltip content="How close the matchup was — 100% means a coin flip" position="top">
-                  <span className="text-text-secondary-500 cursor-help">
-                    Vitals <span className="font-mono font-semibold text-text-secondary-700">{Math.round(event.pulse.components.vitals * 100)}%</span>
-                  </span>
-                </Tooltip>
-                {event.pulse.components.lead_changes > 0 && (
-                  <span className="text-orange-700">
-                    {event.pulse.components.lead_changes} lead change{event.pulse.components.lead_changes > 1 ? 's' : ''}
-                  </span>
+                {ei.metadata.lead_changes > 0 && (
+                  <Tooltip content="How many times the favorite switched" position="top">
+                    <span className="text-orange-700 cursor-help">
+                      {ei.metadata.lead_changes} lead change{ei.metadata.lead_changes > 1 ? 's' : ''}
+                    </span>
+                  </Tooltip>
+                )}
+                {ei.metadata.comeback_factor > 0 && (
+                  <Tooltip content="Winner's lowest probability during the game — lower means bigger comeback" position="top">
+                    <span className="text-text-secondary-500 cursor-help">
+                      Comeback <span className="font-mono font-semibold text-text-secondary-700">{Math.round(ei.metadata.comeback_factor * 100)}%</span>
+                    </span>
+                  </Tooltip>
                 )}
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* Data freshness strip */}
         {odds?.captured_at && (

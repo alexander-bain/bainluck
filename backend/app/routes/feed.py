@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _pulse_label(score: int) -> str:
-    """Short Pulse label for feed display."""
+def _ei_label(score: int) -> str:
+    """Short EI label for feed display."""
     if score >= 90:
         return "Incredible"
     if score >= 81:
@@ -54,6 +54,10 @@ def _pulse_label(score: int) -> str:
     if score >= 51:
         return "Competitive"
     return "Steady"
+
+
+# Backward-compatible alias
+_pulse_label = _ei_label
 
 
 def _team_name_matches(user_team: str, candidate: str) -> bool:
@@ -480,16 +484,16 @@ async def _score_events(
 
         base_score = highlight_result.score
 
-        # Boost completed events that had high Pulse scores — these are the
+        # Boost completed events that had high EI scores — these are the
         # "fascinating outcomes" worth surfacing even hours later.
-        if event.status in ("completed", "closed") and event.raw_gei:
-            pulse_score = max(1, min(100, round(float(event.raw_gei) * 100)))
-            if pulse_score >= 80:
+        if event.status in ("completed", "closed") and event.raw_ei:
+            ei_score = max(1, min(100, round(float(event.raw_ei) * 100)))
+            if ei_score >= 80:
                 base_score += 25  # Must-Watch / Incredible — always surface
-                highlight_result.reasons.append("high_pulse")
-            elif pulse_score >= 60:
+                highlight_result.reasons.append("high_ei")
+            elif ei_score >= 60:
                 base_score += 15  # Engaging / Exciting — good boost
-                highlight_result.reasons.append("good_pulse")
+                highlight_result.reasons.append("good_ei")
 
         # Apply personalization multiplier
         p_result = compute_event_multiplier(
@@ -586,13 +590,15 @@ async def _score_events(
         if label:
             event_data["highlight"] = {"label": label}
 
-        # Include Pulse score for completed/closed events
-        if event.status in ("completed", "closed") and event.raw_gei:
-            raw_score = max(1, min(100, round(float(event.raw_gei) * 100)))
-            event_data["pulse"] = {
+        # Include EI score for completed/closed events
+        if event.status in ("completed", "closed") and event.raw_ei:
+            raw_score = max(1, min(100, round(float(event.raw_ei) * 100)))
+            ei_data = {
                 "score": raw_score,
-                "label": _pulse_label(raw_score),
+                "label": _ei_label(raw_score),
             }
+            event_data["ei"] = ei_data
+            event_data["pulse"] = ei_data  # Backward compat
 
         # Compute sort time: live games first (far future), then by commence_time
         sort_time = event.commence_time.timestamp()
