@@ -59,6 +59,8 @@ interface OddsChartProps {
   winProbSources?: Record<string, WinProbSourceMeta>;
   /** Scoring plays from StatPal play-by-play for chart annotations */
   scoringPlays?: ScoringPlay[];
+  /** Backend-computed aggregate line (weighted median with staleness decay) */
+  aggregateLine?: Array<{ timestamp: string; home_probability: number }>;
   /** Event ID for analytics tracking */
   eventId?: number;
   /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
@@ -131,6 +133,7 @@ export default function OddsChart({
   winProbHistory,
   winProbSources,
   scoringPlays,
+  aggregateLine,
   eventId,
   eventStatus,
   fillContainer = false,
@@ -378,21 +381,32 @@ export default function OddsChart({
     }
 
     // ── Compute Bain Luck aggregated line (multi-source mode) ──
-    // Average of all available source deltas at each timestamp.
-    // Sources: betting odds (homeDelta) + all win prob sources
+    // Prefer backend aggregate_line (weighted median with staleness decay)
+    // when available; fall back to naive frontend averaging.
     if (isMultiSource) {
-      const sourceDataKeys = resolvedSources.map((s) => s.dataKey);
-      for (const point of Array.from(dataMap.values())) {
-        const values: number[] = [];
-        for (const key of sourceDataKeys) {
-          const val = point[key];
-          if (typeof val === "number" && val !== null) {
-            values.push(val);
-          }
+      if (aggregateLine && aggregateLine.length > 0) {
+        // Use backend-computed aggregate line
+        for (const point of aggregateLine) {
+          const homeProb = point.home_probability * 100;
+          const delta = homeProb - 50;
+          const dp = ensurePoint(point.timestamp);
+          dp.bainLuckDelta = delta;
         }
-        point.bainLuckDelta = values.length > 0
-          ? values.reduce((a, b) => a + b, 0) / values.length
-          : null;
+      } else {
+        // Fallback: average of all available source deltas at each timestamp
+        const sourceDataKeys = resolvedSources.map((s) => s.dataKey);
+        for (const point of Array.from(dataMap.values())) {
+          const values: number[] = [];
+          for (const key of sourceDataKeys) {
+            const val = point[key];
+            if (typeof val === "number" && val !== null) {
+              values.push(val);
+            }
+          }
+          point.bainLuckDelta = values.length > 0
+            ? values.reduce((a, b) => a + b, 0) / values.length
+            : null;
+        }
       }
     }
 
@@ -400,7 +414,7 @@ export default function OddsChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, aggregateLine]);
 
   // Build scoring play annotations that map to chart data points
   const scoringPlayAnnotations = useMemo(() => {
@@ -458,31 +472,6 @@ export default function OddsChart({
       }));
   }, [periodBoundaries, chartData]);
 
-  // Early return for empty history
-  if (!history || history.length === 0) {
-    return (
-      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
-        No history data available
-      </div>
-    );
-  }
-
-  // The primary delta key for the area fill gradient
-  const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
-
-  // Compute gradient offset for area fill-by-value
-  const gradientOffset = (() => {
-    const deltas = chartData
-      .map((d) => d[primaryDeltaKey] as number | null)
-      .filter((v): v is number => v !== null);
-    if (deltas.length === 0) return 0.5;
-    const dataMax = Math.max(...deltas);
-    const dataMin = Math.min(...deltas);
-    if (dataMax <= 0) return 0;
-    if (dataMin >= 0) return 1;
-    return dataMax / (dataMax - dataMin);
-  })();
-
   // Auto-zoom: compute dynamic Y-axis domain based on actual data range
   const { yDomain, yTicks } = useMemo(() => {
     const allDeltas = chartData
@@ -520,6 +509,31 @@ export default function OddsChart({
     ticks.sort((a, b) => a - b);
     return { yDomain: [lo, hi] as [number, number], yTicks: ticks };
   }, [chartData]);
+
+  // Early return for empty history
+  if (!history || history.length === 0) {
+    return (
+      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
+        No history data available
+      </div>
+    );
+  }
+
+  // The primary delta key for the area fill gradient
+  const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
+
+  // Compute gradient offset for area fill-by-value
+  const gradientOffset = (() => {
+    const deltas = chartData
+      .map((d) => d[primaryDeltaKey] as number | null)
+      .filter((v): v is number => v !== null);
+    if (deltas.length === 0) return 0.5;
+    const dataMax = Math.max(...deltas);
+    const dataMin = Math.min(...deltas);
+    if (dataMax <= 0) return 0;
+    if (dataMin >= 0) return 1;
+    return dataMax / (dataMax - dataMin);
+  })();
 
   // Short team names
   const homeShort = homeTeam.split(" ").pop() || homeTeam;

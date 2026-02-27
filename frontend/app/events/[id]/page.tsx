@@ -377,6 +377,15 @@ export default function EventPage({ params }: EventPageProps) {
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
+  // Derive period boundaries from history data for chart annotations
+  const periodBoundaries = useMemo(() => {
+    return derivePeriodBoundaries(
+      historyData?.espn_history,
+      historyData?.win_prob_history,
+      historyData?.scoring_plays,
+    );
+  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
+
   if (eventLoading) {
     return (
       <div className="py-12">
@@ -475,15 +484,6 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
-
-  // Derive period boundaries from history data for chart annotations
-  const periodBoundaries = useMemo(() => {
-    return derivePeriodBoundaries(
-      historyData?.espn_history,
-      historyData?.win_prob_history,
-      historyData?.scoring_plays,
-    );
-  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
 
   return (
     <div className="space-y-4">
@@ -1080,6 +1080,7 @@ export default function EventPage({ params }: EventPageProps) {
             winProbHistory={historyData?.win_prob_history}
             winProbSources={historyData?.win_prob_sources}
             scoringPlays={historyData?.scoring_plays}
+            aggregateLine={historyData?.aggregate_line ?? undefined}
             eventId={eventId}
             eventStatus={event.status}
             periodBoundaries={periodBoundaries}
