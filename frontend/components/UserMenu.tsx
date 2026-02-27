@@ -11,6 +11,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useAuthContext } from "@/components/AuthProvider";
+import { preloadFirebaseAuth } from "@/lib/firebase";
 
 export default function UserMenu() {
   const {
@@ -47,6 +48,8 @@ export default function UserMenu() {
           onClick={() => {
             if (signingIn) return;
             setShowProviders(!showProviders);
+            // Pre-load Firebase Auth module so Apple popup opens instantly
+            preloadFirebaseAuth();
           }}
           disabled={signingIn}
           className="text-sm text-text-secondary hover:text-text-primary transition-colors"

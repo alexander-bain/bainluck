@@ -429,14 +429,26 @@ export async function signInWithGoogle(): Promise<string | null> {
 }
 
 /**
+ * Pre-load Firebase Auth module so signInWithPopup can open immediately
+ * on user click without the dynamic import delay that triggers popup blockers.
+ * Call this when the sign-in dropdown opens (before the user clicks a provider).
+ */
+let firebaseAuthModule: typeof import("firebase/auth") | null = null;
+
+export async function preloadFirebaseAuth(): Promise<void> {
+  if (firebaseAuthModule) return;
+  firebaseAuthModule = await import("firebase/auth");
+  // Also ensure auth instance is ready
+  await getFirebaseAuth();
+}
+
+/**
  * Sign in with Apple.
  *
  * Uses Firebase's signInWithPopup with OAuthProvider('apple.com').
  * Firebase handles the Apple OAuth flow through its own verified domain
  * (bainluck-26a47.firebaseapp.com), so no domain verification is needed
  * on bainluck.com.
- *
- * Falls back to backend exchange if signInWithPopup fails (e.g., Safari ITP).
  *
  * Returns the Firebase/backend ID token on success, null on failure.
  */
@@ -448,17 +460,16 @@ export async function signInWithApple(): Promise<string | null> {
   }
 
   try {
-    console.log("[Firebase] Opening Apple sign-in popup via Firebase...");
+    // Use pre-loaded module if available, otherwise load now
+    const authModule = firebaseAuthModule || await import("firebase/auth");
 
-    // Firebase signInWithPopup with Apple OAuthProvider
-    const { OAuthProvider, signInWithPopup } = await import("firebase/auth");
-    const provider = new OAuthProvider("apple.com");
+    const provider = new authModule.OAuthProvider("apple.com");
     provider.addScope("email");
     provider.addScope("name");
 
     console.log("[Firebase] Opening Apple sign-in popup...");
     const result = await withTimeout(
-      signInWithPopup(authInstance, provider),
+      authModule.signInWithPopup(authInstance, provider),
       120000, // 2 min — user may be slow typing Apple ID password
       "signInWithPopup (Apple)"
     );
@@ -471,7 +482,7 @@ export async function signInWithApple(): Promise<string | null> {
     const idToken = await result.user.getIdToken();
 
     // Register with backend (best-effort — captures name, creates DB user)
-    const appleCredential = OAuthProvider.credentialFromResult(result);
+    const appleCredential = authModule.OAuthProvider.credentialFromResult(result);
     const appleIdToken = appleCredential?.idToken;
     if (appleIdToken) {
       fetch(`${API_URL}/api/auth/apple`, {

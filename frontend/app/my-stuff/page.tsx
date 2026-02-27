@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
+import { preloadFirebaseAuth } from "@/lib/firebase";
 import { fetchFeed, fetchMyTeamFutures } from "@/lib/api";
 import type { FeedItem, FeedEventData, FeedFuturesData, TeamFutureItem } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
@@ -43,6 +44,9 @@ export default function MyStuffPage() {
 // ---------------------------------------------------------------------------
 
 function SignInPrompt({ onSignInGoogle, onSignInApple }: { onSignInGoogle: () => Promise<void>; onSignInApple: () => Promise<void> }) {
+  // Pre-load Firebase Auth module so Apple popup opens instantly on click
+  useEffect(() => { preloadFirebaseAuth(); }, []);
+
   return (
     <div className="max-w-lg mx-auto">
       <div className="text-center py-16 px-4">
