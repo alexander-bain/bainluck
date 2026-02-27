@@ -181,6 +181,8 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-injuries",
         "sync-statpal-live-plays",
         "sync-statpal-rosters-daily",
+        "sync-statpal-team-stats-weekly",
+        "sync-statpal-standings-daily",
     }
 
     def test_no_missing_entries(self):
