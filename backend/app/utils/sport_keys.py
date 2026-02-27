@@ -28,6 +28,7 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "basketball_wncaab": ("basketball", "womens-college-basketball"),
     # Baseball
     "baseball_mlb": ("baseball", "mlb"),
+    "baseball_mlb_preseason": ("baseball", "mlb"),
     # Hockey
     "icehockey_nhl": ("hockey", "nhl"),
     # Soccer
@@ -57,6 +58,7 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "americanfootball_ncaaf": "football/college-football",
     "icehockey_nhl": "hockey/nhl",
     "baseball_mlb": "baseball/mlb",
+    "baseball_mlb_preseason": "baseball/mlb",
     "soccer_usa_mls": "soccer/usa.1",
     "soccer_epl": "soccer/eng.1",
 }
