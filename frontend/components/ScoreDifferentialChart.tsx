@@ -19,6 +19,7 @@ import type {
   BookmakerHistoryPoint,
   ScoreHistoryPoint,
 } from "@/lib/types";
+import type { PeriodBoundary } from "@/lib/periodMarkers";
 
 interface ScoreDifferentialChartProps {
   history: OddsHistoryPoint[];
@@ -31,8 +32,18 @@ interface ScoreDifferentialChartProps {
   currentHomeScore?: number | null;
   currentAwayScore?: number | null;
   eventStatus?: string;
-  /** When true, chart fills its parent container height instead of using fixed h-64 */
+  /** When true, chart fills its parent container height instead of using fixed h-40 */
   fillContainer?: boolean;
+  /** Period boundaries for vertical divider annotations */
+  periodBoundaries?: PeriodBoundary[];
+  /** Home team primary color (hex) for team label styling */
+  homeTeamColor?: string;
+  /** Away team primary color (hex) for team label styling */
+  awayTeamColor?: string;
+  /** Home team logo URL (small) */
+  homeTeamLogo?: string;
+  /** Away team logo URL (small) */
+  awayTeamLogo?: string;
 }
 
 type TimeRange = "all" | "live";
@@ -66,6 +77,11 @@ export default function ScoreDifferentialChart({
   currentAwayScore,
   eventStatus,
   fillContainer = false,
+  periodBoundaries,
+  homeTeamColor,
+  awayTeamColor,
+  homeTeamLogo,
+  awayTeamLogo,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
@@ -270,6 +286,23 @@ export default function ScoreDifferentialChart({
     );
   }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory]);
 
+  // Filter period boundaries to match chart time range
+  const filteredPeriodBoundaries = useMemo(() => {
+    if (!periodBoundaries || periodBoundaries.length === 0 || chartData.length === 0) return [];
+    const chartStart = parseISO(chartData[0].timestamp).getTime();
+    const chartEnd = parseISO(chartData[chartData.length - 1].timestamp).getTime();
+
+    return periodBoundaries
+      .filter((b) => {
+        const t = parseISO(b.timestamp).getTime();
+        return t >= chartStart && t <= chartEnd;
+      })
+      .map((b) => ({
+        ...b,
+        time: format(parseISO(b.timestamp), "h:mm a"),
+      }));
+  }, [periodBoundaries, chartData]);
+
   // Early returns
   if (!history || history.length === 0) return null;
   if (!hasProjectedScoreData && !hasActualScoreData) {
@@ -370,7 +403,7 @@ export default function ScoreDifferentialChart({
   };
 
   return (
-    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-4"}>
+    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}>
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
         {TIME_RANGE_OPTIONS.map((option) => (
@@ -396,8 +429,24 @@ export default function ScoreDifferentialChart({
         ))}
       </div>
 
+      {/* Team labels above chart (which side = which team) */}
+      <div className="flex items-center justify-between text-sm font-semibold px-8 shrink-0">
+        <span className="flex items-center gap-1" style={{ color: homeTeamColor || "#16a34a" }}>
+          {homeTeamLogo && (
+            <img src={homeTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
+          )}
+          + {homeShort} leading
+        </span>
+        <span className="flex items-center gap-1" style={{ color: awayTeamColor || "#2563eb" }}>
+          {awayTeamLogo && (
+            <img src={awayTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
+          )}
+          − {awayShort} leading
+        </span>
+      </div>
+
       {/* Chart */}
-      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-64"}>
+      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-40"}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
@@ -424,10 +473,28 @@ export default function ScoreDifferentialChart({
             />
             <ReferenceLine
               y={0}
-              stroke="#9ca3af"
-              strokeWidth={1.5}
-              strokeDasharray="4 4"
+              stroke="#6b7280"
+              strokeWidth={2}
+              label={{
+                value: "0",
+                position: "right",
+                style: { fontSize: 10, fill: "#6b7280" },
+              }}
             />
+            {/* Period boundary markers */}
+            {filteredPeriodBoundaries.map((b) => (
+              <ReferenceLine
+                key={`period-${b.label}-${b.timestamp}`}
+                x={b.time}
+                stroke="#d1d5db"
+                strokeWidth={1}
+                label={{
+                  value: b.label,
+                  position: "insideBottomLeft",
+                  style: { fontSize: 9, fill: "#9ca3af", fontWeight: 500 },
+                }}
+              />
+            ))}
             <Tooltip content={<CustomTooltip />} />
             <Legend
               wrapperStyle={{ fontSize: "12px" }}
@@ -498,12 +565,6 @@ export default function ScoreDifferentialChart({
             )}
           </ComposedChart>
         </ResponsiveContainer>
-      </div>
-
-      {/* Axis labels */}
-      <div className="flex justify-between text-xs text-text-muted px-2 shrink-0">
-        <span>+ = {homeShort} leading</span>
-        <span>- = {awayShort} leading</span>
       </div>
 
       {/* Info about gray lines */}

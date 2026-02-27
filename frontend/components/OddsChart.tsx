@@ -24,6 +24,7 @@ import type {
   WinProbSourceMeta,
   ScoringPlay,
 } from "@/lib/types";
+import type { PeriodBoundary } from "@/lib/periodMarkers";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
@@ -64,6 +65,16 @@ interface OddsChartProps {
   eventStatus?: string;
   /** When true, chart fills its parent container height instead of using fixed h-80 */
   fillContainer?: boolean;
+  /** Period boundaries for vertical divider annotations (Q1/Q2/Q3/Q4 etc.) */
+  periodBoundaries?: PeriodBoundary[];
+  /** Home team primary color (hex) for team label styling */
+  homeTeamColor?: string;
+  /** Away team primary color (hex) for team label styling */
+  awayTeamColor?: string;
+  /** Home team logo URL (small) */
+  homeTeamLogo?: string;
+  /** Away team logo URL (small) */
+  awayTeamLogo?: string;
 }
 
 type TimeRange = "all" | "live";
@@ -123,6 +134,11 @@ export default function OddsChart({
   eventId,
   eventStatus,
   fillContainer = false,
+  periodBoundaries,
+  homeTeamColor,
+  awayTeamColor,
+  homeTeamLogo,
+  awayTeamLogo,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
   const { track } = useAnalyticsContext();
@@ -425,6 +441,23 @@ export default function OddsChart({
       .filter((p): p is NonNullable<typeof p> => p !== null);
   }, [scoringPlays, chartData, isMultiSource]);
 
+  // Filter period boundaries to match chart time range and map to chart time format
+  const filteredPeriodBoundaries = useMemo(() => {
+    if (!periodBoundaries || periodBoundaries.length === 0 || chartData.length === 0) return [];
+    const chartStart = parseISO(chartData[0].timestamp).getTime();
+    const chartEnd = parseISO(chartData[chartData.length - 1].timestamp).getTime();
+
+    return periodBoundaries
+      .filter((b) => {
+        const t = parseISO(b.timestamp).getTime();
+        return t >= chartStart && t <= chartEnd;
+      })
+      .map((b) => ({
+        ...b,
+        time: format(parseISO(b.timestamp), "h:mm a"),
+      }));
+  }, [periodBoundaries, chartData]);
+
   // Early return for empty history
   if (!history || history.length === 0) {
     return (
@@ -449,6 +482,44 @@ export default function OddsChart({
     if (dataMin >= 0) return 1;
     return dataMax / (dataMax - dataMin);
   })();
+
+  // Auto-zoom: compute dynamic Y-axis domain based on actual data range
+  const { yDomain, yTicks } = useMemo(() => {
+    const allDeltas = chartData
+      .flatMap((d) => {
+        const vals: number[] = [];
+        // Collect all delta values from all sources
+        for (const key of Object.keys(d)) {
+          if (key.endsWith("Delta") || key.endsWith("_delta")) {
+            const v = d[key];
+            if (typeof v === "number") vals.push(v);
+          }
+        }
+        return vals;
+      });
+    if (allDeltas.length === 0) return { yDomain: [-50, 50] as [number, number], yTicks: [-50, -25, 0, 25, 50] };
+
+    const dataMin = Math.min(...allDeltas);
+    const dataMax = Math.max(...allDeltas);
+    // Add 5-point padding, round to nearest 5, ensure 0 is included
+    let lo = Math.floor((dataMin - 5) / 5) * 5;
+    let hi = Math.ceil((dataMax + 5) / 5) * 5;
+    // Ensure 0 is always in range
+    if (lo > 0) lo = 0;
+    if (hi < 0) hi = 0;
+    // Clamp to [-50, 50]
+    lo = Math.max(-50, lo);
+    hi = Math.min(50, hi);
+    // Generate ticks at 10-point intervals
+    const ticks: number[] = [];
+    for (let t = lo; t <= hi; t += 10) {
+      ticks.push(t);
+    }
+    // Ensure 0 is always a tick
+    if (!ticks.includes(0)) ticks.push(0);
+    ticks.sort((a, b) => a - b);
+    return { yDomain: [lo, hi] as [number, number], yTicks: ticks };
+  }, [chartData]);
 
   // Short team names
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
@@ -643,9 +714,19 @@ export default function OddsChart({
       </div>
 
       {/* Team labels flanking the chart */}
-      <div className="flex items-center justify-between text-xs font-medium px-8 shrink-0">
-        <span className="text-green-600">{homeShort} favored ↑</span>
-        <span className="text-blue-600">{awayShort} favored ↓</span>
+      <div className="flex items-center justify-between text-sm font-semibold px-8 shrink-0">
+        <span className="flex items-center gap-1" style={{ color: homeTeamColor || "#16a34a" }}>
+          {homeTeamLogo && (
+            <img src={homeTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
+          )}
+          {homeShort} favored ↑
+        </span>
+        <span className="flex items-center gap-1" style={{ color: awayTeamColor || "#2563eb" }}>
+          {awayTeamLogo && (
+            <img src={awayTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
+          )}
+          {awayShort} favored ↓
+        </span>
       </div>
 
       {/* Probability Chart */}
@@ -681,8 +762,8 @@ export default function OddsChart({
               minTickGap={50}
             />
             <YAxis
-              domain={[-50, 50]}
-              ticks={[-50, -25, 0, 25, 50]}
+              domain={yDomain}
+              ticks={yTicks}
               tick={{ fontSize: 10, fill: "#6b7280" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
@@ -700,6 +781,20 @@ export default function OddsChart({
                 style: { fontSize: 10, fill: "#9ca3af" },
               }}
             />
+            {/* Period boundary markers */}
+            {filteredPeriodBoundaries.map((b) => (
+              <ReferenceLine
+                key={`period-${b.label}-${b.timestamp}`}
+                x={b.time}
+                stroke="#d1d5db"
+                strokeWidth={1}
+                label={{
+                  value: b.label,
+                  position: "insideBottomLeft",
+                  style: { fontSize: 9, fill: "#9ca3af", fontWeight: 500 },
+                }}
+              />
+            ))}
             <Tooltip content={<CustomTooltip />} />
 
             {/* ── MODE B: Sportsbooks-only — individual bookmaker lines (thin grey) ── */}

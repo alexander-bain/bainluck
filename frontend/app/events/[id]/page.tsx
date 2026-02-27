@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import useSWR from "swr";
@@ -23,6 +23,7 @@ import {
   usePinnedEvents,
 } from "@/hooks";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
+import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 
 interface EventPageProps {
   params: { id: string };
@@ -474,6 +475,15 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
+
+  // Derive period boundaries from history data for chart annotations
+  const periodBoundaries = useMemo(() => {
+    return derivePeriodBoundaries(
+      historyData?.espn_history,
+      historyData?.win_prob_history,
+      historyData?.scoring_plays,
+    );
+  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
 
   return (
     <div className="space-y-4">
@@ -1008,8 +1018,8 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData?.history && historyData.history.length > 0 && (
-        <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
-          <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
+        <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
+          <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             Score Differential
           </h3>
           <ScoreDifferentialChart
@@ -1023,6 +1033,11 @@ export default function EventPage({ params }: EventPageProps) {
             currentHomeScore={event.home_score}
             currentAwayScore={event.away_score}
             eventStatus={event.status}
+            periodBoundaries={periodBoundaries}
+            homeTeamColor={event.home_team_data?.primary_color || undefined}
+            awayTeamColor={event.away_team_data?.primary_color || undefined}
+            homeTeamLogo={event.home_team_data?.logo_small || undefined}
+            awayTeamLogo={event.away_team_data?.logo_small || undefined}
           />
         </div>
       )}
@@ -1067,6 +1082,11 @@ export default function EventPage({ params }: EventPageProps) {
             scoringPlays={historyData?.scoring_plays}
             eventId={eventId}
             eventStatus={event.status}
+            periodBoundaries={periodBoundaries}
+            homeTeamColor={event.home_team_data?.primary_color || undefined}
+            awayTeamColor={event.away_team_data?.primary_color || undefined}
+            homeTeamLogo={event.home_team_data?.logo_small || undefined}
+            awayTeamLogo={event.away_team_data?.logo_small || undefined}
           />
         )}
       </div>
