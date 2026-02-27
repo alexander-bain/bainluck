@@ -34,7 +34,7 @@
 - **TMDB** (themoviedb.org) - Movie posters, headshots, trailers for Oscars page (free tier, no API key needed for read — uses Read Access Token as Bearer auth)
 - **OpenAI** (platform.openai.com) - GPT-4o-mini for LLM classification (~$5/mo)
 - **Google Analytics 4** - User analytics (free)
-- **Firebase Auth** - Google Sign-In (Apple planned), user accounts and personalization (free tier)
+- **Firebase Auth** - Google Sign-In + Apple Sign-In, user accounts and personalization (free tier)
 
 ---
 
@@ -236,6 +236,7 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `STATPAL_API_KEY` - From statpal.io (~$99/mo — enables schedule sync, roster enrichment, injury reports, play-by-play data)
 - `FIREBASE_PROJECT_ID` - Firebase project ID (optional - enables auth)
 - `FIREBASE_SERVICE_ACCOUNT_JSON` - Full service account JSON string (optional - for admin operations)
+- `APPLE_SERVICES_ID` - Apple Services ID for JWT audience validation (optional - enables Apple Sign-In)
 
 ### Frontend (Vercel Environment Variables)
 - `NEXT_PUBLIC_API_URL` = `https://api.bainluck.com`
@@ -708,37 +709,46 @@ curl -X POST "https://api.bainluck.com/api/admin/espn/cleanup-bad-matches?secret
 ```
 
 ### Authentication & Personalization
-Firebase Auth provides Google (and later Apple) Sign-In. The app works fully without login; auth unlocks personalization features.
+Firebase Auth provides Google and Apple Sign-In. The app works fully without login; auth unlocks personalization features.
 
 **Architecture:**
-- **Frontend**: Google Identity Services (GIS) OAuth popup → access token → Firebase `signInWithCredential` or backend custom token exchange
+- **Frontend (Google)**: Google Identity Services (GIS) OAuth popup → access token → Firebase `signInWithCredential` or backend custom token exchange
+- **Frontend (Apple)**: Firebase `signInWithPopup` with `OAuthProvider('apple.com')` → Firebase handles Apple OAuth through its own verified domain (`bainluck-26a47.firebaseapp.com`). No domain verification required on `bainluck.com`.
 - **Backend**: `firebase-admin` verifies ID tokens → upserts user in `users` table → returns profile
 - **Auth dependencies**: `get_current_user` (required auth) and `get_optional_user` (optional auth) FastAPI dependencies
 - **Anonymous-first**: All existing endpoints work without auth. Personalization is an overlay, not a gate.
 - **Pin sync**: Pins migrate from localStorage to `user_pins` table on first login. localStorage continues as fallback for anonymous users.
 
-**Safari compatibility (critical — 3-tier auth fallback):**
+**Safari compatibility (critical — Google 3-tier auth fallback):**
 Safari ITP blocks `identitytoolkit.googleapis.com`, breaking both `signInWithCredential` AND `signInWithCustomToken`. The solution is a 3-tier fallback with fast timeouts (4s) to prevent hanging:
 1. **`signInWithCredential`** (4s timeout) — works on Chrome/Firefox
 2. **Backend custom token → `signInWithCustomToken`** (4s timeout) — works when only credential auth is blocked
 3. **Backend-only auth** — when Firebase client SDK is fully blocked, the backend issues a PyJWT session token (HS256, 1hr TTL) signed with `ADMIN_SECRET`. Frontend stores in localStorage and uses directly as Bearer token. Backend `verify_id_token()` accepts both Firebase ID tokens and backend session tokens.
 
-**Auth persistence fix:** Firebase uses `initializeAuth` with explicit `browserLocalPersistence` (localStorage) instead of the default `indexedDBLocalPersistence`. Safari ITP aggressively clears IndexedDB for cross-origin resources, causing sign-out on hard refresh.
+**Apple Sign-In implementation notes:**
+- Uses Firebase's `signInWithPopup` with `OAuthProvider('apple.com')` — Firebase's domain is already verified with Apple, so no domain verification file is needed on `bainluck.com`.
+- Requires `browserPopupRedirectResolver` in `initializeAuth` config — Firebase v10's modular SDK doesn't include it by default with custom persistence. Without it, `signInWithPopup` throws `auth/argument-error`.
+- Firebase Auth module is pre-loaded via `preloadFirebaseAuth()` when the sign-in dropdown opens (UserMenu) or sign-in prompt mounts (My Stuff) to prevent popup blockers from blocking the popup due to async `import()` delay.
+- After `signInWithPopup` succeeds, user state is read directly from `getCurrentFirebaseUser()` instead of relying on `onAuthStateChanged` — because first-time sign-in defers Firebase SDK loading, so the auth state listener isn't subscribed yet.
+- Backend registration uses `/api/auth/google` (Firebase ID token) since `signInWithPopup` returns a Firebase token, not a raw Apple JWT.
+- Apple Developer Console requires: App ID with Sign in with Apple enabled, Services ID (`com.bainluck.web`), Apple provider enabled in Firebase Console with Team ID + Key ID + .p8 private key.
+
+**Auth persistence fix:** Firebase uses `initializeAuth` with explicit `browserLocalPersistence` (localStorage) and `browserPopupRedirectResolver` instead of the default `indexedDBLocalPersistence`. Safari ITP aggressively clears IndexedDB for cross-origin resources, causing sign-out on hard refresh.
 
 This requires `FIREBASE_SERVICE_ACCOUNT_JSON` and `ADMIN_SECRET` on the backend.
 
-**Key files for Safari auth:**
-- `frontend/lib/firebase.ts` — 3-tier sign-in with `withTimeout()`, `BackendAuthData` localStorage fallback
-- `backend/app/services/firebase_auth.py` — `create_session_token()`, `verify_session_token()`, updated `verify_id_token()` to accept both Firebase and session tokens
+**Key files for Safari auth (Google):**
+- `frontend/lib/firebase.ts` — 3-tier Google sign-in with `withTimeout()`, `BackendAuthData` localStorage fallback, Apple `signInWithPopup` with preloaded module
+- `backend/app/services/firebase_auth.py` — `create_session_token()`, `verify_session_token()`, `verify_apple_id_token()`, updated `verify_id_token()` to accept both Firebase and session tokens
 - `backend/requirements.txt` — Added `PyJWT>=2.8.0`
 
 **Key files:**
-- `backend/app/services/firebase_auth.py` — Firebase Admin SDK init, token verification, `get_or_create_firebase_user`, `create_custom_token`
+- `backend/app/services/firebase_auth.py` — Firebase Admin SDK init, token verification, `get_or_create_firebase_user`, `create_custom_token`, `verify_apple_id_token`
 - `backend/app/dependencies/auth.py` — `get_current_user` / `get_optional_user` FastAPI dependencies
-- `backend/app/routes/auth.py` — `POST /api/auth/google`, `POST /api/auth/google-access-token` (Safari fallback), `GET /api/auth/me`, profile management
+- `backend/app/routes/auth.py` — `POST /api/auth/google`, `POST /api/auth/google-access-token` (Safari fallback), `POST /api/auth/apple`, `GET /api/auth/me`, `GET /api/auth/status`, profile management
 - `backend/app/routes/user.py` — Pin CRUD (`/api/me/pins`), team search (`/api/me/teams/search`)
-- `frontend/lib/firebase.ts` — Firebase app config, GIS OAuth flow, two-step sign-in with backend fallback
-- `frontend/hooks/useAuth.ts` — Reactive auth state, token management
+- `frontend/lib/firebase.ts` — Firebase app config, GIS OAuth flow (Google), `signInWithPopup` (Apple), `preloadFirebaseAuth()`, backend fallback
+- `frontend/hooks/useAuth.ts` — Reactive auth state, token management, `getCurrentFirebaseUser` for immediate state after popup
 - `frontend/components/AuthProvider.tsx` — Auth context provider, wires token to API client
 - `frontend/components/UserMenu.tsx` — Header sign-in button / user avatar dropdown (Preferences links to `/preferences`)
 - `frontend/hooks/usePinSync.ts` — One-way localStorage → server pin migration on first login
@@ -754,7 +764,7 @@ This requires `FIREBASE_SERVICE_ACCOUNT_JSON` and `ADMIN_SECRET` on the backend.
 - `user_pins` — Server-side pin storage (events + futures)
 
 **Environment variables:**
-- Backend: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (**required** for Safari sign-in — enables `create_custom_token` and `get_user_by_email`)
+- Backend: `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (**required** for Safari sign-in — enables `create_custom_token` and `get_user_by_email`), `APPLE_SERVICES_ID` (enables Apple Sign-In backend verification)
 - Frontend: `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
 
 **City → Teams mapping:** ESPN's `location` field on team objects maps cities/regions/schools to teams. The `Team.location` column stores this. A static metro alias map (`METRO_ALIASES` in `user.py`, ~30 entries) groups brand names to metro areas ("New England" → "Boston", "Golden State" → "Bay Area").
@@ -1289,7 +1299,7 @@ These are the current focus. Resist the urge to build new features until these a
 18. 🟢 **Event importance scoring + ESPN season type (shipped)** — `compute_highlight()` reads `llm_importance` with championship (+25), playoff (+15), exhibition (-20) weights. ESPN sync parses `season.type` and writes to `llm_importance`. Tennis Grand Slams and golf Majors promoted to tier 2. Playoff NFL scores 65 base (was 50), preseason NBA drops to 30 (was 50). 17 new tests.
 19. 🟢 **Migrate roster sync from SportsDataIO to ESPN (shipped)** — `roster_sync.py` already uses ESPN + MLB Stats API as primary sources. Deleted `sportsdata_api.py` (321 lines of dead code). `SPORTSDATA_API_KEY` env var no longer needed.
 20. 🟢 **"Why Did the Line Move?" v1 — ESPN context enrichment (shipped)** — The full pipeline was already deployed (detection in `line_movement.py`, LLM explanation in `llm.py`, caching in `LineMovementAnalysis`, endpoint at `GET /events/{id}/line-movement`, frontend in `LineMovementExplainer.tsx`). This phase adds **real data** to the LLM prompt: ESPN injury reports (`get_event_context()` in `espn_api.py`), news headlines, and live game state (score/period/clock). Prompt instructs LLM to only reference listed injuries — no fabrication. Response includes `context` metadata (injuries_count, news_count, has_game_state). 26 new line movement tests + 8 ESPN parsing tests (84 total in both files).
-21. 📋 Apple Sign-In (after Google auth is working) — required by App Store policy if Google Sign-In is offered. Also: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting
+21. 🟢 **Apple Sign-In (shipped)** — Uses Firebase `signInWithPopup` with `OAuthProvider('apple.com')`. Firebase's domain handles Apple OAuth — no domain verification needed on `bainluck.com`. Key fixes: `browserPopupRedirectResolver` required in `initializeAuth` (Firebase v10 gotcha), preload Firebase Auth module to prevent popup blockers, read `currentUser` directly after popup (first-time sign-in hasn't subscribed `onAuthStateChanged`). Backend endpoint `POST /api/auth/apple` for direct Apple JWT verification (standalone path). Provider chooser dropdown in UserMenu and My Stuff page. 13 backend tests. Remaining: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting.
 22. 📋 Sport-specific Pulse normalization (different ceilings per sport)
 23. 🟡 **TV Mode v2 (designed, prototype built)** — Fullscreen second-screen experience for live games, elections, award shows, and ambient futures. Browser-first (`/tv` route). Cascaded density hierarchy: Phone shows Pulse ring + multi-source chart + context + related futures. iPad shows 3-column layout (chart + context sidebar + other games). TV is maximal with score-by-period, Pulse component breakdown, source comparison strip, sparklines in other-game cards, expanded trending futures. Ambient mode auto-rotates through futures during downtime. Prototype at `tv-mode-prototype.jsx`, full design plan at `docs/tv-mode-plan.md`. iOS v2 features documented (Live Activities, Dynamic Island, StandBy, Apple Watch, widgets, haptics, Siri). See TV Mode section in Key Features below.
 24. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
@@ -1417,6 +1427,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ ESPN team logo matching fix: Replaced bidirectional substring matching in `_backfill_team_logos()` with token-overlap scoring (`_team_name_match_score()`, threshold `> 0.5`). Removed mascot-only names ("Buckeyes", "Bulldogs") from ESPN lookup dict. Guarded `espn_id` writes to exact/ID matches only. One-time cleanup task cleared 179 bad matches (637 checked, 458 valid). Admin endpoint `POST /api/admin/espn/cleanup-bad-matches`. 13 new tests.
 - ✅ Event detail standings fix: StatPal returns `position` (team rank) as strings in `standings_data` JSONB. `_compute_standings_context()` compared these with `<=` against integers, crashing all event detail pages. Fixed with `int()` conversion + try/except. StatPal sync now stores numeric standings fields (draws, ties, points, goals, position) as `int` at write time.
 - ✅ Line movement 3-tier prompt: Split `build_llm_prompt()` into 3 instruction tiers — injuries/news → explain causes, game state only → describe factually (no speculation), no context → describe movement only. Eliminates vague hedging ("possibly due to key plays or scoring runs"). Admin endpoint `DELETE /api/admin/line-movement/cache/{event_id}` clears stale cached explanations.
+- ✅ Apple Sign-In: Firebase `signInWithPopup` with `OAuthProvider('apple.com')` — Firebase handles Apple OAuth through its own verified domain, no domain verification needed on `bainluck.com`. Backend `POST /api/auth/apple` endpoint with Apple JWKS verification, `GET /api/auth/status` dynamic provider list. Provider chooser dropdown (Google + Apple) in UserMenu and My Stuff sign-in prompt. Key gotchas solved: `browserPopupRedirectResolver` required in `initializeAuth` (Firebase v10), preload module to prevent popup blockers, read `currentUser` directly after popup for immediate state. 13 backend tests.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1499,7 +1510,7 @@ The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout)
 
 11. **ESPN scoreboard vs teams API format**: The scoreboard endpoint returns team logos as a single `"logo"` string, while the teams endpoint returns a `"logos"` array. The `_parse_team` method in `espn_api.py` handles both.
 
-12. **Safari breaks Firebase Auth** — `signInWithPopup`, `signInWithRedirect`, and `signInWithCredential` all fail on Safari due to ITP. The working solution is GIS `initTokenClient` (opens OAuth popup, returns access token) → backend exchanges for custom Firebase token → `signInWithCustomToken`. Do NOT attempt to use Firebase's native Google sign-in methods on Safari. The backend fallback endpoint `POST /api/auth/google-access-token` handles this. Requires `FIREBASE_SERVICE_ACCOUNT_JSON` to be set.
+12. **Safari breaks Firebase Auth (Google only)** — `signInWithPopup`, `signInWithRedirect`, and `signInWithCredential` all fail on Safari due to ITP for **Google** sign-in. The working solution is GIS `initTokenClient` (opens OAuth popup, returns access token) → backend exchanges for custom Firebase token → `signInWithCustomToken`. Do NOT attempt to use Firebase's native Google sign-in methods on Safari. The backend fallback endpoint `POST /api/auth/google-access-token` handles this. Requires `FIREBASE_SERVICE_ACCOUNT_JSON` to be set. **Apple sign-in** uses `signInWithPopup` with `OAuthProvider('apple.com')` which works because Firebase routes through its own verified domain.
 
 13. **The Odds API commence_time can be wrong**: The Odds API occasionally returns game local times as if they were UTC (e.g., a 3:30 PM ET game as `15:30Z` instead of `20:30Z`). To prevent this: (a) odds polling upserts no longer overwrite `commence_time` after initial insert, and (b) the ESPN sync task corrects mismatches automatically. For bulk retroactive fixes, use `POST /api/admin/espn/fix-commence-times`. **Note:** Task modules use `logging.getLogger(__name__)`. Some older code still uses `print()` instead — migrate to logger when touching those sections.
 

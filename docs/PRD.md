@@ -191,7 +191,7 @@ Different game statuses show different probability data to users:
 | Task Queue | Celery + Redis | Heroku Redis | Scheduled odds polling, background tasks |
 | Web Frontend | Next.js 14 (React) | Vercel | SSR for shareable links, great DX |
 | iOS App | SwiftUI | Planned | Modern Apple development |
-| Auth | Firebase Auth | Google Cloud | Google/Apple sign-in (Phase 1 shipped) |
+| Auth | Firebase Auth | Google Cloud | Google + Apple sign-in (shipped) |
 | Analytics | Google Analytics 4 | Google | Cross-platform tracking, User-ID support |
 | LLM Integration | OpenAI GPT-4o-mini | OpenAI | Classification, categorization (~$5/mo) |
 
@@ -1830,7 +1830,7 @@ These are the current focus. Resist the urge to build new features until these a
 
 ### Next — Features (in priority order)
 
-19. **Apple Sign-In** — Required by App Store policy. Also: change Firebase support email to support@bainluck.com.
+19. ✅ **Apple Sign-In** — Firebase `signInWithPopup` with `OAuthProvider('apple.com')`. Provider chooser dropdown (Google + Apple). 13 backend tests. Remaining: Firebase support email, GA cross-platform.
 20. **Sport-specific Pulse normalization** — Different sports have different baseline volatility.
 21. **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant events.
 22. **Additional win prob sources** — MoneyPuck for NHL. Infrastructure ready (stub configured).
