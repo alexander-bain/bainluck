@@ -446,62 +446,17 @@ export async function signInWithApple(): Promise<string | null> {
   try {
     console.log("[Firebase] Opening Apple sign-in popup via Firebase...");
 
-    // Attempt 1: Firebase signInWithPopup with Apple OAuthProvider
-    try {
-      const { OAuthProvider, signInWithPopup } = await import("firebase/auth");
-      const provider = new OAuthProvider("apple.com");
-      provider.addScope("email");
-      provider.addScope("name");
+    // Use signInWithRedirect — more reliable than signInWithPopup for Apple.
+    // This redirects the user to Apple's sign-in page, then back to the app.
+    // The result is picked up by getRedirectResult() on page reload.
+    const { OAuthProvider, signInWithRedirect } = await import("firebase/auth");
+    const provider = new OAuthProvider("apple.com");
+    provider.addScope("email");
+    provider.addScope("name");
 
-      const result = await withTimeout(
-        signInWithPopup(authInstance, provider),
-        120000, // 2 min — user may be slow typing Apple ID password
-        "signInWithPopup (Apple)"
-      );
-
-      console.log(
-        "[Firebase] Apple signInWithPopup succeeded for",
-        result.user.email || result.user.uid
-      );
-
-      const idToken = await result.user.getIdToken();
-
-      // Extract name from Apple credential (only available on first auth)
-      const appleCredential = OAuthProvider.credentialFromResult(result);
-      const appleIdToken = appleCredential?.idToken;
-
-      // Register with backend (best-effort — captures name, creates DB user)
-      if (appleIdToken) {
-        fetch(`${API_URL}/api/auth/apple`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id_token: appleIdToken }),
-        }).catch(() => {
-          // Best-effort — don't block sign-in
-        });
-      }
-
-      return idToken;
-    } catch (popupError: unknown) {
-      const authError = popupError as { code?: string; message?: string };
-
-      // User closed the popup — don't try fallbacks
-      if (authError.code === "auth/popup-closed-by-user" || authError.code === "auth/cancelled-popup-request") {
-        console.log("[Firebase] Apple popup closed by user");
-        return null;
-      }
-
-      console.warn(
-        "[Firebase] Apple signInWithPopup failed:",
-        authError.message || authError.code,
-        "- trying backend fallback..."
-      );
-    }
-
-    // Attempt 2+3: Backend-only fallback (Safari ITP)
-    // Without Apple's JS SDK, we can't get an Apple id_token client-side
-    // when signInWithPopup fails. Redirect to backend Apple OAuth flow instead.
-    console.warn("[Firebase] Apple sign-in: no client-side fallback available. signInWithPopup is required.");
+    console.log("[Firebase] Redirecting to Apple sign-in...");
+    await signInWithRedirect(authInstance, provider);
+    // Page will redirect — this code won't continue
     return null;
   } catch (error) {
     console.error("[Firebase] Apple sign-in error:", error);
@@ -582,6 +537,29 @@ export async function onAuthChange(
     }
     return () => {};
   }
+
+  // Check for Apple sign-in redirect result (signInWithRedirect returns here)
+  try {
+    const { getRedirectResult, OAuthProvider } = await import("firebase/auth");
+    const redirectResult = await getRedirectResult(authInstance);
+    if (redirectResult?.user) {
+      console.log("[Firebase] Apple redirect sign-in succeeded for", redirectResult.user.email || redirectResult.user.uid);
+
+      // Register with backend (best-effort)
+      const appleCredential = OAuthProvider.credentialFromResult(redirectResult);
+      const appleIdToken = appleCredential?.idToken;
+      if (appleIdToken) {
+        fetch(`${API_URL}/api/auth/apple`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id_token: appleIdToken }),
+        }).catch(() => {});
+      }
+    }
+  } catch (redirectError) {
+    console.warn("[Firebase] getRedirectResult error:", redirectError);
+  }
+
   const { onAuthStateChanged } = await import("firebase/auth");
   const unsub = onAuthStateChanged(authInstance, (fbUser) => {
     if (fbUser) {
