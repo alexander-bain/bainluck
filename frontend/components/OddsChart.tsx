@@ -366,7 +366,7 @@ export default function OddsChart({
     // Sources: betting odds (homeDelta) + all win prob sources
     if (isMultiSource) {
       const sourceDataKeys = resolvedSources.map((s) => s.dataKey);
-      for (const point of dataMap.values()) {
+      for (const point of Array.from(dataMap.values())) {
         const values: number[] = [];
         for (const key of sourceDataKeys) {
           const val = point[key];

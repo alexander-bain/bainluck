@@ -137,6 +137,5 @@ export function EIInline({ ei }: { ei: EIData }) {
   );
 }
 
-// Backward compatibility — re-export old names
-export { EIBadge as default };
+// Backward compatibility — re-export old name
 export { EIInline as PulseInline };
