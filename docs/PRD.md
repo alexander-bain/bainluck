@@ -1628,6 +1628,21 @@ These are differentiated features that can't be built with odds data alone. They
 
 ---
 
+## Ideas Under Exploration
+
+These ideas need design questions answered before planning. See `docs/planning-questions.md` for detailed question sets.
+
+### Bespoke Category Landing Pages
+Beautiful, over-invested landing pages for each major sport (basketball, golf, etc.) and non-sports category (politics, entertainment, weather, miscellany). Since categories are stable over time, these can be hand-crafted visual experiences rather than generic list views. The Oscars page is the prototype for this pattern.
+
+### "What Are the Odds?" Game
+Probability guessing game: show users events/futures from the DB, they guess the probability, we score accuracy. Designed as a retention driver and viral acquisition vehicle. Many game mechanics to work out (scoring formula, difficulty modes, multiplayer, social sharing).
+
+### Insight Arena (Admin LLM Training)
+Admin-only feature: LLM generates event-level, category-level, and DB-wide insights. Two insights are surfaced at a time for A/B preference selection. Choices train the LLM (via prompt refinement, RLHF-style preference data, or few-shot examples) on what makes a good insight. Eventually graduates insights to user-facing surfaces.
+
+---
+
 ## Sports Coverage
 
 ### Blacklist Approach
