@@ -84,16 +84,20 @@ async function getFirebaseAuth(): Promise<Auth | null> {
   const {
     initializeAuth,
     browserLocalPersistence,
+    browserPopupRedirectResolver,
     getAuth: getAuthDefault,
     indexedDBLocalPersistence,
   } = await import("firebase/auth");
 
   // Try to use initializeAuth with explicit localStorage persistence.
+  // browserPopupRedirectResolver is required for signInWithPopup/signInWithRedirect
+  // (not included by default with initializeAuth, unlike getAuth).
   // If auth was already initialized (e.g., by another import), fall back
   // to getAuth() which returns the existing instance.
   try {
     auth = initializeAuth(firebaseApp, {
       persistence: [browserLocalPersistence, indexedDBLocalPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver,
     });
   } catch {
     // Auth already initialized — use existing instance
@@ -446,18 +450,38 @@ export async function signInWithApple(): Promise<string | null> {
   try {
     console.log("[Firebase] Opening Apple sign-in popup via Firebase...");
 
-    // Use signInWithRedirect — more reliable than signInWithPopup for Apple.
-    // This redirects the user to Apple's sign-in page, then back to the app.
-    // The result is picked up by getRedirectResult() on page reload.
-    const { OAuthProvider, signInWithRedirect } = await import("firebase/auth");
+    // Firebase signInWithPopup with Apple OAuthProvider
+    const { OAuthProvider, signInWithPopup } = await import("firebase/auth");
     const provider = new OAuthProvider("apple.com");
     provider.addScope("email");
     provider.addScope("name");
 
-    console.log("[Firebase] Redirecting to Apple sign-in...");
-    await signInWithRedirect(authInstance, provider);
-    // Page will redirect — this code won't continue
-    return null;
+    console.log("[Firebase] Opening Apple sign-in popup...");
+    const result = await withTimeout(
+      signInWithPopup(authInstance, provider),
+      120000, // 2 min — user may be slow typing Apple ID password
+      "signInWithPopup (Apple)"
+    );
+
+    console.log(
+      "[Firebase] Apple signInWithPopup succeeded for",
+      result.user.email || result.user.uid
+    );
+
+    const idToken = await result.user.getIdToken();
+
+    // Register with backend (best-effort — captures name, creates DB user)
+    const appleCredential = OAuthProvider.credentialFromResult(result);
+    const appleIdToken = appleCredential?.idToken;
+    if (appleIdToken) {
+      fetch(`${API_URL}/api/auth/apple`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id_token: appleIdToken }),
+      }).catch(() => {});
+    }
+
+    return idToken;
   } catch (error) {
     console.error("[Firebase] Apple sign-in error:", error);
     return null;
@@ -536,28 +560,6 @@ export async function onAuthChange(
       callback(null);
     }
     return () => {};
-  }
-
-  // Check for Apple sign-in redirect result (signInWithRedirect returns here)
-  try {
-    const { getRedirectResult, OAuthProvider } = await import("firebase/auth");
-    const redirectResult = await getRedirectResult(authInstance);
-    if (redirectResult?.user) {
-      console.log("[Firebase] Apple redirect sign-in succeeded for", redirectResult.user.email || redirectResult.user.uid);
-
-      // Register with backend (best-effort)
-      const appleCredential = OAuthProvider.credentialFromResult(redirectResult);
-      const appleIdToken = appleCredential?.idToken;
-      if (appleIdToken) {
-        fetch(`${API_URL}/api/auth/apple`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id_token: appleIdToken }),
-        }).catch(() => {});
-      }
-    }
-  } catch (redirectError) {
-    console.warn("[Firebase] getRedirectResult error:", redirectError);
   }
 
   const { onAuthStateChanged } = await import("firebase/auth");
