@@ -411,7 +411,7 @@ async def _poll_all_odds():
     Uses per-sport last poll times stored in Redis.
     Also fetches scores for live/completed games.
     """
-    from app.tasks.pulse import update_live_gei
+    from app.tasks.excitement_index import update_live_ei as update_live_gei
 
     service = OddsAPIService()
 

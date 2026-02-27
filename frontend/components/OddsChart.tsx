@@ -33,7 +33,14 @@ const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: stri
   kalshi: { display_name: "Kalshi", color: "#22c55e", dash_pattern: "8 4", type: "market" },
   polymarket: { display_name: "Polymarket", color: "#3b82f6", dash_pattern: "8 4", type: "market" },
   moneypuck: { display_name: "MoneyPuck", color: "#10b981", dash_pattern: "4 4", type: "model" },
-  fangraphs: { display_name: "FanGraphs", color: "#06b6d4", dash_pattern: "4 4", type: "model" },
+  fangraphs: { display_name: "MLB Model", color: "#06b6d4", dash_pattern: "4 4", type: "model" },
+};
+
+/** Bain Luck aggregated line config */
+const BAIN_LUCK_CONFIG = {
+  color: "#059669", // emerald-600 — distinctive green
+  displayName: "Bain Luck",
+  dataKey: "bainLuckDelta",
 };
 
 interface OddsChartProps {
@@ -73,6 +80,8 @@ interface ChartDataPoint {
   homeDelta: number | null;
   /** ESPN home probability delta from 50% (legacy) */
   espnDelta: number | null;
+  /** Bain Luck aggregated probability delta (multi-source mode) */
+  bainLuckDelta: number | null;
   [key: string]: string | number | null | undefined;
 }
 
@@ -88,11 +97,17 @@ interface ResolvedSource {
 }
 
 /**
- * Win probability chart showing multiple labeled sources.
+ * Win probability chart with two display modes:
  *
- * Each source (Betting Odds, ESPN, Statistical Model, etc.) gets its own
- * clearly labeled line. Market sources use solid lines, model sources use
- * dashed lines. The betting odds line also gets an area fill.
+ * **Mode A (Multi-source):** When multiple probability sources exist
+ * (sportsbooks + ESPN/Kalshi/Polymarket/models), shows:
+ *   - An aggregated "Bain Luck" line prominently (solid, with area fill)
+ *   - Each individual SOURCE as a thin, semi-transparent line with its color
+ *   - Individual bookmakers are HIDDEN
+ *
+ * **Mode B (Sportsbooks-only):** When only sportsbook data exists:
+ *   - Sportsbook consensus line shown prominently (solid, with area fill)
+ *   - Individual bookmaker lines shown faintly in grey
  */
 export default function OddsChart({
   history,
@@ -146,8 +161,6 @@ export default function OddsChart({
   }, [bookmakerHistory, timeRange, commenceTime]);
 
   // Build the list of all sources to display (betting + model sources)
-  // Betting odds always included as first source when history data exists.
-  // Model sources come from winProbHistory (new) or espnHistory (legacy).
   const resolvedSources = useMemo((): ResolvedSource[] => {
     const sources: ResolvedSource[] = [];
 
@@ -166,7 +179,6 @@ export default function OddsChart({
     }
 
     if (winProbHistory && Object.keys(winProbHistory).length > 0) {
-      // Use the new multi-source data
       for (const [key, points] of Object.entries(winProbHistory)) {
         if (points.length === 0) continue;
         const meta = winProbSources?.[key];
@@ -182,7 +194,6 @@ export default function OddsChart({
         });
       }
     } else if (espnHistory && espnHistory.length > 0) {
-      // Legacy: use espnHistory directly
       sources.push({
         key: "espn",
         dataKey: "espnDelta",
@@ -197,11 +208,15 @@ export default function OddsChart({
     return sources;
   }, [history, winProbHistory, winProbSources, espnHistory]);
 
-  // Non-betting sources (model sources rendered as separate chart lines)
-  const modelSources = useMemo(
+  // Non-betting sources
+  const nonBettingSources = useMemo(
     () => resolvedSources.filter((s) => s.key !== "betting"),
     [resolvedSources]
   );
+
+  // ── Display mode detection ──
+  // Multi-source mode: when we have at least 1 non-betting source with data
+  const isMultiSource = nonBettingSources.length > 0;
 
   // Filter win prob history based on time range
   const filteredWinProbHistory = useMemo(() => {
@@ -245,6 +260,7 @@ export default function OddsChart({
           time: format(parseISO(timestamp), "h:mm a"),
           homeDelta: null,
           espnDelta: null,
+          bainLuckDelta: null,
         };
         dataMap.set(timestamp, point);
       }
@@ -327,7 +343,7 @@ export default function OddsChart({
       // Ensure all source keys exist on all data points
       const allDataPoints = Array.from(dataMap.values());
       for (const point of allDataPoints) {
-        for (const source of modelSources) {
+        for (const source of nonBettingSources) {
           if (point[source.dataKey] === undefined) {
             point[source.dataKey] = null;
           }
@@ -345,20 +361,41 @@ export default function OddsChart({
       }
     }
 
+    // ── Compute Bain Luck aggregated line (multi-source mode) ──
+    // Average of all available source deltas at each timestamp.
+    // Sources: betting odds (homeDelta) + all win prob sources
+    if (isMultiSource) {
+      const sourceDataKeys = resolvedSources.map((s) => s.dataKey);
+      for (const point of Array.from(dataMap.values())) {
+        const values: number[] = [];
+        for (const key of sourceDataKeys) {
+          const val = point[key];
+          if (typeof val === "number" && val !== null) {
+            values.push(val);
+          }
+        }
+        point.bainLuckDelta = values.length > 0
+          ? values.reduce((a, b) => a + b, 0) / values.length
+          : null;
+      }
+    }
+
     return Array.from(dataMap.values()).sort(
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, modelSources]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources]);
 
   // Build scoring play annotations that map to chart data points
   const scoringPlayAnnotations = useMemo(() => {
     if (!scoringPlays || scoringPlays.length === 0 || chartData.length === 0) return [];
 
+    // In multi-source mode, use the Bain Luck aggregated delta; otherwise use homeDelta
+    const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
+
     return scoringPlays
       .filter((play) => play.timestamp)
       .map((play) => {
-        // Find the closest chart data point by timestamp
         const playTime = parseISO(play.timestamp).getTime();
         let closestIdx = 0;
         let closestDist = Infinity;
@@ -370,7 +407,7 @@ export default function OddsChart({
           }
         }
         const closestPoint = chartData[closestIdx];
-        const yValue = closestPoint.homeDelta;
+        const yValue = closestPoint[primaryDeltaKey] as number | null;
         if (yValue === null) return null;
 
         return {
@@ -386,7 +423,7 @@ export default function OddsChart({
         };
       })
       .filter((p): p is NonNullable<typeof p> => p !== null);
-  }, [scoringPlays, chartData]);
+  }, [scoringPlays, chartData, isMultiSource]);
 
   // Early return for empty history
   if (!history || history.length === 0) {
@@ -397,10 +434,13 @@ export default function OddsChart({
     );
   }
 
+  // The primary delta key for the area fill gradient
+  const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
+
   // Compute gradient offset for area fill-by-value
   const gradientOffset = (() => {
     const deltas = chartData
-      .map((d) => d.homeDelta)
+      .map((d) => d[primaryDeltaKey] as number | null)
       .filter((v): v is number => v !== null);
     if (deltas.length === 0) return 0.5;
     const dataMax = Math.max(...deltas);
@@ -442,6 +482,11 @@ export default function OddsChart({
         return `${homeTeam}: ${homeProb.toFixed(1)}% | ${awayTeam}: ${awayProb.toFixed(1)}%`;
       };
 
+      // Bain Luck aggregated line (multi-source mode)
+      const bainLuckEntry = isMultiSource
+        ? payload.find((e) => e.dataKey === "bainLuckDelta" && e.value !== null)
+        : null;
+
       // Find entries for each resolved source
       const sourceEntries = resolvedSources
         .map((source) => {
@@ -452,13 +497,17 @@ export default function OddsChart({
         })
         .filter((e): e is ResolvedSource & { value: number } => e !== null);
 
-      const bookmakerEntries = payload.filter(
-        (e) =>
-          e.dataKey !== "homeDelta" &&
-          !e.dataKey.startsWith("wp_") &&
-          e.dataKey !== "espnDelta" &&
-          e.value !== null
-      );
+      // Bookmaker entries (only shown in sportsbooks-only mode)
+      const bookmakerEntries = !isMultiSource
+        ? payload.filter(
+            (e) =>
+              e.dataKey !== "homeDelta" &&
+              e.dataKey !== "bainLuckDelta" &&
+              !e.dataKey.startsWith("wp_") &&
+              e.dataKey !== "espnDelta" &&
+              e.value !== null
+          )
+        : [];
 
       return (
         <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-sm">
@@ -483,9 +532,26 @@ export default function OddsChart({
               </div>
             );
           })()}
-          {/* All sources, grouped */}
+
+          {/* Multi-source mode: Bain Luck aggregated first, then individual sources */}
+          {isMultiSource && bainLuckEntry && (
+            <div className="mb-2 pb-2 border-b border-gray-100">
+              <p className="text-xs text-text-muted mb-0.5">
+                {BAIN_LUCK_CONFIG.displayName}
+                <span className="text-text-muted ml-1">(aggregated)</span>
+              </p>
+              <p className="text-sm font-semibold" style={{ color: BAIN_LUCK_CONFIG.color }}>
+                {formatProb(bainLuckEntry.value)}
+              </p>
+            </div>
+          )}
+
+          {/* Individual sources */}
           {sourceEntries.length > 0 && (
             <div className="space-y-1">
+              {isMultiSource && (
+                <p className="text-xs text-text-muted mb-0.5">Sources:</p>
+              )}
               {sourceEntries.map((source) => (
                 <div key={source.key}>
                   <p className="text-xs text-text-muted mb-0.5">
@@ -495,8 +561,16 @@ export default function OddsChart({
                     </span>
                   </p>
                   <p
-                    className={`text-xs font-medium ${source.key === "betting" ? "text-sm font-semibold text-gray-800" : ""}`}
-                    style={source.key !== "betting" ? { color: source.color } : undefined}
+                    className={`text-xs font-medium ${
+                      !isMultiSource && source.key === "betting"
+                        ? "text-sm font-semibold text-gray-800"
+                        : ""
+                    }`}
+                    style={
+                      isMultiSource || source.key !== "betting"
+                        ? { color: source.color }
+                        : undefined
+                    }
                   >
                     {formatProb(source.value)}
                   </p>
@@ -504,6 +578,8 @@ export default function OddsChart({
               ))}
             </div>
           )}
+
+          {/* Bookmaker breakdown (sportsbooks-only mode) */}
           {bookmakerEntries.length > 0 && (
             <div className="mt-2 pt-2 border-t border-gray-100">
               <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
@@ -626,8 +702,8 @@ export default function OddsChart({
             />
             <Tooltip content={<CustomTooltip />} />
 
-            {/* Individual bookmaker lines - thin grey */}
-            {bookmakers.map((bookmaker) => (
+            {/* ── MODE B: Sportsbooks-only — individual bookmaker lines (thin grey) ── */}
+            {!isMultiSource && bookmakers.map((bookmaker) => (
               <Line
                 key={`${bookmaker}_delta`}
                 type="monotone"
@@ -641,8 +717,25 @@ export default function OddsChart({
               />
             ))}
 
-            {/* Model source lines (ESPN, stat model, etc.) — dashed */}
-            {modelSources.map((source) => (
+            {/* ── MODE A: Multi-source — individual source lines (thin, colored, semi-transparent) ── */}
+            {isMultiSource && resolvedSources.map((source) => (
+              <Line
+                key={source.dataKey}
+                type="monotone"
+                dataKey={source.dataKey}
+                name={source.displayName}
+                stroke={source.color}
+                strokeWidth={1.5}
+                strokeOpacity={0.5}
+                strokeDasharray={source.dashPattern ?? undefined}
+                dot={false}
+                activeDot={{ r: 3, fill: source.color }}
+                connectNulls
+              />
+            ))}
+
+            {/* ── MODE B: Sportsbooks-only — non-betting source lines (when no multi-source) ── */}
+            {!isMultiSource && nonBettingSources.map((source) => (
               <Line
                 key={source.dataKey}
                 type="monotone"
@@ -657,8 +750,8 @@ export default function OddsChart({
               />
             ))}
 
-            {/* Legacy ESPN line (when winProbHistory not available) */}
-            {!useNewWinProbData && filteredEspnHistory.length > 0 && (
+            {/* Legacy ESPN line (when winProbHistory not available and not multi-source) */}
+            {!isMultiSource && !useNewWinProbData && filteredEspnHistory.length > 0 && (
               <Line
                 type="monotone"
                 dataKey="espnDelta"
@@ -672,10 +765,10 @@ export default function OddsChart({
               />
             )}
 
-            {/* Area fill between betting odds line and 50% */}
+            {/* Area fill — tracks the primary line (Bain Luck in multi-source, betting in sportsbooks-only) */}
             <Area
               type="monotone"
-              dataKey="homeDelta"
+              dataKey={primaryDeltaKey}
               stroke="none"
               fill="url(#probFillGradient)"
               connectNulls
@@ -683,17 +776,33 @@ export default function OddsChart({
               isAnimationActive={false}
             />
 
-            {/* Betting odds line — solid, on top */}
-            <Line
-              type="monotone"
-              dataKey="homeDelta"
-              name="Betting Odds"
-              stroke="#374151"
-              strokeWidth={2.5}
-              dot={false}
-              activeDot={{ r: 5, fill: "#374151" }}
-              connectNulls
-            />
+            {/* ── MODE A: Multi-source — aggregated Bain Luck line (prominent, on top) ── */}
+            {isMultiSource && (
+              <Line
+                type="monotone"
+                dataKey="bainLuckDelta"
+                name={BAIN_LUCK_CONFIG.displayName}
+                stroke={BAIN_LUCK_CONFIG.color}
+                strokeWidth={3}
+                dot={false}
+                activeDot={{ r: 5, fill: BAIN_LUCK_CONFIG.color }}
+                connectNulls
+              />
+            )}
+
+            {/* ── MODE B: Sportsbooks-only — betting odds line (solid, on top) ── */}
+            {!isMultiSource && (
+              <Line
+                type="monotone"
+                dataKey="homeDelta"
+                name="Betting Odds"
+                stroke="#374151"
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 5, fill: "#374151" }}
+                connectNulls
+              />
+            )}
 
             {/* Scoring play annotations — dots at key moments */}
             {scoringPlayAnnotations.length > 0 && (
@@ -722,66 +831,86 @@ export default function OddsChart({
         </ResponsiveContainer>
       </div>
 
-      {/* Source legend — always shown, all sources labeled, links to models page */}
-      {resolvedSources.length > 0 && (
-        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
-          {resolvedSources.map((source) => {
-            const inner = (
-              <>
-                <svg width="20" height="4" className="shrink-0">
-                  <line
-                    x1="0" y1="2" x2="20" y2="2"
-                    stroke={source.color}
-                    strokeWidth="2.5"
-                    strokeDasharray={source.dashPattern ?? undefined}
-                  />
-                </svg>
-                <span className="text-xs text-gray-500 hover:text-gray-700">
-                  {source.displayName}
-                  <span className="text-text-muted ml-0.5">({source.type})</span>
-                </span>
-              </>
-            );
-            return eventId ? (
-              <Link
-                key={source.key}
-                href={`/events/${eventId}/models`}
-                className="flex items-center gap-1.5 hover:underline"
-              >
-                {inner}
-              </Link>
-            ) : (
-              <div key={source.key} className="flex items-center gap-1.5">
-                {inner}
-              </div>
-            );
-          })}
-          {bookmakers.length > 0 && (
-            <div className="flex items-center gap-1.5">
+      {/* Source legend */}
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
+        {/* Multi-source mode: Bain Luck aggregated line first */}
+        {isMultiSource && (
+          <div className="flex items-center gap-1.5">
+            <svg width="20" height="4" className="shrink-0">
+              <line
+                x1="0" y1="2" x2="20" y2="2"
+                stroke={BAIN_LUCK_CONFIG.color}
+                strokeWidth="3"
+              />
+            </svg>
+            <span className="text-xs font-semibold" style={{ color: BAIN_LUCK_CONFIG.color }}>
+              {BAIN_LUCK_CONFIG.displayName}
+            </span>
+          </div>
+        )}
+
+        {/* Individual sources */}
+        {resolvedSources.map((source) => {
+          const inner = (
+            <>
               <svg width="20" height="4" className="shrink-0">
                 <line
                   x1="0" y1="2" x2="20" y2="2"
-                  stroke="rgba(156, 163, 175, 0.4)"
-                  strokeWidth="1"
+                  stroke={source.color}
+                  strokeWidth={isMultiSource ? "1.5" : "2.5"}
+                  strokeDasharray={source.dashPattern ?? undefined}
+                  strokeOpacity={isMultiSource ? 0.6 : 1}
                 />
               </svg>
-              <span className="text-xs text-text-muted">
-                Individual sportsbooks
+              <span className={`text-xs ${isMultiSource ? "text-text-muted" : "text-gray-500 hover:text-gray-700"}`}>
+                {source.displayName}
+                <span className="text-text-muted ml-0.5">({source.type})</span>
               </span>
+            </>
+          );
+          return eventId ? (
+            <Link
+              key={source.key}
+              href={`/events/${eventId}/models`}
+              className="flex items-center gap-1.5 hover:underline"
+            >
+              {inner}
+            </Link>
+          ) : (
+            <div key={source.key} className="flex items-center gap-1.5">
+              {inner}
             </div>
-          )}
-          {scoringPlayAnnotations.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              <svg width="10" height="10" className="shrink-0">
-                <circle cx="5" cy="5" r="4" fill="#ef4444" stroke="#fff" strokeWidth="1" />
-              </svg>
-              <span className="text-xs text-text-muted">
-                Scoring plays
-              </span>
-            </div>
-          )}
-        </div>
-      )}
+          );
+        })}
+
+        {/* Bookmaker legend (sportsbooks-only mode) */}
+        {!isMultiSource && bookmakers.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <svg width="20" height="4" className="shrink-0">
+              <line
+                x1="0" y1="2" x2="20" y2="2"
+                stroke="rgba(156, 163, 175, 0.4)"
+                strokeWidth="1"
+              />
+            </svg>
+            <span className="text-xs text-text-muted">
+              Individual sportsbooks
+            </span>
+          </div>
+        )}
+
+        {/* Scoring plays legend */}
+        {scoringPlayAnnotations.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <svg width="10" height="10" className="shrink-0">
+              <circle cx="5" cy="5" r="4" fill="#ef4444" stroke="#fff" strokeWidth="1" />
+            </svg>
+            <span className="text-xs text-text-muted">
+              Scoring plays
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Tap for details */}
       <p className="text-xs text-text-muted text-center shrink-0">

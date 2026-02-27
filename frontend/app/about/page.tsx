@@ -135,15 +135,15 @@ export default function AboutPage() {
             <strong className="text-text-primary">most exciting games</strong>.
           </p>
           <p className="text-text-secondary leading-relaxed">
-            <strong className="text-text-primary">Pulse</strong> is our proprietary
-            score (1-100) that measures how thrilling a game is based on
-            probability swings, lead changes, and dramatic moments.
+            The <strong className="text-text-primary">Excitement Index</strong> is our
+            score (1-100) that measures how thrilling a game is based on the total
+            distance win probabilities travel during the game.
           </p>
           <Link
-            href="/pulse"
+            href="/ei"
             className="inline-flex items-center gap-2 text-orange-700 hover:text-orange-800 font-semibold"
           >
-            Learn how Pulse works →
+            Learn how the Excitement Index works →
           </Link>
         </div>
       </section>

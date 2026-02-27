@@ -15,7 +15,7 @@ REQUIRED_FIELDS = [
     "methodology", "attribution_url", "attribution_name",
 ]
 
-VALID_SOURCE_TYPES = {"market", "model"}
+VALID_SOURCE_TYPES = {"market", "model", "aggregate"}
 
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 

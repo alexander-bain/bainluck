@@ -112,10 +112,10 @@ class Event(Base):
     opening_over_under: Mapped[Optional[float]] = mapped_column(Numeric(5, 1))
     opening_favorite: Mapped[Optional[str]] = mapped_column(String(10))  # 'home', 'away', 'even'
 
-    # Game Excitement Index (GEI) - computed after game completion
-    raw_gei: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
-    gei_components: Mapped[Optional[str]] = mapped_column(Text)  # JSON of component scores
-    gei_computed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Excitement Index (EI) — standard GEI: cumulative probability travel distance
+    raw_ei: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
+    ei_metadata: Mapped[Optional[str]] = mapped_column(Text)  # JSON: {raw_ei, lead_changes, comeback_factor}
+    ei_computed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # LLM metadata enrichment
     llm_gender: Mapped[Optional[str]] = mapped_column(String(20))  # men/women/mixed/unknown
@@ -442,15 +442,15 @@ class ScoreSnapshot(Base):
     event: Mapped["Event"] = relationship()
 
 
-class GEIPercentile(Base):
-    """Percentile thresholds for Game Excitement Index scoring."""
+class EIPercentile(Base):
+    """Percentile thresholds for Excitement Index scoring."""
 
-    __tablename__ = "gei_percentiles"
+    __tablename__ = "ei_percentiles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     scope: Mapped[str] = mapped_column(String(50), nullable=False)  # 'global', 'basketball_nba', etc.
     percentile: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-100
-    raw_gei_threshold: Mapped[float] = mapped_column(Numeric(6, 4))  # Raw GEI value at this percentile
+    raw_ei_threshold: Mapped[float] = mapped_column(Numeric(6, 4))  # Raw EI value at this percentile
     sample_size: Mapped[int] = mapped_column(Integer)  # Number of events in this scope
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -460,6 +460,10 @@ class GEIPercentile(Base):
     __table_args__ = (
         UniqueConstraint("scope", "percentile", name="uq_scope_percentile"),
     )
+
+
+# Backward-compatible alias
+GEIPercentile = EIPercentile
 
 
 class Venue(Base):

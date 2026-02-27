@@ -702,13 +702,13 @@ class TestWinProbSources:
         assert fg["color"] == "#06b6d4"
         assert fg["dash_pattern"] == "4 4"
 
-    def test_all_seven_sources(self):
-        """Verify we now have 7 sources: betting, espn, stat_model, kalshi, polymarket, moneypuck, fangraphs."""
+    def test_all_sources(self):
+        """Verify we have all expected sources including the aggregate."""
         from app.config.win_prob_sources import WIN_PROB_SOURCES
-        assert len(WIN_PROB_SOURCES) == 7
+        assert len(WIN_PROB_SOURCES) == 8
         assert set(WIN_PROB_SOURCES.keys()) == {
             "betting", "espn", "stat_model", "kalshi", "polymarket",
-            "moneypuck", "fangraphs",
+            "moneypuck", "fangraphs", "bainluck_aggregate",
         }
 
 

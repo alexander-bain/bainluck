@@ -14,7 +14,7 @@ import type {
   FuturesMoversResponse,
   SearchResponse,
   SearchSuggestionsResponse,
-  PulseRankingsResponse,
+  EIRankingsResponse,
   RelatedFuturesResponse,
   RelatedEventsResponse,
   FeedResponse,
@@ -229,20 +229,23 @@ export async function fetchTypeahead(q: string): Promise<TypeaheadResponse> {
 }
 
 /**
- * Fetch all-time highest and lowest Pulse events
+ * Fetch all-time highest and lowest Excitement Index events
  */
-export async function fetchPulseRankings(params?: {
+export async function fetchEIRankings(params?: {
   sport?: string;
   limit?: number;
-}): Promise<PulseRankingsResponse> {
+}): Promise<EIRankingsResponse> {
   const searchParams = new URLSearchParams();
 
   if (params?.sport) searchParams.set("sport", params.sport);
   if (params?.limit) searchParams.set("limit", params.limit.toString());
 
   const query = searchParams.toString();
-  return apiFetch<PulseRankingsResponse>(`/api/events/pulse-rankings${query ? `?${query}` : ""}`);
+  return apiFetch<EIRankingsResponse>(`/api/events/ei-rankings${query ? `?${query}` : ""}`);
 }
+
+/** @deprecated Use fetchEIRankings instead */
+export const fetchPulseRankings = fetchEIRankings;
 
 /**
  * Format probability as percentage string

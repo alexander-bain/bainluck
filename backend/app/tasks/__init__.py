@@ -151,27 +151,27 @@ def poll_sport_odds(self, sport_key: str):
     return run_async(_poll_sport_odds(sport_key))
 
 
-# --- Pulse (Game Excitement Index) ---
+# --- Excitement Index (EI) ---
 
 @celery_app.task(bind=True, name="app.tasks.compute_gei_for_event")
 def compute_gei_for_event(self, event_id: int):
-    """Compute GEI for a single completed event."""
-    from app.tasks.pulse import _compute_gei_for_event
-    return run_async(_compute_gei_for_event(event_id))
+    """Compute EI for a single completed event. (Task name kept for beat schedule compat.)"""
+    from app.tasks.excitement_index import _compute_ei_for_event
+    return run_async(_compute_ei_for_event(event_id))
 
 
 @celery_app.task(bind=True, name="app.tasks.compute_gei_batch")
 def compute_gei_batch(self, limit: int = 100):
-    """Compute Pulse for a batch of completed events."""
-    from app.tasks.pulse import _compute_pulse_batch
-    return run_async(_compute_pulse_batch(limit))
+    """Compute EI for a batch of completed events. (Task name kept for beat schedule compat.)"""
+    from app.tasks.excitement_index import _compute_ei_batch
+    return run_async(_compute_ei_batch(limit))
 
 
 @celery_app.task(bind=True, name="app.tasks.compute_gei_percentiles")
 def compute_gei_percentiles(self):
-    """Recompute GEI percentile thresholds for all scopes."""
-    from app.tasks.pulse import _compute_gei_percentiles
-    return run_async(_compute_gei_percentiles())
+    """Recompute EI percentile thresholds for all scopes. (Task name kept for beat schedule compat.)"""
+    from app.tasks.excitement_index import _compute_ei_percentiles
+    return run_async(_compute_ei_percentiles())
 
 
 # --- Futures (The Odds API) ---

@@ -56,40 +56,27 @@ export interface OpeningOdds {
   favorite: "home" | "away" | "even" | null;
 }
 
-export interface GEIComponents {
-  win_probability_volatility: number;
-  late_game_uncertainty: number;
-  expectation_deviation: number;
-  comeback_factor: number;
-  overtime_bonus: number;
-}
-
-export interface ExcitementData {
-  raw_gei: number;
-  percentile_global: number | null;
-  percentile_sport: number | null;
-  label: string;
-  emoji: string;
-  components?: GEIComponents;
-}
-
-export interface PulseComponents {
-  heart_rate: number;
-  amplitude: number;
-  arrhythmia: number;
-  vitals: number;
-  time_weight: number;
+export interface EIMetadata {
+  raw_ei: number;
   lead_changes: number;
+  comeback_factor: number;
+  snapshot_count: number;
 }
 
-export interface PulseData {
+export interface EIData {
   score: number;           // 1-100 (percentile when available, raw otherwise)
   raw_score?: number;      // 1-100 raw score before percentile mapping
-  status: string;          // 'racing' | 'strong' | 'steady' | 'weak' | 'flatline'
+  status: string;          // 'incredible' | 'exciting' | 'competitive' | 'quiet' | 'flat'
   label: string;           // 'Must-Watch', 'Exciting', etc.
-  emoji: string;           // 🫀 💓 💗 🩺 📉
-  components?: PulseComponents;
+  emoji: string;           // 🔥 ⚡ 💪 😐 💤
+  metadata?: EIMetadata;
 }
+
+// Backward compatibility aliases
+export type GEIComponents = EIMetadata;
+export type ExcitementData = EIData;
+export type PulseComponents = EIMetadata;
+export type PulseData = EIData;
 
 export interface ESPNData {
   espn_id?: string;
@@ -132,8 +119,11 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
-  excitement?: ExcitementData;
-  pulse?: PulseData;
+  ei?: EIData;
+  /** @deprecated Use `ei` instead */
+  excitement?: EIData;
+  /** @deprecated Use `ei` instead */
+  pulse?: EIData;
   espn?: ESPNData;
   home_team_data?: TeamData;
   away_team_data?: TeamData;
@@ -166,8 +156,11 @@ export interface BookmakerOddsDetail {
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
-  excitement?: ExcitementData;
-  pulse?: PulseData;
+  ei?: EIData;
+  /** @deprecated Use `ei` instead */
+  excitement?: EIData;
+  /** @deprecated Use `ei` instead */
+  pulse?: EIData;
 }
 
 export interface OddsHistoryPoint {
@@ -405,12 +398,12 @@ export interface RelatedFuturesResponse {
   summary: string | null;
 }
 
-// Pulse rankings types
+// EI (Excitement Index) rankings types
 export interface RankedEvent extends Event {
   rank: number;
 }
 
-export interface PulseRankingsResponse {
+export interface EIRankingsResponse {
   highest: RankedEvent[];
   lowest: RankedEvent[];
   filters: {
@@ -418,6 +411,9 @@ export interface PulseRankingsResponse {
     limit: number;
   };
 }
+
+/** @deprecated Use EIRankingsResponse instead */
+export type PulseRankingsResponse = EIRankingsResponse;
 
 // Search types
 export interface SearchPagination {
@@ -581,6 +577,11 @@ export interface FeedEventData {
   highlight?: {
     label: string;
   };
+  ei?: {
+    score: number;
+    label: string;
+  };
+  /** @deprecated Use `ei` instead */
   pulse?: {
     score: number;
     label: string;

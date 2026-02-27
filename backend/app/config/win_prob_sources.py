@@ -94,6 +94,17 @@ WIN_PROB_SOURCES = {
         "attribution_url": "https://statsapi.mlb.com",
         "attribution_name": "MLB Stats API",
     },
+    "bainluck_aggregate": {
+        "display_name": "Bain Luck",
+        "source_type": "aggregate",
+        "sports": ["*"],
+        "color": "#1e293b",
+        "dash_pattern": None,
+        "description": "Bain Luck's aggregate probability, combining sportsbook consensus, prediction markets (Kalshi, Polymarket), and statistical models (ESPN, MLB) via weighted median. Outlier-resistant and staleness-aware.",
+        "methodology": "Weighted median across all available sources. Sportsbook consensus (weight 3.0) anchors the aggregate due to deep multi-bookmaker liquidity. Prediction markets (0.8 each) and statistical models (1.0-1.5) provide independent signals. Source weight decays linearly after 2 minutes of staleness and drops to zero after 5 minutes. Light exponential smoothing (α=0.3) prevents jumps when sources appear or disappear.",
+        "attribution_url": "https://bainluck.com",
+        "attribution_name": "Bain Luck",
+    },
 }
 
 

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, GEIPercentile, FuturesMarket, FuturesOutcome, Team
+from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team
 from app.services import get_db, OddsAPIService, fetch_current_odds
 from app.utils import (
     moneyline_to_probability,
@@ -221,33 +221,33 @@ async def discover_all_events(
         await service.close()
 
 
-# In-memory cache for GEI percentiles (rarely changes, queried on every request)
-_gei_cache: dict = {}
-_gei_cache_time: float = 0
-_GEI_CACHE_TTL = 300  # 5 minutes
+# In-memory cache for EI percentiles (rarely changes, queried on every request)
+_ei_cache: dict = {}
+_ei_cache_time: float = 0
+_EI_CACHE_TTL = 300  # 5 minutes
 
 
-async def _load_gei_percentiles(db: AsyncSession) -> dict:
-    """Load GEI percentile thresholds from database.
+async def _load_ei_percentiles(db: AsyncSession) -> dict:
+    """Load EI percentile thresholds from database.
 
     Returns cached data if available (TTL 5 min). Percentiles change
     only when recalculate is triggered, so per-request DB queries are
     wasteful.
 
     Returns empty dict if table doesn't exist or query fails,
-    allowing the API to function without GEI data.
+    allowing the API to function without EI data.
     """
     import time
 
-    global _gei_cache, _gei_cache_time
+    global _ei_cache, _ei_cache_time
 
     now = time.monotonic()
-    if _gei_cache and (now - _gei_cache_time) < _GEI_CACHE_TTL:
-        return _gei_cache
+    if _ei_cache and (now - _ei_cache_time) < _EI_CACHE_TTL:
+        return _ei_cache
 
     try:
         result = await db.execute(
-            select(GEIPercentile.scope, GEIPercentile.percentile, GEIPercentile.raw_gei_threshold)
+            select(EIPercentile.scope, EIPercentile.percentile, EIPercentile.raw_ei_threshold)
         )
         rows = result.all()
 
@@ -257,12 +257,16 @@ async def _load_gei_percentiles(db: AsyncSession) -> dict:
                 percentiles[scope] = {}
             percentiles[scope][percentile] = float(threshold) if threshold else 0
 
-        _gei_cache = percentiles
-        _gei_cache_time = now
+        _ei_cache = percentiles
+        _ei_cache_time = now
         return percentiles
     except Exception:
         # Table may not exist yet - return empty dict
         return {}
+
+
+# Backward-compatible alias
+_load_gei_percentiles = _load_ei_percentiles
 
 
 @router.get("/highlights")
@@ -270,29 +274,29 @@ async def get_highlights(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
     days: int = Query(7, description="Days of history to include"),
     limit: int = Query(20, description="Maximum number of events"),
-    min_percentile: int = Query(75, description="Minimum GEI percentile"),
+    min_percentile: int = Query(75, description="Minimum EI percentile"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Get the most exciting completed events.
 
-    Returns events with highest GEI scores, useful for highlights/replay discovery.
+    Returns events with highest EI scores, useful for highlights/replay discovery.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Load GEI percentiles for formatting
-    gei_percentiles = await _load_gei_percentiles(db)
+    # Load EI percentiles for formatting
+    ei_percentiles = await _load_ei_percentiles(db)
 
-    # Build query for completed events with GEI
+    # Build query for completed events with EI
     query = (
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             Event.status == "completed",
-            Event.raw_gei.isnot(None),
+            Event.raw_ei.isnot(None),
             Event.commence_time >= cutoff,
         )
-        .order_by(Event.raw_gei.desc())
+        .order_by(Event.raw_ei.desc())
         .limit(limit * 2)  # Fetch extra to filter by percentile
     )
 
@@ -305,12 +309,12 @@ async def get_highlights(
     # Apply percentile filter
     highlights = []
     for event in events:
-        formatted = _format_event(event, gei_percentiles)
+        formatted = _format_event(event, ei_percentiles)
 
-        # Check Pulse score threshold
-        pulse = formatted.get("pulse", {})
-        pulse_score = pulse.get("score", 0)
-        if pulse_score >= min_percentile:
+        # Check EI score threshold
+        ei = formatted.get("ei", formatted.get("pulse", {}))
+        ei_score = ei.get("score", 0)
+        if ei_score >= min_percentile:
             highlights.append(formatted)
 
         if len(highlights) >= limit:
@@ -328,22 +332,23 @@ async def get_highlights(
 
 
 @router.get("/pulse-rankings")
-async def get_pulse_rankings(
+@router.get("/ei-rankings")
+async def get_ei_rankings(
     limit: int = Query(25, ge=1, le=100, description="Number of events per list"),
     sport: Optional[str] = Query(None, description="Filter by sport key"),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Get the all-time highest and lowest Pulse events.
+    Get the all-time highest and lowest EI events.
 
-    Returns two lists: the most exciting games ever tracked (highest Pulse)
-    and the most boring/one-sided games (lowest Pulse).
+    Returns two lists: the most exciting games ever tracked (highest EI)
+    and the most boring/one-sided games (lowest EI).
 
     Only includes events with sufficient odds data (10+ snapshots) to avoid
     inflated scores from games with sparse data.
     """
-    # Load GEI percentiles for formatting
-    gei_percentiles = await _load_gei_percentiles(db)
+    # Load EI percentiles for formatting
+    ei_percentiles = await _load_ei_percentiles(db)
 
     # Subquery: count distinct time buckets (minutes) per event.
     # Raw odds_snapshots contain multiple bookmakers per polling cycle,
@@ -364,14 +369,14 @@ async def get_pulse_rankings(
 
     MIN_SNAPSHOTS_FOR_RANKING = 20
 
-    # Base query for completed events with GEI and enough data
+    # Base query for completed events with EI and enough data
     base_query = (
         select(Event)
         .options(selectinload(Event.sport))
         .join(snapshot_count, Event.id == snapshot_count.c.event_id)
         .where(
             Event.status.in_(["completed", "closed"]),
-            Event.raw_gei.isnot(None),
+            Event.raw_ei.isnot(None),
             snapshot_count.c.snap_count >= MIN_SNAPSHOTS_FOR_RANKING,
         )
     )
@@ -379,16 +384,16 @@ async def get_pulse_rankings(
     if sport:
         base_query = base_query.join(Sport).where(Sport.key == sport)
 
-    # Highest Pulse (most exciting)
-    highest_query = base_query.order_by(Event.raw_gei.desc()).limit(limit)
+    # Highest EI (most exciting)
+    highest_query = base_query.order_by(Event.raw_ei.desc()).limit(limit)
     highest_result = await db.execute(highest_query)
     highest_events = highest_result.scalars().all()
 
-    # Lowest Pulse (least exciting) - must have some activity (raw_gei > 0)
+    # Lowest EI (least exciting) - must have some activity (raw_ei > 0)
     lowest_query = (
         base_query
-        .where(Event.raw_gei > 0)
-        .order_by(Event.raw_gei.asc())
+        .where(Event.raw_ei > 0)
+        .order_by(Event.raw_ei.asc())
         .limit(limit)
     )
     lowest_result = await db.execute(lowest_query)
@@ -397,13 +402,13 @@ async def get_pulse_rankings(
     # Format events with rank
     highest_formatted = []
     for i, event in enumerate(highest_events, 1):
-        formatted = _format_event(event, gei_percentiles)
+        formatted = _format_event(event, ei_percentiles)
         formatted["rank"] = i
         highest_formatted.append(formatted)
 
     lowest_formatted = []
     for i, event in enumerate(lowest_events, 1):
-        formatted = _format_event(event, gei_percentiles)
+        formatted = _format_event(event, ei_percentiles)
         formatted["rank"] = i
         lowest_formatted.append(formatted)
 
@@ -1242,18 +1247,19 @@ async def debug_db_bookmakers(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/debug/pulse")
-async def debug_pulse_status(db: AsyncSession = Depends(get_db)):
+@router.get("/debug/ei")
+async def debug_ei_status(db: AsyncSession = Depends(get_db)):
     """
-    Debug endpoint to check Pulse calculation status.
+    Debug endpoint to check EI (Excitement Index) calculation status.
 
-    Shows how many events have Pulse scores calculated.
+    Shows how many events have EI scores calculated.
     """
-    # Count events by Pulse status
+    # Count events by EI status
     result = await db.execute(
         select(
             Event.status,
-            func.count().filter(Event.raw_gei.isnot(None)).label("with_pulse"),
-            func.count().filter(Event.raw_gei.is_(None)).label("without_pulse"),
+            func.count().filter(Event.raw_ei.isnot(None)).label("with_ei"),
+            func.count().filter(Event.raw_ei.is_(None)).label("without_ei"),
         )
         .group_by(Event.status)
     )
@@ -1263,26 +1269,26 @@ async def debug_pulse_status(db: AsyncSession = Depends(get_db)):
     total_with = 0
     total_without = 0
 
-    for status, with_pulse, without_pulse in rows:
+    for status, with_ei, without_ei in rows:
         status_counts[status] = {
-            "with_pulse": with_pulse,
-            "without_pulse": without_pulse,
+            "with_ei": with_ei,
+            "without_ei": without_ei,
         }
-        total_with += with_pulse
-        total_without += without_pulse
+        total_with += with_ei
+        total_without += without_ei
 
-    # Get a sample of events with Pulse to verify it's working
+    # Get a sample of events with EI to verify it's working
     sample_result = await db.execute(
-        select(Event.id, Event.home_team_name, Event.away_team_name, Event.raw_gei, Event.status)
-        .where(Event.raw_gei.isnot(None))
-        .order_by(Event.raw_gei.desc())
+        select(Event.id, Event.home_team_name, Event.away_team_name, Event.raw_ei, Event.status)
+        .where(Event.raw_ei.isnot(None))
+        .order_by(Event.raw_ei.desc())
         .limit(5)
     )
     sample_events = [
         {
             "id": row[0],
             "matchup": f"{row[1]} vs {row[2]}",
-            "pulse_score": round(float(row[3]) * 100) if row[3] else None,
+            "ei_score": round(float(row[3]) * 100) if row[3] else None,
             "status": row[4],
         }
         for row in sample_result.all()
@@ -1290,12 +1296,12 @@ async def debug_pulse_status(db: AsyncSession = Depends(get_db)):
 
     return {
         "total": {
-            "with_pulse": total_with,
-            "without_pulse": total_without,
+            "with_ei": total_with,
+            "without_ei": total_without,
         },
         "by_status": status_counts,
         "completion_pct": round(total_with / (total_with + total_without) * 100, 1) if (total_with + total_without) > 0 else 0,
-        "sample_events_with_pulse": sample_events,
+        "sample_events_with_ei": sample_events,
     }
 
 
@@ -3135,20 +3141,20 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
     except AttributeError:
         pass  # Columns may not exist yet
 
-    # Add Pulse data if available (for live and completed events)
+    # Add EI (Excitement Index) data if available (for live and completed events)
     # Wrap in try/except in case columns don't exist yet (migration not applied)
     try:
-        if event.raw_gei is not None:
-            from app.utils.pulse import get_pulse_label, get_pulse_emoji, get_pulse_status
+        if event.raw_ei is not None:
+            from app.utils.excitement_index import get_ei_label, get_ei_emoji, get_ei_status
             import json
 
-            raw_gei = float(event.raw_gei)
+            raw_ei = float(event.raw_ei)
 
-            # Parse components if stored
-            components = None
-            if event.gei_components:
+            # Parse metadata if stored
+            metadata = None
+            if event.ei_metadata:
                 try:
-                    components = json.loads(event.gei_components)
+                    metadata = json.loads(event.ei_metadata)
                 except json.JSONDecodeError:
                     pass
 
@@ -3158,38 +3164,41 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             percentile_score = None
             if gei_percentiles:
                 if sport_key:
-                    percentile_score = _calculate_percentile(raw_gei, gei_percentiles, sport_key)
+                    percentile_score = _calculate_percentile(raw_ei, gei_percentiles, sport_key)
                 if percentile_score is None:
-                    percentile_score = _calculate_percentile(raw_gei, gei_percentiles, 'global')
+                    percentile_score = _calculate_percentile(raw_ei, gei_percentiles, 'global')
 
             # Use percentile as the display score when available, raw conversion as fallback
-            raw_score = max(1, min(100, round(raw_gei * 100)))
+            raw_score = max(1, min(100, round(raw_ei * 100)))
             display_score = percentile_score if percentile_score is not None else raw_score
 
-            response["pulse"] = {
+            ei_data = {
                 "score": display_score,
                 "raw_score": raw_score,
-                "status": get_pulse_status(display_score),
-                "label": get_pulse_label(display_score),
-                "emoji": get_pulse_emoji(display_score),
-                "components": components,
+                "status": get_ei_status(display_score),
+                "label": get_ei_label(display_score),
+                "emoji": get_ei_emoji(display_score),
+                "metadata": metadata,
             }
+            response["ei"] = ei_data
+            # Backward compatibility: also emit as "pulse" for existing frontends
+            response["pulse"] = ei_data
     except Exception as e:
-        # Pulse columns may not exist yet or other error - log for debugging
+        # EI columns may not exist yet or other error - log for debugging
         import logging
-        logging.warning(f"Error adding Pulse data for event {event.id}: {e}")
+        logging.warning(f"Error adding EI data for event {event.id}: {e}")
 
     return response
 
 
-def _calculate_percentile(raw_gei: float, percentiles: dict, scope: str) -> int:
-    """Calculate percentile from raw GEI using stored thresholds."""
+def _calculate_percentile(raw_ei: float, percentiles: dict, scope: str) -> int:
+    """Calculate percentile from raw EI using stored thresholds."""
     if not percentiles or scope not in percentiles:
         return None
 
     thresholds = percentiles[scope]
     for p in range(100, 0, -1):
-        if p in thresholds and raw_gei >= thresholds[p]:
+        if p in thresholds and raw_ei >= thresholds[p]:
             return p
     return 1
 

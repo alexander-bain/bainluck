@@ -5,7 +5,7 @@ import type { Event } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
-import PulseBadge from "./PulseBadge";
+import EIBadge from "./EIBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl } from "@/lib/images";
@@ -142,8 +142,8 @@ export default function EventCard({
                 {highlightLabel || "LIVE"}
               </span>
             )}
-            {isLive && event.pulse && (
-              <PulseBadge pulse={event.pulse} size="sm" />
+            {isLive && (event.ei || event.pulse) && (
+              <EIBadge ei={(event.ei || event.pulse)!} size="sm" />
             )}
             {!isLive && !isFinished && (
               <span className="text-micro text-text-muted">{timeStr}</span>
@@ -151,7 +151,7 @@ export default function EventCard({
             {isFinished && (
               <>
                 <span className="text-micro-xs text-text-muted uppercase">Final</span>
-                {event.pulse && <PulseBadge pulse={event.pulse} size="sm" />}
+                {(event.ei || event.pulse) && <EIBadge ei={(event.ei || event.pulse)!} size="sm" />}
               </>
             )}
             {/* Pin button */}

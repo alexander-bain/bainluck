@@ -60,13 +60,13 @@ class TestModuleImports:
         )
         assert callable(_poll_all_odds)
 
-    def test_import_pulse(self):
-        from app.tasks.pulse import (
-            _compute_gei_for_event,
-            _compute_pulse_batch,
-            _compute_gei_percentiles,
+    def test_import_excitement_index(self):
+        from app.tasks.excitement_index import (
+            _compute_ei_for_event,
+            _compute_ei_batch,
+            _compute_ei_percentiles,
         )
-        assert callable(_compute_gei_for_event)
+        assert callable(_compute_ei_for_event)
 
     def test_import_futures(self):
         from app.tasks.futures import _poll_futures_odds, _infer_base_sport
@@ -181,6 +181,8 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-injuries",
         "sync-statpal-live-plays",
         "sync-statpal-rosters-daily",
+        "sync-statpal-team-stats-weekly",
+        "sync-statpal-standings-daily",
     }
 
     def test_no_missing_entries(self):
