@@ -2483,6 +2483,52 @@ async def get_event_odds_history(
         (event.win_probability_sources or {}).get("statpal_plays", [])
     )
 
+    # ── Compute backend aggregate line using the aggregation engine ──
+    # Combines sportsbook consensus + all win prob sources into a single
+    # weighted-median time series with staleness decay and smoothing.
+    aggregate_line = []
+    try:
+        from app.utils.aggregation import compute_aggregated_probability, TimestampedProb
+
+        agg_sources: dict[str, list] = {}
+
+        # Add sportsbook consensus as "betting" source
+        if history:
+            agg_sources["betting"] = [
+                TimestampedProb(
+                    timestamp=datetime.fromisoformat(h["timestamp"]),
+                    home_probability=h["home_probability"],
+                )
+                for h in history
+                if h.get("home_probability") is not None
+            ]
+
+        # Add each win_prob source
+        for source_key, points in win_prob_history.items():
+            source_points = [
+                TimestampedProb(
+                    timestamp=datetime.fromisoformat(p["timestamp"]),
+                    home_probability=p["home_probability"],
+                )
+                for p in points
+                if p.get("home_probability") is not None
+            ]
+            if source_points:
+                agg_sources[source_key] = source_points
+
+        if len(agg_sources) > 1:  # Only compute if multiple sources exist
+            agg_result = compute_aggregated_probability(agg_sources, bucket_seconds=60)
+            aggregate_line = [
+                {
+                    "timestamp": p.timestamp.isoformat(),
+                    "home_probability": p.home_probability,
+                }
+                for p in agg_result
+            ]
+    except Exception:
+        # Graceful degradation — frontend falls back to naive averaging
+        pass
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -2494,6 +2540,7 @@ async def get_event_odds_history(
         "win_prob_history": win_prob_history,
         "win_prob_sources": win_prob_sources_meta,
         "scoring_plays": scoring_plays,
+        "aggregate_line": aggregate_line if aggregate_line else None,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),

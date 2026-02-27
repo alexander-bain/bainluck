@@ -7,6 +7,7 @@ Replaces the old Pulse tasks with the standard GEI formula:
 
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -58,6 +59,7 @@ async def update_live_ei(session) -> int:
                     captured_at=s.captured_at,
                     home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
                     source=s.bookmaker,
+                    valid_until=s.valid_until,
                 )
                 for s in snapshots
             ]
@@ -135,6 +137,7 @@ async def _compute_ei_for_event(event_id: int):
                 captured_at=s.captured_at,
                 home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
                 source=s.bookmaker,
+                valid_until=s.valid_until,
             )
             for s in snapshots
         ]
@@ -233,6 +236,7 @@ async def _compute_ei_batch(limit: int):
                     captured_at=s.captured_at,
                     home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
                     source=s.bookmaker,
+                    valid_until=s.valid_until,
                 )
                 for s in snapshots
             ]
@@ -302,13 +306,17 @@ async def _compute_ei_percentiles():
             all_eis.append(ei_value)
 
         # Compute global percentiles
-        await _store_percentiles(session, 'global', all_eis)
+        global_percentile_map = await _store_percentiles(session, 'global', all_eis)
         scopes_computed = ['global']
 
-        # Compute per-sport percentiles (minimum 30 samples)
+        # Compute per-sport percentiles (minimum 100 samples to avoid
+        # degenerate curves — sports with fewer events fall back to global)
         for sport_key, eis in by_sport.items():
-            if len(eis) >= 30:
-                await _store_percentiles(session, sport_key, eis)
+            if len(eis) >= 100:
+                await _store_percentiles(
+                    session, sport_key, eis,
+                    global_percentile_map=global_percentile_map,
+                )
                 scopes_computed.append(sport_key)
 
         await session.commit()
@@ -324,13 +332,29 @@ async def _compute_ei_percentiles():
 _compute_gei_percentiles = _compute_ei_percentiles
 
 
-async def _store_percentiles(session, scope: str, values: list[float]):
-    """Store percentile thresholds for a scope."""
+async def _store_percentiles(
+    session,
+    scope: str,
+    values: list[float],
+    global_percentile_map: Optional[dict[int, float]] = None,
+) -> dict[int, float]:
+    """Store percentile thresholds for a scope.
+
+    When global_percentile_map is provided (for sport-specific scopes),
+    caps each sport percentile threshold so it doesn't exceed the global
+    threshold by more than 20 points. This prevents data-poor sports
+    from producing inflated percentile scores.
+
+    Returns a mapping of percentile → threshold value (for use as
+    global_percentile_map when computing sport-specific scopes).
+    """
     from app.models import EIPercentile
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+    percentile_map: dict[int, float] = {}
+
     if not values:
-        return
+        return percentile_map
 
     values = sorted(values)
     sample_size = len(values)
@@ -347,6 +371,24 @@ async def _store_percentiles(session, scope: str, values: list[float]):
         else:
             threshold = values[lower_idx] * (1 - fraction) + values[upper_idx] * fraction
 
+        # Cap sport-specific percentiles: if a sport threshold would map
+        # to a percentile more than 20 points above the global percentile
+        # for the same raw score, cap it at global + 20.
+        # This prevents e.g. lacrosse raw_score=1 → percentile=86
+        if global_percentile_map is not None:
+            global_threshold = global_percentile_map.get(p)
+            if global_threshold is not None:
+                # The threshold for this percentile in the sport-specific curve
+                # should not be much lower than the global threshold
+                # (lower threshold = easier to reach = inflated percentile)
+                # Cap: sport threshold >= global threshold for (p - 20)
+                capped_p = max(1, p - 20)
+                global_floor = global_percentile_map.get(capped_p, 0.0)
+                if threshold < global_floor:
+                    threshold = global_floor
+
+        percentile_map[p] = threshold
+
         stmt = pg_insert(EIPercentile).values(
             scope=scope,
             percentile=p,
@@ -361,3 +403,5 @@ async def _store_percentiles(session, scope: str, values: list[float]):
             }
         )
         await session.execute(stmt)
+
+    return percentile_map

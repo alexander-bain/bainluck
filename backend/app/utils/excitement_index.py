@@ -74,6 +74,7 @@ class EIDataPoint:
     captured_at: datetime
     home_win_probability: Optional[float]
     source: str  # "consensus", bookmaker name, "aggregate", etc.
+    valid_until: Optional[datetime] = None  # When this reading was superseded
 
 
 @dataclass
@@ -163,7 +164,7 @@ def get_ei_emoji(score: int) -> str:
 
 def _aggregate_snapshots(
     snapshots: list[EIDataPoint],
-    bucket_seconds: int = 30,
+    bucket_seconds: int = 60,
 ) -> list[EIDataPoint]:
     """
     Aggregate multi-source snapshots into one data point per time bucket.
@@ -171,9 +172,14 @@ def _aggregate_snapshots(
     Groups snapshots into time buckets and takes the median probability
     across all sources in each bucket, producing a clean time series.
 
+    When a snapshot has valid_until set, it is carried forward into all
+    subsequent buckets up to valid_until. This prevents phantom oscillation
+    caused by stale bookmakers dropping out of current buckets due to
+    write-time dedup.
+
     Args:
         snapshots: Raw snapshots (may contain multiple sources per timestamp)
-        bucket_seconds: Time bucket size in seconds (default 30s)
+        bucket_seconds: Time bucket size in seconds (default 60s)
 
     Returns:
         Aggregated list with one EIDataPoint per time bucket
@@ -187,20 +193,39 @@ def _aggregate_snapshots(
         bucket_key = int(ts // bucket_seconds) * bucket_seconds
         buckets[bucket_key].append(s)
 
+        # Carry forward: if valid_until extends beyond this bucket,
+        # include this snapshot in subsequent buckets up to valid_until
+        if s.valid_until is not None and s.home_win_probability is not None:
+            vu_ts = s.valid_until.timestamp()
+            next_bucket = bucket_key + bucket_seconds
+            while next_bucket < vu_ts:
+                buckets[next_bucket].append(s)
+                next_bucket += bucket_seconds
+
     aggregated = []
     for bucket_key in sorted(buckets.keys()):
         bucket = buckets[bucket_key]
+        # Deduplicate by source: if the same source appears multiple times
+        # in a bucket (from carry-forward), keep the latest reading
+        by_source: dict[str, EIDataPoint] = {}
+        for s in bucket:
+            existing = by_source.get(s.source)
+            if existing is None or s.captured_at > existing.captured_at:
+                by_source[s.source] = s
+
         probs = [
             s.home_win_probability
-            for s in bucket
+            for s in by_source.values()
             if s.home_win_probability is not None
         ]
         if not probs:
             continue
 
-        representative_time = bucket[0].captured_at
+        representative_time = min(s.captured_at for s in by_source.values())
+        # Use the bucket start time for consistent spacing
+        bucket_time = datetime.fromtimestamp(bucket_key, tz=representative_time.tzinfo)
         aggregated.append(EIDataPoint(
-            captured_at=representative_time,
+            captured_at=bucket_time,
             home_win_probability=median(probs),
             source="consensus",
         ))
@@ -241,8 +266,8 @@ def calculate_ei(
     if len(valid_snapshots) < MIN_SNAPSHOTS:
         return None
 
-    # Aggregate into time buckets
-    valid_snapshots = _aggregate_snapshots(valid_snapshots, bucket_seconds=30)
+    # Aggregate into time buckets (60s default, matching history endpoint)
+    valid_snapshots = _aggregate_snapshots(valid_snapshots, bucket_seconds=60)
 
     if len(valid_snapshots) < MIN_SNAPSHOTS:
         return None

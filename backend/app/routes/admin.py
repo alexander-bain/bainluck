@@ -108,6 +108,7 @@ async def recalculate_ei(
                     captured_at=s.captured_at,
                     home_win_probability=float(s.home_win_probability) if s.home_win_probability else None,
                     source=s.bookmaker,
+                    valid_until=s.valid_until,
                 )
                 for s in snapshots
             ]

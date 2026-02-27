@@ -240,6 +240,7 @@ export interface EventHistoryResponse {
   win_prob_history?: Record<string, WinProbHistoryPoint[]>;
   win_prob_sources?: Record<string, WinProbSourceMeta>;
   scoring_plays?: ScoringPlay[];
+  aggregate_line?: Array<{ timestamp: string; home_probability: number }>;
   points: number;
   espn_snapshot_count?: number;
 }

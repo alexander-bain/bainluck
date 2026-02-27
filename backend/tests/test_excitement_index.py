@@ -212,6 +212,150 @@ class TestAggregateSnapshots:
         result = _aggregate_snapshots([], bucket_seconds=30)
         assert result == []
 
+    def test_valid_until_carry_forward(self):
+        """Snapshots with valid_until extend into subsequent buckets."""
+        base = datetime(2026, 2, 1, 19, 0, 0, tzinfo=timezone.utc)
+        snapshots = [
+            # Bookmaker A reported at t=0, valid until t=180s (3 buckets at 60s)
+            EIDataPoint(
+                captured_at=base,
+                home_win_probability=0.55,
+                source="bookmaker_a",
+                valid_until=base + timedelta(seconds=180),
+            ),
+            # Bookmaker B reported at t=60, no valid_until
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=60),
+                home_win_probability=0.60,
+                source="bookmaker_b",
+            ),
+            # Bookmaker B reported at t=120
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=120),
+                home_win_probability=0.58,
+                source="bookmaker_b",
+            ),
+        ]
+        result = _aggregate_snapshots(snapshots, bucket_seconds=60)
+        # Bucket 0: A=0.55 → median=0.55
+        # Bucket 60: A=0.55 (carried), B=0.60 → median=0.575
+        # Bucket 120: A=0.55 (carried), B=0.58 → median=0.565
+        assert len(result) == 3
+        assert result[0].home_win_probability == 0.55
+        # With carry-forward, bucket 60 has both sources
+        assert result[1].home_win_probability == pytest.approx(0.575, abs=0.001)
+
+    def test_valid_until_stabilizes_medians(self):
+        """
+        Without valid_until, different bookmaker subsets per bucket cause phantom
+        oscillation. With valid_until, carried-forward readings stabilize the median.
+        """
+        base = datetime(2026, 2, 1, 19, 0, 0, tzinfo=timezone.utc)
+        # Simulate: 3 bookmakers all agree at ~55%, but report at different times
+        # Without carry-forward, buckets with only 1-2 sources produce unstable medians
+        snapshots = [
+            EIDataPoint(
+                captured_at=base,
+                home_win_probability=0.54,
+                source="book_a",
+                valid_until=base + timedelta(seconds=300),
+            ),
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=10),
+                home_win_probability=0.56,
+                source="book_b",
+                valid_until=base + timedelta(seconds=300),
+            ),
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=20),
+                home_win_probability=0.55,
+                source="book_c",
+                valid_until=base + timedelta(seconds=300),
+            ),
+            # Next update only from book_a at t=120
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=120),
+                home_win_probability=0.53,
+                source="book_a",
+                valid_until=base + timedelta(seconds=300),
+            ),
+        ]
+        result = _aggregate_snapshots(snapshots, bucket_seconds=60)
+        # With carry-forward, all buckets should have 3 sources and stable medians
+        assert len(result) >= 2
+        # Check that consecutive medians are close (no phantom oscillation)
+        for i in range(1, len(result)):
+            delta = abs(result[i].home_win_probability - result[i - 1].home_win_probability)
+            assert delta < 0.05, f"Phantom oscillation: delta={delta} between bucket {i-1} and {i}"
+
+    def test_backward_compat_no_valid_until(self):
+        """EIDataPoint without valid_until still works (defaults to None)."""
+        base = datetime(2026, 2, 1, 19, 0, 0, tzinfo=timezone.utc)
+        # Create without valid_until (old-style)
+        snapshots = [
+            EIDataPoint(captured_at=base, home_win_probability=0.50, source="a"),
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=60),
+                home_win_probability=0.55,
+                source="a",
+            ),
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=120),
+                home_win_probability=0.52,
+                source="a",
+            ),
+        ]
+        result = _aggregate_snapshots(snapshots, bucket_seconds=60)
+        assert len(result) == 3
+        # No carry-forward — each bucket only has its own snapshot
+        assert result[0].home_win_probability == 0.50
+        assert result[1].home_win_probability == 0.55
+        assert result[2].home_win_probability == 0.52
+
+    def test_default_bucket_size_is_60s(self):
+        """Default bucket size should be 60s (not 30s)."""
+        base = datetime(2026, 2, 1, 19, 0, 0, tzinfo=timezone.utc)
+        snapshots = [
+            EIDataPoint(captured_at=base, home_win_probability=0.50, source="a"),
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=30),
+                home_win_probability=0.55,
+                source="b",
+            ),
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=60),
+                home_win_probability=0.60,
+                source="a",
+            ),
+        ]
+        # With default 60s buckets, first two snapshots are in same bucket
+        result = _aggregate_snapshots(snapshots)
+        assert len(result) == 2  # 2 buckets, not 3
+
+    def test_source_dedup_in_carry_forward(self):
+        """When same source appears via carry-forward and new reading, keep latest."""
+        base = datetime(2026, 2, 1, 19, 0, 0, tzinfo=timezone.utc)
+        snapshots = [
+            # book_a at t=0, valid for 120s
+            EIDataPoint(
+                captured_at=base,
+                home_win_probability=0.50,
+                source="book_a",
+                valid_until=base + timedelta(seconds=120),
+            ),
+            # book_a updates at t=60 with new value
+            EIDataPoint(
+                captured_at=base + timedelta(seconds=60),
+                home_win_probability=0.60,
+                source="book_a",
+                valid_until=base + timedelta(seconds=180),
+            ),
+        ]
+        result = _aggregate_snapshots(snapshots, bucket_seconds=60)
+        assert len(result) == 3  # buckets at 0, 60, 120
+        assert result[0].home_win_probability == 0.50  # original
+        assert result[1].home_win_probability == 0.60  # latest reading wins
+
 
 class TestStatusLabels:
     """Test EI status/label/emoji functions."""
