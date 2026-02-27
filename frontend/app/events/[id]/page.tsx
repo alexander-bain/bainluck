@@ -908,11 +908,13 @@ export default function EventPage({ params }: EventPageProps) {
             {/* EI Metadata Breakdown - inline */}
             {ei.metadata && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 pt-2 border-t border-slate-200/60 text-xs">
-                <Tooltip content="Cumulative probability distance — how much the odds traveled" position="top">
-                  <span className="text-text-secondary-500 cursor-help">
-                    Travel <span className="font-mono font-semibold text-text-secondary-700">{ei.metadata.raw_ei.toFixed(2)}</span>
-                  </span>
-                </Tooltip>
+                {ei.metadata.raw_ei != null && (
+                  <Tooltip content="Cumulative probability distance — how much the odds traveled" position="top">
+                    <span className="text-text-secondary-500 cursor-help">
+                      Travel <span className="font-mono font-semibold text-text-secondary-700">{ei.metadata.raw_ei.toFixed(2)}</span>
+                    </span>
+                  </Tooltip>
+                )}
                 {ei.metadata.lead_changes > 0 && (
                   <Tooltip content="How many times the favorite switched" position="top">
                     <span className="text-orange-700 cursor-help">
@@ -920,7 +922,7 @@ export default function EventPage({ params }: EventPageProps) {
                     </span>
                   </Tooltip>
                 )}
-                {ei.metadata.comeback_factor > 0 && (
+                {ei.metadata.comeback_factor != null && ei.metadata.comeback_factor > 0 && (
                   <Tooltip content="Winner's lowest probability during the game — lower means bigger comeback" position="top">
                     <span className="text-text-secondary-500 cursor-help">
                       Comeback <span className="font-mono font-semibold text-text-secondary-700">{Math.round(ei.metadata.comeback_factor * 100)}%</span>

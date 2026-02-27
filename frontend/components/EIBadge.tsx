@@ -61,11 +61,15 @@ export default function EIBadge({
         <div className="space-y-2 pt-2 border-t border-white/20">
           <div className="text-xs text-white/70 font-medium">Game details:</div>
           <div className="space-y-1.5 text-xs">
-            <div className="flex justify-between items-center">
-              <span className="text-white/80">Probability Travel</span>
-              <span className="text-white font-mono">{ei.metadata.raw_ei.toFixed(2)}</span>
-            </div>
-            <div className="text-white/60 text-[10px] -mt-1">Cumulative probability distance</div>
+            {ei.metadata.raw_ei != null && (
+              <>
+                <div className="flex justify-between items-center">
+                  <span className="text-white/80">Probability Travel</span>
+                  <span className="text-white font-mono">{ei.metadata.raw_ei.toFixed(2)}</span>
+                </div>
+                <div className="text-white/60 text-[10px] -mt-1">Cumulative probability distance</div>
+              </>
+            )}
 
             {ei.metadata.lead_changes > 0 && (
               <>
@@ -77,7 +81,7 @@ export default function EIBadge({
               </>
             )}
 
-            {ei.metadata.comeback_factor > 0 && (
+            {ei.metadata.comeback_factor != null && ei.metadata.comeback_factor > 0 && (
               <>
                 <div className="flex justify-between items-center">
                   <span className="text-white/80">Comeback Factor</span>

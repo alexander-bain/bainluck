@@ -57,10 +57,17 @@ export interface OpeningOdds {
 }
 
 export interface EIMetadata {
-  raw_ei: number;
+  // New EI format
+  raw_ei?: number;
   lead_changes: number;
-  comeback_factor: number;
-  snapshot_count: number;
+  comeback_factor?: number;
+  snapshot_count?: number;
+  // Old Pulse format (backward compatibility for pre-migration events)
+  heart_rate?: number;
+  amplitude?: number;
+  arrhythmia?: number;
+  vitals?: number;
+  time_weight?: number;
 }
 
 export interface EIData {
