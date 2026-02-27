@@ -26,8 +26,7 @@
 - **The Odds API** (the-odds-api.com) - Sports odds data (~$119/mo)
 - **Kalshi** (kalshi.com) - Prediction market data (futures with timing info, free)
 - **Polymarket** (polymarket.com) - Prediction market data (sports + politics/entertainment/crypto, free, no API key)
-- **SportsDataIO** (sportsdata.io) - **Removed.** Roster sync migrated to ESPN + MLB Stats API. `sportsdata_api.py` deleted.
-- **MySportsFeeds** (mysportsfeeds.com) - Injuries, lineup changes, transactions, game context (pending personal account approval). Key enabler for "Why Did the Line Move?" feature. Affordable alternative to SportsDataIO for structured sports data with timestamps.
+- **MySportsFeeds** (mysportsfeeds.com) - Injuries, lineup changes, transactions, game context (pending personal account approval). Key enabler for "Why Did the Line Move?" feature.
 - **StatPal** (statpal.io) - Canonical schedules, rosters, injuries, play-by-play, team/player stats (~$99/mo). Covers NFL, NBA, MLB, NHL, soccer, PGA, cricket, esports, F1. 5-15s real-time latency, 300k calls/day. Corrects The Odds API commence_time errors, provides game end times, structured injury reports, and scoring plays context.
 - **MLB Stats API** (statsapi.mlb.com) - Live baseball win probability, schedules, play-by-play (free, no API key)
 - **ESPN** (undocumented API) - Team colors, logos, live game data, win probability, rosters, injuries, news (free, unreliable)
@@ -71,20 +70,21 @@ bainluck/
 │   │   │   └── win_prob_sources.py # Win probability source registry
 │   │   ├── dependencies/
 │   │   │   └── auth.py          # FastAPI auth dependencies
-│   │   ├── tasks/               # Celery tasks (modular package, 16 modules)
+│   │   ├── tasks/               # Celery tasks (modular package, 18+ modules)
 │   │   │   ├── __init__.py      # Celery app, task definitions, beat schedule
 │   │   │   ├── config.py        # Shared constants (intervals, sport mapping)
 │   │   │   ├── base.py          # DB session helpers, run_async()
 │   │   │   ├── snapshots.py     # Shared snapshot write-time dedup helpers
 │   │   │   ├── redis_state.py   # Adaptive polling state, heartbeat
 │   │   │   ├── odds_polling.py  # Odds polling, snapshot dedup, opening odds
-│   │   │   ├── pulse.py         # Pulse/GEI computation
+│   │   │   ├── excitement_index.py # Excitement Index (EI) computation (new)
+│   │   │   ├── pulse.py         # Legacy Pulse computation (backward compat)
 │   │   │   ├── futures.py       # Futures polling from The Odds API
 │   │   │   ├── kalshi.py        # Kalshi prediction market polling
 │   │   │   ├── espn_sync.py     # ESPN live sync, team enrichment
 │   │   │   ├── sports.py        # Sport sync, event discovery
 │   │   │   ├── retention.py     # Snapshot collapse/retention
-│   │   │   ├── roster_sync.py   # SportsDataIO roster sync
+│   │   │   ├── roster_sync.py   # Roster sync (ESPN + MLB Stats API)
 │   │   │   ├── team_linking.py  # Futures outcome → team linking
 │   │   │   ├── prediction_market_matching.py  # Link game markets → events
 │   │   │   ├── matching_audit.py # LLM-based matching quality audits
@@ -93,7 +93,10 @@ bainluck/
 │   │   │   └── statpal_sync.py # StatPal schedule/injury/play-by-play sync
 │   │   └── utils/
 │   │       ├── odds_math.py     # Probability conversions
-│   │       ├── pulse.py         # Game excitement algorithm
+│   │       ├── excitement_index.py # Excitement Index algorithm (standard GEI formula)
+│   │       ├── pulse.py         # Legacy Pulse algorithm (backward-compat aliases)
+│   │       ├── aggregation.py   # Multi-source probability aggregation engine
+│   │       ├── league_classification.py # League tier system
 │   │       ├── highlights.py    # Event ranking (Level 1 + Level 2)
 │   │       ├── futures_highlights.py # Futures market ranking
 │   │       ├── win_probability.py # Statistical win prob model
@@ -147,20 +150,20 @@ bainluck/
 
 | File | Purpose |
 |------|---------|
-| `backend/app/tasks/` | Celery tasks package: odds polling, Pulse, ESPN sync, retention |
+| `backend/app/tasks/` | Celery tasks package: odds polling, EI, ESPN sync, retention |
 | `backend/app/utils/highlights.py` | Highlight scoring, flags, and labels |
 | `backend/app/utils/feed_reasons.py` | Feed card reason text generation (non-repetitive, context-aware) |
-| `backend/app/utils/pulse.py` | Pulse (excitement metric) algorithm |
-| `backend/app/routes/events.py` | Main API - events, search, history, pulse-rankings |
+| `backend/app/utils/excitement_index.py` | Excitement Index (EI) algorithm — standard GEI formula |
+| `backend/app/routes/events.py` | Main API - events, search, history, ei-rankings |
 | `backend/app/services/llm.py` | OpenAI GPT-4o-mini integration for classification |
 | `backend/app/services/espn_api.py` | ESPN API client for team/event enrichment |
 | `backend/app/utils/futures_categorization.py` | Hybrid rules + LLM categorization |
 | `frontend/components/EventCard.tsx` | Event display component (includes pin button) |
 | `frontend/components/FuturesCard.tsx` | Futures market display component (includes pin button) |
-| `frontend/components/PulseBadge.tsx` | Pulse score badge with tooltip |
+| `frontend/components/EIBadge.tsx` | Excitement Index badge with tooltip |
 | `frontend/hooks/usePinnedEvents.ts` | Hook for managing pinned events (localStorage) |
 | `frontend/hooks/usePinnedFutures.ts` | Hook for managing pinned futures (localStorage) |
-| `frontend/app/pulse/hall-of-fame/page.tsx` | Top 25 highest/lowest Pulse games |
+| `frontend/app/ei/hall-of-fame/page.tsx` | Top 25 highest/lowest EI games (`/pulse` redirects here) |
 | `backend/app/services/firebase_auth.py` | Firebase Admin SDK init and token verification |
 | `backend/app/dependencies/auth.py` | `get_current_user` / `get_optional_user` FastAPI deps |
 | `backend/app/routes/auth.py` | Auth endpoints (Google sign-in, profile) |
@@ -202,7 +205,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1627+ pytest items across 21 files): Pulse algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing, team name match scoring), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (27 tests: detection thresholds, direction classification, prompt building with injuries/news/game context, 3-tier prompt verification), matching audit (22 tests: LLM helper, finding structures, task registration, schedule times). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (1700+ pytest items across 22+ files): Excitement Index algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing, team name match scoring), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (27 tests: detection thresholds, direction classification, prompt building with injuries/news/game context, 3-tier prompt verification), matching audit (22 tests: LLM helper, finding structures, task registration, schedule times). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117+ tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -211,7 +214,7 @@ Use `curl` against the production API to inspect data:
 ```bash
 curl "https://api.bainluck.com/api/events?sport=americanfootball_nfl"
 curl "https://api.bainluck.com/api/events/search?q=celtics"
-curl "https://api.bainluck.com/api/admin/pulse/status"
+curl "https://api.bainluck.com/api/admin/ei/status"
 ```
 
 **Note:** When running in Claude Code's web sandbox, direct HTTP requests to the production API may be blocked by egress restrictions. The MCP proxy at `tools/mcp-api-proxy/` is designed for local Claude Code CLI usage only.
@@ -231,7 +234,6 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 - `ADMIN_SECRET` - Optional: protect admin endpoints
 - `SENTRY_DSN` - From sentry.io (optional - enables error tracking + performance monitoring)
 - `SENTRY_ENVIRONMENT` - Defaults to "production" if unset
-- `SPORTSDATA_API_KEY` - **Removed** — no longer needed (roster sync uses ESPN + MLB Stats API)
 - `MYSPORTSFEEDS_API_KEY` - From mysportsfeeds.com (optional — enables structured injury/lineup data for "Why Did the Line Move?", pending account approval)
 - `STATPAL_API_KEY` - From statpal.io (~$99/mo — enables schedule sync, roster enrichment, injury reports, play-by-play data)
 - `FIREBASE_PROJECT_ID` - Firebase project ID (optional - enables auth)
@@ -250,43 +252,59 @@ Backend and frontend environment variables are configured in **Heroku** and **Ve
 
 ## Key Features
 
-### Pulse (Game Excitement Metric)
-Proprietary 1-100 score measuring how exciting a game is based on probability swings.
+### Excitement Index (EI) — Game Excitement Metric
+1-100 score measuring how exciting a game is, based on the standard Game Excitement Index (GEI) formula from sports analytics.
 
-**Two-layer scoring:**
-1. **Raw score**: Deterministic calculation from odds movement data (stored as `raw_gei` on events)
-2. **Percentile score**: Raw score mapped to percentiles using completed/closed games as reference set. This is the score shown to users. Falls back to raw score if percentiles unavailable.
+**Formula:**
+```
+EI_raw = (T_regulation / T_actual) × Σ|pᵢ - pᵢ₋₁|
+```
+The raw value represents the total "distance traveled" by the win probability curve, normalized to regulation game length. A raw EI of 4.0 means the probability traveled 400% total distance.
 
-**Components (weighted):**
-- Heart Rate (25%): Frequency of significant moves (≥2% threshold). Normalized: moves/min ÷ 0.6
-- Amplitude (30%): RMS magnitude of probability swings. Normalized: RMS ÷ 0.15
-- Arrhythmia (15%): Unpredictability (stdev of deltas). Normalized: stdev ÷ 0.10
-- Vitals (30%): Average closeness to 50% across all snapshots (rewards games that stayed competitive throughout, not just those that ended close)
-- Lead Changes: Bonus for 50% crossings (5 pts each, max 20 pts)
-- Time Weight: Late-game multiplier `0.6 + 0.4 × (progress^1.5)`
+**Typical raw EI ranges:**
+- 1.0-2.0: Uneventful (blowout or minimal swings)
+- 2.0-3.5: Average game
+- 3.5-5.0: Exciting game
+- 5.0+: Incredible drama
 
-**Normalization tuning history:**
-The normalization ceilings were tuned iteratively using `GET /api/admin/pulse/distributions` to analyze score distributions across completed games. Key issue was Heart Rate saturating at 100% for 26% of games (ceiling too low at 0.3), then compressing below 38% (ceiling too high at 1.5). Final ceiling of 0.6 was derived from observed max rate of ~0.57 moves/min.
+**Scoring:** Raw EI is mapped to 1-100 using a sqrt transform: `score = min(100, sqrt(raw_ei / 8.0) * 100)`. This maps: 0→0, 0.5→25, 2.0→50, 4.5→75, 8.0→100. Users see the 0-100 score (percentile when available, raw otherwise).
 
-**Multi-bookmaker aggregation:** Raw odds snapshots come from multiple bookmakers (5-11 per event). Before Pulse calculation, snapshots are aggregated into 60-second time buckets using median probability (`_aggregate_snapshots` in `pulse.py`). This prevents bookmaker disagreements from being counted as odds movements. Without aggregation, even an unremarkable game can score 100 due to phantom lead changes and inflated movement metrics.
+**Multi-source aggregation:** Before EI calculation, snapshots from multiple bookmakers (5-11 per event) are aggregated into 30-second time buckets using median probability (`_aggregate_snapshots` in `excitement_index.py`). This prevents bookmaker disagreements from being counted as odds movements. Minimum 3 aggregated time buckets required.
 
-**Scaling:** Raw Pulse score is divided by 1.0 and mapped to 1-100. The theoretical max raw score is ~1.2 (all components maxed + lead change bonus), which clamps to 100. A typical close game scores 60-75; scoring 100 requires exceptional movement across all dimensions.
+**Metadata stored alongside score:**
+- `raw_ei`: Raw EI value (e.g., 3.45)
+- `lead_changes`: Number of 50% crossings
+- `comeback_factor`: Lowest probability the winning team had (0-1)
+- `snapshot_count`: Number of aggregated time buckets used
 
-**Files:** `backend/app/utils/pulse.py`, `frontend/components/PulseBadge.tsx`
+**Data quality levels:**
+- `good` (30+ buckets): Full confidence
+- `limited` (10-29 buckets): Acceptable
+- `minimal` (3-9 buckets): Low confidence — stored for live games but not for completed events
+
+**Labels:** Incredible (90+), Must-Watch (80+), Exciting (70+), Engaging (60+), Competitive (50+), Average (40+), Quiet (25+), Flat (<25)
+
+**References:** Brian Burke (Advanced Football Analytics), Mike Beuoy (Inpredictable), FiveThirtyEight, Luke Benz (ncaahoopR)
+
+**Files:**
+- Algorithm: `backend/app/utils/excitement_index.py` (standard GEI formula)
+- Legacy: `backend/app/utils/pulse.py` (backward-compat aliases: `PulseDataPoint = EIDataPoint`, `calculate_pulse = calculate_ei`)
+- Frontend: `frontend/components/EIBadge.tsx` (primary), `frontend/components/PulseBadge.tsx` (deprecated wrapper)
 
 **Admin Endpoints:**
-- `GET /api/admin/pulse/status` - Check calculation status
-- `GET /api/admin/pulse/distributions` - Score and component distribution analysis (histograms, saturation, statistics)
-- `POST /api/admin/pulse/recalculate?secret=xxx&limit=100` - Trigger batch recalc (completed + closed events)
+- `GET /api/admin/ei/status` - Check calculation status
+- `GET /api/admin/ei/distributions` - Score distribution analysis
+- `POST /api/admin/ei/recalculate?secret=xxx&limit=100` - Trigger batch recalc
 
-**After algorithm changes:** You must force-recalculate stored scores since `raw_gei` values are computed once and cached:
+**After algorithm changes:** Force-recalculate stored scores since `raw_ei` values are computed once and cached:
 ```bash
-curl -X POST "https://api.bainluck.com/api/admin/pulse/recalculate?secret=any&limit=500"
-# Then verify with distributions endpoint:
-curl "https://api.bainluck.com/api/admin/pulse/distributions"
+curl -X POST "https://api.bainluck.com/api/admin/ei/recalculate?secret=any&limit=500"
+curl "https://api.bainluck.com/api/admin/ei/distributions"
 ```
 
-**Hall of Fame filtering:** The `pulse-rankings` endpoint requires 20+ distinct minute-level time buckets (not raw snapshot rows, since each poll captures 5-11 bookmakers). Completed events with `data_quality == "minimal"` (< 10 aggregated time buckets) never get a stored Pulse score, providing a second layer of filtering.
+**Hall of Fame filtering:** The `ei-rankings` endpoint requires 20+ distinct minute-level time buckets. Completed events with `data_quality == "minimal"` never get a stored EI score.
+
+**Migration note (Feb 2026):** The codebase migrated from a proprietary "Pulse" metric (weighted components: heart rate, amplitude, arrhythmia, vitals, lead changes, time weight) to the standard GEI formula. Database columns were renamed (`raw_gei` → `raw_ei`, `gei_components` → `ei_metadata`, `gei_percentiles` → `ei_percentiles`). Old events still have Pulse-format metadata in `ei_metadata` — the frontend handles both formats with optional fields. Backend serves both `"ei"` and `"pulse"` keys in API responses for backward compatibility. `/pulse` routes redirect to `/ei`.
 
 ### Highlights (Event Ranking)
 Scores events 0–100 to decide what appears in the homepage Highlights section. Events need ≥30 points. This is **Level 1 (snapshot scoring)** of a multi-level ranking system — see "Ranking & Feed Evolution" in `docs/PRD.md` for the full roadmap toward the iOS feed tab.
@@ -315,7 +333,7 @@ The `llm_importance` field on events (populated by ESPN `season.type` and LLM te
 
 A playoff NFL game scores 30 (live) + 20 (tier 1) + 15 (playoff) = **65** base. A preseason NBA game scores 30 + 20 + (-20) = **30** base. A far-future playoff NBA game scores 20 (tier 1) + 15 (playoff) = **35** even without any odds signals.
 
-**Feed sections (homepage):** Live Now → Just Happened → Upcoming → Top Markets. Completed events surface for 24h with Pulse-based score boost (≥80 Pulse: +25 pts, ≥60: +15 pts). Sections replace the earlier Highlights/Live/Upcoming/Starting Soon split.
+**Feed sections (homepage):** Live Now → Just Happened → Upcoming → Top Markets. Completed events surface for 24h with EI-based score boost (≥80 EI: +25 pts, ≥60: +15 pts). Sections replace the earlier Highlights/Live/Upcoming/Starting Soon split.
 
 **Feed min_score thresholds:**
 - Anonymous/default: 30 (events) / 40 (futures)
@@ -570,10 +588,10 @@ bainluck_pinnedEvents    // Array of event IDs
 bainluck_pinnedFutures   // Array of futures market IDs
 ```
 
-### SportsDataIO Integration (Removed)
-SportsDataIO previously provided roster data. **Fully replaced** by ESPN roster endpoints + MLB Stats API at zero cost. The `sportsdata_api.py` client has been deleted. `SPORTSDATA_API_KEY` is no longer needed.
+### Roster Sync (ESPN + MLB Stats API)
+Team rosters are synced daily using ESPN's roster endpoints and MLB Stats API for baseball. SportsDataIO was previously used but has been fully removed.
 
-**Roster Sync:** `backend/app/tasks/roster_sync.py` (`_sync_rosters`)
+**Task:** `backend/app/tasks/roster_sync.py` (`_sync_rosters`)
 - Uses ESPN `/teams/{id}/roster` endpoint for NBA, NFL, NHL, NCAAB, NCAAF, WNBA, MLS, EPL
 - Uses MLB Stats API for baseball
 - Beat schedule: daily at 7:00 AM UTC (`sync-rosters-daily`)
@@ -1092,7 +1110,7 @@ Visual-first landing page for the 98th Academy Awards (March 2, 2026) at `/oscar
 ### TV Mode (Second-Screen Experience)
 Fullscreen browser-first second-screen experience at `/tv` for live games, elections, award shows, and ambient futures display. Designed for phone, iPad, and TV/monitor with a cascaded density hierarchy — every screen shows as much data as possible, bigger screens show MORE.
 
-**Signature element:** Probability numbers "breathe" — a CSS scale/glow animation whose speed maps to the Pulse score. `beatMs(p) = Math.max(550, 2000 - p * 14.5)`. A Pulse-91 thriller visibly throbs faster than a Pulse-42 blowout.
+**Signature element:** Probability numbers "breathe" — a CSS scale/glow animation whose speed maps to the EI score. `beatMs(p) = Math.max(550, 2000 - p * 14.5)`. An EI-91 thriller visibly throbs faster than an EI-42 blowout.
 
 **Design language:** Dark void (#09090b), team colors as the only palette, glowing numbers via text-shadow, no UI chrome in display mode, jumbotron typography.
 
@@ -1104,36 +1122,36 @@ Fullscreen browser-first second-screen experience at `/tv` for live games, elect
 | Multi-source chart (Odds, ESPN, Kalshi, Polymarket) | ✅ w/ gridlines | ✅ w/ gridlines | ✅ w/ gridlines |
 | Score + teams + records | ✅ | ✅ | ✅ large |
 | Probability bar | ✅ | ✅ | ✅ |
-| Pulse ring | ✅ 58px inline | ✅ 72px sidebar | ✅ 100px sidebar |
+| EI ring | ✅ 58px inline | ✅ 72px sidebar | ✅ 100px sidebar |
 | Context (opened, line, divergence) | ✅ | ✅ sidebar | ✅ sidebar |
 | Championship impact | ✅ | ✅ sidebar | ✅ sidebar |
 | Related futures | ✅ up to 3 | ✅ all | ✅ all |
 | Other live games panel | — | ✅ 140px | ✅ 200px |
 | Trending futures panel | — | ✅ top 2 | ✅ top 4 w/ bars |
 | Score-by-period breakdown | — | — | ✅ header |
-| Pulse component breakdown | — | — | ✅ (HR/Amp/Arr/Vit) |
+| EI component breakdown | — | — | ✅ (raw_ei/lead_changes/comeback) |
 | Source comparison strip | — | — | ✅ below chart |
 | Sparklines in other games | — | — | ✅ |
 
 **Two modes:**
-- **Live mode**: Single event focus filling the screen. Navigate between games via arrows/swipe. Auto-switches to highest-Pulse game when spike >85.
+- **Live mode**: Single event focus filling the screen. Navigate between games via arrows/swipe. Auto-switches to highest-EI game when spike >85.
 - **Ambient mode**: 8-second rotation through interesting futures (championships, elections, crypto) with crossfade. Auto-activates when no live games.
 
-**Smart behaviors:** Auto-switch on Pulse spikes, auto-ambient when no live games, `wakeLock` API to prevent screen dimming, keyboard shortcuts (arrows, space, F).
+**Smart behaviors:** Auto-switch on EI spikes, auto-ambient when no live games, `wakeLock` API to prevent screen dimming, keyboard shortcuts (arrows, space, F).
 
 **Device frames:** Phone 390×780 (with notch), iPad 900×600, TV 1280×720. Scale-to-fit based on viewport width.
 
-**iOS v2 features (documented, not built):** Lock Screen Live Activities (persistent probability bar), Dynamic Island (Pulse dot + score), StandBy mode (giant numbers on MagSafe charger), Apple Watch complications (probability ring), widget gallery (small/medium/large), haptic feedback mapped to Pulse rhythm, Siri integration ("What's the most exciting game right now?").
+**iOS v2 features (documented, not built):** Lock Screen Live Activities (persistent probability bar), Dynamic Island (EI dot + score), StandBy mode (giant numbers on MagSafe charger), Apple Watch complications (probability ring), widget gallery (small/medium/large), haptic feedback mapped to EI rhythm, Siri integration ("What's the most exciting game right now?").
 
 **Files:**
-- Prototype: `tv-mode-prototype.jsx` (interactive React component with device switching, mode toggling, Pulse slider)
+- Prototype: `tv-mode-prototype.jsx` (interactive React component with device switching, mode toggling, EI slider)
 - Design plan: `docs/tv-mode-plan.md` (full spec including iOS v2 features, implementation phases)
 
 **Implementation plan (4 phases):**
 1. Route + core layout: `/tv` route, device detection, LiveView, wire to events/history APIs
 2. Multi-source + context: win probability sources, opening odds, line movement, related futures, divergence
 3. Ambient + polish: futures rotation, auto-switch, keyboard shortcuts, wakeLock, fullscreen
-4. Smart features: game start notifications, Pulse spike alerts, optional heartbeat audio, multi-game split screen
+4. Smart features: game start notifications, EI spike alerts, optional heartbeat audio, multi-game split screen
 
 ---
 
@@ -1147,8 +1165,10 @@ Fullscreen browser-first second-screen experience at `/tv` for live games, elect
 # Timestamps in ISO 8601
 {"commence_time": "2026-02-03T19:00:00+00:00"}
 
-# Pulse included when available (score = percentile, raw_score = pre-percentile)
-{"pulse": {"score": 75, "raw_score": 68, "status": "strong", "emoji": "💓", "label": "Exciting"}}
+# EI included when available (score = percentile or raw, raw_score = pre-percentile)
+# Backend serves both "ei" and "pulse" keys for backward compatibility
+{"ei": {"score": 75, "raw_score": 68, "status": "exciting", "emoji": "⚡", "label": "Exciting",
+        "metadata": {"raw_ei": 3.45, "lead_changes": 4, "comeback_factor": 0.23, "snapshot_count": 42}}}
 ```
 
 ### Event Statuses
@@ -1162,12 +1182,12 @@ Fullscreen browser-first second-screen experience at `/tv` for live games, elect
 ## Database Schema (Key Tables)
 
 ```sql
-events          -- Games/matches with teams, scores, Pulse
+events          -- Games/matches with teams, scores, EI
 odds_snapshots  -- Historical odds from each bookmaker
 score_snapshots -- Score history during live games
 sports          -- Supported sports/leagues
 futures         -- Championship odds markets
-gei_percentiles -- Pulse percentile thresholds
+ei_percentiles  -- EI percentile thresholds (renamed from gei_percentiles)
 team_identity_mapping -- Cross-source team identity index (source, source_id/name, sport_key → team_id)
 ```
 
@@ -1179,10 +1199,10 @@ team_identity_mapping -- Cross-source team identity index (source, source_id/nam
 **Identity columns on teams:**
 - `statpal_team_id` - StatPal's team identifier (indexed, used for roster/injury sync)
 
-**Pulse fields on events:**
-- `raw_gei` - Score/100 (e.g., 0.75 = score 75)
-- `gei_components` - JSON of component breakdown
-- `gei_computed_at` - When last calculated
+**Excitement Index fields on events:**
+- `raw_ei` - Score/100 (e.g., 0.75 = score 75). Renamed from `raw_gei`.
+- `ei_metadata` - JSON of EI metadata (raw_ei, lead_changes, comeback_factor, snapshot_count). Renamed from `gei_components`. Note: old events still have Pulse-format data in this column.
+- `ei_computed_at` - When last calculated. Renamed from `gei_computed_at`.
 
 ---
 
@@ -1196,14 +1216,14 @@ team_identity_mapping -- Cross-source team identity index (source, source_id/nam
 1. Create file in `frontend/app/[route]/page.tsx`
 2. Next.js app router auto-registers it
 
-### Run Pulse recalculation
+### Run EI recalculation
 ```bash
-curl -X POST "https://api.bainluck.com/api/admin/pulse/recalculate?secret=any&limit=500"
+curl -X POST "https://api.bainluck.com/api/admin/ei/recalculate?secret=any&limit=500"
 ```
 
-### Check Pulse status
+### Check EI status
 ```
-https://api.bainluck.com/api/events/debug/pulse
+https://api.bainluck.com/api/admin/ei/status
 ```
 
 ### Debug an event
@@ -1300,16 +1320,17 @@ These are the current focus. Resist the urge to build new features until these a
 19. 🟢 **Migrate roster sync from SportsDataIO to ESPN (shipped)** — `roster_sync.py` already uses ESPN + MLB Stats API as primary sources. Deleted `sportsdata_api.py` (321 lines of dead code). `SPORTSDATA_API_KEY` env var no longer needed.
 20. 🟢 **"Why Did the Line Move?" v1 — ESPN context enrichment (shipped)** — The full pipeline was already deployed (detection in `line_movement.py`, LLM explanation in `llm.py`, caching in `LineMovementAnalysis`, endpoint at `GET /events/{id}/line-movement`, frontend in `LineMovementExplainer.tsx`). This phase adds **real data** to the LLM prompt: ESPN injury reports (`get_event_context()` in `espn_api.py`), news headlines, and live game state (score/period/clock). Prompt instructs LLM to only reference listed injuries — no fabrication. Response includes `context` metadata (injuries_count, news_count, has_game_state). 26 new line movement tests + 8 ESPN parsing tests (84 total in both files).
 21. 🟢 **Apple Sign-In (shipped)** — Uses Firebase `signInWithPopup` with `OAuthProvider('apple.com')`. Firebase's domain handles Apple OAuth — no domain verification needed on `bainluck.com`. Key fixes: `browserPopupRedirectResolver` required in `initializeAuth` (Firebase v10 gotcha), preload Firebase Auth module to prevent popup blockers, read `currentUser` directly after popup (first-time sign-in hasn't subscribed `onAuthStateChanged`). Backend endpoint `POST /api/auth/apple` for direct Apple JWT verification (standalone path). Provider chooser dropdown in UserMenu and My Stuff page. 13 backend tests. Remaining: change Firebase support email to support@bainluck.com, link Firebase to Google Analytics for cross-platform reporting.
-22. 📋 Sport-specific Pulse normalization (different ceilings per sport)
-23. 🟡 **TV Mode v2 (designed, prototype built)** — Fullscreen second-screen experience for live games, elections, award shows, and ambient futures. Browser-first (`/tv` route). Cascaded density hierarchy: Phone shows Pulse ring + multi-source chart + context + related futures. iPad shows 3-column layout (chart + context sidebar + other games). TV is maximal with score-by-period, Pulse component breakdown, source comparison strip, sparklines in other-game cards, expanded trending futures. Ambient mode auto-rotates through futures during downtime. Prototype at `tv-mode-prototype.jsx`, full design plan at `docs/tv-mode-plan.md`. iOS v2 features documented (Live Activities, Dynamic Island, StandBy, Apple Watch, widgets, haptics, Siri). See TV Mode section in Key Features below.
-24. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
-25. 🟢 **NFL roster sync fix (shipped)** — Phase 1 team sync builds `sd_abbrev → team_id` mapping that Phase 2 roster sync uses as primary lookup, bridging the ESPN/SportsDataIO abbreviation gap. Added ILIKE fallback for formatting diffs, MLB abbreviation map (30 teams). Should fix 2/32 → 32/32 NFL matching.
-26. 🟢 **Related futures Phase 4 (shipped)** — LLM "Bigger Picture" summary on related-futures endpoint. GPT-4o-mini generates 2-3 sentence casual summary of championship/award implications. Cached in `LineMovementAnalysis` with 2h TTL (never expires for completed games). Frontend summary-first collapsed design with "See all N futures" toggle.
-27. 🟢 **Bigger Picture visual redesign (shipped)** — Tier-grouped display with pattern-based `effectiveTier()` overriding backend `market_tier`. Championship hero cards, award rows with ESPN headshots (`PlayerHeadshot` component: headshot URL → espn_id → Wikipedia → initials), stat prop cards with semi-circular SVG gauges, dense 2-col upcoming games grid. Award dedup by player+award combo key. NOT_CHAMPIONSHIP_PATTERNS (14 patterns) prevents misclassified hero cards (Win Totals, Make Playoffs, Seeding, etc.). Title Comparison prefers "championship" in market name. Backend stat prop filter ensures game-specific stats only show on correct event page (±6h temporal proximity or event_id match). Frontend cross-sport false positive check on game grid (team name must appear in market name).
-28. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
-29. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
-30. 🟢 **Matching quality audits (shipped)** — Three daily LLM-based audits verify canonical key dedup, prediction market→event links, and related futures coverage. GPT-4o-mini samples records, checks correctness, stores findings with `pattern_category` and `suggested_rule` in `LineMovementAnalysis`. Pattern aggregation endpoint surfaces recurring issues. Report-only Phase 1; Phase 2 auto-fix gated on ≥90% accuracy over 2+ weeks. ~$0.02/day cost. 22 tests.
-31. 🟡 **Database size & retention strategy (evaluating)** — The `odds_snapshots`, `futures_odds_snapshots`, and `win_prob_snapshots` tables grow ~10-20K net rows/day after write-time dedup. Current mitigation: lossless snapshot collapse (Phase 1 shipped — pure SQL, constant memory) reduces row count 50-90% for events >48h old. **No auto-deletion** — we want to preserve full history. Future options under evaluation: (a) pre-game snapshot thinning (keep 1/hour for >24h before game), (b) populate `odds_aggregated` table with 1-hour buckets for completed events then archive raw snapshots to cold storage, (c) tiered retention by event tier (Tier 1 full history, Tier 3-4 for 30 days), (d) futures cleanup for resolved markets after 6 months. The current collapse strategy buys 2-3 years of runway. Need to spend more time evaluating solutions — the priority is not losing data we might want later. See `backend/app/tasks/retention.py` for collapse implementation.
+22. 🟢 **Pulse → Excitement Index (EI) migration (shipped)** — Replaced proprietary Pulse metric (weighted components: heart rate, amplitude, arrhythmia, vitals) with standard Game Excitement Index (GEI) formula: `EI_raw = (T_regulation / T_actual) × Σ|pᵢ - pᵢ₋₁|`. New algorithm in `utils/excitement_index.py`, multi-source 30s time bucket aggregation, regulation time normalization per sport. DB columns renamed via Alembic migration (`raw_gei` → `raw_ei`, `gei_components` → `ei_metadata`, `gei_percentiles` → `ei_percentiles`). Frontend `EIBadge.tsx` replaces `PulseBadge.tsx` (backward-compat wrapper remains). Routes `/ei` and `/ei/hall-of-fame` added, `/pulse` redirects. API serves both `"ei"` and `"pulse"` keys. 80+ new tests in `test_excitement_index.py`.
+23. 📋 Sport-specific EI normalization (different ceilings per sport)
+24. 🟡 **TV Mode v2 (designed, prototype built)** — Fullscreen second-screen experience for live games, elections, award shows, and ambient futures. Browser-first (`/tv` route). Cascaded density hierarchy: Phone shows EI ring + multi-source chart + context + related futures. iPad shows 3-column layout (chart + context sidebar + other games). TV is maximal with score-by-period, EI component breakdown, source comparison strip, sparklines in other-game cards, expanded trending futures. Ambient mode auto-rotates through futures during downtime. Prototype at `tv-mode-prototype.jsx`, full design plan at `docs/tv-mode-plan.md`. iOS v2 features documented (Live Activities, Dynamic Island, StandBy, Apple Watch, widgets, haptics, Siri). See TV Mode section in Key Features below.
+25. 🟢 **Stale bookmaker filter fix (shipped)** — `filter_stale_bookmaker_snapshots` now uses `valid_until` (write-time dedup aware) instead of only `captured_at`. Layer 2 recency filter for live events excludes bookmakers >10 min stale. 23 tests (14 existing + 9 new). Reduces `current_odds` divergence from history endpoint.
+26. 🟢 **NFL roster sync fix (shipped)** — Phase 1 team sync builds `sd_abbrev → team_id` mapping that Phase 2 roster sync uses as primary lookup, bridging the ESPN/SportsDataIO abbreviation gap. Added ILIKE fallback for formatting diffs, MLB abbreviation map (30 teams). Should fix 2/32 → 32/32 NFL matching.
+27. 🟢 **Related futures Phase 4 (shipped)** — LLM "Bigger Picture" summary on related-futures endpoint. GPT-4o-mini generates 2-3 sentence casual summary of championship/award implications. Cached in `LineMovementAnalysis` with 2h TTL (never expires for completed games). Frontend summary-first collapsed design with "See all N futures" toggle.
+28. 🟢 **Bigger Picture visual redesign (shipped)** — Tier-grouped display with pattern-based `effectiveTier()` overriding backend `market_tier`. Championship hero cards, award rows with ESPN headshots (`PlayerHeadshot` component: headshot URL → espn_id → Wikipedia → initials), stat prop cards with semi-circular SVG gauges, dense 2-col upcoming games grid. Award dedup by player+award combo key. NOT_CHAMPIONSHIP_PATTERNS (14 patterns) prevents misclassified hero cards (Win Totals, Make Playoffs, Seeding, etc.). Title Comparison prefers "championship" in market name. Backend stat prop filter ensures game-specific stats only show on correct event page (±6h temporal proximity or event_id match). Frontend cross-sport false positive check on game grid (team name must appear in market name).
+29. 📋 **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant upcoming/recent events
+30. 📋 Non-sports category display in frontend (politics, entertainment, crypto tabs on homepage)
+31. 🟢 **Matching quality audits (shipped)** — Three daily LLM-based audits verify canonical key dedup, prediction market→event links, and related futures coverage. GPT-4o-mini samples records, checks correctness, stores findings with `pattern_category` and `suggested_rule` in `LineMovementAnalysis`. Pattern aggregation endpoint surfaces recurring issues. Report-only Phase 1; Phase 2 auto-fix gated on ≥90% accuracy over 2+ weeks. ~$0.02/day cost. 22 tests.
+32. 🟡 **Database size & retention strategy (evaluating)** — The `odds_snapshots`, `futures_odds_snapshots`, and `win_prob_snapshots` tables grow ~10-20K net rows/day after write-time dedup. Current mitigation: lossless snapshot collapse (Phase 1 shipped — pure SQL, constant memory) reduces row count 50-90% for events >48h old. **No auto-deletion** — we want to preserve full history. Future options under evaluation: (a) pre-game snapshot thinning (keep 1/hour for >24h before game), (b) populate `odds_aggregated` table with 1-hour buckets for completed events then archive raw snapshots to cold storage, (c) tiered retention by event tier (Tier 1 full history, Tier 3-4 for 30 days), (d) futures cleanup for resolved markets after 6 months. The current collapse strategy buys 2-3 years of runway. Need to spend more time evaluating solutions — the priority is not losing data we might want later. See `backend/app/tasks/retention.py` for collapse implementation.
 
 ### Horizon — AI-Native Sports Intelligence (ESPN + MySportsFeeds + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require sports data enrichment (rosters, injuries, standings, schedules from ESPN free API + MySportsFeeds) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -1329,7 +1350,7 @@ These are differentiated features that can't be built with odds data alone. They
 
 **Design:**
 - 📋 **Sparklines on feed cards** — Tiny 40px SVG on each EventCard showing 24h odds trajectory. Communicates volatility at a glance without clicking through.
-- 📋 **Pulse glow on live cards** — Subtle border glow animation on homepage live cards, speed mapped to Pulse score (port of TV mode "breathing"). Feel which games are exciting before reading anything.
+- 📋 **EI glow on live cards** — Subtle border glow animation on homepage live cards, speed mapped to EI score (port of TV mode "breathing"). Feel which games are exciting before reading anything.
 - 📋 **Top-of-page scoreboard strip** — Horizontally scrollable strip above feed with compact live game chips (abbreviations + probability + score). Tap to jump to full card.
 - 📋 **Team color gradient card backgrounds** — Team colors as subtle gradient backgrounds on entire card, blending both teams' colors. Feed feels less like a data table.
 - 📋 **Futures outcome mini-bars** — Thin horizontal probability bars behind each outcome name on FuturesCard. Makes relative probability scannable without reading numbers.
@@ -1348,26 +1369,31 @@ These are differentiated features that can't be built with odds data alone. They
 - *Already implemented: Player award → game matching (via roster_players ILIKE), conference/division futures → event linking (via market_tier).*
 
 **Wild:**
-- 📋 **Probability Replay** — After a game ends, "replay" the odds chart like a movie with a scrubber. Overlay ESPN play-by-play annotations at each inflection point. High-Pulse games become sharable highlights.
+- 📋 **Probability Replay** — After a game ends, "replay" the odds chart like a movie with a scrubber. Overlay ESPN play-by-play annotations at each inflection point. High-EI games become sharable highlights.
 - 📋 **"What If" simulator** — "What happens to championship odds if the Lakers win tonight?" Use historical futures snapshot correlations to estimate impact before the game.
 - 📋 **Prediction game (no real money)** — Users lock in probability predictions for futures. Track accuracy over time with calibration score. Leaderboard. Zero regulatory risk.
-- 📋 **Ambient mode for bars** — `/ambient` route designed for TVs in sports bars. Cycles through highest-Pulse games, auto-switches on exciting moments, futures ticker scrolling across bottom. "Powered by Bain Luck" in corner.
-- 📋 **Shareable probability snapshots** — "Share" button generates beautiful image card (OpenGraph-ready) with teams, logos, odds, Pulse, one-line reason. Optimized for iMessage/Twitter/Instagram stories.
+- 📋 **Ambient mode for bars** — `/ambient` route designed for TVs in sports bars. Cycles through highest-EI games, auto-switches on exciting moments, futures ticker scrolling across bottom. "Powered by Bain Luck" in corner.
+- 📋 **Shareable probability snapshots** — "Share" button generates beautiful image card (OpenGraph-ready) with teams, logos, odds, EI, one-line reason. Optimized for iMessage/Twitter/Instagram stories.
+
+**Category & Content:**
+- 📋 **Bespoke category landing pages** — Beautiful, over-invested landing pages for each major sport (basketball, golf, etc.) and non-sports category (politics, entertainment, weather, miscellany). Since categories are stable, these can be hand-crafted visual experiences rather than generic list views. Needs design questions answered first — see `docs/planning-questions.md` §1.
+- 📋 **"What Are the Odds?" game** — Probability guessing game: show users events/futures from our DB, they guess the probability, we score accuracy. Retention driver + viral acquisition vehicle. Many game mechanics to work out — see `docs/planning-questions.md` §2.
+- 📋 **Insight Arena (admin LLM training)** — Admin-only feature: LLM generates event-level, category-level, and DB-wide insights. Surfaces 2 at a time for A/B preference selection. Choices train the LLM on what makes a good insight over time. See `docs/planning-questions.md` §3.
 
 ### Completed
 <details>
 <summary>Shipped features (click to expand)</summary>
 
-- ✅ Pulse feature complete and deployed
+- ✅ Excitement Index (EI) feature complete and deployed (migrated from Pulse)
 - ✅ Kalshi prediction market integration
 - ✅ Futures UI improvements (sportsbooks, start times, categorization)
 - ✅ LLM infrastructure (OpenAI GPT-4o-mini for smart categorization)
-- ✅ Pulse Hall of Fame page
+- ✅ EI Hall of Fame page (`/ei/hall-of-fame`, `/pulse` redirects)
 - ✅ Pinned Events & Futures (localStorage-based tracking)
 - ✅ Futures categorization hardened (0 uncategorized markets)
-- ✅ Pulse distribution tuning (normalization constants, percentile scoring, component tooltips)
+- ✅ EI distribution tuning (normalization constants, percentile scoring, component tooltips)
 - ✅ ~~TV/Party mode v1~~ (shipped for Super Bowl LX, removed post-event)
-- ✅ TV Mode v2 design + interactive prototype (cascaded density hierarchy, multi-source charts, Pulse breathing animation, ambient futures rotation, iOS v2 features documented)
+- ✅ TV Mode v2 design + interactive prototype (cascaded density hierarchy, multi-source charts, EI breathing animation, ambient futures rotation, iOS v2 features documented)
 - ✅ Sentry error tracking (FastAPI + Celery worker, controlled by SENTRY_DSN env var)
 - ✅ Multi-source win probability infrastructure (generic `win_prob_snapshots` table, source config, N-source chart)
 - ✅ Bain Luck statistical win probability model (nflfastR-inspired, NFL/NCAAF/NBA/NCAAB/WNCAAB/NHL)
@@ -1377,17 +1403,17 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Stale bookmaker filter extracted to `app/utils/odds_filtering.py` with 14 regression tests (including commence_time sanity check)
 - ✅ Opening odds now stores last pregame consensus (cross-bookmaker average, continuously updated while scheduled)
 - ✅ Snapshot data retention Phase 1: lossless collapsing of consecutive identical rows across `odds_snapshots`, `win_prob_snapshots`, `futures_odds_snapshots` + write-time dedup for `win_prob_snapshots`. Phase 2: rewritten to pure SQL using PostgreSQL window functions (LAG, SUM, CTEs) for constant memory — fixes Heroku worker OOM (R14).
-- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 16 modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`, `roster_sync.py`, `team_linking.py`, `prediction_market_matching.py`, `matching_audit.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
+- ✅ Refactored `tasks.py` (2,970 lines) into `tasks/` package with 18+ modules: `__init__.py`, `config.py`, `base.py`, `snapshots.py`, `redis_state.py`, `odds_polling.py`, `excitement_index.py`, `pulse.py`, `futures.py`, `kalshi.py`, `espn_sync.py`, `sports.py`, `retention.py`, `roster_sync.py`, `team_linking.py`, `prediction_market_matching.py`, `matching_audit.py`, `team_identity_backfill.py`, `mlb_sync.py`, `statpal_sync.py`. All task names pinned with `name=` params for backward compatibility. Celery heartbeat + health endpoint added.
 - ✅ Super Bowl dead code cleanup: removed `contest.py`, `superbowl.py`, `youtube_api.py`, `CommercialLeaderboard.tsx`, and related routes/types (~7K+ lines)
 - ✅ Related futures Phases 1-3: team linking infrastructure (`FuturesOutcome.team_id` FK, `FuturesMarket.market_tier`, backfill task), `GET /api/events/{id}/related-futures` endpoint with hybrid matching (name ILIKE + team_id, triple sport filter), frontend "Bigger Picture" section with team colors/logos/probability bars
 - ✅ SportsDataIO integration: API client, roster sync task (daily at 7:00 AM UTC), `Team.roster_players` JSONB column for player name matching in related futures. NBA 26/30, NHL 20/32 teams synced. **Later:** `sportsdata_api.py` deleted, roster sync migrated to ESPN + MLB Stats API.
-- ✅ Test coverage for core algorithms: 1569+ backend (pytest items) + 117+ frontend = 1686+ total tests. Pure-function testing strategy covers Pulse (85), Highlights (126, incl. Level 2 time-series, event importance), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (63, incl. season type, injury/news parsing, team name match scoring), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33), matching audit (22), line movement (27). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
+- ✅ Test coverage for core algorithms: 1700+ backend (pytest items) + 117+ frontend = 1800+ total tests. Pure-function testing strategy covers EI (85+), Highlights (126, incl. Level 2 time-series, event importance), odds math (35+35), futures categorization (116), win probability (67), ESPN API parsing (63, incl. season type, injury/news parsing, team name match scoring), team linking (97), LLM classification (60), prediction market matching (291), odds polling helpers (27), win prob sources (24), task wiring (21), stale bookmaker filter (14), snapshot collapse (13), retention SQL (19), redis state (13), onboarding/preferences (31), MLB Stats API (33), matching audit (22), line movement (27). See `docs/test-coverage-analysis.md` for full analysis and prioritized improvement recommendations.
 - ✅ Moved `_create_or_update_win_prob_snapshot` to `tasks/snapshots.py` shared module (was in `odds_polling.py`, imported by `espn_sync.py`)
 - ✅ Polymarket integration Phase 1: API client (`polymarket_api.py`), polling task (`tasks/polymarket.py`) with streaming pagination + batched commits (50 events/batch), 160+ tag-to-category mapping with fallback to rules + league detection, outcome name extraction, page cap monitoring. 69 tests covering tag mapping, name extraction, API parsing.
 - ✅ Auth & Personalization Phase 1 (shipped): Google Sign-In on Safari + Chrome via GIS + backend custom token fallback, backend auth middleware, pin sync, frontend auth context + sign-in UI.
 - ✅ Auth & Personalization Phase 2 (shipped): 5-step onboarding flow (`/onboarding`) — location, follow teams, alma maters, sports+beyond (20 categories incl. politics/entertainment/crypto), rivals. Team search falls back to events table and auto-creates Team records for college teams. Inline favorites CRUD on preferences page. 31+ tests.
 - ✅ Auth & Personalization Phase 3 (shipped): Personalized feed scoring with team multipliers (local 3.5×, alma_mater 2.5×, followed 2.0×), rival multipliers (live losses, blown leads), sport affinity weighting. Personalization badges ("Your team", "Local", "Alma mater", "Rival losing"). Unified interestingness feed combining events + futures on homepage.
-- ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to ranked feed with visual sections (Live Now, Just Happened, Upcoming, Top Markets). Feed items include events and futures, with personalization overlay for authenticated users. Completed events surface with Pulse-based scoring boost.
+- ✅ Unified feed: Homepage redesigned from separate sections (Highlights, Live, Upcoming) to ranked feed with visual sections (Live Now, Just Happened, Upcoming, Top Markets). Feed items include events and futures, with personalization overlay for authenticated users. Completed events surface with EI-based scoring boost.
 - ✅ Prediction market → event matching: Two-pass strategy (targeted Kalshi ticker scan + general scan) links game-level Kalshi/Polymarket markets to Events for win probability trend lines. Live game price polling every 2 min via `poll_live_prediction_markets` (targeted — only fetches prices for linked live-event markets from Kalshi/Polymarket APIs). Ticker abbreviation parsing (`extract_teams_from_ticker`) for generic-named Kalshi markets. 223 tests covering ticker detection, abbreviation parsing, name building, false positive prevention, sport prefix mapping, ticker fallback, live poll wiring.
 - ✅ ESPN matching resilience + wall-clock fallback: Multi-signal ESPN matching (ESPN ID → name → commence_time proximity) for both live and scheduled events. Wall-clock time estimation fallback for stat model when ESPN sync misses (common for college teams). Odds polling path relaxed to use fallback automatically. 16 new tests (67 total win probability tests).
 - ✅ Task-level monitoring dashboard: `redis_state.py` metrics system tracks success/failure/duration/output per task in Redis. Dashboard at `GET /api/admin/celery/dashboard` with health classification. 7 key tasks instrumented via `_tracked_run()`.
@@ -1418,7 +1444,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ "Why Did the Line Move?" ESPN context enrichment: Added `get_event_context()` to `espn_api.py` (parses injuries + news from `/summary` endpoint). Enriched `build_llm_prompt()` with real injury reports, news headlines, and live game state (score/period/clock). 3-tier prompt system: (1) injuries/news available → explain causes using provided data, (2) game state only → describe score and odds factually without speculating, (3) no context → describe odds movement only. Prevents vague LLM hedging like "possibly due to key plays or scoring runs." Admin cache clear: `DELETE /api/admin/line-movement/cache/{event_id}`. 27 line movement tests + 8 ESPN parsing tests (85 total).
 - ✅ Feed quality tightening: Regular-season tennis demoted from tier 3 to tier 4. Tier 3 penalty changed from 0 to -5. Tier 4 penalty increased from -15 to -45. Anonymous min_score raised from 25 to 30. ~70 league entries in LEAGUE_TIERS (up from 30+). Events without odds data skipped in feed.
 - ✅ Personalized feed hard filters: "Nah" sports (0.0 affinity) hard-filtered — skipped entirely unless championship/playoff importance. "If it's wild" sports (0.1 affinity) require min_score 55 — live+close alone isn't enough.
-- ✅ Homepage section redesign: "Starting Soon" and "More Games" merged into single "Upcoming" section. New "Just Happened" section for completed events (24h window) with Pulse-based scoring boost (+25 for Pulse ≥80, +15 for ≥60). Section order: Live Now → Just Happened → Upcoming → Top Markets.
+- ✅ Homepage section redesign: "Starting Soon" and "More Games" merged into single "Upcoming" section. New "Just Happened" section for completed events (24h window) with EI-based scoring boost (+25 for EI ≥80, +15 for ≥60). Section order: Live Now → Just Happened → Upcoming → Top Markets.
 - ✅ Finished event card redesign: Shows expected vs actual — opening odds probability bar (what was expected) + score with winner bolded (what happened) + date/time for freshness. No probability numbers on finished cards. Non-repetitive reason text: returns empty string for generic cases, only shows genuinely insightful context ("Won as 35% underdog", "Starting soon", line movement). Applies to all statuses — upcoming events no longer repeat odds in reason text, live events no longer repeat score.
 - ✅ Bigger Picture v5-v6 redesign: Tier-grouped visual hierarchy with 6 tiers (championship → conference → awards → downgraded → game markets → stat props). Upcoming games grid, player stat gauges with headshots, tiered border styling. Title odds fix prevents "Make Playoffs" from displaying instead of championship odds.
 - ✅ Feed endpoint performance optimization (8-16x improvement, 5-10s → 0.6-1.2s): Three changes in `feed.py`: (a) replaced 29 sequential per-category futures queries with single `ROW_NUMBER() OVER (PARTITION BY llm_sport_category)` query (~95% fewer DB round-trips), (b) parallelized personalization queries (favorites, preferences, pins) with `asyncio.gather()`, (c) cached canonical source counts with 5-min TTL. No product trade-offs — the per-category LIMIT 10 was already in place.
@@ -1428,6 +1454,7 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Event detail standings fix: StatPal returns `position` (team rank) as strings in `standings_data` JSONB. `_compute_standings_context()` compared these with `<=` against integers, crashing all event detail pages. Fixed with `int()` conversion + try/except. StatPal sync now stores numeric standings fields (draws, ties, points, goals, position) as `int` at write time.
 - ✅ Line movement 3-tier prompt: Split `build_llm_prompt()` into 3 instruction tiers — injuries/news → explain causes, game state only → describe factually (no speculation), no context → describe movement only. Eliminates vague hedging ("possibly due to key plays or scoring runs"). Admin endpoint `DELETE /api/admin/line-movement/cache/{event_id}` clears stale cached explanations.
 - ✅ Apple Sign-In: Firebase `signInWithPopup` with `OAuthProvider('apple.com')` — Firebase handles Apple OAuth through its own verified domain, no domain verification needed on `bainluck.com`. Backend `POST /api/auth/apple` endpoint with Apple JWKS verification, `GET /api/auth/status` dynamic provider list. Provider chooser dropdown (Google + Apple) in UserMenu and My Stuff sign-in prompt. Key gotchas solved: `browserPopupRedirectResolver` required in `initializeAuth` (Firebase v10), preload module to prevent popup blockers, read `currentUser` directly after popup for immediate state. 13 backend tests.
+- ✅ Pulse → Excitement Index (EI) migration: Replaced proprietary Pulse metric (weighted components: heart rate, amplitude, arrhythmia, vitals, time weight, lead changes) with standard GEI formula: `EI_raw = (T_regulation / T_actual) × Σ|pᵢ - pᵢ₋₁|`. New algorithm in `utils/excitement_index.py` with multi-source 30s time bucket aggregation. DB columns renamed via Alembic (`raw_gei` → `raw_ei`, `gei_components` → `ei_metadata`, `gei_percentiles` → `ei_percentiles`). Frontend `EIBadge.tsx` replaces `PulseBadge.tsx`. Routes `/ei` and `/ei/hall-of-fame` with `/pulse` redirect. API serves both `"ei"` and `"pulse"` keys for backward compat. 80+ tests in `test_excitement_index.py`.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1438,11 +1465,11 @@ See `docs/PRD.md` for full roadmap.
 
 ### Fix-Commit Problem
 ~34% of early commits were bug fixes, often for issues that could have been caught before deploy. Root causes:
-- Test suite now has 1681+ tests (1564+ backend + 117+ frontend) but initially had very few
+- Test suite now has 1800+ tests (1700+ backend + 117+ frontend) but initially had very few
 - Direct deploy to production without staging verification
 - Background task failures (Celery) — now mitigated by Sentry error tracking + heartbeat monitoring
 
-**Rule of thumb:** Before shipping changes to `pulse.py`, `highlights.py`, or the `tasks/` modules, write or run tests first.
+**Rule of thumb:** Before shipping changes to `excitement_index.py`, `highlights.py`, or the `tasks/` modules, write or run tests first.
 
 ### Tasks Package Architecture
 The former monolithic `tasks.py` was refactored into `backend/app/tasks/` (14 modules). Key architectural decisions:
@@ -1483,15 +1510,15 @@ The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout)
 
 4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-5. **Pulse data quality gating**: `calculate_pulse()` returns `None` for < 3 aggregated time buckets. For completed events, Pulse is only stored when `data_quality` is `"limited"` (10-29 buckets) or `"good"` (30+). Events with `"minimal"` data (3-9 buckets) get no stored score. Hall of Fame rankings additionally require 20+ distinct minute-level time buckets. Note: live games still show Pulse with any data quality for real-time feedback.
+5. **EI data quality gating**: `calculate_ei()` returns `None` for < 3 aggregated time buckets. For completed events, EI is only stored when `data_quality` is `"limited"` (10-29 buckets) or `"good"` (30+). Events with `"minimal"` data (3-9 buckets) get no stored score. Hall of Fame rankings additionally require 20+ distinct minute-level time buckets. Note: live games still show EI with any data quality for real-time feedback.
 
 6. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
 7. **CORS**: Production domains are whitelisted in `backend/app/main.py`.
 
-8. **Pulse scores are cached**: Changing the algorithm in `pulse.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
+8. **EI scores are cached**: Changing the algorithm in `excitement_index.py` does NOT retroactively update stored scores. You must run the force-recalculate endpoint afterward and verify with the distributions endpoint.
 
-9. **Pulse percentiles use completed games only**: The `gei_percentiles` table is computed from completed/closed events with `raw_gei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
+9. **EI percentiles use completed games only**: The `ei_percentiles` table is computed from completed/closed events with `raw_ei > 0`. Live games are excluded from the reference set to avoid skewing thresholds.
 
 10. **Celery tasks MUST use async DB sessions**: The database module only provides async sessions — there is no `SessionLocal`. New tasks go in the appropriate `tasks/` submodule with an async implementation, and get a thin wrapper in `tasks/__init__.py`:
     ```python
@@ -1529,8 +1556,8 @@ The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout)
 | What | Where |
 |------|-------|
 | API docs | `/docs` on backend URL |
-| Pulse explainer | https://bainluck.com/pulse |
-| Pulse Hall of Fame | https://bainluck.com/pulse/hall-of-fame |
+| EI explainer | https://bainluck.com/ei |
+| EI Hall of Fame | https://bainluck.com/ei/hall-of-fame |
 | Search | https://bainluck.com/search?q=celtics |
 | Market Was Wrong | https://bainluck.com/market-moves |
 | Oscars | https://bainluck.com/oscars |
