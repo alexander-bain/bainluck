@@ -29,7 +29,6 @@ const firebaseConfig = {
 };
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-const APPLE_CLIENT_ID = process.env.NEXT_PUBLIC_APPLE_CLIENT_ID;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // localStorage key for backend-only auth fallback (Safari ITP)
@@ -126,33 +125,6 @@ function loadGIS(): Promise<void> {
   });
 
   return gisLoadPromise;
-}
-
-/**
- * Load Apple Sign-In JS SDK.
- */
-let appleSDKLoaded = false;
-let appleSDKLoadPromise: Promise<void> | null = null;
-
-function loadAppleSDK(): Promise<void> {
-  if (appleSDKLoaded) return Promise.resolve();
-  if (appleSDKLoadPromise) return appleSDKLoadPromise;
-
-  appleSDKLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src =
-      "https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js";
-    script.async = true;
-    script.onload = () => {
-      appleSDKLoaded = true;
-      resolve();
-    };
-    script.onerror = () =>
-      reject(new Error("Failed to load Apple Sign-In SDK"));
-    document.head.appendChild(script);
-  });
-
-  return appleSDKLoadPromise;
 }
 
 /**
@@ -455,119 +427,82 @@ export async function signInWithGoogle(): Promise<string | null> {
 /**
  * Sign in with Apple.
  *
- * Opens the Apple Sign-In popup via Apple JS SDK, then tries three approaches:
- * 1. signInWithCredential with OAuthProvider('apple.com') (Chrome/Firefox)
- * 2. Backend POST /api/auth/apple → custom token → signInWithCustomToken
- * 3. Backend-only auth (Safari ITP fallback)
+ * Uses Firebase's signInWithPopup with OAuthProvider('apple.com').
+ * Firebase handles the Apple OAuth flow through its own verified domain
+ * (bainluck-26a47.firebaseapp.com), so no domain verification is needed
+ * on bainluck.com.
  *
- * Apple only sends the user's name on the FIRST authorization. It's captured
- * from the popup response and sent to the backend for storage.
+ * Falls back to backend exchange if signInWithPopup fails (e.g., Safari ITP).
  *
  * Returns the Firebase/backend ID token on success, null on failure.
  */
 export async function signInWithApple(): Promise<string | null> {
   const authInstance = await getFirebaseAuth();
-  if (!authInstance || !APPLE_CLIENT_ID) {
-    console.error("[Firebase] Auth not initialized or missing APPLE_CLIENT_ID");
+  if (!authInstance) {
+    console.error("[Firebase] Auth not initialized");
     return null;
   }
 
   try {
-    console.log("[Firebase] Opening Apple sign-in popup...");
-    await loadAppleSDK();
+    console.log("[Firebase] Opening Apple sign-in popup via Firebase...");
 
-    const appleID = window.AppleID;
-    if (!appleID?.auth) {
-      console.error("[Firebase] Apple Sign-In SDK not available");
-      return null;
-    }
-
-    appleID.auth.init({
-      clientId: APPLE_CLIENT_ID,
-      scope: "name email",
-      redirectURI: window.location.origin,
-      usePopup: true,
-    });
-
-    const appleResponse = await appleID.auth.signIn();
-    const appleIdToken = appleResponse.authorization.id_token;
-    const appleUser = appleResponse.user; // Only present on first auth
-    console.log("[Firebase] Got Apple id_token");
-
-    // Attempt 1: signInWithCredential with Apple OAuthProvider (Chrome/Firefox)
+    // Attempt 1: Firebase signInWithPopup with Apple OAuthProvider
     try {
-      const { OAuthProvider, signInWithCredential } = await import("firebase/auth");
+      const { OAuthProvider, signInWithPopup } = await import("firebase/auth");
       const provider = new OAuthProvider("apple.com");
-      const credential = provider.credential({ idToken: appleIdToken });
+      provider.addScope("email");
+      provider.addScope("name");
+
       const result = await withTimeout(
-        signInWithCredential(authInstance, credential),
-        4000,
-        "signInWithCredential (Apple)"
+        signInWithPopup(authInstance, provider),
+        120000, // 2 min — user may be slow typing Apple ID password
+        "signInWithPopup (Apple)"
       );
+
       console.log(
-        "[Firebase] Apple signInWithCredential succeeded for",
+        "[Firebase] Apple signInWithPopup succeeded for",
         result.user.email || result.user.uid
       );
 
-      // If we got the user's name on first auth, send it to the backend
-      // so it gets stored (Firebase credential flow doesn't always persist it)
-      if (appleUser?.name?.firstName || appleUser?.name?.lastName) {
-        const idToken = await result.user.getIdToken();
+      const idToken = await result.user.getIdToken();
+
+      // Extract name from Apple credential (only available on first auth)
+      const appleCredential = OAuthProvider.credentialFromResult(result);
+      const appleIdToken = appleCredential?.idToken;
+
+      // Register with backend (best-effort — captures name, creates DB user)
+      if (appleIdToken) {
         fetch(`${API_URL}/api/auth/apple`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id_token: appleIdToken,
-            first_name: appleUser.name?.firstName,
-            last_name: appleUser.name?.lastName,
-          }),
+          body: JSON.stringify({ id_token: appleIdToken }),
         }).catch(() => {
-          // Best-effort name capture — don't block sign-in
+          // Best-effort — don't block sign-in
         });
-        return idToken;
       }
 
-      return await result.user.getIdToken();
-    } catch (credError: unknown) {
-      const authError = credError as { code?: string; message?: string };
-      console.warn(
-        "[Firebase] Apple signInWithCredential failed:",
-        authError.message || authError.code,
-        "- trying backend exchange..."
-      );
-    }
+      return idToken;
+    } catch (popupError: unknown) {
+      const authError = popupError as { code?: string; message?: string };
 
-    // Attempt 2+3: Exchange via backend → custom token → fallback
-    let backendData: BackendExchangeData | null = null;
-
-    try {
-      const resp = await withTimeout(
-        fetch(`${API_URL}/api/auth/apple`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id_token: appleIdToken,
-            first_name: appleUser?.name?.firstName,
-            last_name: appleUser?.name?.lastName,
-          }),
-        }),
-        8000,
-        "backend Apple token exchange"
-      );
-
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        console.error("[Firebase] Backend Apple exchange failed:", resp.status, text);
+      // User closed the popup — don't try fallbacks
+      if (authError.code === "auth/popup-closed-by-user" || authError.code === "auth/cancelled-popup-request") {
+        console.log("[Firebase] Apple popup closed by user");
         return null;
       }
 
-      backendData = await resp.json();
-    } catch (fetchError) {
-      console.error("[Firebase] Backend Apple exchange fetch failed:", fetchError);
-      return null;
+      console.warn(
+        "[Firebase] Apple signInWithPopup failed:",
+        authError.message || authError.code,
+        "- trying backend fallback..."
+      );
     }
 
-    return await handleBackendExchange(authInstance, backendData!);
+    // Attempt 2+3: Backend-only fallback (Safari ITP)
+    // Without Apple's JS SDK, we can't get an Apple id_token client-side
+    // when signInWithPopup fails. Redirect to backend Apple OAuth flow instead.
+    console.warn("[Firebase] Apple sign-in: no client-side fallback available. signInWithPopup is required.");
+    return null;
   } catch (error) {
     console.error("[Firebase] Apple sign-in error:", error);
     return null;
