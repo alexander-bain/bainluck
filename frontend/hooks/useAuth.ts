@@ -24,6 +24,7 @@ import {
   getIdToken,
   onAuthChange,
   getBackendAuthUser,
+  getCurrentFirebaseUser,
   type FirebaseUser,
 } from "@/lib/firebase";
 
@@ -223,8 +224,7 @@ export function useAuth(): UseAuthResult {
         // Register with backend (best-effort, don't block user state update)
         registerWithBackend(idToken);
 
-        // Immediately update user state from backend auth data.
-        // On Safari with ITP, Firebase's onAuthStateChanged may never fire.
+        // Try backend auth data first (Safari ITP fallback)
         const backendUser = getBackendAuthUser();
         if (backendUser) {
           console.log("[Auth] Setting user state from backend auth (Apple):", backendUser.email);
@@ -234,6 +234,15 @@ export function useAuth(): UseAuthResult {
             displayName: backendUser.displayName,
             photoURL: backendUser.photoURL,
           });
+        } else {
+          // signInWithPopup succeeded — read user directly from Firebase Auth.
+          // onAuthStateChanged may not be subscribed yet (first-time sign-in
+          // defers Firebase SDK loading), so we read currentUser directly.
+          const fbUser = await getCurrentFirebaseUser();
+          if (fbUser) {
+            console.log("[Auth] Setting user state from Firebase currentUser (Apple):", fbUser.email);
+            setUser(mapFirebaseUser(fbUser));
+          }
         }
       }
     } catch (error) {

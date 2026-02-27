@@ -481,22 +481,29 @@ export async function signInWithApple(): Promise<string | null> {
 
     const idToken = await result.user.getIdToken();
 
-    // Register with backend (best-effort — captures name, creates DB user)
-    const appleCredential = authModule.OAuthProvider.credentialFromResult(result);
-    const appleIdToken = appleCredential?.idToken;
-    if (appleIdToken) {
-      fetch(`${API_URL}/api/auth/apple`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: appleIdToken }),
-      }).catch(() => {});
-    }
+    // Register with backend using Firebase ID token (same as Google flow).
+    // Best-effort — don't block sign-in.
+    fetch(`${API_URL}/api/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_token: idToken }),
+    }).catch(() => {});
 
     return idToken;
   } catch (error) {
     console.error("[Firebase] Apple sign-in error:", error);
     return null;
   }
+}
+
+/**
+ * Get the current Firebase user (if signed in).
+ * Used to immediately read user state after signInWithPopup succeeds,
+ * without waiting for onAuthStateChanged.
+ */
+export async function getCurrentFirebaseUser(): Promise<FirebaseUser | null> {
+  const authInstance = await getFirebaseAuth();
+  return authInstance?.currentUser ?? null;
 }
 
 /**
