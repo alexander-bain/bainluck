@@ -62,6 +62,37 @@ class TestParseDatetime:
         dt = datetime(2026, 2, 25, tzinfo=timezone.utc)
         assert _parse_datetime(dt) == dt
 
+    def test_dd_mm_yyyy_with_time(self):
+        """StatPal uses DD.MM.YYYY HH:MM format for dates."""
+        from app.services.statpal_api import _parse_datetime
+        dt = _parse_datetime("27.02.2026 19:30")
+        assert dt is not None
+        assert dt.year == 2026
+        assert dt.month == 2
+        assert dt.day == 27
+        assert dt.hour == 19
+        assert dt.minute == 30
+        assert dt.tzinfo == timezone.utc
+
+    def test_dd_mm_yyyy_date_only(self):
+        """StatPal date-only format."""
+        from app.services.statpal_api import _parse_datetime
+        dt = _parse_datetime("11.10.2025")
+        assert dt is not None
+        assert dt.year == 2025
+        assert dt.month == 10
+        assert dt.day == 11
+
+    def test_dd_mm_yyyy_midnight(self):
+        """StatPal sometimes has 00:00 for TBD times."""
+        from app.services.statpal_api import _parse_datetime
+        dt = _parse_datetime("15.03.2026 00:00")
+        assert dt is not None
+        assert dt.year == 2026
+        assert dt.month == 3
+        assert dt.day == 15
+        assert dt.hour == 0
+
 
 # =============================================================================
 # Status normalization
@@ -96,6 +127,13 @@ class TestNormalizeStatus:
         assert _normalize_status("AET") == "finished"
         assert _normalize_status("Completed") == "finished"
         assert _normalize_status("Game Over") == "finished"
+
+    def test_after_overtime_variants(self):
+        """StatPal uses 'After Over Time' for overtime finishes."""
+        from app.services.statpal_api import _normalize_status
+        assert _normalize_status("After Over Time") == "finished"
+        assert _normalize_status("after overtime") == "finished"
+        assert _normalize_status("After Extra Time") == "finished"
 
     def test_postponed_variants(self):
         from app.services.statpal_api import _normalize_status
@@ -354,6 +392,458 @@ class TestFixtureParsing:
         fixture = service._parse_single_fixture(item)
         assert fixture.end_time is not None
         assert fixture.end_time.hour == 22
+
+
+# =============================================================================
+# _extract_match_items — response format extraction
+# =============================================================================
+
+class TestExtractMatchItems:
+    """Tests for _extract_match_items with various StatPal response formats."""
+
+    def test_v1_season_schedule_format(self):
+        """v1 NBA/NFL/NHL/MLB: {"scores": {"tournament": {"match": [...]}}}"""
+        from app.services.statpal_api import StatPalAPIService
+        data = {
+            "scores": {
+                "tournament": {
+                    "league": "NBA",
+                    "season": "2025/2026",
+                    "match": [
+                        {"id": "1", "home": {"name": "Celtics"}, "away": {"name": "Lakers"}},
+                        {"id": "2", "home": {"name": "Nets"}, "away": {"name": "Knicks"}},
+                    ]
+                }
+            }
+        }
+        items = StatPalAPIService._extract_match_items(data)
+        assert len(items) == 2
+        assert items[0]["id"] == "1"
+        assert items[1]["id"] == "2"
+
+    def test_v1_livescores_format(self):
+        """v1 livescores: {"livescores": {"tournament": {"match": [...]}}}"""
+        from app.services.statpal_api import StatPalAPIService
+        data = {
+            "livescores": {
+                "tournament": {
+                    "match": [
+                        {"id": "10", "home": {"name": "Heat"}, "away": {"name": "Bulls"}},
+                    ]
+                }
+            }
+        }
+        items = StatPalAPIService._extract_match_items(data)
+        assert len(items) == 1
+        assert items[0]["id"] == "10"
+
+    def test_soccer_v2_daily_format(self):
+        """Soccer v2: {"matches_DD_MM_YYYY": {"league": [{"match": [...]}]}}"""
+        from app.services.statpal_api import StatPalAPIService
+        data = {
+            "matches_28_02_2026": {
+                "league": [
+                    {
+                        "league_name": "English Premier League",
+                        "match": [
+                            {"id": "100", "home": {"name": "Arsenal"}, "away": {"name": "Chelsea"}},
+                            {"id": "101", "home": {"name": "Liverpool"}, "away": {"name": "Man City"}},
+                        ]
+                    },
+                    {
+                        "league_name": "La Liga",
+                        "match": [
+                            {"id": "200", "home": {"name": "Barcelona"}, "away": {"name": "Real Madrid"}},
+                        ]
+                    },
+                ]
+            }
+        }
+        items = StatPalAPIService._extract_match_items(data)
+        assert len(items) == 3
+        assert items[0]["id"] == "100"
+        assert items[2]["id"] == "200"
+
+    def test_soccer_v2_single_match_as_dict(self):
+        """Soccer v2: single match returned as dict instead of list."""
+        from app.services.statpal_api import StatPalAPIService
+        data = {
+            "matches_28_02_2026": {
+                "league": [
+                    {
+                        "league_name": "MLS",
+                        "match": {"id": "300", "home": {"name": "LAFC"}, "away": {"name": "Galaxy"}},
+                    },
+                ]
+            }
+        }
+        items = StatPalAPIService._extract_match_items(data)
+        assert len(items) == 1
+        assert items[0]["id"] == "300"
+
+    def test_golf_fixtures_format(self):
+        """Golf: {"fixtures": {"tournament": [...]}}"""
+        from app.services.statpal_api import StatPalAPIService
+        data = {
+            "fixtures": {
+                "tournament": [
+                    {"id": "PGA1", "name": "The Masters"},
+                    {"id": "PGA2", "name": "US Open"},
+                ]
+            }
+        }
+        items = StatPalAPIService._extract_match_items(data)
+        assert len(items) == 2
+
+    def test_data_wrapper_fallback(self):
+        """Fallback: {"data": [...]}"""
+        from app.services.statpal_api import StatPalAPIService
+        data = {
+            "data": [
+                {"id": "1", "home_team": "A", "away_team": "B"},
+            ]
+        }
+        items = StatPalAPIService._extract_match_items(data)
+        assert len(items) == 1
+
+    def test_empty_dict(self):
+        from app.services.statpal_api import StatPalAPIService
+        items = StatPalAPIService._extract_match_items({})
+        assert items == []
+
+    def test_non_dict_passthrough(self):
+        """Non-dict, non-list data is wrapped in a list."""
+        from app.services.statpal_api import StatPalAPIService
+        items = StatPalAPIService._extract_match_items("some_string")
+        assert items == ["some_string"]
+
+    def test_list_input_passthrough(self):
+        """List input is returned directly."""
+        from app.services.statpal_api import StatPalAPIService
+        data = [{"id": "1"}, {"id": "2"}]
+        items = StatPalAPIService._extract_match_items(data)
+        assert len(items) == 2
+        assert items[0]["id"] == "1"
+
+    def test_none_returns_empty(self):
+        from app.services.statpal_api import StatPalAPIService
+        items = StatPalAPIService._extract_match_items(None)
+        assert items == []
+
+
+# =============================================================================
+# StatPal native match format parsing
+# =============================================================================
+
+class TestStatPalNativeFormat:
+    """Tests for _parse_single_fixture with StatPal's actual v1 format.
+
+    StatPal returns: {"id": "988739", "date": "11.10.2025", "time": "00:00",
+                      "status": "Finished", "venue": "Frost Bank Center",
+                      "home": {"id": "2689", "name": "San Antonio Spurs", "totalscore": "134"},
+                      "away": {"id": "2679", "name": "Utah Jazz", "totalscore": "130"}}
+    """
+
+    def test_basic_nba_match(self):
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "988739",
+            "date": "11.10.2025",
+            "time": "00:00",
+            "status": "Finished",
+            "venue": "Frost Bank Center",
+            "home": {"id": "2689", "name": "San Antonio Spurs", "totalscore": "134"},
+            "away": {"id": "2679", "name": "Utah Jazz", "totalscore": "130"},
+        }
+        fixture = service._parse_single_fixture(item)
+        assert fixture is not None
+        assert fixture.fixture_id == "988739"
+        assert fixture.home_team == "San Antonio Spurs"
+        assert fixture.away_team == "Utah Jazz"
+        assert fixture.home_team_id == "2689"
+        assert fixture.away_team_id == "2679"
+        assert fixture.home_score == 134
+        assert fixture.away_score == 130
+        assert fixture.status == "finished"
+        assert fixture.venue == "Frost Bank Center"
+        assert fixture.start_time is not None
+        assert fixture.start_time.year == 2025
+        assert fixture.start_time.month == 10
+        assert fixture.start_time.day == 11
+
+    def test_scheduled_match_with_time(self):
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "1001234",
+            "date": "27.02.2026",
+            "time": "19:30",
+            "status": "Not Started",
+            "venue": "TD Garden",
+            "home": {"id": "2685", "name": "Boston Celtics"},
+            "away": {"id": "2691", "name": "Brooklyn Nets"},
+        }
+        fixture = service._parse_single_fixture(item)
+        assert fixture is not None
+        assert fixture.home_team == "Boston Celtics"
+        assert fixture.away_team == "Brooklyn Nets"
+        assert fixture.status == "scheduled"
+        assert fixture.home_score is None
+        assert fixture.away_score is None
+        assert fixture.start_time is not None
+        assert fixture.start_time.hour == 19
+        assert fixture.start_time.minute == 30
+
+    def test_live_match_with_scores(self):
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "1001235",
+            "date": "27.02.2026",
+            "time": "20:00",
+            "status": "Q3",
+            "venue": "Chase Center",
+            "home": {"id": "2688", "name": "Golden State Warriors", "totalscore": "78"},
+            "away": {"id": "2687", "name": "Denver Nuggets", "totalscore": "72"},
+        }
+        fixture = service._parse_single_fixture(item)
+        assert fixture is not None
+        assert fixture.status == "live"
+        assert fixture.home_score == 78
+        assert fixture.away_score == 72
+
+    def test_totalscore_as_int(self):
+        """totalscore may come as int instead of string."""
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "123",
+            "date": "27.02.2026",
+            "time": "19:00",
+            "status": "Finished",
+            "home": {"id": "1", "name": "Team A", "totalscore": 110},
+            "away": {"id": "2", "name": "Team B", "totalscore": 105},
+        }
+        fixture = service._parse_single_fixture(item)
+        assert fixture.home_score == 110
+        assert fixture.away_score == 105
+
+    def test_missing_totalscore(self):
+        """Scheduled matches may have no totalscore."""
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "456",
+            "date": "01.03.2026",
+            "time": "20:00",
+            "status": "NS",
+            "home": {"id": "1", "name": "Team A"},
+            "away": {"id": "2", "name": "Team B"},
+        }
+        fixture = service._parse_single_fixture(item)
+        assert fixture.home_score is None
+        assert fixture.away_score is None
+
+    def test_after_over_time_status(self):
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "789",
+            "date": "27.02.2026",
+            "time": "19:00",
+            "status": "After Over Time",
+            "home": {"id": "1", "name": "Team A", "totalscore": "120"},
+            "away": {"id": "2", "name": "Team B", "totalscore": "118"},
+        }
+        fixture = service._parse_single_fixture(item)
+        assert fixture.status == "finished"
+
+    def test_date_only_no_time(self):
+        """When time field is missing, should still parse date."""
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        item = {
+            "id": "999",
+            "date": "15.03.2026",
+            "status": "NS",
+            "home": {"id": "1", "name": "Team A"},
+            "away": {"id": "2", "name": "Team B"},
+        }
+        fixture = service._parse_single_fixture(item)
+        assert fixture.start_time is not None
+        assert fixture.start_time.day == 15
+        assert fixture.start_time.month == 3
+
+
+# =============================================================================
+# Full _parse_fixtures chain with realistic data
+# =============================================================================
+
+class TestParseFixturesChain:
+    """Tests for the full _parse_fixtures pipeline with realistic StatPal responses."""
+
+    def test_nba_season_schedule(self):
+        """Full NBA season-schedule response → parsed fixtures."""
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        data = {
+            "scores": {
+                "tournament": {
+                    "league": "NBA",
+                    "season": "2025/2026",
+                    "match": [
+                        {
+                            "id": "988739",
+                            "date": "11.10.2025",
+                            "time": "00:00",
+                            "status": "Finished",
+                            "venue": "Frost Bank Center",
+                            "home": {"id": "2689", "name": "San Antonio Spurs", "totalscore": "134"},
+                            "away": {"id": "2679", "name": "Utah Jazz", "totalscore": "130"},
+                        },
+                        {
+                            "id": "1001234",
+                            "date": "27.02.2026",
+                            "time": "19:30",
+                            "status": "Not Started",
+                            "venue": "TD Garden",
+                            "home": {"id": "2685", "name": "Boston Celtics"},
+                            "away": {"id": "2691", "name": "Brooklyn Nets"},
+                        },
+                    ]
+                }
+            }
+        }
+        fixtures = service._parse_fixtures(data, "nba")
+        assert len(fixtures) == 2
+        assert fixtures[0].fixture_id == "988739"
+        assert fixtures[0].home_team == "San Antonio Spurs"
+        assert fixtures[0].status == "finished"
+        assert fixtures[0].home_score == 134
+        assert fixtures[1].fixture_id == "1001234"
+        assert fixtures[1].home_team == "Boston Celtics"
+        assert fixtures[1].status == "scheduled"
+        assert fixtures[1].start_time.hour == 19
+        assert fixtures[1].start_time.minute == 30
+
+    def test_soccer_v2_multi_league(self):
+        """Soccer v2 multi-league response → parsed fixtures from all leagues."""
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        data = {
+            "matches_28_02_2026": {
+                "league": [
+                    {
+                        "league_name": "English Premier League",
+                        "match": [
+                            {
+                                "id": "500",
+                                "date": "28.02.2026",
+                                "time": "15:00",
+                                "status": "NS",
+                                "home": {"id": "10", "name": "Arsenal"},
+                                "away": {"id": "11", "name": "Chelsea"},
+                            },
+                        ]
+                    },
+                    {
+                        "league_name": "La Liga",
+                        "match": [
+                            {
+                                "id": "501",
+                                "date": "28.02.2026",
+                                "time": "21:00",
+                                "status": "NS",
+                                "home": {"id": "20", "name": "Real Madrid"},
+                                "away": {"id": "21", "name": "Barcelona"},
+                            },
+                        ]
+                    },
+                ]
+            }
+        }
+        fixtures = service._parse_fixtures(data, "soccer")
+        assert len(fixtures) == 2
+        assert fixtures[0].home_team == "Arsenal"
+        assert fixtures[1].home_team == "Real Madrid"
+
+    def test_empty_match_list(self):
+        """Season schedule with no matches returns empty list."""
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        data = {
+            "scores": {
+                "tournament": {
+                    "league": "NFL",
+                    "match": []
+                }
+            }
+        }
+        fixtures = service._parse_fixtures(data, "nfl")
+        assert fixtures == []
+
+    def test_malformed_items_skipped(self):
+        """Non-dict items in the match list are skipped gracefully."""
+        from app.services.statpal_api import StatPalAPIService
+        service = StatPalAPIService.__new__(StatPalAPIService)
+        data = {
+            "scores": {
+                "tournament": {
+                    "match": [
+                        "not_a_dict",
+                        None,
+                        {
+                            "id": "1",
+                            "date": "27.02.2026",
+                            "time": "19:00",
+                            "status": "NS",
+                            "home": {"id": "1", "name": "Team A"},
+                            "away": {"id": "2", "name": "Team B"},
+                        },
+                    ]
+                }
+            }
+        }
+        fixtures = service._parse_fixtures(data, "nba")
+        assert len(fixtures) == 1
+        assert fixtures[0].home_team == "Team A"
+
+
+# =============================================================================
+# Schedule endpoint mapping
+# =============================================================================
+
+class TestScheduleEndpoints:
+    """Tests for _SCHEDULE_ENDPOINTS mapping."""
+
+    def test_major_sports_use_season_schedule(self):
+        from app.services.statpal_api import StatPalAPIService
+        for sport in ("nba", "nfl", "nhl", "mlb"):
+            assert StatPalAPIService._SCHEDULE_ENDPOINTS[sport] == "season-schedule", \
+                f"{sport} should use season-schedule"
+
+    def test_soccer_uses_matches_daily(self):
+        from app.services.statpal_api import StatPalAPIService
+        assert StatPalAPIService._SCHEDULE_ENDPOINTS["soccer"] == "matches/daily"
+
+    def test_golf_uses_schedule(self):
+        from app.services.statpal_api import StatPalAPIService
+        assert StatPalAPIService._SCHEDULE_ENDPOINTS["golf"] == "schedule"
+        assert StatPalAPIService._SCHEDULE_ENDPOINTS["pga"] == "schedule"
+
+    def test_f1_uses_schedule(self):
+        from app.services.statpal_api import StatPalAPIService
+        assert StatPalAPIService._SCHEDULE_ENDPOINTS["f1"] == "schedule"
+
+    def test_cricket_uses_upcoming_schedule(self):
+        from app.services.statpal_api import StatPalAPIService
+        assert StatPalAPIService._SCHEDULE_ENDPOINTS["cricket"] == "upcoming-schedule"
+
+    def test_unknown_sport_defaults_to_season_schedule(self):
+        """Unknown sports fall back to season-schedule via dict.get()."""
+        from app.services.statpal_api import StatPalAPIService
+        assert StatPalAPIService._SCHEDULE_ENDPOINTS.get("esports", "season-schedule") == "season-schedule"
 
 
 # =============================================================================

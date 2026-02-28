@@ -78,9 +78,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 
                 sport_id = sport_row.id
 
-                # Fetch today's and upcoming fixtures
-                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                fixtures = await service.get_fixtures(statpal_sport, date=today)
+                # Fetch schedule — season-schedule returns full season for v1 sports
+                # We'll filter to a useful window (yesterday to +7 days) in the loop
+                fixtures = await service.get_fixtures(statpal_sport)
 
                 # Also fetch live scores to get current game state
                 live = await service.get_live_scores(statpal_sport)
@@ -92,10 +92,17 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                 sport_updated = 0
                 sport_created = 0
                 now = datetime.now(timezone.utc)
+                window_start = now - timedelta(days=1)
+                window_end = now + timedelta(days=7)
 
                 for fixture in fixtures:
                     if not fixture.home_team or not fixture.away_team:
                         continue
+
+                    # Filter to relevant window — skip fixtures outside -1d to +7d
+                    if fixture.start_time:
+                        if fixture.start_time < window_start or fixture.start_time > window_end:
+                            continue
 
                     total_fixtures += 1
 

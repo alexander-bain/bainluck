@@ -215,6 +215,22 @@ class StatPalAPIService:
     # Fixtures / Schedules
     # -------------------------------------------------------------------------
 
+    # Correct endpoint names per the StatPal OpenAPI spec.
+    # v1 sports (NBA/NFL/NHL/MLB) use "season-schedule".
+    # Soccer v2 uses "matches/daily" with an offset param.
+    # Golf/F1 use "schedule". Cricket uses "upcoming-schedule".
+    _SCHEDULE_ENDPOINTS: dict[str, str] = {
+        "nba": "season-schedule",
+        "nfl": "season-schedule",
+        "nhl": "season-schedule",
+        "mlb": "season-schedule",
+        "soccer": "matches/daily",
+        "golf": "schedule",
+        "pga": "schedule",
+        "f1": "schedule",
+        "cricket": "upcoming-schedule",
+    }
+
     async def get_fixtures(
         self,
         sport: str,
@@ -233,15 +249,29 @@ class StatPalAPIService:
         Returns:
             List of StatPalFixture objects.
         """
+        endpoint = self._SCHEDULE_ENDPOINTS.get(sport, "season-schedule")
         params = {}
         if season:
             params["season"] = season
-        if date:
-            params["date"] = date
         if league_id:
             params["league"] = league_id
 
-        data = await self._get(sport, "fixtures", params)
+        # Soccer v2 uses "matches/daily" with an offset param (0 = today)
+        if sport == "soccer" and endpoint == "matches/daily":
+            # Fetch today (offset=0 is not supported, use offset=1 for tomorrow
+            # and offset=-1 for yesterday). We'll fetch today's live scores
+            # via get_live_scores() instead and fetch tomorrow's schedule here.
+            params["offset"] = 1
+            data = await self._get(sport, endpoint, params)
+            results = self._parse_fixtures(data, sport) if data else []
+            # Also fetch +2 days for upcoming
+            params["offset"] = 2
+            data2 = await self._get(sport, endpoint, params)
+            if data2:
+                results.extend(self._parse_fixtures(data2, sport))
+            return results
+
+        data = await self._get(sport, endpoint, params)
         if not data:
             return []
 
@@ -263,12 +293,17 @@ class StatPalAPIService:
         return self._parse_fixtures(data, sport)
 
     def _parse_fixtures(self, data: dict, sport: str) -> list[StatPalFixture]:
-        """Parse fixture/livescore response into StatPalFixture objects."""
+        """Parse fixture/livescore/season-schedule response into StatPalFixture objects.
+
+        StatPal v1 season-schedule returns:
+          {"scores": {"tournament": {"match": [...], "league": "NBA", "season": "2025/2026"}}}
+        StatPal v1 livescores returns similar nested structure.
+        Soccer v2 returns:
+          {"matches_DD_MM_YYYY": {"league": [{"match": [...]}]}}
+          or {"live_matches": {"league": [{"match": [...]}]}}
+        """
         fixtures = []
-        # StatPal returns data in a "data" wrapper or as a list
-        items = data.get("data", data) if isinstance(data, dict) else data
-        if not isinstance(items, list):
-            items = [items] if items else []
+        items = self._extract_match_items(data)
 
         for item in items:
             try:
@@ -281,30 +316,106 @@ class StatPalAPIService:
 
         return fixtures
 
+    @staticmethod
+    def _extract_match_items(data) -> list:
+        """Extract the list of match dicts from the various StatPal response formats."""
+        if isinstance(data, list):
+            return data
+        if not isinstance(data, dict):
+            return [data] if data else []
+
+        # v1 season-schedule: {"scores": {"tournament": {"match": [...]}}}
+        # v1 livescores:     {"livescores": {"tournament": {"match": [...]}}}
+        for top_key in ("scores", "livescores"):
+            section = data.get(top_key)
+            if isinstance(section, dict):
+                tournament = section.get("tournament")
+                if isinstance(tournament, dict):
+                    matches = tournament.get("match", [])
+                    if isinstance(matches, list):
+                        return matches
+                # Alternate: {"scores": {"match": [...]}}
+                matches = section.get("match", [])
+                if isinstance(matches, list) and matches:
+                    return matches
+
+        # Soccer v2 live: {"live_matches": {"league": [{"match": [...]}]}}
+        # Soccer v2 daily: {"matches_DD_MM_YYYY": {"league": [{"match": [...]}]}}
+        for key, val in data.items():
+            if isinstance(val, dict) and "league" in val:
+                all_matches = []
+                for league_group in val.get("league", []):
+                    if isinstance(league_group, dict):
+                        league_matches = league_group.get("match", [])
+                        if isinstance(league_matches, list):
+                            all_matches.extend(league_matches)
+                        elif isinstance(league_matches, dict):
+                            all_matches.append(league_matches)
+                if all_matches:
+                    return all_matches
+
+        # Golf/F1: {"fixtures": {"tournament": [...]}}
+        fixtures_section = data.get("fixtures")
+        if isinstance(fixtures_section, dict):
+            tournaments = fixtures_section.get("tournament", [])
+            if isinstance(tournaments, list):
+                return tournaments
+
+        # Fallback: try "data" wrapper or treat as list
+        items = data.get("data", data)
+        if isinstance(items, list):
+            return items
+        if isinstance(items, dict) and items:
+            return [items]
+
+        return []
+
     def _parse_single_fixture(self, item: dict) -> Optional[StatPalFixture]:
-        """Parse a single fixture from the API response."""
+        """Parse a single fixture/match from the API response.
+
+        StatPal v1 match format:
+          {"id": "988739", "date": "11.10.2025", "time": "00:00",
+           "status": "Finished", "venue": "Frost Bank Center",
+           "home": {"id": "2689", "name": "San Antonio Spurs", "totalscore": "134", ...},
+           "away": {"id": "2679", "name": "Utah Jazz", "totalscore": "130", ...}}
+        """
         if not isinstance(item, dict):
             return None
 
-        # Extract team info — structure varies by sport
+        # Extract team info
         home_team = ""
         away_team = ""
         home_team_id = None
         away_team_id = None
+        home_score = None
+        away_score = None
 
-        # Try nested team objects first
-        teams = item.get("teams", {})
-        if isinstance(teams, dict):
-            home = teams.get("home", {})
-            away = teams.get("away", {})
-            if isinstance(home, dict):
-                home_team = home.get("name", "")
-                home_team_id = str(home.get("id", "")) or None
-            if isinstance(away, dict):
-                away_team = away.get("name", "")
-                away_team_id = str(away.get("id", "")) or None
+        # StatPal format: "home" and "away" are direct objects with name, id, totalscore
+        home = item.get("home", {})
+        away = item.get("away", {})
+        if isinstance(home, dict):
+            home_team = home.get("name", "")
+            home_team_id = str(home.get("id", "")) or None
+            home_score = _safe_int(home.get("totalscore"))
+        if isinstance(away, dict):
+            away_team = away.get("name", "")
+            away_team_id = str(away.get("id", "")) or None
+            away_score = _safe_int(away.get("totalscore"))
 
-        # Fallback to flat fields
+        # Fallback: nested "teams" object (other API formats)
+        if not home_team:
+            teams = item.get("teams", {})
+            if isinstance(teams, dict):
+                h = teams.get("home", {})
+                a = teams.get("away", {})
+                if isinstance(h, dict):
+                    home_team = h.get("name", "")
+                    home_team_id = home_team_id or (str(h.get("id", "")) or None)
+                if isinstance(a, dict):
+                    away_team = a.get("name", "")
+                    away_team_id = away_team_id or (str(a.get("id", "")) or None)
+
+        # Fallback: flat fields
         if not home_team:
             home_team = item.get("home_team", item.get("home_name", ""))
         if not away_team:
@@ -313,23 +424,27 @@ class StatPalAPIService:
         if not home_team or not away_team:
             return None
 
-        # Parse scores — try nested "scores" dict, then flat fields
-        scores = item.get("scores", item.get("score"))
-        home_score = None
-        away_score = None
-        if isinstance(scores, dict) and scores:
-            home_score = _safe_int(scores.get("home", scores.get("home_score")))
-            away_score = _safe_int(scores.get("away", scores.get("away_score")))
-        # Fallback to flat score fields
+        # Parse scores — fallback to nested "scores" dict or flat fields
+        if home_score is None:
+            scores = item.get("scores", item.get("score"))
+            if isinstance(scores, dict) and scores:
+                home_score = _safe_int(scores.get("home", scores.get("home_score")))
+                away_score = _safe_int(scores.get("away", scores.get("away_score")))
         if home_score is None and item.get("home_score") is not None:
             home_score = _safe_int(item.get("home_score"))
         if away_score is None and item.get("away_score") is not None:
             away_score = _safe_int(item.get("away_score"))
 
-        # Parse start time
-        start_time = _parse_datetime(
-            item.get("date", item.get("start_time", item.get("datetime")))
-        )
+        # Parse start time — StatPal uses "date" (DD.MM.YYYY) + "time" (HH:MM)
+        date_str = item.get("date", "")
+        time_str = item.get("time", "")
+        start_time = None
+        if date_str and time_str:
+            start_time = _parse_datetime(f"{date_str} {time_str}")
+        if not start_time:
+            start_time = _parse_datetime(
+                date_str or item.get("start_time", item.get("datetime"))
+            )
 
         # Parse end time (if available — typically only for finished games)
         end_time = _parse_datetime(item.get("end_time"))
@@ -342,6 +457,11 @@ class StatPalAPIService:
 
         fixture_id = str(item.get("id", item.get("fixture_id", "")))
 
+        # Venue — can be a string or a dict
+        venue = item.get("venue")
+        if isinstance(venue, dict):
+            venue = venue.get("name", "")
+
         return StatPalFixture(
             fixture_id=fixture_id,
             home_team=home_team,
@@ -353,7 +473,7 @@ class StatPalAPIService:
             status=status,
             home_score=home_score,
             away_score=away_score,
-            venue=item.get("venue", {}).get("name") if isinstance(item.get("venue"), dict) else item.get("venue"),
+            venue=venue,
             league=item.get("league", {}).get("name") if isinstance(item.get("league"), dict) else item.get("league"),
             season=str(item.get("season", "")) or None,
             round_info=item.get("round", item.get("week")),
@@ -698,7 +818,7 @@ def _parse_datetime(val) -> Optional[datetime]:
         return val
 
     val = str(val).strip()
-    # Try ISO 8601 first
+    # Try ISO 8601 and common formats
     for fmt in (
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%SZ",
@@ -706,6 +826,8 @@ def _parse_datetime(val) -> Optional[datetime]:
         "%Y-%m-%dT%H:%M:%S.%fZ",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d",
+        "%d.%m.%Y %H:%M",       # StatPal: "27.02.2026 19:30"
+        "%d.%m.%Y",              # StatPal: "27.02.2026"
     ):
         try:
             dt = datetime.strptime(val, fmt)
@@ -729,7 +851,8 @@ def _normalize_status(status: str) -> str:
         return "scheduled"
     if s in ("live", "in progress", "1h", "2h", "ht", "et", "p", "bt", "q1", "q2", "q3", "q4", "ot"):
         return "live"
-    if s in ("finished", "final", "ft", "aet", "pen", "completed", "game over"):
+    if s in ("finished", "final", "ft", "aet", "pen", "completed", "game over",
+             "after over time", "after overtime", "after extra time"):
         return "finished"
     if s in ("postponed", "pst", "delayed"):
         return "postponed"
