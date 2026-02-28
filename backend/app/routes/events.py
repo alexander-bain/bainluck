@@ -2015,7 +2015,10 @@ async def get_related_futures(
     # ── Game-specific market filtering ────────────────────────────
     # Game-specific markets (stat props AND matchup markets) are tied to a
     # single game and should only appear on THAT event's detail page.
+    # For completed/closed events, game-specific markets are always hidden —
+    # their probabilities are stale (markets may not have resolved in our data).
     # Season-long markets (championship, MVP, awards) always show.
+    event_is_finished = event.status in ("completed", "closed")
     event_commence_time = event.commence_time
     GAME_TIME_WINDOW = timedelta(hours=6)  # ±6h for game market matching
 
@@ -2060,10 +2063,12 @@ async def get_related_futures(
 
         market = outcome.market
 
-        # ── Filter game-specific markets that don't belong to this event ──
-        # Game-specific markets (matchups, stat props) are tied to a specific game.
-        if _is_game_specific_market(market) and not _game_market_matches_event(market):
-            continue
+        # ── Filter game-specific markets ──
+        # For finished events: hide ALL game-specific markets (stale odds).
+        # For live/scheduled: only show game-specific markets that match THIS event.
+        if _is_game_specific_market(market):
+            if event_is_finished or not _game_market_matches_event(market):
+                continue
 
         # Classify: team_id first (reliable for player outcomes), then name matching
         is_home = outcome.team_id in home_team_ids if outcome.team_id else False
