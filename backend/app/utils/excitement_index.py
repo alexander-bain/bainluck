@@ -293,7 +293,14 @@ def calculate_ei(
     if t_actual < 60:
         t_actual = t_regulation  # Fallback to regulation length
 
-    raw_ei = (t_regulation / t_actual) * total_change
+    # Cap the time normalization ratio at 2.0x to prevent games with thin
+    # data coverage (e.g., 12 min of a 135-min baseball game) from getting
+    # inflated scores. If we have less than half the regulation time in data,
+    # assume the unseen portion was average, not extrapolated from a short window.
+    time_ratio = t_regulation / t_actual
+    time_ratio = min(time_ratio, 2.0)
+
+    raw_ei = time_ratio * total_change
 
     # =========================================================================
     # Lead changes: count 50% crossings
