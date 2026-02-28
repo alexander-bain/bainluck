@@ -2220,8 +2220,13 @@ async def odds_api_daily_activity(
     db: AsyncSession = Depends(get_db),
     month: int = Query(2, description="Month (1-12)"),
     year: int = Query(2026, description="Year"),
+    table: str = Query("odds", description="Table to query: odds, futures, winprob, or all"),
 ):
-    """Infer daily Odds API call volume from snapshot row counts."""
+    """Infer daily Odds API call volume from snapshot row counts.
+
+    Query one table at a time (table=odds|futures|winprob) to stay within
+    Heroku's 30-second timeout, or table=all to try all three.
+    """
     from sqlalchemy import text
 
     start = f"{year}-{month:02d}-01"
@@ -2230,69 +2235,65 @@ async def odds_api_daily_activity(
     else:
         end = f"{year}-{month + 1:02d}-01"
 
-    # Count odds_snapshots by day (each row = 1 bookmaker×event data point from an API call)
-    odds_q = await db.execute(text("""
-        SELECT date_trunc('day', captured_at)::date AS day,
-               COUNT(*) AS rows,
-               COUNT(DISTINCT event_id) AS events,
-               COUNT(DISTINCT bookmaker) AS bookmakers
-        FROM odds_snapshots
-        WHERE captured_at >= :start AND captured_at < :end
-        GROUP BY 1 ORDER BY 1
-    """), {"start": start, "end": end})
-    odds_rows = [dict(r._mapping) for r in odds_q.all()]
+    # Set a statement timeout to avoid blocking the DB
+    await db.execute(text("SET LOCAL statement_timeout = '25s'"))
 
-    # Count futures_odds_snapshots by day
-    futures_q = await db.execute(text("""
-        SELECT date_trunc('day', captured_at)::date AS day,
-               COUNT(*) AS rows,
-               COUNT(DISTINCT outcome_id) AS outcomes
-        FROM futures_odds_snapshots
-        WHERE captured_at >= :start AND captured_at < :end
-        GROUP BY 1 ORDER BY 1
-    """), {"start": start, "end": end})
-    futures_rows = [dict(r._mapping) for r in futures_q.all()]
+    results = {}
 
-    # Count win_prob_snapshots by day (not Odds API but useful context)
-    wp_q = await db.execute(text("""
-        SELECT date_trunc('day', captured_at)::date AS day,
-               COUNT(*) AS rows,
-               COUNT(DISTINCT source) AS sources
-        FROM win_prob_snapshots
-        WHERE captured_at >= :start AND captured_at < :end
-        GROUP BY 1 ORDER BY 1
-    """), {"start": start, "end": end})
-    wp_rows = [dict(r._mapping) for r in wp_q.all()]
+    if table in ("odds", "all"):
+        try:
+            odds_q = await db.execute(text("""
+                SELECT captured_at::date AS day,
+                       COUNT(*) AS rows,
+                       COUNT(DISTINCT event_id) AS events
+                FROM odds_snapshots
+                WHERE captured_at >= :start AND captured_at < :end
+                GROUP BY 1 ORDER BY 1
+            """), {"start": start, "end": end})
+            results["odds"] = [
+                {"date": str(r.day), "rows": r.rows, "events": r.events}
+                for r in odds_q.all()
+            ]
+        except Exception as e:
+            results["odds_error"] = str(e)
 
-    # Combine into daily summary
-    all_days = {}
-    for r in odds_rows:
-        d = str(r["day"])
-        all_days.setdefault(d, {})["odds_snapshots"] = r["rows"]
-        all_days[d]["odds_events"] = r["events"]
-        all_days[d]["odds_bookmakers"] = r["bookmakers"]
-    for r in futures_rows:
-        d = str(r["day"])
-        all_days.setdefault(d, {})["futures_snapshots"] = r["rows"]
-        all_days[d]["futures_outcomes"] = r["outcomes"]
-    for r in wp_rows:
-        d = str(r["day"])
-        all_days.setdefault(d, {})["win_prob_snapshots"] = r["rows"]
-        all_days[d]["wp_sources"] = r["sources"]
+    if table in ("futures", "all"):
+        try:
+            futures_q = await db.execute(text("""
+                SELECT captured_at::date AS day,
+                       COUNT(*) AS rows,
+                       COUNT(DISTINCT outcome_id) AS outcomes
+                FROM futures_odds_snapshots
+                WHERE captured_at >= :start AND captured_at < :end
+                GROUP BY 1 ORDER BY 1
+            """), {"start": start, "end": end})
+            results["futures"] = [
+                {"date": str(r.day), "rows": r.rows, "outcomes": r.outcomes}
+                for r in futures_q.all()
+            ]
+        except Exception as e:
+            results["futures_error"] = str(e)
 
-    daily = []
-    for day in sorted(all_days.keys()):
-        entry = {"date": day, **all_days[day]}
-        daily.append(entry)
+    if table in ("winprob", "all"):
+        try:
+            wp_q = await db.execute(text("""
+                SELECT captured_at::date AS day,
+                       COUNT(*) AS rows
+                FROM win_prob_snapshots
+                WHERE captured_at >= :start AND captured_at < :end
+                GROUP BY 1 ORDER BY 1
+            """), {"start": start, "end": end})
+            results["winprob"] = [
+                {"date": str(r.day), "rows": r.rows}
+                for r in wp_q.all()
+            ]
+        except Exception as e:
+            results["winprob_error"] = str(e)
 
     return {
         "month": f"{year}-{month:02d}",
-        "days": daily,
-        "totals": {
-            "odds_snapshots": sum(r.get("odds_snapshots", 0) for r in daily),
-            "futures_snapshots": sum(r.get("futures_snapshots", 0) for r in daily),
-            "win_prob_snapshots": sum(r.get("win_prob_snapshots", 0) for r in daily),
-        },
+        "table_filter": table,
+        **results,
     }
 
 
