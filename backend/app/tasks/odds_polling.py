@@ -515,6 +515,15 @@ async def _poll_all_odds():
                     all_events_data.extend(events_data)
                     sports_polled += 1
 
+                    # Record quota from response headers
+                    if service.last_requests_remaining is not None:
+                        from app.tasks.redis_state import record_odds_api_quota
+                        record_odds_api_quota(
+                            service.last_requests_remaining,
+                            service.last_requests_used or 0,
+                            "poll_odds",
+                        )
+
                     # Update last poll time in Redis
                     if r:
                         try:

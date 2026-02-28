@@ -168,6 +168,15 @@ async def _poll_futures_odds():
                     api_response = await service.get_futures_odds(sport_key)
                     markets_data = service._parse_futures(api_response, sport_key)
 
+                    # Record quota from response headers
+                    if service.last_requests_remaining is not None:
+                        from app.tasks.redis_state import record_odds_api_quota
+                        record_odds_api_quota(
+                            service.last_requests_remaining,
+                            service.last_requests_used or 0,
+                            "poll_futures",
+                        )
+
                     if not markets_data:
                         continue
 

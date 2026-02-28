@@ -151,6 +151,15 @@ async def _discover_events():
                     events_data = await service.get_odds(sport_key)
                     sports_polled += 1
 
+                    # Record quota from response headers
+                    if service.last_requests_remaining is not None:
+                        from app.tasks.redis_state import record_odds_api_quota
+                        record_odds_api_quota(
+                            service.last_requests_remaining,
+                            service.last_requests_used or 0,
+                            "discover_events",
+                        )
+
                     # Collect all team names from this sport's events
                     all_team_names: set[str] = set()
 

@@ -73,17 +73,30 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
         checks["database"] = f"error: {e}"
         all_ok = False
 
-    # Check Odds API quota
+    # Check Odds API quota (from Redis cache — avoids burning an API request)
     try:
-        service = OddsAPIService()
-        quota = await service.check_quota()
-        await service.close()
-        remaining = quota.get("requests_remaining", "unknown")
-        checks["odds_api"] = {
-            "status": "ok",
-            "requests_remaining": remaining,
-            "requests_used": quota.get("requests_used", "unknown"),
-        }
+        from app.tasks.redis_state import get_odds_api_quota
+        quota = get_odds_api_quota()
+        if quota.get("status") in ("unknown", "no_data", "error"):
+            # Fallback to live check if Redis has no data
+            service = OddsAPIService()
+            quota_live = await service.check_quota()
+            await service.close()
+            checks["odds_api"] = {
+                "status": "ok",
+                "requests_remaining": quota_live.get("requests_remaining", "unknown"),
+                "requests_used": quota_live.get("requests_used", "unknown"),
+                "source": "live",
+            }
+        else:
+            checks["odds_api"] = {
+                "status": "ok" if quota["health"] != "critical" else "degraded",
+                "requests_remaining": str(quota["remaining"]),
+                "requests_used": str(quota["used"]),
+                "health": quota["health"],
+                "updated_at": quota["updated_at"],
+                "source": "cached",
+            }
     except Exception as e:
         checks["odds_api"] = f"error: {e}"
         all_ok = False

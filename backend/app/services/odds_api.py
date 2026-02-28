@@ -66,12 +66,26 @@ class OddsAPIService:
         self.api_key = api_key or os.getenv("ODDS_API_KEY")
         if not self.api_key:
             raise ValueError("ODDS_API_KEY not set")
-        
+
         self.client = httpx.AsyncClient(timeout=30.0)
+        self.last_requests_remaining: Optional[int] = None
+        self.last_requests_used: Optional[int] = None
     
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
+
+    def _capture_quota(self, response: httpx.Response):
+        """Extract quota headers from any API response."""
+        try:
+            remaining = response.headers.get("x-requests-remaining")
+            used = response.headers.get("x-requests-used")
+            if remaining is not None:
+                self.last_requests_remaining = int(remaining)
+            if used is not None:
+                self.last_requests_used = int(used)
+        except (ValueError, TypeError):
+            pass
     
     async def get_sports(self) -> list[dict]:
         """
@@ -89,8 +103,9 @@ class OddsAPIService:
             params={"apiKey": self.api_key}
         )
         response.raise_for_status()
+        self._capture_quota(response)
         return response.json()
-    
+
     async def get_odds(
         self,
         sport_key: str,
@@ -125,6 +140,7 @@ class OddsAPIService:
             }
         )
         response.raise_for_status()
+        self._capture_quota(response)
         return response.json()
 
     async def get_scores(
@@ -157,6 +173,7 @@ class OddsAPIService:
             }
         )
         response.raise_for_status()
+        self._capture_quota(response)
         return response.json()
     
     async def get_event_odds(
@@ -345,6 +362,7 @@ class OddsAPIService:
             }
         )
         response.raise_for_status()
+        self._capture_quota(response)
         return response.json()
 
     def _parse_futures(

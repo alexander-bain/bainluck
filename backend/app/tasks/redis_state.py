@@ -274,3 +274,119 @@ def _utc_now_iso() -> str:
     """Get current UTC time as ISO string."""
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+# =============================================================================
+# Odds API Quota Monitoring
+# =============================================================================
+
+QUOTA_KEY = "bainluck:odds_api_quota"
+QUOTA_HISTORY_PREFIX = "bainluck:odds_api_quota:hourly"
+QUOTA_ALERT_THRESHOLD = 500_000
+QUOTA_WARNING_THRESHOLD = 1_000_000
+
+import logging
+_quota_logger = logging.getLogger(__name__)
+
+
+def record_odds_api_quota(remaining: int, used: int, source_task: str):
+    """Store latest quota reading from passive header capture."""
+    from datetime import datetime, timezone, timedelta
+
+    r = get_redis_client()
+    if not r:
+        return
+    try:
+        now = datetime.now(timezone.utc)
+        hour_key = now.strftime("%Y-%m-%dT%H")
+
+        pipe = r.pipeline()
+        # Current snapshot (always up to date)
+        pipe.hset(QUOTA_KEY, mapping={
+            "remaining": str(remaining),
+            "used": str(used),
+            "updated_at": now.isoformat(),
+            "source_task": source_task,
+        })
+        pipe.expire(QUOTA_KEY, 86400 * 7)  # 7 day TTL
+
+        # Hourly history (for graphing)
+        history_key = f"{QUOTA_HISTORY_PREFIX}:{hour_key}"
+        pipe.hset(history_key, mapping={
+            "remaining": str(remaining),
+            "used": str(used),
+        })
+        pipe.expire(history_key, 86400 * 35)  # 35 day TTL (covers full billing cycle)
+        pipe.execute()
+
+        # Log warnings at threshold crossings
+        if remaining <= QUOTA_ALERT_THRESHOLD:
+            _quota_logger.critical(
+                "ODDS API QUOTA CRITICAL: %s remaining (%s used)", f"{remaining:,}", f"{used:,}"
+            )
+        elif remaining <= QUOTA_WARNING_THRESHOLD:
+            _quota_logger.warning(
+                "Odds API quota low: %s remaining (%s used)", f"{remaining:,}", f"{used:,}"
+            )
+    except Exception:
+        pass  # Never break a task for metrics
+
+
+def get_odds_api_quota() -> dict:
+    """Get current quota snapshot from Redis."""
+    r = get_redis_client()
+    if not r:
+        return {"status": "unknown"}
+    try:
+        data = r.hgetall(QUOTA_KEY)
+        if not data:
+            return {"status": "no_data"}
+
+        remaining = int(data.get(b"remaining", b"0"))
+        used = int(data.get(b"used", b"0"))
+        total = remaining + used
+        pct_used = (used / total * 100) if total > 0 else 0
+
+        if remaining <= QUOTA_ALERT_THRESHOLD:
+            health = "critical"
+        elif remaining <= QUOTA_WARNING_THRESHOLD:
+            health = "warning"
+        else:
+            health = "healthy"
+
+        return {
+            "remaining": remaining,
+            "used": used,
+            "total": total,
+            "pct_used": round(pct_used, 1),
+            "health": health,
+            "updated_at": data.get(b"updated_at", b"").decode(),
+            "source_task": data.get(b"source_task", b"").decode(),
+        }
+    except Exception:
+        return {"status": "error"}
+
+
+def get_odds_api_quota_history(hours: int = 168) -> list:
+    """Get hourly quota history for graphing (default: 7 days)."""
+    from datetime import datetime, timezone, timedelta
+
+    r = get_redis_client()
+    if not r:
+        return []
+    try:
+        now = datetime.now(timezone.utc)
+        results = []
+        for h in range(hours):
+            dt = now - timedelta(hours=h)
+            key = f"{QUOTA_HISTORY_PREFIX}:{dt.strftime('%Y-%m-%dT%H')}"
+            data = r.hgetall(key)
+            if data:
+                results.append({
+                    "hour": dt.strftime("%Y-%m-%dT%H:00Z"),
+                    "remaining": int(data.get(b"remaining", b"0")),
+                    "used": int(data.get(b"used", b"0")),
+                })
+        return list(reversed(results))
+    except Exception:
+        return []

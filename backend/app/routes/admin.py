@@ -2126,6 +2126,10 @@ async def celery_dashboard():
     # Get per-task metrics
     tasks = get_all_task_metrics()
 
+    # Get Odds API quota (passive, from Redis cache)
+    from app.tasks.redis_state import get_odds_api_quota
+    odds_api_quota = get_odds_api_quota()
+
     # Get heartbeat status for overall worker health
     try:
         r = get_redis_client()
@@ -2164,6 +2168,7 @@ async def celery_dashboard():
         "critical_tasks": [t["task"] for t in critical_tasks],
         "degraded_tasks": [t["task"] for t in degraded_tasks],
         "tasks": tasks,
+        "odds_api_quota": odds_api_quota,
     }
 
 
@@ -2172,6 +2177,42 @@ async def get_task_metrics_endpoint(task_name: str):
     """Get detailed metrics for a specific task."""
     from app.tasks.redis_state import get_task_metrics
     return get_task_metrics(task_name)
+
+
+# ---------------------------------------------------------------------------
+# Odds API Quota Monitoring
+# ---------------------------------------------------------------------------
+
+@router.get("/odds-api/usage")
+async def odds_api_usage():
+    """Current Odds API quota status and hourly history."""
+    from app.tasks.redis_state import get_odds_api_quota, get_odds_api_quota_history
+
+    quota = get_odds_api_quota()
+    history = get_odds_api_quota_history(hours=720)  # 30 days
+
+    # Compute daily aggregates from hourly data
+    daily = {}
+    for entry in history:
+        day = entry["hour"][:10]
+        daily[day] = entry  # Last reading of each day
+
+    daily_usage = []
+    sorted_days = sorted(daily.keys())
+    for i, day in enumerate(sorted_days):
+        used = daily[day]["used"]
+        prev_used = daily[sorted_days[i - 1]]["used"] if i > 0 else 0
+        delta = used - prev_used
+        # Handle month rollover (used resets to 0)
+        if delta < 0:
+            delta = used
+        daily_usage.append({"date": day, "daily_requests": delta, "cumulative": used})
+
+    return {
+        "current": quota,
+        "daily_usage": daily_usage,
+        "hourly_history": history[-168:],  # Last 7 days hourly
+    }
 
 
 # ---------------------------------------------------------------------------
