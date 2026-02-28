@@ -404,6 +404,11 @@ function EventFeedCard({
               </div>
             </div>
           )}
+          {displayHomeProb === null && displayAwayProb === null && !isFinished && (
+            <span className="text-[11px] text-text-muted/50 flex-shrink-0 italic">
+              No odds yet
+            </span>
+          )}
         </div>
 
         {/* Probability bar — current odds for live/scheduled, opening odds for finished */}

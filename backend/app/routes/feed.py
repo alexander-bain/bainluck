@@ -735,6 +735,12 @@ async def _score_futures(
             leader_name = leader.name
             leader_prob = float(leader.current_probability) if leader.current_probability else None
 
+        # Skip effectively-resolved markets (leader at ≥97%)
+        # These are still "open" status but their outcomes have settled.
+        # e.g., NFL Combine prop markets where the event already happened.
+        if leader_prob is not None and leader_prob >= 0.97:
+            continue
+
         # Get source count from canonical key
         source_count = 1
         if market.canonical_market_key:
