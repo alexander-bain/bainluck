@@ -267,7 +267,7 @@ The raw value represents the total "distance traveled" by the win probability cu
 - 3.5-5.0: Exciting game
 - 5.0+: Incredible drama
 
-**Scoring:** Raw EI is mapped to 1-100 using a sqrt transform: `score = min(100, sqrt(raw_ei / 8.0) * 100)`. This maps: 0→0, 0.5→25, 2.0→50, 4.5→75, 8.0→100. Users see the 0-100 score (percentile when available, raw otherwise).
+**Scoring:** Raw EI is mapped to 1-100 using a sqrt transform: `score = min(100, sqrt(raw_ei / 2.5) * 100)`. This maps: 0→0, ~0.16→25, ~0.63→50, ~1.41→75, 2.5→100. The time normalization ratio `T_regulation / T_actual` is capped at 2.0x to prevent games with thin data coverage from getting inflated scores. Users see the 0-100 score (percentile when available, raw otherwise).
 
 **Multi-source aggregation:** Before EI calculation, snapshots from multiple bookmakers (5-11 per event) are aggregated into 30-second time buckets using median probability (`_aggregate_snapshots` in `excitement_index.py`). This prevents bookmaker disagreements from being counted as odds movements. Minimum 3 aggregated time buckets required.
 
@@ -278,9 +278,9 @@ The raw value represents the total "distance traveled" by the win probability cu
 - `snapshot_count`: Number of aggregated time buckets used
 
 **Data quality levels:**
-- `good` (30+ buckets): Full confidence
-- `limited` (10-29 buckets): Acceptable
-- `minimal` (3-9 buckets): Low confidence — stored for live games but not for completed events
+- `good` (15+ buckets): Full confidence
+- `limited` (5-14 buckets): Acceptable
+- `minimal` (3-4 buckets): Low confidence — stored for live games but not for completed events
 
 **Labels:** Incredible (90+), Must-Watch (80+), Exciting (70+), Engaging (60+), Competitive (50+), Average (40+), Quiet (25+), Flat (<25)
 
@@ -1510,7 +1510,7 @@ The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout)
 
 4. **Admin endpoints require mounting**: New routers must be added to both `main.py` AND `routes/__init__.py`.
 
-5. **EI data quality gating**: `calculate_ei()` returns `None` for < 3 aggregated time buckets. For completed events, EI is only stored when `data_quality` is `"limited"` (10-29 buckets) or `"good"` (30+). Events with `"minimal"` data (3-9 buckets) get no stored score. Hall of Fame rankings additionally require 20+ distinct minute-level time buckets. Note: live games still show EI with any data quality for real-time feedback.
+5. **EI data quality gating**: `calculate_ei()` returns `None` for < 3 aggregated time buckets. For completed events, EI is only stored when `data_quality` is `"limited"` (5-14 buckets) or `"good"` (15+). Events with `"minimal"` data (3-4 buckets) get no stored score. Hall of Fame rankings additionally require 20+ distinct minute-level time buckets. Note: live games still show EI with any data quality for real-time feedback.
 
 6. **Frontend types must match backend**: Keep `frontend/lib/types.ts` in sync with API responses.
 
@@ -1548,6 +1548,8 @@ The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout)
 16. **Team identity service is a supplement, not a replacement**: The `TeamIdentityService` sits in front of existing fuzzy matching in each consumer module. Don't remove the fallback matching logic — the identity service only has mappings for teams it has previously resolved. New teams or new source names need the fuzzy fallback to register the mapping for next time.
 
 17. **`Event.external_id` is nullable (schedule-first architecture)**: StatPal creates Event records ~1 week ahead without an Odds API ID. `_discover_events()` in `sports.py` attaches the `external_id` later. Code that assumes all events have `external_id` will break on StatPal-created events. Use `statpal_fixture_id` for StatPal lookups.
+
+18. **🚨 The Odds API quota is CRITICAL — monitor constantly**: The monthly quota is 5M "billed requests" (~$119/mo plan). The API bills per `events_returned × market_types × regions`, NOT per HTTP call. With `markets=h2h,spreads,totals` (3) and `regions=us,us2` (2), **every event in a response costs 6 billed requests**. A sport with 12 events = 72 billed requests per API call. Current daily burn rate is **~150K-250K billed requests/day** depending on live game volume, which means the 5M quota lasts ~20-25 days. The biggest cost driver is `discover_events` polling ALL ~40 active sports every 15 minutes (~115K/day). **Before making ANY changes to polling frequency, sport list, market types, or regions, calculate the impact on the monthly quota.** Check current usage with `curl https://api.bainluck.com/health/ready` (look at `odds_api.requests_remaining`). If remaining < 500K, alert the user immediately. There is currently NO automated alerting — this must be added. The quota resets on the 1st of each month. Running out means zero event discovery, zero odds updates, and zero futures polling until the reset. Feb 2026 exhausted the full 5M quota by ~Feb 26.
 
 ---
 

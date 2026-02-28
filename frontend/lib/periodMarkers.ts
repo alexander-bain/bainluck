@@ -24,7 +24,14 @@ export interface PeriodBoundary {
  */
 export function normalizePeriodLabel(raw: string): string {
   if (!raw) return "";
-  const s = raw.trim();
+  let s = raw.trim();
+
+  // Strip clock prefix: "11:05 - 1st Quarter" → "1st Quarter"
+  // ESPN status_detail includes game clock before the period name
+  s = s.replace(/^[\d.:]+\s*-\s*/, "");
+
+  // Strip "End of " / "Start of " prefix: "End of 1st Quarter" → "1st Quarter"
+  s = s.replace(/^(?:end|start)\s+of\s+/i, "");
 
   // Halftime
   if (/^half\s*time$/i.test(s) || s === "HT") return "HT";
@@ -113,11 +120,11 @@ function deriveBoundariesFromEspn(history: ESPNHistoryPoint[]): PeriodBoundary[]
     const label = normalizePeriodLabel(point.period);
     if (!label) continue;
 
-    if (prevPeriod !== null && point.period !== prevPeriod && !seenLabels.has(label)) {
+    if (prevPeriod !== null && label !== prevPeriod && !seenLabels.has(label)) {
       boundaries.push({ timestamp: point.timestamp, label });
       seenLabels.add(label);
     }
-    prevPeriod = point.period;
+    prevPeriod = label;
   }
 
   return boundaries;
@@ -151,11 +158,11 @@ function deriveBoundariesFromWinProb(
     const label = normalizePeriodLabel(point.period);
     if (!label) continue;
 
-    if (prevPeriod !== null && point.period !== prevPeriod && !seenLabels.has(label)) {
+    if (prevPeriod !== null && label !== prevPeriod && !seenLabels.has(label)) {
       boundaries.push({ timestamp: point.timestamp, label });
       seenLabels.add(label);
     }
-    prevPeriod = point.period;
+    prevPeriod = label;
   }
 
   return boundaries;
@@ -178,11 +185,11 @@ function deriveBoundariesFromScoringPlays(plays: ScoringPlay[]): PeriodBoundary[
     const label = normalizePeriodLabel(play.period);
     if (!label) continue;
 
-    if (prevPeriod !== null && play.period !== prevPeriod && !seenLabels.has(label)) {
+    if (prevPeriod !== null && label !== prevPeriod && !seenLabels.has(label)) {
       boundaries.push({ timestamp: play.timestamp, label });
       seenLabels.add(label);
     }
-    prevPeriod = play.period;
+    prevPeriod = label;
   }
 
   return boundaries;
