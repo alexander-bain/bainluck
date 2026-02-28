@@ -49,7 +49,13 @@ async def _register_market_team_identities(session, event_id, matchup, market):
     from app.models.models import Event
     from app.services.team_identity import team_identity_service
 
-    event = await session.get(Event, event_id)
+    # Must eager-load sport to avoid lazy-load in async context
+    event_result = await session.execute(
+        select(Event)
+        .options(joinedload(Event.sport))
+        .where(Event.id == event_id)
+    )
+    event = event_result.scalar_one_or_none()
     if not event or not event.sport:
         return
 
