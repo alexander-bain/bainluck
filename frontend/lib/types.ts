@@ -404,6 +404,8 @@ export interface RelatedFuturesResponse {
   away_team_futures: RelatedFuture[];
   total_count: number;
   summary: string | null;
+  event_status?: string;
+  box_score?: Record<string, Record<string, number>> | null;
 }
 
 // EI (Excitement Index) rankings types
@@ -754,4 +756,51 @@ export interface SharedTeamFuturesResponse {
   items: TeamFutureItem[];
   teams: Array<{ id: number; name: string; logo_small: string | null; primary_color: string | null }>;
   total_count: number;
+}
+
+// ============================================================================
+// Golf types
+// ============================================================================
+
+export interface GolfGolfer {
+  name: string;
+  probability: number;
+  american_odds: number | null;
+  opening_probability: number | null;
+  movement_24h: number | null;
+  rank: number;
+  sources: Record<string, number>;
+}
+
+export interface GolfTournament {
+  key: string;
+  name: string;
+  is_major: boolean;
+  commence_time: string | null;
+  resolution_date: string | null;
+  market_ids: number[];
+  golfers: GolfGolfer[];
+}
+
+export interface GolfMover {
+  name: string;
+  tournament_key: string;
+  tournament_name: string;
+  movement_24h: number;
+  probability: number;
+}
+
+export interface GolfUpcomingEvent {
+  id: number;
+  name: string;
+  commence_time: string | null;
+  status: string;
+}
+
+export interface GolfResponse {
+  tournaments: GolfTournament[];
+  biggest_movers: GolfMover[];
+  upcoming_events: GolfUpcomingEvent[];
+  total_tournaments: number;
+  total_golfers: number;
 }

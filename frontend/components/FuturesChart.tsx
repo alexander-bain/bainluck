@@ -25,6 +25,17 @@ const GOLD_COLORS = [
   "#d1d5db",
 ];
 
+const GREEN_COLORS = [
+  "#006747", // Augusta green (leader)
+  "#2d8659", // lighter green
+  "#6b7280", // gray-500
+  "#9ca3af", // gray-400
+  "#d1d5db", // gray-300
+  "#6b7280",
+  "#9ca3af",
+  "#d1d5db",
+];
+
 interface FuturesChartProps {
   historyData: FuturesOutcomeHistory[];
   selectedOutcomes?: Set<number>;
@@ -34,6 +45,7 @@ interface FuturesChartProps {
   showLegend?: boolean;
   showAxes?: boolean;
   goldTheme?: boolean;
+  greenTheme?: boolean;
   className?: string;
 }
 
@@ -46,11 +58,12 @@ export function FuturesChart({
   showLegend,
   showAxes,
   goldTheme = false,
+  greenTheme = false,
   className,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
-  const colors = goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
+  const colors = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
 
   // Filter to selected outcomes, or show top 5 if none selected
   const displayedOutcomes = useMemo(() => {
@@ -296,7 +309,7 @@ export function FuturesChart({
                 y1={padding.top}
                 x2={hoverInfo.svgX}
                 y2={padding.top + innerHeight}
-                stroke={goldTheme ? "#D4AF37" : "#94a3b8"}
+                stroke={greenTheme ? "#006747" : goldTheme ? "#D4AF37" : "#94a3b8"}
                 strokeWidth={1}
                 strokeDasharray="4 2"
                 opacity={0.6}
@@ -308,7 +321,7 @@ export function FuturesChart({
                   cy={yScale(v.prob)}
                   r={4}
                   fill={v.color}
-                  stroke={goldTheme ? "#1a1408" : "#0C0F14"}
+                  stroke={greenTheme ? "#0a2e1f" : goldTheme ? "#1a1408" : "#0C0F14"}
                   strokeWidth={2}
                 />
               ))}

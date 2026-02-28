@@ -26,6 +26,7 @@ import type {
   FuturesCategoriesResponse,
   TeamFuturesResponse,
   SharedTeamFuturesResponse,
+  GolfResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -713,6 +714,17 @@ export async function updateSportAffinities(
  */
 export async function fetchOscarsData(): Promise<OscarsResponse> {
   return apiFetch<OscarsResponse>("/api/oscars");
+}
+
+// ============================================================================
+// Golf API
+// ============================================================================
+
+/**
+ * Fetch Golf landing page data — all tournaments with aggregated odds
+ */
+export async function fetchGolfData(): Promise<GolfResponse> {
+  return apiFetch<GolfResponse>("/api/golf");
 }
 
 // ============================================================================
