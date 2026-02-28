@@ -95,6 +95,7 @@ out/
 ios/*.xcworkspace
 ios/Pods/
 ios/.build/
+xcuserdata/
 *.ipa
 *.dSYM.zip
 *.dSYM
