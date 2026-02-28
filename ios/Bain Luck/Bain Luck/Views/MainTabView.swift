@@ -8,12 +8,12 @@ struct MainTabView: View {
                     Label("Feed", systemImage: "rectangle.stack.fill")
                 }
 
-            SearchPlaceholder()
+            SearchView()
                 .tabItem {
                     Label("Search", systemImage: "magnifyingglass")
                 }
 
-            EIRankingsPlaceholder()
+            EIRankingsView()
                 .tabItem {
                     Label("EI Rankings", systemImage: "chart.bar.fill")
                 }

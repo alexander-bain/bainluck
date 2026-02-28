@@ -80,6 +80,7 @@ struct EventDetailView: View {
                         teamHeader(event)
                         if isLive || isFinished { scoreSection(event) }
                         probabilitySection(event)
+                        OddsChartView(eventId: event.id)
                         if let ei = event.ei ?? event.pulse { eiSection(ei) }
                         if let context = event.standingsContext { standingsSection(context) }
                         espnSection(event)
