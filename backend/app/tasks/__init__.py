@@ -261,6 +261,13 @@ def cleanup_bad_espn_matches(self):
     return run_async(_cleanup_bad_espn_matches())
 
 
+@celery_app.task(bind=True, name="app.tasks.backfill_box_scores")
+def backfill_box_scores(self, limit: int = 100):
+    """Fetch ESPN box scores for completed events missing box_score_data."""
+    from app.tasks.espn_sync import _backfill_box_scores
+    return run_async(_backfill_box_scores(limit=limit))
+
+
 # --- Team Linking (Futures → Teams) ---
 
 @celery_app.task(bind=True, name="app.tasks.backfill_team_links")
@@ -279,7 +286,7 @@ def backfill_canonical_keys(self, limit: int = 500):
 
 # --- Prediction Market → Event Matching ---
 
-@celery_app.task(bind=True, name="app.tasks.match_prediction_markets")
+@celery_app.task(bind=True, name="app.tasks.match_prediction_markets", time_limit=600, soft_time_limit=540)
 def match_prediction_markets(self, limit: int = 500):
     """Match game-level prediction markets to events and write win_prob_snapshots."""
     from app.tasks.prediction_market_matching import _match_prediction_markets
