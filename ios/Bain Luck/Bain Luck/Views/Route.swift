@@ -1,0 +1,7 @@
+import Foundation
+
+/// Navigation destinations for the app.
+enum Route: Hashable {
+    case eventDetail(id: Int)
+    case futuresDetail(id: Int)
+}
