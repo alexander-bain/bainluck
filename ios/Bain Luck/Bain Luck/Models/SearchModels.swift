@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Search Response
 
-struct SearchResponse: Decodable {
+nonisolated struct SearchResponse: Decodable, Sendable {
     let query: String
     let results: [SearchEvent]
     let futures: [SearchFuturesMarket]
@@ -11,7 +11,7 @@ struct SearchResponse: Decodable {
     let filters: SearchFilters?
 }
 
-struct SearchEvent: Decodable, Identifiable {
+nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let id: Int
     let externalId: String?
     let sport: String?
@@ -32,7 +32,7 @@ struct SearchEvent: Decodable, Identifiable {
     let openingOdds: OpeningOdds?
 }
 
-struct SearchFuturesMarket: Decodable, Identifiable {
+nonisolated struct SearchFuturesMarket: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let sport: String?
@@ -47,7 +47,7 @@ struct SearchFuturesMarket: Decodable, Identifiable {
     let updatedAt: String?
 }
 
-struct SearchFuturesOutcome: Decodable, Identifiable {
+nonisolated struct SearchFuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?
@@ -56,7 +56,7 @@ struct SearchFuturesOutcome: Decodable, Identifiable {
     let movement: Double?
 }
 
-struct SearchPagination: Decodable {
+nonisolated struct SearchPagination: Decodable, Sendable {
     let page: Int
     let perPage: Int
     let totalResults: Int
@@ -65,13 +65,13 @@ struct SearchPagination: Decodable {
     let hasPrev: Bool
 }
 
-struct SportFacet: Decodable {
+nonisolated struct SportFacet: Decodable, Sendable {
     let key: String
     let name: String
     let count: Int
 }
 
-struct SearchFilters: Decodable {
+nonisolated struct SearchFilters: Decodable, Sendable {
     let sport: String?
     let daysBack: Int?
     let includeUpcoming: Bool?
@@ -79,12 +79,12 @@ struct SearchFilters: Decodable {
 
 // MARK: - Typeahead Response
 
-struct TypeaheadResponse: Decodable {
+nonisolated struct TypeaheadResponse: Decodable, Sendable {
     let suggestions: [TypeaheadSuggestion]
     let query: String
 }
 
-struct TypeaheadSuggestion: Decodable, Identifiable {
+nonisolated struct TypeaheadSuggestion: Decodable, Identifiable, Sendable {
     let type: String
     let text: String
     let abbreviation: String?

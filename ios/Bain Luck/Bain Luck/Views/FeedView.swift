@@ -133,7 +133,9 @@ struct FeedView: View {
                 feedSection(title: "Top Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
             }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #endif
         .refreshable {
             await vm.load()
         }

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Feed Response
 
-struct FeedResponse: Decodable {
+nonisolated struct FeedResponse: Decodable, Sendable {
     let items: [FeedItem]
     let total: Int
     let limit: Int
@@ -12,7 +12,7 @@ struct FeedResponse: Decodable {
 
 // MARK: - Feed Item (Polymorphic)
 
-struct FeedItem: Decodable, Identifiable {
+nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let type: String
     let score: Int
     let reason: String?
@@ -62,7 +62,7 @@ struct FeedItem: Decodable, Identifiable {
 
 // MARK: - Feed Event Data
 
-struct FeedEventData: Decodable, Identifiable {
+nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let id: Int
     let externalId: String?
     let sport: String?
@@ -87,7 +87,7 @@ struct FeedEventData: Decodable, Identifiable {
 
 // MARK: - Feed Futures Data
 
-struct FeedFuturesData: Decodable, Identifiable {
+nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let sport: String?
@@ -103,7 +103,7 @@ struct FeedFuturesData: Decodable, Identifiable {
     let canonicalMarketKey: String?
 }
 
-struct FeedFuturesOutcome: Decodable, Identifiable {
+nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?

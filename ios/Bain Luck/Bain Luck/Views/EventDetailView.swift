@@ -90,7 +90,9 @@ struct EventDetailView: View {
             }
         }
         .navigationTitle("Game Details")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             await vm.load()
         }
@@ -155,7 +157,7 @@ struct EventDetailView: View {
             .frame(maxWidth: .infinity)
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -241,7 +243,7 @@ struct EventDetailView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -270,7 +272,7 @@ struct EventDetailView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -290,7 +292,7 @@ struct EventDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -320,7 +322,7 @@ struct EventDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
-            .background(Color(.systemGray6))
+            .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
@@ -354,7 +356,7 @@ struct EventDetailView: View {
                 }
             }
             .padding()
-            .background(Color(.systemGray6))
+            .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Line Movement Response
 
-struct LineMovementResponse: Decodable {
+nonisolated struct LineMovementResponse: Decodable, Sendable {
     let eventId: Int
     let movements: [Movement]
     let explanation: String?
@@ -13,7 +13,7 @@ struct LineMovementResponse: Decodable {
     let createdAt: String?
 }
 
-struct Movement: Decodable, Identifiable {
+nonisolated struct Movement: Decodable, Identifiable, Sendable {
     let change: Double
     let context: String?
     let isMajor: Bool?
@@ -27,14 +27,14 @@ struct Movement: Decodable, Identifiable {
     var id: String { "\(timestampStart ?? "")-\(change)" }
 }
 
-struct DisagreementData: Decodable {
+nonisolated struct DisagreementData: Decodable, Sendable {
     let sportsbooks: Double?
     let predictionMarkets: Double?
     let gap: Double?
     let sources: [String: Double]?
 }
 
-struct LineMovementContext: Decodable {
+nonisolated struct LineMovementContext: Decodable, Sendable {
     let newsCount: Int?
     let hasGameState: Bool?
     let hasTeamStats: Bool?

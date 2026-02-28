@@ -28,7 +28,7 @@ struct StatusBadge: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color(.systemGray5))
+                .background(Color.cardBackgroundDark)
                 .clipShape(Capsule())
         default:
             EmptyView()

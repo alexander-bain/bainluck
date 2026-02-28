@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Event Detail
 
-struct EventDetail: Decodable, Identifiable {
+nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     let id: Int
     let externalId: String?
     let sport: String?
@@ -28,20 +28,20 @@ struct EventDetail: Decodable, Identifiable {
 
 // MARK: - Standings Context
 
-struct StandingsContext: Decodable {
+nonisolated struct StandingsContext: Decodable, Sendable {
     let home: String?
     let away: String?
 }
 
 // MARK: - EI Rankings
 
-struct EIRankingsResponse: Decodable {
+nonisolated struct EIRankingsResponse: Decodable, Sendable {
     let highest: [EIRankedEvent]
     let lowest: [EIRankedEvent]
     let filters: EIRankingsFilters?
 }
 
-struct EIRankedEvent: Decodable, Identifiable {
+nonisolated struct EIRankedEvent: Decodable, Identifiable, Sendable {
     let id: Int
     let externalId: String?
     let sport: String?
@@ -57,7 +57,7 @@ struct EIRankedEvent: Decodable, Identifiable {
     let rank: Int
 }
 
-struct EIRankingsFilters: Decodable {
+nonisolated struct EIRankingsFilters: Decodable, Sendable {
     let sport: String?
     let limit: Int?
 }

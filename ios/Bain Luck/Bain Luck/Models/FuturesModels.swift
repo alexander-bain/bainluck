@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Futures Market Detail
 
-struct FuturesMarketDetail: Decodable, Identifiable {
+nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let description: String?
@@ -21,7 +21,7 @@ struct FuturesMarketDetail: Decodable, Identifiable {
 
 // MARK: - Futures Outcome
 
-struct FuturesOutcome: Decodable, Identifiable {
+nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?
@@ -37,7 +37,7 @@ struct FuturesOutcome: Decodable, Identifiable {
 
 // MARK: - Related Futures Response
 
-struct RelatedFuturesResponse: Decodable {
+nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
     let eventId: Int
     let homeTeam: String
     let awayTeam: String
@@ -47,7 +47,7 @@ struct RelatedFuturesResponse: Decodable {
     let summary: String?
 }
 
-struct RelatedFuture: Decodable, Identifiable {
+nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let marketId: Int
     let marketName: String
     let marketTier: Int?
@@ -70,7 +70,7 @@ struct RelatedFuture: Decodable, Identifiable {
     var id: Int { outcomeId }
 }
 
-struct MatchedPlayer: Decodable {
+nonisolated struct MatchedPlayer: Decodable, Sendable {
     let name: String?
     let headshot: String?
     let espnId: String?

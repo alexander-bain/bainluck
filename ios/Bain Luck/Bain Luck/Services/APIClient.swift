@@ -46,7 +46,7 @@ actor APIClient {
 
     // MARK: - Generic Fetch
 
-    private func fetch<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+    private func fetch<T: Decodable & Sendable>(_ path: String, query: [String: String] = [:]) async throws -> sending T {
         var components = URLComponents(string: baseURL + path)
         if !query.isEmpty {
             components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }

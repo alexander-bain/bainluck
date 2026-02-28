@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Team Data
 
-struct TeamData: Decodable {
+nonisolated struct TeamData: Decodable, Sendable {
     let primaryColor: String?
     let secondaryColor: String?
     let logoSmall: String?
@@ -11,7 +11,7 @@ struct TeamData: Decodable {
     let standings: StandingsData?
 }
 
-struct StandingsData: Decodable {
+nonisolated struct StandingsData: Decodable, Sendable {
     let pct: String?
     let wins: Int?
     let losses: Int?
@@ -28,7 +28,7 @@ struct StandingsData: Decodable {
 
 // MARK: - Odds
 
-struct CurrentOdds: Decodable {
+nonisolated struct CurrentOdds: Decodable, Sendable {
     let capturedAt: String?
     let homeProbability: Double?
     let awayProbability: Double?
@@ -40,12 +40,12 @@ struct CurrentOdds: Decodable {
     let probabilityRange: ProbabilityRange?
 }
 
-struct ProbabilityRange: Decodable {
+nonisolated struct ProbabilityRange: Decodable, Sendable {
     let min: Double?
     let max: Double?
 }
 
-struct OpeningOdds: Decodable {
+nonisolated struct OpeningOdds: Decodable, Sendable {
     let homeProbability: Double?
     let awayProbability: Double?
     let favorite: String?
@@ -53,7 +53,7 @@ struct OpeningOdds: Decodable {
 
 // MARK: - Excitement Index
 
-struct EIData: Decodable {
+nonisolated struct EIData: Decodable, Sendable {
     let score: Int?
     let rawScore: Int?
     let status: String?
@@ -62,7 +62,7 @@ struct EIData: Decodable {
     let metadata: EIMetadata?
 }
 
-struct EIMetadata: Decodable {
+nonisolated struct EIMetadata: Decodable, Sendable {
     let rawEi: Double?
     let leadChanges: Int?
     let comebackFactor: Double?
@@ -71,13 +71,13 @@ struct EIMetadata: Decodable {
 
 // MARK: - Highlight
 
-struct Highlight: Decodable {
+nonisolated struct Highlight: Decodable, Sendable {
     let label: String?
 }
 
 // MARK: - Event Metadata
 
-struct EventMetadata: Decodable {
+nonisolated struct EventMetadata: Decodable, Sendable {
     let gender: String?
     let level: String?
     let league: String?
@@ -86,7 +86,7 @@ struct EventMetadata: Decodable {
 
 // MARK: - ESPN
 
-struct ESPNData: Decodable {
+nonisolated struct ESPNData: Decodable, Sendable {
     let espnId: String?
     let gameClock: String?
     let period: String?
@@ -97,7 +97,7 @@ struct ESPNData: Decodable {
 
 // MARK: - Win Probability Sources
 
-struct WinProbSource: Decodable {
+nonisolated struct WinProbSource: Decodable, Sendable {
     let value: Double?
     let displayName: String?
     let type: String?
@@ -106,7 +106,7 @@ struct WinProbSource: Decodable {
 
 // MARK: - Bookmaker Odds
 
-struct BookmakerOdds: Decodable {
+nonisolated struct BookmakerOdds: Decodable, Sendable {
     let bookmaker: String?
     let homeMoneyline: Int?
     let awayMoneyline: Int?

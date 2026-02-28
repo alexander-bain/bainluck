@@ -16,11 +16,22 @@ extension Color {
 
     /// Returns a lighter version (for backgrounds).
     func lightened(_ amount: Double = 0.3) -> Color {
-        let uiColor = UIColor(self)
-        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        uiColor.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
-        return Color(hue: Double(h), saturation: Double(s) * (1 - amount), brightness: min(Double(b) + amount, 1))
+        // Decompose via resolved color values
+        let resolved = self.resolve(in: EnvironmentValues())
+        let r = Double(resolved.red)
+        let g = Double(resolved.green)
+        let b = Double(resolved.blue)
+        return Color(
+            red: min(r + amount * (1 - r), 1),
+            green: min(g + amount * (1 - g), 1),
+            blue: min(b + amount * (1 - b), 1)
+        )
     }
+
+    // Cross-platform system background colors (replace UIKit-only UIColor.systemGrayN)
+    static let cardBackground = Color(white: 0.95).opacity(0.6)
+    static let cardBackgroundDark = Color(white: 0.90).opacity(0.6)
+    static let barTrack = Color(white: 0.82)
 }
 
 // MARK: - Probability Formatting

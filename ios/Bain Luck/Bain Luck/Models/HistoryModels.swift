@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Event History Response
 
-struct EventHistoryResponse: Decodable {
+nonisolated struct EventHistoryResponse: Decodable, Sendable {
     let eventId: Int
     let homeTeam: String
     let awayTeam: String
@@ -22,14 +22,14 @@ struct EventHistoryResponse: Decodable {
 
 // MARK: - History Points
 
-struct HistoryPoint: Decodable {
+nonisolated struct HistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double
     let awayProbability: Double
     let bookmakerCount: Int?
 }
 
-struct BookmakerHistoryPoint: Decodable {
+nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
     let awayProbability: Double?
@@ -37,27 +37,27 @@ struct BookmakerHistoryPoint: Decodable {
     let awayMoneyline: Int?
 }
 
-struct ScoreHistoryPoint: Decodable {
+nonisolated struct ScoreHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeScore: Int
     let awayScore: Int
 }
 
-struct ESPNHistoryPoint: Decodable {
+nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
     let gameClock: String?
     let period: String?
 }
 
-struct WinProbHistoryPoint: Decodable {
+nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double
 }
 
 // MARK: - Win Prob Source Info
 
-struct WinProbSourceInfo: Decodable {
+nonisolated struct WinProbSourceInfo: Decodable, Sendable {
     let displayName: String?
     let type: String?
     let color: String?
@@ -68,7 +68,7 @@ struct WinProbSourceInfo: Decodable {
 
 // MARK: - Scoring Play
 
-struct ScoringPlay: Decodable {
+nonisolated struct ScoringPlay: Decodable, Sendable {
     let timestamp: String?
     let team: String?
     let description: String?
@@ -80,7 +80,7 @@ struct ScoringPlay: Decodable {
 
 // MARK: - Aggregate Line
 
-struct AggregateLinePoint: Decodable {
+nonisolated struct AggregateLinePoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double
     let awayProbability: Double

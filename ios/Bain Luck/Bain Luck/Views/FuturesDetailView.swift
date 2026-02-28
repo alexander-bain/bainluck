@@ -64,7 +64,9 @@ struct FuturesDetailView: View {
             }
         }
         .navigationTitle("Market Details")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             await vm.load()
         }
@@ -108,7 +110,7 @@ struct FuturesDetailView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -128,7 +130,7 @@ struct FuturesDetailView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -188,7 +190,7 @@ struct FuturesDetailView: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(Color(.systemGray4))
+                            .fill(Color.barTrack)
                         Capsule()
                             .fill(.blue.opacity(0.6))
                             .frame(width: geo.size.width * prob)
