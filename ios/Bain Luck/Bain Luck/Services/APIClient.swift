@@ -84,7 +84,45 @@ actor APIClient {
         }
     }
 
-    // MARK: - Generic POST
+    // MARK: - Generic POST (Encodable body)
+
+    private func postEncodable<B: Encodable & Sendable, T: Decodable & Sendable>(_ path: String, body: B) async throws -> sending T {
+        guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        request.httpBody = try encoder.encode(body)
+
+        if let provider = authTokenProvider, let token = await provider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.networkError(underlying: error)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8)
+            throw APIError.httpError(statusCode: http.statusCode, body: body)
+        }
+
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decodingError(underlying: error)
+        }
+    }
+
+    // MARK: - Generic POST (Dictionary body)
 
     private func post<T: Decodable & Sendable>(_ path: String, body: [String: String?]) async throws -> sending T {
         guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
@@ -207,5 +245,19 @@ actor APIClient {
 
     func fetchAuthStatus() async throws -> AuthStatusResponse {
         return try await fetch("/api/auth/status")
+    }
+
+    // MARK: - Onboarding
+
+    func searchTeamsByLocation(query: String) async throws -> [TeamSearchResult] {
+        return try await fetch("/api/me/teams/by-location", query: ["q": query])
+    }
+
+    func searchTeams(query: String) async throws -> [TeamSearchResult] {
+        return try await fetch("/api/me/teams/search", query: ["q": query])
+    }
+
+    func submitOnboarding(_ submission: OnboardingSubmission) async throws -> OnboardingResponse {
+        return try await postEncodable("/api/me/onboarding", body: submission)
     }
 }

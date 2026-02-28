@@ -81,6 +81,7 @@ struct MyStuffView: View {
     @EnvironmentObject var authManager: AuthManager
     @StateObject private var vm = MyStuffViewModel()
     @State private var path = NavigationPath()
+    @State private var showOnboarding = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -187,7 +188,7 @@ struct MyStuffView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("Set up your teams on bainluck.com to see a personalized feed here.")
+            Text("Tell us what you're into and we'll personalize your feed.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -200,14 +201,23 @@ struct MyStuffView: View {
             }
 
             Button {
-                Task { await authManager.refreshProfile() }
+                showOnboarding = true
             } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.subheadline)
+                Text("Get Started")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .foregroundStyle(.white)
+                    .background(.blue)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            .buttonStyle(.bordered)
+            .padding(.horizontal, 40)
 
             Spacer()
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView()
+                .environmentObject(authManager)
         }
     }
 
