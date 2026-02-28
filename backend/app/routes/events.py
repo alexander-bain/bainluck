@@ -2064,10 +2064,18 @@ async def get_related_futures(
         market = outcome.market
 
         # ── Filter game-specific markets ──
-        # For finished events: hide ALL game-specific markets (stale odds).
+        # For finished events: show stat props IF we have box score data,
+        # but hide matchup markets (moneylines, spreads — meaningless post-game).
         # For live/scheduled: only show game-specific markets that match THIS event.
         if _is_game_specific_market(market):
-            if event_is_finished or not _game_market_matches_event(market):
+            is_stat_prop = bool(_GAME_STAT_PROP_RE.search(market.name or ""))
+            if event_is_finished:
+                # Only allow stat props through when we have box score data
+                if not is_stat_prop or not event.box_score_data or event.box_score_data.get("error"):
+                    continue
+                if not _game_market_matches_event(market):
+                    continue
+            elif not _game_market_matches_event(market):
                 continue
 
         # Classify: team_id first (reliable for player outcomes), then name matching
@@ -2224,6 +2232,11 @@ async def get_related_futures(
             import logging
             logging.getLogger(__name__).debug("Related futures summary error: %s", e)
 
+    # Extract box score player data for the response (if available)
+    box_score_players = None
+    if event.box_score_data and not event.box_score_data.get("error"):
+        box_score_players = event.box_score_data.get("players")
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -2232,6 +2245,8 @@ async def get_related_futures(
         "away_team_futures": away_futures,
         "total_count": len(home_futures) + len(away_futures),
         "summary": summary,
+        "event_status": event.status,
+        "box_score": box_score_players,
     }
 
 
@@ -2723,6 +2738,8 @@ async def get_line_movement_analysis(
                     "team_name": inj.get("team", ""),
                     "status": inj.get("status", ""),
                     "injury_type": inj.get("type", ""),
+                    "detail": inj.get("detail", ""),
+                    "expected_return": inj.get("expected_return", ""),
                 }
                 for inj in statpal_injuries_raw
                 if inj.get("player")

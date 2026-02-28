@@ -275,6 +275,8 @@ def compute_highlight(
     away_team_name: Optional[str] = None,
     # Event importance (from llm_importance / ESPN season type)
     importance: Optional[str] = None,
+    # Actual end time (from StatPal) for more accurate recently-finished timing
+    end_time: Optional[datetime] = None,
 ) -> HighlightResult:
     """
     Compute highlight score and flags for an event.
@@ -324,11 +326,16 @@ def compute_highlight(
             result.score += WEIGHTS["starting_soon_1h"]
             result.reasons.append("starting_very_soon")
 
-    # Recently finished
-    if status in ("completed", "closed") and 0 < hours_since <= 24:
-        flags.is_recently_finished = True
-        result.score += WEIGHTS["recent_finish"]
-        result.reasons.append("recent_finish")
+    # Recently finished — use actual end time if available, otherwise commence_time
+    if status in ("completed", "closed"):
+        finish_ref = end_time if end_time else commence_time
+        if finish_ref.tzinfo is None:
+            finish_ref = finish_ref.replace(tzinfo=timezone.utc)
+        hours_since_finish = (now - finish_ref).total_seconds() / 3600
+        if 0 < hours_since_finish <= 24:
+            flags.is_recently_finished = True
+            result.score += WEIGHTS["recent_finish"]
+            result.reasons.append("recent_finish")
 
     # === League tier ===
     flags.league_tier = get_league_tier(sport_key)

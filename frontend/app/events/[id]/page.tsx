@@ -79,6 +79,48 @@ function isBlowout(homeProb: number | null | undefined): boolean {
   return homeProb > 0.85 || homeProb < 0.15;
 }
 
+// Pick key season stats to display based on sport
+function getKeyStats(
+  stats: Record<string, number | string> | null | undefined,
+  sportKey: string | undefined
+): Array<{ label: string; value: string | number }> {
+  if (!stats) return [];
+  const result: Array<{ label: string; value: string | number }> = [];
+  const s = sportKey?.toLowerCase() || "";
+
+  if (s.includes("basketball")) {
+    if (stats.ppg != null) result.push({ label: "PPG", value: stats.ppg });
+    if (stats.rpg != null) result.push({ label: "RPG", value: stats.rpg });
+    if (stats.apg != null) result.push({ label: "APG", value: stats.apg });
+    if (stats.opp_ppg != null) result.push({ label: "Opp PPG", value: stats.opp_ppg });
+  } else if (s.includes("football")) {
+    if (stats.points_per_game != null) result.push({ label: "PTS/G", value: stats.points_per_game });
+    if (stats.yards_per_game != null) result.push({ label: "YDS/G", value: stats.yards_per_game });
+    if (stats.opp_points_per_game != null) result.push({ label: "Opp PTS/G", value: stats.opp_points_per_game });
+  } else if (s.includes("baseball")) {
+    if (stats.batting_avg != null) result.push({ label: "AVG", value: stats.batting_avg });
+    if (stats.era != null) result.push({ label: "ERA", value: stats.era });
+    if (stats.runs_per_game != null) result.push({ label: "R/G", value: stats.runs_per_game });
+  } else if (s.includes("hockey")) {
+    if (stats.goals_for_per_game != null) result.push({ label: "GF/G", value: stats.goals_for_per_game });
+    if (stats.goals_against_per_game != null) result.push({ label: "GA/G", value: stats.goals_against_per_game });
+    if (stats.power_play_pct != null) result.push({ label: "PP%", value: stats.power_play_pct });
+  } else if (s.includes("soccer")) {
+    if (stats.goals_per_game != null) result.push({ label: "G/G", value: stats.goals_per_game });
+    if (stats.clean_sheets != null) result.push({ label: "CS", value: stats.clean_sheets });
+    if (stats.goals_against_per_game != null) result.push({ label: "GA/G", value: stats.goals_against_per_game });
+  } else {
+    // Generic: show first 3 numeric stats
+    for (const [key, val] of Object.entries(stats)) {
+      if (result.length >= 3) break;
+      if (typeof val === "number" || (typeof val === "string" && !isNaN(Number(val)))) {
+        result.push({ label: key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), value: val });
+      }
+    }
+  }
+  return result.slice(0, 4);
+}
+
 interface SourceAnalysis {
   sources: string[];
   hasSignificantDivergence: boolean;
@@ -787,6 +829,34 @@ export default function EventPage({ params }: EventPageProps) {
             </div>
           )}
 
+          {/* Season stats comparison strip */}
+          {(event.home_team_data?.season_stats || event.away_team_data?.season_stats) && (() => {
+            const homeStats = getKeyStats(event.home_team_data?.season_stats, event.sport ?? undefined);
+            const awayStats = getKeyStats(event.away_team_data?.season_stats, event.sport ?? undefined);
+            if (homeStats.length === 0 && awayStats.length === 0) return null;
+            // Use home stats labels as canonical
+            const labels = homeStats.length > 0 ? homeStats : awayStats;
+            return (
+              <div className="flex items-center gap-2 text-[11px] text-text-muted justify-center py-1">
+                {labels.map((stat, i) => {
+                  const homeVal = homeStats.find(s => s.label === stat.label)?.value;
+                  const awayVal = awayStats.find(s => s.label === stat.label)?.value;
+                  return (
+                    <span key={stat.label} className="flex items-center gap-1">
+                      {i > 0 && <span className="text-text-muted/30 mx-0.5">·</span>}
+                      <span className="text-text-muted/60">{stat.label}</span>
+                      <span className="tabular-nums font-medium text-text-secondary">
+                        {homeVal ?? "—"}</span>
+                      <span className="text-text-muted/40">v</span>
+                      <span className="tabular-nums font-medium text-text-secondary">
+                        {awayVal ?? "—"}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {/* Away Team */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1124,6 +1194,7 @@ export default function EventPage({ params }: EventPageProps) {
         homeTeamLogo={event.home_team_data?.logo_small || undefined}
         awayTeamLogo={event.away_team_data?.logo_small || undefined}
         sportKey={event.sport || undefined}
+        eventStatus={event.status}
       />
     </div>
   );

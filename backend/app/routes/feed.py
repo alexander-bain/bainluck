@@ -444,14 +444,10 @@ async def _score_events(
         opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
         opening_away_prob = float(event.opening_away_probability) if event.opening_away_probability else None
 
-        # Skip events with no odds — the whole point of the site is probabilities.
-        # Events can exist without odds if they were discovered but haven't been
-        # polled yet, or if all bookmakers were filtered as stale.
-        if opening_home_prob is None:
-            continue
-
-        # For scoring, use opening odds as "current" — good enough for ranking.
-        # The highlight scorer detects closeness, upset potential, etc. from these.
+        # Events without odds still score on tier + time + importance.
+        # StatPal-created events may not have odds yet (e.g., during Odds API
+        # quota exhaustion), but a tier-1 NBA game starting soon is still worth
+        # showing. compute_highlight() handles current_home_prob=None gracefully.
         current_home_prob = opening_home_prob
         current_away_prob = opening_away_prob
 
@@ -480,6 +476,7 @@ async def _score_events(
             home_team_name=event.home_team_name,
             away_team_name=event.away_team_name,
             importance=importance,
+            end_time=event.statpal_end_time,
         )
 
         base_score = highlight_result.score

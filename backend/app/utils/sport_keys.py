@@ -76,6 +76,16 @@ STATPAL_SPORT_MAPPING: dict[str, str] = {
     "soccer_epl": "soccer",
     "soccer_usa_mls": "soccer",
     "golf_pga": "pga",
+    # College sports
+    "basketball_ncaab": "ncaab",
+    "americanfootball_ncaaf": "ncaaf",
+    "basketball_wnba": "wnba",
+    # More soccer leagues (StatPal uses sport="soccer" for all)
+    "soccer_spain_la_liga": "soccer",
+    "soccer_germany_bundesliga": "soccer",
+    "soccer_italy_serie_a": "soccer",
+    "soccer_france_ligue_one": "soccer",
+    "soccer_uefa_champs_league": "soccer",
 }
 
 

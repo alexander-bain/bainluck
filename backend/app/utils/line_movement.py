@@ -284,6 +284,10 @@ def build_llm_prompt(
             parts = [f"  - {inj['player_name']} ({inj['team_name']}): {inj['status']}"]
             if inj.get("injury_type") and inj["injury_type"] != "Unknown":
                 parts[0] += f" — {inj['injury_type']}"
+            if inj.get("detail"):
+                parts[0] += f" ({inj['detail']})"
+            if inj.get("expected_return"):
+                parts[0] += f" [Expected return: {inj['expected_return']}]"
             lines.append(parts[0])
         context_sections.append("\n".join(lines))
 

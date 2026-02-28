@@ -16,6 +16,7 @@ interface RelatedFuturesProps {
   homeTeamLogo?: string;
   awayTeamLogo?: string;
   sportKey?: string;
+  eventStatus?: string;
 }
 
 /** Tier display config */
@@ -201,6 +202,53 @@ function formatOdds(odds: number | null | undefined): string {
 function normalizeName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, " ");
 }
+
+/**
+ * Match a stat prop player name to an ESPN box score entry.
+ * Tries exact normalized match first, then last-name match for abbreviated names.
+ */
+function matchPlayerToBoxScore(
+  playerName: string,
+  boxScore: Record<string, Record<string, number>>
+): Record<string, number> | null {
+  const norm = normalizeName(playerName);
+  // Exact match
+  for (const [name, stats] of Object.entries(boxScore)) {
+    if (normalizeName(name) === norm) return stats;
+  }
+  // Last name match (handles "C. Johnson" vs "Cameron Johnson")
+  const lastName = norm.split(" ").pop() || "";
+  if (lastName.length >= 4) {
+    const matches = Object.entries(boxScore).filter(
+      ([name]) => normalizeName(name).endsWith(lastName)
+    );
+    if (matches.length === 1) return matches[0][1];
+  }
+  return null;
+}
+
+/** Extract numeric threshold from line string: "12+" → 12, "O/U 3.5" → 3.5 */
+function parseThreshold(line: string | null): number | null {
+  if (!line) return null;
+  const m = line.match(/([\d.]+)/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+/** Map stat category from market name to box score key */
+const CATEGORY_TO_STAT: Record<string, string> = {
+  points: "points", rebounds: "rebounds", assists: "assists",
+  steals: "steals", blocks: "blocks", turnovers: "turnovers",
+  "three pointers": "three pointers", "3-pointers": "three pointers",
+  threepointers: "three pointers",
+  "double doubles": "double doubles", "double double": "double doubles",
+  doubledoubles: "double doubles",
+  "triple doubles": "triple doubles", "triple double": "triple doubles",
+  tripledoubles: "triple doubles",
+  strikeouts: "strikeouts", hits: "hits", "home runs": "home runs",
+  "passing yards": "passing yards", "rushing yards": "rushing yards",
+  "receiving yards": "receiving yards", touchdowns: "touchdowns",
+  goals: "goals", saves: "saves", sacks: "sacks",
+};
 
 /** Movement pill — colored badge with arrow */
 function MovementPill({ change }: { change: number | null | undefined }) {
@@ -808,15 +856,21 @@ function StatGauge({
   );
 }
 
-// ─── STAT PROPS: Player stat cards with gauges ───
+// ─── STAT PROPS: Player stat cards with gauges (live/scheduled) or settled results (completed) ───
 function StatPropsSection({
   futures,
   teamColor,
   sportKey,
+  isFinished,
+  isLive,
+  boxScore,
 }: {
   futures: RelatedFuture[];
   teamColor: string;
   sportKey?: string;
+  isFinished?: boolean;
+  isLive?: boolean;
+  boxScore?: Record<string, Record<string, number>> | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (futures.length === 0) return null;
@@ -899,7 +953,7 @@ function StatPropsSection({
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-[10px]">📊</span>
         <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-          Player stats
+          {isFinished && boxScore ? "Player stats — results" : isLive && boxScore ? "Player stats — live" : "Player stats"}
         </span>
       </div>
 
@@ -919,55 +973,146 @@ function StatPropsSection({
 
             {/* Player stat cards — horizontal scroll on mobile */}
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
-              {rows.slice(0, ROWS_PER_GROUP).map((row) => (
-                <Link
-                  key={`${row.marketId}-${row.outcomeName}`}
-                  href={`/futures/${row.marketId}`}
-                  className="flex-shrink-0 rounded-xl p-2.5 group transition-all duration-200 hover:scale-[1.02] text-center"
-                  style={{
-                    background: `linear-gradient(135deg, ${teamColor}08, transparent)`,
-                    border: `1px solid ${teamColor}15`,
-                    width: 110,
-                  }}
-                >
-                  {/* Player headshot — small */}
-                  {row.playerName && (
-                    <div className="flex justify-center mb-1.5">
-                      <PlayerHeadshot
-                        name={row.playerName}
-                        matchedPlayer={row.matchedPlayer}
-                        sportKey={sportKey}
-                        teamColor={teamColor}
-                        size={36}
-                      />
+              {rows.slice(0, ROWS_PER_GROUP).map((row) => {
+                // For completed events with box score: show settled card
+                const statKey = CATEGORY_TO_STAT[category] || category;
+                const playerStats = ((isFinished || isLive) && boxScore && row.playerName)
+                  ? matchPlayerToBoxScore(row.playerName, boxScore)
+                  : null;
+                const actualValue = playerStats ? playerStats[statKey] : null;
+                const threshold = parseThreshold(row.line);
+                const hasSettledData = isFinished && actualValue !== null && threshold !== null;
+                const hasLiveData = isLive && actualValue !== null && threshold !== null;
+
+                // Determine OVER/UNDER/PUSH result
+                let result: "over" | "under" | "push" | null = null;
+                if (hasSettledData) {
+                  if (actualValue! > threshold!) result = "over";
+                  else if (actualValue! < threshold!) result = "under";
+                  else result = "push";
+                }
+
+                // Live progress toward the line
+                const liveProgress = hasLiveData ? Math.min(1, (actualValue as number) / (threshold as number)) : 0;
+                const livePacing = hasLiveData && (actualValue as number) >= (threshold as number);
+
+                return (
+                  <Link
+                    key={`${row.marketId}-${row.outcomeName}`}
+                    href={`/futures/${row.marketId}`}
+                    className="flex-shrink-0 rounded-xl p-2.5 group transition-all duration-200 hover:scale-[1.02] text-center"
+                    style={{
+                      background: hasSettledData
+                        ? result === "over"
+                          ? `linear-gradient(135deg, #22c55e08, transparent)`
+                          : result === "under"
+                          ? `linear-gradient(135deg, #ef444408, transparent)`
+                          : `linear-gradient(135deg, ${teamColor}08, transparent)`
+                        : hasLiveData
+                          ? `linear-gradient(135deg, ${teamColor}0a, transparent)`
+                          : `linear-gradient(135deg, ${teamColor}08, transparent)`,
+                      border: hasSettledData
+                        ? result === "over"
+                          ? `1px solid #22c55e25`
+                          : result === "under"
+                          ? `1px solid #ef444425`
+                          : `1px solid ${teamColor}15`
+                        : hasLiveData
+                          ? `1px solid ${teamColor}25`
+                          : `1px solid ${teamColor}15`,
+                      width: 110,
+                    }}
+                  >
+                    {/* Player headshot — small */}
+                    {row.playerName && (
+                      <div className="flex justify-center mb-1.5">
+                        <PlayerHeadshot
+                          name={row.playerName}
+                          matchedPlayer={row.matchedPlayer}
+                          sportKey={sportKey}
+                          teamColor={teamColor}
+                          size={36}
+                        />
+                      </div>
+                    )}
+
+                    {/* Player name */}
+                    <div className="text-[11px] font-semibold text-text-primary truncate leading-tight">
+                      {row.playerName || (row.isTeamTotal ? "Team" : "—")}
                     </div>
-                  )}
 
-                  {/* Player name */}
-                  <div className="text-[11px] font-semibold text-text-primary truncate leading-tight">
-                    {row.playerName || (row.isTeamTotal ? "Team" : "—")}
-                  </div>
-
-                  {/* Stat line — hero element */}
-                  {row.line && (
-                    <div
-                      className="text-lg font-black tabular-nums mt-0.5 leading-none"
-                      style={{ color: teamColor }}
-                    >
-                      {row.line}
-                    </div>
-                  )}
-
-                  {/* Gauge */}
-                  <div className="flex justify-center mt-1">
-                    <StatGauge
-                      probability={row.probability}
-                      teamColor={teamColor}
-                      size={48}
-                    />
-                  </div>
-                </Link>
-              ))}
+                    {hasSettledData ? (
+                      <>
+                        {/* Settled: line, actual value, result */}
+                        <div className="text-[10px] text-text-muted mt-1">
+                          Line: {row.line}
+                        </div>
+                        <div
+                          className="text-xl font-black tabular-nums mt-0.5 leading-none"
+                          style={{ color: teamColor }}
+                        >
+                          {actualValue}
+                        </div>
+                        <div className={`text-[10px] font-bold mt-1 ${
+                          result === "over"
+                            ? "text-emerald-500"
+                            : result === "under"
+                            ? "text-red-400"
+                            : "text-text-muted"
+                        }`}>
+                          {result === "over" ? "OVER" : result === "under" ? "UNDER" : "PUSH"}
+                        </div>
+                      </>
+                    ) : hasLiveData ? (
+                      <>
+                        {/* Live: line + actual value + progress bar */}
+                        <div className="text-[10px] text-text-muted mt-1">
+                          Line: {row.line}
+                        </div>
+                        <div
+                          className="text-xl font-black tabular-nums mt-0.5 leading-none"
+                          style={{ color: teamColor }}
+                        >
+                          {actualValue}
+                        </div>
+                        {/* Progress bar toward the line */}
+                        <div className="mt-1.5 w-full h-1.5 rounded-full bg-graphite/10 overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${Math.round(liveProgress * 100)}%`,
+                              backgroundColor: livePacing ? "#22c55e" : teamColor,
+                              opacity: livePacing ? 0.8 : 0.5,
+                            }}
+                          />
+                        </div>
+                        <div className="text-[9px] text-text-muted/50 mt-0.5">
+                          {livePacing ? "On pace" : `${Math.round(liveProgress * 100)}%`}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* Scheduled: stat line + gauge */}
+                        {row.line && (
+                          <div
+                            className="text-lg font-black tabular-nums mt-0.5 leading-none"
+                            style={{ color: teamColor }}
+                          >
+                            {row.line}
+                          </div>
+                        )}
+                        <div className="flex justify-center mt-1">
+                          <StatGauge
+                            probability={row.probability}
+                            teamColor={teamColor}
+                            size={48}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </Link>
+                );
+              })}
             </div>
             {rows.length > ROWS_PER_GROUP && (
               <span className="text-[10px] text-text-muted/50 mt-1 inline-block">
@@ -1111,12 +1256,18 @@ function TeamColumn({
   teamColor,
   teamLogo,
   sportKey,
+  isFinished,
+  isLive,
+  boxScore,
 }: {
   teamName: string;
   futures: RelatedFuture[];
   teamColor: string;
   teamLogo?: string;
   sportKey?: string;
+  isFinished?: boolean;
+  isLive?: boolean;
+  boxScore?: Record<string, Record<string, number>> | null;
 }) {
   // Filter out near-100% and near-0% entries globally (resolved markets)
   const activeFutures = futures.filter((f) => {
@@ -1207,8 +1358,15 @@ function TeamColumn({
           teamName={teamName}
         />
 
-        {/* Stat props — player stat cards with gauges */}
-        <StatPropsSection futures={statProps} teamColor={teamColor} sportKey={sportKey} />
+        {/* Stat props — player stat cards with gauges or settled results */}
+        <StatPropsSection
+          futures={statProps}
+          teamColor={teamColor}
+          sportKey={sportKey}
+          isFinished={isFinished}
+          isLive={isLive}
+          boxScore={boxScore}
+        />
       </div>
     </div>
   );
@@ -1241,7 +1399,10 @@ export default function RelatedFutures({
     return null;
   }
 
-  const { home_team_futures, away_team_futures, summary } = data;
+  const { home_team_futures, away_team_futures, summary, event_status, box_score } = data;
+  const isFinished = event_status === "completed" || event_status === "closed";
+  const isLive = event_status === "live";
+  const boxScore = box_score ?? null;
   const hasSummary = !!summary;
 
   // Find championship futures for the comparison bar.
@@ -1270,6 +1431,9 @@ export default function RelatedFutures({
         teamColor={hColor}
         teamLogo={homeTeamLogo}
         sportKey={sportKey}
+        isFinished={isFinished}
+        isLive={isLive}
+        boxScore={boxScore}
       />
       <TeamColumn
         teamName={awayTeam}
@@ -1277,6 +1441,9 @@ export default function RelatedFutures({
         teamColor={aColor}
         teamLogo={awayTeamLogo}
         sportKey={sportKey}
+        isFinished={isFinished}
+        isLive={isLive}
+        boxScore={boxScore}
       />
     </div>
   );

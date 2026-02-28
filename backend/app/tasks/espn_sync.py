@@ -6,7 +6,7 @@ import logging
 import unicodedata
 from datetime import datetime, timezone
 
-from sqlalchemy import select, distinct
+from sqlalchemy import select, distinct, and_, or_
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, Sport
@@ -669,6 +669,58 @@ async def _sync_espn_live_events():
                 except Exception as e:
                     stats["errors"].append(f"scheduled_{sport_key}: {str(e)}")
 
+            # Third pass: fetch box scores for recently completed events
+            # that have an ESPN ID but no box_score_data yet.
+            # This catches games that just finished during the previous sync cycle.
+            try:
+                from datetime import timedelta
+                recent_cutoff = datetime.now(timezone) - timedelta(hours=48)
+                completed_result = await session.execute(
+                    select(Event)
+                    .options(selectinload(Event.sport))
+                    .where(
+                        Event.status.in_(["completed", "closed"]),
+                        Event.espn_id.isnot(None),
+                        Event.box_score_data.is_(None),
+                        Event.commence_time >= recent_cutoff,
+                    )
+                    .order_by(Event.commence_time.desc())
+                    .limit(10)  # Small batch per sync cycle
+                )
+                box_events = completed_result.scalars().all()
+
+                if box_events:
+                    box_espn = ESPNAPIService()
+                    try:
+                        for event in box_events:
+                            sport_key = event.sport.key if event.sport else None
+                            if not sport_key or sport_key not in ESPN_SPORT_MAPPING:
+                                continue
+                            try:
+                                context = await box_espn.get_event_context(sport_key, event.espn_id)
+                                box_score = context.get("box_score", {})
+                                now_str = datetime.now(timezone).isoformat()
+
+                                if box_score:
+                                    event.box_score_data = {
+                                        "source": "espn",
+                                        "fetched_at": now_str,
+                                        "players": box_score,
+                                    }
+                                    stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
+                                else:
+                                    event.box_score_data = {
+                                        "source": "espn",
+                                        "error": "not_available",
+                                        "fetched_at": now_str,
+                                    }
+                            except Exception as e:
+                                logger.error(f"Box score fetch error for event {event.id}: {e}")
+                    finally:
+                        await box_espn.close()
+            except Exception as e:
+                stats["errors"].append(f"box_score_pass: {str(e)}")
+
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
@@ -929,5 +981,105 @@ async def _cleanup_bad_espn_matches():
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
         logger.error(f"Cleanup bad ESPN matches error: {e}\n{traceback.format_exc()}")
+
+    return stats
+
+
+async def _backfill_box_scores(limit: int = 100):
+    """Fetch ESPN box scores for recently completed/live events missing box_score_data.
+
+    Called by admin endpoint POST /api/admin/espn/backfill-boxscores.
+    Queries completed/closed/live events with espn_id set and box_score_data NULL,
+    ordered by most recent first. For live events, box_score_data is refreshed
+    each call (enables live stat prop display).
+    """
+    from app.services.espn_api import ESPNAPIService
+    from app.models.models import Event, Sport
+    import asyncio as _asyncio
+
+    stats = {
+        "checked": 0,
+        "fetched": 0,
+        "errors": 0,
+        "skipped_no_data": 0,
+    }
+
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(
+                    or_(
+                        # Live events: always refresh box scores
+                        and_(
+                            Event.status == "live",
+                            Event.espn_id.isnot(None),
+                        ),
+                        # Completed/closed: only if missing
+                        and_(
+                            Event.status.in_(["completed", "closed"]),
+                            Event.espn_id.isnot(None),
+                            Event.box_score_data.is_(None),
+                        ),
+                    )
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(limit)
+            )
+            events = result.scalars().all()
+
+            if not events:
+                return {"status": "no_events_to_backfill", **stats}
+
+            espn = ESPNAPIService()
+            try:
+                for event in events:
+                    stats["checked"] += 1
+                    sport_key = event.sport.key if event.sport else None
+                    if not sport_key or sport_key not in ESPN_SPORT_MAPPING:
+                        continue
+
+                    try:
+                        context = await espn.get_event_context(sport_key, event.espn_id)
+                        box_score = context.get("box_score", {})
+
+                        now_str = datetime.now(timezone).isoformat()
+
+                        if box_score:
+                            event.box_score_data = {
+                                "source": "espn",
+                                "fetched_at": now_str,
+                                "players": box_score,
+                            }
+                            stats["fetched"] += 1
+                            logger.info(
+                                f"Box score fetched for event {event.id} "
+                                f"({event.home_team_name} vs {event.away_team_name}): "
+                                f"{len(box_score)} players"
+                            )
+                        else:
+                            # Mark as unavailable to avoid infinite retries
+                            event.box_score_data = {
+                                "source": "espn",
+                                "error": "not_available",
+                                "fetched_at": now_str,
+                            }
+                            stats["skipped_no_data"] += 1
+
+                        # Rate limit between requests
+                        await _asyncio.sleep(0.5)
+
+                    except Exception as e:
+                        stats["errors"] += 1
+                        logger.error(f"Box score fetch error for event {event.id}: {e}")
+
+            finally:
+                await espn.close()
+
+    except Exception as e:
+        stats["errors"] += 1
+        import traceback
+        logger.error(f"Box score backfill error: {e}\n{traceback.format_exc()}")
 
     return stats
