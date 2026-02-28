@@ -331,9 +331,13 @@ def calculate_ei(
     final_score = max(1, min(100, round(scaled)))
 
     # Determine data quality
-    if len(valid_snapshots) >= 30:
+    # Thresholds calibrated for 60s buckets:
+    #   good (15+) = 15+ minutes of data
+    #   limited (5-14) = 5-14 minutes
+    #   minimal (<5) = under 5 minutes
+    if len(valid_snapshots) >= 15:
         data_quality = "good"
-    elif len(valid_snapshots) >= 10:
+    elif len(valid_snapshots) >= 5:
         data_quality = "limited"
     else:
         data_quality = "minimal"

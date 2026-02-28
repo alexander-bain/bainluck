@@ -150,24 +150,25 @@ class TestCalculateEI:
         assert 1 <= result.score <= 100
 
     def test_data_quality_good(self):
-        """30+ snapshots = good quality."""
-        snapshots = [_make_dp(i, 0.50 + 0.01 * i) for i in range(35)]
+        """15+ buckets (at 60s) = good quality."""
+        snapshots = [_make_dp(i, 0.50 + 0.01 * i) for i in range(20)]
         end_time = GAME_START + timedelta(hours=2)
         result = calculate_ei(snapshots, GAME_START, end_time, "basketball_nba")
         assert result is not None
         assert result.data_quality == "good"
 
     def test_data_quality_limited(self):
-        """10-29 snapshots = limited quality."""
-        snapshots = [_make_dp(i * 5, 0.50 + 0.01 * i) for i in range(15)]
+        """5-14 buckets (at 60s) = limited quality."""
+        # 8 snapshots at 2-min intervals → 8 buckets at 60s
+        snapshots = [_make_dp(i * 2, 0.50 + 0.01 * i) for i in range(8)]
         end_time = GAME_START + timedelta(hours=2)
         result = calculate_ei(snapshots, GAME_START, end_time, "basketball_nba")
         assert result is not None
         assert result.data_quality == "limited"
 
     def test_data_quality_minimal(self):
-        """3-9 snapshots = minimal quality."""
-        snapshots = [_make_dp(0, 0.50), _make_dp(30, 0.60), _make_dp(60, 0.55)]
+        """<5 buckets = minimal quality."""
+        snapshots = [_make_dp(0, 0.50), _make_dp(1, 0.60), _make_dp(2, 0.55)]
         end_time = GAME_START + timedelta(hours=2)
         result = calculate_ei(snapshots, GAME_START, end_time, "basketball_nba")
         assert result is not None
