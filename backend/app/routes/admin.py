@@ -2228,12 +2228,13 @@ async def odds_api_daily_activity(
     Heroku's 30-second timeout, or table=all to try all three.
     """
     from sqlalchemy import text
+    from datetime import date
 
-    start = f"{year}-{month:02d}-01"
+    start = date(year, month, 1)
     if month == 12:
-        end = f"{year + 1}-01-01"
+        end = date(year + 1, 1, 1)
     else:
-        end = f"{year}-{month + 1:02d}-01"
+        end = date(year, month + 1, 1)
 
     # Set a statement timeout to avoid blocking the DB
     await db.execute(text("SET LOCAL statement_timeout = '25s'"))
