@@ -114,6 +114,8 @@ struct SearchView: View {
                     FuturesDetailView(marketId: id)
                 case .eiRankings:
                     EIRankingsView()
+                case .preferences:
+                    EmptyView()
                 }
             }
         }

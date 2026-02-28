@@ -122,6 +122,81 @@ actor APIClient {
         }
     }
 
+    // MARK: - Generic DELETE
+
+    private func delete<T: Decodable & Sendable>(_ path: String, query: [String: String] = [:]) async throws -> sending T {
+        var components = URLComponents(string: baseURL + path)
+        if !query.isEmpty {
+            components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        guard let url = components?.url else { throw APIError.invalidURL }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        if let provider = authTokenProvider, let token = await provider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.networkError(underlying: error)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8)
+            throw APIError.httpError(statusCode: http.statusCode, body: body)
+        }
+
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decodingError(underlying: error)
+        }
+    }
+
+    // MARK: - Generic PUT (Encodable body)
+
+    private func putEncodable<B: Encodable & Sendable, T: Decodable & Sendable>(_ path: String, body: B) async throws -> sending T {
+        guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        request.httpBody = try encoder.encode(body)
+
+        if let provider = authTokenProvider, let token = await provider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.networkError(underlying: error)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8)
+            throw APIError.httpError(statusCode: http.statusCode, body: body)
+        }
+
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decodingError(underlying: error)
+        }
+    }
+
     // MARK: - Generic POST (Dictionary body)
 
     private func post<T: Decodable & Sendable>(_ path: String, body: [String: String?]) async throws -> sending T {
@@ -259,5 +334,20 @@ actor APIClient {
 
     func submitOnboarding(_ submission: OnboardingSubmission) async throws -> OnboardingResponse {
         return try await postEncodable("/api/me/onboarding", body: submission)
+    }
+
+    // MARK: - Preferences
+
+    func fetchPreferences() async throws -> PreferencesResponse {
+        return try await fetch("/api/me/preferences")
+    }
+
+    func removeFavorite(teamId: Int, relationType: String) async throws -> StatusResponse {
+        return try await delete("/api/me/favorites/\(teamId)", query: ["relation_type": relationType])
+    }
+
+    func updateSportAffinities(_ affinities: [String: Double]) async throws -> StatusResponse {
+        let body = SportAffinitiesUpdate(sportAffinities: affinities)
+        return try await putEncodable("/api/me/preferences/sport-affinities", body: body)
     }
 }

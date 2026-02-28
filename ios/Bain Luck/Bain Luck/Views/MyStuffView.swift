@@ -101,14 +101,11 @@ struct MyStuffView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
-                if authManager.isAuthenticated {
+                if authManager.isAuthenticated && authManager.user?.onboardingCompleted == true {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            authManager.signOut()
-                            vm.items = []
-                        } label: {
-                            Text("Sign Out")
-                                .font(.subheadline)
+                        NavigationLink(value: Route.preferences) {
+                            Image(systemName: "gearshape")
+                                .font(.body)
                         }
                     }
                 }
@@ -121,6 +118,9 @@ struct MyStuffView: View {
                     FuturesDetailView(marketId: id)
                 case .eiRankings:
                     EIRankingsView()
+                case .preferences:
+                    PreferencesView()
+                        .environmentObject(authManager)
                 }
             }
         }
