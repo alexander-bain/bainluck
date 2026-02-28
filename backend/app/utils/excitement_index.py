@@ -322,12 +322,12 @@ def calculate_ei(
     # =========================================================================
     # Raw score → 0-100 scale
     # =========================================================================
-    # Map raw EI to 0-100 using empirical ranges:
-    #   0.0 → 0, ~2.0 → 30 (boring), ~3.5 → 50 (average), ~6.0 → 80, ~8.0+ → 100
+    # Map raw EI to 0-100 using empirical ranges (calibrated with valid_until
+    # carry-forward which removes phantom oscillation from stale bookmakers):
+    #   0.0 → 0, ~0.5 → 35, ~1.0 → 50, ~2.25 → 75, ~4.0 → 100
     # Using a sqrt transform for natural compression at high end:
-    #   score = min(100, sqrt(raw_ei / 8.0) * 100)
-    # This maps: 0→0, 0.5→25, 2.0→50, 4.5→75, 8.0→100
-    scaled = math.sqrt(min(raw_ei, 8.0) / 8.0) * 100
+    #   score = min(100, sqrt(raw_ei / 4.0) * 100)
+    scaled = math.sqrt(min(raw_ei, 4.0) / 4.0) * 100
     final_score = max(1, min(100, round(scaled)))
 
     # Determine data quality
