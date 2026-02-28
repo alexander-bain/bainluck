@@ -52,6 +52,7 @@ async def recalculate_ei(
     # If force mode, clear existing EI data first
     cleared_count = 0
     if force:
+        # Clear scored events
         result = await db.execute(
             update(Event)
             .where(
@@ -61,15 +62,25 @@ async def recalculate_ei(
             .values(raw_ei=None, ei_metadata=None, ei_computed_at=None)
         )
         cleared_count = result.rowcount
+        # Also reset events previously marked as evaluated-but-unscorable
+        await db.execute(
+            update(Event)
+            .where(
+                Event.status.in_(["completed", "closed"]),
+                Event.raw_ei.is_(None),
+                Event.ei_computed_at.isnot(None),
+            )
+            .values(ei_computed_at=None)
+        )
         await db.commit()
 
-    # Find finished events without EI
+    # Find finished events that haven't been evaluated yet
     result = await db.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             Event.status.in_(["completed", "closed"]),
-            Event.raw_ei.is_(None),
+            Event.ei_computed_at.is_(None),
         )
         .order_by(Event.commence_time.desc())
         .limit(limit)
@@ -100,6 +111,8 @@ async def recalculate_ei(
             snapshots = snap_result.scalars().all()
 
             if len(snapshots) < 3:
+                # Mark as evaluated so we don't re-fetch it every time
+                event.ei_computed_at = datetime.now(timezone.utc)
                 continue
 
             # Convert to EIDataPoint objects
@@ -128,6 +141,9 @@ async def recalculate_ei(
                 event.ei_metadata = ei_result.metadata.to_json()
                 event.ei_computed_at = datetime.now(timezone.utc)
                 processed += 1
+            else:
+                # Evaluated but insufficient data — mark so we skip next time
+                event.ei_computed_at = datetime.now(timezone.utc)
 
         except Exception as e:
             errors += 1
@@ -136,12 +152,12 @@ async def recalculate_ei(
 
     await db.commit()
 
-    # Check how many events still need processing
+    # Check how many events still need evaluation
     remaining_result = await db.execute(
         select(Event.id)
         .where(
             Event.status.in_(["completed", "closed"]),
-            Event.raw_ei.is_(None),
+            Event.ei_computed_at.is_(None),
         )
     )
     remaining = len(remaining_result.all())
@@ -155,6 +171,57 @@ async def recalculate_ei(
         "remaining": remaining,
         "message": f"Processed {processed} events. {remaining} remaining." +
                    (f" Call again to continue." if remaining > 0 else " All done!"),
+    }
+
+
+@router.get("/ei/diagnosis")
+async def ei_diagnosis(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Diagnose why events don't have EI scores.
+
+    Breaks down completed/closed events with raw_ei=NULL by root cause:
+    - zero_snapshots: No odds_snapshots at all
+    - few_snapshots: 1-2 raw snapshots (below MIN_SNAPSHOTS=3)
+    - few_buckets: 3+ snapshots but <3 aggregated time buckets
+    - minimal_quality: 3-4 aggregated buckets (data_quality="minimal", not stored)
+    - scorable: 5+ buckets — should have been scored (indicates a bug)
+    """
+    from sqlalchemy import func, text
+
+    # Count completed/closed events with no EI, grouped by snapshot count
+    result = await db.execute(text("""
+        SELECT
+            CASE
+                WHEN snap_count = 0 THEN 'zero_snapshots'
+                WHEN snap_count < 3 THEN 'few_snapshots'
+                ELSE 'has_snapshots'
+            END AS category,
+            COUNT(*) AS event_count
+        FROM (
+            SELECT e.id,
+                   COALESCE((SELECT COUNT(*) FROM odds_snapshots os WHERE os.event_id = e.id), 0) AS snap_count
+            FROM events e
+            WHERE e.status IN ('completed', 'closed')
+              AND e.raw_ei IS NULL
+        ) sub
+        GROUP BY 1
+        ORDER BY 1
+    """))
+    rows = result.all()
+
+    breakdown = {row[0]: row[1] for row in rows}
+    total = sum(breakdown.values())
+
+    return {
+        "total_unscorable": total,
+        "breakdown": breakdown,
+        "explanation": {
+            "zero_snapshots": "No odds data exists for these events (pre-polling, unsupported sport, or very short-lived)",
+            "few_snapshots": "1-2 raw snapshots — below the minimum of 3 needed",
+            "has_snapshots": "3+ raw snapshots but either too few aggregated time buckets or minimal data quality",
+        },
     }
 
 
@@ -1948,6 +2015,31 @@ async def cleanup_bad_espn_matches(
         "status": "queued",
         "task_id": result.id,
         "message": "Cleanup task queued. Check status at /api/admin/espn/task/{task_id}",
+    }
+
+
+@router.post("/espn/backfill-boxscores")
+async def backfill_box_scores(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(100, description="Max events to process"),
+):
+    """
+    Backfill ESPN box score data for completed events.
+
+    Fetches box scores for completed/closed events that have an ESPN ID
+    but are missing box_score_data. Stores player stats for expected-vs-actual
+    display on stat prop markets.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import backfill_box_scores as task
+
+    result = task.delay(limit=limit)
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "message": f"Box score backfill queued (limit={limit}). Check status at /api/admin/espn/task/{{task_id}}",
     }
 
 
