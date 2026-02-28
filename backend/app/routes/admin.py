@@ -181,12 +181,8 @@ async def ei_diagnosis(
     """
     Diagnose why events don't have EI scores.
 
-    Breaks down completed/closed events with raw_ei=NULL by root cause:
-    - zero_snapshots: No odds_snapshots at all
-    - few_snapshots: 1-2 raw snapshots (below MIN_SNAPSHOTS=3)
-    - few_buckets: 3+ snapshots but <3 aggregated time buckets
-    - minimal_quality: 3-4 aggregated buckets (data_quality="minimal", not stored)
-    - scorable: 5+ buckets — should have been scored (indicates a bug)
+    Breaks down completed/closed events with raw_ei=NULL by root cause,
+    including sport breakdown for zero-snapshot events.
     """
     from sqlalchemy import func, text
 
@@ -210,18 +206,59 @@ async def ei_diagnosis(
         ORDER BY 1
     """))
     rows = result.all()
-
     breakdown = {row[0]: row[1] for row in rows}
     total = sum(breakdown.values())
+
+    # For zero-snapshot events: which sports and how old?
+    zero_snap_detail = await db.execute(text("""
+        SELECT s.key AS sport_key, COUNT(*) AS cnt,
+               MIN(e.commence_time) AS oldest,
+               MAX(e.commence_time) AS newest
+        FROM events e
+        LEFT JOIN sports s ON s.id = e.sport_id
+        WHERE e.status IN ('completed', 'closed')
+          AND e.raw_ei IS NULL
+          AND NOT EXISTS (SELECT 1 FROM odds_snapshots os WHERE os.event_id = e.id)
+        GROUP BY s.key
+        ORDER BY cnt DESC
+        LIMIT 15
+    """))
+    zero_by_sport = [
+        {"sport": row[0], "count": row[1],
+         "oldest": row[2].isoformat() if row[2] else None,
+         "newest": row[3].isoformat() if row[3] else None}
+        for row in zero_snap_detail.all()
+    ]
+
+    # For has_snapshots events: distribution of snapshot counts
+    has_snap_detail = await db.execute(text("""
+        SELECT
+            CASE
+                WHEN snap_count BETWEEN 3 AND 5 THEN '3-5'
+                WHEN snap_count BETWEEN 6 AND 10 THEN '6-10'
+                WHEN snap_count BETWEEN 11 AND 20 THEN '11-20'
+                WHEN snap_count BETWEEN 21 AND 50 THEN '21-50'
+                ELSE '51+'
+            END AS bucket,
+            COUNT(*) AS cnt
+        FROM (
+            SELECT e.id,
+                   (SELECT COUNT(*) FROM odds_snapshots os WHERE os.event_id = e.id) AS snap_count
+            FROM events e
+            WHERE e.status IN ('completed', 'closed')
+              AND e.raw_ei IS NULL
+              AND (SELECT COUNT(*) FROM odds_snapshots os WHERE os.event_id = e.id) >= 3
+        ) sub
+        GROUP BY 1
+        ORDER BY 1
+    """))
+    has_snap_buckets = {row[0]: row[1] for row in has_snap_detail.all()}
 
     return {
         "total_unscorable": total,
         "breakdown": breakdown,
-        "explanation": {
-            "zero_snapshots": "No odds data exists for these events (pre-polling, unsupported sport, or very short-lived)",
-            "few_snapshots": "1-2 raw snapshots — below the minimum of 3 needed",
-            "has_snapshots": "3+ raw snapshots but either too few aggregated time buckets or minimal data quality",
-        },
+        "zero_snapshots_by_sport": zero_by_sport,
+        "has_snapshots_distribution": has_snap_buckets,
     }
 
 
