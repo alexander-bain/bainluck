@@ -54,33 +54,23 @@ struct EIRankingsView: View {
     @StateObject private var vm = EIRankingsViewModel()
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if vm.loading {
-                    ProgressView("Loading rankings...")
-                } else if let error = vm.error, vm.rankings == nil {
-                    ContentUnavailableView(
-                        "Couldn't Load Rankings",
-                        systemImage: "wifi.exclamationmark",
-                        description: Text(error)
-                    )
-                } else if let rankings = vm.rankings {
-                    rankingsList(rankings)
-                }
-            }
-            .navigationTitle("EI Rankings")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
-            #endif
-            .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .eventDetail(let id):
-                    EventDetailView(eventId: id)
-                case .futuresDetail(let id):
-                    FuturesDetailView(marketId: id)
-                }
+        Group {
+            if vm.loading {
+                ProgressView("Loading rankings...")
+            } else if let error = vm.error, vm.rankings == nil {
+                ContentUnavailableView(
+                    "Couldn't Load Rankings",
+                    systemImage: "wifi.exclamationmark",
+                    description: Text(error)
+                )
+            } else if let rankings = vm.rankings {
+                rankingsList(rankings)
             }
         }
+        .navigationTitle("EI Rankings")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.large)
+        #endif
         .task {
             await vm.load()
         }

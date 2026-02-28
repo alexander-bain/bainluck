@@ -82,7 +82,9 @@ struct EventDetailView: View {
                         probabilitySection(event)
                         OddsChartView(eventId: event.id)
                         if let ei = event.ei ?? event.pulse { eiSection(ei) }
+                        LineMovementView(eventId: event.id)
                         if let context = event.standingsContext { standingsSection(context) }
+                        RelatedFuturesView(eventId: event.id)
                         espnSection(event)
                         bookmakerSection(event)
                     }

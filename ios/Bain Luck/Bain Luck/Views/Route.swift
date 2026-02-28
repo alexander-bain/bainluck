@@ -4,4 +4,5 @@ import Foundation
 enum Route: Hashable {
     case eventDetail(id: Int)
     case futuresDetail(id: Int)
+    case eiRankings
 }

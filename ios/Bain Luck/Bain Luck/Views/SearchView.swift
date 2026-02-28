@@ -112,6 +112,8 @@ struct SearchView: View {
                     EventDetailView(eventId: id)
                 case .futuresDetail(let id):
                     FuturesDetailView(marketId: id)
+                case .eiRankings:
+                    EIRankingsView()
                 }
             }
         }

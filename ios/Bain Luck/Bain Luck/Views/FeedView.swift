@@ -99,12 +99,21 @@ struct FeedView: View {
                 }
             }
             .navigationTitle("Bain Luck")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    NavigationLink(value: Route.eiRankings) {
+                        Image(systemName: "chart.bar.fill")
+                    }
+                }
+            }
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .eventDetail(let id):
                     EventDetailView(eventId: id)
                 case .futuresDetail(let id):
                     FuturesDetailView(marketId: id)
+                case .eiRankings:
+                    EIRankingsView()
                 }
             }
         }

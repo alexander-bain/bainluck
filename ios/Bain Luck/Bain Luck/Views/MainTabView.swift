@@ -13,9 +13,9 @@ struct MainTabView: View {
                     Label("Search", systemImage: "magnifyingglass")
                 }
 
-            EIRankingsView()
+            MyStuffView()
                 .tabItem {
-                    Label("EI Rankings", systemImage: "chart.bar.fill")
+                    Label("My Stuff", systemImage: "person.fill")
                 }
         }
     }
