@@ -12,8 +12,30 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models import Sport, Event, OddsSnapshot, Team
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
+from app.tasks.config import (
+    DISCOVER_TIER1_INTERVAL,
+    DISCOVER_TIER2_INTERVAL,
+    DISCOVER_TIER3_INTERVAL,
+    DISCOVER_TIER4_INTERVAL,
+)
+from app.tasks.redis_state import get_redis_client
 
 logger = logging.getLogger(__name__)
+
+# Tier → discovery interval mapping
+_DISCOVER_INTERVALS = {
+    1: DISCOVER_TIER1_INTERVAL,
+    2: DISCOVER_TIER2_INTERVAL,
+    3: DISCOVER_TIER3_INTERVAL,
+    4: DISCOVER_TIER4_INTERVAL,
+}
+
+
+def _get_discover_interval(sport_key: str) -> int:
+    """Get the discovery polling interval for a sport based on its league tier."""
+    from app.utils.highlights import LEAGUE_TIERS
+    tier = LEAGUE_TIERS.get(sport_key, 4)
+    return _DISCOVER_INTERVALS.get(tier, DISCOVER_TIER4_INTERVAL)
 
 
 async def _sync_sports():
@@ -135,6 +157,13 @@ async def _discover_events():
         total_new_teams = 0
         total_statpal_attached = 0
         sports_polled = 0
+        sports_skipped = 0
+
+        # Get Redis client for per-sport discovery frequency gating
+        try:
+            r = get_redis_client()
+        except Exception:
+            r = None
 
         async with get_task_session() as session:
             # Get ALL active sports (not filtering by existing events)
@@ -146,10 +175,32 @@ async def _discover_events():
             for sport in sports:
                 sport_key = sport.key
 
+                # Per-sport discovery frequency gating based on league tier
+                discover_interval = _get_discover_interval(sport_key)
+                if r:
+                    try:
+                        last_discover_key = f"bainluck:last_discover:{sport_key}"
+                        last_discover = r.get(last_discover_key)
+                        if last_discover:
+                            elapsed = datetime.now(timezone.utc).timestamp() - float(last_discover.decode())
+                            if elapsed < discover_interval:
+                                sports_skipped += 1
+                                continue
+                    except Exception:
+                        pass  # If Redis fails, just poll
+
                 try:
                     # Fetch odds for this sport
                     events_data = await service.get_odds(sport_key)
                     sports_polled += 1
+
+                    # Record successful discovery timestamp in Redis
+                    if r:
+                        try:
+                            last_discover_key = f"bainluck:last_discover:{sport_key}"
+                            r.set(last_discover_key, str(datetime.now(timezone.utc).timestamp()), ex=86400)
+                        except Exception:
+                            pass
 
                     # Record quota from response headers
                     if service.last_requests_remaining is not None:
@@ -321,6 +372,7 @@ async def _discover_events():
 
         return {
             "sports_polled": sports_polled,
+            "sports_skipped": sports_skipped,
             "events_found": total_events,
             "new_events": total_new_events,
             "new_teams": total_new_teams,
