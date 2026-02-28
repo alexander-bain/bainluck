@@ -9,9 +9,15 @@ import SwiftUI
 
 @main
 struct Bain_LuckApp: App {
+    @StateObject private var authManager = AuthManager()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(authManager)
+                .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+                    authManager.checkCredentialState()
+                }
         }
     }
 }

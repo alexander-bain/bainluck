@@ -34,6 +34,10 @@ actor APIClient {
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
 
+    func setAuthTokenProvider(_ provider: (() async -> String?)?) {
+        authTokenProvider = provider
+    }
+
     private init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -55,6 +59,44 @@ actor APIClient {
 
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        if let provider = authTokenProvider, let token = await provider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIError.networkError(underlying: error)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8)
+            throw APIError.httpError(statusCode: http.statusCode, body: body)
+        }
+
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decodingError(underlying: error)
+        }
+    }
+
+    // MARK: - Generic POST
+
+    private func post<T: Decodable & Sendable>(_ path: String, body: [String: String?]) async throws -> sending T {
+        guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // Filter nil values and encode
+        let filtered = body.compactMapValues { $0 }
+        request.httpBody = try JSONSerialization.data(withJSONObject: filtered)
 
         if let provider = authTokenProvider, let token = await provider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -147,5 +189,23 @@ actor APIClient {
         var q: [String: String] = ["limit": "\(limit)"]
         if let sport { q["sport"] = sport }
         return try await fetch("/api/events/ei-rankings", query: q)
+    }
+
+    // MARK: - Auth
+
+    func signInWithApple(idToken: String, firstName: String?, lastName: String?) async throws -> AppleAuthResponse {
+        return try await post("/api/auth/apple", body: [
+            "id_token": idToken,
+            "first_name": firstName,
+            "last_name": lastName,
+        ])
+    }
+
+    func fetchProfile() async throws -> AuthUser {
+        return try await fetch("/api/auth/me")
+    }
+
+    func fetchAuthStatus() async throws -> AuthStatusResponse {
+        return try await fetch("/api/auth/status")
     }
 }
