@@ -2012,28 +2012,37 @@ async def get_related_futures(
     away_futures = []
     seen_ids = set()
 
-    # ── Game-specific stat prop filtering ────────────────────────────
-    # Stat prop markets (e.g., "Jaylen Brown: 40+ points") are tied to a
+    # ── Game-specific market filtering ────────────────────────────
+    # Game-specific markets (stat props AND matchup markets) are tied to a
     # single game and should only appear on THAT event's detail page.
-    # Game moneylines (e.g., "Lakers vs Nuggets") are fine to show as
-    # "Upcoming Games" context on any event page for those teams.
     # Season-long markets (championship, MVP, awards) always show.
     event_commence_time = event.commence_time
-    GAME_TIME_WINDOW = timedelta(hours=6)  # ±6h for stat prop matching
+    GAME_TIME_WINDOW = timedelta(hours=6)  # ±6h for game market matching
 
-    def _is_stat_prop_market(mkt: FuturesMarket) -> bool:
-        """Check if a market is a game-specific stat prop (not a moneyline)."""
+    def _is_game_specific_market(mkt: FuturesMarket) -> bool:
+        """Check if a market is tied to a specific game (stat prop or matchup)."""
         name = mkt.name or ""
         # Stat prop patterns: "Team at Team: Points/Rebounds/etc."
         if _GAME_STAT_PROP_RE.search(name):
             return True
+        # Matchup patterns: "Team vs. Team", "Team – Team"
+        # These are game moneylines, spreads, O/U tied to a single game.
+        if _GAME_MATCHUP_RE.search(name):
+            return True
         return False
 
-    def _stat_prop_matches_event(mkt: FuturesMarket) -> bool:
-        """Check if a stat prop market belongs to THIS event."""
+    def _game_market_matches_event(mkt: FuturesMarket) -> bool:
+        """Check if a game-specific market belongs to THIS event."""
         # Direct event_id link
         if mkt.event_id is not None:
             return mkt.event_id == event_id
+        # Check if market name contains BOTH teams from this event
+        name_lower = (mkt.name or "").lower()
+        home_short = event.home_team_name.split()[-1].lower() if event.home_team_name else ""
+        away_short = event.away_team_name.split()[-1].lower() if event.away_team_name else ""
+        if (home_short and len(home_short) >= 4 and home_short in name_lower and
+                away_short and len(away_short) >= 4 and away_short in name_lower):
+            return True
         # Temporal proximity
         if event_commence_time:
             for dt in (mkt.commence_time, mkt.resolution_date):
@@ -2051,9 +2060,9 @@ async def get_related_futures(
 
         market = outcome.market
 
-        # ── Filter stat prop markets that don't belong to this event ──
-        # Stat props are tied to a specific game; moneylines are fine as context.
-        if _is_stat_prop_market(market) and not _stat_prop_matches_event(market):
+        # ── Filter game-specific markets that don't belong to this event ──
+        # Game-specific markets (matchups, stat props) are tied to a specific game.
+        if _is_game_specific_market(market) and not _game_market_matches_event(market):
             continue
 
         # Classify: team_id first (reliable for player outcomes), then name matching

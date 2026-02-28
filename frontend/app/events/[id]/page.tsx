@@ -1016,6 +1016,56 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
+      {/* Trend Chart */}
+      <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
+        <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
+          Win Probability
+        </h3>
+        {historyLoading ? (
+          <div className="h-48 flex items-center justify-center">
+            <LoadingSpinner size="sm" />
+          </div>
+        ) : historyError ? (
+          <div className="h-48 flex flex-col items-center justify-center text-sm text-text-secondary gap-2">
+            <span>Unable to load history</span>
+            <span className="text-xs text-text-muted">
+              {historyError.message || 'Unknown error'}
+            </span>
+            <button
+              onClick={() => refreshHistory()}
+              className="text-xs text-blue-600 hover:underline mt-2"
+            >
+              Retry
+            </button>
+          </div>
+        ) : historyData?.history?.length === 0 ? (
+          <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
+            Tracking will begin when odds are available
+          </div>
+        ) : (
+          <OddsChart
+            history={historyData?.history ?? []}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+            commenceTime={event.commence_time}
+            isLive={effectivelyLive}
+            bookmakerHistory={historyData?.bookmaker_history}
+            espnHistory={historyData?.espn_history}
+            winProbHistory={historyData?.win_prob_history}
+            winProbSources={historyData?.win_prob_sources}
+            scoringPlays={historyData?.scoring_plays}
+            aggregateLine={historyData?.aggregate_line ?? undefined}
+            eventId={eventId}
+            eventStatus={event.status}
+            periodBoundaries={periodBoundaries}
+            homeTeamColor={event.home_team_data?.primary_color || undefined}
+            awayTeamColor={event.away_team_data?.primary_color || undefined}
+            homeTeamLogo={event.home_team_data?.logo_small || undefined}
+            awayTeamLogo={event.away_team_data?.logo_small || undefined}
+          />
+        )}
+      </div>
+
       {/* Score Differential Chart - combines projected spread and actual score diff */}
       {historyData?.history && historyData.history.length > 0 && (
         <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
@@ -1041,56 +1091,6 @@ export default function EventPage({ params }: EventPageProps) {
           />
         </div>
       )}
-
-      {/* Trend Chart */}
-      <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
-        <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
-          Win Probability
-        </h3>
-        {historyLoading ? (
-          <div className="h-48 flex items-center justify-center">
-            <LoadingSpinner size="sm" />
-          </div>
-        ) : historyError ? (
-          <div className="h-48 flex flex-col items-center justify-center text-sm text-text-secondary gap-2">
-            <span>Unable to load history</span>
-            <span className="text-xs text-text-muted">
-              {historyError.message || 'Unknown error'}
-            </span>
-            <button
-              onClick={() => refreshHistory()}
-              className="text-xs text-blue-600 hover:underline mt-2"
-            >
-              Retry
-            </button>
-          </div>
-        ) : historyData?.history?.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
-            📊 Tracking will begin when odds are available
-          </div>
-        ) : (
-          <OddsChart
-            history={historyData?.history ?? []}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            commenceTime={event.commence_time}
-            isLive={effectivelyLive}
-            bookmakerHistory={historyData?.bookmaker_history}
-            espnHistory={historyData?.espn_history}
-            winProbHistory={historyData?.win_prob_history}
-            winProbSources={historyData?.win_prob_sources}
-            scoringPlays={historyData?.scoring_plays}
-            aggregateLine={historyData?.aggregate_line ?? undefined}
-            eventId={eventId}
-            eventStatus={event.status}
-            periodBoundaries={periodBoundaries}
-            homeTeamColor={event.home_team_data?.primary_color || undefined}
-            awayTeamColor={event.away_team_data?.primary_color || undefined}
-            homeTeamLogo={event.home_team_data?.logo_small || undefined}
-            awayTeamLogo={event.away_team_data?.logo_small || undefined}
-          />
-        )}
-      </div>
 
       {/* Win Probabilities by Sportsbook */}
       {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (

@@ -326,10 +326,10 @@ export default function ScoreDifferentialChart({
 
   const maxAbs =
     allDiffValues.length > 0
-      ? Math.ceil(Math.max(...allDiffValues.map(Math.abs)) + 2)
-      : 10;
-  // Make symmetric around 0, rounding up to nearest 5
-  const domainMax = Math.ceil(maxAbs / 5) * 5;
+      ? Math.max(...allDiffValues.map(Math.abs)) + 1
+      : 5;
+  // Make symmetric around 0, rounding up to nearest 2 for a tighter fit
+  const domainMax = Math.max(2, Math.ceil(maxAbs / 2) * 2);
 
   // Short team names for axis labels
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
