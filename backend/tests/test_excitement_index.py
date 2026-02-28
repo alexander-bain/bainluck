@@ -313,8 +313,8 @@ class TestAggregateSnapshots:
         assert result[1].home_win_probability == 0.55
         assert result[2].home_win_probability == 0.52
 
-    def test_default_bucket_size_is_60s(self):
-        """Default bucket size should be 60s (not 30s)."""
+    def test_default_bucket_size_is_30s(self):
+        """Default bucket size should be 30s."""
         base = datetime(2026, 2, 1, 19, 0, 0, tzinfo=timezone.utc)
         snapshots = [
             EIDataPoint(captured_at=base, home_win_probability=0.50, source="a"),
@@ -329,9 +329,9 @@ class TestAggregateSnapshots:
                 source="a",
             ),
         ]
-        # With default 60s buckets, first two snapshots are in same bucket
+        # With default 30s buckets, each snapshot is in its own bucket
         result = _aggregate_snapshots(snapshots)
-        assert len(result) == 2  # 2 buckets, not 3
+        assert len(result) == 3  # 3 buckets
 
     def test_source_dedup_in_carry_forward(self):
         """When same source appears via carry-forward and new reading, keep latest."""

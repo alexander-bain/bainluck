@@ -164,7 +164,7 @@ def get_ei_emoji(score: int) -> str:
 
 def _aggregate_snapshots(
     snapshots: list[EIDataPoint],
-    bucket_seconds: int = 60,
+    bucket_seconds: int = 30,
 ) -> list[EIDataPoint]:
     """
     Aggregate multi-source snapshots into one data point per time bucket.
@@ -179,7 +179,7 @@ def _aggregate_snapshots(
 
     Args:
         snapshots: Raw snapshots (may contain multiple sources per timestamp)
-        bucket_seconds: Time bucket size in seconds (default 60s)
+        bucket_seconds: Time bucket size in seconds (default 30s)
 
     Returns:
         Aggregated list with one EIDataPoint per time bucket
@@ -266,8 +266,8 @@ def calculate_ei(
     if len(valid_snapshots) < MIN_SNAPSHOTS:
         return None
 
-    # Aggregate into time buckets (60s default, matching history endpoint)
-    valid_snapshots = _aggregate_snapshots(valid_snapshots, bucket_seconds=60)
+    # Aggregate into time buckets (30s with valid_until carry-forward)
+    valid_snapshots = _aggregate_snapshots(valid_snapshots, bucket_seconds=30)
 
     if len(valid_snapshots) < MIN_SNAPSHOTS:
         return None
@@ -331,10 +331,10 @@ def calculate_ei(
     final_score = max(1, min(100, round(scaled)))
 
     # Determine data quality
-    # Thresholds calibrated for 60s buckets:
-    #   good (15+) = 15+ minutes of data
-    #   limited (5-14) = 5-14 minutes
-    #   minimal (<5) = under 5 minutes
+    # Thresholds for 30s buckets:
+    #   good (15+) = 7.5+ minutes of data
+    #   limited (5-14) = 2.5-7 minutes
+    #   minimal (<5) = under 2.5 minutes
     if len(valid_snapshots) >= 15:
         data_quality = "good"
     elif len(valid_snapshots) >= 5:
