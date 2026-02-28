@@ -573,37 +573,36 @@ async def _match_prediction_markets(limit: int = 500):
 
         await session.commit()
 
-        # ── Phase 2: Write win_prob_snapshots for all linked markets ─────
-
-        # Find all linked prediction markets (including newly linked ones)
-        # Include "open" and recently-resolved markets so we capture final prices
+        # ── Phase 2: Write win_prob_snapshots for active linked markets ────
+        #
+        # Only process markets linked to events that are still relevant:
+        # - Scheduled/live events (upcoming or in progress)
+        # - Recently completed events (<12h, to capture final prices)
+        #
+        # This filters at the SQL level to avoid loading all 5,000+ linked
+        # markets when most are for events that finished days/weeks ago.
+        # Live events are also handled by poll_live_prediction_markets (every
+        # 2 min), so this is a supplementary pass.
+        recent_cutoff = now - timedelta(hours=12)
         linked_result = await session.execute(
-            select(FuturesMarket)
+            select(FuturesMarket, Event)
+            .join(Event, FuturesMarket.event_id == Event.id)
             .where(
                 FuturesMarket.source.in_(["kalshi", "polymarket"]),
                 FuturesMarket.event_id.isnot(None),
+                or_(
+                    Event.status.in_(["scheduled", "live"]),
+                    and_(
+                        Event.status.in_(["completed", "closed"]),
+                        Event.commence_time >= recent_cutoff,
+                    ),
+                ),
             )
         )
-        linked_markets = linked_result.scalars().all()
+        linked_rows = linked_result.all()
 
-        for market in linked_markets:
+        for market, event in linked_rows:
             try:
-                # Load the event to determine home/away mapping
-                event_result = await session.execute(
-                    select(Event).where(Event.id == market.event_id)
-                )
-                event = event_result.scalar_one_or_none()
-                if not event:
-                    continue
-
-                # Skip completed events that finished long ago (> 6 hours)
-                # to avoid writing stale snapshots
-                if event.status in ("completed", "closed"):
-                    if event.commence_time:
-                        hours_since = (now - event.commence_time).total_seconds() / 3600
-                        if hours_since > 12:
-                            continue
-
                 # Re-extract matchup to determine team mapping
                 # Uses ticker fallback for generic-named Kalshi markets
                 matchup = extract_matchup_with_ticker_fallback(
