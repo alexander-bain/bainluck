@@ -51,7 +51,7 @@ struct EventCardView: View {
                     .clipShape(Capsule())
             }
             Spacer()
-            PinButton(type: "event", id: event.id)
+            PinButton(type: "event", id: event.id, compact: true)
             if isScheduled || isFinished {
                 RelativeTimeText(dateString: event.commenceTime)
             }
