@@ -4,10 +4,15 @@ import SwiftUI
 struct EventCardView: View {
     let event: FeedEventData
     let reason: String?
+    var personalizationReasons: [String]? = nil
+    var headline: String? = nil
 
     private var isLive: Bool { event.status == "live" }
     private var isFinished: Bool { event.status == "completed" || event.status == "closed" }
     private var isScheduled: Bool { event.status == "scheduled" || (!isLive && !isFinished) }
+
+    private var awayWon: Bool { isFinished && (event.awayScore ?? 0) > (event.homeScore ?? 0) }
+    private var homeWon: Bool { isFinished && (event.homeScore ?? 0) > (event.awayScore ?? 0) }
 
     private var awayColor: Color { Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280") }
     private var homeColor: Color { Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280") }
@@ -15,7 +20,6 @@ struct EventCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             topBar
-            if isLive || isFinished { scoreRow }
             teamsAndOdds
             footer
         }
@@ -33,39 +37,62 @@ struct EventCardView: View {
             if let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
+            if let badge = personalizationBadge {
+                badge
+            }
+            if let headline, !headline.isEmpty {
+                Text(headline)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.blue.opacity(0.12))
+                    .foregroundStyle(.blue)
+                    .clipShape(Capsule())
+            }
             Spacer()
-            if isScheduled {
+            PinButton(type: "event", id: event.id)
+            if isScheduled || isFinished {
                 RelativeTimeText(dateString: event.commenceTime)
             }
         }
     }
 
-    // MARK: - Score Row (Live / Finished)
+    // MARK: - Personalization Badge
 
-    @ViewBuilder
-    private var scoreRow: some View {
-        HStack {
-            let awayWon = isFinished && (event.awayScore ?? 0) > (event.homeScore ?? 0)
-            let homeWon = isFinished && (event.homeScore ?? 0) > (event.awayScore ?? 0)
-
-            Text("\(event.awayScore ?? 0)")
-                .font(.title2.monospacedDigit())
-                .fontWeight(awayWon ? .bold : .regular)
-                .foregroundStyle(awayWon ? .primary : .secondary)
-            Spacer()
-            Text("-")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text("\(event.homeScore ?? 0)")
-                .font(.title2.monospacedDigit())
-                .fontWeight(homeWon ? .bold : .regular)
-                .foregroundStyle(homeWon ? .primary : .secondary)
+    private var personalizationBadge: AnyView? {
+        guard let reasons = personalizationReasons, !reasons.isEmpty else { return nil }
+        // Parse first matching reason from "your_team:0.80" format
+        for reason in reasons {
+            let key = reason.split(separator: ":").first.map(String.init) ?? reason
+            switch key {
+            case "your_team":
+                return AnyView(badgeCapsule(text: "Your Team", color: .blue))
+            case "local":
+                return AnyView(badgeCapsule(text: "Local", color: .green))
+            case "alma_mater":
+                return AnyView(badgeCapsule(text: "Alma Mater", color: .purple))
+            case "rival_losing":
+                return AnyView(badgeCapsule(text: "Rival Losing", color: .orange))
+            default:
+                continue
+            }
         }
-        .padding(.horizontal, 8)
+        return nil
     }
 
-    // MARK: - Teams + Odds
+    private func badgeCapsule(text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
+    }
+
+    // MARK: - Teams + Odds (with inline scores)
 
     private var teamsAndOdds: some View {
         VStack(spacing: 6) {
@@ -79,14 +106,21 @@ struct EventCardView: View {
                 )
                 Text(event.awayTeam)
                     .font(.subheadline)
-                    .fontWeight(.medium)
+                    .fontWeight(awayWon ? .bold : .medium)
+                    .foregroundStyle(awayWon ? .primary : (isFinished ? .secondary : .primary))
                     .lineLimit(1)
-                if let record = event.awayTeamData?.record {
+                if let record = event.awayTeamData?.record, !isFinished {
                     Text(record)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if isLive || isFinished, let score = event.awayScore {
+                    Text("\(score)")
+                        .font(.subheadline.monospacedDigit())
+                        .fontWeight(awayWon ? .bold : .regular)
+                        .foregroundStyle(awayWon ? .primary : .secondary)
+                }
                 if !isFinished {
                     probabilityText(for: .away)
                 }
@@ -105,14 +139,21 @@ struct EventCardView: View {
                 )
                 Text(event.homeTeam)
                     .font(.subheadline)
-                    .fontWeight(.medium)
+                    .fontWeight(homeWon ? .bold : .medium)
+                    .foregroundStyle(homeWon ? .primary : (isFinished ? .secondary : .primary))
                     .lineLimit(1)
-                if let record = event.homeTeamData?.record {
+                if let record = event.homeTeamData?.record, !isFinished {
                     Text(record)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if isLive || isFinished, let score = event.homeScore {
+                    Text("\(score)")
+                        .font(.subheadline.monospacedDigit())
+                        .fontWeight(homeWon ? .bold : .regular)
+                        .foregroundStyle(homeWon ? .primary : .secondary)
+                }
                 if !isFinished {
                     probabilityText(for: .home)
                 }

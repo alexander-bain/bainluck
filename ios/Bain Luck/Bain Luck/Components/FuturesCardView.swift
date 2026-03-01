@@ -12,6 +12,7 @@ struct FuturesCardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                PinButton(type: "future", id: futures.id)
                 if let count = futures.sourceCount, count > 1 {
                     Text("\(count) sources")
                         .font(.caption2)

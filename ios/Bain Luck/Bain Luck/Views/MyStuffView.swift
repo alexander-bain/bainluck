@@ -80,6 +80,7 @@ final class MyStuffViewModel: ObservableObject {
 struct MyStuffView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var navCoordinator: NavigationCoordinator
+    @EnvironmentObject var pinManager: PinManager
     @StateObject private var vm = MyStuffViewModel()
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
@@ -128,7 +129,7 @@ struct MyStuffView: View {
         .onAppear {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
         }
-        .onChange(of: navCoordinator.pendingRoute) { _ in
+        .onChange(of: navCoordinator.pendingRoute) { _, _ in
             if navCoordinator.selectedTab == .myStuff,
                let route = navCoordinator.consumeRoute() {
                 path.append(route)
@@ -277,8 +278,22 @@ struct MyStuffView: View {
         }
     }
 
+    private var pinnedItems: [FeedItem] {
+        vm.items.filter { item in
+            if item.type == "event", let event = item.event {
+                return pinManager.pinnedEventIDs.contains(event.id)
+            } else if item.type == "futures", let futures = item.futures {
+                return pinManager.pinnedFuturesIDs.contains(futures.id)
+            }
+            return false
+        }
+    }
+
     private var teamFeedList: some View {
         List {
+            if !pinnedItems.isEmpty {
+                feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange, items: pinnedItems)
+            }
             if !vm.liveNow.isEmpty {
                 feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
             }
@@ -324,7 +339,12 @@ struct MyStuffView: View {
             Button {
                 path.append(Route.eventDetail(id: event.id))
             } label: {
-                EventCardView(event: event, reason: item.reason)
+                EventCardView(
+                    event: event,
+                    reason: item.reason,
+                    personalizationReasons: item.personalizationReasons,
+                    headline: item.headline
+                )
             }
             .buttonStyle(.plain)
         } else if item.type == "futures", let futures = item.futures {

@@ -98,6 +98,11 @@ struct EventDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                PinButton(type: "event", id: eventId)
+            }
+        }
         .task {
             await vm.load()
             AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)

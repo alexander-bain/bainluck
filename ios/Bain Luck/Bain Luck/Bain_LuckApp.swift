@@ -13,6 +13,7 @@ import SwiftUI
 struct Bain_LuckApp: App {
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
+    @StateObject private var pinManager = PinManager()
 
     init() {
         FirebaseApp.configure()
@@ -23,6 +24,20 @@ struct Bain_LuckApp: App {
             ContentView()
                 .environmentObject(authManager)
                 .environmentObject(navCoordinator)
+                .environmentObject(pinManager)
+                .onChange(of: authManager.isAuthenticated) { _, isAuth in
+                    pinManager.isAuthenticated = isAuth
+                    Task {
+                        if isAuth {
+                            await pinManager.syncLocalToServer()
+                        }
+                        await pinManager.loadPins()
+                    }
+                }
+                .task {
+                    pinManager.isAuthenticated = authManager.isAuthenticated
+                    await pinManager.loadPins()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
                     authManager.checkCredentialState()
                 }
