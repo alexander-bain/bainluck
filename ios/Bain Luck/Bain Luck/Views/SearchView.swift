@@ -125,14 +125,14 @@ struct SearchView: View {
         .onAppear {
             AnalyticsService.trackScreen(name: "search", type: "search")
         }
-        .onChange(of: navCoordinator.pendingSearchQuery) { _ in
+        .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             if navCoordinator.selectedTab == .search,
                let query = navCoordinator.consumeSearchQuery() {
                 vm.query = query
                 Task { await vm.search() }
             }
         }
-        .onChange(of: navCoordinator.pendingRoute) { _ in
+        .onChange(of: navCoordinator.pendingRoute) { _, _ in
             // Search tab doesn't handle route pushes — handled by feed/myStuff
         }
     }
@@ -154,7 +154,7 @@ struct SearchView: View {
                 .onSubmit {
                     Task { await vm.search() }
                 }
-                .onChange(of: vm.query) { _ in
+                .onChange(of: vm.query) { _, _ in
                     vm.onQueryChange()
                 }
             if !vm.query.isEmpty {
@@ -179,7 +179,7 @@ struct SearchView: View {
     private var suggestionList: some View {
         List(vm.suggestions) { suggestion in
             Button {
-                if suggestion.type == "futures", let marketId = suggestion.marketId {
+                if suggestion.type == "futures", suggestion.marketId != nil {
                     // Navigate directly to futures detail
                     vm.query = suggestion.text
                     vm.results = nil

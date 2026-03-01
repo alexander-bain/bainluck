@@ -24,8 +24,8 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
 
 nonisolated struct HistoryPoint: Decodable, Sendable {
     let timestamp: String
-    let homeProbability: Double
-    let awayProbability: Double
+    let homeProbability: Double?
+    let awayProbability: Double?
     let bookmakerCount: Int?
 }
 
@@ -52,7 +52,7 @@ nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
 
 nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
     let timestamp: String
-    let homeProbability: Double
+    let homeProbability: Double?
 }
 
 // MARK: - Win Prob Source Info

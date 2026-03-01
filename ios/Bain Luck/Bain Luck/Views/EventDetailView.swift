@@ -85,7 +85,14 @@ struct EventDetailView: View {
                         if let ei = event.ei ?? event.pulse { eiSection(ei) }
                         LineMovementView(eventId: event.id)
                         if let context = event.standingsContext { standingsSection(context) }
-                        RelatedFuturesView(eventId: event.id)
+                        RelatedFuturesView(
+                            eventId: event.id,
+                            awayTeamColor: teamColors(event).away,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeam: event.awayTeam,
+                            homeTeam: event.homeTeam,
+                            sportKey: event.sport
+                        )
                         espnSection(event)
                         bookmakerSection(event)
                     }
@@ -401,15 +408,34 @@ struct EventDetailView: View {
     // MARK: - Standings
 
     private func standingsSection(_ context: StandingsContext) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Standings Context")
-                .font(.subheadline)
-                .fontWeight(.medium)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "list.number")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Text("Standings Context")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+            }
             if let away = context.away {
-                Text(away).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color(hex: vm.event?.awayTeamData?.primaryColor ?? "#6b7280"))
+                        .frame(width: 6, height: 6)
+                    Text(away)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             if let home = context.home {
-                Text(home).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color(hex: vm.event?.homeTeamData?.primaryColor ?? "#6b7280"))
+                        .frame(width: 6, height: 6)
+                    Text(home)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -424,21 +450,40 @@ struct EventDetailView: View {
     private func espnSection(_ event: EventDetail) -> some View {
         let hasData = event.espn?.broadcast != nil || event.commenceTime != nil
         if hasData {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Game Info")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                if let broadcast = event.espn?.broadcast {
-                    HStack {
-                        Image(systemName: "tv").font(.caption)
-                        Text(broadcast).font(.caption)
-                    }
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text("Game Info")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
                 }
-                if let ct = event.commenceTime {
-                    HStack {
-                        Image(systemName: "clock").font(.caption)
-                        RelativeTimeText(dateString: ct)
+                HStack(spacing: 12) {
+                    if let broadcast = event.espn?.broadcast {
+                        HStack(spacing: 5) {
+                            Image(systemName: "tv")
+                                .font(.system(size: 10))
+                            Text(broadcast)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                    if let ct = event.commenceTime {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10))
+                            RelativeTimeText(dateString: ct)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(Capsule())
                     }
                 }
             }
@@ -454,10 +499,26 @@ struct EventDetailView: View {
     @ViewBuilder
     private func bookmakerSection(_ event: EventDetail) -> some View {
         if let bookmakers = event.bookmakerOdds, !bookmakers.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Sportsbook Odds")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "book.closed")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text("Sportsbook Odds")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("\(min(bookmakers.count, 10))")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+
+                let colors = teamColors(event)
                 ForEach(bookmakers.prefix(10), id: \.bookmaker) { bm in
                     let awayProb = bm.awayProbability ?? bm.awayMoneyline.map { moneylineToProbability($0) }
                     let homeProb = bm.homeProbability ?? bm.homeMoneyline.map { moneylineToProbability($0) }
@@ -471,8 +532,8 @@ struct EventDetailView: View {
                         if let ap = awayProb, let hp = homeProb {
                             ProbabilityBar(
                                 awayProb: ap, homeProb: hp,
-                                awayColor: Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280"),
-                                homeColor: Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280"),
+                                awayColor: colors.away,
+                                homeColor: colors.home,
                                 height: 6
                             )
                             .frame(maxWidth: .infinity)

@@ -110,3 +110,17 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let rank: Int?
     let movement: Double?
 }
+
+// MARK: - Pins Response
+
+nonisolated struct PinsResponse: Decodable, Sendable {
+    let events: [Int]
+    let futures: [Int]
+}
+
+// MARK: - Pin Request Body
+
+nonisolated struct PinRequest: Encodable, Sendable {
+    let pinType: String
+    let targetId: Int
+}

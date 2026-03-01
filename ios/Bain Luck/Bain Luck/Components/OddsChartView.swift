@@ -121,7 +121,7 @@ struct OddsChartView: View {
         .task {
             await vm.load()
         }
-        .onChange(of: vm.selectedRange) { _ in
+        .onChange(of: vm.selectedRange) { _, _ in
             AnalyticsService.trackChartTimeRange(eventId: eventId, range: vm.selectedRange.label)
             Task {
                 vm.history = nil
@@ -225,16 +225,18 @@ struct OddsChartView: View {
 
         // Consensus line (home probability)
         for h in history.history {
-            guard let date = h.timestamp.asDate else { continue }
-            points.append(ChartDataPoint(date: date, probability: h.homeProbability, source: "consensus"))
+            guard let date = h.timestamp.asDate,
+                  let prob = h.homeProbability else { continue }
+            points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
         }
 
         // Win probability source lines
         if let winProbHistory = history.winProbHistory {
             for (sourceKey, sourcePoints) in winProbHistory {
                 for wp in sourcePoints {
-                    guard let date = wp.timestamp.asDate else { continue }
-                    points.append(ChartDataPoint(date: date, probability: wp.homeProbability, source: sourceKey))
+                    guard let date = wp.timestamp.asDate,
+                          let prob = wp.homeProbability else { continue }
+                    points.append(ChartDataPoint(date: date, probability: prob, source: sourceKey))
                 }
             }
         }

@@ -31,17 +31,178 @@ final class RelatedFuturesViewModel: ObservableObject {
     }
 }
 
+// MARK: - Tier Detection (ports web effectiveTier)
+
+private func effectiveTier(_ f: RelatedFuture) -> Int {
+    let name = f.marketName
+    if isStatProp(name) { return 6 }
+    if isGameMarket(name) { return 5 }
+    if isAwardMarket(name) { return 3 }
+    if isNotChampionship(name) { return 4 }
+    if let tier = f.marketTier, tier >= 1, tier <= 5 { return tier }
+    return 5
+}
+
+private func isStatProp(_ name: String) -> Bool {
+    let patterns = [
+        ":\\s*(points|assists|rebounds|steals|blocks|three\\s*pointers?|3-?pointers?|turnovers|strikeouts|hits|runs|home\\s*runs|goals|saves|sacks|passing\\s*yards|rushing\\s*yards|receiving\\s*yards|touchdowns|completions|interceptions|aces|double\\s*doubles?|triple\\s*doubles?)",
+        "\\bat\\b.*:\\s*\\w",
+    ]
+    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+}
+
+private func isGameMarket(_ name: String) -> Bool {
+    let patterns = ["\\bvs\\.?\\s", "\\s\u{2013}\\s", "more\\s+markets$", "moneyline$", "\\bgame\\s+\\d"]
+    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+}
+
+private func isAwardMarket(_ name: String) -> Bool {
+    let patterns = [
+        "\\bmvp\\b", "\\bgolden\\s+boot\\b", "\\bgolden\\s+glove\\b", "cy\\s*young",
+        "\\bnewcomer\\b|\\brookie\\b", "player\\s+of\\s+(the\\s+)?year", "\\bballon\\b",
+        "\\bbest\\s+(actor|actress|picture|director|supporting)\\b",
+        "\\bleader\\b", "\\bper\\s+game\\b", "\\bclutch\\b", "\\bfinals\\s+mvp\\b",
+        "\\b[ew]cf\\s+mvp\\b", "\\bmost\\s+improved\\b", "\\bsixth\\s+man\\b", "\\b6th\\s+man\\b",
+        "\\ball[- ]?star\\s+mvp\\b", "\\bscoring\\s+(leader|title|champion)",
+        "\\bhome\\s+run\\s+(leader|king)", "\\bcover\\s+of\\b", "\\b2k\\b",
+    ]
+    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+}
+
+private func isNotChampionship(_ name: String) -> Bool {
+    let patterns = [
+        "\\bwin\\s+total", "\\bover/under\\b", "\\bregular\\s+season\\s+wins",
+        "\\bcover\\s+of\\b", "\\b2k\\b", "\\bplayoff\\s+appearance", "\\bmake\\s+playoffs",
+        "\\bplayoff\\s*berth", "\\bto\\s+make\\b", "\\bseeding\\b", "\\bseed\\b",
+        "\\bover\\s+\\d", "\\bunder\\s+\\d", "\\bexact\\s+wins",
+    ]
+    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+}
+
+private func shortAwardLabel(_ marketName: String) -> String {
+    let n = marketName
+    if n.range(of: "\\bmvp\\b|most\\s+valuable", options: [.regularExpression, .caseInsensitive]) != nil { return "MVP" }
+    if n.range(of: "\\brookie\\s+of\\s+the\\s+year", options: [.regularExpression, .caseInsensitive]) != nil { return "Rookie of the Year" }
+    if n.range(of: "\\bdefensive\\s+player", options: [.regularExpression, .caseInsensitive]) != nil { return "DPOY" }
+    if n.range(of: "\\bmost\\s+improved", options: [.regularExpression, .caseInsensitive]) != nil { return "Most Improved" }
+    if n.range(of: "\\bsixth\\s+man|\\b6th\\s+man", options: [.regularExpression, .caseInsensitive]) != nil { return "6th Man" }
+    if n.range(of: "cy\\s*young", options: [.regularExpression, .caseInsensitive]) != nil { return "Cy Young" }
+    if n.range(of: "\\bgolden\\s+boot", options: [.regularExpression, .caseInsensitive]) != nil { return "Golden Boot" }
+    if n.range(of: "\\bgolden\\s+glove", options: [.regularExpression, .caseInsensitive]) != nil { return "Golden Glove" }
+    if n.range(of: "\\bheisman", options: [.regularExpression, .caseInsensitive]) != nil { return "Heisman" }
+    if n.range(of: "\\bcoach\\s+of\\s+the\\s+year", options: [.regularExpression, .caseInsensitive]) != nil { return "Coach of the Year" }
+    if n.range(of: "rebounds?\\s*per\\s*game\\s*leader", options: [.regularExpression, .caseInsensitive]) != nil { return "Rebounds Leader" }
+    if n.range(of: "assists?\\s*per\\s*game\\s*leader", options: [.regularExpression, .caseInsensitive]) != nil { return "Assists Leader" }
+    if n.range(of: "points?\\s*per\\s*game\\s*leader|\\bscoring\\s+(leader|title|champion)", options: [.regularExpression, .caseInsensitive]) != nil { return "Scoring Leader" }
+    if n.range(of: "\\bhome\\s+run\\s+(leader|king)", options: [.regularExpression, .caseInsensitive]) != nil { return "HR Leader" }
+    // Strip league prefix
+    let stripped = n.replacingOccurrences(of: "^(NBA|NFL|NHL|MLB|MLS|WNBA|NCAAB|NCAAF)\\s+", with: "", options: .regularExpression)
+    return stripped
+}
+
+private func extractOpponent(_ marketName: String, teamName: String) -> String {
+    var result = marketName
+        .replacingOccurrences(of: " - More Markets", with: "", options: .caseInsensitive)
+        .replacingOccurrences(of: " - Moneyline", with: "", options: .caseInsensitive)
+    let teamWords = teamName.split(separator: " ")
+    let shortName = teamWords.last.map(String.init) ?? teamName
+    for name in [teamName, shortName] {
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        for sep in ["vs\\.?", "\u{2013}", "at"] {
+            result = result.replacingOccurrences(of: "^\(escaped)\\s+\(sep)\\s+", with: "", options: .regularExpression)
+            result = result.replacingOccurrences(of: "\\s+\(sep)\\s+\(escaped)$", with: "", options: .regularExpression)
+        }
+    }
+    return result.trimmingCharacters(in: .whitespaces)
+}
+
+private func extractStatCategory(_ marketName: String) -> String {
+    if let range = marketName.range(of: ":\\s*(.+?)$", options: .regularExpression) {
+        let match = marketName[range]
+        let cleaned = match.replacingOccurrences(of: "^:\\s*", with: "", options: .regularExpression)
+        return cleaned.lowercased()
+    }
+    return "other"
+}
+
+private struct StatCategoryConfig {
+    let emoji: String
+    let label: String
+}
+
+private let statCategories: [String: StatCategoryConfig] = [
+    "points": .init(emoji: "\u{1F3C0}", label: "Points"),
+    "assists": .init(emoji: "\u{1F91D}", label: "Assists"),
+    "rebounds": .init(emoji: "\u{1F4AA}", label: "Rebounds"),
+    "steals": .init(emoji: "\u{1F590}", label: "Steals"),
+    "blocks": .init(emoji: "\u{1F6AB}", label: "Blocks"),
+    "three pointers": .init(emoji: "\u{1F3AF}", label: "3-Pointers"),
+    "turnovers": .init(emoji: "\u{1F504}", label: "Turnovers"),
+    "strikeouts": .init(emoji: "\u{26BE}", label: "Strikeouts"),
+    "goals": .init(emoji: "\u{26BD}", label: "Goals"),
+    "touchdowns": .init(emoji: "\u{1F3C8}", label: "TDs"),
+    "passing yards": .init(emoji: "\u{1F3AF}", label: "Pass Yds"),
+    "rushing yards": .init(emoji: "\u{1F3C3}", label: "Rush Yds"),
+    "receiving yards": .init(emoji: "\u{1F4E1}", label: "Rec Yds"),
+    "double doubles": .init(emoji: "\u{270C}", label: "Double-Doubles"),
+    "triple doubles": .init(emoji: "\u{1F525}", label: "Triple-Doubles"),
+]
+
+private func getStatConfig(_ category: String) -> StatCategoryConfig {
+    if let config = statCategories[category] { return config }
+    for (key, config) in statCategories {
+        if category.contains(key) || key.contains(category) { return config }
+    }
+    return StatCategoryConfig(emoji: "\u{1F4CA}", label: category.capitalized)
+}
+
+private func sourceLabel(_ source: String?) -> String {
+    switch source {
+    case "polymarket": return "Polymarket"
+    case "kalshi": return "Kalshi"
+    case "odds_api": return "Sportsbooks"
+    default: return source?.capitalized ?? ""
+    }
+}
+
+private func sourceColor(_ source: String?) -> Color {
+    switch source {
+    case "polymarket": return .blue
+    case "kalshi": return Color(hex: "#22c55e")
+    case "odds_api": return Color(hex: "#d97706")
+    default: return .gray
+    }
+}
+
+private func formatOdds(_ odds: Int?) -> String {
+    guard let odds else { return "" }
+    return odds > 0 ? "+\(odds)" : "\(odds)"
+}
+
 // MARK: - View
 
 struct RelatedFuturesView: View {
     let eventId: Int
+    var awayTeamColor: Color = .gray
+    var homeTeamColor: Color = .gray
+    var awayTeam: String = ""
+    var homeTeam: String = ""
+    var sportKey: String? = nil
     @StateObject private var vm: RelatedFuturesViewModel
     @State private var expanded = false
 
-    private let collapsedLimit = 4
-
-    init(eventId: Int) {
+    init(eventId: Int,
+         awayTeamColor: Color = .gray,
+         homeTeamColor: Color = .gray,
+         awayTeam: String = "",
+         homeTeam: String = "",
+         sportKey: String? = nil) {
         self.eventId = eventId
+        self.awayTeamColor = awayTeamColor
+        self.homeTeamColor = homeTeamColor
+        self.awayTeam = awayTeam
+        self.homeTeam = homeTeam
+        self.sportKey = sportKey
         _vm = StateObject(wrappedValue: RelatedFuturesViewModel(eventId: eventId))
     }
 
@@ -69,259 +230,654 @@ struct RelatedFuturesView: View {
         let totalCount = awayFutures.count + homeFutures.count
 
         if totalCount > 0 {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Bigger Picture")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+            VStack(alignment: .leading, spacing: 16) {
+                // Header
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.bar.xaxis.ascending")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                    Text("Bigger Picture")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("\(totalCount)")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
 
+                // AI Summary
                 if let summary = rf.summary {
                     Text(summary)
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .italic()
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.blue.opacity(0.06))
+                        )
                 }
 
+                // Away team futures
                 if !awayFutures.isEmpty {
-                    teamFuturesSection(
+                    teamSection(
                         teamName: rf.awayTeam,
-                        futures: awayFutures
+                        futures: awayFutures,
+                        teamColor: awayTeamColor,
+                        allFutures: awayFutures + homeFutures
                     )
                 }
 
+                // Home team futures
                 if !homeFutures.isEmpty {
-                    teamFuturesSection(
+                    teamSection(
                         teamName: rf.homeTeam,
-                        futures: homeFutures
+                        futures: homeFutures,
+                        teamColor: homeTeamColor,
+                        allFutures: awayFutures + homeFutures
                     )
                 }
 
-                if totalCount > collapsedLimit {
+                // Expand/collapse
+                if totalCount > 6 && !expanded {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            expanded.toggle()
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            expanded = true
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text(expanded ? "Show less" : "See all \(totalCount) futures")
-                                .font(.caption)
+                            Text("See all \(totalCount) futures")
+                                .font(.subheadline)
                                 .fontWeight(.medium)
-                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 10))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
                         }
                         .foregroundStyle(.blue)
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
                     }
                 }
             }
             .padding()
             .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
         }
     }
 
-    // MARK: - Team Futures Section
+    // MARK: - Team Section
 
-    private func teamFuturesSection(teamName: String, futures: [RelatedFuture]) -> some View {
-        let grouped = groupByTier(futures)
-        let displayFutures = expanded ? futures : Array(futures.prefix(collapsedLimit))
+    private func teamSection(teamName: String, futures: [RelatedFuture], teamColor: Color, allFutures: [RelatedFuture]) -> some View {
+        let tiered = Dictionary(grouping: futures) { effectiveTier($0) }
+        let championships = (tiered[1] ?? []) + (tiered[2] ?? [])
+        let awards = (tiered[3] ?? []) + (tiered[4] ?? [])
+        let games = tiered[5] ?? []
+        let statProps = tiered[6] ?? []
 
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(teamName)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
+        let displayLimit = expanded ? 999 : 6
+        var shown = 0
 
-            // Championship/Conference (tier 1-2)
-            let championships = grouped.filter { $0.key <= 2 }.flatMap { $0.value }
-            if !championships.isEmpty {
-                tierHeader(icon: "trophy.fill", title: "Championship Odds")
-                ForEach(limitedFutures(championships, from: displayFutures)) { future in
-                    championshipRow(future)
-                }
+        return VStack(alignment: .leading, spacing: 12) {
+            // Team header
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(teamColor)
+                    .frame(width: 8, height: 8)
+                Text(teamName)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
             }
 
-            // Awards (tier 3-4)
-            let awards = grouped.filter { $0.key == 3 || $0.key == 4 }.flatMap { $0.value }
-            if !awards.isEmpty {
-                tierHeader(icon: "star.fill", title: "Awards")
-                ForEach(limitedFutures(awards, from: displayFutures)) { future in
-                    awardRow(future)
+            // Championships
+            if !championships.isEmpty && shown < displayLimit {
+                let items = Array(championships.prefix(displayLimit - shown))
+                ForEach(items) { future in
+                    ChampionshipCard(future: future, teamColor: teamColor)
                 }
+                let _ = (shown += items.count)
             }
 
-            // Other (tier 5+)
-            let other = grouped.filter { $0.key >= 5 || $0.key == 0 }.flatMap { $0.value }
-            if !other.isEmpty {
-                tierHeader(icon: "calendar", title: "Upcoming Games")
-                ForEach(limitedFutures(other, from: displayFutures)) { future in
-                    compactRow(future)
+            // Awards
+            if !awards.isEmpty && shown < displayLimit {
+                let items = Array(awards.prefix(displayLimit - shown))
+                sectionLabel(icon: "star.fill", title: "Awards")
+                ForEach(items) { future in
+                    AwardCard(future: future, teamColor: teamColor)
                 }
+                let _ = (shown += items.count)
+            }
+
+            // Game grid
+            if !games.isEmpty && shown < displayLimit {
+                let items = Array(games.prefix(displayLimit - shown))
+                sectionLabel(icon: "calendar", title: "Upcoming Games")
+                GameGrid(futures: items, teamColor: teamColor, teamName: teamName)
+                let _ = (shown += items.count)
+            }
+
+            // Stat props
+            if !statProps.isEmpty && shown < displayLimit {
+                let items = Array(statProps.prefix(displayLimit - shown))
+                StatPropsSection(futures: items, teamColor: teamColor)
+                let _ = (shown += items.count)
             }
         }
     }
 
-    // MARK: - Tier Header
+    // MARK: - Section Label
 
-    private func tierHeader(icon: String, title: String) -> some View {
+    private func sectionLabel(icon: String, title: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
                 .font(.system(size: 10))
             Text(title)
                 .font(.caption)
                 .fontWeight(.semibold)
+                .textCase(.uppercase)
+                .tracking(0.5)
         }
         .foregroundStyle(.secondary)
         .padding(.top, 4)
     }
+}
 
-    /// Filters a category's futures to only include those in the display set
-    private func limitedFutures(_ categoryFutures: [RelatedFuture], from displayFutures: [RelatedFuture]) -> [RelatedFuture] {
-        let displayIds = Set(displayFutures.map(\.id))
-        return categoryFutures.filter { displayIds.contains($0.id) }
-    }
+// MARK: - Championship Hero Card
 
-    private func groupByTier(_ futures: [RelatedFuture]) -> [Int: [RelatedFuture]] {
-        Dictionary(grouping: futures) { $0.marketTier ?? 0 }
-    }
+private struct ChampionshipCard: View {
+    let future: RelatedFuture
+    let teamColor: Color
 
-    // MARK: - Championship Row
-
-    private func championshipRow(_ future: RelatedFuture) -> some View {
+    var body: some View {
         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(future.outcomeName)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                    Text(future.marketName)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            VStack(alignment: .leading, spacing: 10) {
+                // Header: tier label + source
+                HStack {
+                    HStack(spacing: 4) {
+                        Text("\u{1F3C6}")
+                            .font(.system(size: 10))
+                        Text((future.marketTier ?? 0) <= 1 ? "CHAMPIONSHIP" : "CONFERENCE")
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    SourceBadge(source: future.source)
                 }
 
-                Spacer()
+                // Market name
+                Text(future.marketName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
-                changeIndicator(future)
+                // Big probability + movement + rank
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(formatProbability(future.probability ?? 0))
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(teamColor)
+                            MovementPill(change: future.probabilityChange24h)
+                        }
+                        if let odds = future.americanOdds {
+                            Text(formatOdds(odds))
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if let rank = future.rank {
+                        VStack(spacing: 1) {
+                            Text("RANK")
+                                .font(.system(size: 8, weight: .semibold))
+                                .tracking(0.5)
+                                .foregroundStyle(.secondary)
+                            Text("#\(rank)")
+                                .font(.system(size: 20, weight: .bold, design: .rounded))
+                                .foregroundStyle(.primary.opacity(0.7))
+                        }
+                    }
+                }
 
-                if let prob = future.probability {
-                    Text(formatProbability(prob))
+                // Probability bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.1))
+                        Capsule()
+                            .fill(teamColor.opacity(0.6))
+                            .frame(width: max(2, geo.size.width * min(1, (future.probability ?? 0) / 0.5)))
+                    }
+                }
+                .frame(height: 4)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(
+                        LinearGradient(
+                            colors: [teamColor.opacity(0.1), teamColor.opacity(0.03)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(teamColor.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Award Card
+
+private struct AwardCard: View {
+    let future: RelatedFuture
+    let teamColor: Color
+
+    var body: some View {
+        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+            HStack(spacing: 12) {
+                // Player headshot
+                PlayerHeadshotView(
+                    player: future.matchedPlayer,
+                    name: future.outcomeName,
+                    teamColor: teamColor,
+                    size: 44
+                )
+
+                // Name + award label
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(future.outcomeName)
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .monospacedDigit()
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Award Row
-
-    private func awardRow(_ future: RelatedFuture) -> some View {
-        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-            HStack(spacing: 8) {
-                playerHeadshot(future.matchedPlayer)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(future.outcomeName)
-                        .font(.caption)
-                        .fontWeight(.medium)
                         .lineLimit(1)
-                    Text(future.marketName)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                    HStack(spacing: 4) {
+                        Text("\u{2B50}")
+                            .font(.system(size: 9))
+                        Text(shortAwardLabel(future.marketName))
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
 
                 Spacer()
 
-                changeIndicator(future)
-
-                if let prob = future.probability {
-                    Text(formatProbability(prob))
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .monospacedDigit()
+                // Probability + movement + odds
+                VStack(alignment: .trailing, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(formatProbability(future.probability ?? 0))
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                            .foregroundStyle(teamColor)
+                        MovementPill(change: future.probabilityChange24h)
+                    }
+                    if let odds = future.americanOdds {
+                        Text(formatOdds(odds))
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            colors: [teamColor.opacity(0.06), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(teamColor.opacity(0.12), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
+}
 
-    // MARK: - Compact Row
+// MARK: - Game Grid (2-col)
 
-    private func compactRow(_ future: RelatedFuture) -> some View {
+private struct GameGrid: View {
+    let futures: [RelatedFuture]
+    let teamColor: Color
+    let teamName: String
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8),
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 8) {
+            ForEach(futures) { future in
+                GameCell(future: future, teamColor: teamColor, teamName: teamName)
+            }
+        }
+    }
+}
+
+private struct GameCell: View {
+    let future: RelatedFuture
+    let teamColor: Color
+    let teamName: String
+
+    private var prob: Double { future.probability ?? 0 }
+    private var favored: Bool { prob > 0.5 }
+    private var opponent: String { extractOpponent(future.marketName, teamName: teamName) }
+
+    var body: some View {
         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(future.outcomeName)
-                        .font(.caption)
-                        .lineLimit(1)
-                    Text(future.marketName)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
+            ZStack(alignment: .leading) {
+                // Background fill showing probability
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(teamColor.opacity(favored ? 0.08 : 0.03))
+                        .frame(width: geo.size.width * min(1, prob))
                 }
 
-                Spacer()
-
-                if let prob = future.probability {
-                    Text(formatProbability(prob))
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    // Date
+                    if let dateStr = future.resolutionDate, let date = dateStr.asDate {
+                        Text(date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                    }
+                    // Opponent + probability
+                    HStack {
+                        Text(opponent)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        HStack(spacing: 2) {
+                            Text("\(Int((prob * 100).rounded()))%")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(favored ? teamColor : .secondary)
+                            if let change = future.probabilityChange24h, abs(change) >= 0.005 {
+                                Image(systemName: change > 0 ? "arrow.up" : "arrow.down")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(change > 0 ? .green : .red)
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
+}
 
-    // MARK: - Change Indicator
+// MARK: - Stat Props Section
 
-    @ViewBuilder
-    private func changeIndicator(_ future: RelatedFuture) -> some View {
-        if let change = future.probabilityChange24h, abs(change) >= 0.005 {
-            HStack(spacing: 1) {
-                Image(systemName: change > 0 ? "arrow.up" : "arrow.down")
-                    .font(.system(size: 8))
-                Text(formatProbability(abs(change)))
+private struct StatPropsSection: View {
+    let futures: [RelatedFuture]
+    let teamColor: Color
+
+    private var meaningful: [RelatedFuture] {
+        futures.filter { ($0.probability ?? 0) > 0.02 && ($0.probability ?? 0) < 0.98 }
+    }
+
+    var body: some View {
+        if !meaningful.isEmpty {
+            let grouped = Dictionary(grouping: meaningful) { extractStatCategory($0.marketName) }
+            let sortedGroups = grouped.sorted { $0.value.count > $1.value.count }
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 5) {
+                    Image(systemName: "chart.bar.fill")
+                        .font(.system(size: 10))
+                    Text("Player Stats")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .textCase(.uppercase)
+                        .tracking(0.5)
+                }
+                .foregroundStyle(.secondary)
+
+                ForEach(Array(sortedGroups.prefix(3).enumerated()), id: \.offset) { _, group in
+                    let config = getStatConfig(group.key)
+                    let rows = group.value.sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 4) {
+                            Text(config.emoji)
+                                .font(.system(size: 12))
+                            Text(config.label)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                            Text("(\(rows.count))")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        // Horizontally scrolling stat cards
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(Array(rows.prefix(4).enumerated()), id: \.element.id) { _, row in
+                                    StatPropCard(future: row, teamColor: teamColor)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct StatPropCard: View {
+    let future: RelatedFuture
+    let teamColor: Color
+
+    private var parsed: (player: String?, line: String?) {
+        let name = future.outcomeName
+        if let colonIdx = name.firstIndex(of: ":") {
+            let player = String(name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
+            let line = String(name[name.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+            return (player, line)
+        }
+        return (name, nil)
+    }
+
+    var body: some View {
+        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+            VStack(spacing: 6) {
+                // Player headshot
+                PlayerHeadshotView(
+                    player: future.matchedPlayer,
+                    name: parsed.player ?? "?",
+                    teamColor: teamColor,
+                    size: 36
+                )
+
+                // Gauge
+                StatGauge(probability: future.probability ?? 0, teamColor: teamColor, size: 48)
+
+                // Player name
+                Text(parsed.player ?? future.outcomeName)
                     .font(.caption2)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+
+                // Line
+                if let line = parsed.line {
+                    Text(line)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .foregroundStyle(change > 0 ? .green : .red)
+            .frame(width: 80)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.secondary.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Semi-circular Stat Gauge
+
+private struct StatGauge: View {
+    let probability: Double
+    let teamColor: Color
+    var size: CGFloat = 48
+
+    private var pct: Int { Int((probability * 100).rounded()) }
+    private var radius: CGFloat { (size - 6) / 2 }
+    private var circumference: CGFloat { .pi * radius }
+    private var offset: CGFloat { circumference * (1 - probability) }
+
+    var body: some View {
+        VStack(spacing: -2) {
+            Canvas { ctx, canvasSize in
+                let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height * 0.9)
+                let r = radius
+
+                // Background arc
+                var bgPath = Path()
+                bgPath.addArc(center: center, radius: r, startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+                ctx.stroke(bgPath, with: .color(.secondary.opacity(0.15)), lineWidth: 4)
+
+                // Colored arc
+                let endAngle = Angle.degrees(180 + probability * 180)
+                var fgPath = Path()
+                fgPath.addArc(center: center, radius: r, startAngle: .degrees(180), endAngle: endAngle, clockwise: false)
+                ctx.stroke(
+                    fgPath,
+                    with: .color(teamColor.opacity(pct >= 50 ? 0.85 : 0.5)),
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                )
+            }
+            .frame(width: size, height: size * 0.5)
+
+            Text("\(pct)%")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(pct >= 50 ? teamColor : .secondary)
         }
     }
+}
 
-    // MARK: - Player Headshot
+// MARK: - Movement Pill
 
-    private func playerHeadshot(_ player: MatchedPlayer?) -> some View {
+private struct MovementPill: View {
+    let change: Double?
+
+    var body: some View {
+        if let change, abs(change) >= 0.005 {
+            let isUp = change > 0
+            let abs = abs(change * 100)
+            HStack(spacing: 1) {
+                Image(systemName: isUp ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 7, weight: .bold))
+                Text(String(format: "%.1f%%", abs))
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(isUp ? .green : .red)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background((isUp ? Color.green : Color.red).opacity(0.12))
+            .clipShape(Capsule())
+        }
+    }
+}
+
+// MARK: - Source Badge
+
+private struct SourceBadge: View {
+    let source: String?
+
+    var body: some View {
+        if let source, !source.isEmpty {
+            Text(sourceLabel(source))
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(sourceColor(source))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(sourceColor(source).opacity(0.12))
+                .clipShape(Capsule())
+        }
+    }
+}
+
+// MARK: - Player Headshot
+
+private struct PlayerHeadshotView: View {
+    let player: MatchedPlayer?
+    let name: String
+    let teamColor: Color
+    var size: CGFloat = 44
+
+    var body: some View {
         Group {
             if let headshot = player?.headshot, let url = URL(string: headshot) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
+                        image.resizable().scaledToFill()
                     default:
-                        initialCircle(player?.name)
+                        initialsView
+                    }
+                }
+            } else if let espnId = player?.espnId, !espnId.isEmpty,
+                      let url = URL(string: "https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/\(espnId).png&w=\(Int(size * 2))&h=\(Int(size * 2))") {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        initialsView
                     }
                 }
             } else {
-                initialCircle(player?.name)
+                initialsView
             }
         }
-        .frame(width: 28, height: 28)
+        .frame(width: size, height: size)
         .clipShape(Circle())
     }
 
-    private func initialCircle(_ name: String?) -> some View {
+    private var initialsView: some View {
         ZStack {
             Circle()
-                .fill(Color.blue.opacity(0.2))
-            Text(String(name?.prefix(1) ?? "?"))
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .foregroundStyle(.blue)
+                .fill(teamColor.opacity(0.15))
+            Text(String(name.prefix(1)))
+                .font(.system(size: size * 0.35, weight: .semibold, design: .rounded))
+                .foregroundStyle(teamColor)
         }
     }
 }

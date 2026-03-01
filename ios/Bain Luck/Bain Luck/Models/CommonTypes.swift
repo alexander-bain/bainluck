@@ -123,13 +123,21 @@ nonisolated struct BookmakerOdds: Decodable, Sendable {
 
 extension String {
     /// Parse an ISO 8601 date string into a Date.
+    /// Handles both with and without fractional seconds.
     var asDate: Date? {
-        Self.iso8601Formatter.date(from: self)
+        Self.iso8601FracFormatter.date(from: self)
+            ?? Self.iso8601Formatter.date(from: self)
     }
+
+    private static let iso8601FracFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
     private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        f.formatOptions = [.withInternetDateTime]
         return f
     }()
 }

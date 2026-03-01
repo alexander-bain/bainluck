@@ -356,4 +356,18 @@ actor APIClient {
         let body = SportAffinitiesUpdate(sportAffinities: affinities)
         return try await putEncodable("/api/me/preferences/sport-affinities", body: body)
     }
+
+    // MARK: - Pins
+
+    func fetchPins() async throws -> PinsResponse {
+        return try await fetch("/api/me/pins")
+    }
+
+    func addPin(type: String, id: Int) async throws -> StatusResponse {
+        return try await postEncodable("/api/me/pins", body: PinRequest(pinType: type, targetId: id))
+    }
+
+    func removePin(type: String, id: Int) async throws -> StatusResponse {
+        return try await delete("/api/me/pins/\(type)/\(id)")
+    }
 }
