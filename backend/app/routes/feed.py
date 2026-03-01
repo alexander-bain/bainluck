@@ -23,7 +23,7 @@ from app.dependencies.auth import get_optional_user
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.models.models import User, UserFavorite, UserPreference, UserPin, Team
 from app.services import get_db
-from app.utils.aggregation import SOURCE_WEIGHTS
+from app.utils.aggregation import SOURCE_WEIGHTS, compute_aggregate_probability as _compute_aggregate_probability
 from app.utils import (
     compute_highlight,
     get_highlight_label,
@@ -31,7 +31,6 @@ from app.utils import (
 )
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
-from app.utils.event_taxonomy import compute_event_tags as _compute_event_tags
 from app.utils.personalization import (
     PersonalizationContext,
     compute_event_multiplier,
@@ -164,7 +163,6 @@ async def get_feed(
     include_events: bool = Query(True, description="Include game events in feed"),
     include_futures: bool = Query(True, description="Include futures markets in feed"),
     my_teams_only: bool = Query(False, description="Filter to only the user's followed teams"),
-    tags: Optional[str] = Query(None, description="Comma-separated event tags filter, e.g. 'tier:1,sport:basketball'. Uses GIN index."),
     db: AsyncSession = Depends(get_db),
     user: Optional[User] = Depends(get_optional_user),
 ):
@@ -218,14 +216,7 @@ async def get_feed(
 
     # === SCORE EVENTS ===
     if include_events:
-        # Parse tag filter
-        tag_filter_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        event_items = await _score_events(
-            db, now, sport, ctx,
-            my_teams_only=my_teams_only,
-            my_team_names=my_team_names,
-            tag_filter=tag_filter_list,
-        )
+        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names)
         feed_items.extend(event_items)
 
     # === ENRICH EVENTS WITH TEAM DATA ===
@@ -402,22 +393,6 @@ async def _load_personalization_context(
     )
 
 
-def _compute_event_tags_inline(event, importance, highlight_result) -> list[str]:
-    """Compute event taxonomy tags on-the-fly for the feed response."""
-    return _compute_event_tags(
-        sport_key=event.sport.key if event.sport else "",
-        status=event.status,
-        commence_time=event.commence_time,
-        llm_importance=importance,
-        llm_gender=event.llm_gender,
-        llm_level=event.llm_level,
-        llm_league=event.llm_league,
-        raw_ei=float(event.raw_ei) if event.raw_ei else None,
-        broadcast_info=event.broadcast_info,
-        highlight_result=highlight_result,
-    )
-
-
 async def _score_events(
     db: AsyncSession,
     now: datetime,
@@ -425,7 +400,6 @@ async def _score_events(
     ctx: PersonalizationContext,
     my_teams_only: bool = False,
     my_team_names: Optional[list] = None,
-    tag_filter: Optional[list[str]] = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -476,14 +450,6 @@ async def _score_events(
 
     if sport_filter:
         query = query.where(Sport.key.ilike(f"%{sport_filter}%"))
-
-    # Tag filter: uses GIN index for fast @> containment queries
-    if tag_filter:
-        from sqlalchemy import cast
-        from sqlalchemy.dialects.postgresql import JSONB as JSONB_TYPE
-        query = query.where(
-            Event.event_tags.op("@>")(cast(tag_filter, JSONB_TYPE))
-        )
 
     # For my_teams_only, push team filtering to SQL so we don't miss events
     # beyond the safety cap (the 7-day window can have 1000+ events across
@@ -737,11 +703,6 @@ async def _score_events(
             }
             event_data["ei"] = ei_data
             event_data["pulse"] = ei_data  # Backward compat
-
-        # Compute event taxonomy tags on-the-fly (not written to DB here)
-        event_data["event_tags"] = _compute_event_tags_inline(
-            event, importance, highlight_result
-        )
 
         # Compute sort time: live games first (far future), then by commence_time
         sort_time = event.commence_time.timestamp()

@@ -3157,10 +3157,6 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         "away_score": event.away_score,
     }
 
-    # Include event taxonomy tags if populated
-    if event.event_tags:
-        response["event_tags"] = event.event_tags
-
     # Add team data (colors, logos) from lookup
     if team_lookup:
         home_team = team_lookup.get(event.home_team_name)
