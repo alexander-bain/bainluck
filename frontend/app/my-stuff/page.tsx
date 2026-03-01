@@ -228,6 +228,22 @@ function MyTeamsFeed() {
       }
     }
 
+    // Sort upcoming by commence_time ascending — soonest games first.
+    // The backend sorts by interestingness score which is great for discovery
+    // feeds, but in My Stuff the user wants time-proximity ordering.
+    upcoming.sort((a, b) => {
+      const da = (a.data as FeedEventData).commence_time;
+      const db_ = (b.data as FeedEventData).commence_time;
+      return new Date(da).getTime() - new Date(db_).getTime();
+    });
+
+    // Sort recently completed by commence_time descending — most recent first
+    recentlyCompleted.sort((a, b) => {
+      const da = (a.data as FeedEventData).commence_time;
+      const db_ = (b.data as FeedEventData).commence_time;
+      return new Date(db_).getTime() - new Date(da).getTime();
+    });
+
     const sections: { key: string; emoji: string; title: string; accent: string; items: FeedItem[] }[] = [];
     if (liveNow.length > 0)
       sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });

@@ -10,6 +10,7 @@ Anonymous users see the generic interestingness feed.
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -61,16 +62,27 @@ def _ei_label(score: int) -> str:
 _pulse_label = _ei_label
 
 
+# Reserve / youth team suffixes that indicate a different squad than the
+# user's followed team.  "New England Revolution" should NOT match
+# "New England Revolution II" or "Barcelona B".
+_RESERVE_SUFFIX_RE = re.compile(
+    r"\s+(?:II|III|IV|B|C|2|U\d{2}|Under[\s-]?\d{2}|Reserves?|Academy|Youth|W|Women)$",
+    re.IGNORECASE,
+)
+
+
 def _team_name_matches(user_team: str, candidate: str) -> bool:
     """Check if a user's followed team name matches a candidate team name.
 
     The safe direction (user's full team name found inside candidate) is kept
-    as-is since full names are specific enough.  The dangerous direction (short
-    candidate found inside the longer user team name) requires the candidate to
-    match the *trailing words* (mascot: "Celtics" in "Boston Celtics") or
-    *leading words* (school/city: "Stanford" in "Stanford Cardinal") of the
-    user's team name.  Prefix matching requires >= 4 chars to prevent "New"
-    matching "New England Patriots".
+    as-is since full names are specific enough — but rejects reserve/youth
+    team suffixes (II, B, 2, U23, Reserves, Academy, etc.).
+
+    The dangerous direction (short candidate found inside the longer user team
+    name) requires the candidate to match the *trailing words* (mascot:
+    "Celtics" in "Boston Celtics") or *leading words* (school/city: "Stanford"
+    in "Stanford Cardinal") of the user's team name.  Prefix matching requires
+    >= 4 chars to prevent "New" matching "New England Patriots".
     """
     user_lower = user_team.lower().strip()
     cand_lower = candidate.lower().strip()
@@ -80,6 +92,10 @@ def _team_name_matches(user_team: str, candidate: str) -> bool:
         return True
     # user team name appears in candidate (safe — full name is specific)
     if user_lower in cand_lower:
+        # Reject if the extra suffix is a reserve/youth indicator
+        remainder = cand_lower[len(user_lower):]
+        if remainder and _RESERVE_SUFFIX_RE.match(remainder):
+            return False
         return True
     # candidate appears in user team (dangerous — require word boundary match)
     if cand_lower in user_lower:
