@@ -67,6 +67,11 @@ struct FuturesDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                PinButton(type: "future", id: marketId)
+            }
+        }
         .task {
             await vm.load()
         }
@@ -78,16 +83,21 @@ struct FuturesDetailView: View {
     // MARK: - Header
 
     private func headerSection(_ market: FuturesMarketDetail) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(market.llmSportCategory?.capitalized ?? "Futures")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let category = market.llmSportCategory {
+                    Text(category.capitalized)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(categoryColor(market).opacity(0.9))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(categoryColor(market).opacity(0.1))
+                        .clipShape(Capsule())
+                }
                 Spacer()
                 if let source = market.source {
-                    Text(source.capitalized)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    sourceBadge(source)
                 }
             }
 
@@ -97,13 +107,23 @@ struct FuturesDetailView: View {
 
             HStack(spacing: 12) {
                 if let status = market.status {
-                    Label(status.capitalized, systemImage: "circle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(status == "active" ? .green : .secondary)
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(status == "active" ? .green : .secondary)
+                            .frame(width: 6, height: 6)
+                        Text(status.capitalized)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(status == "active" ? .green : .secondary)
                 }
-                Label("\(market.outcomes.count) outcomes", systemImage: "list.bullet")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Image(systemName: "list.bullet")
+                        .font(.system(size: 9))
+                    Text("\(market.outcomes.count) outcomes")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
                 if let date = market.resolutionDate {
                     RelativeTimeText(dateString: date)
                 }
@@ -114,16 +134,78 @@ struct FuturesDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
+    // MARK: - Source Badge
+
+    private func sourceBadge(_ source: String) -> some View {
+        let label: String
+        let color: Color
+        switch source {
+        case "polymarket":
+            label = "Polymarket"
+            color = .blue
+        case "kalshi":
+            label = "Kalshi"
+            color = Color(hex: "#22c55e")
+        case "odds_api":
+            label = "Sportsbooks"
+            color = Color(hex: "#d97706")
+        default:
+            label = source.capitalized
+            color = .gray
+        }
+        return Text(label)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+    }
+
+    // MARK: - Category Color
+
+    private func categoryColor(_ market: FuturesMarketDetail) -> Color {
+        switch market.llmSportCategory?.lowercased() {
+        case "basketball": return .orange
+        case "football": return .brown
+        case "baseball": return .red
+        case "hockey": return .cyan
+        case "soccer": return .green
+        case "golf": return .mint
+        case "tennis": return .yellow
+        case "mma", "boxing": return .red
+        case "politics": return .purple
+        case "entertainment": return .pink
+        case "crypto": return Color(hex: "#f59e0b")
+        default: return .blue
+        }
+    }
+
     // MARK: - Outcomes
 
     private func outcomesSection(_ market: FuturesMarketDetail) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("All Outcomes")
-                .font(.subheadline)
-                .fontWeight(.medium)
+        let color = categoryColor(market)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Text("All Outcomes")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+                Text("\(market.outcomes.count)")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(Capsule())
+            }
 
             ForEach(market.outcomes) { outcome in
-                outcomeRow(outcome)
+                outcomeRow(outcome, color: color)
                 if outcome.id != market.outcomes.last?.id {
                     Divider()
                 }
@@ -134,7 +216,7 @@ struct FuturesDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    private func outcomeRow(_ outcome: FuturesOutcome) -> some View {
+    private func outcomeRow(_ outcome: FuturesOutcome, color: Color) -> some View {
         VStack(spacing: 4) {
             HStack(alignment: .top) {
                 if let rank = outcome.rank {
@@ -192,7 +274,7 @@ struct FuturesDetailView: View {
                         Capsule()
                             .fill(Color.barTrack)
                         Capsule()
-                            .fill(.blue.opacity(0.6))
+                            .fill(color.opacity(0.5))
                             .frame(width: geo.size.width * prob)
                     }
                 }

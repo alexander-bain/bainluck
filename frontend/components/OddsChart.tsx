@@ -268,20 +268,31 @@ export default function OddsChart({
   );
 
   // Transform data: convert probabilities to delta from 50%
+  // Bucket by minute so each "h:mm a" time label is unique — required for
+  // Recharts ReferenceLine (period markers) to match categorical XAxis values.
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
 
+    /** Round an ISO timestamp to the start of its minute. */
+    const toMinuteKey = (timestamp: string): string => {
+      const d = parseISO(timestamp);
+      // Zero out seconds and milliseconds
+      d.setSeconds(0, 0);
+      return d.toISOString();
+    };
+
     const ensurePoint = (timestamp: string): ChartDataPoint => {
-      let point = dataMap.get(timestamp);
+      const minuteKey = toMinuteKey(timestamp);
+      let point = dataMap.get(minuteKey);
       if (!point) {
         point = {
-          timestamp,
-          time: format(parseISO(timestamp), "h:mm a"),
+          timestamp: minuteKey,
+          time: format(parseISO(minuteKey), "h:mm a"),
           homeDelta: null,
           espnDelta: null,
           bainLuckDelta: null,
         };
-        dataMap.set(timestamp, point);
+        dataMap.set(minuteKey, point);
       }
       return point;
     };
@@ -812,14 +823,14 @@ export default function OddsChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="#9ca3af"
-                strokeWidth={1}
-                strokeDasharray="4 3"
+                stroke="#6b7280"
+                strokeWidth={1.5}
+                strokeDasharray="6 4"
                 isFront
                 label={{
                   value: b.label,
                   position: "insideTopLeft",
-                  style: { fontSize: 10, fill: "#6b7280", fontWeight: 600 },
+                  style: { fontSize: 11, fill: "#374151", fontWeight: 700 },
                 }}
               />
             ))}

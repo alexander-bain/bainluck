@@ -161,9 +161,33 @@ export default function ScoreDifferentialChart({
 
   const hasActualScoreData = filteredScoreHistory.length > 0;
 
-  // Build chart data by merging projected and actual score data on timeline
+  // Build chart data by merging projected and actual score data on timeline.
+  // Bucket by minute so each "h:mm a" label is unique — required for
+  // ReferenceLine period markers to match categorical XAxis values.
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
+
+    /** Round an ISO timestamp to the start of its minute. */
+    const toMinuteKey = (timestamp: string): string => {
+      const d = parseISO(timestamp);
+      d.setSeconds(0, 0);
+      return d.toISOString();
+    };
+
+    const ensurePoint = (timestamp: string): ChartDataPoint => {
+      const minuteKey = toMinuteKey(timestamp);
+      let point = dataMap.get(minuteKey);
+      if (!point) {
+        point = {
+          timestamp: minuteKey,
+          time: format(parseISO(minuteKey), "h:mm a"),
+          projectedDiff: null,
+          actualDiff: null,
+        };
+        dataMap.set(minuteKey, point);
+      }
+      return point;
+    };
 
     // Add projected score differentials from aggregate history
     for (const point of filteredHistory) {
@@ -174,27 +198,16 @@ export default function ScoreDifferentialChart({
         continue;
 
       const diff = point.projected_home_score - point.projected_away_score;
-      const dp: ChartDataPoint = {
-        timestamp: point.timestamp,
-        time: format(parseISO(point.timestamp), "h:mm a"),
-        projectedDiff: Math.round(diff * 10) / 10,
-        actualDiff: null,
-      };
-      dataMap.set(point.timestamp, dp);
+      const dp = ensurePoint(point.timestamp);
+      dp.projectedDiff = Math.round(diff * 10) / 10;
 
       // Expand valid_until for flat-line rendering
       if (point.valid_until) {
         const endTime = parseISO(point.valid_until);
         const startTime = parseISO(point.timestamp);
         if (endTime.getTime() - startTime.getTime() > 60000) {
-          if (!dataMap.has(point.valid_until)) {
-            dataMap.set(point.valid_until, {
-              timestamp: point.valid_until,
-              time: format(endTime, "h:mm a"),
-              projectedDiff: Math.round(diff * 10) / 10,
-              actualDiff: null,
-            });
-          }
+          const endDp = ensurePoint(point.valid_until);
+          if (endDp.projectedDiff === null) endDp.projectedDiff = Math.round(diff * 10) / 10;
         }
       }
     }
@@ -213,36 +226,17 @@ export default function ScoreDifferentialChart({
         const diff =
           Math.round((point.projected_home_score - awayScore) * 10) / 10;
 
-        const existing = dataMap.get(point.timestamp);
-        if (existing) {
-          existing[`${bookmaker}_diff`] = diff;
-        } else {
-          const newPoint: ChartDataPoint = {
-            timestamp: point.timestamp,
-            time: format(parseISO(point.timestamp), "h:mm a"),
-            projectedDiff: null,
-            actualDiff: null,
-            [`${bookmaker}_diff`]: diff,
-          };
-          dataMap.set(point.timestamp, newPoint);
-        }
+        const dp = ensurePoint(point.timestamp);
+        dp[`${bookmaker}_diff`] = diff;
 
         // Expand valid_until
         if (point.valid_until) {
           const endTime = parseISO(point.valid_until);
           const startTime = parseISO(point.timestamp);
           if (endTime.getTime() - startTime.getTime() > 60000) {
-            const existingEnd = dataMap.get(point.valid_until);
-            if (existingEnd) {
-              existingEnd[`${bookmaker}_diff`] = diff;
-            } else {
-              dataMap.set(point.valid_until, {
-                timestamp: point.valid_until,
-                time: format(endTime, "h:mm a"),
-                projectedDiff: null,
-                actualDiff: null,
-                [`${bookmaker}_diff`]: diff,
-              });
+            const endDp = ensurePoint(point.valid_until);
+            if (endDp[`${bookmaker}_diff`] === undefined) {
+              endDp[`${bookmaker}_diff`] = diff;
             }
           }
         }
@@ -263,21 +257,8 @@ export default function ScoreDifferentialChart({
     // Add actual score differences
     for (const point of filteredScoreHistory) {
       const diff = point.home_score - point.away_score;
-      const existing = dataMap.get(point.timestamp);
-      if (existing) {
-        existing.actualDiff = diff;
-      } else {
-        const newPoint: ChartDataPoint = {
-          timestamp: point.timestamp,
-          time: format(parseISO(point.timestamp), "h:mm a"),
-          projectedDiff: null,
-          actualDiff: diff,
-        };
-        for (const bookmaker of allBookmakers) {
-          newPoint[`${bookmaker}_diff`] = null;
-        }
-        dataMap.set(point.timestamp, newPoint);
-      }
+      const dp = ensurePoint(point.timestamp);
+      dp.actualDiff = diff;
     }
 
     return Array.from(dataMap.values()).sort(
@@ -486,14 +467,14 @@ export default function ScoreDifferentialChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="#9ca3af"
-                strokeWidth={1}
-                strokeDasharray="4 3"
+                stroke="#6b7280"
+                strokeWidth={1.5}
+                strokeDasharray="6 4"
                 isFront
                 label={{
                   value: b.label,
                   position: "insideTopLeft",
-                  style: { fontSize: 10, fill: "#6b7280", fontWeight: 600 },
+                  style: { fontSize: 11, fill: "#374151", fontWeight: 700 },
                 }}
               />
             ))}

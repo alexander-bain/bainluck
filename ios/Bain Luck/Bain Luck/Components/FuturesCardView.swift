@@ -54,10 +54,10 @@ struct FuturesCardView: View {
     private func outcomeRow(_ outcome: FeedFuturesOutcome) -> some View {
         HStack(spacing: 8) {
             if let rank = outcome.rank {
-                Text("\(rank)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, alignment: .trailing)
+                Text("#\(rank)")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 20, alignment: .trailing)
             }
             Text(outcome.name)
                 .font(.caption)
@@ -67,9 +67,37 @@ struct FuturesCardView: View {
             if let prob = outcome.probability {
                 Text(formatProbability(prob))
                     .font(.caption)
-                    .fontWeight(.medium)
+                    .fontWeight(.semibold)
                     .monospacedDigit()
+                    .foregroundStyle(.primary)
             }
+        }
+        .padding(.vertical, 2)
+        .background(
+            GeometryReader { geo in
+                if let prob = outcome.probability {
+                    Rectangle()
+                        .fill(categoryColor.opacity(0.06))
+                        .frame(width: geo.size.width * min(1, prob))
+                }
+            }
+        )
+    }
+
+    private var categoryColor: Color {
+        switch futures.llmSportCategory?.lowercased() {
+        case "basketball": return .orange
+        case "football": return .brown
+        case "baseball": return .red
+        case "hockey": return .cyan
+        case "soccer": return .green
+        case "golf": return .mint
+        case "tennis": return .yellow
+        case "mma", "boxing": return .red
+        case "politics": return .purple
+        case "entertainment": return .pink
+        case "crypto": return Color(hex: "#f59e0b")
+        default: return .blue
         }
     }
 
