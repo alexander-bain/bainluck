@@ -33,7 +33,6 @@ const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 /** Check if history response has ANY win probability data beyond sportsbook odds. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function _hasAnyWinProbData(data: any): boolean {
   if (!data) return false;
   if (data.espn_history && data.espn_history.length > 0) return true;
