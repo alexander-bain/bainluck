@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -104,11 +104,19 @@ def _compute_aggregate_probability(event) -> Optional[float]:
     Falls back through three tiers of decreasing richness.
     """
     # Tier 1: win_probability_sources JSONB (live games — multiple sources)
+    # Values are stored as raw floats (e.g., {"stat_model": 0.83, "espn": 0.65})
+    # but also handle structured dicts (e.g., {"stat_model": {"value": 0.83, ...}})
     wps = event.win_probability_sources or {}
-    prob_readings = {
-        k: v for k, v in wps.items()
-        if k in SOURCE_WEIGHTS and isinstance(v, (int, float))
-    }
+    prob_readings: dict[str, float] = {}
+    for k, v in wps.items():
+        if k not in SOURCE_WEIGHTS:
+            continue
+        if isinstance(v, (int, float)):
+            prob_readings[k] = float(v)
+        elif isinstance(v, dict) and "value" in v:
+            val = v["value"]
+            if isinstance(val, (int, float)):
+                prob_readings[k] = float(val)
 
     if prob_readings:
         total_weight = 0.0
@@ -448,6 +456,17 @@ async def _score_events(
             return []
         query = query.limit(200)  # Safety cap (user's teams only)
     else:
+        # Prioritize live > recently completed > scheduled so the 500-row
+        # cap doesn't crowd out live events when thousands of scheduled
+        # events exist across all sports.
+        query = query.order_by(
+            case(
+                (Event.status == "live", 0),
+                (Event.status.in_(["completed", "closed"]), 1),
+                else_=2,
+            ),
+            Event.commence_time.desc(),
+        )
         query = query.limit(500)  # Safety cap (all events)
 
     result = await db.execute(query)
