@@ -79,6 +79,7 @@ final class MyStuffViewModel: ObservableObject {
 
 struct MyStuffView: View {
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var navCoordinator: NavigationCoordinator
     @StateObject private var vm = MyStuffViewModel()
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
@@ -122,6 +123,15 @@ struct MyStuffView: View {
                     PreferencesView()
                         .environmentObject(authManager)
                 }
+            }
+        }
+        .onAppear {
+            AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
+        }
+        .onChange(of: navCoordinator.pendingRoute) { _ in
+            if navCoordinator.selectedTab == .myStuff,
+               let route = navCoordinator.consumeRoute() {
+                path.append(route)
             }
         }
     }

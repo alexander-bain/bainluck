@@ -74,10 +74,12 @@ final class OddsChartViewModel: ObservableObject {
 
 struct OddsChartView: View {
     let eventId: Int
+    var teamColors: (away: Color, home: Color)?
     @StateObject private var vm: OddsChartViewModel
 
-    init(eventId: Int) {
+    init(eventId: Int, teamColors: (away: Color, home: Color)? = nil) {
         self.eventId = eventId
+        self.teamColors = teamColors
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId))
     }
 
@@ -94,19 +96,19 @@ struct OddsChartView: View {
 
             if vm.loading {
                 ProgressView()
-                    .frame(height: 200)
+                    .frame(height: 260)
             } else if let error = vm.error {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(height: 200)
+                    .frame(height: 260)
             } else if let history = vm.history {
                 let dataPoints = buildDataPoints(history)
                 if dataPoints.isEmpty {
                     Text("No odds data available")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(height: 200)
+                        .frame(height: 260)
                 } else {
                     chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
@@ -120,6 +122,7 @@ struct OddsChartView: View {
             await vm.load()
         }
         .onChange(of: vm.selectedRange) { _ in
+            AnalyticsService.trackChartTimeRange(eventId: eventId, range: vm.selectedRange.label)
             Task {
                 vm.history = nil
                 await vm.load()
@@ -193,7 +196,7 @@ struct OddsChartView: View {
                     .font(.caption2)
             }
         }
-        .frame(height: 200)
+        .frame(height: 260)
     }
 
     // MARK: - Legend
@@ -242,7 +245,7 @@ struct OddsChartView: View {
     // MARK: - Source Styling
 
     private func colorForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> Color {
-        if source == "consensus" { return .blue }
+        if source == "consensus" { return teamColors?.home ?? .blue }
         if let info = sources[source], let hex = info.color {
             return Color(hex: hex)
         }

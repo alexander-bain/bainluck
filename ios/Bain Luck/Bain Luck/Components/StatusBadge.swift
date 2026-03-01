@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Live (red pulse), Final (gray), Scheduled (hidden).
+/// Live (red pulse), Scheduled countdown, Final (gray).
 struct StatusBadge: View {
     let status: String?
+    var commenceTime: String? = nil
 
     var body: some View {
         switch status {
@@ -30,6 +31,23 @@ struct StatusBadge: View {
                 .padding(.vertical, 2)
                 .background(Color.cardBackgroundDark)
                 .clipShape(Capsule())
+        case "scheduled":
+            if let ct = commenceTime, let date = ct.asDate, let countdown = formatCountdown(from: date) {
+                HStack(spacing: 3) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 8))
+                    Text("In \(countdown)")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                }
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.blue.opacity(0.1))
+                .clipShape(Capsule())
+            } else {
+                EmptyView()
+            }
         default:
             EmptyView()
         }

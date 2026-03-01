@@ -10,6 +10,14 @@
 				<string>com.googleusercontent.apps.899260594814-8kiobo38atvkhhm5rp441gt69gqlahc8</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.bainluck.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>bainluck</string>
+			</array>
+		</dict>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

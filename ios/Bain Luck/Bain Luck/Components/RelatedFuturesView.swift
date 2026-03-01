@@ -134,6 +134,7 @@ struct RelatedFuturesView: View {
             // Championship/Conference (tier 1-2)
             let championships = grouped.filter { $0.key <= 2 }.flatMap { $0.value }
             if !championships.isEmpty {
+                tierHeader(icon: "trophy.fill", title: "Championship Odds")
                 ForEach(limitedFutures(championships, from: displayFutures)) { future in
                     championshipRow(future)
                 }
@@ -142,6 +143,7 @@ struct RelatedFuturesView: View {
             // Awards (tier 3-4)
             let awards = grouped.filter { $0.key == 3 || $0.key == 4 }.flatMap { $0.value }
             if !awards.isEmpty {
+                tierHeader(icon: "star.fill", title: "Awards")
                 ForEach(limitedFutures(awards, from: displayFutures)) { future in
                     awardRow(future)
                 }
@@ -150,11 +152,26 @@ struct RelatedFuturesView: View {
             // Other (tier 5+)
             let other = grouped.filter { $0.key >= 5 || $0.key == 0 }.flatMap { $0.value }
             if !other.isEmpty {
+                tierHeader(icon: "sportscourt.fill", title: "Upcoming Games")
                 ForEach(limitedFutures(other, from: displayFutures)) { future in
                     compactRow(future)
                 }
             }
         }
+    }
+
+    // MARK: - Tier Header
+
+    private func tierHeader(icon: String, title: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(title)
+                .font(.caption)
+                .fontWeight(.semibold)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.top, 4)
     }
 
     /// Filters a category's futures to only include those in the display set

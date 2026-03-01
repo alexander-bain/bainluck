@@ -82,6 +82,7 @@ final class FeedViewModel: ObservableObject {
 struct FeedView: View {
     @StateObject private var vm = FeedViewModel()
     @State private var path = NavigationPath()
+    @EnvironmentObject var navCoordinator: NavigationCoordinator
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -119,11 +120,20 @@ struct FeedView: View {
                 }
             }
         }
+        .onAppear {
+            AnalyticsService.trackScreen(name: "feed", type: "feed")
+        }
         .task {
             await vm.load()
         }
         .onDisappear {
             vm.stopRefresh()
+        }
+        .onChange(of: navCoordinator.pendingRoute) { _ in
+            if navCoordinator.selectedTab == .feed,
+               let route = navCoordinator.consumeRoute() {
+                path.append(route)
+            }
         }
     }
 
@@ -174,6 +184,7 @@ struct FeedView: View {
     private func feedRow(_ item: FeedItem) -> some View {
         if item.type == "event", let event = item.event {
             Button {
+                AnalyticsService.trackEventCardClick(eventId: event.id, sport: event.sport, status: event.status)
                 path.append(Route.eventDetail(id: event.id))
             } label: {
                 EventCardView(event: event, reason: item.reason)

@@ -1,0 +1,19 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "J893F72P4R.com.bainluck.Bain-Luck",
+        "paths": [
+          "/events/*",
+          "/futures/*",
+          "/ei/hall-of-fame",
+          "/search",
+          "/search?*",
+          "/my-stuff",
+          "/preferences"
+        ]
+      }
+    ]
+  }
+}

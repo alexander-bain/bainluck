@@ -45,6 +45,8 @@ final class SearchViewModel: ObservableObject {
             suggestions = []
             error = nil
             loading = false
+            let totalResults = (results?.results.count ?? 0) + (results?.futures.count ?? 0)
+            AnalyticsService.trackSearch(query: trimmed, resultsCount: totalResults)
         } catch {
             self.error = error.localizedDescription
             loading = false
@@ -68,6 +70,7 @@ final class SearchViewModel: ObservableObject {
 
 struct SearchView: View {
     @StateObject private var vm = SearchViewModel()
+    @EnvironmentObject var navCoordinator: NavigationCoordinator
 
     var body: some View {
         NavigationStack {
@@ -119,6 +122,19 @@ struct SearchView: View {
                 }
             }
         }
+        .onAppear {
+            AnalyticsService.trackScreen(name: "search", type: "search")
+        }
+        .onChange(of: navCoordinator.pendingSearchQuery) { _ in
+            if navCoordinator.selectedTab == .search,
+               let query = navCoordinator.consumeSearchQuery() {
+                vm.query = query
+                Task { await vm.search() }
+            }
+        }
+        .onChange(of: navCoordinator.pendingRoute) { _ in
+            // Search tab doesn't handle route pushes — handled by feed/myStuff
+        }
     }
 
     // MARK: - Search Field
@@ -154,7 +170,7 @@ struct SearchView: View {
             }
         }
         .padding(10)
-        .background(Color.cardBackground)
+        .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 

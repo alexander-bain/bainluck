@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E392F525C6D000542D3 /* GoogleSignIn */; };
+		A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		A7869E2A2F525C6A000542D3 /* Bain Luck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Bain Luck.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +28,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A73159A72F53CBFF0051185B /* FirebaseAnalytics in Frameworks */,
+				A73159A62F53CBFF0051185B /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,6 +73,7 @@
 			name = "Bain Luck";
 			packageProductDependencies = (
 				A7869E392F525C6D000542D3 /* GoogleSignIn */,
+				A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */,
 			);
 			productName = "Bain Luck";
 			productReference = A7869E2A2F525C6A000542D3 /* Bain Luck.app */;
@@ -95,15 +103,16 @@
 			);
 			mainGroup = A7869E212F525C69000542D3;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A7869E382F525C6D000542D3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				A7869E3B2F525C6E000542D3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A7869E2B2F525C6A000542D3 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				A7869E292F525C6A000542D3 /* Bain Luck */,
-			);
-			packageReferences = (
-				A7869E382F525C6D000542D3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 		};
 /* End PBXProject section */
@@ -365,6 +374,14 @@
 				minimumVersion = 8.0.0;
 			};
 		};
+		A7869E3B2F525C6E000542D3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -372,6 +389,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A7869E382F525C6D000542D3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignIn;
+		};
+		A7869E3A2F525C6E000542D3 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A7869E3B2F525C6E000542D3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -41,6 +41,7 @@ final class AuthManager: ObservableObject {
         do {
             let profile: AuthUser = try await APIClient.shared.fetchProfile()
             self.user = profile
+            AnalyticsService.setUserId(String(profile.id))
             logger.info("Session restored for user \(profile.id)")
         } catch {
             logger.warning("Session restore failed: \(error). Clearing stored token.")
@@ -83,6 +84,8 @@ final class AuthManager: ObservableObject {
         GIDSignIn.sharedInstance.signOut()
         user = nil
         error = nil
+        AnalyticsService.trackLogout()
+        AnalyticsService.setUserId(nil)
         logger.info("User signed out")
     }
 
@@ -164,6 +167,8 @@ final class AuthManager: ObservableObject {
 
             self.user = response.user
             self.error = nil
+            AnalyticsService.trackLogin(method: "apple")
+            AnalyticsService.setUserId(String(response.user.id))
             logger.info("Apple sign-in successful: user \(response.user.id)")
         } catch {
             self.error = "Sign-in failed. Please try again."
@@ -204,6 +209,8 @@ final class AuthManager: ObservableObject {
 
             self.user = response.user
             self.error = nil
+            AnalyticsService.trackLogin(method: "google")
+            AnalyticsService.setUserId(String(response.user.id))
             logger.info("Google sign-in successful: user \(response.user.id)")
         } catch {
             // Silently ignore user cancellation (GIDSignInError code -5)
