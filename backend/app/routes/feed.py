@@ -24,6 +24,7 @@ from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.models.models import User, UserFavorite, UserPreference, UserPin, Team
 from app.services import get_db
 from app.utils.aggregation import SOURCE_WEIGHTS, compute_aggregate_probability as _compute_aggregate_probability
+from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils import (
     compute_highlight,
     get_highlight_label,
@@ -112,49 +113,6 @@ def _team_name_matches(user_team: str, candidate: str) -> bool:
     return False
 
 
-def _compute_aggregate_probability(event) -> Optional[float]:
-    """Compute aggregate home win probability from all available sources.
-
-    Uses SOURCE_WEIGHTS from the aggregation engine to produce a weighted
-    average of all available probability readings on the event model.
-    Falls back through three tiers of decreasing richness.
-    """
-    # Tier 1: win_probability_sources JSONB (live games — multiple sources)
-    # Values are stored as raw floats (e.g., {"stat_model": 0.83, "espn": 0.65})
-    # but also handle structured dicts (e.g., {"stat_model": {"value": 0.83, ...}})
-    wps = event.win_probability_sources or {}
-    prob_readings: dict[str, float] = {}
-    for k, v in wps.items():
-        if k not in SOURCE_WEIGHTS:
-            continue
-        if isinstance(v, (int, float)):
-            prob_readings[k] = float(v)
-        elif isinstance(v, dict) and "value" in v:
-            val = v["value"]
-            if isinstance(val, (int, float)):
-                prob_readings[k] = float(val)
-
-    if prob_readings:
-        total_weight = 0.0
-        weighted_sum = 0.0
-        for source, prob in prob_readings.items():
-            w = SOURCE_WEIGHTS.get(source, 0.5)
-            weighted_sum += prob * w
-            total_weight += w
-        if total_weight > 0:
-            return round(weighted_sum / total_weight, 6)
-
-    # Tier 2: ESPN win probability (live games, single source)
-    if event.espn_win_prob_home is not None:
-        return round(float(event.espn_win_prob_home), 6)
-
-    # Tier 3: Opening probability (Odds API sportsbook consensus)
-    if event.opening_home_probability is not None:
-        return round(float(event.opening_home_probability), 6)
-
-    return None
-
-
 @router.get("")
 async def get_feed(
     limit: int = Query(200, description="Number of feed items to return", ge=1, le=5000),
@@ -163,6 +121,7 @@ async def get_feed(
     include_events: bool = Query(True, description="Include game events in feed"),
     include_futures: bool = Query(True, description="Include futures markets in feed"),
     my_teams_only: bool = Query(False, description="Filter to only the user's followed teams"),
+    tags: Optional[str] = Query(None, description="Filter by taxonomy tags (JSON array, e.g., [\"sport:basketball\"])"),
     db: AsyncSession = Depends(get_db),
     user: Optional[User] = Depends(get_optional_user),
 ):
@@ -184,6 +143,17 @@ async def get_feed(
     - personalized: whether score was personalized (only present if true)
     """
     now = datetime.now(timezone.utc)
+
+    # Parse tag filter
+    import json as _json
+    tag_filter: Optional[list[str]] = None
+    if tags:
+        try:
+            tag_filter = _json.loads(tags)
+            if not isinstance(tag_filter, list):
+                tag_filter = None
+        except (ValueError, TypeError):
+            tag_filter = None
 
     # my_teams_only requires authentication
     if my_teams_only and not user:
@@ -216,7 +186,7 @@ async def get_feed(
 
     # === SCORE EVENTS ===
     if include_events:
-        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names)
+        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=tag_filter)
         feed_items.extend(event_items)
 
     # === ENRICH EVENTS WITH TEAM DATA ===
@@ -242,7 +212,7 @@ async def get_feed(
 
     # === SCORE FUTURES ===
     if include_futures:
-        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names)
+        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=tag_filter)
 
         # Deduplicate futures by canonical_market_key — keep highest-scoring per group.
         # Without this, "NBA Championship" from Polymarket, Kalshi, and Odds API
@@ -400,6 +370,7 @@ async def _score_events(
     ctx: PersonalizationContext,
     my_teams_only: bool = False,
     my_team_names: Optional[list] = None,
+    tag_filter: Optional[list[str]] = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -704,6 +675,26 @@ async def _score_events(
             event_data["ei"] = ei_data
             event_data["pulse"] = ei_data  # Backward compat
 
+        # Compute event_tags on-the-fly (fresh, not stale persisted)
+        inline_tags = compute_event_tags(
+            sport_key=event.sport.key if event.sport else "",
+            status=event.status,
+            commence_time=event.commence_time,
+            llm_importance=importance,
+            llm_gender=getattr(event, "llm_gender", None),
+            llm_level=getattr(event, "llm_level", None),
+            llm_league=getattr(event, "llm_league", None),
+            raw_ei=float(event.raw_ei) if event.raw_ei else None,
+            broadcast_info=getattr(event, "broadcast_info", None),
+            highlight_result=highlight_result,
+        )
+        event_data["event_tags"] = inline_tags
+
+        # Tag filter: skip events that don't match requested tags
+        if tag_filter:
+            if not all(t in inline_tags for t in tag_filter):
+                continue
+
         # Compute sort time: live games first (far future), then by commence_time
         sort_time = event.commence_time.timestamp()
         if event.status == "live":
@@ -737,6 +728,7 @@ async def _score_futures(
     ctx: PersonalizationContext,
     my_teams_only: bool = False,
     my_team_names: Optional[list] = None,
+    tag_filter: Optional[list[str]] = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -989,6 +981,24 @@ async def _score_futures(
             "outcome_count": len(market.outcomes),
             "canonical_market_key": market.canonical_market_key,
         }
+
+        # Compute market_tags on-the-fly
+        inline_market_tags = compute_market_tags(
+            llm_sport_category=market.llm_sport_category,
+            llm_league=getattr(market, "llm_league", None),
+            llm_gender=getattr(market, "llm_gender", None),
+            llm_level=getattr(market, "llm_level", None),
+            market_tier=market.market_tier,
+            category=market.category,
+            status=market.status,
+            source=market.source,
+        )
+        futures_data["market_tags"] = inline_market_tags
+
+        # Tag filter: skip futures that don't match requested tags
+        if tag_filter:
+            if not all(t in inline_market_tags for t in tag_filter):
+                continue
 
         if matched_outcomes_list:
             futures_data["matched_outcomes"] = matched_outcomes_list

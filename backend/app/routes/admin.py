@@ -4342,3 +4342,65 @@ async def clear_line_movement_cache(
 
     return {"deleted": len(rows), "event_id": event_id}
 
+
+# =============================================================================
+# Event Taxonomy
+# =============================================================================
+
+@router.post("/taxonomy/backfill")
+async def backfill_taxonomy(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(500, description="Max items to process"),
+):
+    """Trigger taxonomy tag computation for events and futures markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import update_event_tags as task
+
+    result = task.delay(limit=limit)
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "message": f"Taxonomy backfill queued (limit={limit}). Check status at /api/admin/taxonomy/task/{{task_id}}",
+    }
+
+
+@router.get("/taxonomy/task/{task_id}")
+async def taxonomy_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check taxonomy task status."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app as app
+
+    result = app.AsyncResult(task_id)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+    if result.state == "SUCCESS":
+        response["result"] = result.result
+    elif result.state == "FAILURE":
+        response["error"] = str(result.result)
+    return response
+
+
+@router.get("/taxonomy/vocabulary")
+async def taxonomy_vocabulary(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Return the controlled tag vocabulary for inspection."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.event_taxonomy import ALLOWED_TAGS
+
+    return {
+        namespace: sorted(values)
+        for namespace, values in sorted(ALLOWED_TAGS.items())
+    }
+

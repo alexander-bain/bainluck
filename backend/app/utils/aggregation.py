@@ -265,3 +265,49 @@ def compute_current_aggregate(
         return None
 
     return round(_weighted_median(values, wts), 6)
+
+
+def compute_aggregate_probability(event) -> Optional[float]:
+    """Compute aggregate home win probability from all available sources.
+
+    Uses SOURCE_WEIGHTS to produce a weighted average of all available
+    probability readings on the event model.  Falls back through three
+    tiers of decreasing richness.
+
+    Works on any object with win_probability_sources, espn_win_prob_home,
+    and opening_home_probability attributes (typically an Event model).
+    """
+    # Tier 1: win_probability_sources JSONB (live games — multiple sources)
+    wps = getattr(event, "win_probability_sources", None) or {}
+    prob_readings: dict[str, float] = {}
+    for k, v in wps.items():
+        if k not in SOURCE_WEIGHTS:
+            continue
+        if isinstance(v, (int, float)):
+            prob_readings[k] = float(v)
+        elif isinstance(v, dict) and "value" in v:
+            val = v["value"]
+            if isinstance(val, (int, float)):
+                prob_readings[k] = float(val)
+
+    if prob_readings:
+        total_weight = 0.0
+        weighted_sum = 0.0
+        for source, prob in prob_readings.items():
+            w = SOURCE_WEIGHTS.get(source, 0.5)
+            weighted_sum += prob * w
+            total_weight += w
+        if total_weight > 0:
+            return round(weighted_sum / total_weight, 6)
+
+    # Tier 2: ESPN win probability (live games, single source)
+    espn_prob = getattr(event, "espn_win_prob_home", None)
+    if espn_prob is not None:
+        return round(float(espn_prob), 6)
+
+    # Tier 3: Opening probability (Odds API sportsbook consensus)
+    opening_prob = getattr(event, "opening_home_probability", None)
+    if opening_prob is not None:
+        return round(float(opening_prob), 6)
+
+    return None

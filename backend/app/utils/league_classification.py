@@ -42,10 +42,52 @@ LEAGUE_CLASS: dict[str, str] = {
     "soccer_brazil_serie_a": "international",
     # MMA/Boxing
     "mma_mixed_martial_arts": "pro_major",
+    "boxing_boxing": "pro_major",
+    # International soccer (additional)
+    "soccer_fifa_world_cup": "international",
+    "soccer_brazil_campeonato": "international",
+    "soccer_conmebol_copa_libertadores": "international",
+    "soccer_netherlands_eredivisie": "international",
+    "soccer_portugal_primeira_liga": "international",
+    "soccer_efl_champ": "international",
+    "soccer_fa_cup": "international",
+    "soccer_uefa_europa_conference_league": "international",
+    "soccer_england_league1": "pro_minor",
+    "soccer_england_league2": "pro_minor",
     # Olympics
-    "icehockey_olympics": "pro_major",
-    "basketball_olympics": "pro_major",
-    "soccer_olympics": "pro_major",
+    "icehockey_olympics": "international",
+    "basketball_olympics": "international",
+    "soccer_olympics": "international",
+    "fieldhockey_olympics": "international",
+    "curling_olympics": "international",
+    # Rugby
+    "rugby_nrl": "international",
+    "rugbyleague_nrl": "international",
+    "rugbyunion_six_nations": "international",
+    # Aussie Rules
+    "aussierules_afl": "international",
+    # Cricket
+    "cricket_t20_world_cup": "international",
+    "cricket_icc_world_cup": "international",
+    "cricket_international_t20": "international",
+    "cricket_test_match": "international",
+    # Tennis Grand Slams
+    "tennis_us_open": "pro_major",
+    "tennis_french_open": "pro_major",
+    "tennis_wimbledon": "pro_major",
+    "tennis_australian_open": "pro_major",
+    "tennis_atp_aus_open_singles": "pro_major",
+    "tennis_wta_aus_open_singles": "pro_major",
+    # Golf Majors
+    "golf_masters_tournament_winner": "pro_major",
+    "golf_pga_championship_winner": "pro_major",
+    "golf_us_open_winner": "pro_major",
+    "golf_the_open_championship_winner": "pro_major",
+    "golf_pga": "pro_major",
+    # Lower-tier hockey
+    "icehockey_liiga": "pro_minor",
+    "icehockey_sweden_hockey_league": "pro_minor",
+    "icehockey_sweden_allsvenskan": "pro_minor",
 }
 
 # Power 4 conferences (SEC, Big Ten, Big 12, ACC) — ~67 schools.

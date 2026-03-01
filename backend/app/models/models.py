@@ -146,6 +146,9 @@ class Event(Base):
     # ESPN box score data (populated after game completion)
     box_score_data: Mapped[Optional[dict]] = mapped_column(JSONB)
 
+    # Taxonomy tags (namespaced, e.g., ["sport:basketball", "tier:1", "signal:upset"])
+    event_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -518,6 +521,9 @@ class FuturesMarket(Base):
     # Multi-category tags for cross-category discovery
     # e.g., ["basketball", "nba", "mvp"] or ["politics", "trump", "crypto"]
     category_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+
+    # Taxonomy tags (namespaced, e.g., ["sport:basketball", "tier:1", "category:championship"])
+    market_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
 
     # For multi-outcome markets, whether exactly one outcome can win
     mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)

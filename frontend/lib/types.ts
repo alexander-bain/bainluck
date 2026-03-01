@@ -633,6 +633,7 @@ export interface FeedFuturesData {
     rank: number | null;
     movement: number | null;
   }[];
+  market_tags?: string[];
 }
 
 export interface FeedItem {
