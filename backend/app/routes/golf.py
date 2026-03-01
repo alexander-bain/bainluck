@@ -50,6 +50,7 @@ _NON_GOLF_RE = re.compile(
     r"movie|film\b|cinema|"
     r"reality\s+tv|talk\s+show|podcast|"
     r"album\s+of|concert|"
+    r"motion\s+picture|producers?\s+guild|pga\s+award|"
     # Politics
     r"election|president(?:ial)?|senate|governor|congress|democrat|republican|"
     r"cabinet|supreme\s+court|"
@@ -111,12 +112,19 @@ def _is_golf_market(market) -> bool:
 # Tournament classification
 # ============================================================================
 
+# Patterns that look like "Open Championship" but are NOT The Open Championship.
+# Must be checked before _TOURNAMENT_PATTERNS to prevent false classification.
+_NOT_THE_OPEN_RE = re.compile(
+    r"south\s+african\s+open|joburg\s+open|kenya\s+open",
+    re.I,
+)
+
 # Order matters: more specific patterns first
 _TOURNAMENT_PATTERNS = [
     (re.compile(r"(?:the\s+)?masters(?:\s+(?:tournament|golf|winner|champion))?(?!\s+(?:tour|bangkok|shanghai|madrid|tokyo|reykjavik|copenhagen))", re.I), "masters"),
     (re.compile(r"pga\s+championship", re.I), "pga_championship"),
     (re.compile(r"us\s+open|u\.s\.\s+open", re.I), "us_open"),
-    (re.compile(r"the\s+open\s+championship|(?:the\s+)?open\s+championship|british\s+open", re.I), "the_open"),
+    (re.compile(r"the\s+open\s+championship|(?:the\s+)?open\s+championship|british\s+open|the\s+open\b", re.I), "the_open"),
     (re.compile(r"players\s+championship", re.I), "players"),
     (re.compile(r"ryder\s+cup", re.I), "ryder_cup"),
     (re.compile(r"presidents?\s+cup", re.I), "presidents_cup"),
@@ -183,6 +191,9 @@ def _normalize_tournament(market_name: str) -> str:
     """Extract tournament key from a market name. Returns 'other' if no match."""
     for pattern, key in _TOURNAMENT_PATTERNS:
         if pattern.search(market_name):
+            # Exclude non-Open Championship events that match "open championship"
+            if key == "the_open" and _NOT_THE_OPEN_RE.search(market_name):
+                continue
             return key
     return "other"
 
@@ -223,10 +234,6 @@ async def get_golf(
 
     logger.info("Golf endpoint: %d markets after filtering", len(markets))
 
-    # Log market names for debugging data quality
-    for m in markets:
-        logger.info("Golf market: id=%d source=%s name='%s'", m.id, m.source or "?", m.name or "?")
-
     # Group markets by tournament
     tournament_markets: dict[str, list] = defaultdict(list)
 
@@ -241,13 +248,11 @@ async def get_golf(
         golfer_data: dict[str, dict] = {}  # match_key -> aggregated data
 
         market_ids = []
-        market_names = []  # Debug: track market names
         earliest_commence = None
         latest_resolution = None
 
         for market in tourn_markets:
             market_ids.append(market.id)
-            market_names.append(f"[{market.id}] ({market.source}) {market.name}")
             source = market.source or "unknown"
 
             # Track tournament timing
@@ -344,7 +349,6 @@ async def get_golf(
             "commence_time": earliest_commence.isoformat() if earliest_commence else None,
             "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
             "market_ids": market_ids,
-            "market_names": market_names,  # Debug: temporary
             "golfers": golfers,
         })
 
