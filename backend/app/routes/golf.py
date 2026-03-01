@@ -745,10 +745,11 @@ def _find_current_event(
         if nearest:
             return _build_current_event(nearest)
 
-    # Phase 2: Fallback — pick the tour event with the most market activity
-    # (most sources across its golfers = most actively traded)
-    best = None
-    best_score = -1
+    # Phase 2: Fallback — pick the tour event with the most odds movement.
+    # Active events (currently in progress) will have significant 24h movement,
+    # while future events will be static. Use movement as the primary signal,
+    # with activity score (sources + golfers) as tiebreaker.
+    candidates = []
     for t in tour_events:
         if not t.get("resolution_date"):
             continue
@@ -759,15 +760,22 @@ def _find_current_event(
         except (ValueError, TypeError):
             continue
 
-        # Score by source diversity + golfer count
+        # Movement signals: how many golfers moved + total movement magnitude
+        movers = sum(
+            1 for g in t["golfers"]
+            if g.get("movement_24h") is not None and abs(g["movement_24h"]) >= 0.005
+        )
+        total_movement = sum(
+            abs(g["movement_24h"]) for g in t["golfers"]
+            if g.get("movement_24h") is not None
+        )
         total_sources = sum(len(g.get("sources", {})) for g in t["golfers"])
-        score = total_sources + len(t["golfers"])
-        if score > best_score:
-            best_score = score
-            best = t
+        candidates.append((t, movers, total_movement, total_sources))
 
-    if best:
-        return _build_current_event(best)
+    if candidates:
+        # Sort by: movers desc, total_movement desc, sources desc
+        candidates.sort(key=lambda c: (-c[1], -c[2], -c[3]))
+        return _build_current_event(candidates[0][0])
 
     return None
 
