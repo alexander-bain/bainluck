@@ -83,6 +83,14 @@ _GOLF_SIGNAL_RE = re.compile(
 )
 
 
+# Kalshi external_id patterns that are NOT golf despite LLM classification.
+# These tickers indicate tennis or cross-sport markets.
+_NON_GOLF_TICKER_RE = re.compile(
+    r"kxgrandslam|kxgolftennis",
+    re.I,
+)
+
+
 def _is_golf_market(market) -> bool:
     """Validate that a market is actually golf-related, not a false positive."""
     source = market.source or ""
@@ -92,6 +100,10 @@ def _is_golf_market(market) -> bool:
     # Odds API markets: trust the sport key prefix
     if source == "odds_api":
         return external_id.startswith("golf_")
+
+    # Reject markets with non-golf Kalshi tickers (tennis grand slams, cross-sport)
+    if _NON_GOLF_TICKER_RE.search(external_id):
+        return False
 
     # For Kalshi/Polymarket: reject markets with clear non-golf signals
     if _NON_GOLF_RE.search(name):
@@ -129,6 +141,7 @@ _TOURNAMENT_PATTERNS = [
     (re.compile(r"ryder\s+cup", re.I), "ryder_cup"),
     (re.compile(r"presidents?\s+cup", re.I), "presidents_cup"),
     (re.compile(r"liv\s+golf", re.I), "liv"),
+    (re.compile(r"tomorrow'?s?\s+golf\s+league|tgl\s+champion", re.I), "tgl"),
 ]
 
 TOURNAMENT_DISPLAY_NAMES = {
@@ -140,6 +153,7 @@ TOURNAMENT_DISPLAY_NAMES = {
     "ryder_cup": "Ryder Cup",
     "presidents_cup": "Presidents Cup",
     "liv": "LIV Golf",
+    "tgl": "TGL",
     "other": "Other Tournaments",
 }
 
@@ -147,7 +161,7 @@ MAJOR_TOURNAMENTS = {"masters", "pga_championship", "us_open", "the_open"}
 
 TOURNAMENT_ORDER = [
     "masters", "pga_championship", "us_open", "the_open",
-    "players", "ryder_cup", "presidents_cup", "liv", "other",
+    "players", "ryder_cup", "presidents_cup", "liv", "tgl", "other",
 ]
 
 # Max golfers to return per tournament
@@ -187,10 +201,25 @@ _TOUR_EVENT_RE = re.compile(
     r"|Joburg\s+Open"
     r"|Kenya\s+Open"
     r"|Honda\s+LPGA\s+Thailand"
+    r"|HSBC\s+Women'?s?\s+World\s+Championship"
     r"|(?:DP\s+World\s+Tour|European\s+Tour|Sunshine\s+Tour|Asian\s+Tour)[:\s]+\w[\w\s]*?(?=\s+(?:Winner|Top|End|Round))"
     r"))",
     re.I,
 )
+
+# Display names for dynamically-extracted tour events.
+# Keys are the normalized form (lowered, non-alpha replaced with underscores).
+_TOUR_EVENT_DISPLAY_NAMES = {
+    "cognizant_classic_in_the_palm_beaches": "Cognizant Classic",
+    "cognizant_classic": "Cognizant Classic",
+    "investec_south_african_open_championship": "South African Open",
+    "investec_south_african_open": "South African Open",
+    "south_african_open_championship": "South African Open",
+    "south_african_open": "South African Open",
+    "honda_lpga_thailand": "Honda LPGA Thailand",
+    "hsbc_women_s_world_championship": "HSBC Women's World Championship",
+    "hsbc_womens_world_championship": "HSBC Women's World Championship",
+}
 
 
 def _extract_tour_event(market_name: str) -> str | None:
@@ -400,7 +429,10 @@ async def get_golf(
             g["rank"] = i + 1
 
         order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 50
-        display_name = TOURNAMENT_DISPLAY_NAMES.get(tourn_key, tourn_key.replace("_", " ").title())
+        display_name = TOURNAMENT_DISPLAY_NAMES.get(
+            tourn_key,
+            _TOUR_EVENT_DISPLAY_NAMES.get(tourn_key, tourn_key.replace("_", " ").title()),
+        )
         is_tour_event = tourn_key not in TOURNAMENT_ORDER and tourn_key != "other"
 
         # For dynamic tour events, sort by resolution date (nearest first)
