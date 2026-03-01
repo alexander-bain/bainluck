@@ -4404,3 +4404,131 @@ async def taxonomy_vocabulary(
         for namespace, values in sorted(ALLOWED_TAGS.items())
     }
 
+
+@router.get("/taxonomy/dashboard")
+async def taxonomy_dashboard(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tag distribution and content quality dashboard.
+
+    Returns coverage stats, tag value distributions, and data quality signals
+    for monitoring the event taxonomy system.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text, func as sqlfunc
+    from datetime import timezone
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Event tag coverage
+    event_coverage_result = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) FILTER (WHERE event_tags IS NOT NULL AND event_tags != '[]'::jsonb) AS tagged,
+                COUNT(*) FILTER (WHERE event_tags IS NULL OR event_tags = '[]'::jsonb) AS untagged
+            FROM events
+            WHERE status IN ('scheduled', 'live')
+        """)
+    )
+    ec = event_coverage_result.first()
+    event_coverage = {
+        "tagged": ec.tagged if ec else 0,
+        "untagged": ec.untagged if ec else 0,
+    }
+
+    # 2. Futures tag coverage
+    futures_coverage_result = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) FILTER (WHERE market_tags IS NOT NULL AND market_tags != '[]'::jsonb) AS tagged,
+                COUNT(*) FILTER (WHERE market_tags IS NULL OR market_tags = '[]'::jsonb) AS untagged
+            FROM futures_markets
+            WHERE status = 'open'
+        """)
+    )
+    fc = futures_coverage_result.first()
+    futures_coverage = {
+        "tagged": fc.tagged if fc else 0,
+        "untagged": fc.untagged if fc else 0,
+    }
+
+    # 3. Event tag distribution (last 7 days)
+    event_tags_result = await db.execute(
+        text("""
+            SELECT tag, COUNT(*) AS count
+            FROM events, jsonb_array_elements_text(event_tags) AS tag
+            WHERE status IN ('scheduled', 'live', 'completed')
+              AND commence_time > :cutoff
+            GROUP BY tag
+            ORDER BY count DESC
+            LIMIT 50
+        """),
+        {"cutoff": now - timedelta(days=7)},
+    )
+    event_tag_distribution = [
+        {"tag": row.tag, "count": row.count}
+        for row in event_tags_result.all()
+    ]
+
+    # 4. Futures tag distribution
+    futures_tags_result = await db.execute(
+        text("""
+            SELECT tag, COUNT(*) AS count
+            FROM futures_markets, jsonb_array_elements_text(market_tags) AS tag
+            WHERE status = 'open'
+            GROUP BY tag
+            ORDER BY count DESC
+            LIMIT 50
+        """)
+    )
+    futures_tag_distribution = [
+        {"tag": row.tag, "count": row.count}
+        for row in futures_tags_result.all()
+    ]
+
+    # 5. Sport distribution for events
+    sport_dist_result = await db.execute(
+        text("""
+            SELECT s.key AS sport_key, COUNT(*) AS count
+            FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            WHERE e.status IN ('scheduled', 'live')
+            GROUP BY s.key
+            ORDER BY count DESC
+            LIMIT 30
+        """)
+    )
+    sport_distribution = [
+        {"sport": row.sport_key, "count": row.count}
+        for row in sport_dist_result.all()
+    ]
+
+    # 6. Signal tag breakdown (interesting for monitoring)
+    signal_tags_result = await db.execute(
+        text("""
+            SELECT tag, COUNT(*) AS count
+            FROM events, jsonb_array_elements_text(event_tags) AS tag
+            WHERE status IN ('live', 'scheduled')
+              AND tag LIKE 'signal:%'
+            GROUP BY tag
+            ORDER BY count DESC
+        """)
+    )
+    signal_distribution = [
+        {"tag": row.tag, "count": row.count}
+        for row in signal_tags_result.all()
+    ]
+
+    return {
+        "generated_at": now.isoformat(),
+        "event_coverage": event_coverage,
+        "futures_coverage": futures_coverage,
+        "event_tag_distribution": event_tag_distribution,
+        "futures_tag_distribution": futures_tag_distribution,
+        "sport_distribution": sport_distribution,
+        "signal_distribution": signal_distribution,
+    }
+

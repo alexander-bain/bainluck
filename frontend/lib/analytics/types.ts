@@ -48,7 +48,7 @@ export interface PageViewParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf';
+    | 'share' | 'golf' | 'category' | 'category_index' | 'admin_taxonomy';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -223,7 +223,7 @@ export interface ScrollDepthParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf';
+    | 'share' | 'golf' | 'category' | 'category_index' | 'admin_taxonomy';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -236,7 +236,7 @@ export interface TimeOnPageParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf';
+    | 'share' | 'golf' | 'category' | 'category_index' | 'admin_taxonomy';
   seconds: number;
   page_path: string;
   event_id?: number;
@@ -329,6 +329,16 @@ export interface OnboardingCompleteParams {
 }
 
 // ============================================================================
+// Feed Filter Chip Events
+// ============================================================================
+
+export interface FeedFilterChipParams {
+  chip_label: string;
+  chip_tags: string[];
+  action: 'select' | 'deselect';
+}
+
+// ============================================================================
 // Event Map (all events with their parameters)
 // ============================================================================
 
@@ -373,6 +383,9 @@ export interface AnalyticsEventMap {
   // Onboarding
   onboarding_step: OnboardingStepParams;
   onboarding_complete: OnboardingCompleteParams;
+
+  // Feed filter chips
+  feed_filter_chip: FeedFilterChipParams;
 
   // Account (future)
   sign_up: SignUpParams;

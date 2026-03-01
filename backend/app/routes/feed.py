@@ -1159,3 +1159,86 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
     if not names_a or not names_b:
         return True
     return bool(names_a & names_b)
+
+
+@router.get("/tag-counts")
+async def get_tag_counts(
+    db: AsyncSession = Depends(get_db),
+):
+    """Return item counts grouped by sport for the category index page.
+
+    Counts active events (live, scheduled within 12h, completed within 24h)
+    and open futures markets per sport category.
+    """
+    now = datetime.now(timezone.utc)
+    recent_cutoff = now - timedelta(hours=24)
+    upcoming_cutoff = now + timedelta(hours=12)
+
+    from sqlalchemy import text
+
+    # Count events by sport key prefix (first segment before '_')
+    event_counts_result = await db.execute(
+        text("""
+            SELECT
+                CASE
+                    WHEN s.key LIKE 'americanfootball_%' THEN 'football'
+                    WHEN s.key LIKE 'basketball_%' THEN 'basketball'
+                    WHEN s.key LIKE 'baseball_%' THEN 'baseball'
+                    WHEN s.key LIKE 'icehockey_%' THEN 'hockey'
+                    WHEN s.key LIKE 'soccer_%' THEN 'soccer'
+                    WHEN s.key LIKE 'mma_%' THEN 'mma'
+                    WHEN s.key LIKE 'boxing_%' THEN 'boxing'
+                    WHEN s.key LIKE 'golf_%' THEN 'golf'
+                    WHEN s.key LIKE 'tennis_%' THEN 'tennis'
+                    WHEN s.key LIKE 'cricket_%' THEN 'cricket'
+                    WHEN s.key LIKE 'rugbyleague_%' OR s.key LIKE 'rugbyunion_%' THEN 'rugby'
+                    WHEN s.key LIKE 'aussierules_%' THEN 'aussierules'
+                    WHEN s.key LIKE 'esports_%' THEN 'esports'
+                    WHEN s.key LIKE 'lacrosse_%' THEN 'lacrosse'
+                    WHEN s.key LIKE 'motorsport_%' OR s.key LIKE 'racing_%' THEN 'motorsport'
+                    ELSE 'other'
+                END AS category,
+                COUNT(*) AS cnt
+            FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            WHERE (
+                (e.status = 'live')
+                OR (e.status = 'scheduled' AND e.commence_time <= :upcoming AND e.commence_time >= :now)
+                OR (e.status IN ('completed', 'closed') AND e.commence_time >= :recent)
+            )
+            GROUP BY category
+        """),
+        {"now": now, "upcoming": upcoming_cutoff, "recent": recent_cutoff},
+    )
+    event_counts: dict[str, int] = {}
+    for row in event_counts_result.all():
+        event_counts[row.category] = row.cnt
+
+    # Count futures by llm_sport_category
+    futures_counts_result = await db.execute(
+        text("""
+            SELECT
+                COALESCE(llm_sport_category, 'other') AS category,
+                COUNT(*) AS cnt
+            FROM futures_markets
+            WHERE status = 'open'
+              AND event_id IS NULL
+              AND (resolution_date IS NULL OR resolution_date >= :now)
+            GROUP BY category
+        """),
+        {"now": now},
+    )
+    futures_counts: dict[str, int] = {}
+    for row in futures_counts_result.all():
+        futures_counts[row.category] = row.cnt
+
+    # Merge into response
+    all_categories = set(event_counts.keys()) | set(futures_counts.keys())
+    counts = {}
+    for cat in sorted(all_categories):
+        counts[cat] = {
+            "events": event_counts.get(cat, 0),
+            "futures": futures_counts.get(cat, 0),
+        }
+
+    return {"counts": counts}

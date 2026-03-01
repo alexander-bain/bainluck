@@ -501,6 +501,7 @@ export async function fetchFeed(params?: {
   sport?: string;
   my_teams_only?: boolean;
   include_futures?: boolean;
+  tags?: string[];
 }): Promise<FeedResponse> {
   const searchParams = new URLSearchParams();
 
@@ -509,9 +510,26 @@ export async function fetchFeed(params?: {
   if (params?.sport) searchParams.set("sport", params.sport);
   if (params?.my_teams_only) searchParams.set("my_teams_only", "true");
   if (params?.include_futures === false) searchParams.set("include_futures", "false");
+  if (params?.tags?.length) searchParams.set("tags", JSON.stringify(params.tags));
 
   const query = searchParams.toString();
   return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`);
+}
+
+// ============================================================================
+// Tag Counts API (for category pages)
+// ============================================================================
+
+export interface TagCountsResponse {
+  counts: Record<string, { events: number; futures: number }>;
+}
+
+/**
+ * Fetch item counts grouped by sport tag.
+ * Powers the category index grid showing "12 events, 5 futures" per category.
+ */
+export async function fetchTagCounts(): Promise<TagCountsResponse> {
+  return apiFetch<TagCountsResponse>("/api/feed/tag-counts");
 }
 
 // ============================================================================

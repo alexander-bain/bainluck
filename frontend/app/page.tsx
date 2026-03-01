@@ -8,10 +8,12 @@ import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedF
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import FeedCard from "@/components/FeedCard";
+import FeedFilterChips from "@/components/FeedFilterChips";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import { getCategoryForLeague } from "@/lib/sportCategories";
+import { groupFeedIntoSections } from "@/lib/feedSections";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
 import {
   useAnalytics,
@@ -34,6 +36,10 @@ export default function HomePage() {
 
   // Auth state — used to key SWR so the feed re-fetches when auth loads
   const { user, isLoading: authLoading } = useAuthContext();
+
+  // Feed filter chips
+  const [activeTags, setActiveTags] = useState<string[] | null>(null);
+  const { track } = useAnalytics();
 
   // Pinned events
   const { pinnedIds, isPinned, togglePin, isMaxReached } = usePinnedEvents();
@@ -59,8 +65,13 @@ export default function HomePage() {
     // Don't fetch until auth state is resolved — avoids caching the anonymous
     // feed when the user is actually signed in (race condition).
     // Key includes user UID so SWR re-fetches when auth state changes.
-    authLoading ? null : user ? ["feed", user.uid] : "feed-anon",
-    () => fetchFeed({ limit: 200 }),
+    // Key includes activeTags so SWR re-fetches on filter change.
+    authLoading
+      ? null
+      : user
+        ? ["feed", user.uid, ...(activeTags ?? [])]
+        : ["feed-anon", ...(activeTags ?? [])],
+    () => fetchFeed({ limit: 200, tags: activeTags ?? undefined }),
     { refreshInterval: 30000 }
   );
 
@@ -204,36 +215,7 @@ export default function HomePage() {
 
   const feedSections = useMemo(() => {
     if (!feedData || feedData.items.length === 0) return [];
-
-    const now = new Date();
-
-    const liveNow: FeedItem[] = [];
-    const justHappened: FeedItem[] = [];
-    const upcoming: FeedItem[] = [];
-    const topMarkets: FeedItem[] = [];
-
-    for (const item of feedData.items) {
-      if (item.type === "futures") {
-        topMarkets.push(item);
-      } else {
-        const data = item.data as FeedEventData;
-        if (data.status === "live") {
-          liveNow.push(item);
-        } else if (data.status === "completed" || data.status === "closed") {
-          justHappened.push(item);
-        } else {
-          upcoming.push(item);
-        }
-      }
-    }
-
-    const sections: { key: string; emoji: string; title: string; accent: string; items: FeedItem[] }[] = [];
-    if (liveNow.length > 0) sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });
-    if (justHappened.length > 0) sections.push({ key: "finished", emoji: "\uD83C\uDFC1", title: "Just Happened", accent: "text-text-secondary", items: justHappened });
-    if (upcoming.length > 0) sections.push({ key: "upcoming", emoji: "\uD83D\uDCC5", title: "Upcoming", accent: "text-text-secondary", items: upcoming });
-    if (topMarkets.length > 0) sections.push({ key: "markets", emoji: "\uD83D\uDCCA", title: "Top Markets", accent: "text-accent-futures", items: topMarkets });
-
-    return sections;
+    return groupFeedIntoSections(feedData.items);
   }, [feedData]);
 
   // =========================================================================
@@ -256,6 +238,19 @@ export default function HomePage() {
           onRetry={() => refreshFeed()}
         />
       )}
+
+      {/* Filter Chips */}
+      <FeedFilterChips
+        activeTags={activeTags}
+        onTagChange={setActiveTags}
+        onTrack={(chip, action) =>
+          track("feed_filter_chip", {
+            chip_label: chip.label,
+            chip_tags: chip.tags,
+            action,
+          })
+        }
+      />
 
       {/* Loading State */}
       {feedLoading && !feedData && <SkeletonGrid count={6} />}
