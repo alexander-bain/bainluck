@@ -575,7 +575,8 @@ export interface FeedEventData {
   current_odds?: {
     home_probability: number | null;
     away_probability: number | null;
-    bookmaker_count: number;
+    bookmaker_count?: number;
+    source?: string;  // "aggregate" when computed from non-sportsbook sources
   };
   opening_odds?: {
     home_probability: number;
@@ -620,6 +621,10 @@ export interface FeedFuturesData {
   top_outcomes: FeedFuturesOutcome[];
   outcome_count: number;
   canonical_market_key: string | null;
+  // Resolved market metadata (leader ≥97% with interesting journey)
+  resolved?: boolean;
+  winner?: string;
+  winner_opening_probability?: number;
   matched_outcomes?: {
     name: string;
     probability: number | null;

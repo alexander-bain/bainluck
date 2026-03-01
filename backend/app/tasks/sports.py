@@ -363,6 +363,64 @@ async def _discover_events():
                                 f"records for {sport_key}"
                             )
 
+                    # Link team_ids on events that don't have them yet.
+                    # This covers events created by both Odds API (this run)
+                    # and StatPal (earlier). Without this, My Stuff SQL team
+                    # ID filter misses events that only have team names.
+                    if all_team_names:
+                        team_map_result = await session.execute(
+                            select(Team.name, Team.id).where(
+                                Team.sport_id == sport.id,
+                                Team.name.in_(all_team_names),
+                            )
+                        )
+                        team_name_to_id = {
+                            name: tid for name, tid in team_map_result.all()
+                        }
+
+                        if team_name_to_id:
+                            from sqlalchemy import or_ as sql_or
+                            unlinked_result = await session.execute(
+                                select(Event).where(
+                                    Event.sport_id == sport.id,
+                                    sql_or(
+                                        Event.home_team_id.is_(None),
+                                        Event.away_team_id.is_(None),
+                                    ),
+                                    sql_or(
+                                        Event.home_team_name.in_(
+                                            team_name_to_id.keys()
+                                        ),
+                                        Event.away_team_name.in_(
+                                            team_name_to_id.keys()
+                                        ),
+                                    ),
+                                ).limit(200)
+                            )
+                            linked_count = 0
+                            for evt in unlinked_result.scalars().all():
+                                if (
+                                    evt.home_team_id is None
+                                    and evt.home_team_name in team_name_to_id
+                                ):
+                                    evt.home_team_id = team_name_to_id[
+                                        evt.home_team_name
+                                    ]
+                                    linked_count += 1
+                                if (
+                                    evt.away_team_id is None
+                                    and evt.away_team_name in team_name_to_id
+                                ):
+                                    evt.away_team_id = team_name_to_id[
+                                        evt.away_team_name
+                                    ]
+                                    linked_count += 1
+                            if linked_count:
+                                logger.info(
+                                    f"Linked {linked_count} team IDs on "
+                                    f"events for {sport_key}"
+                                )
+
                 except Exception as e:
                     # Log but continue with other sports
                     print(f"Error discovering events for {sport_key}: {e}")

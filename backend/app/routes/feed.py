@@ -22,6 +22,7 @@ from app.dependencies.auth import get_optional_user
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
 from app.models.models import User, UserFavorite, UserPreference, UserPin, Team
 from app.services import get_db
+from app.utils.aggregation import SOURCE_WEIGHTS
 from app.utils import (
     compute_highlight,
     get_highlight_label,
@@ -66,9 +67,10 @@ def _team_name_matches(user_team: str, candidate: str) -> bool:
     The safe direction (user's full team name found inside candidate) is kept
     as-is since full names are specific enough.  The dangerous direction (short
     candidate found inside the longer user team name) requires the candidate to
-    match the *trailing words* of the user's team name.  This prevents
-    "Celtic" matching "Boston Celtics" and "England" matching "New England
-    Patriots" while still allowing "Celtics" and "Patriots" to match.
+    match the *trailing words* (mascot: "Celtics" in "Boston Celtics") or
+    *leading words* (school/city: "Stanford" in "Stanford Cardinal") of the
+    user's team name.  Prefix matching requires >= 4 chars to prevent "New"
+    matching "New England Patriots".
     """
     user_lower = user_team.lower().strip()
     cand_lower = candidate.lower().strip()
@@ -79,14 +81,54 @@ def _team_name_matches(user_team: str, candidate: str) -> bool:
     # user team name appears in candidate (safe — full name is specific)
     if user_lower in cand_lower:
         return True
-    # candidate appears in user team (dangerous — require suffix word match)
+    # candidate appears in user team (dangerous — require word boundary match)
     if cand_lower in user_lower:
         user_words = user_lower.split()
         cand_words = cand_lower.split()
         if len(cand_words) <= len(user_words):
+            # Suffix match: "Celtics" matches "Boston Celtics"
             if user_words[-len(cand_words):] == cand_words:
                 return True
+            # Prefix match: "Stanford" matches "Stanford Cardinal"
+            # Require >= 4 chars to prevent "New" matching "New England Patriots"
+            if len(cand_lower) >= 4 and user_words[:len(cand_words)] == cand_words:
+                return True
     return False
+
+
+def _compute_aggregate_probability(event) -> Optional[float]:
+    """Compute aggregate home win probability from all available sources.
+
+    Uses SOURCE_WEIGHTS from the aggregation engine to produce a weighted
+    average of all available probability readings on the event model.
+    Falls back through three tiers of decreasing richness.
+    """
+    # Tier 1: win_probability_sources JSONB (live games — multiple sources)
+    wps = event.win_probability_sources or {}
+    prob_readings = {
+        k: v for k, v in wps.items()
+        if k in SOURCE_WEIGHTS and isinstance(v, (int, float))
+    }
+
+    if prob_readings:
+        total_weight = 0.0
+        weighted_sum = 0.0
+        for source, prob in prob_readings.items():
+            w = SOURCE_WEIGHTS.get(source, 0.5)
+            weighted_sum += prob * w
+            total_weight += w
+        if total_weight > 0:
+            return round(weighted_sum / total_weight, 6)
+
+    # Tier 2: ESPN win probability (live games, single source)
+    if event.espn_win_prob_home is not None:
+        return round(float(event.espn_win_prob_home), 6)
+
+    # Tier 3: Opening probability (Odds API sportsbook consensus)
+    if event.opening_home_probability is not None:
+        return round(float(event.opening_home_probability), 6)
+
+    return None
 
 
 @router.get("")
@@ -414,7 +456,30 @@ async def _score_events(
     if not events:
         return []
 
-    # Score each event using stored opening odds (no snapshot query needed)
+    # Batch fallback: for events where _compute_aggregate_probability() returns
+    # None, query the latest win_prob_snapshot per event. This catches
+    # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
+    snapshot_fallbacks: dict[int, float] = {}
+    events_needing_fallback = [
+        e for e in events if _compute_aggregate_probability(e) is None
+    ]
+    if events_needing_fallback:
+        fallback_ids = [e.id for e in events_needing_fallback]
+        from sqlalchemy import text
+        fb_result = await db.execute(
+            text("""
+                SELECT DISTINCT ON (event_id) event_id, home_win_probability
+                FROM win_prob_snapshots
+                WHERE event_id = ANY(:ids)
+                  AND home_win_probability IS NOT NULL
+                ORDER BY event_id, captured_at DESC
+            """),
+            {"ids": fallback_ids},
+        )
+        for row in fb_result.all():
+            snapshot_fallbacks[row.event_id] = round(float(row.home_win_probability), 6)
+
+    # Score each event using aggregate probabilities from all available sources
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
 
@@ -444,12 +509,16 @@ async def _score_events(
         opening_home_prob = float(event.opening_home_probability) if event.opening_home_probability else None
         opening_away_prob = float(event.opening_away_probability) if event.opening_away_probability else None
 
-        # Events without odds still score on tier + time + importance.
-        # StatPal-created events may not have odds yet (e.g., during Odds API
-        # quota exhaustion), but a tier-1 NBA game starting soon is still worth
-        # showing. compute_highlight() handles current_home_prob=None gracefully.
-        current_home_prob = opening_home_prob
-        current_away_prob = opening_away_prob
+        # Always compute aggregate from all available sources (ESPN, stat model,
+        # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
+        current_home_prob = _compute_aggregate_probability(event)
+        if current_home_prob is None and event.id in snapshot_fallbacks:
+            current_home_prob = snapshot_fallbacks[event.id]
+        current_away_prob = round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
+
+        # Track whether we have sportsbook-specific data or only aggregate
+        has_sportsbook_odds = opening_home_prob is not None
+        prob_source = None if has_sportsbook_odds else ("aggregate" if current_home_prob is not None else None)
 
         # Auto-detect preseason as exhibition from sport key when
         # llm_importance isn't set (ESPN doesn't sync preseason sport keys)
@@ -563,10 +632,13 @@ async def _score_events(
         }
 
         if current_home_prob is not None:
-            event_data["current_odds"] = {
+            odds_data = {
                 "home_probability": current_home_prob,
                 "away_probability": current_away_prob,
             }
+            if prob_source:
+                odds_data["source"] = prob_source
+            event_data["current_odds"] = odds_data
 
         if opening_home_prob is not None:
             event_data["opening_odds"] = {
@@ -735,11 +807,22 @@ async def _score_futures(
             leader_name = leader.name
             leader_prob = float(leader.current_probability) if leader.current_probability else None
 
-        # Skip effectively-resolved markets (leader at ≥97%)
-        # These are still "open" status but their outcomes have settled.
-        # e.g., NFL Combine prop markets where the event already happened.
-        if leader_prob is not None and leader_prob >= 0.97:
-            continue
+        # Handle effectively-resolved markets (leader at ≥97%).
+        # Keep markets with interesting journeys (opened <85%), skip boring locks.
+        is_effectively_resolved = leader_prob is not None and leader_prob >= 0.97
+        leader_opening = None
+
+        if is_effectively_resolved:
+            for o in outcomes_data:
+                if o["name"] == leader_name:
+                    leader_opening = o.get("opening_probability")
+                    break
+            # Skip if always a near-lock (opened >= 85%) — not interesting
+            if leader_opening is not None and leader_opening >= 0.85:
+                continue
+            # Skip if no opening data (can't show journey)
+            if leader_opening is None:
+                continue
 
         # Get source count from canonical key
         source_count = 1
@@ -874,6 +957,12 @@ async def _score_futures(
 
         if matched_outcomes_list:
             futures_data["matched_outcomes"] = matched_outcomes_list
+
+        # Add resolved metadata for markets that have effectively settled
+        if is_effectively_resolved:
+            futures_data["resolved"] = True
+            futures_data["winner"] = leader_name
+            futures_data["winner_opening_probability"] = leader_opening
 
         # Sort time: higher-tier markets and markets resolving soon get priority
         sort_time = now.timestamp()

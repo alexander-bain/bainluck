@@ -404,11 +404,6 @@ function EventFeedCard({
               </div>
             </div>
           )}
-          {displayHomeProb === null && displayAwayProb === null && !isFinished && (
-            <span className="text-[11px] text-text-muted/50 flex-shrink-0 italic">
-              No odds yet
-            </span>
-          )}
         </div>
 
         {/* Probability bar — current odds for live/scheduled, opening odds for finished */}
@@ -505,6 +500,11 @@ function FuturesFeedCard({
         {/* Top row */}
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-1.5 min-w-0">
+            {data.resolved && (
+              <span className="bg-surface-elevated text-text-muted px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
+                RESOLVED
+              </span>
+            )}
             {item.headline && (
               <span className="bg-accent-futures/15 text-accent-futures px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 {item.headline}
@@ -542,6 +542,11 @@ function FuturesFeedCard({
               {data.name}
             </div>
             <p className="text-xs text-text-secondary mt-0.5 truncate">{item.reason}</p>
+            {data.resolved && data.winner && data.winner_opening_probability != null && (
+              <p className="text-[11px] text-accent-live font-medium mt-0.5">
+                {data.winner}: {Math.round(data.winner_opening_probability * 100)}% → Won
+              </p>
+            )}
             {data.matched_outcomes && data.matched_outcomes.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
                 {data.matched_outcomes.slice(0, 3).map((mo, i) => (
