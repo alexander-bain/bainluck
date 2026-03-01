@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,15 +25,66 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ============================================================================
+# Market validation — filter out non-golf false positives from LLM
+# ============================================================================
+
+# Non-golf terms in market names that indicate LLM miscategorization.
+# The LLM sometimes classifies esports "Masters" events, entertainment props,
+# and other non-golf markets as golf.
+_NON_GOLF_RE = re.compile(
+    r"\b(?:"
+    # Esports
+    r"vct|valorant|league\s+of\s+legends|\blol\b|dota|counter[-\s]?strike|"
+    r"\bcs2?\b|esports?|overwatch|call\s+of\s+duty|fortnite|apex\s+legends|"
+    r"rocket\s+league|starcraft|hearthstone|"
+    # Sports leagues (not golf)
+    r"\bnba\b|\bnfl\b|\bnhl\b|\bmlb\b|\bwnba\b|\bmls\b|\bufc\b|\bmma\b|"
+    r"\bepl\b|la\s+liga|serie\s+a|\bbundesliga\b|"
+    r"super\s+bowl|world\s+series|stanley\s+cup|"
+    # Entertainment
+    r"\boscar|emmy|grammy|golden\s+globe|tony\s+award|"
+    r"netflix|hulu|disney\+|streaming|tv\s+show|television|"
+    r"box\s+office|academy\s+award|"
+    r"most[- ]watched|most[- ]streamed|"
+    # Politics
+    r"election|president(?:ial)?|senate|governor|congress|democrat|republican|"
+    r"cabinet|supreme\s+court|"
+    # Finance/crypto
+    r"bitcoin|ethereum|crypto|stock\s+market|s&p|nasdaq|"
+    # Weather
+    r"temperature|weather|hurricane|tornado"
+    r")\b",
+    re.I,
+)
+
+
+def _is_golf_market(market) -> bool:
+    """Validate that a market is actually golf-related, not a false positive."""
+    source = market.source or ""
+    external_id = (market.external_id or "").lower()
+    name = market.name or ""
+
+    # Odds API markets: trust the sport key prefix
+    if source == "odds_api":
+        return external_id.startswith("golf_")
+
+    # For Kalshi/Polymarket: reject markets with clear non-golf signals
+    if _NON_GOLF_RE.search(name):
+        return False
+
+    return True
+
+
+# ============================================================================
 # Tournament classification
 # ============================================================================
 
 # Order matters: more specific patterns first
 _TOURNAMENT_PATTERNS = [
-    (re.compile(r"masters", re.I), "masters"),
+    (re.compile(r"(?:the\s+)?masters(?:\s+(?:tournament|golf|winner|champion))?(?!\s+(?:tour|bangkok|shanghai|madrid|tokyo|reykjavik|copenhagen))", re.I), "masters"),
     (re.compile(r"pga\s+championship", re.I), "pga_championship"),
     (re.compile(r"us\s+open|u\.s\.\s+open", re.I), "us_open"),
-    (re.compile(r"open\s+championship|british\s+open|the\s+open", re.I), "the_open"),
+    (re.compile(r"open\s+championship|british\s+open|the\s+open\b", re.I), "the_open"),
     (re.compile(r"players\s+championship", re.I), "players"),
     (re.compile(r"ryder\s+cup", re.I), "ryder_cup"),
     (re.compile(r"presidents?\s+cup", re.I), "presidents_cup"),
@@ -114,13 +165,18 @@ async def get_golf(
     Returns tournaments ordered by importance (Majors first), with golfers
     merged across Polymarket, Kalshi, and Odds API sources.
     """
-    # Query all golf-related futures markets
+    # Query golf-related futures markets using both sport key and LLM category
     query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            FuturesMarket.llm_sport_category == "golf",
             FuturesMarket.status == "open",
+            or_(
+                # Odds API markets with golf_ sport key (authoritative)
+                FuturesMarket.external_id.ilike("golf_%"),
+                # LLM-classified golf markets (may have false positives)
+                FuturesMarket.llm_sport_category == "golf",
+            ),
         )
     )
 
@@ -129,6 +185,11 @@ async def get_golf(
 
     # Filter out game-level markets (e.g., "Player A vs Player B" matchups)
     markets = [m for m in markets if " vs " not in m.name.lower() and " vs." not in m.name.lower()]
+
+    # Filter out non-golf false positives (esports, entertainment, politics, etc.)
+    markets = [m for m in markets if _is_golf_market(m)]
+
+    logger.info("Golf endpoint: %d markets after filtering", len(markets))
 
     # Group markets by tournament
     tournament_markets: dict[str, list] = defaultdict(list)
@@ -272,7 +333,7 @@ async def get_golf(
     biggest_movers = all_movers[:5]
 
     # ========================================================================
-    # Upcoming golf events from events table
+    # Golf events — live + upcoming from events table
     # ========================================================================
     now = datetime.now(timezone.utc)
     events_query = (
@@ -280,8 +341,14 @@ async def get_golf(
         .join(Sport, Event.sport_id == Sport.id)
         .where(
             Sport.key.ilike("golf_%"),
-            Event.commence_time >= now,
-            Event.commence_time <= now + timedelta(days=30),
+            or_(
+                # Currently live events
+                Event.status == "live",
+                # Upcoming events in next 30 days
+                Event.commence_time.between(now, now + timedelta(days=30)),
+                # Recently started (last 6h, may not be marked 'live' yet)
+                Event.commence_time.between(now - timedelta(hours=6), now),
+            ),
         )
         .order_by(Event.commence_time)
         .limit(10)
