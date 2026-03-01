@@ -41,11 +41,15 @@ _NON_GOLF_RE = re.compile(
     r"\bnba\b|\bnfl\b|\bnhl\b|\bmlb\b|\bwnba\b|\bmls\b|\bufc\b|\bmma\b|"
     r"\bepl\b|la\s+liga|serie\s+a|\bbundesliga\b|"
     r"super\s+bowl|world\s+series|stanley\s+cup|"
-    # Entertainment
+    # Entertainment / media
     r"\boscar|emmy|grammy|golden\s+globe|tony\s+award|"
     r"netflix|hulu|disney\+|streaming|tv\s+show|television|"
     r"box\s+office|academy\s+award|"
     r"most[- ]watched|most[- ]streamed|"
+    r"k-?pop|anime|manga|"
+    r"movie|film\b|cinema|"
+    r"reality\s+tv|talk\s+show|podcast|"
+    r"album\s+of|concert|"
     # Politics
     r"election|president(?:ial)?|senate|governor|congress|democrat|republican|"
     r"cabinet|supreme\s+court|"
@@ -53,6 +57,26 @@ _NON_GOLF_RE = re.compile(
     r"bitcoin|ethereum|crypto|stock\s+market|s&p|nasdaq|"
     # Weather
     r"temperature|weather|hurricane|tornado"
+    r")\b",
+    re.I,
+)
+
+# Positive golf signals — market names that indicate actual golf content.
+# For Kalshi/Polymarket, passing the blocklist is necessary but not sufficient.
+# The market name must also contain at least one golf-related term.
+_GOLF_SIGNAL_RE = re.compile(
+    r"\b(?:"
+    r"golf|golfer|pga|lpga|"
+    r"masters|"
+    r"open|"
+    r"championship|"
+    r"classic|invitational|"
+    r"ryder|presidents?\s+cup|"
+    r"major|hole[-\s]in[-\s]one|"
+    r"wgc|winner|"
+    r"liv\s+golf|korn\s+ferry|"
+    r"dp\s+world|sunshine\s+tour|"
+    r"asian\s+tour|european\s+tour"
     r")\b",
     re.I,
 )
@@ -72,6 +96,14 @@ def _is_golf_market(market) -> bool:
     if _NON_GOLF_RE.search(name):
         return False
 
+    # Require at least one positive golf signal in the market name.
+    # This catches entertainment markets that the LLM miscategorized as golf
+    # (e.g., movie/show names) which don't trigger the blocklist but also
+    # have no golf-related terms.
+    if not _GOLF_SIGNAL_RE.search(name):
+        logger.debug("Golf filter: rejected '%s' (source=%s) — no golf signal", name, source)
+        return False
+
     return True
 
 
@@ -84,7 +116,7 @@ _TOURNAMENT_PATTERNS = [
     (re.compile(r"(?:the\s+)?masters(?:\s+(?:tournament|golf|winner|champion))?(?!\s+(?:tour|bangkok|shanghai|madrid|tokyo|reykjavik|copenhagen))", re.I), "masters"),
     (re.compile(r"pga\s+championship", re.I), "pga_championship"),
     (re.compile(r"us\s+open|u\.s\.\s+open", re.I), "us_open"),
-    (re.compile(r"open\s+championship|british\s+open|the\s+open\b", re.I), "the_open"),
+    (re.compile(r"the\s+open\s+championship|(?:the\s+)?open\s+championship|british\s+open", re.I), "the_open"),
     (re.compile(r"players\s+championship", re.I), "players"),
     (re.compile(r"ryder\s+cup", re.I), "ryder_cup"),
     (re.compile(r"presidents?\s+cup", re.I), "presidents_cup"),
