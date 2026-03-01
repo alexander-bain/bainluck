@@ -333,6 +333,12 @@ function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
   let statusLabel = "Coming Up";
   let dateLabel = "";
 
+  // Detect active tournament from golfer movement (fallback when no schedule dates)
+  const topGolfers = event.top_golfers ?? [];
+  const hasActiveMovement = topGolfers.some(
+    (g) => g.movement_24h !== null && Math.abs(g.movement_24h) >= 0.01
+  );
+
   if (event.start_date && event.end_date) {
     const start = new Date(event.start_date);
     const end = new Date(event.end_date);
@@ -348,6 +354,10 @@ function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
       statusLabel = daysUntil <= 7 ? "This Week" : "Coming Up";
       dateLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
     }
+  } else if (hasActiveMovement) {
+    // No schedule dates but significant odds movement → tournament is in progress
+    statusLabel = "In Progress";
+    // Don't show resolution_date — it's market close, not tournament date
   } else if (event.resolution_date) {
     const resDate = new Date(event.resolution_date);
     const daysUntil = Math.ceil(
@@ -366,7 +376,6 @@ function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
     }
   }
 
-  const topGolfers = event.top_golfers ?? [];
   const leaderProb = topGolfers.length > 0 ? topGolfers[0].probability : 0;
 
   return (
