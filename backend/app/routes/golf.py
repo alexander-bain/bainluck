@@ -223,6 +223,10 @@ async def get_golf(
 
     logger.info("Golf endpoint: %d markets after filtering", len(markets))
 
+    # Log market names for debugging data quality
+    for m in markets:
+        logger.info("Golf market: id=%d source=%s name='%s'", m.id, m.source or "?", m.name or "?")
+
     # Group markets by tournament
     tournament_markets: dict[str, list] = defaultdict(list)
 
@@ -237,11 +241,13 @@ async def get_golf(
         golfer_data: dict[str, dict] = {}  # match_key -> aggregated data
 
         market_ids = []
+        market_names = []  # Debug: track market names
         earliest_commence = None
         latest_resolution = None
 
         for market in tourn_markets:
             market_ids.append(market.id)
+            market_names.append(f"[{market.id}] ({market.source}) {market.name}")
             source = market.source or "unknown"
 
             # Track tournament timing
@@ -338,6 +344,7 @@ async def get_golf(
             "commence_time": earliest_commence.isoformat() if earliest_commence else None,
             "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
             "market_ids": market_ids,
+            "market_names": market_names,  # Debug: temporary
             "golfers": golfers,
         })
 
