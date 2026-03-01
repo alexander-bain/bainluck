@@ -102,31 +102,53 @@ function SourceDots({ sources }: { sources: Record<string, number> }) {
 // ============================================================================
 
 function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
-  const resDate = new Date(event.resolution_date);
   const now = new Date();
-  const daysUntil = Math.ceil((resDate.getTime() - now.getTime()) / 86400000);
-  const isPast = daysUntil < 0;
-  const isThisWeek = daysUntil >= 0 && daysUntil <= 7;
+
+  // Determine timing from start/end dates (StatPal) or resolution_date (fallback)
+  let statusLabel = "Coming Up";
+  let dateLabel = "";
+
+  if (event.start_date && event.end_date) {
+    const start = new Date(event.start_date);
+    const end = new Date(event.end_date);
+    if (now >= start && now <= end) {
+      statusLabel = "This Week";
+      dateLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+    } else if (now > end) {
+      statusLabel = "Just Finished";
+    } else {
+      const daysUntil = Math.ceil((start.getTime() - now.getTime()) / 86400000);
+      statusLabel = daysUntil <= 7 ? "This Week" : "Coming Up";
+      dateLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    }
+  } else if (event.resolution_date) {
+    const resDate = new Date(event.resolution_date);
+    const daysUntil = Math.ceil((resDate.getTime() - now.getTime()) / 86400000);
+    if (daysUntil < 0) {
+      statusLabel = "Just Finished";
+    } else if (daysUntil <= 7) {
+      statusLabel = "This Week";
+      dateLabel = `Ends ${resDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+    } else {
+      dateLabel = resDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    }
+  }
 
   return (
     <div className="bg-gradient-to-r from-green-900/30 via-green-800/20 to-emerald-900/30 border border-green-700/30 rounded-xl p-5 mb-8">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <p className="text-green-400 text-xs font-semibold uppercase tracking-wider mb-1">
-            {isPast ? "Just Finished" : isThisWeek ? "This Week" : "Coming Up"}
+            {statusLabel}
           </p>
           <h2 className="text-xl font-bold text-white">{event.name}</h2>
           <p className="text-gray-400 text-sm mt-1">
+            {event.venue && (
+              <span>{event.venue} &middot; </span>
+            )}
             {event.golfer_count} golfers with odds
-            {!isPast && (
-              <span>
-                {" "}&middot; Ends{" "}
-                {resDate.toLocaleDateString("en-US", {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                })}
-              </span>
+            {dateLabel && (
+              <span> &middot; {dateLabel}</span>
             )}
           </p>
         </div>
@@ -185,7 +207,23 @@ function TournamentSection({
   const golferCount = tournament.golfers.length;
 
   let timingLabel = "";
-  if (tournament.resolution_date) {
+  if (tournament.start_date && tournament.end_date) {
+    const start = new Date(tournament.start_date);
+    const end = new Date(tournament.end_date);
+    const now = new Date();
+    if (now >= start && now <= end) {
+      timingLabel = "In Progress";
+    } else if (now > end) {
+      timingLabel = "Completed";
+    } else {
+      const days = Math.ceil((start.getTime() - now.getTime()) / 86400000);
+      if (days <= 7) {
+        timingLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+      } else {
+        timingLabel = start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      }
+    }
+  } else if (tournament.resolution_date) {
     const res = new Date(tournament.resolution_date);
     const now = new Date();
     const days = Math.ceil((res.getTime() - now.getTime()) / 86400000);
@@ -239,6 +277,7 @@ function TournamentSection({
             </h3>
             <p className="text-sm text-gray-400">
               {golferCount} golfer{golferCount !== 1 ? "s" : ""}
+              {tournament.venue && <span> &middot; {tournament.venue}</span>}
               {timingLabel && <span> &middot; {timingLabel}</span>}
             </p>
           </div>

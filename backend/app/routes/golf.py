@@ -3,20 +3,22 @@ Golf category landing page endpoint.
 
 Aggregates futures market odds across Polymarket, Kalshi, and The Odds API for golf tournaments.
 Groups by tournament, merges cross-source golfer odds, and computes biggest movers.
+Enriches with PGA tour schedule from StatPal for accurate current-event detection.
 """
 
 import logging
 import re
+import time
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, Event, Sport
+from app.models import FuturesMarket, FuturesOddsSnapshot, Event, Sport
 from app.services import get_db
 from app.utils.odds_math import probability_to_american
 
@@ -232,6 +234,99 @@ def _extract_tour_event(market_name: str) -> str | None:
     return None
 
 
+# ============================================================================
+# StatPal PGA schedule cache
+# ============================================================================
+
+_golf_schedule_cache: dict = {"data": None, "ts": 0}
+_GOLF_SCHEDULE_TTL = 3600  # 1 hour
+
+
+async def _get_golf_schedule() -> list[dict]:
+    """Fetch PGA tour schedule from StatPal with 1-hour in-process cache.
+
+    Returns a list of tournament dicts with name, start/end dates, venue, status.
+    Returns empty list if StatPal is unavailable.
+    """
+    now_ts = time.time()
+    if _golf_schedule_cache["data"] is not None and (now_ts - _golf_schedule_cache["ts"]) < _GOLF_SCHEDULE_TTL:
+        return _golf_schedule_cache["data"]
+
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return []
+
+    service = StatPalAPIService()
+    try:
+        # StatPal golf endpoint returns {"fixtures": {"tournament": [...]}}
+        data = await service._get("pga", "schedule")
+        if not data or not isinstance(data, dict):
+            logger.info("StatPal PGA schedule: empty or invalid response")
+            return []
+
+        # Extract tournament items from the response
+        items = service._extract_match_items(data)
+        logger.info("StatPal PGA schedule: extracted %d tournament items", len(items))
+
+        result = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            name = item.get("name", item.get("tournament", item.get("league", "")))
+            if not name:
+                continue
+
+            # Parse dates — StatPal uses DD.MM.YYYY or YYYY-MM-DD
+            start_str = item.get("date", item.get("start_date", ""))
+            end_str = item.get("end_date", "")
+            venue = item.get("venue", item.get("course", ""))
+            status = (item.get("status", "") or "").lower()
+            round_info = item.get("round", "")
+
+            start_date = _parse_statpal_date(start_str)
+            end_date = _parse_statpal_date(end_str)
+
+            # Try to match to our tournament key
+            tourn_key = _normalize_tournament(name)
+
+            result.append({
+                "name": name,
+                "key": tourn_key,
+                "start_date": start_date,
+                "end_date": end_date,
+                "venue": venue if isinstance(venue, str) else "",
+                "status": status,
+                "round": round_info if isinstance(round_info, str) else "",
+            })
+
+        _golf_schedule_cache["data"] = result
+        _golf_schedule_cache["ts"] = now_ts
+        return result
+
+    except Exception as e:
+        logger.warning("Failed to fetch golf schedule from StatPal: %s", e)
+        return []
+    finally:
+        await service.close()
+
+
+def _parse_statpal_date(date_str: str) -> str | None:
+    """Parse a date string from StatPal (DD.MM.YYYY or YYYY-MM-DD) to ISO format."""
+    if not date_str:
+        return None
+    # DD.MM.YYYY format
+    m = re.match(r"(\d{2})\.(\d{2})\.(\d{4})", date_str)
+    if m:
+        return f"{m.group(3)}-{m.group(2)}-{m.group(1)}T00:00:00+00:00"
+    # YYYY-MM-DD format
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
+    if m:
+        return f"{date_str}T00:00:00+00:00"
+    return None
+
+
 def _strip_diacritics(s: str) -> str:
     """Remove accent marks: e->e, a->a, u->u, etc."""
     return "".join(
@@ -294,6 +389,8 @@ async def get_golf(
     Returns tournaments ordered by importance (Majors first), with golfers
     merged across Polymarket, Kalshi, and Odds API sources.
     """
+    now = datetime.now(timezone.utc)
+
     # Query golf-related futures markets using both sport key and LLM category
     query = (
         select(FuturesMarket)
@@ -320,7 +417,51 @@ async def get_golf(
 
     logger.info("Golf endpoint: %d markets after filtering", len(markets))
 
-    # Group markets by tournament
+    # ========================================================================
+    # Compute 24h movement from futures_odds_snapshots
+    # ========================================================================
+    # Collect all outcome IDs to query snapshots in one batch
+    all_outcome_ids = []
+    for market in markets:
+        for outcome in market.outcomes:
+            if outcome.current_probability is not None:
+                all_outcome_ids.append(outcome.id)
+
+    # Get probability from ~24h ago for each outcome (single batch query)
+    prob_24h_ago: dict[int, float] = {}
+    if all_outcome_ids:
+        # Use row_number to get the most recent snapshot in the 23-25h window
+        snapshot_subq = (
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                FuturesOddsSnapshot.probability,
+                sqlfunc.row_number().over(
+                    partition_by=FuturesOddsSnapshot.outcome_id,
+                    order_by=FuturesOddsSnapshot.captured_at.desc()
+                ).label("rn")
+            )
+            .where(
+                FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
+                FuturesOddsSnapshot.captured_at.between(
+                    now - timedelta(hours=25),
+                    now - timedelta(hours=23),
+                ),
+            )
+            .subquery()
+        )
+
+        snap_result = await db.execute(
+            select(snapshot_subq.c.outcome_id, snapshot_subq.c.probability)
+            .where(snapshot_subq.c.rn == 1)
+        )
+        prob_24h_ago = {row.outcome_id: float(row.probability) for row in snap_result}
+
+    logger.info("Golf endpoint: found 24h-ago snapshots for %d/%d outcomes",
+                len(prob_24h_ago), len(all_outcome_ids))
+
+    # ========================================================================
+    # Group markets by tournament and aggregate golfer odds
+    # ========================================================================
     tournament_markets: dict[str, list] = defaultdict(list)
 
     for market in markets:
@@ -386,11 +527,18 @@ async def get_golf(
                 golfer_data[key]["sources"][source] = round(prob, 3)
                 golfer_data[key]["probabilities"].append(prob)
 
-                # Use the 24h movement from whichever source has it
-                if outcome.probability_change_24h is not None:
-                    existing = golfer_data[key]["movement_24h"]
+                # Compute 24h movement from snapshots
+                if outcome.id in prob_24h_ago:
+                    delta = prob - prob_24h_ago[outcome.id]
+                    if abs(delta) >= 0.001:  # Skip noise
+                        existing = golfer_data[key]["movement_24h"]
+                        if existing is None or abs(delta) > abs(existing):
+                            golfer_data[key]["movement_24h"] = round(delta, 4)
+
+                # Fall back to outcome field if snapshot not available
+                if golfer_data[key]["movement_24h"] is None and outcome.probability_change_24h is not None:
                     change = float(outcome.probability_change_24h)
-                    if existing is None or abs(change) > abs(existing):
+                    if abs(change) >= 0.001:
                         golfer_data[key]["movement_24h"] = round(change, 4)
 
                 # Track opening probability
@@ -461,6 +609,27 @@ async def get_golf(
         t.pop("sort_date", None)
 
     # ========================================================================
+    # StatPal PGA schedule — enrich with real tournament dates
+    # ========================================================================
+    schedule = await _get_golf_schedule()
+    schedule_by_key: dict[str, dict] = {}
+    for s_event in schedule:
+        key = s_event.get("key", "other")
+        if key != "other" and key not in schedule_by_key:
+            schedule_by_key[key] = s_event
+
+    # Enrich tournaments with schedule data
+    for t in tournaments:
+        sched = schedule_by_key.get(t["key"])
+        if sched:
+            t["venue"] = sched.get("venue") or None
+            t["schedule_status"] = sched.get("status") or None
+            if sched.get("start_date"):
+                t["start_date"] = sched["start_date"]
+            if sched.get("end_date"):
+                t["end_date"] = sched["end_date"]
+
+    # ========================================================================
     # Biggest movers — top 5 golfers across all tournaments by |movement_24h|
     # ========================================================================
     all_movers = []
@@ -480,7 +649,6 @@ async def get_golf(
     # ========================================================================
     # Golf events — live + upcoming from events table
     # ========================================================================
-    now = datetime.now(timezone.utc)
     events_query = (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
@@ -512,27 +680,9 @@ async def get_golf(
     ]
 
     # ========================================================================
-    # Current tour event — nearest tour event by resolution date
+    # Current tour event — smart detection using StatPal dates + fallback
     # ========================================================================
-    now = datetime.now(timezone.utc)
-    current_event = None
-    for t in tournaments:
-        if t.get("is_tour_event") and t.get("resolution_date"):
-            try:
-                res_date = datetime.fromisoformat(t["resolution_date"])
-                # Show events resolving within the next 14 days or just finished (past 2 days)
-                if now - timedelta(days=2) <= res_date <= now + timedelta(days=14):
-                    current_event = {
-                        "key": t["key"],
-                        "name": t["name"],
-                        "resolution_date": t["resolution_date"],
-                        "golfer_count": len(t["golfers"]),
-                        "leader": t["golfers"][0]["name"] if t["golfers"] else None,
-                        "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
-                    }
-                    break  # First (nearest) tour event
-            except (ValueError, TypeError):
-                continue
+    current_event = _find_current_event(tournaments, schedule_by_key, now)
 
     return {
         "tournaments": tournaments,
@@ -541,4 +691,97 @@ async def get_golf(
         "current_event": current_event,
         "total_tournaments": len(tournaments),
         "total_golfers": sum(len(t["golfers"]) for t in tournaments),
+        "pga_schedule": schedule if schedule else None,
+    }
+
+
+def _find_current_event(
+    tournaments: list[dict],
+    schedule_by_key: dict[str, dict],
+    now: datetime,
+) -> dict | None:
+    """Find the current tour event using StatPal dates with fallback heuristics.
+
+    Priority order:
+    1. StatPal schedule: event whose start_date <= now <= end_date
+    2. StatPal schedule: nearest upcoming event (start_date > now, within 7 days)
+    3. Fallback: tour event with most sources/golfer data (highest activity)
+    """
+    tour_events = [t for t in tournaments if t.get("is_tour_event")]
+    if not tour_events:
+        return None
+
+    now_str = now.isoformat()
+
+    # Phase 1: Use StatPal schedule dates if available
+    if schedule_by_key:
+        # Find event currently in progress
+        for t in tour_events:
+            sched = schedule_by_key.get(t["key"])
+            if not sched:
+                continue
+            start = sched.get("start_date")
+            end = sched.get("end_date")
+            if start and end and start <= now_str <= end:
+                return _build_current_event(t)
+
+        # Find nearest upcoming event from schedule
+        nearest = None
+        nearest_start = None
+        for t in tour_events:
+            sched = schedule_by_key.get(t["key"])
+            if not sched:
+                continue
+            start = sched.get("start_date")
+            if start and start > now_str:
+                try:
+                    start_dt = datetime.fromisoformat(start)
+                    if (start_dt - now).days <= 7:
+                        if nearest_start is None or start < nearest_start:
+                            nearest_start = start
+                            nearest = t
+                except (ValueError, TypeError):
+                    continue
+        if nearest:
+            return _build_current_event(nearest)
+
+    # Phase 2: Fallback — pick the tour event with the most market activity
+    # (most sources across its golfers = most actively traded)
+    best = None
+    best_score = -1
+    for t in tour_events:
+        if not t.get("resolution_date"):
+            continue
+        try:
+            res_dt = datetime.fromisoformat(t["resolution_date"])
+            if res_dt < now - timedelta(days=2):
+                continue  # Already resolved
+        except (ValueError, TypeError):
+            continue
+
+        # Score by source diversity + golfer count
+        total_sources = sum(len(g.get("sources", {})) for g in t["golfers"])
+        score = total_sources + len(t["golfers"])
+        if score > best_score:
+            best_score = score
+            best = t
+
+    if best:
+        return _build_current_event(best)
+
+    return None
+
+
+def _build_current_event(t: dict) -> dict:
+    """Build the current_event response dict from a tournament."""
+    return {
+        "key": t["key"],
+        "name": t["name"],
+        "resolution_date": t.get("resolution_date"),
+        "start_date": t.get("start_date"),
+        "end_date": t.get("end_date"),
+        "venue": t.get("venue"),
+        "golfer_count": len(t["golfers"]),
+        "leader": t["golfers"][0]["name"] if t["golfers"] else None,
+        "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
     }
