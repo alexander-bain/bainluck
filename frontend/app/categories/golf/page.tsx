@@ -7,6 +7,7 @@ import type {
   GolfResponse,
   GolfTournament,
   GolfGolfer,
+  GolfCurrentEvent,
   GolfMover,
   FuturesOutcomeHistory,
 } from "@/lib/types";
@@ -30,36 +31,43 @@ export default function GolfPage() {
   const [data, setData] = useState<GolfResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [modalTournament, setModalTournament] = useState<GolfTournament | null>(null);
+  const [modalTournament, setModalTournament] =
+    useState<GolfTournament | null>(null);
   const [historyByTournament, setHistoryByTournament] = useState<
     Record<string, FuturesOutcomeHistory[]>
   >({});
-  const [expandedOther, setExpandedOther] = useState<Set<string>>(new Set());
-  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
 
   // Phase 1: Fetch golf data
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       try {
-        setLoading(true);
         const result = await fetchGolfData();
-        setData(result);
+        if (!cancelled) {
+          setData(result);
+          setLoading(false);
+        }
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load golf data"
-        );
-      } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Failed to load golf data"
+          );
+          setLoading(false);
+        }
       }
     }
     load();
 
     const interval = setInterval(() => {
       fetchGolfData()
-        .then(setData)
+        .then((r) => { if (!cancelled) setData(r); })
         .catch(() => {});
     }, 120_000);
-    return () => clearInterval(interval);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   // Phase 2: Lazy-load chart history when modal opens
@@ -67,9 +75,10 @@ export default function GolfPage() {
     if (!modalTournament) return;
     const key = modalTournament.key;
     if (historyByTournament[key]) return;
-    if (!modalTournament.market_ids[0]) return;
+    const marketId = modalTournament.market_ids[0];
+    if (!marketId) return;
 
-    fetchFuturesHistory(modalTournament.market_ids[0], 168)
+    fetchFuturesHistory(marketId, 168)
       .then((h) => {
         if (h?.outcomes) {
           setHistoryByTournament((prev) => ({
@@ -79,13 +88,16 @@ export default function GolfPage() {
         }
       })
       .catch(() => {});
-  }, [modalTournament]);
+  }, [modalTournament, historyByTournament]);
 
   // Derived data
-  const majors = data?.tournaments.filter((t) => t.is_major) || [];
-  const otherTournaments = data?.tournaments.filter((t) => !t.is_major) || [];
+  const majors = data?.tournaments.filter((t) => t.is_major) ?? [];
+  const tourEvents =
+    data?.tournaments.filter((t) => !t.is_major && t.is_tour_event) ?? [];
+  const otherTournaments =
+    data?.tournaments.filter((t) => !t.is_major && !t.is_tour_event) ?? [];
 
-  // Find next Major for countdown
+  // Next Major countdown
   const nextMajor = majors.find(
     (t) => t.commence_time && new Date(t.commence_time) > new Date()
   );
@@ -137,8 +149,12 @@ export default function GolfPage() {
       {/* Content */}
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-10">
         {loading && (
-          <div className="text-center py-16 text-text-secondary">
-            Loading golf data...
+          <div className="text-center py-16">
+            <div className="animate-pulse space-y-6 max-w-md mx-auto">
+              <div className="h-8 bg-surface-card rounded w-48 mx-auto" />
+              <div className="h-24 bg-surface-card/50 rounded-xl" />
+              <div className="h-64 bg-surface-card/30 rounded-xl" />
+            </div>
           </div>
         )}
 
@@ -159,6 +175,11 @@ export default function GolfPage() {
 
         {data && !loading && data.tournaments.length > 0 && (
           <>
+            {/* Current Event Banner */}
+            {data.current_event && (
+              <CurrentEventBanner event={data.current_event} />
+            )}
+
             {/* Biggest Movers Strip */}
             {data.biggest_movers.length > 0 && (
               <MoversStrip movers={data.biggest_movers} />
@@ -176,16 +197,26 @@ export default function GolfPage() {
                     <TournamentCard
                       key={tournament.key}
                       tournament={tournament}
-                      expandedSources={expandedSources}
-                      onToggleSource={(key) =>
-                        setExpandedSources((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(key)) next.delete(key);
-                          else next.add(key);
-                          return next;
-                        })
-                      }
                       onClick={() => setModalTournament(tournament)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Tour Events */}
+            {tourEvents.length > 0 && (
+              <section>
+                <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
+                  <span className="text-[#006747]">&#x1F3CC;&#xFE0F;</span>
+                  Tour Events
+                </h2>
+                <div className="space-y-2">
+                  {tourEvents.map((tournament) => (
+                    <ExpandableTournamentRow
+                      key={tournament.key}
+                      tournament={tournament}
+                      onClickFull={() => setModalTournament(tournament)}
                     />
                   ))}
                 </div>
@@ -196,32 +227,14 @@ export default function GolfPage() {
             {otherTournaments.length > 0 && (
               <section>
                 <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
-                  <span className="text-[#006747]">&#x1F3CC;&#xFE0F;</span>
+                  <span className="text-text-secondary">&#x26F3;</span>
                   Other Tournaments
                 </h2>
                 <div className="space-y-2">
                   {otherTournaments.map((tournament) => (
-                    <OtherTournamentRow
+                    <ExpandableTournamentRow
                       key={tournament.key}
                       tournament={tournament}
-                      expanded={expandedOther.has(tournament.key)}
-                      expandedSources={expandedSources}
-                      onToggle={() =>
-                        setExpandedOther((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(tournament.key)) next.delete(tournament.key);
-                          else next.add(tournament.key);
-                          return next;
-                        })
-                      }
-                      onToggleSource={(key) =>
-                        setExpandedSources((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(key)) next.delete(key);
-                          else next.add(key);
-                          return next;
-                        })
-                      }
                       onClickFull={() => setModalTournament(tournament)}
                     />
                   ))}
@@ -249,11 +262,7 @@ export default function GolfPage() {
                         <span className="text-xs text-text-muted">
                           {new Date(event.commence_time).toLocaleDateString(
                             "en-US",
-                            {
-                              weekday: "short",
-                              month: "short",
-                              day: "numeric",
-                            }
+                            { weekday: "short", month: "short", day: "numeric" }
                           )}
                         </span>
                       )}
@@ -262,6 +271,22 @@ export default function GolfPage() {
                 </div>
               </section>
             )}
+
+            {/* Source Legend */}
+            <div className="flex items-center justify-center gap-4 text-xs text-text-muted pt-4 border-t border-surface-border">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
+                Sportsbooks
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                Kalshi
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
+                Polymarket
+              </span>
+            </div>
           </>
         )}
       </div>
@@ -274,6 +299,80 @@ export default function GolfPage() {
           onClose={() => setModalTournament(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Current Event Banner
+// ============================================================================
+
+function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
+  const now = new Date();
+  let statusLabel = "Coming Up";
+  let dateLabel = "";
+
+  if (event.start_date && event.end_date) {
+    const start = new Date(event.start_date);
+    const end = new Date(event.end_date);
+    if (now >= start && now <= end) {
+      statusLabel = "This Week";
+      dateLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${end.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+    } else if (now > end) {
+      statusLabel = "Just Finished";
+    } else {
+      const daysUntil = Math.ceil(
+        (start.getTime() - now.getTime()) / 86400000
+      );
+      statusLabel = daysUntil <= 7 ? "This Week" : "Coming Up";
+      dateLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    }
+  } else if (event.resolution_date) {
+    const resDate = new Date(event.resolution_date);
+    const daysUntil = Math.ceil(
+      (resDate.getTime() - now.getTime()) / 86400000
+    );
+    if (daysUntil < 0) {
+      statusLabel = "Just Finished";
+    } else if (daysUntil <= 7) {
+      statusLabel = "This Week";
+      dateLabel = `Ends ${resDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+    } else {
+      dateLabel = resDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
+    }
+  }
+
+  return (
+    <div className="bg-gradient-to-r from-[#006747]/20 via-[#006747]/10 to-[#006747]/20 border border-[#006747]/30 rounded-xl p-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <p className="text-[#006747] text-xs font-semibold uppercase tracking-wider mb-1">
+            {statusLabel}
+          </p>
+          <h2 className="text-xl font-bold text-text-primary">{event.name}</h2>
+          <p className="text-text-muted text-sm mt-1">
+            {event.venue && <span>{event.venue} &middot; </span>}
+            {event.golfer_count} golfers with odds
+            {dateLabel && <span> &middot; {dateLabel}</span>}
+          </p>
+        </div>
+        {event.leader && event.leader_probability !== null && (
+          <div className="text-right">
+            <p className="text-xs text-text-muted uppercase tracking-wider">
+              Favorite
+            </p>
+            <p className="text-lg font-semibold text-text-primary">
+              {event.leader}
+            </p>
+            <p className="text-[#006747] font-mono text-sm">
+              {Math.round(event.leader_probability * 100)}%
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -383,174 +482,13 @@ function MoversStrip({ movers }: { movers: GolfMover[] }) {
 }
 
 // ============================================================================
-// Tournament Card (Majors)
-// ============================================================================
-
-function TournamentCard({
-  tournament,
-  expandedSources,
-  onToggleSource,
-  onClick,
-}: {
-  tournament: GolfTournament;
-  expandedSources: Set<string>;
-  onToggleSource: (key: string) => void;
-  onClick: () => void;
-}) {
-  const emoji = TOURNAMENT_EMOJI[tournament.key] || "\u26F3";
-  const venue = TOURNAMENT_VENUES[tournament.key];
-  const topGolfers = tournament.golfers.slice(0, 8);
-
-  return (
-    <div
-      onClick={onClick}
-      className="group bg-surface-card rounded-xl border border-l-4 border-surface-border border-l-[#006747] p-4 hover:shadow-card-hover hover:border-[#006747]/30 transition-all cursor-pointer h-full"
-    >
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-lg">{emoji}</span>
-        <h3 className="text-body-strong text-text-primary">{tournament.name}</h3>
-      </div>
-      {venue && (
-        <p className="text-xs text-text-muted mb-3">{venue}</p>
-      )}
-      {tournament.commence_time && (
-        <p className="text-xs text-text-muted mb-3">
-          {new Date(tournament.commence_time).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </p>
-      )}
-
-      <div className="space-y-1.5">
-        {topGolfers.map((golfer) => (
-          <GolferRow
-            key={golfer.name}
-            golfer={golfer}
-            tournamentKey={tournament.key}
-            showSources={expandedSources.has(`${tournament.key}_${golfer.name}`)}
-            onToggleSource={() =>
-              onToggleSource(`${tournament.key}_${golfer.name}`)
-            }
-          />
-        ))}
-      </div>
-
-      {tournament.golfers.length > 8 && (
-        <p className="text-xs text-[#006747] mt-3 group-hover:underline">
-          View all {tournament.golfers.length} golfers &rarr;
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// Golfer Row
-// ============================================================================
-
-function GolferRow({
-  golfer,
-  tournamentKey,
-  showSources,
-  onToggleSource,
-}: {
-  golfer: GolfGolfer;
-  tournamentKey: string;
-  showSources: boolean;
-  onToggleSource: () => void;
-}) {
-  const pct = Math.round(golfer.probability * 100);
-  const barWidth = Math.max(pct, 2);
-  const isLeader = golfer.rank === 1;
-  const sourceCount = Object.keys(golfer.sources).length;
-
-  return (
-    <div>
-      <div
-        className="flex items-center gap-2 group/row"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (sourceCount > 1) onToggleSource();
-        }}
-      >
-        {/* Rank */}
-        <span
-          className={`text-xs font-mono w-5 text-right ${
-            isLeader ? "text-[#006747] font-bold" : "text-text-muted"
-          }`}
-        >
-          {golfer.rank}
-        </span>
-
-        {/* Name */}
-        <span
-          className={`text-sm flex-1 truncate ${
-            isLeader ? "text-text-primary font-medium" : "text-text-secondary"
-          }`}
-        >
-          {golfer.name}
-        </span>
-
-        {/* Movement */}
-        {golfer.movement_24h !== null && Math.abs(golfer.movement_24h) >= 0.005 && (
-          <MovementBadge movement={golfer.movement_24h} />
-        )}
-
-        {/* Probability */}
-        <span className="text-sm font-mono text-text-primary w-10 text-right">
-          {pct}%
-        </span>
-
-        {/* Source indicator */}
-        {sourceCount > 1 && (
-          <span className="text-[10px] text-text-muted cursor-pointer group-hover/row:text-text-secondary">
-            {sourceCount}src
-          </span>
-        )}
-      </div>
-
-      {/* Probability bar */}
-      <div className="ml-7 mr-16 mt-0.5 mb-0.5">
-        <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all"
-            style={{
-              width: `${barWidth}%`,
-              backgroundColor: isLeader ? "#006747" : "#2d8659",
-              opacity: isLeader ? 1 : 0.6,
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Source breakdown (expandable) */}
-      {showSources && sourceCount > 1 && (
-        <div className="ml-7 mb-1 flex flex-wrap gap-x-3 gap-y-0.5">
-          {Object.entries(golfer.sources)
-            .sort(([, a], [, b]) => b - a)
-            .map(([source, prob]) => (
-              <span key={source} className="text-[10px] text-text-muted">
-                {source}: {Math.round(prob * 100)}%
-              </span>
-            ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
 // Movement Badge
 // ============================================================================
 
 function MovementBadge({ movement }: { movement: number | null }) {
   if (movement === null || Math.abs(movement) < 0.005) return null;
-
   const isUp = movement > 0;
   const delta = Math.abs(Math.round(movement * 100));
-
   return (
     <span
       className={`text-[10px] font-medium px-1 py-0.5 rounded ${
@@ -566,39 +504,229 @@ function MovementBadge({ movement }: { movement: number | null }) {
 }
 
 // ============================================================================
-// Other Tournament Row (Expandable)
+// Golfer Row
 // ============================================================================
 
-function OtherTournamentRow({
+function GolferRow({
+  golfer,
+  tournamentKey,
+  showSourceBreakdown,
+}: {
+  golfer: GolfGolfer;
+  tournamentKey: string;
+  showSourceBreakdown?: boolean;
+}) {
+  const pct = Math.round(golfer.probability * 100);
+  const barWidth = Math.max(pct, 2);
+  const isLeader = golfer.rank === 1;
+  const sourceCount = Object.keys(golfer.sources).length;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span
+          className={`text-xs font-mono w-5 text-right ${
+            isLeader ? "text-[#006747] font-bold" : "text-text-muted"
+          }`}
+        >
+          {golfer.rank}
+        </span>
+        <span
+          className={`text-sm flex-1 truncate ${
+            isLeader ? "text-text-primary font-medium" : "text-text-secondary"
+          }`}
+        >
+          {golfer.name}
+        </span>
+        <MovementBadge movement={golfer.movement_24h} />
+        <span className="text-sm font-mono text-text-primary w-10 text-right">
+          {pct}%
+        </span>
+        {sourceCount > 1 && (
+          <SourceDots sources={golfer.sources} />
+        )}
+      </div>
+      <div className="ml-7 mr-16 mt-0.5 mb-0.5">
+        <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${barWidth}%`,
+              backgroundColor: isLeader ? "#006747" : "#2d8659",
+              opacity: isLeader ? 1 : 0.6,
+            }}
+          />
+        </div>
+      </div>
+      {showSourceBreakdown && sourceCount > 1 && (
+        <div className="ml-7 mb-1 flex flex-wrap gap-x-3 gap-y-0.5">
+          {Object.entries(golfer.sources)
+            .sort(([, a], [, b]) => b - a)
+            .map(([source, prob]) => (
+              <span key={source} className="text-[10px] text-text-muted">
+                {source === "odds_api"
+                  ? "Sportsbooks"
+                  : source === "kalshi"
+                    ? "Kalshi"
+                    : source === "polymarket"
+                      ? "Polymarket"
+                      : source}
+                : {Math.round(prob * 100)}%
+              </span>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Source Dots
+// ============================================================================
+
+function SourceDots({ sources }: { sources: Record<string, number> }) {
+  const sourceColors: Record<string, string> = {
+    odds_api: "#3b82f6",
+    kalshi: "#22c55e",
+    polymarket: "#8b5cf6",
+  };
+  return (
+    <div className="flex gap-1">
+      {Object.keys(sources).map((s) => (
+        <span
+          key={s}
+          className="w-1.5 h-1.5 rounded-full inline-block"
+          style={{ backgroundColor: sourceColors[s] || "#6b7280" }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// Tournament Card (Majors — compact grid)
+// ============================================================================
+
+function TournamentCard({
   tournament,
-  expanded,
-  expandedSources,
-  onToggle,
-  onToggleSource,
+  onClick,
+}: {
+  tournament: GolfTournament;
+  onClick: () => void;
+}) {
+  const emoji = TOURNAMENT_EMOJI[tournament.key] || "\u26F3";
+  const venue = TOURNAMENT_VENUES[tournament.key];
+  const topGolfers = tournament.golfers.slice(0, 8);
+
+  return (
+    <div
+      onClick={onClick}
+      className="group bg-surface-card rounded-xl border border-l-4 border-surface-border border-l-[#006747] p-4 hover:shadow-card-hover hover:border-[#006747]/30 transition-all cursor-pointer h-full"
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-lg">{emoji}</span>
+        <h3 className="text-body-strong text-text-primary">{tournament.name}</h3>
+      </div>
+      {venue && <p className="text-xs text-text-muted mb-3">{venue}</p>}
+      {tournament.commence_time && (
+        <p className="text-xs text-text-muted mb-3">
+          {new Date(tournament.commence_time).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </p>
+      )}
+      <div className="space-y-1.5">
+        {topGolfers.map((golfer) => (
+          <GolferRow
+            key={golfer.name}
+            golfer={golfer}
+            tournamentKey={tournament.key}
+          />
+        ))}
+      </div>
+      {tournament.golfers.length > 8 && (
+        <p className="text-xs text-[#006747] mt-3 group-hover:underline">
+          View all {tournament.golfers.length} golfers &rarr;
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Expandable Tournament Row (Tour Events / Other)
+// ============================================================================
+
+function ExpandableTournamentRow({
+  tournament,
   onClickFull,
 }: {
   tournament: GolfTournament;
-  expanded: boolean;
-  expandedSources: Set<string>;
-  onToggle: () => void;
-  onToggleSource: (key: string) => void;
   onClickFull: () => void;
 }) {
-  const emoji = TOURNAMENT_EMOJI[tournament.key] || "\u1F3CC\uFE0F";
+  const [expanded, setExpanded] = useState(false);
+  const emoji = TOURNAMENT_EMOJI[tournament.key] || "\u26F3";
   const leader = tournament.golfers[0];
+
+  let timingLabel = "";
+  if (tournament.start_date && tournament.end_date) {
+    const start = new Date(tournament.start_date);
+    const end = new Date(tournament.end_date);
+    const now = new Date();
+    if (now >= start && now <= end) timingLabel = "In Progress";
+    else if (now > end) timingLabel = "Completed";
+    else {
+      const days = Math.ceil((start.getTime() - now.getTime()) / 86400000);
+      timingLabel =
+        days <= 7
+          ? `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+          : start.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            });
+    }
+  } else if (tournament.resolution_date) {
+    const res = new Date(tournament.resolution_date);
+    const days = Math.ceil(
+      (res.getTime() - Date.now()) / 86400000
+    );
+    if (days < 0) timingLabel = "Completed";
+    else if (days <= 7)
+      timingLabel = res.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+    else
+      timingLabel = res.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
+  }
 
   return (
     <div className="bg-surface-card rounded-lg border border-surface-border overflow-hidden">
       <button
-        onClick={onToggle}
+        onClick={() => setExpanded((e) => !e)}
         className="w-full flex items-center gap-3 p-3 text-left hover:bg-surface-elevated/50 transition-colors"
       >
         <span>{emoji}</span>
-        <span className="text-sm text-text-primary font-medium flex-1">
-          {tournament.name}
-        </span>
+        <div className="flex-1 min-w-0">
+          <span className="text-sm text-text-primary font-medium">
+            {tournament.name}
+          </span>
+          {(tournament.venue || timingLabel) && (
+            <span className="text-xs text-text-muted ml-2">
+              {tournament.venue && tournament.venue}
+              {tournament.venue && timingLabel && " \u00B7 "}
+              {timingLabel}
+            </span>
+          )}
+        </div>
         {leader && (
-          <span className="text-xs text-text-muted">
+          <span className="text-xs text-text-muted hidden sm:inline">
             {leader.name} ({Math.round(leader.probability * 100)}%)
           </span>
         )}
@@ -609,18 +737,15 @@ function OtherTournamentRow({
 
       {expanded && (
         <div className="px-3 pb-3 space-y-1.5 border-t border-surface-border pt-2">
-          {tournament.golfers.slice(0, 10).map((golfer) => (
+          {tournament.golfers.slice(0, 15).map((golfer) => (
             <GolferRow
               key={golfer.name}
               golfer={golfer}
               tournamentKey={tournament.key}
-              showSources={expandedSources.has(`${tournament.key}_${golfer.name}`)}
-              onToggleSource={() =>
-                onToggleSource(`${tournament.key}_${golfer.name}`)
-              }
+              showSourceBreakdown
             />
           ))}
-          {tournament.golfers.length > 10 && (
+          {tournament.golfers.length > 15 && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -652,7 +777,6 @@ function TournamentModal({
 }) {
   const emoji = TOURNAMENT_EMOJI[tournament.key] || "\u26F3";
 
-  // Close on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -661,7 +785,6 @@ function TournamentModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  // Prevent body scroll
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => {
@@ -712,69 +835,14 @@ function TournamentModal({
 
         {/* Full golfer list */}
         <div className="px-5 py-4 space-y-2">
-          {tournament.golfers.map((golfer) => {
-            const pct = Math.round(golfer.probability * 100);
-            const barWidth = Math.max(pct, 2);
-            const isLeader = golfer.rank === 1;
-            const sourceCount = Object.keys(golfer.sources).length;
-
-            return (
-              <div key={golfer.name}>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-xs font-mono w-5 text-right ${
-                      isLeader ? "text-[#006747] font-bold" : "text-text-muted"
-                    }`}
-                  >
-                    {golfer.rank}
-                  </span>
-                  <span
-                    className={`text-sm flex-1 ${
-                      isLeader ? "text-text-primary font-medium" : "text-text-secondary"
-                    }`}
-                  >
-                    {golfer.name}
-                  </span>
-                  {golfer.movement_24h !== null && Math.abs(golfer.movement_24h) >= 0.005 && (
-                    <MovementBadge movement={golfer.movement_24h} />
-                  )}
-                  <span className="text-sm font-mono text-text-primary w-12 text-right">
-                    {pct}%
-                  </span>
-                  {golfer.american_odds !== null && (
-                    <span className="text-xs text-text-muted w-16 text-right">
-                      {golfer.american_odds > 0 ? "+" : ""}
-                      {golfer.american_odds}
-                    </span>
-                  )}
-                </div>
-                <div className="ml-7 mr-28 mt-0.5 mb-0.5">
-                  <div className="h-1 bg-surface-elevated rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${barWidth}%`,
-                        backgroundColor: isLeader ? "#006747" : "#2d8659",
-                        opacity: isLeader ? 1 : 0.6,
-                      }}
-                    />
-                  </div>
-                </div>
-                {/* Source breakdown in modal */}
-                {sourceCount > 1 && (
-                  <div className="ml-7 mb-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-                    {Object.entries(golfer.sources)
-                      .sort(([, a], [, b]) => b - a)
-                      .map(([source, prob]) => (
-                        <span key={source} className="text-[10px] text-text-muted">
-                          {source}: {Math.round(prob * 100)}%
-                        </span>
-                      ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {tournament.golfers.map((golfer) => (
+            <GolferRow
+              key={golfer.name}
+              golfer={golfer}
+              tournamentKey={tournament.key}
+              showSourceBreakdown
+            />
+          ))}
         </div>
 
         {/* Footer */}
