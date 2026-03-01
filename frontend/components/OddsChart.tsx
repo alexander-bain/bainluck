@@ -510,8 +510,8 @@ export default function OddsChart({
     return { yDomain: [lo, hi] as [number, number], yTicks: ticks };
   }, [chartData]);
 
-  // Early return for empty history
-  if (!history || history.length === 0) {
+  // Early return for empty data across ALL sources (not just sportsbook odds)
+  if (chartData.length === 0) {
     return (
       <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
         No history data available
@@ -519,8 +519,20 @@ export default function OddsChart({
     );
   }
 
-  // The primary delta key for the area fill gradient
-  const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
+  // When sportsbook odds are missing but other sources exist, the chart
+  // should use a non-betting source as the primary fill area.
+  const hasBookmakerData = history && history.length > 0;
+
+  // The primary delta key for the area fill gradient.
+  // When sportsbook odds are missing but other sources exist, fall back to
+  // the first available non-betting source for the fill area.
+  const primaryDeltaKey = isMultiSource
+    ? "bainLuckDelta"
+    : hasBookmakerData
+      ? "homeDelta"
+      : nonBettingSources.length > 0
+        ? nonBettingSources[0].dataKey
+        : "homeDelta";
 
   // Compute gradient offset for area fill-by-value
   const gradientOffset = (() => {

@@ -32,6 +32,19 @@ interface EventPageProps {
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
+/** Check if history response has ANY win probability data beyond sportsbook odds. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function _hasAnyWinProbData(data: any): boolean {
+  if (!data) return false;
+  if (data.espn_history && data.espn_history.length > 0) return true;
+  if (data.win_prob_history) {
+    for (const points of Object.values(data.win_prob_history)) {
+      if (Array.isArray(points) && points.length > 0) return true;
+    }
+  }
+  return false;
+}
+
 function formatCountdown(targetTime: string): string {
   const target = new Date(targetTime);
   const now = new Date();
@@ -1108,7 +1121,7 @@ export default function EventPage({ params }: EventPageProps) {
               Retry
             </button>
           </div>
-        ) : historyData?.history?.length === 0 ? (
+        ) : historyData?.history?.length === 0 && !_hasAnyWinProbData(historyData) ? (
           <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
             Tracking will begin when odds are available
           </div>
