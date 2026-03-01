@@ -194,7 +194,7 @@ struct SearchView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: suggestion.type == "futures" ? "chart.line.uptrend.xyaxis" : "sportscourt")
+                    Image(systemName: suggestion.type == "futures" ? "chart.line.uptrend.xyaxis" : "figure.run")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(width: 20)
@@ -224,7 +224,7 @@ struct SearchView: View {
                         }
                     }
                 } header: {
-                    Label("Events", systemImage: "sportscourt")
+                    Label("Events", systemImage: "figure.run")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .textCase(nil)

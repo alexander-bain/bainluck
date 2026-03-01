@@ -206,7 +206,7 @@ struct MyStuffView: View {
         VStack(spacing: 20) {
             Spacer()
 
-            Image(systemName: "sportscourt.fill")
+            Image(systemName: "heart.circle.fill")
                 .font(.system(size: 56))
                 .foregroundStyle(.blue)
 
@@ -262,7 +262,7 @@ struct MyStuffView: View {
             } else if vm.items.isEmpty {
                 ContentUnavailableView(
                     "No Games Right Now",
-                    systemImage: "sportscourt",
+                    systemImage: "calendar",
                     description: Text("Your teams don't have any games coming up.")
                 )
             } else {

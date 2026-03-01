@@ -152,7 +152,7 @@ struct RelatedFuturesView: View {
             // Other (tier 5+)
             let other = grouped.filter { $0.key >= 5 || $0.key == 0 }.flatMap { $0.value }
             if !other.isEmpty {
-                tierHeader(icon: "sportscourt.fill", title: "Upcoming Games")
+                tierHeader(icon: "calendar", title: "Upcoming Games")
                 ForEach(limitedFutures(other, from: displayFutures)) { future in
                     compactRow(future)
                 }
