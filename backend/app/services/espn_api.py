@@ -487,33 +487,34 @@ class ESPNAPIService:
         self, sport_key: str, event_id: str
     ) -> dict:
         """
-        Get injury reports and news headlines for an event.
+        Get injury reports, news headlines, and box score for an event.
 
         Uses the /summary endpoint (same as get_event) and parses the
-        injuries and news sections for line movement context.
+        injuries, news, and boxscore sections.
 
         Args:
             sport_key: Our internal sport key
             event_id: ESPN event ID
 
         Returns:
-            {"injuries": list[ESPNInjury], "news": list[ESPNNewsHeadline]}
+            {"injuries": list[ESPNInjury], "news": list[ESPNNewsHeadline], "box_score": dict}
         """
         path = self._get_espn_path(sport_key)
         if not path:
-            return {"injuries": [], "news": []}
+            return {"injuries": [], "news": [], "box_score": {}}
 
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/summary?event={event_id}"
 
         data = await self._get(url)
         if not data:
-            return {"injuries": [], "news": []}
+            return {"injuries": [], "news": [], "box_score": {}}
 
         injuries = self._parse_injuries(data)
         news = self._parse_news(data)
+        box_score = self._parse_boxscore(data)
 
-        return {"injuries": injuries, "news": news}
+        return {"injuries": injuries, "news": news, "box_score": box_score}
 
     def _parse_injuries(self, summary_data: dict) -> list[ESPNInjury]:
         """Parse injury data from ESPN summary response."""
@@ -553,6 +554,123 @@ class ESPNAPIService:
                 published=published,
             ))
         return headlines
+
+    # Stat name normalization: ESPN abbreviation → canonical name
+    _STAT_NORMALIZE: dict[str, str] = {
+        # Basketball
+        "PTS": "points", "REB": "rebounds", "AST": "assists",
+        "STL": "steals", "BLK": "blocks", "TO": "turnovers",
+        "3PT": "three pointers", "OREB": "offensive rebounds",
+        "DREB": "defensive rebounds", "FG": "field goals",
+        "FT": "free throws", "MIN": "minutes",
+        # Football
+        "YDS": "yards", "TD": "touchdowns", "INT": "interceptions",
+        "CMP": "completions", "SACK": "sacks",
+        "C/ATT": "completions", "PASS YDS": "passing yards",
+        "RUSH YDS": "rushing yards", "REC YDS": "receiving yards",
+        "REC": "receptions", "CAR": "carries",
+        # Baseball
+        "H": "hits", "HR": "home runs", "RBI": "rbis",
+        "SO": "strikeouts", "R": "runs", "BB": "walks",
+        "AB": "at bats", "AVG": "batting average",
+        # Hockey
+        "G": "goals", "A": "assists", "S": "saves",
+        "SA": "shots against", "SV%": "save percentage",
+        # Soccer
+        "SH": "shots", "SOG": "shots on goal",
+    }
+
+    # Stats that count toward double-double / triple-double
+    _DD_CATEGORIES = {"points", "rebounds", "assists", "steals", "blocks"}
+
+    def _parse_boxscore(self, summary_data: dict) -> dict:
+        """Parse box score data from ESPN summary response.
+
+        Returns dict of player_name → {stat_name: value, ...}.
+        Compound stats like "10-22" (made-attempts) are parsed to extract
+        the made value. Double-doubles and triple-doubles are computed.
+        """
+        players_data = {}
+        boxscore = summary_data.get("boxscore", {})
+        if not boxscore:
+            return players_data
+
+        for team_group in boxscore.get("players", []):
+            for stat_group in team_group.get("statistics", []):
+                stat_names = stat_group.get("names", [])
+                if not stat_names:
+                    continue
+
+                for athlete_entry in stat_group.get("athletes", []):
+                    athlete = athlete_entry.get("athlete", {})
+                    player_name = athlete.get("displayName")
+                    if not player_name:
+                        continue
+
+                    raw_stats = athlete_entry.get("stats", [])
+                    if len(raw_stats) != len(stat_names):
+                        continue
+
+                    parsed: dict[str, float] = {}
+                    for abbrev, value_str in zip(stat_names, raw_stats):
+                        canonical = self._STAT_NORMALIZE.get(abbrev.upper())
+                        if not canonical:
+                            continue
+
+                        # Parse the value
+                        val = self._parse_stat_value(value_str)
+                        if val is not None:
+                            parsed[canonical] = val
+
+                    if not parsed:
+                        continue
+
+                    # Compute double-doubles and triple-doubles
+                    dd_count = sum(
+                        1 for cat in self._DD_CATEGORIES
+                        if parsed.get(cat, 0) >= 10
+                    )
+                    if dd_count >= 2:
+                        parsed["double doubles"] = 1
+                    if dd_count >= 3:
+                        parsed["triple doubles"] = 1
+
+                    # Merge into existing entry (multiple stat groups per player)
+                    if player_name in players_data:
+                        players_data[player_name].update(parsed)
+                    else:
+                        players_data[player_name] = parsed
+
+        return players_data
+
+    @staticmethod
+    def _parse_stat_value(value_str: str) -> float | None:
+        """Parse a single stat value string from ESPN.
+
+        Handles:
+        - Simple numbers: "28" → 28.0
+        - Compound stats: "10-22" (made-attempts) → 10.0
+        - Percentages: ".455" → 0.455
+        - Dashes/empty: "--" or "" → None
+        """
+        if not value_str or value_str.strip() in ("--", "-", ""):
+            return None
+
+        value_str = value_str.strip()
+
+        # Compound stat: "10-22" → extract the made value (first number)
+        if "-" in value_str and not value_str.startswith("-"):
+            parts = value_str.split("-")
+            if len(parts) == 2:
+                try:
+                    return float(parts[0])
+                except ValueError:
+                    return None
+
+        try:
+            return float(value_str)
+        except ValueError:
+            return None
 
     async def get_team_roster(self, sport_key: str, team_id: str) -> list[dict]:
         """
