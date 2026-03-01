@@ -153,6 +153,55 @@ TOURNAMENT_ORDER = [
 # Max golfers to return per tournament
 _MAX_GOLFERS = 15
 
+# Outcomes that are not individual golfer names — skip these
+_PROP_OUTCOME_RE = re.compile(
+    r"(?:"
+    r"\d\+\s|"                   # "1+ golf major..."
+    r"\bany\s+golfer\b|"         # "Any golfer"
+    r"\bcombined\b|"             # "...combined"
+    r"\band\b.*\bcombined\b|"    # "X, Y, and Z combined"
+    r"^yes$|^no$"                # Binary yes/no outcomes
+    r")",
+    re.I,
+)
+
+# ============================================================================
+# Tour event extraction — sub-group "other" into named tour events
+# ============================================================================
+
+# Known PGA Tour event name patterns to extract from market names.
+# These appear in Kalshi/Polymarket market names like:
+#   "Cognizant Classic in The Palm Beaches Winner?"
+#   "PGA Tour: Genesis Invitational Top 5"
+_TOUR_EVENT_RE = re.compile(
+    r"(?:PGA\s+Tour:\s*)?"  # Optional "PGA Tour:" prefix (Polymarket)
+    r"((?:"
+    # Named tournaments — add new ones as they appear
+    r"Cognizant\s+Classic(?:\s+in\s+The\s+Palm\s+Beaches)?"
+    r"|Genesis\s+Invitational"
+    r"|Arnold\s+Palmer\s+Invitational"
+    r"|Honda\s+Classic"
+    r"|Valspar\s+Championship"
+    r"|WGC[- ].*?(?=\s+(?:Winner|Top|End|Round|Make|Playoff))"
+    r"|(?:Investec\s+)?South\s+African\s+Open(?:\s+Championship)?"
+    r"|Joburg\s+Open"
+    r"|Kenya\s+Open"
+    r"|Honda\s+LPGA\s+Thailand"
+    r"|(?:DP\s+World\s+Tour|European\s+Tour|Sunshine\s+Tour|Asian\s+Tour)[:\s]+\w[\w\s]*?(?=\s+(?:Winner|Top|End|Round))"
+    r"))",
+    re.I,
+)
+
+
+def _extract_tour_event(market_name: str) -> str | None:
+    """Extract a tour event name from a market name, or None if not a tour event."""
+    m = _TOUR_EVENT_RE.search(market_name)
+    if m:
+        name = m.group(1).strip()
+        # Clean up trailing "in The Palm Beaches" etc. for display key
+        return name
+    return None
+
 
 def _strip_diacritics(s: str) -> str:
     """Remove accent marks: e->e, a->a, u->u, etc."""
@@ -195,6 +244,14 @@ def _normalize_tournament(market_name: str) -> str:
             if key == "the_open" and _NOT_THE_OPEN_RE.search(market_name):
                 continue
             return key
+
+    # Try to extract a specific tour event name (creates dynamic tournament sections)
+    tour_event = _extract_tour_event(market_name)
+    if tour_event:
+        # Create a stable key from the tour event name
+        key = re.sub(r"[^a-z0-9]+", "_", tour_event.lower()).strip("_")
+        return key
+
     return "other"
 
 
@@ -278,6 +335,10 @@ async def get_golf(
                 if raw_name.lower() in ("tie", "field", "other", "the field"):
                     continue
 
+                # Skip prop/meta outcomes that aren't individual golfer names
+                if _PROP_OUTCOME_RE.search(raw_name):
+                    continue
+
                 display_name = _normalize_golfer_name(raw_name)
                 key = _match_key(raw_name)
 
@@ -338,25 +399,34 @@ async def get_golf(
         for i, g in enumerate(golfers):
             g["rank"] = i + 1
 
-        order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 99
+        order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 50
         display_name = TOURNAMENT_DISPLAY_NAMES.get(tourn_key, tourn_key.replace("_", " ").title())
+        is_tour_event = tourn_key not in TOURNAMENT_ORDER and tourn_key != "other"
+
+        # For dynamic tour events, sort by resolution date (nearest first)
+        if is_tour_event and latest_resolution:
+            # Use resolution date as tiebreaker within the tour events band (50-98)
+            order_idx = 50
 
         tournaments.append({
             "key": tourn_key,
             "name": display_name,
             "is_major": tourn_key in MAJOR_TOURNAMENTS,
+            "is_tour_event": is_tour_event,
             "order": order_idx,
+            "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
             "commence_time": earliest_commence.isoformat() if earliest_commence else None,
             "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
             "market_ids": market_ids,
             "golfers": golfers,
         })
 
-    # Sort tournaments by order
-    tournaments.sort(key=lambda t: t["order"])
-    # Remove the order field from response (internal use only)
+    # Sort tournaments by order, then by resolution date for tour events
+    tournaments.sort(key=lambda t: (t["order"], t.get("sort_date") or "9999"))
+    # Remove internal sort fields from response
     for t in tournaments:
         del t["order"]
+        t.pop("sort_date", None)
 
     # ========================================================================
     # Biggest movers — top 5 golfers across all tournaments by |movement_24h|
@@ -409,10 +479,34 @@ async def get_golf(
         for e in upcoming_events_rows
     ]
 
+    # ========================================================================
+    # Current tour event — nearest tour event by resolution date
+    # ========================================================================
+    now = datetime.now(timezone.utc)
+    current_event = None
+    for t in tournaments:
+        if t.get("is_tour_event") and t.get("resolution_date"):
+            try:
+                res_date = datetime.fromisoformat(t["resolution_date"])
+                # Show events resolving within the next 14 days or just finished (past 2 days)
+                if now - timedelta(days=2) <= res_date <= now + timedelta(days=14):
+                    current_event = {
+                        "key": t["key"],
+                        "name": t["name"],
+                        "resolution_date": t["resolution_date"],
+                        "golfer_count": len(t["golfers"]),
+                        "leader": t["golfers"][0]["name"] if t["golfers"] else None,
+                        "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
+                    }
+                    break  # First (nearest) tour event
+            except (ValueError, TypeError):
+                continue
+
     return {
         "tournaments": tournaments,
         "biggest_movers": biggest_movers,
         "upcoming_events": upcoming_events,
+        "current_event": current_event,
         "total_tournaments": len(tournaments),
         "total_golfers": sum(len(t["golfers"]) for t in tournaments),
     }

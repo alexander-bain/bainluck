@@ -781,6 +781,7 @@ export interface GolfTournament {
   key: string;
   name: string;
   is_major: boolean;
+  is_tour_event?: boolean;
   commence_time: string | null;
   resolution_date: string | null;
   market_ids: number[];
@@ -802,10 +803,20 @@ export interface GolfUpcomingEvent {
   status: string;
 }
 
+export interface GolfCurrentEvent {
+  key: string;
+  name: string;
+  resolution_date: string;
+  golfer_count: number;
+  leader: string | null;
+  leader_probability: number | null;
+}
+
 export interface GolfResponse {
   tournaments: GolfTournament[];
   biggest_movers: GolfMover[];
   upcoming_events: GolfUpcomingEvent[];
+  current_event: GolfCurrentEvent | null;
   total_tournaments: number;
   total_golfers: number;
 }
