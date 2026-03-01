@@ -481,17 +481,19 @@ export default function ScoreDifferentialChart({
                 style: { fontSize: 10, fill: "#6b7280" },
               }}
             />
-            {/* Period boundary markers */}
+            {/* Period boundary markers — rendered in front of data area */}
             {filteredPeriodBoundaries.map((b) => (
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="#d1d5db"
+                stroke="#9ca3af"
                 strokeWidth={1}
+                strokeDasharray="4 3"
+                isFront
                 label={{
                   value: b.label,
-                  position: "insideBottomLeft",
-                  style: { fontSize: 9, fill: "#9ca3af", fontWeight: 500 },
+                  position: "insideTopLeft",
+                  style: { fontSize: 10, fill: "#6b7280", fontWeight: 600 },
                 }}
               />
             ))}

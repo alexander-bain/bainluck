@@ -84,15 +84,18 @@ export function derivePeriodBoundaries(
   winProbHistory?: Record<string, WinProbHistoryPoint[]>,
   scoringPlays?: ScoringPlay[],
 ): PeriodBoundary[] {
-  // Try ESPN history first (most reliable)
-  if (espnHistory && espnHistory.length > 1) {
-    const boundaries = deriveBoundariesFromEspn(espnHistory);
+  // Prefer win prob history — its timestamps are always present in chartData
+  // (added via ensurePoint), so ReferenceLine x values will match chart categories.
+  // ESPN history timestamps come from a separate table (ESPNSnapshot) and may not
+  // have matching entries in the chart data when win_prob_snapshots deduped them.
+  if (winProbHistory) {
+    const boundaries = deriveBoundariesFromWinProb(winProbHistory);
     if (boundaries.length > 0) return boundaries;
   }
 
-  // Try win prob history game_state
-  if (winProbHistory) {
-    const boundaries = deriveBoundariesFromWinProb(winProbHistory);
+  // Fallback to ESPN history (explicit period field, different table)
+  if (espnHistory && espnHistory.length > 1) {
+    const boundaries = deriveBoundariesFromEspn(espnHistory);
     if (boundaries.length > 0) return boundaries;
   }
 
