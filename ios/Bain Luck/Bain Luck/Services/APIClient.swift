@@ -314,6 +314,12 @@ actor APIClient {
         ])
     }
 
+    func signInWithGoogle(accessToken: String) async throws -> AppleAuthResponse {
+        return try await post("/api/auth/google-access-token", body: [
+            "access_token": accessToken,
+        ])
+    }
+
     func fetchProfile() async throws -> AuthUser {
         return try await fetch("/api/auth/me")
     }

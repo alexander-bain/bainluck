@@ -162,6 +162,22 @@ struct MyStuffView: View {
             }
             .padding(.horizontal, 40)
 
+            Button {
+                authManager.signInWithGoogle()
+            } label: {
+                HStack {
+                    Image(systemName: "g.circle.fill")
+                    Text("Sign in with Google")
+                        .fontWeight(.semibold)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .foregroundStyle(.white)
+                .background(Color(red: 0.26, green: 0.52, blue: 0.96))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .padding(.horizontal, 40)
+
             if let error = authManager.error {
                 Text(error)
                     .font(.caption)

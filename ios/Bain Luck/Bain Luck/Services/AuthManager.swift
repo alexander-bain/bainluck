@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Combine
+import GoogleSignIn
 import os
 import SwiftUI
 
@@ -67,10 +68,19 @@ final class AuthManager: ObservableObject {
         coordinator.performRequest()
     }
 
+    // MARK: - Google Sign-In
+
+    func signInWithGoogle() {
+        Task {
+            await handleGoogleSignIn()
+        }
+    }
+
     // MARK: - Sign Out
 
     func signOut() {
         clearStoredAuth()
+        GIDSignIn.sharedInstance.signOut()
         user = nil
         error = nil
         logger.info("User signed out")
@@ -159,6 +169,59 @@ final class AuthManager: ObservableObject {
             self.error = "Sign-in failed. Please try again."
             logger.error("Apple sign-in backend call failed: \(error)")
         }
+    }
+
+    private func handleGoogleSignIn() async {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first?.rootViewController else {
+            error = "Cannot present sign-in"
+            return
+        }
+
+        guard let clientID = googleClientID() else {
+            error = "Google Sign-In not configured"
+            logger.error("GoogleService-Info.plist missing or has no CLIENT_ID")
+            return
+        }
+
+        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+
+        do {
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
+            let accessToken = result.user.accessToken.tokenString
+
+            let response = try await APIClient.shared.signInWithGoogle(accessToken: accessToken)
+
+            guard let tokenData = response.idToken.data(using: .utf8) else {
+                error = "Failed to encode session token"
+                return
+            }
+            _ = KeychainHelper.save(key: keychainTokenKey, data: tokenData)
+
+            await APIClient.shared.setAuthTokenProvider {
+                KeychainHelper.load(key: keychainTokenKey).flatMap { String(data: $0, encoding: .utf8) }
+            }
+
+            self.user = response.user
+            self.error = nil
+            logger.info("Google sign-in successful: user \(response.user.id)")
+        } catch {
+            // Silently ignore user cancellation (GIDSignInError code -5)
+            if (error as NSError).code == -5 {
+                return
+            }
+            self.error = "Sign-in failed. Please try again."
+            logger.error("Google sign-in error: \(error)")
+        }
+    }
+
+    private func googleClientID() -> String? {
+        guard let path = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
+              let dict = NSDictionary(contentsOfFile: path),
+              let clientID = dict["CLIENT_ID"] as? String else {
+            return nil
+        }
+        return clientID
     }
 }
 

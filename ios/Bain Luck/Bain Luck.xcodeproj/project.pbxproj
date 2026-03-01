@@ -65,6 +65,7 @@
 			);
 			name = "Bain Luck";
 			packageProductDependencies = (
+				A7869E392F525C6D000542D3 /* GoogleSignIn */,
 			);
 			productName = "Bain Luck";
 			productReference = A7869E2A2F525C6A000542D3 /* Bain Luck.app */;
@@ -100,6 +101,9 @@
 			projectRoot = "";
 			targets = (
 				A7869E292F525C6A000542D3 /* Bain Luck */,
+			);
+			packageReferences = (
+				A7869E382F525C6D000542D3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 		};
 /* End PBXProject section */
@@ -351,6 +355,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A7869E382F525C6D000542D3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A7869E392F525C6D000542D3 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A7869E382F525C6D000542D3 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A7869E222F525C69000542D3 /* Project object */;
 }

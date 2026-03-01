@@ -5,6 +5,7 @@
 //  Created by bain on 2/27/26.
 //
 
+import GoogleSignIn
 import SwiftUI
 
 @main
@@ -17,6 +18,9 @@ struct Bain_LuckApp: App {
                 .environmentObject(authManager)
                 .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
                     authManager.checkCredentialState()
+                }
+                .onOpenURL { url in
+                    GIDSignIn.sharedInstance.handle(url)
                 }
         }
     }
