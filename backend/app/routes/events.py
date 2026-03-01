@@ -25,6 +25,7 @@ from app.utils import (
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
+from app.utils.event_taxonomy import compute_event_tags
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY
 
 router = APIRouter()
@@ -1623,6 +1624,19 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     )
 
     response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
+
+    # Compute tags for this event
+    response["event_tags"] = compute_event_tags(
+        sport_key=event.sport.key if event.sport else "",
+        status=event.status,
+        commence_time=event.commence_time,
+        llm_importance=getattr(event, "llm_importance", None),
+        llm_gender=getattr(event, "llm_gender", None),
+        llm_level=getattr(event, "llm_level", None),
+        llm_league=getattr(event, "llm_league", None),
+        raw_ei=float(event.raw_ei) if event.raw_ei else None,
+        broadcast_info=getattr(event, "broadcast_info", None),
+    )
 
     # Compute standings context for event detail
     standings_context = _compute_standings_context(

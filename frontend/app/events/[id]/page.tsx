@@ -14,7 +14,8 @@ const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExp
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
-import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
+import RelatedByTag from "@/components/RelatedByTag";
+import { getLeagueDisplay, getEmojiForLeague, getCategoryForLeague } from "@/lib/sportCategories";
 import {
   useAnalytics,
   usePageTracking,
@@ -637,14 +638,22 @@ export default function EventPage({ params }: EventPageProps) {
               <PinIcon filled={eventIsPinned} className="w-5 h-5" />
             </button>
 
-            {event.sport && (
-              <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
-                <span className="text-lg">{sportEmoji}</span>
-                <span className="text-text-secondary font-medium">
-                  {getLeagueDisplay(event.sport)}
+            {event.sport && (() => {
+              const cat = getCategoryForLeague(event.sport!);
+              const badge = (
+                <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
+                  <span className="text-lg">{sportEmoji}</span>
+                  <span className="text-text-secondary font-medium">
+                    {getLeagueDisplay(event.sport!)}
+                  </span>
                 </span>
-              </span>
-            )}
+              );
+              return cat ? (
+                <Link href={`/categories/${cat.key}`} className="hover:opacity-80 transition-opacity">
+                  {badge}
+                </Link>
+              ) : badge;
+            })()}
           </div>
 
           {/* Status badge */}
@@ -659,6 +668,60 @@ export default function EventPage({ params }: EventPageProps) {
             </span>
           )}
         </div>
+
+        {/* Tag chips — contextual labels from taxonomy */}
+        {event.event_tags && event.event_tags.length > 0 && (() => {
+          // Show interesting tags (skip sport/league/source — those are visible elsewhere)
+          const displayTags = event.event_tags.filter((t: string) => {
+            const ns = t.split(":")[0];
+            return ["importance", "signal", "timing", "tier", "ei"].includes(ns);
+          });
+          if (displayTags.length === 0) return null;
+
+          const tagLabels: Record<string, string> = {
+            "importance:championship": "Championship",
+            "importance:playoff": "Playoff",
+            "importance:exhibition": "Exhibition",
+            "signal:close_matchup": "Close Game",
+            "signal:upset": "Upset",
+            "signal:line_moving": "Line Moving",
+            "signal:blowout": "Blowout",
+            "timing:primetime": "Primetime",
+            "timing:national_tv": "National TV",
+            "timing:weekend": "Weekend",
+            "tier:1": "Major",
+            "tier:2": "Tier 2",
+            "ei:must_watch": "Must-Watch",
+            "ei:incredible": "Incredible",
+            "ei:exciting": "Exciting",
+          };
+
+          const tagColors: Record<string, string> = {
+            importance: "bg-purple-500/15 text-purple-400",
+            signal: "bg-orange-500/15 text-orange-400",
+            timing: "bg-yellow-500/15 text-yellow-400",
+            tier: "bg-blue-500/15 text-blue-400",
+            ei: "bg-emerald-500/15 text-emerald-400",
+          };
+
+          return (
+            <div className="flex flex-wrap gap-1.5 justify-center">
+              {displayTags.map((tag: string) => {
+                const ns = tag.split(":")[0];
+                const color = tagColors[ns] || "bg-slate/10 text-text-muted";
+                const label = tagLabels[tag] || tag.split(":")[1]?.replace(/_/g, " ");
+                return (
+                  <span
+                    key={tag}
+                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${color}`}
+                  >
+                    {label}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* Game time/status - compact for live */}
         <div className="text-center mb-3">
@@ -1208,6 +1271,20 @@ export default function EventPage({ params }: EventPageProps) {
         sportKey={event.sport || undefined}
         eventStatus={event.status}
       />
+
+      {/* Related by sport tag — cross-content discovery */}
+      {event.sport && (() => {
+        const cat = getCategoryForLeague(event.sport!);
+        return cat ? (
+          <RelatedByTag
+            tags={[`sport:${cat.key}`]}
+            excludeId={event.id}
+            excludeType="event"
+            limit={4}
+            title={`More ${cat.name}`}
+          />
+        ) : null;
+      })()}
     </div>
   );
 }

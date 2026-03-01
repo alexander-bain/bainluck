@@ -17,6 +17,7 @@ import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { FuturesChart } from "@/components/FuturesChart";
 import EntityImage from "@/components/EntityImage";
+import RelatedByTag from "@/components/RelatedByTag";
 import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
 
 interface FuturesDetailPageProps {
@@ -258,14 +259,22 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               <PinIcon filled={marketIsPinned} className="w-5 h-5" />
             </button>
 
-            {market.sport && (
-              <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
-                <span className="text-lg">{sportEmoji}</span>
-                <span className="text-text-secondary font-medium">
-                  {market.sport_name || market.sport}
+            {market.sport && (() => {
+              const categoryKey = market.llm_sport_category || undefined;
+              const badge = (
+                <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
+                  <span className="text-lg">{sportEmoji}</span>
+                  <span className="text-text-secondary font-medium">
+                    {market.sport_name || market.sport}
+                  </span>
                 </span>
-              </span>
-            )}
+              );
+              return categoryKey ? (
+                <Link href={`/categories/${categoryKey}`} className="hover:opacity-80 transition-opacity">
+                  {badge}
+                </Link>
+              ) : badge;
+            })()}
           </div>
 
           {/* Status badge */}
@@ -387,6 +396,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* More from this category */}
+      {market?.llm_sport_category && (
+        <RelatedByTag
+          tags={[`sport:${market.llm_sport_category}`]}
+          excludeId={market.id}
+          excludeType="futures"
+          limit={4}
+          title={`More ${market.llm_sport_category.charAt(0).toUpperCase() + market.llm_sport_category.slice(1)}`}
+        />
       )}
 
       {/* Probability Chart (if history available) */}
