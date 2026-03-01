@@ -181,6 +181,9 @@ _PROP_OUTCOME_RE = re.compile(
     re.I,
 )
 
+# Women's / LPGA detection
+_WOMENS_RE = re.compile(r"\b(?:lpga|women'?s?|ladies)\b", re.I)
+
 # ============================================================================
 # Tour event extraction — sub-group "other" into named tour events
 # ============================================================================
@@ -588,16 +591,27 @@ async def get_golf(
             # Use resolution date as tiebreaker within the tour events band (50-98)
             order_idx = 50
 
+        # Collect deduplicated market names for context labels
+        market_names = sorted({m.name for m in tourn_markets})
+
+        # Detect women's / LPGA tournaments
+        is_womens = (
+            bool(_WOMENS_RE.search(display_name))
+            or any(_WOMENS_RE.search(m.name) for m in tourn_markets)
+        )
+
         tournaments.append({
             "key": tourn_key,
             "name": display_name,
             "is_major": tourn_key in MAJOR_TOURNAMENTS,
             "is_tour_event": is_tour_event,
+            "is_womens": is_womens,
             "order": order_idx,
             "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
             "commence_time": earliest_commence.isoformat() if earliest_commence else None,
             "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
             "market_ids": market_ids,
+            "market_names": market_names,
             "golfers": golfers,
         })
 
@@ -792,4 +806,5 @@ def _build_current_event(t: dict) -> dict:
         "golfer_count": len(t["golfers"]),
         "leader": t["golfers"][0]["name"] if t["golfers"] else None,
         "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
+        "top_golfers": t["golfers"][:5],
     }

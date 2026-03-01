@@ -4342,3 +4342,120 @@ async def clear_line_movement_cache(
 
     return {"deleted": len(rows), "event_id": event_id}
 
+
+# --- Event Taxonomy ---
+
+
+@router.post("/taxonomy/backfill")
+async def taxonomy_backfill(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(500, description="Max events to process"),
+):
+    """Queue a backfill task to tag events with empty/null event_tags."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import update_event_tags
+    task = update_event_tags.delay(limit=limit, backfill=True)
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "message": f"Backfilling event_tags for up to {limit} untagged events",
+    }
+
+
+@router.get("/taxonomy/status")
+async def taxonomy_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Coverage stats: total, tagged, and untagged events by status."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func, case
+
+    result = await db.execute(
+        select(
+            Event.status,
+            func.count().label("total"),
+            func.count().filter(
+                Event.event_tags.isnot(None),
+                Event.event_tags != [],
+            ).label("tagged"),
+        ).group_by(Event.status)
+    )
+    rows = result.all()
+
+    status_data = {}
+    total_all = 0
+    tagged_all = 0
+    for status_val, total, tagged in rows:
+        status_data[status_val] = {
+            "total": total,
+            "tagged": tagged,
+            "untagged": total - tagged,
+        }
+        total_all += total
+        tagged_all += tagged
+
+    return {
+        "summary": {
+            "total": total_all,
+            "tagged": tagged_all,
+            "untagged": total_all - tagged_all,
+            "coverage_pct": round(tagged_all / total_all * 100, 1) if total_all > 0 else 0,
+        },
+        "by_status": status_data,
+    }
+
+
+@router.get("/taxonomy/vocabulary")
+async def taxonomy_vocabulary(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Distinct tags with occurrence counts (uses jsonb_array_elements_text)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text
+
+    result = await db.execute(text("""
+        SELECT tag, COUNT(*) as cnt
+        FROM events, jsonb_array_elements_text(event_tags) AS tag
+        WHERE event_tags IS NOT NULL AND event_tags != '[]'::jsonb
+        GROUP BY tag
+        ORDER BY cnt DESC
+    """))
+    rows = result.all()
+
+    return {
+        "total_distinct_tags": len(rows),
+        "tags": [{"tag": tag, "count": cnt} for tag, cnt in rows],
+    }
+
+
+@router.get("/taxonomy/task/{task_id}")
+async def taxonomy_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check status of a taxonomy backfill task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import celery_app as _celery_app
+    result = _celery_app.AsyncResult(task_id)
+
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+    if result.state == "SUCCESS":
+        response["result"] = result.result
+    elif result.state == "FAILURE":
+        response["error"] = str(result.result)
+
+    return response
+

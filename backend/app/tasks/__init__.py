@@ -409,6 +409,15 @@ def backfill_team_identities(self):
     return run_async(_backfill_team_identities())
 
 
+# --- Event Taxonomy ---
+
+@celery_app.task(bind=True, name="app.tasks.update_event_tags")
+def update_event_tags(self, limit: int = 500, backfill: bool = False):
+    """Compute and persist event_tags for events needing tag updates."""
+    from app.tasks.taxonomy import _update_event_tags_impl
+    return _tracked_run("update_event_tags", _update_event_tags_impl(limit, backfill))
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
@@ -564,6 +573,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.audit_related_futures",
         "schedule": crontab(minute=30, hour=9),  # Daily at 9:30 AM UTC
         "kwargs": {"limit": 30},
+    },
+    "update-event-tags": {
+        "task": "app.tasks.update_event_tags",
+        "schedule": 120.0,  # Every 2 minutes — re-tags live events, tags new scheduled/completed
+        "kwargs": {"limit": 500},
     },
 }
 

@@ -146,6 +146,9 @@ class Event(Base):
     # ESPN box score data (populated after game completion)
     box_score_data: Mapped[Optional[dict]] = mapped_column(JSONB)
 
+    # Event taxonomy tags (deterministic, populated by Celery task)
+    event_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

@@ -92,8 +92,10 @@ export default function GolfPage() {
 
   // Derived data
   const majors = data?.tournaments.filter((t) => t.is_major) ?? [];
-  const tourEvents =
-    data?.tournaments.filter((t) => !t.is_major && t.is_tour_event) ?? [];
+  const pgaTourEvents =
+    data?.tournaments.filter((t) => !t.is_major && t.is_tour_event && !t.is_womens) ?? [];
+  const lpgaTourEvents =
+    data?.tournaments.filter((t) => !t.is_major && t.is_tour_event && t.is_womens) ?? [];
   const otherTournaments =
     data?.tournaments.filter((t) => !t.is_major && !t.is_tour_event) ?? [];
 
@@ -204,15 +206,34 @@ export default function GolfPage() {
               </section>
             )}
 
-            {/* Tour Events */}
-            {tourEvents.length > 0 && (
+            {/* Tour Events (PGA) */}
+            {pgaTourEvents.length > 0 && (
               <section>
                 <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
                   <span className="text-[#006747]">&#x1F3CC;&#xFE0F;</span>
                   Tour Events
                 </h2>
                 <div className="space-y-2">
-                  {tourEvents.map((tournament) => (
+                  {pgaTourEvents.map((tournament) => (
+                    <ExpandableTournamentRow
+                      key={tournament.key}
+                      tournament={tournament}
+                      onClickFull={() => setModalTournament(tournament)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* LPGA & Women's Events */}
+            {lpgaTourEvents.length > 0 && (
+              <section>
+                <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
+                  <span className="text-[#006747]">&#x1F3CC;&#xFE0F;&#x200D;&#x2640;&#xFE0F;</span>
+                  LPGA &amp; Women&apos;s Events
+                </h2>
+                <div className="space-y-2">
+                  {lpgaTourEvents.map((tournament) => (
                     <ExpandableTournamentRow
                       key={tournament.key}
                       tournament={tournament}
@@ -345,9 +366,12 @@ function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
     }
   }
 
+  const topGolfers = event.top_golfers ?? [];
+  const leaderProb = topGolfers.length > 0 ? topGolfers[0].probability : 0;
+
   return (
     <div className="bg-gradient-to-r from-[#006747]/20 via-[#006747]/10 to-[#006747]/20 border border-[#006747]/30 rounded-xl p-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <div>
           <p className="text-[#006747] text-xs font-semibold uppercase tracking-wider mb-1">
             {statusLabel}
@@ -359,20 +383,74 @@ function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
             {dateLabel && <span> &middot; {dateLabel}</span>}
           </p>
         </div>
-        {event.leader && event.leader_probability !== null && (
-          <div className="text-right">
-            <p className="text-xs text-text-muted uppercase tracking-wider">
-              Favorite
-            </p>
-            <p className="text-lg font-semibold text-text-primary">
-              {event.leader}
-            </p>
-            <p className="text-[#006747] font-mono text-sm">
-              {Math.round(event.leader_probability * 100)}%
-            </p>
-          </div>
-        )}
       </div>
+
+      {/* Mini-Leaderboard */}
+      {topGolfers.length > 0 && (
+        <div className="space-y-2">
+          {topGolfers.map((golfer) => {
+            const pct = Math.round(golfer.probability * 100);
+            const barWidth = leaderProb > 0
+              ? Math.max(Math.round((golfer.probability / leaderProb) * 100), 4)
+              : pct;
+            const isLeader = golfer.rank === 1;
+
+            return (
+              <div key={golfer.name}>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-xs font-mono w-5 text-right ${
+                      isLeader ? "text-[#006747] font-bold" : "text-text-muted"
+                    }`}
+                  >
+                    {golfer.rank}
+                  </span>
+                  <span
+                    className={`text-sm flex-1 truncate ${
+                      isLeader ? "text-text-primary font-medium" : "text-text-secondary"
+                    }`}
+                  >
+                    {golfer.name}
+                  </span>
+                  <MovementBadge movement={golfer.movement_24h} />
+                  <span className="text-sm font-mono text-text-primary w-10 text-right">
+                    {pct}%
+                  </span>
+                </div>
+                <div className="ml-7 mr-14 mt-0.5 mb-0.5">
+                  <div className="h-1.5 bg-[#006747]/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${barWidth}%`,
+                        background: isLeader
+                          ? "linear-gradient(90deg, #006747, #2d8659)"
+                          : "#2d8659",
+                        opacity: isLeader ? 1 : 0.5,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Fallback if no top_golfers (shouldn't happen, but safe) */}
+      {topGolfers.length === 0 && event.leader && event.leader_probability !== null && (
+        <div className="text-right">
+          <p className="text-xs text-text-muted uppercase tracking-wider">
+            Favorite
+          </p>
+          <p className="text-lg font-semibold text-text-primary">
+            {event.leader}
+          </p>
+          <p className="text-[#006747] font-mono text-sm">
+            {Math.round(event.leader_probability * 100)}%
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -723,6 +801,14 @@ function ExpandableTournamentRow({
               {tournament.venue && timingLabel && " \u00B7 "}
               {timingLabel}
             </span>
+          )}
+          {/* Market description subtitle */}
+          {tournament.market_names && tournament.market_names.length > 0 && !tournament.is_tour_event && (
+            <div className="text-[11px] text-text-muted mt-0.5 truncate">
+              {tournament.market_names.length === 1
+                ? tournament.market_names[0]
+                : tournament.market_names.join(" \u00B7 ")}
+            </div>
           )}
         </div>
         {leader && (

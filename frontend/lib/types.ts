@@ -126,6 +126,7 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
+  event_tags?: string[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
   excitement?: EIData;
@@ -597,6 +598,7 @@ export interface FeedEventData {
     score: number;
     label: string;
   };
+  event_tags?: string[];
 }
 
 export interface FeedFuturesOutcome {
@@ -782,6 +784,7 @@ export interface GolfTournament {
   name: string;
   is_major: boolean;
   is_tour_event?: boolean;
+  is_womens?: boolean;
   commence_time: string | null;
   resolution_date: string | null;
   start_date?: string | null;
@@ -789,6 +792,7 @@ export interface GolfTournament {
   venue?: string | null;
   schedule_status?: string | null;
   market_ids: number[];
+  market_names?: string[];
   golfers: GolfGolfer[];
 }
 
@@ -817,6 +821,7 @@ export interface GolfCurrentEvent {
   golfer_count: number;
   leader: string | null;
   leader_probability: number | null;
+  top_golfers?: GolfGolfer[];
 }
 
 export interface GolfResponse {
