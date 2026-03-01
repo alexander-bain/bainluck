@@ -83,5 +83,5 @@ nonisolated struct ScoringPlay: Decodable, Sendable {
 nonisolated struct AggregateLinePoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double
-    let awayProbability: Double
+    let awayProbability: Double?
 }
