@@ -10,6 +10,7 @@ import type {
   GolfCurrentEvent,
   GolfMover,
   FuturesOutcomeHistory,
+  FuturesHistoryPoint,
 } from "@/lib/types";
 import {
   MAJOR_TOURNAMENTS,
@@ -36,6 +37,9 @@ export default function GolfPage() {
   const [historyByTournament, setHistoryByTournament] = useState<
     Record<string, FuturesOutcomeHistory[]>
   >({});
+  const [currentEventHistory, setCurrentEventHistory] = useState<
+    FuturesOutcomeHistory[] | null
+  >(null);
 
   // Phase 1: Fetch golf data
   useEffect(() => {
@@ -89,6 +93,18 @@ export default function GolfPage() {
       })
       .catch(() => {});
   }, [modalTournament, historyByTournament]);
+
+  // Phase 2b: Lazy-load history for current event sparkline
+  useEffect(() => {
+    if (!data?.current_event?.market_ids?.length) return;
+    if (currentEventHistory) return;
+    const marketId = data.current_event.market_ids[0];
+    fetchFuturesHistory(marketId, 168)
+      .then((h) => {
+        if (h?.outcomes) setCurrentEventHistory(h.outcomes);
+      })
+      .catch(() => {});
+  }, [data?.current_event, currentEventHistory]);
 
   // Derived data
   const majors = data?.tournaments.filter((t) => t.is_major) ?? [];
@@ -179,7 +195,10 @@ export default function GolfPage() {
           <>
             {/* Current Event Banner */}
             {data.current_event && (
-              <CurrentEventBanner event={data.current_event} />
+              <CurrentEventBanner
+                event={data.current_event}
+                historyData={currentEventHistory}
+              />
             )}
 
             {/* Biggest Movers Strip */}
@@ -244,12 +263,12 @@ export default function GolfPage() {
               </section>
             )}
 
-            {/* Other Tournaments */}
+            {/* Other Markets */}
             {otherTournaments.length > 0 && (
               <section>
                 <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
                   <span className="text-text-secondary">&#x26F3;</span>
-                  Other Tournaments
+                  Other Markets
                 </h2>
                 <div className="space-y-2">
                   {otherTournaments.map((tournament) => (
@@ -328,7 +347,13 @@ export default function GolfPage() {
 // Current Event Banner
 // ============================================================================
 
-function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
+function CurrentEventBanner({
+  event,
+  historyData,
+}: {
+  event: GolfCurrentEvent;
+  historyData: FuturesOutcomeHistory[] | null;
+}) {
   const now = new Date();
   let statusLabel = "Coming Up";
   let dateLabel = "";
@@ -393,6 +418,11 @@ function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
           </p>
         </div>
       </div>
+
+      {/* Odds Trend Sparkline */}
+      {historyData && historyData.length > 0 && (
+        <TrendSparkline historyData={historyData} topGolfers={topGolfers} />
+      )}
 
       {/* Mini-Leaderboard */}
       {topGolfers.length > 0 && (
@@ -460,6 +490,136 @@ function CurrentEventBanner({ event }: { event: GolfCurrentEvent }) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Trend Sparkline (SVG chart for current event)
+// ============================================================================
+
+const SPARKLINE_COLORS = [
+  "#006747", // leader — dark green
+  "#2d8659", // 2nd
+  "#4a9e6e", // 3rd
+  "#6bb585", // 4th
+  "#8ecc9d", // 5th
+];
+
+function TrendSparkline({
+  historyData,
+  topGolfers,
+}: {
+  historyData: FuturesOutcomeHistory[];
+  topGolfers: GolfGolfer[];
+}) {
+  // Match history outcomes to top golfers by name
+  const topNames = new Set(topGolfers.map((g) => g.name.toLowerCase()));
+  const matched = historyData
+    .filter((o) => topNames.has(o.name.toLowerCase()))
+    .slice(0, 5);
+
+  if (matched.length === 0) return null;
+
+  // Find global time and probability bounds
+  const allPoints = matched.flatMap((o) => o.history.filter((p) => p.probability !== null));
+  if (allPoints.length < 2) return null;
+
+  const allTimes = allPoints.map((p) => new Date(p.timestamp).getTime());
+  const allProbs = allPoints.map((p) => p.probability!);
+  const minTime = Math.min(...allTimes);
+  const maxTime = Math.max(...allTimes);
+  const minProb = Math.max(0, Math.min(...allProbs) - 0.02);
+  const maxProb = Math.min(1, Math.max(...allProbs) + 0.02);
+
+  if (maxTime === minTime || maxProb === minProb) return null;
+
+  const w = 320;
+  const h = 80;
+  const pad = { top: 4, right: 4, bottom: 4, left: 4 };
+  const plotW = w - pad.left - pad.right;
+  const plotH = h - pad.top - pad.bottom;
+
+  function toX(t: number) {
+    return pad.left + ((t - minTime) / (maxTime - minTime)) * plotW;
+  }
+  function toY(p: number) {
+    return pad.top + plotH - ((p - minProb) / (maxProb - minProb)) * plotH;
+  }
+
+  // Build SVG paths for each golfer
+  const lines = matched.map((outcome, idx) => {
+    const golferIdx = topGolfers.findIndex(
+      (g) => g.name.toLowerCase() === outcome.name.toLowerCase()
+    );
+    const color = SPARKLINE_COLORS[golferIdx >= 0 ? golferIdx : idx] || SPARKLINE_COLORS[4];
+
+    const points = outcome.history
+      .filter((p) => p.probability !== null)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    if (points.length < 2) return null;
+
+    const d = points
+      .map((p, i) => {
+        const x = toX(new Date(p.timestamp).getTime());
+        const y = toY(p.probability!);
+        return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+
+    return (
+      <path
+        key={outcome.outcome_id}
+        d={d}
+        fill="none"
+        stroke={color}
+        strokeWidth={golferIdx === 0 ? 2 : 1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={golferIdx === 0 ? 1 : 0.6}
+      />
+    );
+  });
+
+  // Time axis labels
+  const timeSpan = maxTime - minTime;
+  const daysAgo = Math.round(timeSpan / 86400000);
+  const timeLabel = daysAgo <= 1 ? "24h" : `${daysAgo}d`;
+
+  return (
+    <div className="mb-3">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] text-text-muted uppercase tracking-wider">
+          Odds trend ({timeLabel})
+        </span>
+        <div className="flex gap-2">
+          {matched.slice(0, 3).map((o, i) => {
+            const golferIdx = topGolfers.findIndex(
+              (g) => g.name.toLowerCase() === o.name.toLowerCase()
+            );
+            const color = SPARKLINE_COLORS[golferIdx >= 0 ? golferIdx : i];
+            const lastName = o.name.split(" ").pop() || o.name;
+            return (
+              <span key={o.outcome_id} className="flex items-center gap-1 text-[10px] text-text-muted">
+                <span
+                  className="w-2 h-0.5 rounded-full inline-block"
+                  style={{ backgroundColor: color }}
+                />
+                {lastName}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        className="w-full"
+        style={{ maxHeight: "80px" }}
+        preserveAspectRatio="none"
+      >
+        {lines}
+      </svg>
     </div>
   );
 }
@@ -774,6 +934,9 @@ function ExpandableTournamentRow({
               day: "numeric",
             });
     }
+  } else if (tournament.golfers.some((g) => g.movement_24h !== null && Math.abs(g.movement_24h) >= 0.01)) {
+    // No schedule dates but significant odds movement → tournament is in progress
+    timingLabel = "In Progress";
   } else if (tournament.resolution_date) {
     const res = new Date(tournament.resolution_date);
     const days = Math.ceil(

@@ -823,6 +823,7 @@ export interface GolfCurrentEvent {
   leader: string | null;
   leader_probability: number | null;
   top_golfers?: GolfGolfer[];
+  market_ids?: number[];
 }
 
 export interface GolfResponse {

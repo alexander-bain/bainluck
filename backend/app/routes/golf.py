@@ -469,7 +469,12 @@ async def get_golf(
 
     for market in markets:
         tournament_key = _normalize_tournament(market.name)
-        tournament_markets[tournament_key].append(market)
+        if tournament_key == "other":
+            # Don't merge unrelated markets — give each its own entry
+            per_market_key = f"other_{market.id}"
+            tournament_markets[per_market_key].append(market)
+        else:
+            tournament_markets[tournament_key].append(market)
 
     # Build tournament response with cross-source aggregation
     tournaments = []
@@ -584,7 +589,14 @@ async def get_golf(
             tourn_key,
             _TOUR_EVENT_DISPLAY_NAMES.get(tourn_key, tourn_key.replace("_", " ").title()),
         )
-        is_tour_event = tourn_key not in TOURNAMENT_ORDER and tourn_key != "other"
+        is_tour_event = tourn_key not in TOURNAMENT_ORDER and not tourn_key.startswith("other_") and tourn_key != "other"
+
+        # Per-market "other" entries: use market name as display name, group with Other
+        if tourn_key.startswith("other_"):
+            display_name = tourn_markets[0].name if tourn_markets else "Other"
+            # Clean up common suffixes from market names for display
+            display_name = re.sub(r"\s*\?\s*$", "", display_name)  # trailing "?"
+            order_idx = TOURNAMENT_ORDER.index("other") if "other" in TOURNAMENT_ORDER else 99
 
         # For dynamic tour events, sort by resolution date (nearest first)
         if is_tour_event and latest_resolution:
@@ -807,4 +819,5 @@ def _build_current_event(t: dict) -> dict:
         "leader": t["golfers"][0]["name"] if t["golfers"] else None,
         "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
         "top_golfers": t["golfers"][:5],
+        "market_ids": t.get("market_ids", []),
     }
