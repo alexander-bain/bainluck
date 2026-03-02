@@ -4560,15 +4560,16 @@ async def list_duplicate_events(
             )
             WHERE a.commence_time > NOW() - INTERVAL '30 days'
               AND b.commence_time > NOW() - INTERVAL '30 days'
+            LIMIT 100
         )
         SELECT
             a.id AS event_a_id, a.external_id AS event_a_external_id,
-            COALESCE(sa.cnt, 0) AS event_a_snapshots,
+            EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = a.id LIMIT 1) AS event_a_has_snaps,
             a.statpal_fixture_id AS event_a_statpal,
             a.commence_time_source AS event_a_source,
             a.status AS event_a_status,
             b.id AS event_b_id, b.external_id AS event_b_external_id,
-            COALESCE(sb.cnt, 0) AS event_b_snapshots,
+            EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = b.id LIMIT 1) AS event_b_has_snaps,
             b.statpal_fixture_id AS event_b_statpal,
             b.commence_time_source AS event_b_source,
             b.status AS event_b_status,
@@ -4580,14 +4581,7 @@ async def list_duplicate_events(
         JOIN events a ON a.id = d.id_a
         JOIN events b ON b.id = d.id_b
         JOIN sports s ON s.id = a.sport_id
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = a.id
-        ) sa ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = b.id
-        ) sb ON TRUE
         ORDER BY a.commence_time DESC
-        LIMIT 100
     """))
     rows = result.all()
 
@@ -4597,7 +4591,7 @@ async def list_duplicate_events(
             "event_a": {
                 "id": row.event_a_id,
                 "external_id": row.event_a_external_id,
-                "snapshots": row.event_a_snapshots,
+                "has_snapshots": row.event_a_has_snaps,
                 "statpal_fixture_id": row.event_a_statpal,
                 "commence_time_source": row.event_a_source,
                 "status": row.event_a_status,
@@ -4605,7 +4599,7 @@ async def list_duplicate_events(
             "event_b": {
                 "id": row.event_b_id,
                 "external_id": row.event_b_external_id,
-                "snapshots": row.event_b_snapshots,
+                "has_snapshots": row.event_b_has_snaps,
                 "statpal_fixture_id": row.event_b_statpal,
                 "commence_time_source": row.event_b_source,
                 "status": row.event_b_status,
@@ -4643,7 +4637,8 @@ async def merge_duplicate_events(
 
     from sqlalchemy import text, func as sqlfunc
 
-    # Find duplicate pairs — LIMIT applied to pair finding BEFORE snapshot counts
+    # Find duplicate pairs — LIMIT applied to pair finding BEFORE snapshot checks
+    # Uses EXISTS instead of COUNT for speed (stops at first row)
     result = await db.execute(text("""
         WITH dupes AS (
             SELECT a.id AS id_a, b.id AS id_b
@@ -4661,12 +4656,12 @@ async def merge_duplicate_events(
         )
         SELECT
             a.id AS id_a, a.external_id AS ext_a,
-            COALESCE(sa.cnt, 0) AS snaps_a,
+            EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = a.id LIMIT 1) AS has_snaps_a,
             a.statpal_fixture_id AS statpal_a, a.commence_time_source AS source_a,
             a.statpal_end_time AS end_a, a.home_team_id AS htid_a,
             a.away_team_id AS atid_a, a.espn_id AS espn_a, a.status AS status_a,
             b.id AS id_b, b.external_id AS ext_b,
-            COALESCE(sb.cnt, 0) AS snaps_b,
+            EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = b.id LIMIT 1) AS has_snaps_b,
             b.statpal_fixture_id AS statpal_b, b.commence_time_source AS source_b,
             b.statpal_end_time AS end_b, b.home_team_id AS htid_b,
             b.away_team_id AS atid_b, b.espn_id AS espn_b, b.status AS status_b,
@@ -4674,12 +4669,6 @@ async def merge_duplicate_events(
         FROM dupes d
         JOIN events a ON a.id = d.id_a
         JOIN events b ON b.id = d.id_b
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = a.id
-        ) sa ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = b.id
-        ) sb ON TRUE
         ORDER BY a.commence_time DESC
     """), {"pair_limit": limit})
     pairs = result.all()
@@ -4689,12 +4678,12 @@ async def merge_duplicate_events(
 
     for row in pairs:
         # Determine which to keep: prefer the one with external_id and snapshots
-        keep_a = (row.ext_a is not None and row.snaps_a > 0)
-        keep_b = (row.ext_b is not None and row.snaps_b > 0)
+        keep_a = (row.ext_a is not None and row.has_snaps_a)
+        keep_b = (row.ext_b is not None and row.has_snaps_b)
 
         if keep_a and not keep_b:
             keep_id, orphan_id = row.id_a, row.id_b
-            orphan_snaps = row.snaps_b
+            orphan_has_snaps = row.has_snaps_b
             # Absorb from b
             absorb = {
                 "statpal_fixture_id": row.statpal_b,
@@ -4706,7 +4695,7 @@ async def merge_duplicate_events(
             }
         elif keep_b and not keep_a:
             keep_id, orphan_id = row.id_b, row.id_a
-            orphan_snaps = row.snaps_a
+            orphan_has_snaps = row.has_snaps_a
             absorb = {
                 "statpal_fixture_id": row.statpal_a,
                 "commence_time_source": row.source_a,
@@ -4719,16 +4708,16 @@ async def merge_duplicate_events(
             # Both orphans — keep the one with more data (statpal_fixture_id)
             if row.statpal_a and not row.statpal_b:
                 keep_id, orphan_id = row.id_a, row.id_b
-                orphan_snaps = row.snaps_b
+                orphan_has_snaps = row.has_snaps_b
                 absorb = {}
             elif row.statpal_b and not row.statpal_a:
                 keep_id, orphan_id = row.id_b, row.id_a
-                orphan_snaps = row.snaps_a
+                orphan_has_snaps = row.has_snaps_a
                 absorb = {}
             else:
                 # Both have same data — keep the older one
                 keep_id, orphan_id = row.id_a, row.id_b
-                orphan_snaps = row.snaps_b
+                orphan_has_snaps = row.has_snaps_b
                 absorb = {
                     "statpal_fixture_id": row.statpal_b,
                     "commence_time_source": row.source_b,
@@ -4748,11 +4737,11 @@ async def merge_duplicate_events(
             continue
 
         # Safety: don't delete events that have snapshots
-        if orphan_snaps > 0:
+        if orphan_has_snaps:
             skipped.append({
                 "event_a": row.id_a,
                 "event_b": row.id_b,
-                "reason": f"orphan event {orphan_id} has {orphan_snaps} snapshots",
+                "reason": f"orphan event {orphan_id} has snapshots",
                 "teams": f"{row.home_team_name} vs {row.away_team_name}",
             })
             continue
