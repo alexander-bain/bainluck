@@ -4682,59 +4682,70 @@ async def merge_duplicate_events_sql(
     if not orphan_ids:
         return {"dry_run": False, "merged": 0, "deleted": 0}
 
-    # Step 2: Absorb metadata per keeper
-    for row in pairs:
-        set_clauses = []
-        params = {"kid": row.keeper_id}
-        fields = [
-            ("statpal_fixture_id", row.statpal_fixture_id),
-            ("commence_time_source", row.commence_time_source),
-            ("statpal_end_time", row.statpal_end_time),
-            ("home_team_id", row.home_team_id),
-            ("away_team_id", row.away_team_id),
-            ("espn_id", row.espn_id),
-        ]
-        for i, (field, value) in enumerate(fields):
-            if value is not None:
-                set_clauses.append(f"{field} = COALESCE({field}, :v{i})")
-                params[f"v{i}"] = value
-        if set_clauses:
-            await db.execute(
-                text(f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"),
-                params,
-            )
+    try:
+        # Step 2: Absorb metadata per keeper
+        for row in pairs:
+            set_clauses = []
+            params = {"kid": row.keeper_id}
+            fields = [
+                ("statpal_fixture_id", row.statpal_fixture_id),
+                ("commence_time_source", row.commence_time_source),
+                ("statpal_end_time", row.statpal_end_time),
+                ("home_team_id", row.home_team_id),
+                ("away_team_id", row.away_team_id),
+                ("espn_id", row.espn_id),
+            ]
+            for i, (field, value) in enumerate(fields):
+                if value is not None:
+                    set_clauses.append(f"{field} = COALESCE({field}, :v{i})")
+                    params[f"v{i}"] = value
+            if set_clauses:
+                await db.execute(
+                    text(f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"),
+                    params,
+                )
 
-    # Step 3: Clear ALL FK references to orphans (5 tables without CASCADE)
-    # Tables with ON DELETE CASCADE (espn_snapshots, win_prob_snapshots) are auto-handled.
-    fk_tables = [
-        "odds_snapshots",       # line 182 — no cascade
-        "odds_aggregated",      # line 226 — no cascade
-        "score_snapshots",      # line 438 — no cascade
-        "line_movement_analysis",  # line 641 — nullable, no cascade
-    ]
-    for table in fk_tables:
+        # Step 3: Clear ALL FK references to orphans before deleting
+        # Tables with ON DELETE CASCADE (espn_snapshots, win_prob_snapshots) are auto-handled.
+        fk_tables = [
+            "odds_snapshots",
+            "odds_aggregated",
+            "score_snapshots",
+            "line_movement_analysis",
+        ]
+        for table in fk_tables:
+            await db.execute(
+                text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"),
+                {"ids": orphan_ids},
+            )
+        # futures_markets has nullable event_id — NULL it instead of deleting
         await db.execute(
-            text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"),
+            text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"),
             {"ids": orphan_ids},
         )
-    # futures_markets has nullable event_id — NULL it instead of deleting
-    await db.execute(
-        text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"),
-        {"ids": orphan_ids},
-    )
 
-    # Step 4: Now delete orphan events (CASCADE handles espn/win_prob snapshots)
-    await db.execute(
-        text("DELETE FROM events WHERE id = ANY(:ids)"),
-        {"ids": orphan_ids},
-    )
+        # Step 4: Now delete orphan events (CASCADE handles espn/win_prob snapshots)
+        await db.execute(
+            text("DELETE FROM events WHERE id = ANY(:ids)"),
+            {"ids": orphan_ids},
+        )
 
-    await db.commit()
-    return {
-        "dry_run": False,
-        "merged": len(pairs),
-        "deleted": len(orphan_ids),
-    }
+        await db.commit()
+        return {
+            "dry_run": False,
+            "merged": len(pairs),
+            "deleted": len(orphan_ids),
+        }
+    except Exception as e:
+        await db.rollback()
+        import traceback
+        return {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc()[-2000:],
+            "orphan_ids": orphan_ids[:10],
+            "pairs_count": len(pairs),
+        }
 
 
 @router.get("/events/merge-task/{task_id}")
