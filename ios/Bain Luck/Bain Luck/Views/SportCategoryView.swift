@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "sportCategory")
@@ -82,17 +83,41 @@ struct SportCategoryView: View {
             if vm.loading {
                 SkeletonFeedView()
             } else if let error = vm.error, vm.items.isEmpty {
-                ContentUnavailableView(
-                    "Couldn't Load",
-                    systemImage: "wifi.exclamationmark",
-                    description: Text(error)
-                )
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary.opacity(0.5))
+                    Text("Couldn't Load")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    Text(error)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Try Again") {
+                        Task { await vm.load() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Spacer()
+                }
+                .padding(.horizontal, 40)
             } else if vm.items.isEmpty {
-                ContentUnavailableView(
-                    "No \(categoryName) Right Now",
-                    systemImage: "calendar",
-                    description: Text("Check back later for \(categoryName.lowercased()) events and futures.")
-                )
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: sportIcon(for: categoryKey))
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary.opacity(0.5))
+                    Text("No \(categoryName) Right Now")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    Text("Check back later for \(categoryName.lowercased()) events and futures.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .padding(.horizontal, 40)
             } else {
                 categoryList
             }
@@ -106,6 +131,24 @@ struct SportCategoryView: View {
         }
         .refreshable {
             await vm.load()
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
+
+    private func sportIcon(for key: String) -> String {
+        switch key {
+        case "basketball": return "basketball.fill"
+        case "football": return "football.fill"
+        case "baseball": return "baseball.fill"
+        case "hockey": return "hockey.puck.fill"
+        case "soccer": return "soccerball"
+        case "golf": return "figure.golf"
+        case "tennis": return "tennis.racket"
+        case "mma": return "figure.boxing"
+        case "politics": return "building.columns.fill"
+        case "entertainment": return "star.fill"
+        case "crypto": return "bitcoinsign.circle.fill"
+        default: return "sportscourt"
         }
     }
 

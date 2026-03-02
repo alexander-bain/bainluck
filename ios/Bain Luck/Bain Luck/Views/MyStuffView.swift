@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UIKit
 import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "mystuff")
@@ -263,11 +264,21 @@ struct MyStuffView: View {
                     description: Text(error)
                 )
             } else if vm.items.isEmpty {
-                ContentUnavailableView(
-                    "No Games Right Now",
-                    systemImage: "calendar",
-                    description: Text("Your teams don't have any games coming up.")
-                )
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: "sportscourt")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary.opacity(0.5))
+                    Text("No Games Right Now")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    Text("Your teams don't have any games coming up.\nPull down to refresh.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .padding(.horizontal, 40)
             } else {
                 teamFeedList
             }
@@ -314,6 +325,7 @@ struct MyStuffView: View {
         #endif
         .refreshable {
             await vm.load()
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
     }
 

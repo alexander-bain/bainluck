@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "feed")
@@ -11,6 +12,7 @@ final class FeedViewModel: ObservableObject {
     @Published var total = 0
     @Published var loading = true
     @Published var error: String?
+    @Published var liveCount = 0
 
     private var refreshTimer: Timer?
 
@@ -49,6 +51,7 @@ final class FeedViewModel: ObservableObject {
             total = feed.total
             error = nil
             loading = false
+            liveCount = liveNow.count
             logger.info("Feed loaded: \(feed.items.count) items")
             configureAutoRefresh()
         } catch {
@@ -124,11 +127,25 @@ struct FeedView: View {
                 if vm.loading {
                     SkeletonFeedView()
                 } else if let error = vm.error, vm.items.isEmpty {
-                    ContentUnavailableView(
-                        "Couldn't Load Feed",
-                        systemImage: "wifi.exclamationmark",
-                        description: Text(error)
-                    )
+                    VStack(spacing: 16) {
+                        Spacer()
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary.opacity(0.5))
+                        Text("Couldn't Load Feed")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Text(error)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Try Again") {
+                            Task { await vm.load() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 40)
                 } else {
                     feedList
                 }
@@ -157,6 +174,9 @@ struct FeedView: View {
         }
         .onDisappear {
             vm.stopRefresh()
+        }
+        .onChange(of: vm.liveCount) { _, count in
+            navCoordinator.liveGameCount = count
         }
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             if navCoordinator.selectedTab == .feed,
@@ -220,6 +240,7 @@ struct FeedView: View {
         #endif
         .refreshable {
             await vm.load()
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
     }
 

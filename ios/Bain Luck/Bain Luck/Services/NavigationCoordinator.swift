@@ -15,6 +15,7 @@ final class NavigationCoordinator: ObservableObject {
     @Published var selectedTab: AppTab = .feed
     @Published var pendingRoute: Route?
     @Published var pendingSearchQuery: String?
+    @Published var liveGameCount: Int = 0
 
     /// Parse a URL and navigate to the appropriate destination.
     /// Returns `true` if the URL was handled.
@@ -73,6 +74,14 @@ final class NavigationCoordinator: ObservableObject {
         case "preferences":
             navigate(to: .preferences, tab: .myStuff)
             return true
+
+        case "category":
+            if pathComponents.count >= 2 {
+                let key = pathComponents[1]
+                let name = sportCategories.first(where: { $0.id == key })?.name ?? key.capitalized
+                navigate(to: .sportCategory(key: key, name: name), tab: .feed)
+                return true
+            }
 
         default:
             break

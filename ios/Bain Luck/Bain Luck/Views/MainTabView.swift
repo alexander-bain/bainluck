@@ -22,6 +22,7 @@ struct MainTabView: View {
                     Label("Feed", systemImage: "rectangle.stack.fill")
                 }
                 .tag(AppTab.feed)
+                .badge(navCoordinator.liveGameCount > 0 ? "\(navCoordinator.liveGameCount) live" : nil)
 
             SearchView()
                 .tabItem {
