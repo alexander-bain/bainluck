@@ -6,4 +6,5 @@ enum Route: Hashable {
     case futuresDetail(id: Int)
     case eiRankings
     case preferences
+    case sportCategory(key: String, name: String)
 }

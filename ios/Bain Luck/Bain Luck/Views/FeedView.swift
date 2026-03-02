@@ -75,6 +75,37 @@ final class FeedViewModel: ObservableObject {
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
+
+    // MARK: - Filtered accessors
+
+    func filteredItems(for categoryID: String) -> [FeedItem] {
+        guard categoryID != "all" else { return items }
+        guard let category = sportCategories.first(where: { $0.id == categoryID }) else { return items }
+        return items.filter { category.matches($0) }
+    }
+
+    func filteredLiveNow(for categoryID: String) -> [FeedItem] {
+        filteredItems(for: categoryID).filter { $0.event?.status == "live" }
+    }
+
+    func filteredJustHappened(for categoryID: String) -> [FeedItem] {
+        filteredItems(for: categoryID).filter {
+            let s = $0.event?.status
+            return s == "completed" || s == "closed"
+        }
+    }
+
+    func filteredUpcoming(for categoryID: String) -> [FeedItem] {
+        filteredItems(for: categoryID).filter {
+            guard $0.type == "event" else { return false }
+            let s = $0.event?.status
+            return s == "scheduled" || s == nil
+        }
+    }
+
+    func filteredTopMarkets(for categoryID: String) -> [FeedItem] {
+        filteredItems(for: categoryID).filter { $0.type == "futures" }
+    }
 }
 
 // MARK: - View
@@ -82,14 +113,16 @@ final class FeedViewModel: ObservableObject {
 struct FeedView: View {
     @StateObject private var vm = FeedViewModel()
     @State private var path = NavigationPath()
+    @State private var selectedCategory: String = "all"
     @EnvironmentObject var navCoordinator: NavigationCoordinator
     @EnvironmentObject var pinManager: PinManager
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if vm.loading {
-                    ProgressView("Loading feed...")
+                    SkeletonFeedView()
                 } else if let error = vm.error, vm.items.isEmpty {
                     ContentUnavailableView(
                         "Couldn't Load Feed",
@@ -111,6 +144,8 @@ struct FeedView: View {
                     EIRankingsView()
                 case .preferences:
                     EmptyView()
+                case .sportCategory(let key, let name):
+                    SportCategoryView(categoryKey: key, categoryName: name)
                 }
             }
         }
@@ -134,7 +169,7 @@ struct FeedView: View {
     // MARK: - Feed List
 
     private var pinnedItems: [FeedItem] {
-        vm.items.filter { item in
+        vm.filteredItems(for: selectedCategory).filter { item in
             if item.type == "event", let event = item.event {
                 return pinManager.pinnedEventIDs.contains(event.id)
             } else if item.type == "futures", let futures = item.futures {
@@ -146,20 +181,38 @@ struct FeedView: View {
 
     private var feedList: some View {
         List {
+            // Filter chips
+            Section {
+                SportFilterChips(selectedCategory: $selectedCategory) { category in
+                    path.append(Route.sportCategory(key: category.id, name: category.name))
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+
             if !pinnedItems.isEmpty {
                 feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange, items: pinnedItems)
             }
-            if !vm.liveNow.isEmpty {
-                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
+
+            let live = vm.filteredLiveNow(for: selectedCategory)
+            if !live.isEmpty {
+                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: live)
             }
-            if !vm.justHappened.isEmpty {
-                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened)
+
+            let happened = vm.filteredJustHappened(for: selectedCategory)
+            if !happened.isEmpty {
+                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: happened)
             }
-            if !vm.upcoming.isEmpty {
-                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: vm.upcoming)
+
+            let up = vm.filteredUpcoming(for: selectedCategory)
+            if !up.isEmpty {
+                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: up)
             }
-            if !vm.topMarkets.isEmpty {
-                feedSection(title: "Top Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
+
+            let markets = vm.filteredTopMarkets(for: selectedCategory)
+            if !markets.isEmpty {
+                feedSection(title: "Top Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: markets)
             }
         }
         #if os(iOS)
@@ -174,8 +227,21 @@ struct FeedView: View {
 
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
-            ForEach(items) { item in
-                feedRow(item)
+            if sizeClass == .regular {
+                // iPad: two-column grid
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(items) { item in
+                        feedRow(item)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            } else {
+                ForEach(items) { item in
+                    feedRow(item)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            pinSwipeButton(item)
+                        }
+                }
             }
         } header: {
             HStack(spacing: 6) {
@@ -220,6 +286,34 @@ struct FeedView: View {
                 FuturesCardView(futures: futures)
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Swipe to Pin
+
+    @ViewBuilder
+    private func pinSwipeButton(_ item: FeedItem) -> some View {
+        let type: String
+        let id: Int
+        if item.type == "event", let event = item.event {
+            type = "event"
+            id = event.id
+        } else if item.type == "futures", let futures = item.futures {
+            type = "future"
+            id = futures.id
+        } else {
+            type = ""
+            id = 0
+        }
+
+        if !type.isEmpty {
+            let isPinned = pinManager.isPinned(type: type, id: id)
+            Button {
+                pinManager.togglePin(type: type, id: id)
+            } label: {
+                Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
+            }
+            .tint(isPinned ? .gray : .orange)
         }
     }
 }

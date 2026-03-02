@@ -119,6 +119,8 @@ struct SearchView: View {
                     EIRankingsView()
                 case .preferences:
                     EmptyView()
+                case .sportCategory(let key, let name):
+                    SportCategoryView(categoryKey: key, categoryName: name)
                 }
             }
         }
