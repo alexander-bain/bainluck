@@ -4635,10 +4635,9 @@ async def merge_duplicate_events(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from sqlalchemy import text, func as sqlfunc
+    from sqlalchemy import text
 
-    # Find duplicate pairs — LIMIT applied to pair finding BEFORE snapshot checks
-    # Uses EXISTS instead of COUNT for speed (stops at first row)
+    # Find duplicate pairs — LIMIT inside CTE, EXISTS instead of COUNT
     result = await db.execute(text("""
         WITH dupes AS (
             SELECT a.id AS id_a, b.id AS id_b
@@ -4754,17 +4753,21 @@ async def merge_duplicate_events(
         }
 
         if not dry_run:
-            # Absorb metadata from orphan into keeper (only fill NULLs)
-            keep_event = await db.get(Event, keep_id)
-            if keep_event:
-                for field, value in absorb.items():
-                    if value is not None and getattr(keep_event, field, None) is None:
-                        setattr(keep_event, field, value)
+            # Absorb metadata into keeper using raw SQL (only fill NULLs)
+            non_null_absorb = {k: v for k, v in absorb.items() if v is not None}
+            if non_null_absorb:
+                set_clauses = []
+                params = {"kid": keep_id}
+                for i, (field, value) in enumerate(non_null_absorb.items()):
+                    set_clauses.append(f"{field} = COALESCE({field}, :v{i})")
+                    params[f"v{i}"] = value
+                sql = f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"
+                await db.execute(text(sql), params)
 
-            # Delete the orphan (cascade will handle any related rows)
-            orphan_event = await db.get(Event, orphan_id)
-            if orphan_event:
-                await db.delete(orphan_event)
+            # Delete the orphan
+            await db.execute(
+                text("DELETE FROM events WHERE id = :oid"), {"oid": orphan_id}
+            )
 
         merged.append(action)
 
@@ -4775,7 +4778,7 @@ async def merge_duplicate_events(
         "dry_run": dry_run,
         "merged": len(merged),
         "skipped": len(skipped),
-        "actions": merged,
-        "skipped_details": skipped if skipped else None,
+        "sample_actions": merged[:10],
+        "skipped_details": skipped[:10] if skipped else None,
     }
 
