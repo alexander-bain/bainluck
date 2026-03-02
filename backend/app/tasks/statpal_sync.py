@@ -60,6 +60,11 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 
     total_created = 0
 
+    # Track StatPal fixture IDs already processed in this run
+    # to prevent duplicates across soccer league iterations
+    # (all map to StatPal sport="soccer" but have different sport_ids)
+    seen_fixture_ids: set[str] = set()
+
     try:
         async with get_task_session() as session:
             from app.models import Event, Sport
@@ -105,6 +110,14 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             continue
 
                     total_fixtures += 1
+
+                    # Dedup: skip if this StatPal fixture was already processed
+                    # in a prior sport key iteration (e.g., soccer_epl and soccer_usa_mls
+                    # both query StatPal sport="soccer" and get identical fixtures)
+                    if fixture.fixture_id:
+                        if fixture.fixture_id in seen_fixture_ids:
+                            continue
+                        seen_fixture_ids.add(fixture.fixture_id)
 
                     # Find matching event in our DB by team names + time proximity
                     match_key = _fixture_match_key(fixture.home_team, fixture.away_team)
