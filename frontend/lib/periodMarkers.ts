@@ -114,23 +114,24 @@ function deriveBoundariesFromEspn(history: ESPNHistoryPoint[]): PeriodBoundary[]
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 
-  const boundaries: PeriodBoundary[] = [];
-  const seenLabels = new Set<string>();
-  let prevPeriod: string | null = null;
+  // Collect the first timestamp we see for each unique period label
+  const firstSeen = new Map<string, string>();
 
   for (const point of sorted) {
     if (!point.period) continue;
     const label = normalizePeriodLabel(point.period);
     if (!label) continue;
-
-    if (prevPeriod !== null && label !== prevPeriod && !seenLabels.has(label)) {
-      boundaries.push({ timestamp: point.timestamp, label });
-      seenLabels.add(label);
+    if (!firstSeen.has(label)) {
+      firstSeen.set(label, point.timestamp);
     }
-    prevPeriod = label;
   }
 
-  return boundaries;
+  // Every unique period we observed gets a boundary at its first occurrence.
+  // This handles missed transitions (e.g., ESPN sync started in Q2 — we still
+  // mark Q2 even though we never saw Q1→Q2).
+  return Array.from(firstSeen.entries())
+    .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
+    .map(([label, timestamp]) => ({ timestamp, label }));
 }
 
 function deriveBoundariesFromWinProb(
@@ -148,52 +149,48 @@ function deriveBoundariesFromWinProb(
     }
   }
 
-  if (allPoints.length < 2) return [];
+  if (allPoints.length === 0) return [];
 
   // Sort by timestamp
   allPoints.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  const boundaries: PeriodBoundary[] = [];
-  const seenLabels = new Set<string>();
-  let prevPeriod: string | null = null;
+  // Collect the first timestamp we see for each unique period label.
+  // This handles missed transitions (e.g., ESPN sync started in Q2).
+  const firstSeen = new Map<string, string>();
 
   for (const point of allPoints) {
     const label = normalizePeriodLabel(point.period);
     if (!label) continue;
-
-    if (prevPeriod !== null && label !== prevPeriod && !seenLabels.has(label)) {
-      boundaries.push({ timestamp: point.timestamp, label });
-      seenLabels.add(label);
+    if (!firstSeen.has(label)) {
+      firstSeen.set(label, point.timestamp);
     }
-    prevPeriod = label;
   }
 
-  return boundaries;
+  return Array.from(firstSeen.entries())
+    .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
+    .map(([label, timestamp]) => ({ timestamp, label }));
 }
 
 function deriveBoundariesFromScoringPlays(plays: ScoringPlay[]): PeriodBoundary[] {
-  // Group scoring plays by period, use earliest timestamp per new period
+  // Group scoring plays by period, use earliest timestamp per unique period
   const sorted = [...plays]
     .filter((p) => p.period && p.timestamp)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  if (sorted.length < 2) return [];
+  if (sorted.length === 0) return [];
 
-  const boundaries: PeriodBoundary[] = [];
-  const seenLabels = new Set<string>();
-  let prevPeriod: string | null = null;
+  const firstSeen = new Map<string, string>();
 
   for (const play of sorted) {
     if (!play.period) continue;
     const label = normalizePeriodLabel(play.period);
     if (!label) continue;
-
-    if (prevPeriod !== null && label !== prevPeriod && !seenLabels.has(label)) {
-      boundaries.push({ timestamp: play.timestamp, label });
-      seenLabels.add(label);
+    if (!firstSeen.has(label)) {
+      firstSeen.set(label, play.timestamp);
     }
-    prevPeriod = label;
   }
 
-  return boundaries;
+  return Array.from(firstSeen.entries())
+    .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
+    .map(([label, timestamp]) => ({ timestamp, label }));
 }
