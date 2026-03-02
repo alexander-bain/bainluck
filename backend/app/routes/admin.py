@@ -4621,164 +4621,44 @@ async def list_duplicate_events(
 async def merge_duplicate_events(
     secret: str = Query(...),
     dry_run: bool = Query(True, description="Preview without making changes"),
-    limit: int = Query(200, description="Max pairs to process per call"),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Merge duplicate events: keep the one with external_id, absorb metadata from orphan.
+    """Queue a Celery task to merge duplicate events.
 
-    For each duplicate pair:
-    - Keep: the event with external_id (has odds data)
-    - Absorb: statpal_fixture_id, commence_time_source, statpal_end_time,
-      home_team_id, away_team_id, espn_id from the orphan
-    - Delete: the orphan event (has 0 snapshots)
+    Runs in background to avoid Heroku 30s timeout.
+    Check status with GET /api/admin/events/merge-task/{task_id}
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from sqlalchemy import text
-
-    # Find duplicate pairs — LIMIT inside CTE, EXISTS instead of COUNT
-    result = await db.execute(text("""
-        WITH dupes AS (
-            SELECT a.id AS id_a, b.id AS id_b
-            FROM events a
-            JOIN events b ON (
-                a.sport_id = b.sport_id
-                AND a.id < b.id
-                AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
-                AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
-                AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
-            )
-            WHERE a.commence_time > NOW() - INTERVAL '30 days'
-              AND b.commence_time > NOW() - INTERVAL '30 days'
-            LIMIT :pair_limit
-        )
-        SELECT
-            a.id AS id_a, a.external_id AS ext_a,
-            EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = a.id LIMIT 1) AS has_snaps_a,
-            a.statpal_fixture_id AS statpal_a, a.commence_time_source AS source_a,
-            a.statpal_end_time AS end_a, a.home_team_id AS htid_a,
-            a.away_team_id AS atid_a, a.espn_id AS espn_a, a.status AS status_a,
-            b.id AS id_b, b.external_id AS ext_b,
-            EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = b.id LIMIT 1) AS has_snaps_b,
-            b.statpal_fixture_id AS statpal_b, b.commence_time_source AS source_b,
-            b.statpal_end_time AS end_b, b.home_team_id AS htid_b,
-            b.away_team_id AS atid_b, b.espn_id AS espn_b, b.status AS status_b,
-            a.home_team_name, a.away_team_name, a.sport_id
-        FROM dupes d
-        JOIN events a ON a.id = d.id_a
-        JOIN events b ON b.id = d.id_b
-        ORDER BY a.commence_time DESC
-    """), {"pair_limit": limit})
-    pairs = result.all()
-
-    merged = []
-    skipped = []
-
-    for row in pairs:
-        # Determine which to keep: prefer the one with external_id and snapshots
-        keep_a = (row.ext_a is not None and row.has_snaps_a)
-        keep_b = (row.ext_b is not None and row.has_snaps_b)
-
-        if keep_a and not keep_b:
-            keep_id, orphan_id = row.id_a, row.id_b
-            orphan_has_snaps = row.has_snaps_b
-            # Absorb from b
-            absorb = {
-                "statpal_fixture_id": row.statpal_b,
-                "commence_time_source": row.source_b,
-                "statpal_end_time": row.end_b,
-                "home_team_id": row.htid_b,
-                "away_team_id": row.atid_b,
-                "espn_id": row.espn_b,
-            }
-        elif keep_b and not keep_a:
-            keep_id, orphan_id = row.id_b, row.id_a
-            orphan_has_snaps = row.has_snaps_a
-            absorb = {
-                "statpal_fixture_id": row.statpal_a,
-                "commence_time_source": row.source_a,
-                "statpal_end_time": row.end_a,
-                "home_team_id": row.htid_a,
-                "away_team_id": row.atid_a,
-                "espn_id": row.espn_a,
-            }
-        elif not keep_a and not keep_b:
-            # Both orphans — keep the one with more data (statpal_fixture_id)
-            if row.statpal_a and not row.statpal_b:
-                keep_id, orphan_id = row.id_a, row.id_b
-                orphan_has_snaps = row.has_snaps_b
-                absorb = {}
-            elif row.statpal_b and not row.statpal_a:
-                keep_id, orphan_id = row.id_b, row.id_a
-                orphan_has_snaps = row.has_snaps_a
-                absorb = {}
-            else:
-                # Both have same data — keep the older one
-                keep_id, orphan_id = row.id_a, row.id_b
-                orphan_has_snaps = row.has_snaps_b
-                absorb = {
-                    "statpal_fixture_id": row.statpal_b,
-                    "commence_time_source": row.source_b,
-                    "statpal_end_time": row.end_b,
-                    "home_team_id": row.htid_b,
-                    "away_team_id": row.atid_b,
-                    "espn_id": row.espn_b,
-                }
-        else:
-            # Both have external_id + snapshots — skip (doubleheader or real dups)
-            skipped.append({
-                "event_a": row.id_a,
-                "event_b": row.id_b,
-                "reason": "both have external_id and snapshots",
-                "teams": f"{row.home_team_name} vs {row.away_team_name}",
-            })
-            continue
-
-        # Safety: don't delete events that have snapshots
-        if orphan_has_snaps:
-            skipped.append({
-                "event_a": row.id_a,
-                "event_b": row.id_b,
-                "reason": f"orphan event {orphan_id} has snapshots",
-                "teams": f"{row.home_team_name} vs {row.away_team_name}",
-            })
-            continue
-
-        action = {
-            "keep": keep_id,
-            "delete": orphan_id,
-            "teams": f"{row.home_team_name} vs {row.away_team_name}",
-            "absorbed": {k: str(v) for k, v in absorb.items() if v is not None},
-        }
-
-        if not dry_run:
-            # Absorb metadata into keeper using raw SQL (only fill NULLs)
-            non_null_absorb = {k: v for k, v in absorb.items() if v is not None}
-            if non_null_absorb:
-                set_clauses = []
-                params = {"kid": keep_id}
-                for i, (field, value) in enumerate(non_null_absorb.items()):
-                    set_clauses.append(f"{field} = COALESCE({field}, :v{i})")
-                    params[f"v{i}"] = value
-                sql = f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"
-                await db.execute(text(sql), params)
-
-            # Delete the orphan
-            await db.execute(
-                text("DELETE FROM events WHERE id = :oid"), {"oid": orphan_id}
-            )
-
-        merged.append(action)
-
-    if not dry_run:
-        await db.commit()
-
+    from app.tasks import merge_duplicate_events_task
+    task = merge_duplicate_events_task.delay(dry_run=dry_run)
     return {
+        "status": "queued",
+        "task_id": task.id,
         "dry_run": dry_run,
-        "merged": len(merged),
-        "skipped": len(skipped),
-        "sample_actions": merged[:10],
-        "skipped_details": skipped[:10] if skipped else None,
+        "message": f"Merge task queued ({'dry run' if dry_run else 'LIVE'}). Check /api/admin/events/merge-task/{task.id}",
     }
+
+
+@router.get("/events/merge-task/{task_id}")
+async def check_merge_task(
+    task_id: str,
+    secret: str = Query(...),
+):
+    """Check status of a merge-duplicates background task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from celery.result import AsyncResult
+    from app.tasks import celery_app
+    result = AsyncResult(task_id, app=celery_app)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+    if result.state == "SUCCESS":
+        response["result"] = result.result
+    elif result.state == "FAILURE":
+        response["error"] = str(result.result)
+    return response
 

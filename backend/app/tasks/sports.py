@@ -700,3 +700,136 @@ async def _discover_events():
         }
     finally:
         await service.close()
+
+
+async def _merge_duplicate_events_impl(dry_run: bool = True):
+    """Find and merge duplicate events. Runs as Celery background task."""
+    from sqlalchemy import text as sa_text
+    from app.tasks.base import get_task_session
+
+    async with get_task_session() as session:
+        # Find all duplicate pairs
+        result = await session.execute(sa_text("""
+            WITH dupes AS (
+                SELECT a.id AS id_a, b.id AS id_b
+                FROM events a
+                JOIN events b ON (
+                    a.sport_id = b.sport_id
+                    AND a.id < b.id
+                    AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
+                    AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
+                    AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
+                )
+                WHERE a.commence_time > NOW() - INTERVAL '30 days'
+                  AND b.commence_time > NOW() - INTERVAL '30 days'
+            )
+            SELECT
+                a.id AS id_a, a.external_id AS ext_a,
+                EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = a.id LIMIT 1) AS has_snaps_a,
+                a.statpal_fixture_id AS statpal_a, a.commence_time_source AS source_a,
+                a.statpal_end_time AS end_a, a.home_team_id AS htid_a,
+                a.away_team_id AS atid_a, a.espn_id AS espn_a,
+                b.id AS id_b, b.external_id AS ext_b,
+                EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = b.id LIMIT 1) AS has_snaps_b,
+                b.statpal_fixture_id AS statpal_b, b.commence_time_source AS source_b,
+                b.statpal_end_time AS end_b, b.home_team_id AS htid_b,
+                b.away_team_id AS atid_b, b.espn_id AS espn_b,
+                a.home_team_name, a.away_team_name
+            FROM dupes d
+            JOIN events a ON a.id = d.id_a
+            JOIN events b ON b.id = d.id_b
+        """))
+        pairs = result.all()
+
+        merged_count = 0
+        skipped_count = 0
+        delete_ids = []
+
+        for row in pairs:
+            keep_a = (row.ext_a is not None and row.has_snaps_a)
+            keep_b = (row.ext_b is not None and row.has_snaps_b)
+
+            if keep_a and not keep_b:
+                keep_id, orphan_id = row.id_a, row.id_b
+                orphan_has_snaps = row.has_snaps_b
+                absorb = {
+                    "statpal_fixture_id": row.statpal_b,
+                    "commence_time_source": row.source_b,
+                    "statpal_end_time": row.end_b,
+                    "home_team_id": row.htid_b,
+                    "away_team_id": row.atid_b,
+                    "espn_id": row.espn_b,
+                }
+            elif keep_b and not keep_a:
+                keep_id, orphan_id = row.id_b, row.id_a
+                orphan_has_snaps = row.has_snaps_a
+                absorb = {
+                    "statpal_fixture_id": row.statpal_a,
+                    "commence_time_source": row.source_a,
+                    "statpal_end_time": row.end_a,
+                    "home_team_id": row.htid_a,
+                    "away_team_id": row.atid_a,
+                    "espn_id": row.espn_a,
+                }
+            elif not keep_a and not keep_b:
+                if row.statpal_a and not row.statpal_b:
+                    keep_id, orphan_id = row.id_a, row.id_b
+                    orphan_has_snaps = row.has_snaps_b
+                    absorb = {}
+                elif row.statpal_b and not row.statpal_a:
+                    keep_id, orphan_id = row.id_b, row.id_a
+                    orphan_has_snaps = row.has_snaps_a
+                    absorb = {}
+                else:
+                    keep_id, orphan_id = row.id_a, row.id_b
+                    orphan_has_snaps = row.has_snaps_b
+                    absorb = {
+                        "statpal_fixture_id": row.statpal_b,
+                        "commence_time_source": row.source_b,
+                        "statpal_end_time": row.end_b,
+                        "home_team_id": row.htid_b,
+                        "away_team_id": row.atid_b,
+                        "espn_id": row.espn_b,
+                    }
+            else:
+                skipped_count += 1
+                continue
+
+            if orphan_has_snaps:
+                skipped_count += 1
+                continue
+
+            if not dry_run:
+                # Absorb metadata (only fill NULLs)
+                non_null = {k: v for k, v in absorb.items() if v is not None}
+                if non_null:
+                    set_clauses = []
+                    params = {"kid": keep_id}
+                    for i, (field, value) in enumerate(non_null.items()):
+                        set_clauses.append(f"{field} = COALESCE({field}, :v{i})")
+                        params[f"v{i}"] = value
+                    await session.execute(
+                        sa_text(f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"),
+                        params,
+                    )
+                delete_ids.append(orphan_id)
+
+            merged_count += 1
+
+        if not dry_run and delete_ids:
+            # Batch delete in chunks of 500
+            for i in range(0, len(delete_ids), 500):
+                chunk = delete_ids[i:i + 500]
+                await session.execute(
+                    sa_text("DELETE FROM events WHERE id = ANY(:ids)"),
+                    {"ids": chunk},
+                )
+            await session.commit()
+            logger.info(f"Merged {merged_count} duplicate events, deleted {len(delete_ids)} orphans")
+
+        return {
+            "dry_run": dry_run,
+            "merged": merged_count,
+            "skipped": skipped_count,
+            "deleted": len(delete_ids) if not dry_run else 0,
+        }

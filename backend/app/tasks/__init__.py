@@ -418,6 +418,15 @@ def update_event_tags(self, limit: int = 500):
     return run_async(_update_event_tags_impl(limit))
 
 
+# --- Duplicate Event Cleanup ---
+
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.merge_duplicate_events")
+def merge_duplicate_events_task(self, dry_run: bool = True):
+    """Find and merge duplicate events (StatPal + Odds API race condition)."""
+    from app.tasks.sports import _merge_duplicate_events_impl
+    return run_async(_merge_duplicate_events_impl(dry_run=dry_run))
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
