@@ -293,27 +293,23 @@ struct FeedView: View {
 
     @ViewBuilder
     private func pinSwipeButton(_ item: FeedItem) -> some View {
-        let type: String
-        let id: Int
-        if item.type == "event", let event = item.event {
-            type = "event"
-            id = event.id
-        } else if item.type == "futures", let futures = item.futures {
-            type = "future"
-            id = futures.id
-        } else {
-            type = ""
-            id = 0
-        }
-
-        if !type.isEmpty {
-            let isPinned = pinManager.isPinned(type: type, id: id)
+        if let pinInfo = pinInfo(for: item) {
+            let isPinned = pinManager.isPinned(type: pinInfo.type, id: pinInfo.id)
             Button {
-                pinManager.togglePin(type: type, id: id)
+                pinManager.togglePin(type: pinInfo.type, id: pinInfo.id)
             } label: {
                 Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
             }
             .tint(isPinned ? .gray : .orange)
         }
+    }
+
+    private func pinInfo(for item: FeedItem) -> (type: String, id: Int)? {
+        if item.type == "event", let event = item.event {
+            return ("event", event.id)
+        } else if item.type == "futures", let futures = item.futures {
+            return ("future", futures.id)
+        }
+        return nil
     }
 }
