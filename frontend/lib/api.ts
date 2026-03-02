@@ -180,12 +180,14 @@ export async function fetchLiveOdds(sportKey: string): Promise<LiveOddsResponse>
 export async function searchEvents(params: {
   q: string;
   sport?: string;
+  tags?: string[];
   page?: number;
   per_page?: number;
 }): Promise<SearchResponse> {
   const searchParams = new URLSearchParams();
   searchParams.set("q", params.q);
   if (params.sport) searchParams.set("sport", params.sport);
+  if (params.tags && params.tags.length > 0) searchParams.set("tags", JSON.stringify(params.tags));
   if (params.page) searchParams.set("page", params.page.toString());
   if (params.per_page) searchParams.set("per_page", params.per_page.toString());
 

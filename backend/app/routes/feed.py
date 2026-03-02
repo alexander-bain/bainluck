@@ -15,9 +15,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, and_, or_, func, case
+from sqlalchemy import select, and_, or_, func, case, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.dependencies.auth import get_optional_user
 from app.models import Event, Sport, FuturesMarket, FuturesOutcome
@@ -144,14 +145,24 @@ async def get_feed(
     """
     now = datetime.now(timezone.utc)
 
-    # Parse tag filter
+    # Parse tag filter — split into static (SQL-pushable) and dynamic (inline)
     import json as _json
     tag_filter: Optional[list[str]] = None
+    static_tag_filter: list[str] = []  # Tags that don't change: sport, league, tier, class, level, gender, category, source
+    dynamic_tag_filter: list[str] = []  # Tags that change frequently: status, signal, timing, ei, importance
+    STATIC_NAMESPACES = {"sport", "league", "tier", "class", "level", "gender", "category", "source"}
     if tags:
         try:
             tag_filter = _json.loads(tags)
             if not isinstance(tag_filter, list):
                 tag_filter = None
+            else:
+                for t in tag_filter:
+                    ns = t.split(":")[0] if ":" in t else ""
+                    if ns in STATIC_NAMESPACES:
+                        static_tag_filter.append(t)
+                    else:
+                        dynamic_tag_filter.append(t)
         except (ValueError, TypeError):
             tag_filter = None
 
@@ -186,7 +197,7 @@ async def get_feed(
 
     # === SCORE EVENTS ===
     if include_events:
-        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=tag_filter)
+        event_items = await _score_events(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
         feed_items.extend(event_items)
 
     # === ENRICH EVENTS WITH TEAM DATA ===
@@ -212,7 +223,7 @@ async def get_feed(
 
     # === SCORE FUTURES ===
     if include_futures:
-        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=tag_filter)
+        futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
 
         # Deduplicate futures by canonical_market_key — keep highest-scoring per group.
         # Without this, "NBA Championship" from Polymarket, Kalshi, and Odds API
@@ -371,6 +382,7 @@ async def _score_events(
     my_teams_only: bool = False,
     my_team_names: Optional[list] = None,
     tag_filter: Optional[list[str]] = None,
+    static_tag_filter: Optional[list[str]] = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -379,6 +391,10 @@ async def _score_events(
     window-function query that was taking 25+ seconds with 130+ live events.
     Opening odds are accurate enough for ranking — the full aggregated odds
     are shown when the user clicks through to the event detail page.
+
+    Tag filtering uses a two-tier approach:
+    - Static tags (sport, league, tier, etc.) are pushed to SQL via GIN index
+    - Dynamic tags (status, signal, timing, etc.) are filtered inline for freshness
     """
     # Wider time windows for my_teams_only — users want to see all their
     # team's upcoming games and recent results.
@@ -421,6 +437,14 @@ async def _score_events(
 
     if sport_filter:
         query = query.where(Sport.key.ilike(f"%{sport_filter}%"))
+
+    # Push static tags to SQL via GIN containment index (@>)
+    # Only for tags that don't change after event creation (sport, league, tier, etc.)
+    if static_tag_filter:
+        import json as _json_mod
+        query = query.where(
+            Event.event_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
+        )
 
     # For my_teams_only, push team filtering to SQL so we don't miss events
     # beyond the safety cap (the 7-day window can have 1000+ events across
@@ -729,6 +753,7 @@ async def _score_futures(
     my_teams_only: bool = False,
     my_team_names: Optional[list] = None,
     tag_filter: Optional[list[str]] = None,
+    static_tag_filter: Optional[list[str]] = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -779,6 +804,13 @@ async def _score_futures(
                 FuturesMarket.llm_sport_category.ilike(f"%{sport_filter}%"),
                 FuturesMarket.external_id.ilike(f"%{sport_filter}%"),
             )
+        )
+
+    # Push static tags to SQL via GIN containment index (@>)
+    if static_tag_filter:
+        import json as _json_mod
+        id_filters.append(
+            FuturesMarket.market_tags.op("@>")(cast(_json_mod.dumps(static_tag_filter), JSONB))
         )
 
     subq = (

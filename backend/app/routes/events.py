@@ -5,9 +5,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, func, case
+from sqlalchemy import select, and_, or_, func, case, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team
@@ -427,6 +428,7 @@ async def get_ei_rankings(
 async def search_events(
     q: str = Query(..., min_length=2, description="Search query (team name, city, etc.)"),
     sport: Optional[str] = Query(None, description="Filter by sport key (e.g., basketball_nba)"),
+    tags: Optional[str] = Query(None, description="Filter by taxonomy tags (JSON array, e.g., [\"sport:basketball\", \"importance:playoff\"])"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
     days_back: int = Query(30, ge=1, le=365, description="How many days back to search"),
@@ -492,6 +494,18 @@ async def search_events(
     # Filter by sport if specified
     if sport:
         query = query.where(Sport.key == sport)
+
+    # Filter by taxonomy tags via GIN index
+    if tags:
+        import json as _json
+        try:
+            tag_list = _json.loads(tags)
+            if isinstance(tag_list, list) and tag_list:
+                query = query.where(
+                    Event.event_tags.op("@>")(cast(_json.dumps(tag_list), JSONB))
+                )
+        except (ValueError, TypeError):
+            pass
 
     # Custom ordering: live first, then upcoming (soonest), then completed (most recent)
     # Using CASE statement for status priority
