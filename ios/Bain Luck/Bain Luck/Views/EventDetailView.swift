@@ -298,25 +298,27 @@ struct EventDetailView: View {
     private func heroProbability(_ event: EventDetail, colors: (away: Color, home: Color)) -> some View {
         VStack(spacing: 6) {
             if isFinished {
-                // Completed: show pre-game odds prominently
-                if let opening = event.openingOdds,
-                   let awayOpen = opening.awayProbability,
-                   let homeOpen = opening.homeProbability {
+                // Completed: show pre-game odds prominently (fallback to current if no opening)
+                let awayProb = event.openingOdds?.awayProbability ?? event.currentOdds?.awayProbability
+                let homeProb = event.openingOdds?.homeProbability ?? event.currentOdds?.homeProbability
+                let label = event.openingOdds?.homeProbability != nil ? "Pre-game Odds" : "Win Probability"
+
+                if let awayProb, let homeProb {
                     HStack {
-                        Text(formatProbability(awayOpen))
+                        Text(formatProbability(awayProb))
                             .font(.title3).fontWeight(.bold).monospacedDigit()
                             .foregroundStyle(colors.away)
                         Spacer()
-                        Text("Pre-game Odds")
+                        Text(label)
                             .font(.caption2).fontWeight(.medium)
                             .foregroundStyle(.white.opacity(0.5))
                         Spacer()
-                        Text(formatProbability(homeOpen))
+                        Text(formatProbability(homeProb))
                             .font(.title3).fontWeight(.bold).monospacedDigit()
                             .foregroundStyle(colors.home)
                     }
                     ProbabilityBar(
-                        awayProb: awayOpen, homeProb: homeOpen,
+                        awayProb: awayProb, homeProb: homeProb,
                         awayColor: colors.away.opacity(0.7),
                         homeColor: colors.home.opacity(0.7),
                         height: 12

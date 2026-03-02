@@ -206,44 +206,39 @@ struct OddsChartView: View {
     // MARK: - Period Markers
 
     /// Extract period boundary markers from ESPN history data.
-    /// Returns a "Start" marker at commenceTime plus a marker at each period transition.
-    /// The start marker position is adjusted to match filtered data range.
+    /// Uses a firstSeen dictionary to produce exactly one marker per unique
+    /// normalized period label (e.g., Q1, Q2, Q3, Q4 for basketball).
+    /// Matches the web's `derivePeriodBoundaries()` approach.
     private func extractPeriodMarkers(_ history: EventHistoryResponse, filteredPoints: [ChartDataPoint]) -> [PeriodMarker] {
-        var markers: [PeriodMarker] = []
+        // Collect the first timestamp we see for each unique normalized period label.
+        // This handles missed transitions (e.g., ESPN sync started in Q2 — we still
+        // mark Q2 even though we never saw Q1→Q2).
+        var firstSeen: [(label: String, date: Date)] = []
+        var seenLabels: Set<String> = []
 
-        // Game start marker — position at the earliest filtered data point
-        // to avoid creating empty chart space from schedule delays
-        if let startDate = gameStartDate, isGameStarted {
-            var markerDate = startDate
-            if vm.selectedRange == .sinceStart, let firstPoint = filteredPoints.first {
-                let gap = firstPoint.date.timeIntervalSince(startDate)
-                if gap > 1800 {
-                    markerDate = firstPoint.date
+        // Try ESPN history first (has explicit period field)
+        if let espnHistory = history.espnHistory, espnHistory.count >= 2 {
+            // Sort by timestamp to ensure we get the FIRST occurrence
+            let sorted = espnHistory
+                .compactMap { point -> (period: String, date: Date)? in
+                    guard let period = point.period, !period.isEmpty,
+                          let date = point.timestamp.asDate else { return nil }
+                    return (period, date)
                 }
-            }
-            markers.append(PeriodMarker(date: markerDate, label: "Start", isGameStart: true))
-        }
+                .sorted { $0.date < $1.date }
 
-        // Period boundary markers from ESPN history
-        guard let espnHistory = history.espnHistory, espnHistory.count >= 2 else {
-            return markers
-        }
-
-        var lastPeriod: String? = nil
-        for point in espnHistory {
-            guard let period = point.period, !period.isEmpty,
-                  let date = point.timestamp.asDate else { continue }
-
-            if period != lastPeriod {
-                if lastPeriod != nil {
-                    // Period changed — mark the start of the new period
-                    markers.append(PeriodMarker(date: date, label: period, isGameStart: false))
-                }
-                lastPeriod = period
+            for point in sorted {
+                let label = normalizePeriodLabel(point.period)
+                guard !label.isEmpty, !seenLabels.contains(label) else { continue }
+                seenLabels.insert(label)
+                firstSeen.append((label, point.date))
             }
         }
 
-        return markers
+        // Sort by date and convert to PeriodMarker
+        return firstSeen
+            .sorted { $0.date < $1.date }
+            .map { PeriodMarker(date: $0.date, label: $0.label, isGameStart: false) }
     }
 
     // MARK: - Chart
@@ -253,8 +248,9 @@ struct OddsChartView: View {
 
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
-        if vm.selectedRange == .sinceStart, let startDate = gameStartDate {
-            visibleMarkers = periodMarkers.filter { $0.date >= startDate }
+        if let minDate = dataPoints.map(\.date).min(),
+           let maxDate = dataPoints.map(\.date).max() {
+            visibleMarkers = periodMarkers.filter { $0.date >= minDate && $0.date <= maxDate }
         } else {
             visibleMarkers = periodMarkers
         }
@@ -265,13 +261,13 @@ struct OddsChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
-            // Period marker lines
+            // Period marker lines (one per period: Q1, Q2, Q3, Q4 etc.)
             ForEach(visibleMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: marker.isGameStart ? 1.2 : 1.0, dash: [3, 3]))
-                    .foregroundStyle(.secondary.opacity(marker.isGameStart ? 0.7 : 0.5))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
+                    .foregroundStyle(.secondary.opacity(0.4))
                     .annotation(position: .top, alignment: .leading) {
-                        Text(normalizePeriodLabel(marker.label))
+                        Text(marker.label)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.primary.opacity(0.7))
                             .padding(.horizontal, 4)
@@ -312,7 +308,8 @@ struct OddsChartView: View {
         }
         .chartXAxis {
             AxisMarks { _ in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
+                    .foregroundStyle(.secondary.opacity(0.3))
                 AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)
                     .font(.caption2)
             }
@@ -461,9 +458,48 @@ struct OddsChartView: View {
     }
 
     private func displayNameForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> String {
+        // Aggregate line — just "Bain Luck" with no type suffix (matches web)
         if source == "aggregate" { return "Bain Luck" }
-        if source == "consensus" { return "Betting Odds" }
-        return sources[source]?.displayName ?? source.capitalized
+
+        // Resolve display name
+        let name: String
+        let type: String
+        switch source {
+        case "consensus":
+            name = "Betting Odds"
+            type = "market"
+        default:
+            name = sources[source]?.displayName ?? fallbackDisplayName(source)
+            type = sources[source]?.type ?? fallbackType(source)
+        }
+
+        // Add type suffix like web: "Kalshi (market)", "ESPN (model)"
+        return "\(name) (\(type))"
+    }
+
+    /// Fallback display names matching web's FALLBACK_SOURCE_CONFIG
+    private func fallbackDisplayName(_ source: String) -> String {
+        switch source {
+        case "espn": return "ESPN"
+        case "stat_model", "bainluck_model": return "Bain Luck Model"
+        case "kalshi": return "Kalshi"
+        case "polymarket": return "Polymarket"
+        case "fangraphs": return "MLB Model"
+        case "moneypuck": return "MoneyPuck"
+        default: return source.capitalized
+        }
+    }
+
+    /// Fallback source types matching web's FALLBACK_SOURCE_CONFIG
+    private func fallbackType(_ source: String) -> String {
+        switch source {
+        case "espn", "stat_model", "bainluck_model", "fangraphs", "moneypuck":
+            return "model"
+        case "kalshi", "polymarket":
+            return "market"
+        default:
+            return "model"
+        }
     }
 
     // MARK: - X-Axis Domain
@@ -483,40 +519,75 @@ struct OddsChartView: View {
     // MARK: - Period Label Normalization
 
     /// Normalize ESPN period strings to user-friendly labels.
+    /// Matches web's normalizePeriodLabel() in periodMarkers.ts
     private func normalizePeriodLabel(_ raw: String) -> String {
-        let lower = raw.lowercased().trimmingCharacters(in: .whitespaces)
+        var s = raw.trimmingCharacters(in: .whitespaces)
 
-        // Already short/friendly
-        if ["start", "ot", "ot1", "ot2", "ot3", "ot4", "so"].contains(lower) {
-            return raw
+        // Strip clock prefix: "11:05 - 1st Quarter" → "1st Quarter"
+        if let dashRange = s.range(of: #"^[\d.:]+\s*-\s*"#, options: .regularExpression) {
+            s = String(s[dashRange.upperBound...])
         }
 
-        // Basketball / Football quarters
-        if lower.hasPrefix("1st quarter") || lower == "1st" { return "Q1" }
-        if lower.hasPrefix("2nd quarter") || lower == "2nd" { return "Q2" }
-        if lower.hasPrefix("3rd quarter") || lower == "3rd" { return "Q3" }
-        if lower.hasPrefix("4th quarter") || lower == "4th" { return "Q4" }
-
-        // Hockey / Soccer halves/periods
-        if lower.hasPrefix("1st period") { return "P1" }
-        if lower.hasPrefix("2nd period") { return "P2" }
-        if lower.hasPrefix("3rd period") { return "P3" }
-        if lower.hasPrefix("1st half") { return "H1" }
-        if lower.hasPrefix("2nd half") { return "H2" }
-
-        // Baseball innings
-        if lower.contains("inning") {
-            let digits = raw.filter(\.isNumber)
-            if !digits.isEmpty { return "\(digits)th" }
+        // Strip "End of " / "Start of " prefix
+        if let prefixRange = s.range(of: #"^(?:end|start)\s+of\s+"#, options: [.regularExpression, .caseInsensitive]) {
+            s = String(s[prefixRange.upperBound...])
         }
 
-        // Halftime / Intermission
-        if lower.contains("halftime") || lower.contains("half time") { return "HT" }
-        if lower.contains("intermission") { return "INT" }
+        let lower = s.lowercased()
+
+        // Halftime
+        if lower == "halftime" || lower == "half time" || lower == "ht" { return "HT" }
 
         // Overtime variants
-        if lower.contains("overtime") { return "OT" }
+        if lower == "overtime" || lower == "ot" { return "OT" }
+        if let match = lower.range(of: #"^(\d+)\w*\s+overtime$"#, options: .regularExpression) {
+            let digits = s[match].filter(\.isNumber)
+            return "OT\(digits)"
+        }
 
-        return raw
+        // Basketball / Football quarters: "1st Quarter" → "Q1"
+        if let match = s.range(of: #"^(\d+)\w*\s+[Qq]uarter$"#, options: .regularExpression) {
+            let digits = s[match].filter(\.isNumber)
+            return "Q\(digits)"
+        }
+        // Plain ordinals for quarters
+        if lower == "1st" { return "Q1" }
+        if lower == "2nd" { return "Q2" }
+        if lower == "3rd" { return "Q3" }
+        if lower == "4th" { return "Q4" }
+
+        // Hockey periods: "1st Period" → "P1"
+        if let match = s.range(of: #"^(\d+)\w*\s+[Pp]eriod$"#, options: .regularExpression) {
+            let digits = s[match].filter(\.isNumber)
+            return "P\(digits)"
+        }
+
+        // Soccer halves: "1st Half" → "1H"
+        if let match = s.range(of: #"^(\d+)\w*\s+[Hh]alf$"#, options: .regularExpression) {
+            let digits = s[match].filter(\.isNumber)
+            return "\(digits)H"
+        }
+
+        // Baseball innings: "Top 3rd" / "Bottom 3rd" / "Mid 3rd" → "3"
+        if let match = s.range(of: #"^(?:top|bottom|mid|end)\s+(\d+)"#, options: [.regularExpression, .caseInsensitive]) {
+            let digits = s[match].filter(\.isNumber)
+            return digits
+        }
+
+        // Plain ordinal inning: "3rd" → "3"
+        if let match = s.range(of: #"^(\d+)(?:st|nd|rd|th)$"#, options: [.regularExpression, .caseInsensitive]) {
+            let digits = s[match].filter(\.isNumber)
+            return digits
+        }
+
+        // Already short: "Q1", "P2", "1H", "OT", "OT1", etc.
+        if s.range(of: #"^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return s.uppercased()
+        }
+
+        // Intermission
+        if lower.contains("intermission") { return "INT" }
+
+        return s
     }
 }
