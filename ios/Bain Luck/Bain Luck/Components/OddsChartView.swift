@@ -262,12 +262,16 @@ struct OddsChartView: View {
             // Period marker lines
             ForEach(visibleMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: marker.isGameStart ? 0.8 : 0.5, dash: [3, 3]))
-                    .foregroundStyle(.white.opacity(marker.isGameStart ? 0.4 : 0.25))
+                    .lineStyle(StrokeStyle(lineWidth: marker.isGameStart ? 1.2 : 1.0, dash: [3, 3]))
+                    .foregroundStyle(.white.opacity(marker.isGameStart ? 0.6 : 0.5))
                     .annotation(position: .top, alignment: .leading) {
-                        Text(marker.label)
-                            .font(.system(size: 8))
-                            .foregroundStyle(.white.opacity(0.5))
+                        Text(normalizePeriodLabel(marker.label))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(.white.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
                             .padding(.leading, 2)
                     }
             }
@@ -288,6 +292,7 @@ struct OddsChartView: View {
             }
         }
         .chartYScale(domain: 0...1)
+        .chartXScale(domain: xAxisDomain(for: dataPoints))
         .chartYAxis {
             AxisMarks(values: [0.0, 0.25, 0.5, 0.75, 1.0]) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
@@ -387,5 +392,59 @@ struct OddsChartView: View {
     private func displayNameForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> String {
         if source == "consensus" { return "Betting Odds" }
         return sources[source]?.displayName ?? source.capitalized
+    }
+
+    // MARK: - X-Axis Domain
+
+    /// Compute a tight x-axis domain from the data points with small padding.
+    private func xAxisDomain(for dataPoints: [ChartDataPoint]) -> ClosedRange<Date> {
+        let dates = dataPoints.map(\.date)
+        guard let minDate = dates.min(), let maxDate = dates.max() else {
+            let now = Date()
+            return now...now
+        }
+        let range = maxDate.timeIntervalSince(minDate)
+        let padding = max(range * 0.02, 60) // At least 1 minute padding
+        return minDate.addingTimeInterval(-padding)...maxDate.addingTimeInterval(padding)
+    }
+
+    // MARK: - Period Label Normalization
+
+    /// Normalize ESPN period strings to user-friendly labels.
+    private func normalizePeriodLabel(_ raw: String) -> String {
+        let lower = raw.lowercased().trimmingCharacters(in: .whitespaces)
+
+        // Already short/friendly
+        if ["start", "ot", "ot1", "ot2", "ot3", "ot4", "so"].contains(lower) {
+            return raw
+        }
+
+        // Basketball / Football quarters
+        if lower.hasPrefix("1st quarter") || lower == "1st" { return "Q1" }
+        if lower.hasPrefix("2nd quarter") || lower == "2nd" { return "Q2" }
+        if lower.hasPrefix("3rd quarter") || lower == "3rd" { return "Q3" }
+        if lower.hasPrefix("4th quarter") || lower == "4th" { return "Q4" }
+
+        // Hockey / Soccer halves/periods
+        if lower.hasPrefix("1st period") { return "P1" }
+        if lower.hasPrefix("2nd period") { return "P2" }
+        if lower.hasPrefix("3rd period") { return "P3" }
+        if lower.hasPrefix("1st half") { return "H1" }
+        if lower.hasPrefix("2nd half") { return "H2" }
+
+        // Baseball innings
+        if lower.contains("inning") {
+            let digits = raw.filter(\.isNumber)
+            if !digits.isEmpty { return "\(digits)th" }
+        }
+
+        // Halftime / Intermission
+        if lower.contains("halftime") || lower.contains("half time") { return "HT" }
+        if lower.contains("intermission") { return "INT" }
+
+        // Overtime variants
+        if lower.contains("overtime") { return "OT" }
+
+        return raw
     }
 }

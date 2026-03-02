@@ -262,6 +262,7 @@ def build_llm_prompt(
     news_headlines: Optional[list[str]] = None,
     game_context: Optional[dict] = None,
     team_stats: Optional[dict] = None,
+    scoring_plays: Optional[list[dict]] = None,
 ) -> str:
     """
     Build the LLM prompt to explain line movements.
@@ -272,29 +273,26 @@ def build_llm_prompt(
         news_headlines: List of recent news headline strings
         game_context: Dict with home_team, away_team, home_score, away_score, period, clock
         team_stats: Dict with home_stats and away_stats dicts (season stats like ppg, opp_ppg)
+        scoring_plays: List of scoring play dicts with timestamp, description, team, period, clock, home_score, away_score
 
     Returns a prompt string ready to send to GPT-4o-mini.
     """
-    # Build context sections
+    # Build context sections — scoring plays first, then game state, then injuries/news
     context_sections = []
 
-    if injuries:
-        lines = ["Known injury report:"]
-        for inj in injuries[:10]:  # Cap at 10 to keep prompt manageable
-            parts = [f"  - {inj['player_name']} ({inj['team_name']}): {inj['status']}"]
-            if inj.get("injury_type") and inj["injury_type"] != "Unknown":
-                parts[0] += f" — {inj['injury_type']}"
-            if inj.get("detail"):
-                parts[0] += f" ({inj['detail']})"
-            if inj.get("expected_return"):
-                parts[0] += f" [Expected return: {inj['expected_return']}]"
-            lines.append(parts[0])
-        context_sections.append("\n".join(lines))
-
-    if news_headlines:
-        lines = ["Recent headlines:"]
-        for headline in news_headlines[:5]:
-            lines.append(f"  - {headline}")
+    if scoring_plays:
+        lines = ["Key game moments:"]
+        for play in scoring_plays[:15]:  # Cap at 15 most relevant
+            period = play.get("period", "")
+            clock = play.get("clock", "")
+            team = play.get("team", "")
+            desc = play.get("description", "")
+            h_score = play.get("home_score")
+            a_score = play.get("away_score")
+            time_label = f"{period} {clock}".strip() if period or clock else ""
+            score_label = f"({h_score} - {a_score})" if h_score is not None and a_score is not None else ""
+            parts = [p for p in [time_label, team, desc, score_label] if p]
+            lines.append(f"  - {' '.join(parts)}")
         context_sections.append("\n".join(lines))
 
     if game_context:
@@ -313,6 +311,23 @@ def build_llm_prompt(
             parts.append(f"Clock: {clock}")
         if parts:
             context_sections.append("Live game state: " + " | ".join(parts))
+
+    if injuries:
+        lines = ["Known injury report:"]
+        for inj in injuries[:5]:  # Cap at 5 to focus on most impactful
+            parts = [f"  - {inj['player_name']} ({inj['team_name']}): {inj['status']}"]
+            if inj.get("injury_type") and inj["injury_type"] != "Unknown":
+                parts[0] += f" — {inj['injury_type']}"
+            if inj.get("detail"):
+                parts[0] += f" ({inj['detail']})"
+            lines.append(parts[0])
+        context_sections.append("\n".join(lines))
+
+    if news_headlines:
+        lines = ["Recent headlines:"]
+        for headline in news_headlines[:5]:
+            lines.append(f"  - {headline}")
+        context_sections.append("\n".join(lines))
 
     if team_stats:
         stats_lines = ["Season stats:"]
@@ -335,15 +350,23 @@ def build_llm_prompt(
         extra_context = "\n\n" + "\n\n".join(context_sections) + "\n"
 
     # Determine how much context we actually have
+    has_scoring_plays = bool(scoring_plays)
     has_injuries = bool(injuries)
     has_news = bool(news_headlines)
     has_game_state = bool(game_context and game_context.get("home_score") is not None)
-    has_any_context = has_injuries or has_news or has_game_state or bool(team_stats)
+    has_any_context = has_scoring_plays or has_injuries or has_news or has_game_state or bool(team_stats)
 
     # Context-aware instructions:
-    # When we have no concrete context, the LLM should acknowledge
-    # the movement without fabricating explanations.
-    if has_injuries or has_news:
+    # Scoring plays get the richest prompt — correlate odds shifts with game moments.
+    if has_scoring_plays:
+        context_instructions = """- Write 2-3 concise sentences explaining the most likely reason(s) for the movement
+- Reference specific scoring plays and game moments when explaining movements. Correlate timing of odds shifts with plays that happened around the same time.
+- State facts directly. Do NOT use "likely due to", "probably because", or any speculative hedging language.
+- BAD: "likely due to their strong performance leading to a significant lead"
+- GOOD: "A 12-0 run in Q3 pushed Detroit from 55% to 78%. Cade Cunningham hit back-to-back threes."
+- Only mention injuries if they directly relate to an odds movement. Don't list the full injury report — focus on players actually missing from the game.
+- If the game is completed, describe how the odds evolved through the game, not just the final state."""
+    elif has_injuries or has_news:
         context_instructions = """- Write 2-3 concise sentences explaining the most likely reason(s) for the movement
 - Focus on the single biggest movement if there are multiple
 - Use the injury and news information provided when explaining the movement. Only reference specific injuries/news if they are listed above. Do not fabricate injury information.

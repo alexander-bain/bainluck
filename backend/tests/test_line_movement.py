@@ -293,7 +293,7 @@ class TestBuildLLMPrompt:
         # Should instruct against vague speculation
         assert "Do NOT speculate" in prompt
         # Should instruct to describe factually
-        assert "describe what happened factually" in prompt.lower()
+        assert "factually" in prompt.lower()
 
     def test_prompt_injuries_unknown_type_omitted(self):
         """Injury with 'Unknown' type should not show type detail."""
@@ -315,8 +315,8 @@ class TestBuildLLMPrompt:
         ])
         assert "Do not fabricate injury information" in prompt
 
-    def test_prompt_caps_injuries_at_10(self):
-        """More than 10 injuries should be capped to keep prompt manageable."""
+    def test_prompt_caps_injuries_at_5(self):
+        """More than 5 injuries should be capped to focus on most impactful."""
         analysis = _make_analysis()
         injuries = [
             {"player_name": f"Player {i}", "team_name": "Team", "status": "Out", "injury_type": "Injury"}
@@ -325,7 +325,7 @@ class TestBuildLLMPrompt:
         prompt = build_llm_prompt(analysis, injuries=injuries)
         # Count injury lines (each starts with "  - ")
         injury_lines = [line for line in prompt.split("\n") if line.strip().startswith("- Player")]
-        assert len(injury_lines) == 10
+        assert len(injury_lines) == 5
 
     def test_prompt_caps_news_at_5(self):
         """More than 5 headlines should be capped."""
@@ -334,6 +334,63 @@ class TestBuildLLMPrompt:
         prompt = build_llm_prompt(analysis, news_headlines=news)
         headline_lines = [line for line in prompt.split("\n") if line.strip().startswith("- Headline")]
         assert len(headline_lines) == 5
+
+    def test_prompt_with_scoring_plays(self):
+        """Scoring plays should appear in prompt and trigger scoring-play instructions."""
+        analysis = _make_analysis()
+        scoring_plays = [
+            {
+                "period": "Q1",
+                "clock": "8:42",
+                "team": "DET",
+                "description": "Cade Cunningham 3-pointer",
+                "home_score": 15,
+                "away_score": 12,
+            },
+            {
+                "period": "Q2",
+                "clock": "3:15",
+                "team": "ORL",
+                "description": "Paolo Banchero dunk",
+                "home_score": 45,
+                "away_score": 48,
+            },
+        ]
+        prompt = build_llm_prompt(analysis, scoring_plays=scoring_plays)
+        assert "Key game moments:" in prompt
+        assert "Cade Cunningham" in prompt
+        assert "Paolo Banchero" in prompt
+        assert "15 - 12" in prompt
+        # Should use the scoring-plays-aware instructions
+        assert "scoring plays" in prompt.lower()
+
+    def test_prompt_scoring_plays_capped_at_15(self):
+        """More than 15 scoring plays should be capped."""
+        analysis = _make_analysis()
+        scoring_plays = [
+            {"period": "Q1", "clock": f"{i}:00", "team": "A", "description": f"Play {i}",
+             "home_score": i, "away_score": i + 1}
+            for i in range(20)
+        ]
+        prompt = build_llm_prompt(analysis, scoring_plays=scoring_plays)
+        play_lines = [line for line in prompt.split("\n") if line.strip().startswith("- Q1")]
+        assert len(play_lines) == 15
+
+    def test_prompt_scoring_plays_take_priority_over_injuries(self):
+        """When scoring plays are present, they should appear before injuries in the prompt."""
+        analysis = _make_analysis()
+        injuries = [
+            {"player_name": "Player X", "team_name": "Team A", "status": "Out", "injury_type": "Ankle"},
+        ]
+        scoring_plays = [
+            {"period": "Q3", "clock": "5:00", "team": "Home", "description": "Three pointer",
+             "home_score": 70, "away_score": 60},
+        ]
+        prompt = build_llm_prompt(analysis, injuries=injuries, scoring_plays=scoring_plays)
+        # Scoring plays section should come before injury report
+        plays_pos = prompt.find("Key game moments:")
+        injuries_pos = prompt.find("Known injury report:")
+        assert plays_pos < injuries_pos
 
 
 # ── StatPal injury merging (A1) ───────────────────────────────────────

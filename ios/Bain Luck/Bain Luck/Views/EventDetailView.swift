@@ -212,7 +212,7 @@ struct EventDetailView: View {
                         }
                     }
                 }
-                .frame(width: 120)
+                .fixedSize(horizontal: true, vertical: false)
 
                 // Home team
                 VStack(spacing: 6) {
@@ -329,15 +329,6 @@ struct EventDetailView: View {
     private func freshnessStrip(_ event: EventDetail) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                if let count = event.currentOdds?.bookmakerCount, count > 0 {
-                    freshnessChip(icon: "book.closed", text: "\(count) sources")
-                }
-                if let spread = event.currentOdds?.spread {
-                    freshnessChip(icon: "plusminus", text: String(format: "%.1f", spread))
-                }
-                if let ou = event.currentOdds?.overUnder {
-                    freshnessChip(icon: "arrow.up.arrow.down", text: "O/U \(String(format: "%.1f", ou))")
-                }
                 if let captured = event.currentOdds?.capturedAt,
                    let date = captured.asDate {
                     let elapsed = Int(-date.timeIntervalSinceNow)

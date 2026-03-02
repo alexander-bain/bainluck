@@ -2741,6 +2741,7 @@ async def get_line_movement_analysis(
     injuries_data = None
     news_headlines = None
     game_context = None
+    scoring_plays_data = None
 
     if analysis.movements:
         # Fetch real context from ESPN for grounded explanations
@@ -2790,6 +2791,17 @@ async def get_line_movement_analysis(
             else:
                 injuries_data = statpal_injuries
 
+        # For completed games, only include injuries for players actually OUT
+        # (skip Questionable/Day-to-Day which are noise for post-game explanation)
+        if event.status in ("completed", "closed") and injuries_data:
+            injuries_data = [i for i in injuries_data if i.get("status") in ("Out", "Doubtful")]
+        injuries_data = (injuries_data or [])[:5]
+
+        # Extract scoring plays from StatPal play-by-play data
+        scoring_plays_data = extract_scoring_plays(
+            (event.win_probability_sources or {}).get("statpal_plays", [])
+        )
+
         if event.status == "live":
             game_context = {
                 "home_team": event.home_team_name,
@@ -2824,7 +2836,7 @@ async def get_line_movement_analysis(
 
         # Skip LLM when we have no real context — it can only restate
         # what the movement cards already show, producing filler text
-        has_any_context = bool(injuries_data) or bool(news_headlines) or bool(game_context) or bool(team_stats)
+        has_any_context = bool(injuries_data) or bool(news_headlines) or bool(game_context) or bool(team_stats) or bool(scoring_plays_data)
         if has_any_context:
             prompt = build_llm_prompt(
                 analysis,
@@ -2832,6 +2844,7 @@ async def get_line_movement_analysis(
                 news_headlines=news_headlines,
                 game_context=game_context,
                 team_stats=team_stats,
+                scoring_plays=scoring_plays_data,
             )
             try:
                 from app.services.llm import generate_line_movement_explanation
@@ -2909,6 +2922,7 @@ async def get_line_movement_analysis(
         "news_count": len(news_headlines) if news_headlines else 0,
         "has_game_state": bool(game_context),
         "has_team_stats": bool(team_stats),
+        "scoring_plays_count": len(scoring_plays_data) if scoring_plays_data else 0,
     }
 
     # Store movements + context together in movement_data JSONB
