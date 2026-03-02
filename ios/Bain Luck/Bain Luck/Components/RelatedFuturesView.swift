@@ -12,22 +12,49 @@ final class RelatedFuturesViewModel: ObservableObject {
     @Published var error: String?
 
     let eventId: Int
+    private var refreshTimer: Timer?
 
     init(eventId: Int) {
         self.eventId = eventId
     }
 
+    var isLive: Bool {
+        relatedFutures?.eventStatus == "live"
+    }
+
     @MainActor
     func load() async {
+        let isInitial = relatedFutures == nil
+        if isInitial { loading = true }
         do {
             relatedFutures = try await APIClient.shared.fetchRelatedFutures(eventId: eventId)
             error = nil
             loading = false
+            configureAutoRefresh()
         } catch {
-            self.error = error.localizedDescription
+            if isInitial {
+                self.error = error.localizedDescription
+            }
             loading = false
             logger.error("Failed to load related futures for event \(self.eventId): \(error)")
         }
+    }
+
+    private func configureAutoRefresh() {
+        refreshTimer?.invalidate()
+        guard isLive else { return }
+        // Refresh every 60 seconds during live games to update box scores
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.load()
+            }
+        }
+    }
+
+    func stopRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
 }
 
@@ -219,6 +246,9 @@ struct RelatedFuturesView: View {
         .task {
             await vm.load()
         }
+        .onDisappear {
+            vm.stopRefresh()
+        }
     }
 
     // MARK: - Content
@@ -269,7 +299,11 @@ struct RelatedFuturesView: View {
                         teamName: rf.awayTeam,
                         futures: awayFutures,
                         teamColor: awayTeamColor,
-                        allFutures: awayFutures + homeFutures
+                        allFutures: awayFutures + homeFutures,
+                        boxScore: rf.boxScore,
+                        eventStatus: rf.eventStatus,
+                        gamePeriod: rf.gamePeriod,
+                        gameClock: rf.gameClock
                     )
                 }
 
@@ -279,7 +313,11 @@ struct RelatedFuturesView: View {
                         teamName: rf.homeTeam,
                         futures: homeFutures,
                         teamColor: homeTeamColor,
-                        allFutures: awayFutures + homeFutures
+                        allFutures: awayFutures + homeFutures,
+                        boxScore: rf.boxScore,
+                        eventStatus: rf.eventStatus,
+                        gamePeriod: rf.gamePeriod,
+                        gameClock: rf.gameClock
                     )
                 }
 
@@ -311,7 +349,7 @@ struct RelatedFuturesView: View {
 
     // MARK: - Team Section
 
-    private func teamSection(teamName: String, futures: [RelatedFuture], teamColor: Color, allFutures: [RelatedFuture]) -> some View {
+    private func teamSection(teamName: String, futures: [RelatedFuture], teamColor: Color, allFutures: [RelatedFuture], boxScore: [String: [String: Double]]? = nil, eventStatus: String? = nil, gamePeriod: Int? = nil, gameClock: String? = nil) -> some View {
         let tiered = Dictionary(grouping: futures) { effectiveTier($0) }
         let championships = (tiered[1] ?? []) + (tiered[2] ?? [])
         let awards = (tiered[3] ?? []) + (tiered[4] ?? [])
@@ -363,7 +401,15 @@ struct RelatedFuturesView: View {
             // Stat props
             if !statProps.isEmpty && shown < displayLimit {
                 let items = Array(statProps.prefix(displayLimit - shown))
-                StatPropsSection(futures: items, teamColor: teamColor)
+                StatPropsSection(
+                    futures: items,
+                    teamColor: teamColor,
+                    boxScore: boxScore,
+                    eventStatus: eventStatus,
+                    gamePeriod: gamePeriod,
+                    gameClock: gameClock,
+                    sportKey: sportKey
+                )
                 let _ = (shown += items.count)
             }
         }
@@ -637,9 +683,23 @@ private struct GameCell: View {
 private struct StatPropsSection: View {
     let futures: [RelatedFuture]
     let teamColor: Color
+    var boxScore: [String: [String: Double]]? = nil
+    var eventStatus: String? = nil
+    var gamePeriod: Int? = nil
+    var gameClock: String? = nil
+    var sportKey: String? = nil
+
+    private var isLive: Bool { eventStatus == "live" }
+    private var isFinished: Bool { eventStatus == "completed" || eventStatus == "closed" }
+    private var hasBoxScore: Bool { boxScore != nil && !(boxScore?.isEmpty ?? true) }
 
     private var meaningful: [RelatedFuture] {
         futures.filter { ($0.probability ?? 0) > 0.02 && ($0.probability ?? 0) < 0.98 }
+    }
+
+    private var gameProgressValue: Double? {
+        guard isLive else { return nil }
+        return computeGameProgress(sport: sportKey, period: gamePeriod, clock: gameClock)
     }
 
     var body: some View {
@@ -649,15 +709,20 @@ private struct StatPropsSection: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 5) {
-                    Image(systemName: "chart.bar.fill")
+                    Image(systemName: (isLive && hasBoxScore) ? "sportscourt.fill" : "chart.bar.fill")
                         .font(.system(size: 10))
-                    Text("Player Stats")
+                    Text((isLive && hasBoxScore) ? "Live Player Stats" : isFinished && hasBoxScore ? "Player Results" : "Player Stats")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .textCase(.uppercase)
                         .tracking(0.5)
+                    if isLive && hasBoxScore {
+                        Circle()
+                            .fill(.red)
+                            .frame(width: 6, height: 6)
+                    }
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle((isLive && hasBoxScore) ? teamColor : .secondary)
 
                 ForEach(Array(sortedGroups.prefix(3).enumerated()), id: \.offset) { _, group in
                     let config = getStatConfig(group.key)
@@ -671,16 +736,31 @@ private struct StatPropsSection: View {
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.secondary)
-                            Text("(\(rows.count))")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                            if !((isLive || isFinished) && hasBoxScore) {
+                                Text("(\(rows.count))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
 
-                        // Horizontally scrolling stat cards
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(Array(rows.prefix(4).enumerated()), id: \.element.id) { _, row in
-                                    StatPropCard(future: row, teamColor: teamColor)
+                        if (isLive || isFinished) && hasBoxScore {
+                            // Full-width tracker rows
+                            ForEach(Array(rows.prefix(4).enumerated()), id: \.element.id) { _, row in
+                                StatTrackerRow(
+                                    future: row,
+                                    teamColor: teamColor,
+                                    boxScore: boxScore!,
+                                    isLive: isLive,
+                                    gameProgress: gameProgressValue
+                                )
+                            }
+                        } else {
+                            // Pre-game: compact cards
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(Array(rows.prefix(4).enumerated()), id: \.element.id) { _, row in
+                                        StatPropCard(future: row, teamColor: teamColor)
+                                    }
                                 }
                             }
                         }
@@ -688,6 +768,185 @@ private struct StatPropsSection: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Live/Completed Stat Tracker Row
+
+private struct StatTrackerRow: View {
+    let future: RelatedFuture
+    let teamColor: Color
+    let boxScore: [String: [String: Double]]
+    let isLive: Bool
+    var gameProgress: Double? = nil
+
+    private var playerName: String {
+        let name = future.outcomeName
+        if let idx = name.firstIndex(of: ":") {
+            return String(name[..<idx]).trimmingCharacters(in: .whitespaces)
+        }
+        return name
+    }
+
+    private var lineText: String {
+        let name = future.outcomeName
+        if let idx = name.firstIndex(of: ":") {
+            return String(name[name.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+        }
+        return ""
+    }
+
+    private var lineValue: Double? {
+        guard let range = lineText.range(of: #"\d+\.?\d*"#, options: .regularExpression) else { return nil }
+        return Double(lineText[range])
+    }
+
+    private var isOverBet: Bool {
+        lineText.lowercased().contains("over") || lineText.hasSuffix("+")
+    }
+
+    private var statCategory: String {
+        extractStatCategory(future.marketName)
+    }
+
+    private var currentValue: Double? {
+        lookupBoxScore(playerName: playerName, stat: statCategory, boxScore: boxScore)
+    }
+
+    private var projected: Int? {
+        guard isLive, let current = currentValue, let gp = gameProgress, gp > 0.08 else { return nil }
+        return Int((current / gp).rounded())
+    }
+
+    private var hitLine: Bool? {
+        guard let current = currentValue, let line = lineValue else { return nil }
+        return isOverBet ? current > line : current < line
+    }
+
+    private var onPaceToHit: Bool? {
+        guard let proj = projected, let line = lineValue else { return nil }
+        return isOverBet ? Double(proj) > line : Double(proj) < line
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            PlayerHeadshotView(
+                player: future.matchedPlayer,
+                name: playerName,
+                teamColor: teamColor,
+                size: 44
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                // Player name
+                Text(playerName)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+
+                // Current value + stat + projection/result
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let current = currentValue {
+                        Text("\(Int(current))")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                            .foregroundStyle(teamColor)
+                    }
+
+                    Text(statCategory)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    if isLive {
+                        // Projection
+                        if let proj = projected {
+                            VStack(alignment: .trailing, spacing: 1) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 9, weight: .bold))
+                                    Text("\(proj)")
+                                        .font(.callout)
+                                        .fontWeight(.bold)
+                                        .monospacedDigit()
+                                }
+                                .foregroundStyle(onPaceToHit == true ? .green : .orange)
+                                Text("projected")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    } else {
+                        // Completed: result badge
+                        if let hit = hitLine {
+                            HStack(spacing: 3) {
+                                Image(systemName: hit ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                Text(hit ? "Hit" : "Missed")
+                            }
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(hit ? .green : .red)
+                        }
+                    }
+                }
+
+                // Progress bar toward line
+                if let line = lineValue {
+                    let current = currentValue ?? 0
+                    let maxVal = max(line * 1.5, current * 1.2, 1)
+                    let barProgress = min(1.0, current / maxVal)
+                    let linePosition = min(1.0, line / maxVal)
+
+                    HStack(spacing: 8) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                // Track
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.secondary.opacity(0.12))
+                                // Fill
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(teamColor.opacity(0.7))
+                                    .frame(width: max(0, geo.size.width * barProgress))
+                                // Line marker
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(Color.primary.opacity(0.4))
+                                    .frame(width: 2, height: 14)
+                                    .offset(x: max(0, geo.size.width * linePosition - 1))
+                            }
+                        }
+                        .frame(height: 8)
+
+                        // Line value + probability
+                        HStack(spacing: 4) {
+                            Text(lineText)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            if let prob = future.probability {
+                                Text("\(Int(prob * 100))%")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(teamColor)
+                            }
+                        }
+                        .fixedSize()
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.secondary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(
+                    isLive ? teamColor.opacity(0.2) : Color.secondary.opacity(0.08),
+                    lineWidth: 1
+                )
+        )
     }
 }
 
@@ -880,4 +1139,83 @@ private struct PlayerHeadshotView: View {
                 .foregroundStyle(teamColor)
         }
     }
+}
+
+// MARK: - Game Progress & Box Score Helpers
+
+private func computeGameProgress(sport: String?, period: Int?, clock: String?) -> Double? {
+    guard let period = period, period > 0 else { return nil }
+
+    let totalPeriods: Double
+    let periodMinutes: Double
+
+    let s = (sport ?? "").lowercased()
+    if s.contains("ncaa") || s.contains("wncaa") {
+        // College basketball: 2 halves of 20 min
+        totalPeriods = 2
+        periodMinutes = 20
+    } else if s.contains("basketball") || s.contains("nba") || s.contains("wnba") {
+        totalPeriods = 4
+        periodMinutes = 12
+    } else if s.contains("football") || s.contains("nfl") {
+        totalPeriods = 4
+        periodMinutes = 15
+    } else if s.contains("hockey") || s.contains("nhl") {
+        totalPeriods = 3
+        periodMinutes = 20
+    } else if s.contains("soccer") || s.contains("mls") || s.contains("epl") {
+        totalPeriods = 2
+        periodMinutes = 45
+    } else if s.contains("baseball") || s.contains("mlb") {
+        // Baseball: 9 innings, no clock
+        totalPeriods = 9
+        let progress = (Double(period) - 0.5) / totalPeriods
+        return min(1.0, max(0.01, progress))
+    } else {
+        totalPeriods = 4
+        periodMinutes = 12
+    }
+
+    // Parse clock "5:30" → 5.5 minutes remaining in period
+    var remainingInPeriod = periodMinutes / 2 // default to midpoint
+    if let clock = clock {
+        let parts = clock.split(separator: ":")
+        if parts.count == 2, let min = Double(parts[0]), let sec = Double(parts[1]) {
+            remainingInPeriod = min + sec / 60.0
+        } else if let sec = Double(clock) {
+            remainingInPeriod = sec / 60.0
+        }
+    }
+
+    let completedPeriods = Double(period - 1)
+    let currentPeriodProgress = (periodMinutes - remainingInPeriod) / periodMinutes
+    let totalProgress = (completedPeriods + currentPeriodProgress) / totalPeriods
+
+    return min(1.0, max(0.01, totalProgress))
+}
+
+private func lookupBoxScore(playerName: String, stat: String, boxScore: [String: [String: Double]]) -> Double? {
+    // Exact match
+    if let stats = boxScore[playerName], let value = stats[stat] {
+        return value
+    }
+
+    // Case-insensitive match
+    let lower = playerName.lowercased()
+    for (name, stats) in boxScore {
+        if name.lowercased() == lower, let value = stats[stat] {
+            return value
+        }
+    }
+
+    // Last name match (handles "J. Tatum" vs "Jayson Tatum")
+    let lastName = playerName.split(separator: " ").last.map(String.init) ?? playerName
+    for (name, stats) in boxScore {
+        let boxLastName = name.split(separator: " ").last.map(String.init) ?? name
+        if boxLastName.lowercased() == lastName.lowercased(), let value = stats[stat] {
+            return value
+        }
+    }
+
+    return nil
 }

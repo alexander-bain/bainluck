@@ -148,11 +148,21 @@ async def _sync_espn_live_events():
         return normalized.lower().strip()
 
     def names_match(our_names: list, espn_name: str) -> bool:
-        """Name matching with unicode normalization — check if any name is a substring of the other."""
+        """Name matching with unicode normalization.
+
+        Primary: substring containment (exact when it works).
+        Fallback: token-overlap scoring via _team_name_match_score()
+        to handle abbreviation differences common in college sports
+        (e.g., "Ohio St Buckeyes" vs "Ohio State Buckeyes").
+        """
         espn_lower = _normalize_name(espn_name or "")
         for name in our_names:
             name_lower = _normalize_name(name)
             if name_lower in espn_lower or espn_lower in name_lower:
+                return True
+        # Fallback: token-overlap scoring for abbreviation handling
+        for name in our_names:
+            if _team_name_match_score(name, espn_name) > 0.5:
                 return True
         return False
 
@@ -720,6 +730,65 @@ async def _sync_espn_live_events():
                         await box_espn.close()
             except Exception as e:
                 stats["errors"].append(f"box_score_pass: {str(e)}")
+
+            # Fourth pass: update box scores for live events (every 2 minutes)
+            try:
+                stale_cutoff = datetime.now(timezone) - timedelta(minutes=2)
+                live_box_result = await session.execute(
+                    select(Event)
+                    .options(selectinload(Event.sport))
+                    .where(
+                        Event.status == "live",
+                        Event.espn_id.isnot(None),
+                    )
+                    .order_by(Event.commence_time.desc())
+                    .limit(10)
+                )
+                live_box_events = live_box_result.scalars().all()
+
+                live_to_fetch = []
+                for ev in live_box_events:
+                    if ev.box_score_data is None:
+                        live_to_fetch.append(ev)
+                    elif ev.box_score_data.get("live"):
+                        fetched_str = ev.box_score_data.get("fetched_at")
+                        if fetched_str:
+                            try:
+                                fetched_at = datetime.fromisoformat(fetched_str)
+                                if fetched_at < stale_cutoff:
+                                    live_to_fetch.append(ev)
+                            except (ValueError, TypeError):
+                                live_to_fetch.append(ev)
+                        else:
+                            live_to_fetch.append(ev)
+
+                if live_to_fetch:
+                    live_espn = ESPNAPIService()
+                    try:
+                        for ev in live_to_fetch:
+                            sport_key = ev.sport.key if ev.sport else None
+                            if not sport_key or sport_key not in ESPN_SPORT_MAPPING:
+                                continue
+                            try:
+                                context = await live_espn.get_event_context(sport_key, ev.espn_id)
+                                box_data = context.get("box_score", {})
+                                now_str = datetime.now(timezone).isoformat()
+                                if box_data:
+                                    ev.box_score_data = {
+                                        "source": "espn",
+                                        "fetched_at": now_str,
+                                        "players": box_data,
+                                        "live": True,
+                                    }
+                                    stats["live_box_scores_fetched"] = (
+                                        stats.get("live_box_scores_fetched", 0) + 1
+                                    )
+                            except Exception as e:
+                                logger.error(f"Live box score error for event {ev.id}: {e}")
+                    finally:
+                        await live_espn.close()
+            except Exception as e:
+                stats["errors"].append(f"live_box_score_pass: {str(e)}")
 
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")

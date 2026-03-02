@@ -45,6 +45,10 @@ nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
     let awayTeamFutures: [RelatedFuture]?
     let sharedFutures: [RelatedFuture]?
     let summary: String?
+    let eventStatus: String?
+    let boxScore: [String: [String: Double]]?
+    let gamePeriod: Int?
+    let gameClock: String?
 }
 
 nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {

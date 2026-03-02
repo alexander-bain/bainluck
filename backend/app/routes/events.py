@@ -2282,6 +2282,8 @@ async def get_related_futures(
         "summary": summary,
         "event_status": event.status,
         "box_score": box_score_players,
+        "game_period": event.period,
+        "game_clock": event.game_clock,
     }
 
 
