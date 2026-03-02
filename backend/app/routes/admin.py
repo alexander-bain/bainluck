@@ -4532,3 +4532,256 @@ async def taxonomy_dashboard(
         "signal_distribution": signal_distribution,
     }
 
+
+# ── Duplicate event detection + merge ──────────────────────────────────
+
+
+@router.get("/events/duplicates")
+async def list_duplicate_events(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find duplicate events: same sport, same teams, same date."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text
+
+    result = await db.execute(text("""
+        WITH candidates AS (
+            SELECT
+                e.id, e.external_id, e.sport_id, e.home_team_name,
+                e.away_team_name, e.commence_time, e.status,
+                e.statpal_fixture_id, e.commence_time_source,
+                e.created_at,
+                s.key AS sport_key,
+                (SELECT COUNT(*) FROM odds_snapshots os
+                 WHERE os.event_id = e.id) AS snapshot_count
+            FROM events e
+            JOIN sports s ON s.id = e.sport_id
+            WHERE e.commence_time > NOW() - INTERVAL '30 days'
+        )
+        SELECT
+            a.id AS event_a_id,
+            a.external_id AS event_a_external_id,
+            a.snapshot_count AS event_a_snapshots,
+            a.statpal_fixture_id AS event_a_statpal,
+            a.commence_time_source AS event_a_source,
+            a.status AS event_a_status,
+            b.id AS event_b_id,
+            b.external_id AS event_b_external_id,
+            b.snapshot_count AS event_b_snapshots,
+            b.statpal_fixture_id AS event_b_statpal,
+            b.commence_time_source AS event_b_source,
+            b.status AS event_b_status,
+            a.sport_key,
+            a.home_team_name,
+            a.away_team_name,
+            a.commence_time AS commence_a,
+            b.commence_time AS commence_b
+        FROM candidates a
+        JOIN candidates b ON (
+            a.sport_id = b.sport_id
+            AND a.id < b.id
+            AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
+            AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
+            AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
+        )
+        ORDER BY a.commence_time DESC
+        LIMIT 100
+    """))
+    rows = result.all()
+
+    duplicates = []
+    for row in rows:
+        duplicates.append({
+            "event_a": {
+                "id": row.event_a_id,
+                "external_id": row.event_a_external_id,
+                "snapshots": row.event_a_snapshots,
+                "statpal_fixture_id": row.event_a_statpal,
+                "commence_time_source": row.event_a_source,
+                "status": row.event_a_status,
+            },
+            "event_b": {
+                "id": row.event_b_id,
+                "external_id": row.event_b_external_id,
+                "snapshots": row.event_b_snapshots,
+                "statpal_fixture_id": row.event_b_statpal,
+                "commence_time_source": row.event_b_source,
+                "status": row.event_b_status,
+            },
+            "sport": row.sport_key,
+            "home_team": row.home_team_name,
+            "away_team": row.away_team_name,
+            "commence_a": row.commence_a.isoformat() if row.commence_a else None,
+            "commence_b": row.commence_b.isoformat() if row.commence_b else None,
+        })
+
+    return {
+        "duplicate_count": len(duplicates),
+        "duplicates": duplicates,
+    }
+
+
+@router.post("/events/merge-duplicates")
+async def merge_duplicate_events(
+    secret: str = Query(...),
+    dry_run: bool = Query(True, description="Preview without making changes"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge duplicate events: keep the one with external_id, absorb metadata from orphan.
+
+    For each duplicate pair:
+    - Keep: the event with external_id (has odds data)
+    - Absorb: statpal_fixture_id, commence_time_source, statpal_end_time,
+      home_team_id, away_team_id, espn_id from the orphan
+    - Delete: the orphan event (has 0 snapshots)
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text, func as sqlfunc
+
+    # Find duplicate pairs
+    result = await db.execute(text("""
+        WITH candidates AS (
+            SELECT
+                e.id, e.external_id, e.sport_id, e.home_team_name,
+                e.away_team_name, e.commence_time, e.status,
+                e.statpal_fixture_id, e.commence_time_source,
+                e.statpal_end_time, e.home_team_id, e.away_team_id,
+                e.espn_id,
+                (SELECT COUNT(*) FROM odds_snapshots os
+                 WHERE os.event_id = e.id) AS snapshot_count
+            FROM events e
+            WHERE e.commence_time > NOW() - INTERVAL '30 days'
+        )
+        SELECT
+            a.id AS id_a, a.external_id AS ext_a, a.snapshot_count AS snaps_a,
+            a.statpal_fixture_id AS statpal_a, a.commence_time_source AS source_a,
+            a.statpal_end_time AS end_a, a.home_team_id AS htid_a,
+            a.away_team_id AS atid_a, a.espn_id AS espn_a, a.status AS status_a,
+            b.id AS id_b, b.external_id AS ext_b, b.snapshot_count AS snaps_b,
+            b.statpal_fixture_id AS statpal_b, b.commence_time_source AS source_b,
+            b.statpal_end_time AS end_b, b.home_team_id AS htid_b,
+            b.away_team_id AS atid_b, b.espn_id AS espn_b, b.status AS status_b,
+            a.home_team_name, a.away_team_name, a.sport_id
+        FROM candidates a
+        JOIN candidates b ON (
+            a.sport_id = b.sport_id
+            AND a.id < b.id
+            AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
+            AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
+            AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
+        )
+        ORDER BY a.commence_time DESC
+    """))
+    pairs = result.all()
+
+    merged = []
+    skipped = []
+
+    for row in pairs:
+        # Determine which to keep: prefer the one with external_id and snapshots
+        keep_a = (row.ext_a is not None and row.snaps_a > 0)
+        keep_b = (row.ext_b is not None and row.snaps_b > 0)
+
+        if keep_a and not keep_b:
+            keep_id, orphan_id = row.id_a, row.id_b
+            orphan_snaps = row.snaps_b
+            # Absorb from b
+            absorb = {
+                "statpal_fixture_id": row.statpal_b,
+                "commence_time_source": row.source_b,
+                "statpal_end_time": row.end_b,
+                "home_team_id": row.htid_b,
+                "away_team_id": row.atid_b,
+                "espn_id": row.espn_b,
+            }
+        elif keep_b and not keep_a:
+            keep_id, orphan_id = row.id_b, row.id_a
+            orphan_snaps = row.snaps_a
+            absorb = {
+                "statpal_fixture_id": row.statpal_a,
+                "commence_time_source": row.source_a,
+                "statpal_end_time": row.end_a,
+                "home_team_id": row.htid_a,
+                "away_team_id": row.atid_a,
+                "espn_id": row.espn_a,
+            }
+        elif not keep_a and not keep_b:
+            # Both orphans — keep the one with more data (statpal_fixture_id)
+            if row.statpal_a and not row.statpal_b:
+                keep_id, orphan_id = row.id_a, row.id_b
+                orphan_snaps = row.snaps_b
+                absorb = {}
+            elif row.statpal_b and not row.statpal_a:
+                keep_id, orphan_id = row.id_b, row.id_a
+                orphan_snaps = row.snaps_a
+                absorb = {}
+            else:
+                # Both have same data — keep the older one
+                keep_id, orphan_id = row.id_a, row.id_b
+                orphan_snaps = row.snaps_b
+                absorb = {
+                    "statpal_fixture_id": row.statpal_b,
+                    "commence_time_source": row.source_b,
+                    "statpal_end_time": row.end_b,
+                    "home_team_id": row.htid_b,
+                    "away_team_id": row.atid_b,
+                    "espn_id": row.espn_b,
+                }
+        else:
+            # Both have external_id + snapshots — skip (doubleheader or real dups)
+            skipped.append({
+                "event_a": row.id_a,
+                "event_b": row.id_b,
+                "reason": "both have external_id and snapshots",
+                "teams": f"{row.home_team_name} vs {row.away_team_name}",
+            })
+            continue
+
+        # Safety: don't delete events that have snapshots
+        if orphan_snaps > 0:
+            skipped.append({
+                "event_a": row.id_a,
+                "event_b": row.id_b,
+                "reason": f"orphan event {orphan_id} has {orphan_snaps} snapshots",
+                "teams": f"{row.home_team_name} vs {row.away_team_name}",
+            })
+            continue
+
+        action = {
+            "keep": keep_id,
+            "delete": orphan_id,
+            "teams": f"{row.home_team_name} vs {row.away_team_name}",
+            "absorbed": {k: str(v) for k, v in absorb.items() if v is not None},
+        }
+
+        if not dry_run:
+            # Absorb metadata from orphan into keeper (only fill NULLs)
+            keep_event = await db.get(Event, keep_id)
+            if keep_event:
+                for field, value in absorb.items():
+                    if value is not None and getattr(keep_event, field, None) is None:
+                        setattr(keep_event, field, value)
+
+            # Delete the orphan (cascade will handle any related rows)
+            orphan_event = await db.get(Event, orphan_id)
+            if orphan_event:
+                await db.delete(orphan_event)
+
+        merged.append(action)
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "merged": len(merged),
+        "skipped": len(skipped),
+        "actions": merged,
+        "skipped_details": skipped if skipped else None,
+    }
+

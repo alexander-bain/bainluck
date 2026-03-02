@@ -579,32 +579,56 @@ async def _poll_all_odds():
                                 event_data["id"], statpal_event.id,
                             )
                         else:
-                            stmt = insert(Event).values(
-                                external_id=event_data["id"],
-                                sport_id=sport.id,
-                                home_team_name=event_data["home_team"],
-                                away_team_name=event_data["away_team"],
-                                commence_time=commence_time,
-                                status=event_status,
-                            ).on_conflict_do_update(
-                                index_elements=["external_id"],
-                                set_={
-                                    "home_team_name": event_data["home_team"],
-                                    "away_team_name": event_data["away_team"],
-                                    # Don't overwrite commence_time — The Odds API occasionally
-                                    # returns local times as UTC. ESPN sync corrects these.
-                                    # Only update status if currently "scheduled"
-                                    # This allows scheduled->live but preserves completed
-                                    "status": case(
-                                        (Event.status == "scheduled", event_status),
-                                        else_=Event.status
-                                    ),
-                                }
-                            ).returning(Event.id)
+                            # Try broader dedup safety net before creating
+                            from app.tasks.sports import _find_existing_event_by_teams
+                            dedup_event = await _find_existing_event_by_teams(
+                                session, sport.id,
+                                event_data["home_team"], event_data["away_team"],
+                                commence_time,
+                                exclude_external_id=event_data["id"],
+                            )
 
-                            result = await session.execute(stmt)
-                            event_id = result.scalar_one()
-                            total_events += 1
+                            if dedup_event and not dedup_event.external_id:
+                                # Orphan event — attach this external_id
+                                dedup_event.external_id = event_data["id"]
+                                dedup_event.status = event_status
+                                await session.flush()
+                                event_id = dedup_event.id
+                                total_events += 1
+                                logger.info(
+                                    "poll_odds dedup: linked Odds API %s to "
+                                    "orphan event %d (%s vs %s)",
+                                    event_data["id"], dedup_event.id,
+                                    event_data["home_team"],
+                                    event_data["away_team"],
+                                )
+                            else:
+                                stmt = insert(Event).values(
+                                    external_id=event_data["id"],
+                                    sport_id=sport.id,
+                                    home_team_name=event_data["home_team"],
+                                    away_team_name=event_data["away_team"],
+                                    commence_time=commence_time,
+                                    status=event_status,
+                                ).on_conflict_do_update(
+                                    index_elements=["external_id"],
+                                    set_={
+                                        "home_team_name": event_data["home_team"],
+                                        "away_team_name": event_data["away_team"],
+                                        # Don't overwrite commence_time — The Odds API occasionally
+                                        # returns local times as UTC. ESPN sync corrects these.
+                                        # Only update status if currently "scheduled"
+                                        # This allows scheduled->live but preserves completed
+                                        "status": case(
+                                            (Event.status == "scheduled", event_status),
+                                            else_=Event.status
+                                        ),
+                                    }
+                                ).returning(Event.id)
+
+                                result = await session.execute(stmt)
+                                event_id = result.scalar_one()
+                                total_events += 1
 
                         # Create odds snapshots (with deduplication)
                         # Collect all bookmaker values for opening odds consensus
@@ -917,30 +941,62 @@ async def _poll_sport_odds(sport_key: str):
                 )
 
                 event_status = "scheduled" if commence_time > datetime.now(timezone.utc) else "live"
-                stmt = insert(Event).values(
-                    external_id=event_data["id"],
-                    sport_id=sport.id,
-                    home_team_name=event_data["home_team"],
-                    away_team_name=event_data["away_team"],
-                    commence_time=commence_time,
-                    status=event_status,
-                ).on_conflict_do_update(
-                    index_elements=["external_id"],
-                    set_={
-                        "home_team_name": event_data["home_team"],
-                        "away_team_name": event_data["away_team"],
-                        # Don't overwrite commence_time — The Odds API occasionally
-                        # returns local times as UTC. ESPN sync corrects these.
-                        # Only update status if currently "scheduled"
-                        "status": case(
-                            (Event.status == "scheduled", event_status),
-                            else_=Event.status
-                        ),
-                    }
-                ).returning(Event.id)
 
-                result = await session.execute(stmt)
-                event_id = result.scalar_one()
+                # Check for StatPal-created or orphan event first
+                from app.tasks.sports import (
+                    _find_statpal_event_for_odds_api,
+                    _find_existing_event_by_teams,
+                )
+                statpal_event = await _find_statpal_event_for_odds_api(
+                    session, sport.id,
+                    event_data["home_team"], event_data["away_team"],
+                    commence_time,
+                )
+                if not statpal_event:
+                    statpal_event = await _find_existing_event_by_teams(
+                        session, sport.id,
+                        event_data["home_team"], event_data["away_team"],
+                        commence_time,
+                        exclude_external_id=event_data["id"],
+                    )
+                    # Only use if it has no external_id (orphan)
+                    if statpal_event and statpal_event.external_id:
+                        statpal_event = None
+
+                if statpal_event:
+                    statpal_event.external_id = event_data["id"]
+                    statpal_event.status = event_status
+                    await session.flush()
+                    event_id = statpal_event.id
+                    logger.info(
+                        "poll_sport_odds: linked Odds API %s to event %d",
+                        event_data["id"], statpal_event.id,
+                    )
+                else:
+                    stmt = insert(Event).values(
+                        external_id=event_data["id"],
+                        sport_id=sport.id,
+                        home_team_name=event_data["home_team"],
+                        away_team_name=event_data["away_team"],
+                        commence_time=commence_time,
+                        status=event_status,
+                    ).on_conflict_do_update(
+                        index_elements=["external_id"],
+                        set_={
+                            "home_team_name": event_data["home_team"],
+                            "away_team_name": event_data["away_team"],
+                            # Don't overwrite commence_time — The Odds API occasionally
+                            # returns local times as UTC. ESPN sync corrects these.
+                            # Only update status if currently "scheduled"
+                            "status": case(
+                                (Event.status == "scheduled", event_status),
+                                else_=Event.status
+                            ),
+                        }
+                    ).returning(Event.id)
+
+                    result = await session.execute(stmt)
+                    event_id = result.scalar_one()
 
                 for bookmaker in event_data.get("bookmakers", []):
                     snapshot = await _create_snapshot(event_id, bookmaker, event_data)

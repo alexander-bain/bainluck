@@ -104,6 +104,13 @@ async def _find_statpal_event_for_odds_api(
     home_norm = normalize_name(home_team)
     away_norm = normalize_name(away_team)
 
+    logger.info(
+        "StatPal match: looking for '%s' vs '%s' (sport_id=%d, time=%s) — "
+        "%d candidates with external_id=NULL",
+        home_team, away_team, sport_id, commence_time.isoformat(),
+        len(candidates),
+    )
+
     for candidate in candidates:
         c_home = normalize_name(candidate.home_team_name)
         c_away = normalize_name(candidate.away_team_name)
@@ -111,13 +118,75 @@ async def _find_statpal_event_for_odds_api(
         # Check normal orientation
         home_match = _names_match(home_norm, c_home)
         away_match = _names_match(away_norm, c_away)
-        if home_match and away_match:
-            return candidate
 
         # Check swapped home/away
         home_as_away = _names_match(home_norm, c_away)
         away_as_home = _names_match(away_norm, c_home)
+
+        logger.info(
+            "  candidate %d: '%s' vs '%s' (time=%s) — "
+            "normal=%s/%s swapped=%s/%s",
+            candidate.id, candidate.home_team_name, candidate.away_team_name,
+            candidate.commence_time.isoformat() if candidate.commence_time else "?",
+            home_match, away_match, home_as_away, away_as_home,
+        )
+
+        if home_match and away_match:
+            logger.info("  → MATCHED (normal orientation)")
+            return candidate
+
         if home_as_away and away_as_home:
+            logger.info("  → MATCHED (swapped home/away)")
+            return candidate
+
+    logger.info("  → NO MATCH found among %d candidates", len(candidates))
+    return None
+
+
+async def _find_existing_event_by_teams(
+    session, sport_id: int, home_team: str, away_team: str,
+    commence_time: datetime, exclude_external_id: Optional[str] = None,
+) -> Optional[Event]:
+    """Broader dedup safety net: find ANY existing event with matching teams + time.
+
+    Unlike _find_statpal_event_for_odds_api (which only searches external_id=NULL),
+    this searches ALL events regardless of external_id. Catches duplicates no matter
+    which source created them.
+
+    Args:
+        exclude_external_id: Skip events that already have this external_id
+            (they're the same event, not a duplicate).
+    """
+    from app.services.team_identity import normalize_name
+
+    window = timedelta(hours=3)
+    result = await session.execute(
+        select(Event).where(
+            Event.sport_id == sport_id,
+            Event.commence_time.between(
+                commence_time - window, commence_time + window
+            ),
+        ).limit(50)
+    )
+    candidates = result.scalars().all()
+
+    home_norm = normalize_name(home_team)
+    away_norm = normalize_name(away_team)
+
+    for candidate in candidates:
+        # Skip the event we're about to create (same external_id)
+        if exclude_external_id and candidate.external_id == exclude_external_id:
+            continue
+
+        c_home = normalize_name(candidate.home_team_name)
+        c_away = normalize_name(candidate.away_team_name)
+
+        # Check normal orientation
+        if _names_match(home_norm, c_home) and _names_match(away_norm, c_away):
+            return candidate
+
+        # Check swapped home/away
+        if _names_match(home_norm, c_away) and _names_match(away_norm, c_home):
             return candidate
 
     return None
@@ -395,41 +464,92 @@ async def _discover_events():
                                     source_name=event_data["away_team"],
                                 )
                         else:
-                            # Normal upsert (no StatPal match found)
-                            insert_vals = {
-                                "external_id": event_data["id"],
-                                "sport_id": sport.id,
-                                "home_team_name": event_data["home_team"],
-                                "away_team_name": event_data["away_team"],
-                                "commence_time": (
-                                    espn_commence_time or commence_time
-                                ),
-                                "status": event_status,
-                            }
-                            if espn_commence_time:
-                                insert_vals[
-                                    "commence_time_source"
-                                ] = "espn"
-                            if espn_event_id:
-                                insert_vals["espn_id"] = espn_event_id
-                            stmt = insert(Event).values(
-                                **insert_vals
-                            ).on_conflict_do_update(
-                                index_elements=["external_id"],
-                                set_={
+                            # No StatPal match — try broader dedup safety net
+                            # before creating a new event
+                            dedup_event = await _find_existing_event_by_teams(
+                                session, sport.id,
+                                event_data["home_team"], event_data["away_team"],
+                                commence_time,
+                                exclude_external_id=event_data["id"],
+                            )
+
+                            if dedup_event and not dedup_event.external_id:
+                                # Orphan event (no external_id) — attach this one
+                                dedup_event.external_id = event_data["id"]
+                                dedup_event.home_team_name = event_data["home_team"]
+                                dedup_event.away_team_name = event_data["away_team"]
+                                dedup_event.status = event_status
+                                if dedup_event.commence_time_source != "statpal":
+                                    dedup_event.commence_time = (
+                                        espn_commence_time or commence_time
+                                    )
+                                    if espn_commence_time:
+                                        dedup_event.commence_time_source = "espn"
+                                if espn_event_id and not dedup_event.espn_id:
+                                    dedup_event.espn_id = espn_event_id
+                                event_id = dedup_event.id
+                                total_statpal_attached += 1
+                                logger.info(
+                                    "Dedup safety net: attached Odds API %s to "
+                                    "orphan event %d (%s vs %s)",
+                                    event_data["id"], dedup_event.id,
+                                    event_data["home_team"],
+                                    event_data["away_team"],
+                                )
+                            elif (
+                                dedup_event
+                                and dedup_event.external_id
+                                and dedup_event.external_id != event_data["id"]
+                            ):
+                                # Different external_id — could be a doubleheader
+                                # or different source. Do normal upsert.
+                                logger.info(
+                                    "Dedup safety net: found event %d with "
+                                    "different external_id '%s' for %s vs %s "
+                                    "(new: '%s') — not a duplicate, proceeding",
+                                    dedup_event.id, dedup_event.external_id,
+                                    event_data["home_team"],
+                                    event_data["away_team"],
+                                    event_data["id"],
+                                )
+                                dedup_event = None  # Fall through to normal upsert
+
+                            if not dedup_event:
+                                # Normal upsert (no duplicate found)
+                                insert_vals = {
+                                    "external_id": event_data["id"],
+                                    "sport_id": sport.id,
                                     "home_team_name": event_data["home_team"],
                                     "away_team_name": event_data["away_team"],
-                                    # Don't overwrite commence_time — The Odds API occasionally
-                                    # returns local times as UTC. ESPN sync corrects these.
-                                    "status": case(
-                                        (Event.status == "scheduled", event_status),
-                                        else_=Event.status
+                                    "commence_time": (
+                                        espn_commence_time or commence_time
                                     ),
+                                    "status": event_status,
                                 }
-                            ).returning(Event.id)
+                                if espn_commence_time:
+                                    insert_vals[
+                                        "commence_time_source"
+                                    ] = "espn"
+                                if espn_event_id:
+                                    insert_vals["espn_id"] = espn_event_id
+                                stmt = insert(Event).values(
+                                    **insert_vals
+                                ).on_conflict_do_update(
+                                    index_elements=["external_id"],
+                                    set_={
+                                        "home_team_name": event_data["home_team"],
+                                        "away_team_name": event_data["away_team"],
+                                        # Don't overwrite commence_time — The Odds API occasionally
+                                        # returns local times as UTC. ESPN sync corrects these.
+                                        "status": case(
+                                            (Event.status == "scheduled", event_status),
+                                            else_=Event.status
+                                        ),
+                                    }
+                                ).returning(Event.id)
 
-                            result = await session.execute(stmt)
-                            event_id = result.scalar_one()
+                                result = await session.execute(stmt)
+                                event_id = result.scalar_one()
 
                         total_events += 1
 
