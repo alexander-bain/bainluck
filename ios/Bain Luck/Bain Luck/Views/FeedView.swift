@@ -150,7 +150,7 @@ struct FeedView: View {
                     feedList
                 }
             }
-            .navigationTitle("Bain Luck")
+            .navigationTitle("🍀 Bain Luck")
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .eventDetail(let id):
@@ -201,7 +201,7 @@ struct FeedView: View {
 
     private var feedList: some View {
         List {
-            // Filter chips
+            // Category chips — navigate to sport category pages
             Section {
                 SportFilterChips(selectedCategory: $selectedCategory) { category in
                     path.append(Route.sportCategory(key: category.id, name: category.name))
