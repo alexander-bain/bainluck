@@ -4652,7 +4652,9 @@ async def merge_duplicate_events_sql(
 
     from sqlalchemy import text
 
-    # Step 1: Find keeper-orphan pairs (fast SELECT)
+    # Step 1: Find keeper-orphan pairs
+    # Case A: keeper has external_id, orphan doesn't (StatPal vs Odds API)
+    # Case B: both NULL external_id — keep lowest ID (StatPal vs StatPal dupes)
     result = await db.execute(text("""
         SELECT
             keeper.id AS keeper_id, orphan.id AS orphan_id,
@@ -4669,9 +4671,14 @@ async def merge_duplicate_events_sql(
         )
         WHERE keeper.commence_time > NOW() - INTERVAL '30 days'
           AND orphan.commence_time > NOW() - INTERVAL '30 days'
-          AND keeper.external_id IS NOT NULL
-          AND orphan.external_id IS NULL
           AND NOT EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = orphan.id LIMIT 1)
+          AND (
+              -- Case A: keeper has external_id, orphan doesn't
+              (keeper.external_id IS NOT NULL AND orphan.external_id IS NULL)
+              OR
+              -- Case B: both NULL, keep lowest ID
+              (keeper.external_id IS NULL AND orphan.external_id IS NULL AND keeper.id < orphan.id)
+          )
     """))
     pairs = result.all()
 
