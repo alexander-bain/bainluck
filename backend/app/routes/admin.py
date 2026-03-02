@@ -4627,6 +4627,7 @@ async def list_duplicate_events(
 async def merge_duplicate_events(
     secret: str = Query(...),
     dry_run: bool = Query(True, description="Preview without making changes"),
+    limit: int = Query(200, description="Max pairs to process per call"),
     db: AsyncSession = Depends(get_db),
 ):
     """Merge duplicate events: keep the one with external_id, absorb metadata from orphan.
@@ -4679,7 +4680,8 @@ async def merge_duplicate_events(
             SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = b.id
         ) sb ON TRUE
         ORDER BY a.commence_time DESC
-    """))
+        LIMIT :pair_limit
+    """), {"pair_limit": limit})
     pairs = result.all()
 
     merged = []
