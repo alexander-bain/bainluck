@@ -139,7 +139,7 @@ struct SearchView: View {
                 case .eiRankings:
                     EIRankingsView()
                 case .preferences:
-                    EmptyView()
+                    PreferencesView()
                 case .sportCategory(let key, let name):
                     SportCategoryView(categoryKey: key, categoryName: name)
                 }

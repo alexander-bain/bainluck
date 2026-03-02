@@ -128,6 +128,7 @@ WEIGHTS = {
     "high_volatility": 10,         # Line has been volatile (RMS of deltas > 0.06)
     "lead_changes": 8,             # Probability crossed 50% (per crossing, max 3)
     "recent_momentum": 10,         # Fast movement in last 30 min (>8% shift)
+    "momentum_accelerating": 8,    # Odds movement is speeding up (acceleration > 3%)
 }
 
 # Thresholds
@@ -143,6 +144,30 @@ MIN_PREGAME_MOVEMENT = 0.05  # 5% change needed for pre-game closeness to be a t
 # Level 2 thresholds
 HIGH_VOLATILITY_RMS = 0.06  # 6% RMS of probability deltas = volatile
 RECENT_MOMENTUM_THRESHOLD = 0.08  # 8% shift in last 30 min = fast-moving
+MOMENTUM_ACCEL_THRESHOLD = 0.03  # 3% acceleration = odds movement speeding up
+
+# Season calendars for season context multiplier.
+# (start_month, playoffs_start_month) — progress goes from 0 at start to 1.0 at playoffs.
+# Seasons that wrap the year boundary (e.g., NBA: Oct to Apr) are handled automatically.
+SEASON_CALENDARS: dict[str, tuple[int, int]] = {
+    "basketball_nba": (10, 4),        # Oct → Apr
+    "basketball_ncaab": (11, 3),      # Nov → Mar (March Madness)
+    "basketball_wncaab": (11, 3),
+    "basketball_wnba": (5, 9),        # May → Sep
+    "americanfootball_nfl": (9, 1),    # Sep → Jan
+    "americanfootball_ncaaf": (8, 12), # Aug → Dec (bowls/playoff)
+    "baseball_mlb": (3, 10),          # Mar → Oct
+    "icehockey_nhl": (10, 4),         # Oct → Apr
+    "soccer_epl": (8, 5),             # Aug → May
+    "soccer_spain_la_liga": (8, 5),
+    "soccer_germany_bundesliga": (8, 5),
+    "soccer_italy_serie_a": (8, 5),
+    "soccer_france_ligue_one": (8, 5),
+    "soccer_usa_mls": (2, 10),        # Feb → Oct
+    "soccer_uefa_champs_league": (9, 5),  # Sep → May (knockouts Feb+)
+    "soccer_mexico_ligamx": (7, 5),
+    "mma_mixed_martial_arts": (1, 12),  # Year-round, no season effect
+}
 
 # Sport-specific total periods for game progress calculation
 SPORT_TOTAL_PERIODS: dict[str, int] = {
@@ -220,6 +245,7 @@ class TimeSeriesMetrics:
     volatility_rms: float = 0.0  # RMS of probability deltas between consecutive snapshots
     lead_changes: int = 0  # Number of times probability crossed 50%
     recent_momentum: float = 0.0  # Absolute probability shift in last 30 minutes
+    momentum_acceleration: float = 0.0  # Change in momentum (recent 30m vs previous 30m)
     snapshot_count: int = 0  # Number of aggregated time buckets used
 
 
@@ -263,6 +289,46 @@ def get_league_tier(sport_key: Optional[str]) -> int:
     return LEAGUE_TIERS.get(sport_key, 4)
 
 
+def get_season_multiplier(sport_key: Optional[str], now: Optional[datetime] = None) -> float:
+    """Get a season progress multiplier for a sport.
+
+    Returns 0.8 (early season) to 1.2 (late season / playoffs approaching).
+    Returns 1.0 if sport is not in the calendar or is in the offseason.
+
+    The multiplier is intended for tier 1/2 league score components only.
+    """
+    if not sport_key or sport_key not in SEASON_CALENDARS:
+        return 1.0
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    start_month, playoffs_month = SEASON_CALENDARS[sport_key]
+    current_month = now.month
+
+    if playoffs_month >= start_month:
+        # Season within same calendar year (e.g., MLB: Mar-Oct, MLS: Feb-Oct)
+        season_months = playoffs_month - start_month
+        if current_month < start_month or current_month > playoffs_month:
+            return 1.0  # Offseason
+        months_elapsed = current_month - start_month
+    else:
+        # Season wraps year boundary (e.g., NBA: Oct-Apr, NFL: Sep-Jan)
+        season_months = (12 - start_month) + playoffs_month
+        if current_month >= start_month:
+            months_elapsed = current_month - start_month
+        elif current_month <= playoffs_month:
+            months_elapsed = (12 - start_month) + current_month
+        else:
+            return 1.0  # Offseason
+
+    if season_months <= 0:
+        return 1.0
+
+    progress = min(months_elapsed / season_months, 1.0)
+    return 0.8 + (0.4 * progress)  # 0.8x early → 1.2x late
+
+
 def compute_time_series_metrics(
     probabilities: list[float],
     timestamps: Optional[list[datetime]] = None,
@@ -304,6 +370,8 @@ def compute_time_series_metrics(
     if timestamps and len(timestamps) == len(probabilities):
         now = timestamps[-1]
         thirty_min_ago = now - timedelta(minutes=30)
+        sixty_min_ago = now - timedelta(minutes=60)
+
         # Find the value closest to 30 min ago
         recent_start_val = None
         for i, ts in enumerate(timestamps):
@@ -312,6 +380,19 @@ def compute_time_series_metrics(
                 break
         if recent_start_val is not None:
             metrics.recent_momentum = abs(probabilities[-1] - recent_start_val)
+
+        # 4. Momentum acceleration: compare recent 30m shift vs previous 30m shift.
+        # Positive acceleration means odds are moving faster now than before.
+        prev_start_val = None
+        prev_end_val = None
+        for i, ts in enumerate(timestamps):
+            if ts >= sixty_min_ago and prev_start_val is None:
+                prev_start_val = probabilities[i]
+            if ts >= thirty_min_ago and prev_end_val is None:
+                prev_end_val = probabilities[i]
+        if prev_start_val is not None and prev_end_val is not None:
+            previous_momentum = abs(prev_end_val - prev_start_val)
+            metrics.momentum_acceleration = metrics.recent_momentum - previous_momentum
 
     return metrics
 
@@ -567,6 +648,13 @@ def compute_highlight(
             result.score += WEIGHTS["recent_momentum"]
             result.reasons.append("recent_momentum")
 
+        # Momentum acceleration: odds are moving increasingly fast (live only).
+        # This catches the "something just happened" signal — a game that was
+        # steady suddenly has rapid movement.
+        if flags.is_live and time_series.momentum_acceleration >= MOMENTUM_ACCEL_THRESHOLD:
+            result.score += WEIGHTS["momentum_accelerating"]
+            result.reasons.append("momentum_accelerating")
+
     # === Clamp score to 0-100 ===
     result.score = max(0, min(100, result.score))
 
@@ -580,6 +668,7 @@ def compute_highlight(
         ("very_close", "Coin flip"),
         ("close_matchup", "Close matchup"),
         ("recent_momentum", "Odds shifting fast"),
+        ("momentum_accelerating", "Momentum surge"),
         ("major_prob_swing", "Big line movement"),
         ("high_volatility", "Wild game"),
         ("championship", "Championship game"),
@@ -620,6 +709,8 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
         return "Close game"
     if flags.is_live and flags.has_recent_momentum:
         return "Odds shifting fast"
+    if flags.is_live and "momentum_accelerating" in result.reasons:
+        return "Momentum surge"
     if flags.is_live and flags.probability_swing == "major":
         return "Momentum shift"
     if flags.is_live and flags.is_volatile:

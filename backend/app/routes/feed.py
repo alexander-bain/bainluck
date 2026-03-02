@@ -30,6 +30,8 @@ from app.utils import (
     compute_highlight,
     get_highlight_label,
     should_highlight,
+    get_league_tier,
+    get_season_multiplier,
 )
 from app.utils.futures_highlights import compute_futures_highlight, should_highlight_futures
 from app.utils.feed_reasons import generate_event_reason, generate_futures_reason
@@ -599,6 +601,19 @@ async def _score_events(
             highlight_result.reasons.append("contender")
         elif max_champ_prob >= 0.01:    # Long shot but not nothing
             base_score += 3
+
+        # Season context: late-season games in major leagues get a boost.
+        # Early-season NBA is less interesting than March playoff-race NBA.
+        sport_key = event.sport.key if event.sport else None
+        if sport_key:
+            season_mult = get_season_multiplier(sport_key, now)
+            if season_mult != 1.0:
+                tier = get_league_tier(sport_key)
+                if tier in (1, 2):
+                    # Scale the bonus off the tier weight (20 for T1, 10 for T2)
+                    tier_weight = 20 if tier == 1 else 10
+                    season_bonus = int(tier_weight * (season_mult - 1.0))
+                    base_score += season_bonus
 
         # Boost completed events that had high EI scores — these are the
         # "fascinating outcomes" worth surfacing even hours later.

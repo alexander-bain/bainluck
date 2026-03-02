@@ -126,6 +126,9 @@ struct SportCategoryView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .onAppear {
+            AnalyticsService.trackScreen(name: "sport_category", type: "category")
+        }
         .task {
             await vm.load()
         }

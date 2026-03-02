@@ -21,6 +21,7 @@ from app.utils.highlights import (
     HighlightResult,
     TimeSeriesMetrics,
     get_league_tier,
+    get_season_multiplier,
 )
 from app.utils.pulse import (
     calculate_pulse,
@@ -64,6 +65,7 @@ __all__ = [
     "EventFlags",
     "HighlightResult",
     "get_league_tier",
+    "get_season_multiplier",
     "calculate_pulse",
     "get_pulse_status",
     "get_pulse_emoji",

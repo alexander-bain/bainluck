@@ -58,7 +58,7 @@ struct MainTabView: View {
                 Label("My Stuff", systemImage: "person.fill")
                     .tag(AppTab.myStuff)
             }
-            .navigationTitle("Bain Luck")
+            .navigationTitle("🍀 Bain Luck")
         } detail: {
             switch navCoordinator.selectedTab {
             case .feed:
