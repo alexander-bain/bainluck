@@ -60,6 +60,8 @@ struct FuturesDetailView: View {
                         outcomesSection(market)
                     }
                     .padding()
+                    .frame(maxWidth: 700)
+                    .frame(maxWidth: .infinity)
                 }
             }
         }

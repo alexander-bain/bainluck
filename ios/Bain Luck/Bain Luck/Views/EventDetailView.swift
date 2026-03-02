@@ -98,6 +98,8 @@ struct EventDetailView: View {
                     }
                     .padding(.horizontal)
                     .padding(.bottom)
+                    .frame(maxWidth: 700)
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
