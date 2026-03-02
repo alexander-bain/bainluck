@@ -4548,45 +4548,44 @@ async def list_duplicate_events(
     from sqlalchemy import text
 
     result = await db.execute(text("""
-        WITH candidates AS (
-            SELECT
-                e.id, e.external_id, e.sport_id, e.home_team_name,
-                e.away_team_name, e.commence_time, e.status,
-                e.statpal_fixture_id, e.commence_time_source,
-                e.created_at,
-                s.key AS sport_key,
-                (SELECT COUNT(*) FROM odds_snapshots os
-                 WHERE os.event_id = e.id) AS snapshot_count
-            FROM events e
-            JOIN sports s ON s.id = e.sport_id
-            WHERE e.commence_time > NOW() - INTERVAL '30 days'
+        WITH dupes AS (
+            SELECT a.id AS id_a, b.id AS id_b
+            FROM events a
+            JOIN events b ON (
+                a.sport_id = b.sport_id
+                AND a.id < b.id
+                AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
+                AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
+                AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
+            )
+            WHERE a.commence_time > NOW() - INTERVAL '30 days'
+              AND b.commence_time > NOW() - INTERVAL '30 days'
         )
         SELECT
-            a.id AS event_a_id,
-            a.external_id AS event_a_external_id,
-            a.snapshot_count AS event_a_snapshots,
+            a.id AS event_a_id, a.external_id AS event_a_external_id,
+            COALESCE(sa.cnt, 0) AS event_a_snapshots,
             a.statpal_fixture_id AS event_a_statpal,
             a.commence_time_source AS event_a_source,
             a.status AS event_a_status,
-            b.id AS event_b_id,
-            b.external_id AS event_b_external_id,
-            b.snapshot_count AS event_b_snapshots,
+            b.id AS event_b_id, b.external_id AS event_b_external_id,
+            COALESCE(sb.cnt, 0) AS event_b_snapshots,
             b.statpal_fixture_id AS event_b_statpal,
             b.commence_time_source AS event_b_source,
             b.status AS event_b_status,
-            a.sport_key,
-            a.home_team_name,
-            a.away_team_name,
+            s.key AS sport_key,
+            a.home_team_name, a.away_team_name,
             a.commence_time AS commence_a,
             b.commence_time AS commence_b
-        FROM candidates a
-        JOIN candidates b ON (
-            a.sport_id = b.sport_id
-            AND a.id < b.id
-            AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
-            AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
-            AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
-        )
+        FROM dupes d
+        JOIN events a ON a.id = d.id_a
+        JOIN events b ON b.id = d.id_b
+        JOIN sports s ON s.id = a.sport_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = a.id
+        ) sa ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = b.id
+        ) sb ON TRUE
         ORDER BY a.commence_time DESC
         LIMIT 100
     """))
@@ -4645,36 +4644,40 @@ async def merge_duplicate_events(
 
     # Find duplicate pairs
     result = await db.execute(text("""
-        WITH candidates AS (
-            SELECT
-                e.id, e.external_id, e.sport_id, e.home_team_name,
-                e.away_team_name, e.commence_time, e.status,
-                e.statpal_fixture_id, e.commence_time_source,
-                e.statpal_end_time, e.home_team_id, e.away_team_id,
-                e.espn_id,
-                (SELECT COUNT(*) FROM odds_snapshots os
-                 WHERE os.event_id = e.id) AS snapshot_count
-            FROM events e
-            WHERE e.commence_time > NOW() - INTERVAL '30 days'
+        WITH dupes AS (
+            SELECT a.id AS id_a, b.id AS id_b
+            FROM events a
+            JOIN events b ON (
+                a.sport_id = b.sport_id
+                AND a.id < b.id
+                AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
+                AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
+                AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
+            )
+            WHERE a.commence_time > NOW() - INTERVAL '30 days'
+              AND b.commence_time > NOW() - INTERVAL '30 days'
         )
         SELECT
-            a.id AS id_a, a.external_id AS ext_a, a.snapshot_count AS snaps_a,
+            a.id AS id_a, a.external_id AS ext_a,
+            COALESCE(sa.cnt, 0) AS snaps_a,
             a.statpal_fixture_id AS statpal_a, a.commence_time_source AS source_a,
             a.statpal_end_time AS end_a, a.home_team_id AS htid_a,
             a.away_team_id AS atid_a, a.espn_id AS espn_a, a.status AS status_a,
-            b.id AS id_b, b.external_id AS ext_b, b.snapshot_count AS snaps_b,
+            b.id AS id_b, b.external_id AS ext_b,
+            COALESCE(sb.cnt, 0) AS snaps_b,
             b.statpal_fixture_id AS statpal_b, b.commence_time_source AS source_b,
             b.statpal_end_time AS end_b, b.home_team_id AS htid_b,
             b.away_team_id AS atid_b, b.espn_id AS espn_b, b.status AS status_b,
             a.home_team_name, a.away_team_name, a.sport_id
-        FROM candidates a
-        JOIN candidates b ON (
-            a.sport_id = b.sport_id
-            AND a.id < b.id
-            AND LOWER(a.home_team_name) = LOWER(b.home_team_name)
-            AND LOWER(a.away_team_name) = LOWER(b.away_team_name)
-            AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
-        )
+        FROM dupes d
+        JOIN events a ON a.id = d.id_a
+        JOIN events b ON b.id = d.id_b
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = a.id
+        ) sa ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = b.id
+        ) sb ON TRUE
         ORDER BY a.commence_time DESC
     """))
     pairs = result.all()
