@@ -1220,7 +1220,7 @@ def generate_line_movement_explanation(prompt: str) -> Optional[str]:
                 {"role": "user", "content": prompt},
             ],
             max_tokens=200,
-            temperature=0.3,  # Slight creativity for natural language
+            temperature=0.1,  # Low temperature for factual, direct output
         )
 
         result = response.choices[0].message.content.strip()

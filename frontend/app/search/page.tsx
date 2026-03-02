@@ -282,31 +282,7 @@ function SearchContent() {
         </div>
       )}
 
-      {/* Futures results */}
-      {hasFutures && (
-        <div className="mb-8">
-          <h2 className="text-title-3 text-text-primary mb-4 flex items-center gap-2">
-            <span>Futures & Championships</span>
-            <span className="text-sm font-normal text-text-secondary">
-              ({results.futures.length})
-            </span>
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.futures.map((market) => (
-              <FuturesCard
-                key={market.id}
-                market={market}
-                showSport={!sportFilter}
-                isPinned={isFuturesPinned(market.id)}
-                onPinToggle={toggleFuturesPin}
-                pinDisabled={isFuturesMaxReached}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Events results grid */}
+      {/* Events results grid — show first */}
       {hasEvents && (
         <>
           {hasFutures && (
@@ -332,6 +308,30 @@ function SearchContent() {
             ))}
           </div>
         </>
+      )}
+
+      {/* Futures results */}
+      {hasFutures && (
+        <div className={hasEvents ? "mt-8" : ""}>
+          <h2 className="text-title-3 text-text-primary mb-4 flex items-center gap-2">
+            <span>Futures & Championships</span>
+            <span className="text-sm font-normal text-text-secondary">
+              ({results.futures.length})
+            </span>
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {results.futures.map((market) => (
+              <FuturesCard
+                key={market.id}
+                market={market}
+                showSport={!sportFilter}
+                isPinned={isFuturesPinned(market.id)}
+                onPinToggle={toggleFuturesPin}
+                pinDisabled={isFuturesMaxReached}
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Pagination */}

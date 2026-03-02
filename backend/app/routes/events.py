@@ -605,13 +605,20 @@ async def search_events(
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
 
+    # Build team lookup for logos/colors in search results
+    all_team_names = []
+    for event in events:
+        all_team_names.append(event.home_team_name)
+        all_team_names.append(event.away_team_name)
+    team_lookup = await _build_team_lookup(db, list(set(all_team_names)))
+
     # Format results and group by sport
     formatted_results = []
     sports_found = {}
 
     for event in events:
         formatted = _format_event_with_aggregated_odds(
-            event, aggregated_odds_map.get(event.id), gei_percentiles
+            event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup
         )
         formatted_results.append(formatted)
 
@@ -2813,18 +2820,22 @@ async def get_line_movement_analysis(
         except Exception as e:
             logger.warning(f"Team stats fetch failed for event {event_id}: {e}")
 
-        prompt = build_llm_prompt(
-            analysis,
-            injuries=injuries_data,
-            news_headlines=news_headlines,
-            game_context=game_context,
-            team_stats=team_stats,
-        )
-        try:
-            from app.services.llm import generate_line_movement_explanation
-            explanation = generate_line_movement_explanation(prompt)
-        except Exception as e:
-            logger.warning(f"LLM explanation failed for event {event_id}: {e}")
+        # Skip LLM when we have no real context — it can only restate
+        # what the movement cards already show, producing filler text
+        has_any_context = bool(injuries_data) or bool(news_headlines) or bool(game_context) or bool(team_stats)
+        if has_any_context:
+            prompt = build_llm_prompt(
+                analysis,
+                injuries=injuries_data,
+                news_headlines=news_headlines,
+                game_context=game_context,
+                team_stats=team_stats,
+            )
+            try:
+                from app.services.llm import generate_line_movement_explanation
+                explanation = generate_line_movement_explanation(prompt)
+            except Exception as e:
+                logger.warning(f"LLM explanation failed for event {event_id}: {e}")
 
     # Check for prediction market disagreement
     disagreement_explanation = None
