@@ -104,26 +104,12 @@ struct PreferencesView: View {
 
     private func teamRow(_ item: FavoriteItem) -> some View {
         HStack(spacing: 10) {
-            if let logoUrl = item.logoUrl, let url = URL(string: logoUrl) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    Circle()
-                        .fill(Color.secondary.opacity(0.2))
-                }
-                .frame(width: 28, height: 28)
-                .clipShape(Circle())
-            } else {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.2))
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Text(String(item.teamName.prefix(1)))
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(Color.accentColor)
-                    )
-            }
+            TeamLogoView(
+                url: item.logoUrl,
+                teamName: item.teamName,
+                color: .accentColor,
+                size: 28
+            )
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.teamName)

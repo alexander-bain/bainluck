@@ -224,10 +224,20 @@ struct SearchView: View {
                         }
                     }
                 } header: {
-                    Label("Events", systemImage: "figure.run")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .textCase(nil)
+                    HStack(spacing: 6) {
+                        Label("Events", systemImage: "figure.run")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .textCase(nil)
+                        Text("\(results.results.count)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                 }
             }
 
@@ -239,10 +249,20 @@ struct SearchView: View {
                         }
                     }
                 } header: {
-                    Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .textCase(nil)
+                    HStack(spacing: 6) {
+                        Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .textCase(nil)
+                        Text("\(results.futures.count)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                 }
             }
 
@@ -324,9 +344,7 @@ struct SearchView: View {
                         .foregroundStyle(.secondary)
                 }
                 if let source = market.source {
-                    Text(source.capitalized)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    searchSourceBadge(source)
                 }
             }
 
@@ -345,5 +363,31 @@ struct SearchView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private func searchSourceBadge(_ source: String) -> some View {
+        let label: String
+        let color: Color
+        switch source {
+        case "polymarket":
+            label = "Polymarket"
+            color = .blue
+        case "kalshi":
+            label = "Kalshi"
+            color = Color(hex: "#22c55e")
+        case "odds_api":
+            label = "Sportsbooks"
+            color = Color(hex: "#d97706")
+        default:
+            label = source.capitalized
+            color = .gray
+        }
+        return Text(label)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
     }
 }

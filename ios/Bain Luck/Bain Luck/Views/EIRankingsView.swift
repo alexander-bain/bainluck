@@ -124,11 +124,21 @@ struct EIRankingsView: View {
                         }
                     }
                 } header: {
-                    Label("Most Exciting", systemImage: "flame.fill")
-                        .foregroundStyle(.orange)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .textCase(nil)
+                    HStack(spacing: 6) {
+                        Label("Most Exciting", systemImage: "flame.fill")
+                            .foregroundStyle(.orange)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .textCase(nil)
+                        Text("\(rankings.highest.count)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                 }
             }
 
@@ -140,11 +150,21 @@ struct EIRankingsView: View {
                         }
                     }
                 } header: {
-                    Label("Least Exciting", systemImage: "moon.zzz.fill")
-                        .foregroundStyle(.secondary)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .textCase(nil)
+                    HStack(spacing: 6) {
+                        Label("Least Exciting", systemImage: "moon.zzz.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .textCase(nil)
+                        Text("\(rankings.lowest.count)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                 }
             }
         }

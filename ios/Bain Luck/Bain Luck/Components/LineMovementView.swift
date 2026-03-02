@@ -68,9 +68,24 @@ struct LineMovementView: View {
 
         if hasMovements || hasExplanation || hasDisagreement {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Line Movement")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text("Line Movement")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    if hasMovements {
+                        Text("\(lm.movements.count)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                }
 
                 if let explanation = lm.explanation {
                     HStack(alignment: .top, spacing: 8) {
