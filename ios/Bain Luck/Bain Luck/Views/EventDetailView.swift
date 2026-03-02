@@ -261,6 +261,9 @@ struct EventDetailView: View {
             // Probability section
             heroProbability(event, colors: colors)
 
+            // Game context strip (broadcast, time, venue)
+            heroContextStrip(event)
+
             // Data freshness strip
             freshnessStrip(event)
         }
@@ -364,6 +367,51 @@ struct EventDetailView: View {
                         Text(formatProbability(homeOpen))
                             .font(.caption2).foregroundStyle(.white.opacity(0.5))
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - Hero Context Strip
+
+    @ViewBuilder
+    private func heroContextStrip(_ event: EventDetail) -> some View {
+        let hasInfo = event.espn?.broadcast != nil || event.commenceTime != nil
+        if hasInfo {
+            HStack(spacing: 8) {
+                if let broadcast = event.espn?.broadcast {
+                    HStack(spacing: 4) {
+                        Image(systemName: "tv")
+                            .font(.system(size: 9))
+                        Text(broadcast)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.white.opacity(0.7))
+                }
+                if let ct = event.commenceTime, let date = ct.asDate {
+                    let isLive = event.status == "live"
+                    let isCompleted = event.status == "completed" || event.status == "closed"
+                    HStack(spacing: 4) {
+                        Image(systemName: isCompleted ? "calendar" : "clock")
+                            .font(.system(size: 9))
+                        if isLive {
+                            // Live: show game clock from ESPN if available
+                            if let clock = event.espn?.gameClock {
+                                Text(clock)
+                                    .font(.caption2)
+                            }
+                        } else if isCompleted {
+                            // Completed: show date
+                            Text(date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                                .font(.caption2)
+                        } else {
+                            // Scheduled: show day + time
+                            Text(date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+                                .font(.caption2)
+                        }
+                    }
+                    .foregroundStyle(.white.opacity(0.6))
                 }
             }
         }
