@@ -4643,7 +4643,7 @@ async def merge_duplicate_events(
 
     from sqlalchemy import text, func as sqlfunc
 
-    # Find duplicate pairs
+    # Find duplicate pairs — LIMIT applied to pair finding BEFORE snapshot counts
     result = await db.execute(text("""
         WITH dupes AS (
             SELECT a.id AS id_a, b.id AS id_b
@@ -4657,6 +4657,7 @@ async def merge_duplicate_events(
             )
             WHERE a.commence_time > NOW() - INTERVAL '30 days'
               AND b.commence_time > NOW() - INTERVAL '30 days'
+            LIMIT :pair_limit
         )
         SELECT
             a.id AS id_a, a.external_id AS ext_a,
@@ -4680,7 +4681,6 @@ async def merge_duplicate_events(
             SELECT COUNT(*) AS cnt FROM odds_snapshots WHERE event_id = b.id
         ) sb ON TRUE
         ORDER BY a.commence_time DESC
-        LIMIT :pair_limit
     """), {"pair_limit": limit})
     pairs = result.all()
 
