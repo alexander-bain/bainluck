@@ -4646,7 +4646,7 @@ async def merge_duplicate_events_sql(
     dry_run: bool = Query(True, description="Preview without making changes"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Merge duplicate events: SELECT pairs first, then targeted UPDATE/DELETE by ID."""
+    """Merge duplicate events: find orphans, clear FK refs, then delete."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
@@ -4678,7 +4678,11 @@ async def merge_duplicate_events_sql(
     if dry_run:
         return {"dry_run": True, "would_merge": len(pairs)}
 
-    # Step 2: Absorb metadata per keeper (targeted by ID)
+    orphan_ids = [row.orphan_id for row in pairs]
+    if not orphan_ids:
+        return {"dry_run": False, "merged": 0, "deleted": 0}
+
+    # Step 2: Absorb metadata per keeper
     for row in pairs:
         set_clauses = []
         params = {"kid": row.keeper_id}
@@ -4700,13 +4704,30 @@ async def merge_duplicate_events_sql(
                 params,
             )
 
-    # Step 3: Bulk delete orphans by ID
-    orphan_ids = [row.orphan_id for row in pairs]
-    if orphan_ids:
+    # Step 3: Clear ALL FK references to orphans (5 tables without CASCADE)
+    # Tables with ON DELETE CASCADE (espn_snapshots, win_prob_snapshots) are auto-handled.
+    fk_tables = [
+        "odds_snapshots",       # line 182 — no cascade
+        "odds_aggregated",      # line 226 — no cascade
+        "score_snapshots",      # line 438 — no cascade
+        "line_movement_analysis",  # line 641 — nullable, no cascade
+    ]
+    for table in fk_tables:
         await db.execute(
-            text("DELETE FROM events WHERE id = ANY(:ids)"),
+            text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"),
             {"ids": orphan_ids},
         )
+    # futures_markets has nullable event_id — NULL it instead of deleting
+    await db.execute(
+        text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"),
+        {"ids": orphan_ids},
+    )
+
+    # Step 4: Now delete orphan events (CASCADE handles espn/win_prob snapshots)
+    await db.execute(
+        text("DELETE FROM events WHERE id = ANY(:ids)"),
+        {"ids": orphan_ids},
+    )
 
     await db.commit()
     return {
