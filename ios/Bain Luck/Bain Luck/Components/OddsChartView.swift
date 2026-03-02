@@ -14,24 +14,27 @@ private struct ChartDataPoint: Identifiable {
     let source: String
 }
 
+// MARK: - Period Marker
+
+private struct PeriodMarker: Identifiable {
+    let id = UUID()
+    let date: Date
+    let label: String
+    let isGameStart: Bool
+}
+
 // MARK: - Time Range
 
-enum OddsTimeRange: Int, CaseIterable, Identifiable {
-    case sixHours = 6
-    case twelveHours = 12
-    case twentyFourHours = 24
-    case fortyEightHours = 48
-    case all = 0
+enum OddsTimeRange: String, CaseIterable, Identifiable {
+    case all
+    case sinceStart
 
-    var id: Int { rawValue }
+    var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .sixHours: return "6h"
-        case .twelveHours: return "12h"
-        case .twentyFourHours: return "24h"
-        case .fortyEightHours: return "48h"
         case .all: return "All"
+        case .sinceStart: return "Since Start"
         }
     }
 }
@@ -42,7 +45,7 @@ final class OddsChartViewModel: ObservableObject {
     @Published var history: EventHistoryResponse?
     @Published var loading = true
     @Published var error: String?
-    @Published var selectedRange: OddsTimeRange = .twentyFourHours
+    @Published var selectedRange: OddsTimeRange = .all
 
     let eventId: Int
 
@@ -54,12 +57,7 @@ final class OddsChartViewModel: ObservableObject {
     func load() async {
         loading = history == nil
         do {
-            let hours = selectedRange == .all ? 0 : selectedRange.rawValue
-            var query: [String: String] = [:]
-            if hours > 0 {
-                query["hours"] = "\(hours)"
-            }
-            history = try await APIClient.shared.fetchEventHistory(id: eventId, hours: hours == 0 ? 168 : hours)
+            history = try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
             error = nil
             loading = false
         } catch {
@@ -75,11 +73,30 @@ final class OddsChartViewModel: ObservableObject {
 struct OddsChartView: View {
     let eventId: Int
     var teamColors: (away: Color, home: Color)?
+    var commenceTime: String?
+    var status: String?
     @StateObject private var vm: OddsChartViewModel
 
-    init(eventId: Int, teamColors: (away: Color, home: Color)? = nil) {
+    private var gameStartDate: Date? {
+        commenceTime?.asDate
+    }
+
+    private var isGameStarted: Bool {
+        status == "live" || status == "completed" || status == "closed"
+    }
+
+    /// Show the All / Since Start picker only when the game has started
+    /// and we know when it started.
+    private var showPicker: Bool {
+        isGameStarted && gameStartDate != nil
+    }
+
+    init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
+         commenceTime: String? = nil, status: String? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
+        self.commenceTime = commenceTime
+        self.status = status
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId))
     }
 
@@ -92,7 +109,9 @@ struct OddsChartView: View {
                 Spacer()
             }
 
-            timeRangePicker
+            if showPicker {
+                timeRangePicker
+            }
 
             if vm.loading {
                 ProgressView()
@@ -103,14 +122,16 @@ struct OddsChartView: View {
                     .foregroundStyle(.secondary)
                     .frame(height: 260)
             } else if let history = vm.history {
-                let dataPoints = buildDataPoints(history)
+                let allPoints = buildDataPoints(history)
+                let dataPoints = filterPoints(allPoints)
+                let periodMarkers = extractPeriodMarkers(history)
                 if dataPoints.isEmpty {
                     Text("No odds data available")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(height: 260)
                 } else {
-                    chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
+                    chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                 }
             }
@@ -119,14 +140,11 @@ struct OddsChartView: View {
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .task {
-            await vm.load()
-        }
-        .onChange(of: vm.selectedRange) { _, _ in
-            AnalyticsService.trackChartTimeRange(eventId: eventId, range: vm.selectedRange.label)
-            Task {
-                vm.history = nil
-                await vm.load()
+            // Default to "Since Start" for started games with a known commence time
+            if isGameStarted && gameStartDate != nil {
+                vm.selectedRange = .sinceStart
             }
+            await vm.load()
         }
     }
 
@@ -137,11 +155,12 @@ struct OddsChartView: View {
             ForEach(OddsTimeRange.allCases) { range in
                 Button {
                     vm.selectedRange = range
+                    AnalyticsService.trackChartTimeRange(eventId: eventId, range: range.label)
                 } label: {
                     Text(range.label)
                         .font(.caption2)
                         .fontWeight(vm.selectedRange == range ? .semibold : .regular)
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(vm.selectedRange == range ? Color.blue.opacity(0.15) : Color.clear)
                         .foregroundStyle(vm.selectedRange == range ? .blue : .secondary)
@@ -152,10 +171,64 @@ struct OddsChartView: View {
         .overlay(Capsule().stroke(Color.secondary.opacity(0.2)))
     }
 
+    // MARK: - Data Filtering
+
+    /// When "Since Start" is selected, only show data from game start onward.
+    private func filterPoints(_ points: [ChartDataPoint]) -> [ChartDataPoint] {
+        guard vm.selectedRange == .sinceStart,
+              let startDate = gameStartDate,
+              isGameStarted else {
+            return points
+        }
+        return points.filter { $0.date >= startDate }
+    }
+
+    // MARK: - Period Markers
+
+    /// Extract period boundary markers from ESPN history data.
+    /// Returns a "Start" marker at commenceTime plus a marker at each period transition.
+    private func extractPeriodMarkers(_ history: EventHistoryResponse) -> [PeriodMarker] {
+        var markers: [PeriodMarker] = []
+
+        // Game start marker
+        if let startDate = gameStartDate, isGameStarted {
+            markers.append(PeriodMarker(date: startDate, label: "Start", isGameStart: true))
+        }
+
+        // Period boundary markers from ESPN history
+        guard let espnHistory = history.espnHistory, espnHistory.count >= 2 else {
+            return markers
+        }
+
+        var lastPeriod: String? = nil
+        for point in espnHistory {
+            guard let period = point.period, !period.isEmpty,
+                  let date = point.timestamp.asDate else { continue }
+
+            if period != lastPeriod {
+                if lastPeriod != nil {
+                    // Period changed — mark the start of the new period
+                    markers.append(PeriodMarker(date: date, label: period, isGameStart: false))
+                }
+                lastPeriod = period
+            }
+        }
+
+        return markers
+    }
+
     // MARK: - Chart
 
-    private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo]) -> some View {
+    private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo], periodMarkers: [PeriodMarker]) -> some View {
         let uniqueSources = Set(dataPoints.map(\.source)).sorted()
+
+        // Filter period markers to visible data range
+        let visibleMarkers: [PeriodMarker]
+        if vm.selectedRange == .sinceStart, let startDate = gameStartDate {
+            visibleMarkers = periodMarkers.filter { $0.date >= startDate }
+        } else {
+            visibleMarkers = periodMarkers
+        }
 
         return Chart {
             // 50% reference line
@@ -163,6 +236,20 @@ struct OddsChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
+            // Period marker lines
+            ForEach(visibleMarkers) { marker in
+                RuleMark(x: .value("Period", marker.date))
+                    .lineStyle(StrokeStyle(lineWidth: marker.isGameStart ? 0.8 : 0.5, dash: [3, 3]))
+                    .foregroundStyle(.white.opacity(marker.isGameStart ? 0.4 : 0.25))
+                    .annotation(position: .top, alignment: .leading) {
+                        Text(marker.label)
+                            .font(.system(size: 8))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .padding(.leading, 2)
+                    }
+            }
+
+            // Data lines
             ForEach(uniqueSources, id: \.self) { source in
                 let points = dataPoints.filter { $0.source == source }
                 ForEach(points) { point in

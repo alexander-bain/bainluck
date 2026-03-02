@@ -81,7 +81,8 @@ struct EventDetailView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         heroSection(event)
-                        OddsChartView(eventId: event.id, teamColors: teamColors(event))
+                        OddsChartView(eventId: event.id, teamColors: teamColors(event),
+                                     commenceTime: event.commenceTime, status: event.status)
                         if let ei = event.ei ?? event.pulse { eiSection(ei) }
                         LineMovementView(eventId: event.id)
                         if let context = event.standingsContext { standingsSection(context) }
