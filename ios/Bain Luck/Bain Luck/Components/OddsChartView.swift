@@ -124,7 +124,7 @@ struct OddsChartView: View {
             } else if let history = vm.history {
                 let allPoints = buildDataPoints(history)
                 let dataPoints = filterPoints(allPoints)
-                let periodMarkers = extractPeriodMarkers(history)
+                let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 if dataPoints.isEmpty {
                     Text("No odds data available")
                         .font(.caption)
@@ -174,25 +174,48 @@ struct OddsChartView: View {
     // MARK: - Data Filtering
 
     /// When "Since Start" is selected, only show data from game start onward.
+    /// Uses a "smart start" approach: if there's a gap >30 min between
+    /// commence_time and the first data point, start from the first data point
+    /// instead — prevents empty chart space from schedule delays.
     private func filterPoints(_ points: [ChartDataPoint]) -> [ChartDataPoint] {
         guard vm.selectedRange == .sinceStart,
               let startDate = gameStartDate,
               isGameStarted else {
             return points
         }
-        return points.filter { $0.date >= startDate }
+        let postStart = points.filter { $0.date >= startDate }
+        guard let firstPoint = postStart.first else {
+            return postStart
+        }
+        // If first data point is >30 min after commence_time, skip the gap
+        let gap = firstPoint.date.timeIntervalSince(startDate)
+        if gap > 1800 {
+            // Start 1 minute before the first data point for slight padding
+            let adjustedStart = firstPoint.date.addingTimeInterval(-60)
+            return postStart.filter { $0.date >= adjustedStart }
+        }
+        return postStart
     }
 
     // MARK: - Period Markers
 
     /// Extract period boundary markers from ESPN history data.
     /// Returns a "Start" marker at commenceTime plus a marker at each period transition.
-    private func extractPeriodMarkers(_ history: EventHistoryResponse) -> [PeriodMarker] {
+    /// The start marker position is adjusted to match filtered data range.
+    private func extractPeriodMarkers(_ history: EventHistoryResponse, filteredPoints: [ChartDataPoint]) -> [PeriodMarker] {
         var markers: [PeriodMarker] = []
 
-        // Game start marker
+        // Game start marker — position at the earliest filtered data point
+        // to avoid creating empty chart space from schedule delays
         if let startDate = gameStartDate, isGameStarted {
-            markers.append(PeriodMarker(date: startDate, label: "Start", isGameStart: true))
+            var markerDate = startDate
+            if vm.selectedRange == .sinceStart, let firstPoint = filteredPoints.first {
+                let gap = firstPoint.date.timeIntervalSince(startDate)
+                if gap > 1800 {
+                    markerDate = firstPoint.date
+                }
+            }
+            markers.append(PeriodMarker(date: markerDate, label: "Start", isGameStart: true))
         }
 
         // Period boundary markers from ESPN history

@@ -606,23 +606,14 @@ async def _sync_espn_live_events():
                                     matched_espn = ee
                                     break
 
-                        # 3. Fall back to commence_time proximity
-                        if not matched_espn and event.commence_time:
-                            candidates = []
-                            for ee in espn_events:
-                                if not ee.date:
-                                    continue
-                                time_diff = abs((ee.date - event.commence_time).total_seconds())
-                                if time_diff <= 21600:  # Within 6 hours
-                                    candidates.append((time_diff, ee))
-                            if len(candidates) == 1:
-                                matched_espn = candidates[0][1]
-                                logger.info(
-                                    f"ESPN scheduled time-match: event {event.id} "
-                                    f"({event.home_team_name} vs {event.away_team_name}) "
-                                    f"matched to ESPN {matched_espn.espn_id} via commence_time "
-                                    f"(diff: {candidates[0][0]/60:.0f}min)"
-                                )
+                        # 3. Commence_time proximity fallback REMOVED
+                        # Previously matched by time proximity when exactly 1 ESPN
+                        # candidate was within 6 hours. This caused massive logo
+                        # contamination for college sports where ESPN returns all
+                        # games — a single-candidate time match assigned wrong team
+                        # data (e.g., 29 teams got Purdue's ESPN ID/logo).
+                        # Name matching (step 2) is sufficient; ESPN ID (step 1)
+                        # handles teams that have already been correctly linked.
 
                         if not matched_espn:
                             continue
@@ -935,9 +926,12 @@ async def _backfill_team_logos():
 async def _cleanup_bad_espn_matches():
     """One-time cleanup for Team records with incorrect ESPN ID assignments.
 
-    Validates each team's espn_id by looking up the ESPN team and comparing
-    names using _team_name_match_score(). Clears ESPN data (ID, logos, colors)
-    for teams that don't pass the threshold.
+    Two-phase cleanup:
+    Phase 1: Find duplicate ESPN IDs (multiple teams sharing the same espn_id)
+             and clear all but the best-matching team for each.
+    Phase 2: Validates remaining teams' espn_id by looking up the ESPN team
+             and comparing names using _team_name_match_score(). Clears ESPN
+             data (ID, logos, colors) for teams that don't pass the threshold.
     """
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
     from app.models.models import Team, Sport
@@ -946,9 +940,30 @@ async def _cleanup_bad_espn_matches():
         "teams_checked": 0,
         "teams_valid": 0,
         "teams_cleared": 0,
+        "duplicate_groups_found": 0,
+        "duplicates_cleared": 0,
         "errors": [],
         "cleared_teams": [],
     }
+
+    def _clear_espn_data(team, reason, extra=None):
+        """Clear all ESPN-sourced data from a team record."""
+        info = {
+            "team": team.name,
+            "team_id": team.id,
+            "espn_id": team.espn_id,
+            "reason": reason,
+        }
+        if extra:
+            info.update(extra)
+        stats["cleared_teams"].append(info)
+        team.espn_id = None
+        team.logo_url_small = None
+        team.logo_url_large = None
+        team.primary_color = None
+        team.secondary_color = None
+        # Clear contaminated alternate_names — they may contain wrong ESPN names
+        team.alternate_names = None
 
     try:
         async with get_task_session() as session:
@@ -988,7 +1003,61 @@ async def _cleanup_bad_espn_matches():
                     # Build espn_id → ESPN team lookup
                     espn_by_id = {et.espn_id: et for et in espn_teams}
 
+                    # --- Phase 1: Find and clear duplicate ESPN IDs ---
+                    # Group our teams by espn_id
+                    teams_by_espn_id = {}
                     for team in teams:
+                        teams_by_espn_id.setdefault(team.espn_id, []).append(team)
+
+                    for eid, group in teams_by_espn_id.items():
+                        if len(group) <= 1:
+                            continue  # No duplicates for this ESPN ID
+
+                        stats["duplicate_groups_found"] += 1
+                        espn_team = espn_by_id.get(eid)
+                        espn_display = (espn_team.display_name or espn_team.name or "") if espn_team else ""
+
+                        # Score each team against the ESPN name
+                        scored = []
+                        for team in group:
+                            best = _team_name_match_score(team.name, espn_display)
+                            scored.append((best, team))
+                        scored.sort(key=lambda x: x[0], reverse=True)
+
+                        # Keep the best match, clear the rest
+                        best_score, best_team = scored[0]
+                        for score, team in scored[1:]:
+                            logger.info(
+                                f"Cleanup: duplicate ESPN ID {eid} — "
+                                f"clearing '{team.name}' (score {score:.2f}), "
+                                f"keeping '{best_team.name}' (score {best_score:.2f})"
+                            )
+                            _clear_espn_data(team, "duplicate_espn_id", {
+                                "espn_name": espn_display,
+                                "score": round(score, 2),
+                                "kept_team": best_team.name,
+                            })
+                            stats["duplicates_cleared"] += 1
+                            stats["teams_cleared"] += 1
+
+                        # If even the best match is bad, clear it too
+                        if best_score <= 0.5:
+                            logger.info(
+                                f"Cleanup: duplicate ESPN ID {eid} — "
+                                f"even best match '{best_team.name}' has score {best_score:.2f} — clearing"
+                            )
+                            _clear_espn_data(best_team, "duplicate_espn_id_all_bad", {
+                                "espn_name": espn_display,
+                                "score": round(best_score, 2),
+                            })
+                            stats["duplicates_cleared"] += 1
+                            stats["teams_cleared"] += 1
+
+                    # --- Phase 2: Validate remaining teams' ESPN IDs ---
+                    for team in teams:
+                        if team.espn_id is None:
+                            continue  # Already cleared in Phase 1
+
                         stats["teams_checked"] += 1
                         espn_team = espn_by_id.get(team.espn_id)
 
@@ -998,17 +1067,8 @@ async def _cleanup_bad_espn_matches():
                                 f"Cleanup: ESPN ID {team.espn_id} not found for "
                                 f"team '{team.name}' ({sport_key}) — clearing"
                             )
+                            _clear_espn_data(team, "espn_id_not_found")
                             stats["teams_cleared"] += 1
-                            stats["cleared_teams"].append({
-                                "team": team.name,
-                                "espn_id": team.espn_id,
-                                "reason": "espn_id_not_found",
-                            })
-                            team.espn_id = None
-                            team.logo_url_small = None
-                            team.logo_url_large = None
-                            team.primary_color = None
-                            team.secondary_color = None
                             continue
 
                         # Validate name match
@@ -1029,19 +1089,11 @@ async def _cleanup_bad_espn_matches():
                                 f"Cleanup: team '{team.name}' matched to ESPN "
                                 f"'{espn_display}' with score {score:.2f} — clearing"
                             )
-                            stats["teams_cleared"] += 1
-                            stats["cleared_teams"].append({
-                                "team": team.name,
-                                "espn_id": team.espn_id,
+                            _clear_espn_data(team, "low_match_score", {
                                 "espn_name": espn_display,
                                 "score": round(score, 2),
-                                "reason": "low_match_score",
                             })
-                            team.espn_id = None
-                            team.logo_url_small = None
-                            team.logo_url_large = None
-                            team.primary_color = None
-                            team.secondary_color = None
+                            stats["teams_cleared"] += 1
 
             finally:
                 await espn.close()
