@@ -100,7 +100,9 @@ LEAGUE_TIERS: dict[str, int] = {
 
 # Highlight score weights
 WEIGHTS = {
-    "live": 30,                    # Being live is inherently interesting
+    "live": 30,                    # Base live bonus (always awarded)
+    "live_late_game": 10,          # Extra bonus for late-game (scales with game progress, up to +10)
+    "live_overtime": 10,           # Extra bonus for overtime
     "close_matchup": 25,           # 40-60% probability
     "very_close": 10,              # 45-55% probability (bonus)
     "favorite_switched": 20,       # Upset potential
@@ -141,6 +143,70 @@ MIN_PREGAME_MOVEMENT = 0.05  # 5% change needed for pre-game closeness to be a t
 # Level 2 thresholds
 HIGH_VOLATILITY_RMS = 0.06  # 6% RMS of probability deltas = volatile
 RECENT_MOMENTUM_THRESHOLD = 0.08  # 8% shift in last 30 min = fast-moving
+
+# Sport-specific total periods for game progress calculation
+SPORT_TOTAL_PERIODS: dict[str, int] = {
+    "basketball_nba": 4,
+    "basketball_ncaab": 2,
+    "basketball_wncaab": 4,
+    "basketball_wnba": 4,
+    "americanfootball_nfl": 4,
+    "americanfootball_ncaaf": 4,
+    "icehockey_nhl": 3,
+    "baseball_mlb": 9,
+    "soccer_epl": 2,
+    "soccer_spain_la_liga": 2,
+    "soccer_uefa_champs_league": 2,
+    "soccer_germany_bundesliga": 2,
+    "soccer_italy_serie_a": 2,
+    "soccer_france_ligue_one": 2,
+    "soccer_usa_mls": 2,
+    "soccer_mexico_ligamx": 2,
+    "soccer_fifa_world_cup": 2,
+}
+
+
+def _parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> tuple[float, bool]:
+    """Parse game progress from ESPN period string.
+
+    Returns:
+        (progress, is_overtime) where progress is 0.0-1.0 (fraction of game elapsed)
+        and is_overtime is True if the game is in overtime/extra time.
+    """
+    if not period_str:
+        return 0.0, False  # Unknown — don't assume any progress
+
+    period_lower = period_str.lower().strip()
+
+    # Overtime detection
+    if any(kw in period_lower for kw in ("ot", "overtime", "extra", "so", "shootout", "penalties")):
+        return 1.0, True
+
+    # Half-based sports (soccer, college basketball)
+    if "1st half" in period_lower or "first half" in period_lower:
+        return 0.25, False
+    if "2nd half" in period_lower or "second half" in period_lower:
+        return 0.75, False
+    if "halftime" in period_lower:
+        return 0.5, False
+
+    # Quarter/period-based: extract number from "Q4", "3rd", "Period 2", etc.
+    import re
+    num_match = re.search(r"(\d+)", period_str)
+    if num_match:
+        period_num = int(num_match.group(1))
+        total = SPORT_TOTAL_PERIODS.get(sport_key or "", 4)
+        if period_num > total:
+            return 1.0, True  # Beyond regulation = overtime
+        # Mid-period approximation: (period - 0.5) / total
+        progress = min((period_num - 0.5) / total, 1.0)
+        return progress, False
+
+    # "Final" means game is over (shouldn't be "live" but handle gracefully)
+    if "final" in period_lower:
+        return 1.0, False
+
+    return 0.5, False  # Unknown — assume mid-game
 
 
 @dataclass
@@ -277,6 +343,8 @@ def compute_highlight(
     importance: Optional[str] = None,
     # Actual end time (from StatPal) for more accurate recently-finished timing
     end_time: Optional[datetime] = None,
+    # Game progress (from ESPN period string, e.g. "Q4", "2nd Half", "OT")
+    period: Optional[str] = None,
 ) -> HighlightResult:
     """
     Compute highlight score and flags for an event.
@@ -314,6 +382,19 @@ def compute_highlight(
     if flags.is_live:
         result.score += WEIGHTS["live"]
         result.reasons.append("live")
+
+        # Graduated late-game bonus: "Live in overtime" is dramatically more
+        # interesting than "Live in Q1". Scale bonus with game progress.
+        game_progress, is_overtime = _parse_game_progress(period, sport_key)
+        if is_overtime:
+            result.score += WEIGHTS["live_late_game"] + WEIGHTS["live_overtime"]
+            result.reasons.append("overtime")
+        elif game_progress >= 0.5:
+            # Scale from 0 at 50% through the game to full at 100%
+            late_bonus = int(WEIGHTS["live_late_game"] * min((game_progress - 0.5) * 2, 1.0))
+            if late_bonus > 0:
+                result.score += late_bonus
+                result.reasons.append("late_game")
 
     # Starting soon
     if status == "scheduled" and 0 < hours_until <= 3:
@@ -493,6 +574,7 @@ def compute_highlight(
     # Priority order for what to show users
     priority_order = [
         ("upset", "Recent upset"),
+        ("overtime", "Overtime"),
         ("favorite_switched", "Possible upset"),
         ("lead_changes", "Lead change"),
         ("very_close", "Coin flip"),
@@ -526,6 +608,8 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
 
     if flags.is_upset:
         return "Recent upset"
+    if flags.is_live and "overtime" in result.reasons:
+        return "Overtime"
     if flags.is_live and flags.favorite_switched:
         return "Upset brewing"
     if flags.is_live and flags.has_lead_changes:

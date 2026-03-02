@@ -513,6 +513,10 @@ async def _score_events(
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
 
+    # Batch-load championship probabilities for stakes weighting.
+    # Games between contenders are more consequential and interesting.
+    champ_probs = await _get_championship_probabilities(db)
+
     for event in events:
         # my_teams_only: skip events that don't involve the user's teams
         if my_teams_only:
@@ -576,9 +580,25 @@ async def _score_events(
             away_team_name=event.away_team_name,
             importance=importance,
             end_time=event.statpal_end_time,
+            period=event.period,
         )
 
         base_score = highlight_result.score
+
+        # Stakes weighting: games involving championship contenders are more
+        # consequential. A Celtics vs Nuggets regular season game should rank
+        # higher than Kings vs Wizards, even if both are 50/50.
+        home_champ = champ_probs.get(event.home_team_id, 0) if event.home_team_id else 0
+        away_champ = champ_probs.get(event.away_team_id, 0) if event.away_team_id else 0
+        max_champ_prob = max(home_champ, away_champ)
+        if max_champ_prob >= 0.15:      # Legit contender (top ~3-4 teams)
+            base_score += 15
+            highlight_result.reasons.append("high_stakes")
+        elif max_champ_prob >= 0.05:    # Fringe contender (top ~8-10)
+            base_score += 8
+            highlight_result.reasons.append("contender")
+        elif max_champ_prob >= 0.01:    # Long shot but not nothing
+            base_score += 3
 
         # Boost completed events that had high EI scores — these are the
         # "fascinating outcomes" worth surfacing even hours later.
@@ -1071,6 +1091,44 @@ async def _score_futures(
 _canonical_source_counts_cache: Optional[dict[str, int]] = None
 _canonical_source_counts_ts: float = 0.0
 _CANONICAL_CACHE_TTL = 300  # 5 minutes
+
+# Championship probability cache (for stakes weighting)
+_champ_prob_cache: Optional[dict[int, float]] = None
+_champ_prob_cache_ts: float = 0.0
+_CHAMP_PROB_CACHE_TTL = 300  # 5 minutes
+
+
+async def _get_championship_probabilities(db: AsyncSession) -> dict[int, float]:
+    """Return {team_id: max_championship_probability} for all teams with championship futures.
+
+    Queries market_tier=1 (championship) futures outcomes with a linked team_id.
+    Cached for 5 minutes since championship odds change slowly.
+    """
+    import time
+
+    global _champ_prob_cache, _champ_prob_cache_ts
+    now_ts = time.time()
+    if _champ_prob_cache is not None and (now_ts - _champ_prob_cache_ts) < _CHAMP_PROB_CACHE_TTL:
+        return _champ_prob_cache
+
+    from sqlalchemy import text
+    result = await db.execute(
+        text("""
+            SELECT fo.team_id, MAX(fo.current_probability) AS max_prob
+            FROM futures_outcomes fo
+            JOIN futures_markets fm ON fo.market_id = fm.id
+            WHERE fm.market_tier = 1
+              AND fm.status = 'open'
+              AND fo.team_id IS NOT NULL
+              AND fo.current_probability IS NOT NULL
+              AND fo.current_probability > 0
+            GROUP BY fo.team_id
+        """)
+    )
+    cache = {row.team_id: float(row.max_prob) for row in result.all()}
+    _champ_prob_cache = cache
+    _champ_prob_cache_ts = now_ts
+    return cache
 
 
 async def _get_canonical_source_counts(db: AsyncSession) -> dict[str, int]:
