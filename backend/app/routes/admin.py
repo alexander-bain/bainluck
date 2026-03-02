@@ -4711,7 +4711,7 @@ async def merge_duplicate_events_sql(
             "odds_snapshots",
             "odds_aggregated",
             "score_snapshots",
-            "line_movement_analysis",
+            "line_movement_analyses",
         ]
         for table in fk_tables:
             await db.execute(
