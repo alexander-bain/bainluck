@@ -139,6 +139,23 @@ def _names_match(a: str, b: str) -> bool:
     return False
 
 
+def _espn_names_match(our_name: str, espn_name: str) -> bool:
+    """Match a single team name against ESPN name.
+
+    Uses substring containment + token-overlap scoring fallback
+    for abbreviation differences (e.g., 'Ohio St' vs 'Ohio State').
+    """
+    from app.tasks.espn_sync import _team_name_match_score
+
+    our_lower = our_name.lower().strip()
+    espn_lower = (espn_name or "").lower().strip()
+    if not our_lower or not espn_lower:
+        return False
+    if our_lower in espn_lower or espn_lower in our_lower:
+        return True
+    return _team_name_match_score(our_name, espn_name) > 0.5
+
+
 async def _discover_events():
     """
     Async implementation of discover_events.
@@ -156,6 +173,7 @@ async def _discover_events():
         total_new_events = 0
         total_new_teams = 0
         total_statpal_attached = 0
+        total_espn_corrected = 0
         sports_polled = 0
         sports_skipped = 0
 
@@ -214,6 +232,48 @@ async def _discover_events():
                     # Collect all team names from this sport's events
                     all_team_names: set[str] = set()
 
+                    # Pre-fetch ESPN schedule for unique dates in this batch
+                    # to correct commence_times at creation time (especially
+                    # for college sports where StatPal doesn't cover)
+                    espn_events_by_date: dict[str, list] = {}
+                    from app.utils.sport_keys import SPORT_LEAGUE_MAP
+                    if sport_key in SPORT_LEAGUE_MAP and events_data:
+                        from app.services.espn_api import ESPNAPIService
+                        unique_dates: set[str] = set()
+                        for ed in events_data:
+                            try:
+                                ct = datetime.fromisoformat(
+                                    ed["commence_time"].replace(
+                                        "Z", "+00:00"
+                                    )
+                                )
+                                unique_dates.add(ct.strftime("%Y%m%d"))
+                            except (ValueError, KeyError):
+                                continue
+
+                        if unique_dates:
+                            espn_sched = ESPNAPIService()
+                            try:
+                                for date_str in unique_dates:
+                                    try:
+                                        espn_evts = (
+                                            await espn_sched.get_scoreboard(
+                                                sport_key, date=date_str
+                                            )
+                                        )
+                                        if espn_evts:
+                                            espn_events_by_date[
+                                                date_str
+                                            ] = espn_evts
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"ESPN schedule fetch failed "
+                                            f"for {sport_key}/{date_str}"
+                                            f": {e}"
+                                        )
+                            finally:
+                                await espn_sched.close()
+
                     for event_data in events_data:
                         commence_time = datetime.fromisoformat(
                             event_data["commence_time"].replace("Z", "+00:00")
@@ -225,6 +285,58 @@ async def _discover_events():
                             event_status = "live"
                         else:
                             event_status = "scheduled"
+
+                        # Cross-reference against pre-fetched ESPN schedule
+                        espn_commence_time = None
+                        espn_event_id = None
+                        if espn_events_by_date:
+                            date_str = commence_time.strftime("%Y%m%d")
+                            for ee in espn_events_by_date.get(
+                                date_str, []
+                            ):
+                                if not ee.home_team or not ee.away_team:
+                                    continue
+                                espn_home = (
+                                    ee.home_team.display_name
+                                    or ee.home_team.name
+                                    or ""
+                                )
+                                espn_away = (
+                                    ee.away_team.display_name
+                                    or ee.away_team.name
+                                    or ""
+                                )
+                                if _espn_names_match(
+                                    event_data["home_team"], espn_home
+                                ) and _espn_names_match(
+                                    event_data["away_team"], espn_away
+                                ):
+                                    espn_commence_time = ee.date
+                                    espn_event_id = ee.espn_id
+                                    break
+
+                            if espn_commence_time:
+                                time_diff = abs(
+                                    (
+                                        espn_commence_time - commence_time
+                                    ).total_seconds()
+                                )
+                                if time_diff > 300:
+                                    logger.info(
+                                        f"ESPN schedule correction for "
+                                        f"{sport_key}: "
+                                        f"{event_data['home_team']} vs "
+                                        f"{event_data['away_team']}: "
+                                        f"{commence_time.isoformat()} -> "
+                                        f"{espn_commence_time.isoformat()}"
+                                        f" (diff: {time_diff/3600:.1f}h)"
+                                    )
+                                    total_espn_corrected += 1
+                                # Re-evaluate status with corrected time
+                                if espn_commence_time > now:
+                                    event_status = "scheduled"
+                                elif event_status == "scheduled":
+                                    event_status = "live"
 
                         # Check if a StatPal-created event matches this Odds API event
                         statpal_event = await _find_statpal_event_for_odds_api(
@@ -241,7 +353,14 @@ async def _discover_events():
                             statpal_event.status = event_status
                             # Only overwrite commence_time if StatPal didn't set it
                             if statpal_event.commence_time_source != "statpal":
-                                statpal_event.commence_time = commence_time
+                                statpal_event.commence_time = (
+                                    espn_commence_time or commence_time
+                                )
+                                if espn_commence_time:
+                                    statpal_event.commence_time_source = "espn"
+                            # Set ESPN ID if matched and not already set
+                            if espn_event_id and not statpal_event.espn_id:
+                                statpal_event.espn_id = espn_event_id
                             event_id = statpal_event.id
                             total_statpal_attached += 1
                             logger.info(
@@ -266,13 +385,24 @@ async def _discover_events():
                                 )
                         else:
                             # Normal upsert (no StatPal match found)
+                            insert_vals = {
+                                "external_id": event_data["id"],
+                                "sport_id": sport.id,
+                                "home_team_name": event_data["home_team"],
+                                "away_team_name": event_data["away_team"],
+                                "commence_time": (
+                                    espn_commence_time or commence_time
+                                ),
+                                "status": event_status,
+                            }
+                            if espn_commence_time:
+                                insert_vals[
+                                    "commence_time_source"
+                                ] = "espn"
+                            if espn_event_id:
+                                insert_vals["espn_id"] = espn_event_id
                             stmt = insert(Event).values(
-                                external_id=event_data["id"],
-                                sport_id=sport.id,
-                                home_team_name=event_data["home_team"],
-                                away_team_name=event_data["away_team"],
-                                commence_time=commence_time,
-                                status=event_status,
+                                **insert_vals
                             ).on_conflict_do_update(
                                 index_elements=["external_id"],
                                 set_={
@@ -435,6 +565,7 @@ async def _discover_events():
             "new_events": total_new_events,
             "new_teams": total_new_teams,
             "statpal_attached": total_statpal_attached,
+            "espn_corrected": total_espn_corrected,
         }
     finally:
         await service.close()
