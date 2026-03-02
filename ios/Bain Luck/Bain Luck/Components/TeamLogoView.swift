@@ -1,30 +1,37 @@
 import SwiftUI
 
-/// Async team logo image with colored-initial fallback.
+/// Async team logo image with cached loading and colored-initial fallback.
 struct TeamLogoView: View {
     let url: String?
     let teamName: String
     let color: Color
     var size: CGFloat = 28
 
+    @State private var image: UIImage?
+    @State private var loadFailed = false
+
     var body: some View {
-        if let url, let imageURL = URL(string: url) {
-            AsyncImage(url: imageURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: size, height: size)
-                case .failure:
-                    initialsFallback
-                default:
-                    Circle()
-                        .fill(color.opacity(0.15))
-                        .frame(width: size, height: size)
-                }
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: size, height: size)
+            } else if loadFailed || url == nil {
+                initialsFallback
+            } else {
+                Circle()
+                    .fill(color.opacity(0.15))
+                    .frame(width: size, height: size)
             }
-        } else {
-            initialsFallback
+        }
+        .task(id: url) {
+            guard let url, let imageURL = URL(string: url) else {
+                loadFailed = true
+                return
+            }
+            image = await ImageCache.shared.image(for: imageURL)
+            if image == nil { loadFailed = true }
         }
     }
 

@@ -49,13 +49,18 @@ final class OddsChartViewModel: ObservableObject {
 
     let eventId: Int
 
-    init(eventId: Int) {
+    init(eventId: Int, preloaded: EventHistoryResponse? = nil) {
         self.eventId = eventId
+        if let preloaded {
+            self.history = preloaded
+            self.loading = false
+        }
     }
 
     @MainActor
     func load() async {
-        loading = history == nil
+        guard history == nil else { return }  // Skip if preloaded
+        loading = true
         do {
             history = try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
             error = nil
@@ -92,12 +97,13 @@ struct OddsChartView: View {
     }
 
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
-         commenceTime: String? = nil, status: String? = nil) {
+         commenceTime: String? = nil, status: String? = nil,
+         preloadedHistory: EventHistoryResponse? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
         self.status = status
-        _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId))
+        _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
 
     var body: some View {
@@ -263,14 +269,14 @@ struct OddsChartView: View {
             ForEach(visibleMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
                     .lineStyle(StrokeStyle(lineWidth: marker.isGameStart ? 1.2 : 1.0, dash: [3, 3]))
-                    .foregroundStyle(.white.opacity(marker.isGameStart ? 0.6 : 0.5))
+                    .foregroundStyle(.secondary.opacity(marker.isGameStart ? 0.7 : 0.5))
                     .annotation(position: .top, alignment: .leading) {
                         Text(normalizePeriodLabel(marker.label))
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.8))
+                            .foregroundStyle(.primary.opacity(0.7))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
-                            .background(.white.opacity(0.12))
+                            .background(Color(.systemGray5))
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                             .padding(.leading, 2)
                     }
@@ -317,42 +323,91 @@ struct OddsChartView: View {
     // MARK: - Legend
 
     private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo]) -> some View {
+        // Order: aggregate first (if present), then consensus, then other sources sorted
         let uniqueSources = Set(dataPoints.map(\.source)).sorted()
+        let ordered = uniqueSources.sorted { a, b in
+            if a == "aggregate" { return true }
+            if b == "aggregate" { return false }
+            if a == "consensus" { return true }
+            if b == "consensus" { return false }
+            return a < b
+        }
 
-        return HStack(spacing: 12) {
-            ForEach(uniqueSources, id: \.self) { source in
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(colorForSource(source, sources: sources))
-                        .frame(width: 6, height: 6)
-                    Text(displayNameForSource(source, sources: sources))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(ordered, id: \.self) { source in
+                    let isPrimary = source == "aggregate" || (source == "consensus" && !ordered.contains("aggregate"))
+                    HStack(spacing: 4) {
+                        if isPrimary {
+                            // Thick bar for primary line
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(colorForSource(source, sources: sources))
+                                .frame(width: 14, height: 3)
+                        } else {
+                            Circle()
+                                .fill(colorForSource(source, sources: sources))
+                                .frame(width: 6, height: 6)
+                        }
+                        Text(displayNameForSource(source, sources: sources))
+                            .font(.caption2)
+                            .foregroundStyle(isPrimary ? .primary : .secondary)
+                    }
                 }
             }
         }
+    }
+
+    // MARK: - Multi-Source Detection
+
+    /// Whether the history has non-sportsbook sources (ESPN, Kalshi, model, etc.)
+    private func isMultiSource(_ history: EventHistoryResponse) -> Bool {
+        guard let winProbHistory = history.winProbHistory else { return false }
+        return !winProbHistory.isEmpty
     }
 
     // MARK: - Data Transformation
 
     private func buildDataPoints(_ history: EventHistoryResponse) -> [ChartDataPoint] {
         var points: [ChartDataPoint] = []
+        let multiSource = isMultiSource(history)
 
-        // Consensus line (home probability)
-        for h in history.history {
-            guard let date = h.timestamp.asDate,
-                  let prob = h.homeProbability else { continue }
-            points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
-        }
+        if multiSource {
+            // Multi-source mode:
+            // - "aggregate" = backend-computed weighted median across ALL sources (bold primary)
+            // - "consensus" = sportsbook mean (shown at equal weight to other sources)
+            // - other sources: ESPN, Kalshi, Polymarket, model, etc.
 
-        // Win probability source lines
-        if let winProbHistory = history.winProbHistory {
-            for (sourceKey, sourcePoints) in winProbHistory {
+            // Backend aggregate line (weighted median + staleness decay + smoothing)
+            if let aggregateLine = history.aggregateLine {
+                for p in aggregateLine {
+                    guard let date = p.timestamp.asDate else { continue }
+                    points.append(ChartDataPoint(date: date, probability: p.homeProbability, source: "aggregate"))
+                }
+            }
+
+            // Sportsbook consensus (now a regular-weight source, not the primary)
+            for h in history.history {
+                guard let date = h.timestamp.asDate,
+                      let prob = h.homeProbability else { continue }
+                points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
+            }
+
+            // Other win probability sources
+            for (sourceKey, sourcePoints) in history.winProbHistory ?? [:] {
                 for wp in sourcePoints {
                     guard let date = wp.timestamp.asDate,
                           let prob = wp.homeProbability else { continue }
                     points.append(ChartDataPoint(date: date, probability: prob, source: sourceKey))
                 }
+            }
+        } else {
+            // Sportsbooks-only mode:
+            // - "consensus" = sportsbook mean (bold primary, the only aggregation)
+            // - No other sources to show
+            for h in history.history {
+                guard let date = h.timestamp.asDate,
+                      let prob = h.homeProbability else { continue }
+                points.append(ChartDataPoint(date: date, probability: prob, source: "consensus"))
             }
         }
 
@@ -362,7 +417,11 @@ struct OddsChartView: View {
     // MARK: - Source Styling
 
     private func colorForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> Color {
-        if source == "consensus" { return teamColors?.home ?? .blue }
+        switch source {
+        case "aggregate": return Color(hex: "#059669") // Emerald green, matches web "Bain Luck" line
+        case "consensus": return teamColors?.home ?? .blue
+        default: break
+        }
         if let info = sources[source], let hex = info.color {
             return Color(hex: hex)
         }
@@ -378,18 +437,31 @@ struct OddsChartView: View {
     }
 
     private func strokeStyleForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> StrokeStyle {
-        if source == "consensus" {
-            return StrokeStyle(lineWidth: 2)
+        if source == "aggregate" {
+            // Meta-aggregate across all sources — boldest line
+            return StrokeStyle(lineWidth: 3.0)
         }
-        // Model sources get dashed lines
+        if source == "consensus" {
+            // Check if aggregate exists — if so, consensus is secondary
+            let hasAggregate = vm.history?.aggregateLine != nil && isMultiSource(vm.history!)
+            if hasAggregate {
+                // Regular weight, same as other sources
+                return StrokeStyle(lineWidth: 1.5)
+            }
+            // Sportsbooks-only: consensus is the primary line
+            return StrokeStyle(lineWidth: 2.5)
+        }
+        // Model sources get dashed lines, thinner
         let isModel = sources[source]?.type == "model"
         if isModel {
             return StrokeStyle(lineWidth: 1.5, dash: [5, 3])
         }
+        // Market sources (Kalshi, Polymarket) — thin solid
         return StrokeStyle(lineWidth: 1.5)
     }
 
     private func displayNameForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> String {
+        if source == "aggregate" { return "Bain Luck" }
         if source == "consensus" { return "Betting Odds" }
         return sources[source]?.displayName ?? source.capitalized
     }

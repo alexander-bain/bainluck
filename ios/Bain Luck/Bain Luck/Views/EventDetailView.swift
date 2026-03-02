@@ -10,6 +10,9 @@ final class EventDetailViewModel: ObservableObject {
     @Published var event: EventDetail?
     @Published var loading = true
     @Published var error: String?
+    @Published var history: EventHistoryResponse?
+    @Published var lineMovement: LineMovementResponse?
+    @Published var relatedFutures: RelatedFuturesResponse?
 
     private var refreshTimer: Timer?
     let eventId: Int
@@ -21,16 +24,30 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     func load() async {
         loading = event == nil
+
+        // Start secondary fetches immediately (they only need eventId)
+        let historyTask = Task { try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168) }
+        let lineMovementTask = Task { try? await APIClient.shared.fetchLineMovement(eventId: eventId) }
+        let relatedFuturesTask = Task { try? await APIClient.shared.fetchRelatedFutures(eventId: eventId) }
+
+        // Await primary fetch (controls loading state)
         do {
             event = try await APIClient.shared.fetchEvent(id: eventId)
             error = nil
-            loading = false
-            configureAutoRefresh()
         } catch {
             self.error = error.localizedDescription
-            loading = false
             logger.error("Failed to load event \(self.eventId): \(error)")
         }
+
+        // Unblock the page — render with whatever secondary data is already available
+        loading = false
+        configureAutoRefresh()
+
+        // Await secondary fetches (already running in parallel, may already be done)
+        // These update @Published properties so child views re-render as data arrives
+        history = await historyTask.value
+        lineMovement = await lineMovementTask.value
+        relatedFutures = await relatedFuturesTask.value
     }
 
     private func configureAutoRefresh() {
@@ -82,9 +99,14 @@ struct EventDetailView: View {
                     VStack(spacing: 16) {
                         heroSection(event)
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
-                                     commenceTime: event.commenceTime, status: event.status)
+                                     commenceTime: event.commenceTime, status: event.status,
+                                     preloadedHistory: vm.history)
                         if let ei = event.ei ?? event.pulse { eiSection(ei) }
-                        LineMovementView(eventId: event.id)
+                        LineMovementView(eventId: event.id,
+                                         homeTeam: event.homeTeam,
+                                         awayTeam: event.awayTeam,
+                                         eventStatus: event.status,
+                                         preloadedData: vm.lineMovement)
                         if let context = event.standingsContext { standingsSection(context) }
                         RelatedFuturesView(
                             eventId: event.id,
@@ -92,7 +114,8 @@ struct EventDetailView: View {
                             homeTeamColor: teamColors(event).home,
                             awayTeam: event.awayTeam,
                             homeTeam: event.homeTeam,
-                            sportKey: event.sport
+                            sportKey: event.sport,
+                            preloadedData: vm.relatedFutures
                         )
                         espnSection(event)
                         bookmakerSection(event)
@@ -274,7 +297,33 @@ struct EventDetailView: View {
 
     private func heroProbability(_ event: EventDetail, colors: (away: Color, home: Color)) -> some View {
         VStack(spacing: 6) {
-            if !isFinished {
+            if isFinished {
+                // Completed: show pre-game odds prominently
+                if let opening = event.openingOdds,
+                   let awayOpen = opening.awayProbability,
+                   let homeOpen = opening.homeProbability {
+                    HStack {
+                        Text(formatProbability(awayOpen))
+                            .font(.title3).fontWeight(.bold).monospacedDigit()
+                            .foregroundStyle(colors.away)
+                        Spacer()
+                        Text("Pre-game Odds")
+                            .font(.caption2).fontWeight(.medium)
+                            .foregroundStyle(.white.opacity(0.5))
+                        Spacer()
+                        Text(formatProbability(homeOpen))
+                            .font(.title3).fontWeight(.bold).monospacedDigit()
+                            .foregroundStyle(colors.home)
+                    }
+                    ProbabilityBar(
+                        awayProb: awayOpen, homeProb: homeOpen,
+                        awayColor: colors.away.opacity(0.7),
+                        homeColor: colors.home.opacity(0.7),
+                        height: 12
+                    )
+                }
+            } else {
+                // Live / Scheduled: show current odds prominently
                 if let odds = event.currentOdds,
                    let away = odds.awayProbability,
                    let home = odds.homeProbability {
@@ -283,7 +332,9 @@ struct EventDetailView: View {
                             .font(.title3).fontWeight(.bold).monospacedDigit()
                             .foregroundStyle(colors.away)
                         Spacer()
-                        Text("Win Probability").font(.caption2).foregroundStyle(.white.opacity(0.5))
+                        Text(isLive ? "Live Win Probability" : "Win Probability")
+                            .font(.caption2).fontWeight(.medium)
+                            .foregroundStyle(.white.opacity(0.5))
                         Spacer()
                         Text(formatProbability(home))
                             .font(.title3).fontWeight(.bold).monospacedDigit()
@@ -295,25 +346,17 @@ struct EventDetailView: View {
                         height: 14, animated: true, glowing: isLive
                     )
                 }
-            }
 
-            if let opening = event.openingOdds,
-               let awayOpen = opening.awayProbability,
-               let homeOpen = opening.homeProbability {
-                VStack(spacing: 4) {
-                    if isFinished {
-                        ProbabilityBar(
-                            awayProb: awayOpen, homeProb: homeOpen,
-                            awayColor: colors.away.opacity(0.5),
-                            homeColor: colors.home.opacity(0.5),
-                            height: 10
-                        )
-                    }
+                // Show opening odds as secondary reference for live games
+                if isLive,
+                   let opening = event.openingOdds,
+                   let awayOpen = opening.awayProbability,
+                   let homeOpen = opening.homeProbability {
                     HStack {
                         Text(formatProbability(awayOpen))
                             .font(.caption2).foregroundStyle(.white.opacity(0.5))
                         Spacer()
-                        Text(isFinished ? "Pre-game odds" : "Opened")
+                        Text("Opened")
                             .font(.caption2).foregroundStyle(.white.opacity(0.35))
                         Spacer()
                         Text(formatProbability(homeOpen))

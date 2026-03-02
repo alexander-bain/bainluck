@@ -31,6 +31,14 @@ actor APIClient {
     private let session: URLSession
     private let decoder: JSONDecoder
 
+    /// In-memory response cache with TTL
+    private var responseCache: [String: CacheEntry] = [:]
+
+    private struct CacheEntry {
+        let data: Data
+        let timestamp: Date
+    }
+
     /// Set by the auth module later. Returns a Firebase ID token or backend session token.
     var authTokenProvider: (() async -> String?)?
 
@@ -50,7 +58,25 @@ actor APIClient {
 
     // MARK: - Generic Fetch
 
-    private func fetch<T: Decodable & Sendable>(_ path: String, query: [String: String] = [:]) async throws -> sending T {
+    private func fetch<T: Decodable & Sendable>(
+        _ path: String,
+        query: [String: String] = [:],
+        cacheTTL: TimeInterval? = nil
+    ) async throws -> sending T {
+        // Check cache
+        let cacheKey: String?
+        if let ttl = cacheTTL {
+            let key = path + "?" + query.sorted(by: { $0.key < $1.key })
+                .map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+            cacheKey = key
+            if let entry = responseCache[key],
+               Date().timeIntervalSince(entry.timestamp) < ttl {
+                return try decoder.decode(T.self, from: entry.data)
+            }
+        } else {
+            cacheKey = nil
+        }
+
         var components = URLComponents(string: baseURL + path)
         if !query.isEmpty {
             components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
@@ -75,6 +101,12 @@ actor APIClient {
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8)
             throw APIError.httpError(statusCode: http.statusCode, body: body)
+        }
+
+        // Store in cache
+        if let key = cacheKey {
+            responseCache[key] = CacheEntry(data: data, timestamp: Date())
+            cleanCacheIfNeeded()
         }
 
         do {
@@ -235,6 +267,14 @@ actor APIClient {
         }
     }
 
+    // MARK: - Cache Cleanup
+
+    private func cleanCacheIfNeeded() {
+        guard responseCache.count > 100 else { return }
+        let now = Date()
+        responseCache = responseCache.filter { now.timeIntervalSince($0.value.timestamp) < 300 }
+    }
+
     // MARK: - Feed
 
     func fetchFeed(
@@ -249,31 +289,31 @@ actor APIClient {
         ]
         if let sport { q["sport"] = sport }
         if myTeamsOnly { q["my_teams_only"] = "true" }
-        return try await fetch("/api/feed", query: q)
+        return try await fetch("/api/feed", query: q, cacheTTL: 30)
     }
 
     // MARK: - Event Detail
 
     func fetchEvent(id: Int) async throws -> EventDetail {
-        return try await fetch("/api/events/\(id)")
+        return try await fetch("/api/events/\(id)", cacheTTL: 15)
     }
 
     // MARK: - Event History
 
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
-        return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"])
+        return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60)
     }
 
     // MARK: - Related Futures
 
     func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse {
-        return try await fetch("/api/events/\(eventId)/related-futures")
+        return try await fetch("/api/events/\(eventId)/related-futures", cacheTTL: 60)
     }
 
     // MARK: - Line Movement
 
     func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse {
-        return try await fetch("/api/events/\(eventId)/line-movement")
+        return try await fetch("/api/events/\(eventId)/line-movement", cacheTTL: 120)
     }
 
     // MARK: - Search

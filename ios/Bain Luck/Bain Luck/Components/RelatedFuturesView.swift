@@ -14,8 +14,12 @@ final class RelatedFuturesViewModel: ObservableObject {
     let eventId: Int
     private var refreshTimer: Timer?
 
-    init(eventId: Int) {
+    init(eventId: Int, preloaded: RelatedFuturesResponse? = nil) {
         self.eventId = eventId
+        if let preloaded {
+            self.relatedFutures = preloaded
+            self.loading = false
+        }
     }
 
     var isLive: Bool {
@@ -24,19 +28,47 @@ final class RelatedFuturesViewModel: ObservableObject {
 
     @MainActor
     func load() async {
-        let isInitial = relatedFutures == nil
-        if isInitial { loading = true }
+        guard relatedFutures == nil else {
+            // Already have data (preloaded), just configure refresh
+            configureAutoRefresh()
+            return
+        }
+        loading = true
         do {
             relatedFutures = try await APIClient.shared.fetchRelatedFutures(eventId: eventId)
             error = nil
             loading = false
             configureAutoRefresh()
         } catch {
-            if isInitial {
-                self.error = error.localizedDescription
-            }
+            self.error = error.localizedDescription
             loading = false
             logger.error("Failed to load related futures for event \(self.eventId): \(error)")
+        }
+    }
+
+    @MainActor
+    func retryLoad() async {
+        error = nil
+        loading = true
+        do {
+            relatedFutures = try await APIClient.shared.fetchRelatedFutures(eventId: eventId)
+            error = nil
+            loading = false
+            configureAutoRefresh()
+        } catch {
+            self.error = error.localizedDescription
+            loading = false
+            logger.error("Failed to retry related futures for event \(self.eventId): \(error)")
+        }
+    }
+
+    @MainActor
+    func refresh() async {
+        do {
+            relatedFutures = try await APIClient.shared.fetchRelatedFutures(eventId: eventId)
+            error = nil
+        } catch {
+            logger.error("Failed to refresh related futures for event \(self.eventId): \(error)")
         }
     }
 
@@ -47,7 +79,7 @@ final class RelatedFuturesViewModel: ObservableObject {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                await self.load()
+                await self.refresh()
             }
         }
     }
@@ -223,14 +255,15 @@ struct RelatedFuturesView: View {
          homeTeamColor: Color = .gray,
          awayTeam: String = "",
          homeTeam: String = "",
-         sportKey: String? = nil) {
+         sportKey: String? = nil,
+         preloadedData: RelatedFuturesResponse? = nil) {
         self.eventId = eventId
         self.awayTeamColor = awayTeamColor
         self.homeTeamColor = homeTeamColor
         self.awayTeam = awayTeam
         self.homeTeam = homeTeam
         self.sportKey = sportKey
-        _vm = StateObject(wrappedValue: RelatedFuturesViewModel(eventId: eventId))
+        _vm = StateObject(wrappedValue: RelatedFuturesViewModel(eventId: eventId, preloaded: preloadedData))
     }
 
     var body: some View {
@@ -241,6 +274,21 @@ struct RelatedFuturesView: View {
                     .padding()
             } else if let rf = vm.relatedFutures {
                 content(rf)
+            } else if vm.error != nil {
+                // Error state: show a subtle retry option
+                Button {
+                    Task { await vm.retryLoad() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                        Text("Tap to load related futures")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                }
             }
         }
         .task {
@@ -1101,33 +1149,42 @@ private struct PlayerHeadshotView: View {
     let teamColor: Color
     var size: CGFloat = 44
 
+    @State private var image: UIImage?
+    @State private var loadFailed = false
+
+    private var imageURLString: String? {
+        if let headshot = player?.headshot, !headshot.isEmpty {
+            return headshot
+        }
+        if let espnId = player?.espnId, !espnId.isEmpty {
+            return "https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/\(espnId).png&w=\(Int(size * 2))&h=\(Int(size * 2))"
+        }
+        return nil
+    }
+
     var body: some View {
         Group {
-            if let headshot = player?.headshot, let url = URL(string: headshot) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        initialsView
-                    }
-                }
-            } else if let espnId = player?.espnId, !espnId.isEmpty,
-                      let url = URL(string: "https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/\(espnId).png&w=\(Int(size * 2))&h=\(Int(size * 2))") {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        initialsView
-                    }
-                }
-            } else {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if loadFailed || imageURLString == nil {
                 initialsView
+            } else {
+                initialsView  // Show initials while loading (no placeholder spinner)
             }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        .task(id: imageURLString) {
+            guard let urlString = imageURLString,
+                  let url = URL(string: urlString) else {
+                loadFailed = true
+                return
+            }
+            image = await ImageCache.shared.image(for: url)
+            if image == nil { loadFailed = true }
+        }
     }
 
     private var initialsView: some View {
