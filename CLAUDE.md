@@ -20,7 +20,7 @@
 | Database | PostgreSQL | Heroku Postgres |
 | Task Queue | Celery + Redis | Heroku Redis |
 | Frontend | Next.js 14 (React) | Vercel |
-| iOS App | SwiftUI | Planned |
+| iOS App | SwiftUI | TestFlight (active development) |
 
 **Key External Services:**
 - **The Odds API** (the-odds-api.com) - Sports odds data (~$119/mo)
@@ -53,6 +53,7 @@ bainluck/
 │   │   │   ├── futures.py       # Championship odds
 │   │   │   ├── feed.py          # Unified feed endpoint (events + futures ranked)
 │   │   │   ├── oscars.py        # Oscars landing page (cross-source odds aggregation)
+│   │   │   ├── golf.py          # Golf category landing page (cross-source tournament odds)
 │   │   │   ├── market_moves.py  # "Market Was Wrong" endpoint
 │   │   │   ├── user.py          # User data endpoints (pins, teams, onboarding, preferences)
 │   │   │   └── health.py        # Health check endpoint
@@ -105,6 +106,7 @@ bainluck/
 │   │       ├── futures_categorization.py # Rules + LLM categorization
 │   │       ├── team_linking.py  # Team name matching utilities
 │   │       ├── sport_keys.py   # Canonical sport key translation maps (10 dicts, 7 functions)
+│   │       ├── event_taxonomy.py # Tag-based event/futures classification
 │   │       └── prediction_market_matching.py  # Game-level market detection + matching
 │   ├── alembic/                 # Database migrations
 │   └── requirements.txt
@@ -112,6 +114,8 @@ bainluck/
 │   ├── app/                     # Next.js app router pages
 │   │   ├── onboarding/page.tsx  # 5-step onboarding flow
 │   │   ├── oscars/page.tsx      # Oscars landing page (TMDB enriched)
+│   │   ├── categories/golf/page.tsx  # Golf category landing page
+│   │   ├── categories/[slug]/page.tsx # Generic category pages
 │   │   ├── my-stuff/page.tsx    # "My Teams" — team-filtered feed (3 states: sign-in, onboarding, feed)
 │   │   ├── preferences/page.tsx # Settings editor (teams, interests, pinned, account)
 │   │   ├── search/page.tsx      # Search results page
@@ -127,6 +131,45 @@ bainluck/
 │   │   └── sportCategories.ts  # Sport grouping logic
 │   └── hooks/                   # Custom React hooks
 ├── docs/PRD.md                  # Full product requirements
+├── ios/                         # iOS app (SwiftUI)
+│   └── Bain Luck/
+│       └── Bain Luck/
+│           ├── Bain_LuckApp.swift        # App entry point
+│           ├── ContentView.swift          # Root view
+│           ├── Views/                     # Screen-level views
+│           │   ├── MainTabView.swift      # Tab bar (Feed, Search, My Stuff)
+│           │   ├── FeedView.swift         # Feed tab (sections, filters, skeleton loading)
+│           │   ├── EventDetailView.swift  # Event detail (chart, related futures, line movement)
+│           │   ├── SearchView.swift       # Search with suggestions
+│           │   ├── MyStuffView.swift      # Team-filtered feed
+│           │   ├── PreferencesView.swift  # Settings page
+│           │   ├── OnboardingView.swift   # Native onboarding flow
+│           │   ├── EIRankingsView.swift   # EI Hall of Fame
+│           │   ├── FuturesDetailView.swift # Futures market detail
+│           │   ├── SportCategoryView.swift # Category detail pages
+│           │   └── Route.swift            # Navigation routing
+│           ├── Components/                # Reusable UI components
+│           │   ├── EventCardView.swift    # Event cards with pin/swipe
+│           │   ├── OddsChartView.swift    # Multi-source odds chart
+│           │   ├── TeamLogoView.swift     # Team logo + color
+│           │   ├── ProbabilityBar.swift   # Team-colored probability bar
+│           │   ├── EIBadgeView.swift      # Excitement Index badge
+│           │   ├── RelatedFuturesView.swift # Bigger Picture section
+│           │   ├── LineMovementView.swift  # Line movement explainer
+│           │   ├── SportFilterChips.swift  # Filter chip bar
+│           │   └── FuturesCardView.swift   # Futures market cards
+│           ├── Models/                    # Data models (Codable)
+│           │   ├── EventModels.swift      # Event, Team, OddsSnapshot
+│           │   ├── FeedModels.swift       # Feed response, sections
+│           │   ├── FuturesModels.swift    # Futures markets/outcomes
+│           │   ├── AuthModels.swift       # Auth state
+│           │   └── OnboardingModels.swift # Onboarding flow data
+│           └── Services/                  # Business logic
+│               ├── APIClient.swift        # HTTP client (async/await)
+│               ├── AuthManager.swift      # Firebase Auth (Google + Apple)
+│               ├── ImageCache.swift       # NSCache-based image caching
+│               ├── AnalyticsService.swift # Firebase Analytics
+│               └── PinManager.swift       # Pin state management
 └── tools/mcp-api-proxy/         # MCP proxy for API access
 ```
 
@@ -191,6 +234,13 @@ bainluck/
 | `backend/app/utils/sport_keys.py` | Canonical sport key translations (10 dicts + 7 accessor functions, zero codebase imports) |
 | `backend/app/services/team_identity.py` | Canonical team identity resolution (5-step cascade, auto-registration) |
 | `backend/app/tasks/team_identity_backfill.py` | One-time backfill of `team_identity_mapping` from ESPN IDs, team names, Kalshi abbrevs |
+| `backend/app/routes/golf.py` | Golf category landing page — cross-source tournament odds aggregation |
+| `frontend/app/categories/golf/page.tsx` | Golf frontend — tournament cards, leaderboard, movers |
+| `frontend/app/categories/[slug]/page.tsx` | Generic category pages — feed filtered by sport/category |
+| `frontend/lib/golfData.ts` | Static golf data (major tournaments, venues, emoji) |
+| `ios/Bain Luck/Bain Luck/Services/APIClient.swift` | iOS API client (async/await, auth headers) |
+| `ios/Bain Luck/Bain Luck/Views/FeedView.swift` | iOS feed tab (sections, filter chips, skeleton loading) |
+| `ios/Bain Luck/Bain Luck/Views/EventDetailView.swift` | iOS event detail (chart, related futures, line movement) |
 
 ---
 
@@ -294,6 +344,7 @@ The raw value represents the total "distance traveled" by the win probability cu
 **Admin Endpoints:**
 - `GET /api/admin/ei/status` - Check calculation status
 - `GET /api/admin/ei/distributions` - Score distribution analysis
+- `GET /api/admin/ei/diagnosis` - Per-sport breakdown and snapshot distribution
 - `POST /api/admin/ei/recalculate?secret=xxx&limit=100` - Trigger batch recalc
 
 **After algorithm changes:** Force-recalculate stored scores since `raw_ei` values are computed once and cached:
@@ -331,7 +382,7 @@ The `llm_importance` field on events (populated by ESPN `season.type` and LLM te
 - **Exhibition** (-20 pts): Preseason/all-star — deprioritized
 - **Regular season** / **None**: No change (backward compatible)
 
-A playoff NFL game scores 30 (live) + 20 (tier 1) + 15 (playoff) = **65** base. A preseason NBA game scores 30 + 20 + (-20) = **30** base. A far-future playoff NBA game scores 20 (tier 1) + 15 (playoff) = **35** even without any odds signals.
+A playoff NFL game scores 30 (live+close) + 20 (tier 1) + 15 (playoff) = **65** base. A preseason NBA game scores 30 + 20 + (-20) = **30** base. A far-future playoff NBA game scores 20 (tier 1) + 15 (playoff) = **35** even without any odds signals. Championship stakes weighting gives additional multiplicative boost to teams with >10% championship odds.
 
 **Feed sections (homepage):** Live Now → Just Happened → Upcoming → Top Markets. Completed events surface for 24h with EI-based score boost (≥80 EI: +25 pts, ≥60: +15 pts). Sections replace the earlier Highlights/Live/Upcoming/Starting Soon split.
 
@@ -379,8 +430,10 @@ Different game statuses show different probability data to users:
 - Endpoint: `GET /api/events/search?q=celtics`
 - Searches both events (by team name) and futures markets (by market name)
 - Trigram indexes for fast ILIKE matching on `events.home_team_name`, `events.away_team_name`, and `futures_markets.name`
-- Events ordered: Live → Upcoming → Completed
+- Events ordered: Live → Upcoming → Completed, with secondary sort by relevance
+- Search ranking applies highlight scoring to push interesting results up
 - Returns `results` (events) and `futures` (markets) arrays
+- Tag-based filtering via `tags` query parameter (uses GIN indexes when available)
 
 ### Kalshi Integration
 Kalshi is a prediction market that provides structured event data including timing (when events start/end).
@@ -1159,6 +1212,146 @@ Fullscreen browser-first second-screen experience at `/tv` for live games, elect
 3. Ambient + polish: futures rotation, auto-switch, keyboard shortcuts, wakeLock, fullscreen
 4. Smart features: game start notifications, EI spike alerts, optional heartbeat audio, multi-game split screen
 
+### iOS App (SwiftUI)
+Native iOS app built with SwiftUI, targeting iOS 17+. Connects to the same production API as the web frontend. Developed across 7 phases (Feb-Mar 2026), 29 commits.
+
+**Architecture:**
+- **MVVM** with `@Observable` view models
+- **Async/await** networking via `APIClient.swift`
+- **Firebase Auth** — Google Sign-In (via `GoogleSignIn-iOS` SPM) + Apple Sign-In (native `AuthenticationServices`)
+- **Firebase Analytics** — screen views, event interactions, search queries
+- **SwiftUI Navigation** — `NavigationCoordinator` with `Route` enum for deep linking
+
+**Key features (shipped):**
+- Section-based feed (Live Now, Just Happened, Upcoming, Top Markets) with 30s auto-refresh
+- Filter chips (sport categories, Starting Soon, Primetime/National TV)
+- Multi-source odds chart (`OddsChartView`) with period markers, All/Since Start toggle, team colors
+- Event detail: score, probability bar, odds chart, related futures ("Bigger Picture"), line movement explainer, scoring plays
+- Search with suggestions, EI Rankings (Hall of Fame)
+- Swipe-to-pin on cards, compact pin buttons
+- Apple Sign-In + Google Sign-In with Keychain token storage
+- Native onboarding flow (location → teams → alma maters → sports → rivals)
+- Preferences page with app icon selection
+- iPad-native layout (sidebar navigation + max-width detail views)
+- Category pages navigable from filter chips
+- Skeleton loading states, haptic feedback, live tab badge
+
+**Files:**
+- App: `ios/Bain Luck/Bain Luck/` (46 Swift files)
+- SPM dependencies: `GoogleSignIn-iOS`, `firebase-ios-sdk`
+- Not in App Store yet — TestFlight distribution
+
+**iOS-specific gotchas:**
+- `@ViewBuilder` closures cannot contain `let` bindings — use computed properties or extract to subfunctions
+- `Combine` import needed for `URLSession.DataTaskPublisher` even with async/await
+- Firebase `GIDSignIn` requires URL scheme in Info.plist (`REVERSED_CLIENT_ID`)
+- Chart aggregation uses 60s buckets (vs web's 30s) for smoother rendering on smaller screens
+
+### Golf Landing Page
+Bespoke category page for golf at `/categories/golf`. Aggregates tournament odds from Polymarket, Kalshi, and The Odds API with rich tournament context.
+
+**Backend:** `GET /api/golf` — Queries golf-categorized `FuturesMarket` records, groups by tournament, merges cross-source golfer odds with diacritics-aware dedup, detects current/in-progress tournaments, computes 24h biggest movers from `FuturesOddsSnapshot` history.
+
+**Key data quality handling:**
+- **Non-golf false positive filter** (`_NON_GOLF_RE`): Regex rejects esports "Masters", entertainment "Oscar" props, other-sport markets that LLM miscategorized as golf
+- **Tennis ticker filter**: Strips Kalshi tennis tickers that match generic "game" patterns
+- **TGL/HSBC separation**: Team Golf League and HSBC events split into own sections
+- **Current event detection**: Prefers markets with recent odds movement (24h) over source count; enriched with StatPal PGA schedule data
+- **Golfer odds merging**: Cross-source dedup by `_strip_diacritics()` + name normalization
+- **24h movement**: Computed from `FuturesOddsSnapshot` rows, aggregated per golfer, used for biggest movers section and sparkline charts
+
+**Frontend sections:** Current Tournament spotlight → Major tournaments grid → Other tournaments (split into individual markets with odds trend sparklines) → Biggest Movers
+
+**Files:**
+- Backend: `backend/app/routes/golf.py`
+- Frontend: `frontend/app/categories/golf/page.tsx`
+- Static data: `frontend/lib/golfData.ts` (major tournaments, venues, emoji)
+- Types: `GolfResponse`, `GolfTournament`, `GolfGolfer`, `GolfMover`, `GolfCurrentEvent` in `frontend/lib/types.ts`
+
+### Category Pages Infrastructure
+Generic category landing pages at `/categories/[slug]`. Each category page shows a feed of events and futures filtered to that sport/category.
+
+**Routes:**
+- `/categories/golf` — Custom bespoke golf page (see above)
+- `/categories/[slug]` — Generic category page for any sport slug (e.g., `basketball`, `soccer`, `politics`)
+- `/categories` — Category index page
+
+**Frontend:** Uses the feed API with category filtering. Reuses `EventCard` and `FuturesCard` components. iOS category pages navigate from filter chips via `SportCategoryView.swift`.
+
+### Odds Chart Redesign
+Multiple chart improvements shipped across web and iOS:
+- **Period markers**: Vertical dashed lines at half/quarter/period boundaries using ESPN period data. `_compute_period_boundaries()` fills gaps even when ESPN misses early periods. Shows on both web and iOS charts.
+- **Auto-zoom Y-axis**: Chart Y-axis auto-scales to the data range (±5% padding) instead of fixed 0-100%. Prevents flat-looking charts for one-sided games.
+- **Smart start time**: Chart starts from first meaningful odds movement rather than hours of flat pre-game data. `_find_smart_start_time()` scans for first >2% change.
+- **Team color labels**: Chart legend uses team primary colors instead of generic label colors.
+- **Score diff line**: Compact score differential displayed below win probability (moved from overlay).
+
+**Files:** `frontend/components/OddsChart.tsx`, `ios/Bain Luck/Bain Luck/Components/OddsChartView.swift`
+
+### ESPN Box Scores
+ESPN box score data is now parsed and stored on events during live sync.
+
+**Data:** `Event.box_score_data` JSONB column stores structured box score (leaders, stats by period). Populated by `espn_sync.py` from ESPN's game summary endpoint. Used by iOS event detail for scoring context and by the line movement LLM prompt for richer game state.
+
+**Files:** `backend/app/tasks/espn_sync.py` (box score parsing), `backend/app/models/models.py` (`box_score_data` column)
+
+### Live Stat Prop Tracking
+Box score stats (points, rebounds, assists) are tracked during live games and used to project pace toward stat prop over/under totals.
+
+**Architecture:** During live games, `espn_sync.py` captures player stats from ESPN box scores. The iOS event detail page uses these stats to show semi-circular gauge components with current stat value vs. prop line, plus pace projections. Helps users understand if a player is on track to hit their stat prop.
+
+**Files:** `backend/app/tasks/espn_sync.py` (stats capture), `ios/Bain Luck/Bain Luck/Views/EventDetailView.swift` (stat prop gauges)
+
+### Duplicate Event Handling
+Defense-in-depth system preventing and cleaning up duplicate events from StatPal + Odds API race conditions.
+
+**Prevention (Layer 1):** `_find_statpal_event_for_odds_api()` in `sports.py` matches StatPal-created events (no `external_id`) to incoming Odds API events by team names + time proximity (±6h). Debug logging traces all match candidates.
+
+**Prevention (Layer 2):** `_find_existing_event_by_teams()` in `sports.py` — broader dedup safety net that searches ALL events (not just StatPal orphans) with matching teams + time proximity (±3h). Applied in `_discover_events()`, `poll_all_odds()`, and `_poll_sport_odds()` after the StatPal check fails.
+
+**Cleanup:** Admin endpoint `POST /api/admin/events/merge-duplicates-sql` finds orphan events (same sport, team names, time proximity, no odds snapshots) and merges them:
+- Case A: Keeper has `external_id`, orphan doesn't (StatPal vs Odds API)
+- Case B: Both `external_id` NULL — keep lowest ID (StatPal vs StatPal dupes)
+- Absorbs metadata (statpal_fixture_id, commence_time_source, team_id, espn_id) from orphan before deleting
+- Explicitly clears FK references from 4 non-CASCADE tables + nullifies `futures_markets.event_id` before delete
+- March 2026 cleanup removed 5,735 orphan events (54 + 5,681)
+
+**Monitoring:** `GET /api/admin/events/duplicates` lists current duplicate pairs.
+
+**Files:** `backend/app/tasks/sports.py` (prevention), `backend/app/tasks/odds_polling.py` (prevention), `backend/app/routes/admin.py` (merge endpoint)
+
+### Odds API Quota Monitoring
+Passive monitoring system for The Odds API usage (5M monthly quota).
+
+**Passive capture:** `odds_api.py` reads `x-requests-remaining` and `x-requests-used` from API response headers and stores in Redis (`bainluck:odds_api:remaining`, etc.) with 25h TTL.
+
+**Daily activity inference:** `GET /api/admin/odds-api/daily-activity` endpoint infers API usage from snapshot creation counts per day (since the API doesn't provide historical usage data).
+
+**Admin dashboard:** `GET /api/admin/odds-api/quota` returns current remaining/used counts from Redis.
+
+**Files:** `backend/app/services/odds_api.py` (header capture), `backend/app/tasks/redis_state.py` (Redis storage), `backend/app/routes/admin.py` (quota + daily-activity endpoints)
+
+### Graduated Live Scoring
+Replaced flat "+30 for live" in highlight scoring with graduated scoring based on game closeness:
+- Live + close (within 10%): +35
+- Live + moderately close (within 20%): +30
+- Live + lopsided: +20
+
+Combined with **championship stakes weighting**: events where a team has >10% championship odds get a multiplicative boost. This was previously in the Ideas Backlog as "Futures stake weighting for event importance" — now shipped.
+
+**Files:** `backend/app/utils/highlights.py` (`compute_highlight`)
+
+### EI Calibration (March 2026)
+The EI scaling constant was iteratively calibrated:
+- Started at 8.0 (too compressed — most games clustered 30-50)
+- Dropped to 4.0 (better spread but still compressed)
+- Settled on **2.5** (good distribution: blowouts ~20-30, average ~40-55, exciting ~65-85, incredible 90+)
+- Time normalization ratio `T_regulation / T_actual` capped at **2.0x** to prevent games with thin data coverage from getting inflated scores
+
+**Admin diagnosis endpoint:** `GET /api/admin/ei/diagnosis` shows per-sport breakdown and snapshot distribution to help tune constants.
+
+**Files:** `backend/app/utils/excitement_index.py` (scaling constant), `backend/app/routes/admin.py` (diagnosis endpoint)
+
 ---
 
 ## API Patterns
@@ -1298,7 +1491,7 @@ Both backend and frontend auto-deploy from `master` branch.
 
 ---
 
-## Current Priorities (February 2026)
+## Current Priorities (March 2026)
 
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
@@ -1338,6 +1531,18 @@ These are the current focus. Resist the urge to build new features until these a
 31. 🟢 **Matching quality audits (shipped)** — Three daily LLM-based audits verify canonical key dedup, prediction market→event links, and related futures coverage. GPT-4o-mini samples records, checks correctness, stores findings with `pattern_category` and `suggested_rule` in `LineMovementAnalysis`. Pattern aggregation endpoint surfaces recurring issues. Report-only Phase 1; Phase 2 auto-fix gated on ≥90% accuracy over 2+ weeks. ~$0.02/day cost. 22 tests.
 32. 🟡 **Database size & retention strategy (evaluating)** — The `odds_snapshots`, `futures_odds_snapshots`, and `win_prob_snapshots` tables grow ~10-20K net rows/day after write-time dedup. Current mitigation: lossless snapshot collapse (Phase 1 shipped — pure SQL, constant memory) reduces row count 50-90% for events >48h old. **No auto-deletion** — we want to preserve full history. Future options under evaluation: (a) pre-game snapshot thinning (keep 1/hour for >24h before game), (b) populate `odds_aggregated` table with 1-hour buckets for completed events then archive raw snapshots to cold storage, (c) tiered retention by event tier (Tier 1 full history, Tier 3-4 for 30 days), (d) futures cleanup for resolved markets after 6 months. The current collapse strategy buys 2-3 years of runway. Need to spend more time evaluating solutions — the priority is not losing data we might want later. See `backend/app/tasks/retention.py` for collapse implementation.
 33. 🟢 **Tiered discovery frequency (shipped)** — Per-sport Redis gating in `_discover_events()` based on `LEAGUE_TIERS`: tier 1 every 15min, tier 2 every 30min, tier 3 every 2h, tier 4 every 4h. Follows `poll_all_odds` Redis pattern. Saves ~53% of discovery API calls (~1.9M billed requests/month). Constants in `tasks/config.py`, gating logic in `tasks/sports.py`. Return dict includes `sports_skipped` for monitoring via Celery dashboard.
+34. 🟢 **iOS App Phases 1-7 (shipped)** — Native SwiftUI app with section-based feed, multi-source odds chart with period markers, event detail (chart, related futures, line movement, scoring plays), search, EI rankings, Apple + Google Sign-In, native onboarding, preferences, iPad layout, category pages, filter chips, swipe-to-pin, haptic feedback, Firebase Analytics, deep linking. 29 commits across 7 phases. See iOS App section above.
+35. 🟢 **Golf landing page (shipped)** — Bespoke category page at `/categories/golf` with cross-source tournament odds aggregation, current event detection, 24h movers, sparkline charts, LPGA/TGL separation, non-golf false positive filtering. 12 commits. See Golf Landing Page section above.
+36. 🟢 **Odds chart redesign (shipped)** — Period markers at game boundaries, auto-zoom Y-axis, smart start time, team color labels, compact score diff. Applied to both web and iOS. 8 commits.
+37. 🟢 **EI calibration (shipped)** — Scaling constant iteratively tuned: 8.0 → 4.0 → 2.5. Time normalization ratio capped at 2.0x. Added diagnosis endpoint. 10 commits. See EI Calibration section above.
+38. 🟢 **Duplicate event handling (shipped)** — 3-layer defense: debug logging in StatPal matching, broader dedup safety net (`_find_existing_event_by_teams`), admin merge endpoint. Cleaned up 5,735 orphan events. See Duplicate Event Handling section above.
+39. 🟢 **Odds API quota monitoring (shipped)** — Passive header capture, Redis tracking, daily-activity inference endpoint, admin quota dashboard. See Odds API Quota Monitoring section above.
+40. 🟢 **Graduated live scoring + championship stakes (shipped)** — Replaced flat +30 live bonus with graduated scoring (35/30/20 based on closeness). Championship stakes weighting gives multiplicative boost for teams with >10% title odds. See Graduated Live Scoring section above.
+41. 🟢 **ESPN box scores + live stat props (shipped)** — Box score parsing from ESPN summary endpoint, stored as JSONB. iOS event detail shows stat prop pace projections with semi-circular gauges. See ESPN Box Scores and Live Stat Prop Tracking sections above.
+42. 🟢 **Category pages infrastructure (shipped)** — Generic `/categories/[slug]` route for sport-filtered feeds. Golf page uses bespoke design. iOS category pages navigable from filter chips.
+43. 🟢 **ESPN proactive commence_time correction (shipped)** — `_discover_events()` now cross-references ESPN schedule at discovery time to correct Odds API time errors before they enter the database, rather than fixing retroactively.
+44. 🟢 **Search ranking + LLM anti-speculation (shipped)** — Search results ranked by highlight score for relevance. LLM line movement prompts now include 3-tier anti-speculation rules preventing vague hedging when no injury/news context is available.
+45. 🟢 **Feed resilience (shipped)** — Aggregate probability fallback when bookmaker consensus unavailable. Resolved futures filtered. "No odds yet" placeholder for events without odds data. My Stuff sort order fixed (soonest first).
 
 ### Horizon — AI-Native Sports Intelligence (ESPN + MySportsFeeds + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require sports data enrichment (rosters, injuries, standings, schedules from ESPN free API + MySportsFeeds) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -1372,7 +1577,7 @@ These are differentiated features that can't be built with odds data alone. They
 **Matching:**
 - 📋 **Futures → events (reverse direction)** — Futures detail pages show relevant upcoming/recent events inline. "Celtics (22%) play tonight at 7:30 PM — currently leading 85-78." Already planned as Related Futures Phase 5.
 - 📋 **Cross-source canonical market identity** — Merge Polymarket "NBA Championship" + Kalshi "NBA Finals Winner" + Odds API "NBA Championship Winner 2025-26" into unified display showing "3 sources" while keeping raw data separate. Oscars page already does a version of this.
-- 📋 **Futures stake weighting for event importance** — If a team has >10% championship odds, every one of their games gets a highlight score multiplier derived from their futures probability. Connects the event and futures scoring systems that currently operate independently. Needs planning on exact formula.
+- ✅ **Futures stake weighting for event importance** — Shipped as "championship stakes weighting" in graduated live scoring (priority #40). Teams with >10% championship odds get multiplicative highlight score boost on their games.
 - *Already implemented: Player award → game matching (via roster_players ILIKE), conference/division futures → event linking (via market_tier).*
 
 **Wild:**
@@ -1383,7 +1588,7 @@ These are differentiated features that can't be built with odds data alone. They
 - 📋 **Shareable probability snapshots** — "Share" button generates beautiful image card (OpenGraph-ready) with teams, logos, odds, EI, one-line reason. Optimized for iMessage/Twitter/Instagram stories.
 
 **Category & Content:**
-- 📋 **Bespoke category landing pages** — Beautiful, over-invested landing pages for each major sport (basketball, golf, etc.) and non-sports category (politics, entertainment, weather, miscellany). Since categories are stable, these can be hand-crafted visual experiences rather than generic list views. Needs design questions answered first — see `docs/planning-questions.md` §1.
+- ✅ **Bespoke category landing pages** — Golf page shipped at `/categories/golf` (see priority #35). Generic `/categories/[slug]` infrastructure also built. Remaining: basketball, football, soccer, politics, entertainment, and other category pages.
 - 📋 **"What Are the Odds?" game** — Probability guessing game: show users events/futures from our DB, they guess the probability, we score accuracy. Retention driver + viral acquisition vehicle. Many game mechanics to work out — see `docs/planning-questions.md` §2.
 - 📋 **Insight Arena (admin LLM training)** — Admin-only feature: LLM generates event-level, category-level, and DB-wide insights. Surfaces 2 at a time for A/B preference selection. Choices train the LLM on what makes a good insight over time. See `docs/planning-questions.md` §3.
 
@@ -1463,6 +1668,18 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Apple Sign-In: Firebase `signInWithPopup` with `OAuthProvider('apple.com')` — Firebase handles Apple OAuth through its own verified domain, no domain verification needed on `bainluck.com`. Backend `POST /api/auth/apple` endpoint with Apple JWKS verification, `GET /api/auth/status` dynamic provider list. Provider chooser dropdown (Google + Apple) in UserMenu and My Stuff sign-in prompt. Key gotchas solved: `browserPopupRedirectResolver` required in `initializeAuth` (Firebase v10), preload module to prevent popup blockers, read `currentUser` directly after popup for immediate state. 13 backend tests.
 - ✅ Pulse → Excitement Index (EI) migration: Replaced proprietary Pulse metric (weighted components: heart rate, amplitude, arrhythmia, vitals, time weight, lead changes) with standard GEI formula: `EI_raw = (T_regulation / T_actual) × Σ|pᵢ - pᵢ₋₁|`. New algorithm in `utils/excitement_index.py` with multi-source 30s time bucket aggregation. DB columns renamed via Alembic (`raw_gei` → `raw_ei`, `gei_components` → `ei_metadata`, `gei_percentiles` → `ei_percentiles`). Frontend `EIBadge.tsx` replaces `PulseBadge.tsx`. Routes `/ei` and `/ei/hall-of-fame` with `/pulse` redirect. API serves both `"ei"` and `"pulse"` keys for backward compat. 80+ tests in `test_excitement_index.py`.
 - ✅ Tiered discovery frequency: Per-sport Redis gating in `_discover_events()` based on `LEAGUE_TIERS` — tier 1 (NBA/NFL) every 15min, tier 2 (NCAAB/MMA) every 30min, tier 3 (Liga MX) every 2h, tier 4 (minor leagues) every 4h. Reuses `poll_all_odds` Redis pattern. Saves ~53% of discovery API calls (~1.9M billed requests/month). Mitigates Feb 2026 quota exhaustion.
+- ✅ iOS App Phases 1-7 (Mar 2026): Native SwiftUI app — section-based feed, multi-source odds chart with period markers, event detail (chart, related futures, line movement, scoring plays), search, EI rankings, Apple + Google Sign-In, native onboarding, preferences, iPad-native sidebar layout, category pages, filter chips, swipe-to-pin, haptic feedback, Firebase Analytics, deep linking. 46 Swift files, 29 commits across 7 phases.
+- ✅ Golf landing page: Bespoke category page at `/categories/golf` — cross-source tournament odds aggregation (Polymarket, Kalshi, Odds API), current event detection from odds movement, 24h biggest movers from snapshot history, sparkline charts, LPGA/TGL separation, non-golf false positive regex filter, StatPal PGA schedule enrichment. 12 commits.
+- ✅ Category pages infrastructure: Generic `/categories/[slug]` route for sport/category-filtered feeds, golf bespoke design, iOS `SportCategoryView` navigable from filter chips.
+- ✅ Odds chart redesign: Period markers at game boundaries (ESPN data, gap-filling for missed early periods), auto-zoom Y-axis (±5% padding instead of fixed 0-100%), smart start time (skips hours of flat pre-game data), team color labels, compact score diff below chart. Applied to both web (`OddsChart.tsx`) and iOS (`OddsChartView.swift`).
+- ✅ EI calibration: Scaling constant iteratively tuned 8.0 → 4.0 → 2.5. Time normalization ratio capped at 2.0x. Added EI diagnosis endpoint (`/api/admin/ei/diagnosis`) with per-sport breakdown and snapshot distribution. Fixed infinite recalculate loop.
+- ✅ Duplicate event handling: 3-layer defense-in-depth — debug logging in `_find_statpal_event_for_odds_api()`, broader `_find_existing_event_by_teams()` safety net in all 3 event creation paths, admin merge endpoint. Cleaned up 5,735 orphan events (54 StatPal-vs-Odds API + 5,681 StatPal-vs-StatPal duplicates). Merge endpoint explicitly clears FK references from 4 non-CASCADE tables before delete.
+- ✅ Odds API quota monitoring: Passive `x-requests-remaining` header capture in `odds_api.py`, Redis storage with 25h TTL, daily-activity inference endpoint, admin quota dashboard.
+- ✅ Graduated live scoring + championship stakes weighting: Replaced flat +30 live bonus with graduated scoring (35/30/20 based on game closeness). Championship stakes weighting gives multiplicative boost for teams with >10% title odds. Moves "Futures stake weighting" from Ideas Backlog to shipped.
+- ✅ ESPN box scores + live stat prop tracking: Box score data parsed from ESPN summary endpoint, stored as `Event.box_score_data` JSONB. iOS event detail shows stat prop pace projections with semi-circular gauges.
+- ✅ ESPN proactive commence_time correction: `_discover_events()` cross-references ESPN schedule at discovery time to correct Odds API time errors before they enter the database. Adds ESPN schedule lookup as a third time source alongside StatPal and Odds API.
+- ✅ Search ranking improvements: Search results ranked by highlight score for relevance. LLM anti-speculation: 3-tier prompt instructions prevent vague hedging in line movement explanations when no injury/news context is available.
+- ✅ Feed resilience: Aggregate probability fallback when bookmaker consensus unavailable. Resolved 100% futures filtered from display. "No odds yet" placeholder for events without data. My Stuff soonest-first sorting. Reserve team match filtering.
 </details>
 
 See `docs/PRD.md` for full roadmap.
@@ -1571,6 +1788,7 @@ The `/api/feed` endpoint was optimized from 5-10s (sometimes 30s Heroku timeout)
 | Search | https://bainluck.com/search?q=celtics |
 | Market Was Wrong | https://bainluck.com/market-moves |
 | Oscars | https://bainluck.com/oscars |
+| Golf | https://bainluck.com/categories/golf |
 | Onboarding | https://bainluck.com/onboarding |
 | My Teams | https://bainluck.com/my-stuff |
 | Preferences | https://bainluck.com/preferences |

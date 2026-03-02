@@ -190,7 +190,7 @@ Different game statuses show different probability data to users:
 | Database | PostgreSQL | Heroku Postgres | Managed, auto-backups |
 | Task Queue | Celery + Redis | Heroku Redis | Scheduled odds polling, background tasks |
 | Web Frontend | Next.js 14 (React) | Vercel | SSR for shareable links, great DX |
-| iOS App | SwiftUI | Planned | Modern Apple development |
+| iOS App | SwiftUI | Active (TestFlight) | Modern Apple development |
 | Auth | Firebase Auth | Google Cloud | Google + Apple sign-in (shipped) |
 | Analytics | Google Analytics 4 | Google | Cross-platform tracking, User-ID support |
 | LLM Integration | OpenAI GPT-4o-mini | OpenAI | Classification, categorization (~$5/mo) |
@@ -1584,21 +1584,31 @@ During onboarding, users select favorite teams. The system runs structured queri
 4. iOS integration with native insights feed
 5. Daily digest emails
 
-### Phase 20: iOS App
-**Native second-screen experience.**
+### Phase 20: iOS App ✅ SHIPPED (Feb-Mar 2026)
+**Native second-screen experience — shipped across 7 phases, 29 commits.**
 
-Target: Q3 2026
-
-- [ ] SwiftUI app with feature parity to web
-- [ ] Second-screen optimized UI (glanceable, minimal interaction)
-- [ ] Native charts with smooth animations
-- [ ] Favorites and personalized feed (powered by ranking infrastructure)
+- [x] SwiftUI app with near-feature-parity to web
+- [x] Section-based feed (Live Now, Just Happened, Upcoming, Top Markets)
+- [x] Multi-source odds chart with period markers, All/Since Start toggle, team colors
+- [x] Event detail: probability bar, chart, related futures ("Bigger Picture"), line movement, scoring plays
+- [x] Search with suggestions + EI Rankings (Hall of Fame)
+- [x] Filter chips (sport categories, Starting Soon, Primetime/National TV)
+- [x] Apple Sign-In + Google Sign-In with Keychain token storage
+- [x] Native 5-step onboarding flow
+- [x] Preferences page with app icon selection
+- [x] iPad-native layout (sidebar navigation + max-width detail views)
+- [x] Category detail pages navigable from filter chips
+- [x] Swipe-to-pin on cards, compact pin buttons
+- [x] Haptic feedback, live tab badge, skeleton loading states
+- [x] Firebase Analytics (screen views, event interactions)
+- [x] Deep linking support
 - [ ] Share extension for quick sharing
 - [ ] Background refresh
 - [ ] Widgets (Lock Screen, Home Screen)
   - Current game win probability
   - Upcoming games for favorite teams
   - "Most Exciting Game Right Now"
+- [ ] App Store submission
 
 ---
 
@@ -1633,7 +1643,7 @@ These are differentiated features that can't be built with odds data alone. They
 These ideas need design questions answered before planning. See `docs/planning-questions.md` for detailed question sets.
 
 ### Bespoke Category Landing Pages
-Beautiful, over-invested landing pages for each major sport (basketball, golf, etc.) and non-sports category (politics, entertainment, weather, miscellany). Since categories are stable over time, these can be hand-crafted visual experiences rather than generic list views. The Oscars page is the prototype for this pattern.
+~~Beautiful, over-invested landing pages for each major sport~~ **Golf page shipped** at `/categories/golf` (Mar 2026): cross-source tournament odds aggregation, current event detection, 24h movers, sparkline charts, LPGA/TGL separation. Generic `/categories/[slug]` infrastructure also built. Remaining: basketball, football, soccer, politics, entertainment, and other categories. The Oscars page was the prototype for this pattern.
 
 ### "What Are the Odds?" Game
 Probability guessing game: show users events/futures from the DB, they guess the probability, we score accuracy. Designed as a retention driver and viral acquisition vehicle. Many game mechanics to work out (scoring formula, difficulty modes, multiplayer, social sharing).
@@ -1816,7 +1826,7 @@ Bain Luck displays information, not transactions.
 
 ---
 
-## Development Priorities (February 2026)
+## Development Priorities (March 2026)
 
 ### Active — Infrastructure & Reliability
 These are the current focus. Resist the urge to build new features until these are addressed.
@@ -1846,13 +1856,22 @@ These are the current focus. Resist the urge to build new features until these a
 ### Next — Features (in priority order)
 
 19. ✅ **Apple Sign-In** — Firebase `signInWithPopup` with `OAuthProvider('apple.com')`. Provider chooser dropdown (Google + Apple). 13 backend tests. Remaining: Firebase support email, GA cross-platform.
-20. **Sport-specific Pulse normalization** — Different sports have different baseline volatility.
-21. **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant events.
-22. **Additional win prob sources** — MoneyPuck for NHL. Infrastructure ready (stub configured).
+20. ✅ **iOS App Phases 1-7** — Native SwiftUI app shipped: section-based feed, multi-source odds chart with period markers, event detail (chart, related futures, line movement, scoring plays), search, EI rankings, Apple + Google Sign-In, native onboarding, preferences, iPad sidebar layout, category pages, filter chips, swipe-to-pin, haptic feedback, Firebase Analytics, deep linking. 46 Swift files, 29 commits. Remaining: share extension, background refresh, widgets, App Store submission.
+21. ✅ **Golf landing page** — Bespoke category page at `/categories/golf` with cross-source tournament odds aggregation, current event detection, 24h movers, sparkline charts. Generic `/categories/[slug]` infrastructure also built.
+22. ✅ **Odds chart redesign** — Period markers, auto-zoom Y-axis, smart start time, team color labels, compact score diff. Applied to web + iOS.
+23. ✅ **EI calibration** — Scaling constant tuned from 8.0 → 2.5, time normalization cap at 2.0x, diagnosis endpoint.
+24. ✅ **Duplicate event handling** — 3-layer prevention + admin merge cleanup (5,735 orphans removed).
+25. ✅ **Graduated live scoring + championship stakes** — Graduated live scoring (35/30/20 by closeness), championship odds multiplicative boost.
+26. ✅ **ESPN box scores + live stat prop tracking** — Box score JSONB column, stat prop pace projections on iOS.
+27. ✅ **Odds API quota monitoring** — Passive header capture, daily-activity inference, admin dashboard.
+28. **Sport-specific EI normalization** — Different sports have different baseline volatility.
+29. **Related futures Phase 5** — Bidirectional linking: futures detail pages show relevant events.
+30. **Additional win prob sources** — MoneyPuck for NHL. Infrastructure ready (stub configured).
 
 ### Later (Q2-Q4 2026)
-- iOS app launch with feed tab, search, and widgets
+- iOS app: App Store submission, widgets, background refresh, share extension
 - **TV Mode v2** — Fullscreen second-screen experience at `/tv`. Design complete, interactive prototype built. See `docs/tv-mode-plan.md`.
+- Additional bespoke category pages (basketball, football, soccer, politics, entertainment)
 - Advanced notification preferences
 - "The Market Was Wrong" v2 — AI narrative generation + personalization
 - Non-sports category display enhancements in frontend
@@ -1865,7 +1884,7 @@ These are the current focus. Resist the urge to build new features until these a
 
 ---
 
-## Completed Features (February 2026)
+## Completed Features (March 2026)
 
 <details>
 <summary>All shipped features (click to expand)</summary>
@@ -1922,6 +1941,19 @@ These are the current focus. Resist the urge to build new features until these a
 - Feed UX overhaul: Sectioned feed (Live Now → Just Happened → Upcoming → Top Markets), non-repetitive reason text in `feed_reasons.py`, finished event expected-vs-actual design (opening odds bar + score with winner bolded + date/time), "Nah" hard filter, "If it's wild" higher bar (min_score 55).
 - League tier expansion: ~70 league entries, Tier 3 (-5 pts), Tier 4 (-45 pts), regular tennis demoted to Tier 4, Pulse boost (+10) for finished events with high Pulse scores.
 - Canonical identity migration: Consolidated 10 sport key translation dicts into `sport_keys.py` (7 accessor functions, zero codebase imports). Built `TeamIdentityService` with 5-step resolution cascade and `team_identity_mapping` table. StatPal schedule-first event creation (`statpal_fixture_id`, `commence_time_source`). Integrated into 6 consumer modules (espn_sync, statpal_sync, sports, roster_sync, prediction_market_matching, team_linking) as supplement to existing fuzzy matching. Backfill task for one-time population from ESPN IDs, team names, and Kalshi abbreviations. 6 admin endpoints.
+- iOS App Phases 1-7 (Feb-Mar 2026): Native SwiftUI app — section-based feed, multi-source odds chart with period markers, event detail (chart, related futures, line movement, scoring plays), search, EI rankings, Apple + Google Sign-In, native onboarding, preferences, iPad-native sidebar layout, category pages, filter chips, swipe-to-pin, haptic feedback, Firebase Analytics, deep linking. 46 Swift files, 29 commits across 7 phases.
+- Golf landing page (Mar 2026): Bespoke category page at `/categories/golf` — cross-source tournament odds aggregation, current event detection, 24h movers, sparkline charts, LPGA/TGL separation, non-golf false positive regex filter, StatPal PGA schedule enrichment. Generic `/categories/[slug]` infrastructure also built. 12 commits.
+- Odds chart redesign (Feb-Mar 2026): Period markers at game boundaries (ESPN data, gap-filling), auto-zoom Y-axis (±5% padding), smart start time (skips flat pre-game data), team color labels, compact score diff below chart. Applied to both web (`OddsChart.tsx`) and iOS (`OddsChartView.swift`). 8 commits.
+- EI calibration (Feb-Mar 2026): Scaling constant iteratively tuned 8.0 → 4.0 → 2.5. Time normalization ratio capped at 2.0x. Added diagnosis endpoint. Fixed infinite recalculate loop. 10 commits.
+- Duplicate event handling (Mar 2026): 3-layer prevention — debug logging in StatPal matching, `_find_existing_event_by_teams()` safety net in all event creation paths, admin merge endpoint. Cleaned up 5,735 orphan events (54 StatPal-vs-Odds API + 5,681 StatPal-vs-StatPal duplicates). 10 commits.
+- Graduated live scoring + championship stakes (Mar 2026): Replaced flat +30 live bonus with graduated scoring (35/30/20 by closeness). Championship stakes weighting gives multiplicative boost for teams with >10% title odds.
+- ESPN box scores + live stat props (Mar 2026): Box score parsing from ESPN summary endpoint, stored as `Event.box_score_data` JSONB. iOS stat prop pace projections with semi-circular gauges.
+- Odds API quota monitoring (Feb-Mar 2026): Passive header capture, Redis tracking, daily-activity inference, admin quota dashboard.
+- ESPN proactive commence_time correction: Discovery cross-references ESPN schedule to correct Odds API time errors at insertion time.
+- Search ranking improvements: Highlight score ranking for search results. LLM anti-speculation 3-tier prompt system.
+- Feed resilience: Aggregate probability fallback, resolved futures filter, "No odds yet" placeholder, My Stuff soonest-first sorting, reserve team match filtering.
+- Matching quality audits: Three daily LLM-based audits (canonical key dedup, prediction market→event links, related futures coverage). Pattern aggregation endpoint for systematic rule improvement. 22 tests. ~$0.02/day.
+- Pulse → Excitement Index (EI) migration: Standard GEI formula replaces proprietary Pulse metric. 30s time bucket aggregation, regulation time normalization per sport. DB columns renamed. 80+ tests.
 </details>
 
 ---
