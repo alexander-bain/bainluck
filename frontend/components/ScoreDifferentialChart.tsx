@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   ComposedChart,
   Line,
@@ -94,6 +94,14 @@ export default function ScoreDifferentialChart({
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
   const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
+
+  // Sync timeRange when data loads asynchronously
+  const [hasUserOverridden, setHasUserOverridden] = useState(false);
+  useEffect(() => {
+    if (!hasUserOverridden && defaultTimeRange === "live") {
+      setTimeRange("live");
+    }
+  }, [defaultTimeRange, hasUserOverridden]);
 
   // Compute smart start time: find first significant odds movement after commence_time
   // This skips flat pre-game data that persists after the scheduled tip time
@@ -408,7 +416,7 @@ export default function ScoreDifferentialChart({
         {TIME_RANGE_OPTIONS.map((option) => (
           <button
             key={option.value}
-            onClick={() => setTimeRange(option.value)}
+            onClick={() => { setTimeRange(option.value); setHasUserOverridden(true); }}
             className={`font-medium rounded-full transition-colors ${
               fillContainer
                 ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${

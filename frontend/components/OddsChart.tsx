@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   ComposedChart,
   Line,
@@ -155,6 +155,16 @@ export default function OddsChart({
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
   const [timeRange, setTimeRange] = useState<TimeRange>(defaultTimeRange);
+
+  // Sync timeRange when data loads asynchronously — useState only uses
+  // its initial value on mount, so if history arrives after first render
+  // the default stays "all" even when it should be "live"
+  const [hasUserOverridden, setHasUserOverridden] = useState(false);
+  useEffect(() => {
+    if (!hasUserOverridden && defaultTimeRange === "live") {
+      setTimeRange("live");
+    }
+  }, [defaultTimeRange, hasUserOverridden]);
 
   // Compute smart start time: find first significant odds movement after commence_time
   // This skips flat pre-game data that persists after the scheduled tip time
@@ -739,6 +749,7 @@ export default function OddsChart({
             onClick={() => {
               const previousRange = timeRange;
               setTimeRange(option.value);
+              setHasUserOverridden(true);
               if (eventId) {
                 track('chart_time_range', {
                   chart_type: 'probability_trend',
