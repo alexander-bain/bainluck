@@ -14,7 +14,9 @@ const FEED_CHIPS: FeedChip[] = [
   { label: "Upsets", tags: ["signal:upset"], emoji: "\uD83D\uDE31" },
   { label: "Close Games", tags: ["signal:close_matchup"], emoji: "\uD83E\uDD1D" },
   { label: "Line Moving", tags: ["signal:line_moving"], emoji: "\uD83D\uDCC8" },
-  { label: "Starting Soon", tags: ["timing:starting_soon"], emoji: "\u23F0" },
+  { label: "Starting Soon", tags: ["signal:starting_soon"], emoji: "\u23F0" },
+  { label: "Primetime", tags: ["timing:primetime"], emoji: "\uD83C\uDF1F" },
+  { label: "National TV", tags: ["timing:national_tv"], emoji: "\uD83D\uDCFA" },
 ];
 
 interface FeedFilterChipsProps {
