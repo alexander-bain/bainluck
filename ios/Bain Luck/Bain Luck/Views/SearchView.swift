@@ -66,11 +66,38 @@ final class SearchViewModel: ObservableObject {
     }
 }
 
+// MARK: - Quick Search Item
+
+private struct QuickSearchItem: Identifiable {
+    let icon: String
+    let label: String
+    let query: String
+    var id: String { query }
+}
+
 // MARK: - View
 
 struct SearchView: View {
     @StateObject private var vm = SearchViewModel()
     @EnvironmentObject var navCoordinator: NavigationCoordinator
+    @FocusState private var isSearchFocused: Bool
+
+    private let quickSearches: [QuickSearchItem] = [
+        .init(icon: "basketball.fill", label: "NBA", query: "NBA"),
+        .init(icon: "football.fill", label: "NFL", query: "NFL"),
+        .init(icon: "baseball.fill", label: "MLB", query: "MLB"),
+        .init(icon: "hockey.puck.fill", label: "NHL", query: "NHL"),
+        .init(icon: "soccerball", label: "Soccer", query: "Soccer"),
+        .init(icon: "figure.golf", label: "Golf", query: "Golf"),
+        .init(icon: "figure.boxing", label: "UFC", query: "UFC"),
+    ]
+
+    private let trendingSearches: [QuickSearchItem] = [
+        .init(icon: "chart.bar.fill", label: "Championship", query: "Championship"),
+        .init(icon: "trophy.fill", label: "MVP", query: "MVP"),
+        .init(icon: "building.columns.fill", label: "Politics", query: "Politics"),
+        .init(icon: "bitcoinsign.circle.fill", label: "Crypto", query: "Crypto"),
+    ]
 
     var body: some View {
         NavigationStack {
@@ -96,13 +123,7 @@ struct SearchView: View {
                     )
                     Spacer()
                 } else {
-                    Spacer()
-                    ContentUnavailableView(
-                        "Search",
-                        systemImage: "magnifyingglass",
-                        description: Text("Search for teams, games, and futures markets.")
-                    )
-                    Spacer()
+                    emptyStateContent
                 }
             }
             .navigationTitle("Search")
@@ -126,6 +147,10 @@ struct SearchView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "search", type: "search")
+            // Auto-focus the search field when tab appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                isSearchFocused = true
+            }
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             if navCoordinator.selectedTab == .search,
@@ -145,10 +170,11 @@ struct SearchView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
-            TextField("Teams, games, futures...", text: $vm.query)
+                .foregroundStyle(isSearchFocused ? .primary : .secondary)
+            TextField("Search teams, games, futures...", text: $vm.query)
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
+                .focused($isSearchFocused)
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
                 #endif
@@ -174,6 +200,90 @@ struct SearchView: View {
         .padding(10)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isSearchFocused ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1.5)
+        )
+        .animation(.easeInOut(duration: 0.2), value: isSearchFocused)
+    }
+
+    // MARK: - Empty State with Quick Searches
+
+    private var emptyStateContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Quick Search by Sport
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Browse by Sport")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    FlowLayout(spacing: 8) {
+                        ForEach(quickSearches) { item in
+                            quickSearchChip(icon: item.icon, label: item.label) {
+                                vm.query = item.query
+                                Task { await vm.search() }
+                            }
+                        }
+                    }
+                }
+
+                // Trending / Explore
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Explore")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    FlowLayout(spacing: 8) {
+                        ForEach(trendingSearches) { item in
+                            quickSearchChip(icon: item.icon, label: item.label) {
+                                vm.query = item.query
+                                Task { await vm.search() }
+                            }
+                        }
+                    }
+                }
+
+                // Hint
+                HStack {
+                    Spacer()
+                    VStack(spacing: 6) {
+                        Image(systemName: "lightbulb.min")
+                            .font(.title3)
+                            .foregroundStyle(.secondary.opacity(0.5))
+                        Text("Try searching for a team name, player, or market")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    Spacer()
+                }
+                .padding(.top, 8)
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+        }
+    }
+
+    private func quickSearchChip(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                Text(label)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(.tertiarySystemGroupedBackground))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Suggestions

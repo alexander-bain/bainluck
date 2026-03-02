@@ -121,7 +121,9 @@ struct EventCardView: View {
                         .fontWeight(awayWon ? .bold : .regular)
                         .foregroundStyle(awayWon ? .primary : .secondary)
                 }
-                if !isFinished {
+                if isFinished {
+                    preGameOddsLabel(for: .away)
+                } else {
                     probabilityText(for: .away)
                 }
             }
@@ -154,7 +156,9 @@ struct EventCardView: View {
                         .fontWeight(homeWon ? .bold : .regular)
                         .foregroundStyle(homeWon ? .primary : .secondary)
                 }
-                if !isFinished {
+                if isFinished {
+                    preGameOddsLabel(for: .home)
+                } else {
                     probabilityText(for: .home)
                 }
             }
@@ -165,12 +169,9 @@ struct EventCardView: View {
 
     @ViewBuilder
     private var footer: some View {
-        HStack {
+        HStack(spacing: 6) {
             if let reason, !reason.isEmpty {
-                Text(reason)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                reasonBadge(reason)
             }
             Spacer()
             if isLive, let opening = event.openingOdds,
@@ -179,14 +180,42 @@ struct EventCardView: View {
                 Text("Opened \(formatProbability(awayOpen))/\(formatProbability(homeOpen))")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-            } else if isFinished, let opening = event.openingOdds,
-                      let awayOpen = opening.awayProbability,
-                      let homeOpen = opening.homeProbability {
-                Text("Pre-game: \(formatProbability(awayOpen))/\(formatProbability(homeOpen))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private func reasonBadge(_ text: String) -> some View {
+        let (icon, color) = reasonStyle(text)
+        return HStack(spacing: 3) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            Text(text)
+                .font(.caption2)
+                .fontWeight(.medium)
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.1))
+        .clipShape(Capsule())
+    }
+
+    private func reasonStyle(_ text: String) -> (String?, Color) {
+        let lower = text.lowercased()
+        if lower.contains("upset") || lower.contains("underdog") {
+            return ("exclamationmark.triangle.fill", .orange)
+        } else if lower.contains("close") || lower.contains("tight") || lower.contains("even") {
+            return ("equal.circle.fill", .blue)
+        } else if lower.contains("line mov") || lower.contains("shifted") || lower.contains("odds") {
+            return ("arrow.up.arrow.down", .purple)
+        } else if lower.contains("starting soon") {
+            return ("clock.fill", .green)
+        } else if lower.contains("lead change") || lower.contains("wild") || lower.contains("exciting") {
+            return ("bolt.fill", .yellow)
+        }
+        return (nil, .secondary)
     }
 
     // MARK: - Helpers
@@ -205,18 +234,43 @@ struct EventCardView: View {
         }
     }
 
+    /// Shows pre-game odds inline for completed games — dimmed, with "was" prefix for clarity
+    @ViewBuilder
+    private func preGameOddsLabel(for side: TeamSide) -> some View {
+        let opening = event.openingOdds
+        let prob: Double? = side == .home ? opening?.homeProbability : opening?.awayProbability
+        if let prob {
+            let wasUnderdog = prob < 0.4
+            let wasHeavyFavorite = prob > 0.7
+            let won = (side == .home && homeWon) || (side == .away && awayWon)
+            let isUpset = won && wasUnderdog
+
+            HStack(spacing: 2) {
+                Text(formatProbability(prob))
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+            }
+            .foregroundStyle(
+                isUpset ? .orange :
+                (won && wasHeavyFavorite) ? .secondary :
+                .secondary.opacity(0.7)
+            )
+        }
+    }
+
     @ViewBuilder
     private var probabilityBar: some View {
         if isFinished {
-            // Finished: show opening odds bar
+            // Finished: show opening odds bar with full team colors
             if let opening = event.openingOdds,
                let awayProb = opening.awayProbability,
                let homeProb = opening.homeProbability {
                 ProbabilityBar(
                     awayProb: awayProb,
                     homeProb: homeProb,
-                    awayColor: awayColor.opacity(0.5),
-                    homeColor: homeColor.opacity(0.5),
+                    awayColor: awayColor.opacity(0.6),
+                    homeColor: homeColor.opacity(0.6),
                     height: 6
                 )
             }
