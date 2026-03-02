@@ -4640,6 +4640,93 @@ async def merge_duplicate_events(
     }
 
 
+@router.post("/events/merge-duplicates-sql")
+async def merge_duplicate_events_sql(
+    secret: str = Query(...),
+    dry_run: bool = Query(True, description="Preview without making changes"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge duplicate events using pure SQL (no Python loop).
+
+    Finds orphan events (no external_id, no snapshots) that duplicate
+    an event with external_id, absorbs metadata, then deletes orphans.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text
+
+    if dry_run:
+        # Count how many would be merged
+        result = await db.execute(text("""
+            SELECT COUNT(*) FROM (
+                SELECT orphan.id
+                FROM events keeper
+                JOIN events orphan ON (
+                    keeper.sport_id = orphan.sport_id
+                    AND keeper.id != orphan.id
+                    AND LOWER(keeper.home_team_name) = LOWER(orphan.home_team_name)
+                    AND LOWER(keeper.away_team_name) = LOWER(orphan.away_team_name)
+                    AND ABS(EXTRACT(EPOCH FROM (keeper.commence_time - orphan.commence_time))) < 21600
+                )
+                WHERE keeper.commence_time > NOW() - INTERVAL '30 days'
+                  AND orphan.commence_time > NOW() - INTERVAL '30 days'
+                  AND keeper.external_id IS NOT NULL
+                  AND orphan.external_id IS NULL
+                  AND NOT EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = orphan.id LIMIT 1)
+            ) sub
+        """))
+        count = result.scalar()
+        return {"dry_run": True, "would_merge": count}
+
+    # Step 1: Absorb statpal metadata from orphans into keepers
+    absorb_result = await db.execute(text("""
+        UPDATE events keeper SET
+            statpal_fixture_id = COALESCE(keeper.statpal_fixture_id, orphan.statpal_fixture_id),
+            commence_time_source = COALESCE(keeper.commence_time_source, orphan.commence_time_source),
+            statpal_end_time = COALESCE(keeper.statpal_end_time, orphan.statpal_end_time),
+            home_team_id = COALESCE(keeper.home_team_id, orphan.home_team_id),
+            away_team_id = COALESCE(keeper.away_team_id, orphan.away_team_id),
+            espn_id = COALESCE(keeper.espn_id, orphan.espn_id)
+        FROM events orphan
+        WHERE keeper.sport_id = orphan.sport_id
+          AND keeper.id != orphan.id
+          AND LOWER(keeper.home_team_name) = LOWER(orphan.home_team_name)
+          AND LOWER(keeper.away_team_name) = LOWER(orphan.away_team_name)
+          AND ABS(EXTRACT(EPOCH FROM (keeper.commence_time - orphan.commence_time))) < 21600
+          AND keeper.commence_time > NOW() - INTERVAL '30 days'
+          AND orphan.commence_time > NOW() - INTERVAL '30 days'
+          AND keeper.external_id IS NOT NULL
+          AND orphan.external_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = orphan.id LIMIT 1)
+    """))
+    absorbed = absorb_result.rowcount
+
+    # Step 2: Delete orphans (no external_id, no snapshots, have a keeper match)
+    delete_result = await db.execute(text("""
+        DELETE FROM events orphan
+        USING events keeper
+        WHERE keeper.sport_id = orphan.sport_id
+          AND keeper.id != orphan.id
+          AND LOWER(keeper.home_team_name) = LOWER(orphan.home_team_name)
+          AND LOWER(keeper.away_team_name) = LOWER(orphan.away_team_name)
+          AND ABS(EXTRACT(EPOCH FROM (keeper.commence_time - orphan.commence_time))) < 21600
+          AND keeper.commence_time > NOW() - INTERVAL '30 days'
+          AND orphan.commence_time > NOW() - INTERVAL '30 days'
+          AND keeper.external_id IS NOT NULL
+          AND orphan.external_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM odds_snapshots WHERE event_id = orphan.id LIMIT 1)
+    """))
+    deleted = delete_result.rowcount
+
+    await db.commit()
+    return {
+        "dry_run": False,
+        "absorbed_metadata": absorbed,
+        "deleted_orphans": deleted,
+    }
+
+
 @router.get("/events/merge-task/{task_id}")
 async def check_merge_task(
     task_id: str,
