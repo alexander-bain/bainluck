@@ -338,12 +338,23 @@ async def _discover_events():
                                 elif event_status == "scheduled":
                                     event_status = "live"
 
+                        # Check if an event with this external_id already exists
+                        # (prevents UniqueViolation when StatPal attachment
+                        # tries to set external_id on a different event)
+                        existing_event = (await session.execute(
+                            select(Event).where(
+                                Event.external_id == event_data["id"]
+                            ).limit(1)
+                        )).scalar_one_or_none()
+
                         # Check if a StatPal-created event matches this Odds API event
-                        statpal_event = await _find_statpal_event_for_odds_api(
-                            session, sport.id,
-                            event_data["home_team"], event_data["away_team"],
-                            commence_time,
-                        )
+                        statpal_event = None
+                        if not existing_event:
+                            statpal_event = await _find_statpal_event_for_odds_api(
+                                session, sport.id,
+                                event_data["home_team"], event_data["away_team"],
+                                commence_time,
+                            )
 
                         if statpal_event:
                             # Attach Odds API external_id to existing StatPal event
