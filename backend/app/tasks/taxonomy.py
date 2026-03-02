@@ -7,9 +7,9 @@ Runs every 2 minutes to keep tags fresh for live events and new futures.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
-from sqlalchemy import select, and_, or_, update
+from sqlalchemy import select, and_, or_
+from sqlalchemy.orm import selectinload
 
 from app.tasks.base import get_task_session
 from app.models.models import Event, FuturesMarket
@@ -35,6 +35,7 @@ async def _update_event_tags_impl(limit: int = 500) -> dict:
         # Query events needing tag updates
         stmt = (
             select(Event)
+            .options(selectinload(Event.sport))
             .where(
                 or_(
                     # Live events — always refresh
@@ -86,6 +87,8 @@ async def _update_event_tags_impl(limit: int = 500) -> dict:
 
 def _tag_event(event: Event) -> list[str]:
     """Compute tags for a single event using current aggregate probability."""
+    sport_key = event.sport.key if event.sport else None
+
     # Get current aggregate probability (not just opening odds)
     current_home_prob = compute_aggregate_probability(event)
     opening_home_prob = (
@@ -102,29 +105,26 @@ def _tag_event(event: Event) -> list[str]:
     highlight_result = None
     if opening_home_prob is not None and current_home_prob is not None:
         highlight_result = compute_highlight(
-            sport_key=event.sport_key,
             status=event.status,
             commence_time=event.commence_time,
+            sport_key=sport_key,
             opening_home_prob=opening_home_prob,
             opening_away_prob=opening_away_prob,
             current_home_prob=current_home_prob,
             current_away_prob=current_away_prob,
-            home_score=event.home_score,
-            away_score=event.away_score,
-            llm_importance=getattr(event, "llm_importance", None),
         )
 
     # Get raw EI score
     raw_ei = float(event.raw_ei) if event.raw_ei is not None else None
 
     return compute_event_tags(
-        sport_key=event.sport_key,
+        sport_key=sport_key or "",
         status=event.status,
         commence_time=event.commence_time,
-        llm_importance=getattr(event, "llm_importance", None),
-        llm_gender=getattr(event, "llm_gender", None),
-        llm_level=getattr(event, "llm_level", None),
-        llm_league=getattr(event, "llm_league", None),
+        llm_importance=event.llm_importance,
+        llm_gender=event.llm_gender,
+        llm_level=event.llm_level,
+        llm_league=event.llm_league,
         raw_ei=raw_ei,
         broadcast_info=getattr(event, "broadcast_info", None),
         highlight_result=highlight_result,
@@ -164,12 +164,13 @@ async def _update_market_tags(session, limit: int = 500) -> int:
         try:
             tags = compute_market_tags(
                 llm_sport_category=market.llm_sport_category,
-                llm_league=getattr(market, "llm_league", None),
-                llm_gender=getattr(market, "llm_gender", None),
-                llm_level=getattr(market, "llm_level", None),
+                llm_league=market.llm_league,
+                llm_gender=market.llm_gender,
+                llm_level=market.llm_level,
                 market_tier=market.market_tier,
                 category=market.category,
                 status=market.status,
+                resolution_date=market.resolution_date,
                 source=market.source,
             )
             market.market_tags = tags
