@@ -76,10 +76,11 @@ STATPAL_SPORT_MAPPING: dict[str, str] = {
     "soccer_epl": "soccer",
     "soccer_usa_mls": "soccer",
     "golf_pga": "pga",
-    # College sports
-    "basketball_ncaab": "ncaab",
-    "americanfootball_ncaaf": "ncaaf",
-    "basketball_wnba": "wnba",
+    # Note: StatPal does NOT cover college sports (NCAAB, NCAAF) or WNBA.
+    # Their API only supports 13 pro/international sports:
+    # NFL, NBA, MLB, NHL, soccer, golf, cricket, esports, F1, handball,
+    # horse racing, tennis, volleyball. College sports rely on
+    # The Odds API + ESPN for event creation and commence_time correction.
     # More soccer leagues (StatPal uses sport="soccer" for all)
     "soccer_spain_la_liga": "soccer",
     "soccer_germany_bundesliga": "soccer",
