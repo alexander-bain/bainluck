@@ -81,6 +81,8 @@ struct SearchView: View {
     @StateObject private var vm = SearchViewModel()
     @EnvironmentObject var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var path = NavigationPath()
 
     private let quickSearches: [QuickSearchItem] = [
         .init(icon: "basketball.fill", label: "NBA", query: "NBA"),
@@ -100,7 +102,7 @@ struct SearchView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 searchField
                     .padding(.horizontal)
@@ -330,9 +332,23 @@ struct SearchView: View {
         List {
             if !results.results.isEmpty {
                 Section {
-                    ForEach(results.results) { event in
-                        NavigationLink(value: Route.eventDetail(id: event.id)) {
-                            searchEventRow(event)
+                    if sizeClass == .regular {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            ForEach(results.results) { event in
+                                Button {
+                                    path.append(Route.eventDetail(id: event.id))
+                                } label: {
+                                    searchEventRow(event)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    } else {
+                        ForEach(results.results) { event in
+                            NavigationLink(value: Route.eventDetail(id: event.id)) {
+                                searchEventRow(event)
+                            }
                         }
                     }
                 } header: {
@@ -355,9 +371,23 @@ struct SearchView: View {
 
             if !results.futures.isEmpty {
                 Section {
-                    ForEach(results.futures) { market in
-                        NavigationLink(value: Route.futuresDetail(id: market.id)) {
-                            searchFuturesRow(market)
+                    if sizeClass == .regular {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            ForEach(results.futures) { market in
+                                Button {
+                                    path.append(Route.futuresDetail(id: market.id))
+                                } label: {
+                                    searchFuturesRow(market)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    } else {
+                        ForEach(results.futures) { market in
+                            NavigationLink(value: Route.futuresDetail(id: market.id)) {
+                                searchFuturesRow(market)
+                            }
                         }
                     }
                 } header: {

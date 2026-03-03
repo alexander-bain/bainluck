@@ -90,6 +90,11 @@ struct OddsChartView: View {
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
     @State private var selectedDate: Date?
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var chartHeight: CGFloat {
+        sizeClass == .regular ? 380 : 260
+    }
 
     private var gameStartDate: Date? {
         commenceTime?.asDate
@@ -132,12 +137,12 @@ struct OddsChartView: View {
 
             if vm.loading {
                 ProgressView()
-                    .frame(height: 260)
+                    .frame(height: chartHeight)
             } else if let error = vm.error {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(height: 260)
+                    .frame(height: chartHeight)
             } else if let history = vm.history {
                 let allPoints = buildDataPoints(history)
                 let enrichedPoints = enrichWithGameState(allPoints, history: history)
@@ -147,7 +152,7 @@ struct OddsChartView: View {
                     Text("No odds data available")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(height: 260)
+                        .frame(height: chartHeight)
                 } else {
                     chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
                         .onChange(of: selectedDate) { _, newDate in
@@ -356,7 +361,7 @@ struct OddsChartView: View {
             }
         }
         .chartXSelection(value: $selectedDate)
-        .frame(height: 260)
+        .frame(height: chartHeight)
     }
 
     // MARK: - Legend

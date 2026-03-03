@@ -75,6 +75,7 @@ struct EventDetailView: View {
     @State private var countdownText: String?
     @State private var countdownTimer: Timer?
     @State private var selectedPlayPoint: GamePlayPoint?
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     init(eventId: Int) {
         self.eventId = eventId
@@ -84,6 +85,11 @@ struct EventDetailView: View {
     private var isLive: Bool { vm.event?.status == "live" }
     private var isFinished: Bool { vm.event?.status == "completed" || vm.event?.status == "closed" }
     private var isScheduled: Bool { vm.event?.status == "scheduled" }
+
+    private var isIPad: Bool { sizeClass == .regular }
+    private var logoSize: CGFloat { isIPad ? 80 : 56 }
+    private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
+    private var contentMaxWidth: CGFloat { isIPad ? 900 : 700 }
 
     var body: some View {
         Group {
@@ -138,7 +144,7 @@ struct EventDetailView: View {
                     }
                     .padding(.horizontal)
                     .padding(.bottom)
-                    .frame(maxWidth: 700)
+                    .frame(maxWidth: contentMaxWidth)
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -204,7 +210,7 @@ struct EventDetailView: View {
                         url: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
                         teamName: event.awayTeam,
                         color: colors.away,
-                        size: 56
+                        size: logoSize
                     )
                     Text(event.awayTeam)
                         .font(.caption)
@@ -223,13 +229,13 @@ struct EventDetailView: View {
                     if isLive || isFinished {
                         HStack(spacing: 12) {
                             Text("\(event.awayScore ?? 0)")
-                                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                                .font(.system(size: scoreFontSize, weight: .bold, design: .rounded).monospacedDigit())
                                 .foregroundStyle(winnerColor(isAway: true, event: event))
                             Text("-")
                                 .font(.title2)
                                 .foregroundStyle(.white.opacity(0.4))
                             Text("\(event.homeScore ?? 0)")
-                                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                                .font(.system(size: scoreFontSize, weight: .bold, design: .rounded).monospacedDigit())
                                 .foregroundStyle(winnerColor(isAway: false, event: event))
                         }
                         if let clock = event.espn?.gameClock, isLive {
@@ -259,7 +265,7 @@ struct EventDetailView: View {
                         url: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                         teamName: event.homeTeam,
                         color: colors.home,
-                        size: 56
+                        size: logoSize
                     )
                     Text(event.homeTeam)
                         .font(.caption)

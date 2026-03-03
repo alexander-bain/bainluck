@@ -85,6 +85,7 @@ struct MyStuffView: View {
     @StateObject private var vm = MyStuffViewModel()
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -333,11 +334,22 @@ struct MyStuffView: View {
 
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
-            ForEach(items) { item in
-                feedRow(item)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        pinSwipeButton(item)
+            if sizeClass == .regular {
+                // iPad: two-column grid with context menu for pin
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(items) { item in
+                        feedRow(item)
+                            .contextMenu { pinContextMenu(item) }
                     }
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            } else {
+                ForEach(items) { item in
+                    feedRow(item)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            pinSwipeButton(item)
+                        }
+                }
             }
         } header: {
             HStack(spacing: 6) {
@@ -396,6 +408,20 @@ struct MyStuffView: View {
                 Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
             }
             .tint(isPinned ? .gray : .orange)
+        }
+    }
+
+    // MARK: - Context Menu Pin (iPad)
+
+    @ViewBuilder
+    private func pinContextMenu(_ item: FeedItem) -> some View {
+        if let pinInfo = pinInfo(for: item) {
+            let isPinned = pinManager.isPinned(type: pinInfo.type, id: pinInfo.id)
+            Button {
+                pinManager.togglePin(type: pinInfo.type, id: pinInfo.id)
+            } label: {
+                Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
+            }
         }
     }
 

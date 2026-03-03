@@ -249,10 +249,11 @@ struct FeedView: View {
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
             if sizeClass == .regular {
-                // iPad: two-column grid
+                // iPad: two-column grid with context menu for pin
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     ForEach(items) { item in
                         feedRow(item)
+                            .contextMenu { pinContextMenu(item) }
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -322,6 +323,20 @@ struct FeedView: View {
                 Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
             }
             .tint(isPinned ? .gray : .orange)
+        }
+    }
+
+    // MARK: - Context Menu Pin (iPad)
+
+    @ViewBuilder
+    private func pinContextMenu(_ item: FeedItem) -> some View {
+        if let pinInfo = pinInfo(for: item) {
+            let isPinned = pinManager.isPinned(type: pinInfo.type, id: pinInfo.id)
+            Button {
+                pinManager.togglePin(type: pinInfo.type, id: pinInfo.id)
+            } label: {
+                Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "bookmark.slash" : "bookmark")
+            }
         }
     }
 
