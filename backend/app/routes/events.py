@@ -541,7 +541,7 @@ async def faceted_search(
     if tag_filter:
         valid_tags = [t for t in tag_filter if validate_tag(t)]
         if valid_tags:
-            facet_query_sql += " AND event_tags @> :tag_filter::jsonb"
+            facet_query_sql += " AND event_tags @> CAST(:tag_filter AS jsonb)"
             facet_params["tag_filter"] = _json.dumps(valid_tags)
 
     facet_query_sql += """
