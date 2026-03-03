@@ -444,38 +444,59 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
 
-  // Compute the latest timestamp across all OddsChart data sources so the
-  // Score Differential chart can extend its x-axis to match.
-  const oddsChartEndTime = useMemo(() => {
-    if (!historyData) return undefined;
-    let maxTs = "";
-    const check = (ts: string) => { if (ts > maxTs) maxTs = ts; };
+  // Compute the earliest and latest timestamps across all OddsChart data
+  // sources so the Score Differential chart can match its x-axis range.
+  // Uses Date.getTime() comparison instead of string comparison to avoid
+  // format mismatches (e.g. "...T22:30:00.000Z" vs "...T23:00:00+00:00").
+  const { oddsChartStartTime, oddsChartEndTime } = useMemo(() => {
+    if (!historyData) return { oddsChartStartTime: undefined, oddsChartEndTime: undefined };
+    let minMs = Infinity;
+    let maxMs = 0;
+    const check = (ts: string) => {
+      const ms = new Date(ts).getTime();
+      if (!isNaN(ms)) {
+        if (ms < minMs) minMs = ms;
+        if (ms > maxMs) maxMs = ms;
+      }
+    };
 
     // history (odds snapshots)
     if (historyData.history?.length) {
+      check(historyData.history[0].timestamp);
       check(historyData.history[historyData.history.length - 1].timestamp);
     }
     // win probability history (Kalshi, Polymarket, ESPN, etc.) — Record<string, WinProbHistoryPoint[]>
     if (historyData.win_prob_history) {
       for (const pts of Object.values(historyData.win_prob_history)) {
-        if (pts.length) check(pts[pts.length - 1].timestamp);
+        if (pts.length) {
+          check(pts[0].timestamp);
+          check(pts[pts.length - 1].timestamp);
+        }
       }
     }
     // aggregate line
     if (historyData.aggregate_line?.length) {
+      check(historyData.aggregate_line[0].timestamp);
       check(historyData.aggregate_line[historyData.aggregate_line.length - 1].timestamp);
     }
     // ESPN history
     if (historyData.espn_history?.length) {
+      check(historyData.espn_history[0].timestamp);
       check(historyData.espn_history[historyData.espn_history.length - 1].timestamp);
     }
     // bookmaker history
     if (historyData.bookmaker_history) {
       for (const pts of Object.values(historyData.bookmaker_history)) {
-        if (pts.length) check(pts[pts.length - 1].timestamp);
+        if (pts.length) {
+          check(pts[0].timestamp);
+          check(pts[pts.length - 1].timestamp);
+        }
       }
     }
-    return maxTs || undefined;
+    return {
+      oddsChartStartTime: minMs < Infinity ? new Date(minMs).toISOString() : undefined,
+      oddsChartEndTime: maxMs > 0 ? new Date(maxMs).toISOString() : undefined,
+    };
   }, [historyData]);
 
   // Compute the most recent chart point for GamePlayCard default display
@@ -1375,6 +1396,7 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamColor={event.away_team_data?.primary_color || undefined}
             homeTeamLogo={event.home_team_data?.logo_small || undefined}
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
+            chartStartTime={oddsChartStartTime}
             chartEndTime={oddsChartEndTime}
           />
         </div>

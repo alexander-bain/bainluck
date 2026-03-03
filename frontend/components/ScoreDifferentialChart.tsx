@@ -47,6 +47,8 @@ interface ScoreDifferentialChartProps {
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
   awayTeamLogo?: string;
+  /** Start timestamp (ISO) from the Win Probability chart so both charts share the same x-axis range */
+  chartStartTime?: string;
   /** End timestamp (ISO) from the Win Probability chart so both charts share the same x-axis range */
   chartEndTime?: string;
 }
@@ -88,6 +90,7 @@ export default function ScoreDifferentialChart({
   awayTeamColor,
   homeTeamLogo,
   awayTeamLogo,
+  chartStartTime,
   chartEndTime,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
@@ -332,8 +335,18 @@ export default function ScoreDifferentialChart({
     // match the Win Probability chart's time range.
     const allTimestamps = Array.from(dataMap.keys()).sort();
     if (allTimestamps.length >= 2) {
-      const first = parseISO(allTimestamps[0]);
+      let first = parseISO(allTimestamps[0]);
       let last = parseISO(allTimestamps[allTimestamps.length - 1]);
+
+      // Extend to match the Win Probability chart's start time if it starts earlier
+      if (chartStartTime) {
+        const startFromParent = parseISO(chartStartTime);
+        startFromParent.setSeconds(0, 0);
+        if (startFromParent < first) {
+          first = startFromParent;
+          ensurePoint(first.toISOString());
+        }
+      }
 
       // Extend to match the Win Probability chart's end time if it goes further
       if (chartEndTime) {
@@ -356,7 +369,7 @@ export default function ScoreDifferentialChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartEndTime]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime]);
 
   // Filter period boundaries to match chart time range
   const filteredPeriodBoundaries = useMemo(() => {
