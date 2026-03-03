@@ -199,13 +199,55 @@ export default function OddsChart({
     return cutoff;
   }, [history, commenceTime]);
 
+  // Compute smart end time for completed/closed games:
+  // Bookmakers keep reporting stale data 15-20 min after a game ends,
+  // stretching the chart far beyond the actual game duration.
+  // Use the latest game-state signal (ESPN, win prob models, score snapshots)
+  // as the true end, plus a small buffer.
+  const smartEndTime = useMemo(() => {
+    if (!isClosed) return null; // Only clip completed games
+
+    let latestGameSignal: Date | null = null;
+
+    // Signal 1: last ESPN history point (most reliable game-end signal)
+    if (espnHistory && espnHistory.length > 0) {
+      const lastEspn = parseISO(espnHistory[espnHistory.length - 1].timestamp);
+      if (!latestGameSignal || lastEspn > latestGameSignal) latestGameSignal = lastEspn;
+    }
+
+    // Signal 2: last win probability model point (stat_model, ESPN source, etc.)
+    if (winProbHistory) {
+      for (const points of Object.values(winProbHistory)) {
+        if (points.length > 0) {
+          const lastPt = parseISO(points[points.length - 1].timestamp);
+          if (!latestGameSignal || lastPt > latestGameSignal) latestGameSignal = lastPt;
+        }
+      }
+    }
+
+    // Signal 3: last aggregate line point
+    if (aggregateLine && aggregateLine.length > 0) {
+      const lastAgg = parseISO(aggregateLine[aggregateLine.length - 1].timestamp);
+      if (!latestGameSignal || lastAgg > latestGameSignal) latestGameSignal = lastAgg;
+    }
+
+    if (!latestGameSignal) return null;
+
+    // Add 2-minute buffer to avoid clipping the last data point
+    return new Date(latestGameSignal.getTime() + 2 * 60 * 1000);
+  }, [isClosed, espnHistory, winProbHistory, aggregateLine]);
+
   // Filter history based on time range
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
     if (timeRange === "all") return history;
     const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
-    return history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
-  }, [history, timeRange, commenceTime, smartStartTime]);
+    let filtered = history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
+    if (smartEndTime) {
+      filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
+    }
+    return filtered;
+  }, [history, timeRange, commenceTime, smartStartTime, smartEndTime]);
 
   // Filter bookmaker history
   const filteredBookmakerHistory = useMemo(() => {
@@ -215,12 +257,16 @@ export default function OddsChart({
     const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
-      filtered[bookmaker] = points.filter(
+      let pts = points.filter(
         (point) => parseISO(point.timestamp) >= cutoffTime
       );
+      if (smartEndTime) {
+        pts = pts.filter((point) => parseISO(point.timestamp) <= smartEndTime);
+      }
+      filtered[bookmaker] = pts;
     }
     return filtered;
-  }, [bookmakerHistory, timeRange, commenceTime, smartStartTime]);
+  }, [bookmakerHistory, timeRange, commenceTime, smartStartTime, smartEndTime]);
 
   // Build the list of all sources to display (betting + model sources)
   const resolvedSources = useMemo((): ResolvedSource[] => {
@@ -287,22 +333,30 @@ export default function OddsChart({
     const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
     const filtered: Record<string, WinProbHistoryPoint[]> = {};
     for (const [source, points] of Object.entries(winProbHistory)) {
-      filtered[source] = points.filter(
+      let pts = points.filter(
         (point) => parseISO(point.timestamp) >= cutoffTime
       );
+      if (smartEndTime) {
+        pts = pts.filter((point) => parseISO(point.timestamp) <= smartEndTime);
+      }
+      filtered[source] = pts;
     }
     return filtered;
-  }, [winProbHistory, timeRange, commenceTime, smartStartTime]);
+  }, [winProbHistory, timeRange, commenceTime, smartStartTime, smartEndTime]);
 
   // Filter ESPN history (legacy fallback)
   const filteredEspnHistory = useMemo(() => {
     if (!espnHistory || espnHistory.length === 0) return [];
     if (timeRange === "all") return espnHistory;
     const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
-    return espnHistory.filter(
+    let filtered = espnHistory.filter(
       (point) => parseISO(point.timestamp) >= cutoffTime
     );
-  }, [espnHistory, timeRange, commenceTime, smartStartTime]);
+    if (smartEndTime) {
+      filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
+    }
+    return filtered;
+  }, [espnHistory, timeRange, commenceTime, smartStartTime, smartEndTime]);
 
   // Filter aggregate line — use commenceTime (not smartStartTime) because the
   // aggregate line is already a clean backend-computed weighted median without
@@ -311,10 +365,14 @@ export default function OddsChart({
     if (!aggregateLine || aggregateLine.length === 0) return [];
     if (timeRange === "all") return aggregateLine;
     const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
-    return aggregateLine.filter(
+    let filtered = aggregateLine.filter(
       (point) => parseISO(point.timestamp) >= cutoffTime
     );
-  }, [aggregateLine, timeRange, commenceTime]);
+    if (smartEndTime) {
+      filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
+    }
+    return filtered;
+  }, [aggregateLine, timeRange, commenceTime, smartEndTime]);
 
   const useNewWinProbData = Object.keys(filteredWinProbHistory).length > 0;
   const bookmakers = useMemo(
