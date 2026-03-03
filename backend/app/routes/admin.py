@@ -4352,16 +4352,127 @@ async def backfill_taxonomy(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(500, description="Max items to process"),
     sync: bool = Query(False, description="Run synchronously instead of via Celery"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Trigger taxonomy tag computation for events and futures markets."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     if sync:
-        # Run directly in the web process (bypass Celery)
-        from app.tasks.taxonomy import _update_event_tags_impl
-        result = await _update_event_tags_impl(limit)
-        return {"status": "completed", "result": result}
+        # Run directly in the web process using the existing DB session
+        import traceback
+        from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
+        from app.utils.aggregation import compute_aggregate_probability
+        from app.utils import compute_highlight
+
+        try:
+            # --- Tag events ---
+            stmt = (
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(
+                    or_(
+                        Event.event_tags == None,  # noqa: E711
+                        Event.event_tags == [],
+                    )
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(limit)
+            )
+            result = await db.execute(stmt)
+            events = result.scalars().all()
+
+            events_tagged = 0
+            events_errors = 0
+            for event in events:
+                try:
+                    sport_key = event.sport.key if event.sport else ""
+                    current_home_prob = compute_aggregate_probability(event)
+                    opening_home_prob = (
+                        float(event.opening_home_probability)
+                        if event.opening_home_probability is not None else None
+                    )
+                    current_away_prob = (1.0 - current_home_prob) if current_home_prob else None
+                    opening_away_prob = (1.0 - opening_home_prob) if opening_home_prob else None
+
+                    highlight_result = None
+                    if opening_home_prob is not None and current_home_prob is not None:
+                        highlight_result = compute_highlight(
+                            status=event.status,
+                            commence_time=event.commence_time,
+                            sport_key=sport_key,
+                            opening_home_prob=opening_home_prob,
+                            opening_away_prob=opening_away_prob,
+                            current_home_prob=current_home_prob,
+                            current_away_prob=current_away_prob,
+                        )
+
+                    raw_ei = float(event.raw_ei) if event.raw_ei is not None else None
+                    tags = compute_event_tags(
+                        sport_key=sport_key,
+                        status=event.status,
+                        commence_time=event.commence_time,
+                        llm_importance=event.llm_importance,
+                        llm_gender=event.llm_gender,
+                        llm_level=event.llm_level,
+                        llm_league=event.llm_league,
+                        raw_ei=raw_ei,
+                        broadcast_info=getattr(event, "broadcast_info", None),
+                        highlight_result=highlight_result,
+                    )
+                    event.event_tags = tags
+                    events_tagged += 1
+                except Exception:
+                    events_errors += 1
+
+            if events_tagged > 0:
+                await db.commit()
+
+            # --- Tag futures markets ---
+            from app.models import FuturesMarket as FM
+            fm_stmt = (
+                select(FM)
+                .where(or_(FM.market_tags == None, FM.market_tags == []))  # noqa: E711
+                .order_by(FM.updated_at.desc())
+                .limit(limit)
+            )
+            fm_result = await db.execute(fm_stmt)
+            markets = fm_result.scalars().all()
+            futures_tagged = 0
+            for market in markets:
+                try:
+                    mtags = compute_market_tags(
+                        llm_sport_category=market.llm_sport_category,
+                        llm_league=market.llm_league,
+                        llm_gender=market.llm_gender,
+                        llm_level=market.llm_level,
+                        market_tier=market.market_tier,
+                        category=market.category,
+                        status=market.status,
+                        resolution_date=market.resolution_date,
+                        source=market.source,
+                    )
+                    market.market_tags = mtags
+                    futures_tagged += 1
+                except Exception:
+                    pass
+            if futures_tagged > 0:
+                await db.commit()
+
+            return {
+                "status": "completed",
+                "result": {
+                    "events_tagged": events_tagged,
+                    "events_errors": events_errors,
+                    "futures_tagged": futures_tagged,
+                },
+            }
+        except Exception as exc:
+            return {
+                "status": "error",
+                "error": str(exc),
+                "trace": traceback.format_exc().split("\n")[-5:],
+            }
 
     from app.tasks import update_event_tags as task
 
