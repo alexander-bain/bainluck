@@ -415,7 +415,7 @@ def backfill_team_identities(self):
 def update_event_tags(self, limit: int = 500):
     """Compute and persist event_tags + market_tags for events and futures."""
     from app.tasks.taxonomy import _update_event_tags_impl
-    return run_async(_update_event_tags_impl(limit))
+    return _tracked_run("update_event_tags", _update_event_tags_impl(limit))
 
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
@@ -423,7 +423,7 @@ def update_event_tags(self, limit: int = 500):
 def enrich_taxonomy_llm(self, event_limit: int = 50, market_limit: int = 30):
     """Enrich events and futures with LLM-generated taxonomy tags (stakes, narrative, audience, structure)."""
     from app.tasks.taxonomy import _enrich_taxonomy_llm_impl
-    return run_async(_enrich_taxonomy_llm_impl(event_limit, market_limit))
+    return _tracked_run("enrich_taxonomy_llm", _enrich_taxonomy_llm_impl(event_limit, market_limit))
 
 
 # --- Duplicate Event Cleanup ---

@@ -439,10 +439,7 @@ async def faceted_search(
 ):
     """Faceted search over events using GIN-indexed taxonomy tags."""
     import json as _json
-    import traceback as _tb
     from sqlalchemy import literal_column, text as sql_text
-
-    _VERSION = "v9"
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
@@ -466,100 +463,90 @@ async def faceted_search(
         if val:
             tag_filter.append(f"{ns}:{val}")
 
-    try:
-        # Base conditions
-        conditions = [Event.commence_time >= cutoff]
+    # Base conditions
+    conditions = [Event.commence_time >= cutoff]
 
-        # GIN containment filter — use literal_column to inline the JSONB
-        # value directly, avoiding asyncpg bind-parameter JSONB casting issues
-        valid_tags: list[str] = []
-        if tag_filter:
-            valid_tags = [t for t in tag_filter if validate_tag(t)]
-            if valid_tags:
-                escaped = _json.dumps(valid_tags).replace("'", "''")
-                conditions.append(
-                    Event.event_tags.op("@>")(
-                        literal_column(f"'{escaped}'::jsonb")
-                    )
-                )
-
-        # Count
-        count_q = select(func.count(Event.id)).where(*conditions)
-        total_count = (await db.execute(count_q)).scalar() or 0
-
-        # Data
-        offset_val = (page - 1) * per_page
-        data_q = (
-            select(Event)
-            .options(selectinload(Event.sport))
-            .where(*conditions)
-            .order_by(
-                case(
-                    (Event.status == "live", 0),
-                    (Event.status == "scheduled", 1),
-                    else_=2,
-                ),
-                Event.commence_time.desc(),
-            )
-            .offset(offset_val)
-            .limit(per_page)
-        )
-        events = (await db.execute(data_q)).scalars().all()
-
-        # Team lookup
-        team_names = []
-        for event in events:
-            if event.home_team_name:
-                team_names.append(event.home_team_name)
-            if event.away_team_name:
-                team_names.append(event.away_team_name)
-        team_lookup = await _build_team_lookup(db, team_names)
-
-        # Format
-        formatted = []
-        for event in events:
-            evt = _format_event(event, team_lookup=team_lookup)
-            if event.event_tags:
-                evt["event_tags"] = event.event_tags
-            formatted.append(evt)
-
-        # Facet counts — also use inline JSONB literal
-        facet_sql = """
-            SELECT split_part(tag, ':', 1) AS ns, tag, COUNT(*) AS cnt
-            FROM events, jsonb_array_elements_text(event_tags) AS tag
-            WHERE commence_time >= :cutoff
-        """
-        facet_params: dict = {"cutoff": cutoff}
+    # GIN containment filter — use literal_column to inline the JSONB
+    # value directly, avoiding asyncpg bind-parameter JSONB casting issues
+    valid_tags: list[str] = []
+    if tag_filter:
+        valid_tags = [t for t in tag_filter if validate_tag(t)]
         if valid_tags:
-            escaped_facet = _json.dumps(valid_tags).replace("'", "''")
-            facet_sql += f" AND event_tags @> '{escaped_facet}'::jsonb"
-        facet_sql += " GROUP BY ns, tag ORDER BY ns, cnt DESC"
+            escaped = _json.dumps(valid_tags).replace("'", "''")
+            conditions.append(
+                Event.event_tags.op("@>")(
+                    literal_column(f"'{escaped}'::jsonb")
+                )
+            )
 
-        facet_rows = (await db.execute(sql_text(facet_sql), facet_params)).all()
-        facets: dict = {}
-        for row in facet_rows:
-            ns = row[0]
-            if ns not in facets:
-                facets[ns] = []
-            facets[ns].append({"tag": row[1], "count": row[2]})
+    # Count
+    count_q = select(func.count(Event.id)).where(*conditions)
+    total_count = (await db.execute(count_q)).scalar() or 0
 
-        return {
-            "version": _VERSION,
-            "total": total_count,
-            "page": page,
-            "per_page": per_page,
-            "filters": tag_filter,
-            "events": formatted,
-            "facets": facets,
-        }
-    except Exception as exc:
-        return {
-            "version": _VERSION,
-            "error": str(exc),
-            "error_type": type(exc).__name__,
-            "trace": _tb.format_exc().split("\n")[-5:],
-            "filters": tag_filter,
-        }
+    # Data
+    offset_val = (page - 1) * per_page
+    data_q = (
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(*conditions)
+        .order_by(
+            case(
+                (Event.status == "live", 0),
+                (Event.status == "scheduled", 1),
+                else_=2,
+            ),
+            Event.commence_time.desc(),
+        )
+        .offset(offset_val)
+        .limit(per_page)
+    )
+    events = (await db.execute(data_q)).scalars().all()
+
+    # Team lookup
+    team_names = []
+    for event in events:
+        if event.home_team_name:
+            team_names.append(event.home_team_name)
+        if event.away_team_name:
+            team_names.append(event.away_team_name)
+    team_lookup = await _build_team_lookup(db, team_names)
+
+    # Format
+    formatted = []
+    for event in events:
+        evt = _format_event(event, team_lookup=team_lookup)
+        if event.event_tags:
+            evt["event_tags"] = event.event_tags
+        formatted.append(evt)
+
+    # Facet counts — also use inline JSONB literal
+    facet_sql = """
+        SELECT split_part(tag, ':', 1) AS ns, tag, COUNT(*) AS cnt
+        FROM events, jsonb_array_elements_text(event_tags) AS tag
+        WHERE commence_time >= :cutoff
+    """
+    facet_params: dict = {"cutoff": cutoff}
+    if valid_tags:
+        escaped_facet = _json.dumps(valid_tags).replace("'", "''")
+        facet_sql += f" AND event_tags @> '{escaped_facet}'::jsonb"
+    facet_sql += " GROUP BY ns, tag ORDER BY ns, cnt DESC"
+
+    facet_rows = (await db.execute(sql_text(facet_sql), facet_params)).all()
+    facets: dict = {}
+    for row in facet_rows:
+        ns = row[0]
+        if ns not in facets:
+            facets[ns] = []
+        facets[ns].append({"tag": row[1], "count": row[2]})
+
+    return {
+        "total": total_count,
+        "page": page,
+        "per_page": per_page,
+        "filters": tag_filter,
+        "events": formatted,
+        "facets": facets,
+    }
 
 
 @router.get("/search")
