@@ -51,14 +51,54 @@ struct MainTabView: View {
     private var iPadLayout: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: tabSelection) {
-                Label("Feed", systemImage: "rectangle.stack.fill")
+                Section {
+                    HStack {
+                        Label("Feed", systemImage: "rectangle.stack.fill")
+                        Spacer()
+                        if navCoordinator.liveGameCount > 0 {
+                            Text("\(navCoordinator.liveGameCount) live")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.red)
+                                .clipShape(Capsule())
+                        }
+                    }
                     .tag(AppTab.feed)
-                Label("Search", systemImage: "magnifyingglass")
-                    .tag(AppTab.search)
-                Label("My Stuff", systemImage: "person.fill")
-                    .tag(AppTab.myStuff)
+
+                    Label("Search", systemImage: "magnifyingglass")
+                        .tag(AppTab.search)
+
+                    Label("My Stuff", systemImage: "person.fill")
+                        .tag(AppTab.myStuff)
+                }
+
+                Section("Explore") {
+                    NavigationLink(value: Route.eiRankings) {
+                        Label("EI Rankings", systemImage: "trophy.fill")
+                    }
+                    NavigationLink(value: Route.preferences) {
+                        Label("Preferences", systemImage: "gearshape")
+                    }
+                }
             }
             .navigationTitle("🍀 Bain Luck")
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .eventDetail(let id):
+                    EventDetailView(eventId: id)
+                case .futuresDetail(let id):
+                    FuturesDetailView(marketId: id)
+                case .eiRankings:
+                    EIRankingsView()
+                case .preferences:
+                    PreferencesView()
+                case .sportCategory(let key, let name):
+                    SportCategoryView(categoryKey: key, categoryName: name)
+                }
+            }
         } detail: {
             switch navCoordinator.selectedTab {
             case .feed:

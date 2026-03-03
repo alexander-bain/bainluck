@@ -83,6 +83,7 @@ struct SearchView: View {
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var path = NavigationPath()
+    @State private var landscapeColumns = false
 
     private let quickSearches: [QuickSearchItem] = [
         .init(icon: "basketball.fill", label: "NBA", query: "NBA"),
@@ -153,6 +154,7 @@ struct SearchView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 isSearchFocused = true
             }
+            updateLandscapeColumns()
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             if navCoordinator.selectedTab == .search,
@@ -163,6 +165,9 @@ struct SearchView: View {
         }
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             // Search tab doesn't handle route pushes — handled by feed/myStuff
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            updateLandscapeColumns()
         }
     }
 
@@ -326,6 +331,19 @@ struct SearchView: View {
         .listStyle(.plain)
     }
 
+    // MARK: - iPad Grid
+
+    private var iPadGridColumns: [GridItem] {
+        let count = landscapeColumns ? 3 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
+    }
+
+    private func updateLandscapeColumns() {
+        guard sizeClass == .regular else { return }
+        let bounds = UIScreen.main.bounds
+        landscapeColumns = bounds.width > bounds.height
+    }
+
     // MARK: - Search Results
 
     private func searchResults(_ results: SearchResponse) -> some View {
@@ -333,7 +351,7 @@ struct SearchView: View {
             if !results.results.isEmpty {
                 Section {
                     if sizeClass == .regular {
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        LazyVGrid(columns: iPadGridColumns, spacing: 12) {
                             ForEach(results.results) { event in
                                 Button {
                                     path.append(Route.eventDetail(id: event.id))
@@ -341,6 +359,9 @@ struct SearchView: View {
                                     searchEventRow(event)
                                 }
                                 .buttonStyle(.plain)
+                                .padding(12)
+                                .background(Color(.tertiarySystemGroupedBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -372,7 +393,7 @@ struct SearchView: View {
             if !results.futures.isEmpty {
                 Section {
                     if sizeClass == .regular {
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        LazyVGrid(columns: iPadGridColumns, spacing: 12) {
                             ForEach(results.futures) { market in
                                 Button {
                                     path.append(Route.futuresDetail(id: market.id))
@@ -380,6 +401,9 @@ struct SearchView: View {
                                     searchFuturesRow(market)
                                 }
                                 .buttonStyle(.plain)
+                                .padding(12)
+                                .background(Color(.tertiarySystemGroupedBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))

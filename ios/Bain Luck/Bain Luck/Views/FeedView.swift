@@ -117,6 +117,7 @@ struct FeedView: View {
     @StateObject private var vm = FeedViewModel()
     @State private var path = NavigationPath()
     @State private var selectedCategory: String = "all"
+    @State private var landscapeColumns = false
     @EnvironmentObject var navCoordinator: NavigationCoordinator
     @EnvironmentObject var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -168,12 +169,16 @@ struct FeedView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "feed", type: "feed")
+            updateLandscapeColumns()
         }
         .task {
             await vm.load()
         }
         .onDisappear {
             vm.stopRefresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            updateLandscapeColumns()
         }
         .onChange(of: vm.liveCount) { _, count in
             navCoordinator.liveGameCount = count
@@ -187,6 +192,19 @@ struct FeedView: View {
     }
 
     // MARK: - Feed List
+
+    // MARK: - iPad Grid
+
+    private var iPadGridColumns: [GridItem] {
+        let count = landscapeColumns ? 3 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
+    }
+
+    private func updateLandscapeColumns() {
+        guard sizeClass == .regular else { return }
+        let bounds = UIScreen.main.bounds
+        landscapeColumns = bounds.width > bounds.height
+    }
 
     private var pinnedItems: [FeedItem] {
         vm.filteredItems(for: selectedCategory).filter { item in
@@ -249,10 +267,13 @@ struct FeedView: View {
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
             if sizeClass == .regular {
-                // iPad: two-column grid with context menu for pin
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                // iPad: multi-column grid with context menu for pin
+                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
                     ForEach(items) { item in
                         feedRow(item)
+                            .padding(12)
+                            .background(Color(.tertiarySystemGroupedBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                             .contextMenu { pinContextMenu(item) }
                     }
                 }

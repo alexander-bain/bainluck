@@ -85,6 +85,7 @@ struct MyStuffView: View {
     @StateObject private var vm = MyStuffViewModel()
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
+    @State private var landscapeColumns = false
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
@@ -132,6 +133,10 @@ struct MyStuffView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
+            updateLandscapeColumns()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            updateLandscapeColumns()
         }
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             if navCoordinator.selectedTab == .myStuff,
@@ -303,6 +308,19 @@ struct MyStuffView: View {
         }
     }
 
+    // MARK: - iPad Grid
+
+    private var iPadGridColumns: [GridItem] {
+        let count = landscapeColumns ? 3 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
+    }
+
+    private func updateLandscapeColumns() {
+        guard sizeClass == .regular else { return }
+        let bounds = UIScreen.main.bounds
+        landscapeColumns = bounds.width > bounds.height
+    }
+
     private var teamFeedList: some View {
         List {
             if !pinnedItems.isEmpty {
@@ -335,10 +353,13 @@ struct MyStuffView: View {
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
             if sizeClass == .regular {
-                // iPad: two-column grid with context menu for pin
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                // iPad: multi-column grid with context menu for pin
+                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
                     ForEach(items) { item in
                         feedRow(item)
+                            .padding(12)
+                            .background(Color(.tertiarySystemGroupedBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                             .contextMenu { pinContextMenu(item) }
                     }
                 }
