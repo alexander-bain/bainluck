@@ -117,10 +117,39 @@ def sync_sports(self):
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.discover_events")
 def discover_events(self):
-    """Discover events for ALL active sports."""
+    """Discover events for ALL active sports, then update taxonomy tags."""
     from app.tasks.sports import _discover_events
     try:
-        return _tracked_run("discover_events", _discover_events())
+        result = _tracked_run("discover_events", _discover_events())
+        # Piggyback taxonomy update — worker concurrency=2 means dedicated
+        # taxonomy tasks never get a slot. Run inline after discovery.
+        try:
+            from app.tasks.taxonomy import _update_event_tags_impl
+            tag_result = _tracked_run("update_event_tags", _update_event_tags_impl(500))
+            result["taxonomy"] = tag_result
+        except Exception as tag_exc:
+            import logging
+            logging.getLogger(__name__).warning("Taxonomy update failed: %s", tag_exc)
+            result["taxonomy_error"] = str(tag_exc)[:200]
+        # LLM enrichment — gated to run at most every 10 min
+        try:
+            from app.tasks.redis_state import get_redis_client
+            r = get_redis_client()
+            lock_key = "bainluck:llm_enrich_gate"
+            if r.set(lock_key, "1", nx=True, ex=600):  # 10 min TTL
+                from app.tasks.taxonomy import _enrich_taxonomy_llm_impl
+                llm_result = _tracked_run(
+                    "enrich_taxonomy_llm",
+                    _enrich_taxonomy_llm_impl(event_limit=50, market_limit=30),
+                )
+                result["llm_enrichment"] = llm_result
+            else:
+                result["llm_enrichment"] = "skipped (gate)"
+        except Exception as llm_exc:
+            import logging
+            logging.getLogger(__name__).warning("LLM enrichment failed: %s", llm_exc)
+            result["llm_enrichment_error"] = str(llm_exc)[:200]
+        return result
     except Exception as exc:
         raise self.retry(exc=exc, countdown=120)
 
@@ -591,16 +620,10 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour=9),  # Daily at 9:30 AM UTC
         "kwargs": {"limit": 30},
     },
-    "update-event-tags": {
-        "task": "app.tasks.update_event_tags",
-        "schedule": crontab(minute="*/2"),  # Every 2 minutes — keeps live event tags fresh
-        "kwargs": {"limit": 500},
-    },
-    "enrich-taxonomy-llm": {
-        "task": "app.tasks.enrich_taxonomy_llm",
-        "schedule": crontab(minute="*/10"),  # Every 10 minutes — LLM-generated tags
-        "kwargs": {"event_limit": 50, "market_limit": 30},
-    },
+    # Note: update_event_tags and enrich_taxonomy_llm are piggybacked on
+    # discover_events since the worker only has 2 concurrency slots which
+    # are permanently occupied by high-frequency tasks (poll_odds 30s,
+    # espn_sync 60s). Standalone beat entries would queue but never execute.
 }
 
 
