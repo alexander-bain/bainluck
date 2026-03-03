@@ -29,7 +29,7 @@ import type { PeriodBoundary } from "@/lib/periodMarkers";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
-  betting: { display_name: "Betting Odds", color: "#374151", dash_pattern: null, type: "market" },
+  betting: { display_name: "Betting Odds", color: "#e5e7eb", dash_pattern: null, type: "market" },
   espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3", type: "model" },
   stat_model: { display_name: "Bain Luck Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
   kalshi: { display_name: "Kalshi", color: "#22c55e", dash_pattern: "8 4", type: "market" },
@@ -652,7 +652,7 @@ export default function OddsChart({
       return null; // Will re-render with "all" data
     }
     return (
-      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
+      <div className="h-64 flex items-center justify-center bg-surface-elevated rounded-lg text-text-muted">
         No history data available
       </div>
     );
@@ -746,20 +746,20 @@ export default function OddsChart({
         : [];
 
       return (
-        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-sm">
-          <p className="text-xs text-gray-500 mb-2">{label}</p>
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-white/10 max-w-sm">
+          <p className="text-xs text-text-muted mb-2">{label}</p>
           {/* Scoring play annotation */}
           {scoringPlayAnnotations.length > 0 && (() => {
             const match = scoringPlayAnnotations.find((p) => p.time === label);
             if (!match) return null;
             return (
-              <div className="mb-2 pb-2 border-b border-gray-100">
+              <div className="mb-2 pb-2 border-b border-white/10">
                 <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
                   <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
                   {match.description || match.type}
                 </p>
                 {match.home_score != null && match.away_score != null && (
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-xs text-text-muted mt-0.5">
                     {match.period && `${match.period} `}
                     {match.clock && `${match.clock} — `}
                     Score: {match.home_score}-{match.away_score}
@@ -771,7 +771,7 @@ export default function OddsChart({
 
           {/* Multi-source mode: Bain Luck aggregated first, then individual sources */}
           {isMultiSource && bainLuckEntry && (
-            <div className="mb-2 pb-2 border-b border-gray-100">
+            <div className="mb-2 pb-2 border-b border-white/10">
               <p className="text-xs text-text-muted mb-0.5">
                 {BAIN_LUCK_CONFIG.displayName}
                 <span className="text-text-muted ml-1">(aggregated)</span>
@@ -799,7 +799,7 @@ export default function OddsChart({
                   <p
                     className={`text-xs font-medium ${
                       !isMultiSource && source.key === "betting"
-                        ? "text-sm font-semibold text-gray-800"
+                        ? "text-sm font-semibold text-text-primary"
                         : ""
                     }`}
                     style={
@@ -817,14 +817,14 @@ export default function OddsChart({
 
           {/* Bookmaker breakdown (sportsbooks-only mode) */}
           {bookmakerEntries.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-gray-100">
+            <div className="mt-2 pt-2 border-t border-white/10">
               <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_delta", "");
                 const homeProb = entry.value + 50;
                 const awayProb = 100 - homeProb;
                 return (
-                  <p key={bookmaker} className="text-xs text-gray-500">
+                  <p key={bookmaker} className="text-xs text-text-muted">
                     {bookmaker}: {homeProb.toFixed(0)}% /{" "}
                     {awayProb.toFixed(0)}%
                   </p>
@@ -939,21 +939,21 @@ export default function OddsChart({
                 <stop
                   offset={gradientOffset}
                   stopColor="#22c55e"
-                  stopOpacity={0.25}
+                  stopOpacity={0.35}
                 />
                 <stop
                   offset={gradientOffset}
                   stopColor="#3b82f6"
-                  stopOpacity={0.25}
+                  stopOpacity={0.35}
                 />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
             <XAxis
               dataKey="time"
-              tick={{ fontSize: 10, fill: "#6b7280" }}
+              tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "#e5e7eb" }}
+              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
               interval={
                 chartData.length <= 10 ? 0 : "preserveStartEnd"
               }
@@ -962,21 +962,21 @@ export default function OddsChart({
             <YAxis
               domain={yDomain}
               ticks={yTicks}
-              tick={{ fontSize: 10, fill: "#6b7280" }}
+              tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "#e5e7eb" }}
+              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
               tickFormatter={formatYTick}
             />
             {/* 50% reference line */}
             <ReferenceLine
               y={0}
-              stroke="#9ca3af"
+              stroke="rgba(255,255,255,0.25)"
               strokeWidth={1.5}
               strokeDasharray="4 4"
               label={{
                 value: "50%",
                 position: "right",
-                style: { fontSize: 10, fill: "#9ca3af" },
+                style: { fontSize: 10, fill: "rgba(255,255,255,0.4)" },
               }}
             />
             {/* Period boundary markers — rendered in front of data area */}
@@ -984,14 +984,14 @@ export default function OddsChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="#6b7280"
+                stroke="rgba(255,255,255,0.3)"
                 strokeWidth={1.5}
                 strokeDasharray="6 4"
                 isFront
                 label={{
                   value: b.label,
                   position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "#374151", fontWeight: 700 },
+                  style: { fontSize: 11, fill: "rgba(255,255,255,0.6)", fontWeight: 700 },
                 }}
               />
             ))}
@@ -1003,10 +1003,10 @@ export default function OddsChart({
                 key={`${bookmaker}_delta`}
                 type="monotone"
                 dataKey={`${bookmaker}_delta`}
-                stroke="rgba(156, 163, 175, 0.4)"
+                stroke="rgba(255,255,255,0.2)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={{ r: 3, fill: "#9ca3af" }}
+                activeDot={{ r: 3, fill: "rgba(255,255,255,0.5)" }}
                 connectNulls
                 legendType="none"
               />
@@ -1091,10 +1091,10 @@ export default function OddsChart({
                 type="monotone"
                 dataKey="homeDelta"
                 name="Betting Odds"
-                stroke="#374151"
+                stroke="#e5e7eb"
                 strokeWidth={2.5}
                 dot={false}
-                activeDot={{ r: 5, fill: "#374151" }}
+                activeDot={{ r: 5, fill: "#e5e7eb" }}
                 connectNulls
               />
             )}
@@ -1184,7 +1184,7 @@ export default function OddsChart({
             <svg width="20" height="4" className="shrink-0">
               <line
                 x1="0" y1="2" x2="20" y2="2"
-                stroke="rgba(156, 163, 175, 0.4)"
+                stroke="rgba(255,255,255,0.2)"
                 strokeWidth="1"
               />
             </svg>

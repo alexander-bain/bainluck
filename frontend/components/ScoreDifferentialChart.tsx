@@ -18,6 +18,7 @@ import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
   ScoreHistoryPoint,
+  ESPNHistoryPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 
@@ -29,6 +30,8 @@ interface ScoreDifferentialChartProps {
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
   scoreHistory?: ScoreHistoryPoint[];
+  /** ESPN history — dense score updates every 60s (supplements sparse ScoreSnapshot data) */
+  espnHistory?: ESPNHistoryPoint[];
   currentHomeScore?: number | null;
   currentAwayScore?: number | null;
   eventStatus?: string;
@@ -73,6 +76,7 @@ export default function ScoreDifferentialChart({
   isLive = false,
   bookmakerHistory,
   scoreHistory,
+  espnHistory,
   currentHomeScore,
   currentAwayScore,
   eventStatus,
@@ -171,6 +175,16 @@ export default function ScoreDifferentialChart({
     );
   }, [scoreHistory, timeRange, commenceTime, smartStartTime]);
 
+  // Filter ESPN history based on time range (dense score updates every 60s)
+  const filteredEspnHistory = useMemo(() => {
+    if (!espnHistory || espnHistory.length === 0) return [];
+    if (timeRange === "all") return espnHistory;
+    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    return espnHistory.filter(
+      (point) => parseISO(point.timestamp) >= cutoffTime
+    );
+  }, [espnHistory, timeRange, commenceTime, smartStartTime]);
+
   const bookmakers = useMemo(
     () => Object.keys(filteredBookmakerHistory),
     [filteredBookmakerHistory]
@@ -185,7 +199,9 @@ export default function ScoreDifferentialChart({
     );
   }, [history]);
 
-  const hasActualScoreData = filteredScoreHistory.length > 0;
+  const hasActualScoreData = filteredScoreHistory.length > 0 || filteredEspnHistory.some(
+    (p) => p.home_score != null && p.away_score != null
+  );
 
   // Build chart data by merging projected and actual score data on timeline.
   // Bucket by minute so each "h:mm a" label is unique — required for
@@ -280,18 +296,28 @@ export default function ScoreDifferentialChart({
       }
     }
 
-    // Add actual score differences
+    // Add actual score differences from ScoreSnapshot (authoritative when available)
     for (const point of filteredScoreHistory) {
       const diff = point.home_score - point.away_score;
       const dp = ensurePoint(point.timestamp);
       dp.actualDiff = diff;
     }
 
+    // Supplement with ESPN history scores (dense 60s updates, fills gaps between sparse ScoreSnapshots)
+    for (const point of filteredEspnHistory) {
+      if (point.home_score == null || point.away_score == null) continue;
+      const dp = ensurePoint(point.timestamp);
+      // Only set if ScoreSnapshot hasn't already set this minute's value
+      if (dp.actualDiff === null) {
+        dp.actualDiff = point.home_score - point.away_score;
+      }
+    }
+
     return Array.from(dataMap.values()).sort(
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory]);
 
   // Filter period boundaries to match chart time range
   const filteredPeriodBoundaries = useMemo(() => {
@@ -314,7 +340,7 @@ export default function ScoreDifferentialChart({
   if (!history || history.length === 0) return null;
   if (!hasProjectedScoreData && !hasActualScoreData) {
     return (
-      <div className="text-center py-4 text-sm text-gray-500">
+      <div className="text-center py-4 text-sm text-text-muted">
         Score data is not available for this event.
       </div>
     );
@@ -378,8 +404,8 @@ export default function ScoreDifferentialChart({
       };
 
       return (
-        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-gray-200 max-w-xs">
-          <p className="text-xs text-gray-500 mb-2">{label}</p>
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-white/10 max-w-xs">
+          <p className="text-xs text-text-muted mb-2">{label}</p>
           {projectedEntry && (
             <p className="text-sm font-semibold text-emerald-600">
               Projected: {formatDiff(projectedEntry.value)}
@@ -391,12 +417,12 @@ export default function ScoreDifferentialChart({
             </p>
           )}
           {bookmakerEntries.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-gray-100">
+            <div className="mt-2 pt-2 border-t border-white/10">
               <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_diff", "");
                 return (
-                  <p key={bookmaker} className="text-xs text-gray-500">
+                  <p key={bookmaker} className="text-xs text-text-muted">
                     {bookmaker}: {formatDiff(entry.value)}
                   </p>
                 );
@@ -459,20 +485,20 @@ export default function ScoreDifferentialChart({
             data={chartData}
             margin={{ top: 5, right: 10, left: fillContainer ? 5 : 0, bottom: 5 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
             <XAxis
               dataKey="time"
-              tick={{ fontSize: 10, fill: "#6b7280" }}
+              tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "#e5e7eb" }}
+              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
               interval="preserveStartEnd"
               minTickGap={50}
             />
             <YAxis
               domain={[-domainMax, domainMax]}
-              tick={{ fontSize: 10, fill: "#6b7280" }}
+              tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "#e5e7eb" }}
+              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
               tickFormatter={(value: number) => {
                 if (value === 0) return "0";
                 return value > 0 ? `+${value}` : `${value}`;
@@ -480,12 +506,12 @@ export default function ScoreDifferentialChart({
             />
             <ReferenceLine
               y={0}
-              stroke="#6b7280"
+              stroke="rgba(255,255,255,0.25)"
               strokeWidth={2}
               label={{
                 value: "0",
                 position: "right",
-                style: { fontSize: 10, fill: "#6b7280" },
+                style: { fontSize: 10, fill: "rgba(255,255,255,0.4)" },
               }}
             />
             {/* Period boundary markers — rendered in front of data area */}
@@ -493,14 +519,14 @@ export default function ScoreDifferentialChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="#6b7280"
+                stroke="rgba(255,255,255,0.3)"
                 strokeWidth={1.5}
                 strokeDasharray="6 4"
                 isFront
                 label={{
                   value: b.label,
                   position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "#374151", fontWeight: 700 },
+                  style: { fontSize: 11, fill: "rgba(255,255,255,0.6)", fontWeight: 700 },
                 }}
               />
             ))}
@@ -536,10 +562,10 @@ export default function ScoreDifferentialChart({
                 key={`${bookmaker}_diff`}
                 type="monotone"
                 dataKey={`${bookmaker}_diff`}
-                stroke="rgba(156, 163, 175, 0.4)"
+                stroke="rgba(255,255,255,0.2)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={{ r: 3, fill: "#9ca3af" }}
+                activeDot={{ r: 3, fill: "rgba(255,255,255,0.5)" }}
                 connectNulls
                 legendType="none"
               />
