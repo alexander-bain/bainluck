@@ -47,6 +47,8 @@ interface ScoreDifferentialChartProps {
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
   awayTeamLogo?: string;
+  /** End timestamp (ISO) from the Win Probability chart so both charts share the same x-axis range */
+  chartEndTime?: string;
 }
 
 type TimeRange = "all" | "live";
@@ -86,6 +88,7 @@ export default function ScoreDifferentialChart({
   awayTeamColor,
   homeTeamLogo,
   awayTeamLogo,
+  chartEndTime,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
@@ -325,11 +328,22 @@ export default function ScoreDifferentialChart({
     // The Win Probability chart has more data sources (winProbHistory, aggregateLine,
     // scoringPlays) creating ~120+ minute-level categories. Without filling gaps here,
     // this chart has fewer categories, causing different pixel-per-minute spacing and
-    // visible x-axis misalignment.
+    // visible x-axis misalignment. If chartEndTime is provided, extend the fill to
+    // match the Win Probability chart's time range.
     const allTimestamps = Array.from(dataMap.keys()).sort();
     if (allTimestamps.length >= 2) {
       const first = parseISO(allTimestamps[0]);
-      const last = parseISO(allTimestamps[allTimestamps.length - 1]);
+      let last = parseISO(allTimestamps[allTimestamps.length - 1]);
+
+      // Extend to match the Win Probability chart's end time if it goes further
+      if (chartEndTime) {
+        const endFromParent = parseISO(chartEndTime);
+        endFromParent.setSeconds(0, 0);
+        if (endFromParent > last) {
+          last = endFromParent;
+        }
+      }
+
       const cursor = new Date(first.getTime());
       cursor.setMinutes(cursor.getMinutes() + 1);
       while (cursor <= last) {
@@ -342,7 +356,7 @@ export default function ScoreDifferentialChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartEndTime]);
 
   // Filter period boundaries to match chart time range
   const filteredPeriodBoundaries = useMemo(() => {

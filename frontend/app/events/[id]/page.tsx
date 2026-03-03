@@ -444,6 +444,38 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
 
+  // Compute the latest timestamp across all OddsChart data sources so the
+  // Score Differential chart can extend its x-axis to match.
+  const oddsChartEndTime = useMemo(() => {
+    if (!historyData) return undefined;
+    let maxTs = "";
+    const check = (ts: string) => { if (ts > maxTs) maxTs = ts; };
+
+    // history (odds snapshots)
+    if (historyData.history?.length) {
+      check(historyData.history[historyData.history.length - 1].timestamp);
+    }
+    // win probability history (Kalshi, Polymarket, ESPN, etc.)
+    if (historyData.win_prob_history?.length) {
+      check(historyData.win_prob_history[historyData.win_prob_history.length - 1].timestamp);
+    }
+    // aggregate line
+    if (historyData.aggregate_line?.length) {
+      check(historyData.aggregate_line[historyData.aggregate_line.length - 1].timestamp);
+    }
+    // ESPN history
+    if (historyData.espn_history?.length) {
+      check(historyData.espn_history[historyData.espn_history.length - 1].timestamp);
+    }
+    // bookmaker history
+    if (historyData.bookmaker_history) {
+      for (const pts of Object.values(historyData.bookmaker_history)) {
+        if (pts.length) check(pts[pts.length - 1].timestamp);
+      }
+    }
+    return maxTs || undefined;
+  }, [historyData]);
+
   // Compute the most recent chart point for GamePlayCard default display
   const lastChartPoint = useMemo<ActiveChartPoint | null>(() => {
     if (!historyData) return null;
@@ -1286,6 +1318,7 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamColor={event.away_team_data?.primary_color || undefined}
             homeTeamLogo={event.home_team_data?.logo_small || undefined}
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
+            chartEndTime={oddsChartEndTime}
           />
         </div>
       )}
