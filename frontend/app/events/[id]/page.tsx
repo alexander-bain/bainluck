@@ -1249,7 +1249,7 @@ export default function EventPage({ params }: EventPageProps) {
           />
         )}
         {/* Game Play Card — shows score/period/play as user hovers the chart */}
-        {(effectivelyLive || isFinished || hasStarted) && historyData?.scoring_plays?.length ? (
+        {(effectivelyLive || isFinished || hasStarted) && historyData ? (
           <GamePlayCard
             activePoint={activeChartPoint}
             homeTeam={event.home_team}

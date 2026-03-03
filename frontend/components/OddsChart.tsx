@@ -300,6 +300,16 @@ export default function OddsChart({
     );
   }, [espnHistory, timeRange, commenceTime, smartStartTime]);
 
+  // Filter aggregate line
+  const filteredAggregateLine = useMemo(() => {
+    if (!aggregateLine || aggregateLine.length === 0) return [];
+    if (timeRange === "all") return aggregateLine;
+    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    return aggregateLine.filter(
+      (point) => parseISO(point.timestamp) >= cutoffTime
+    );
+  }, [aggregateLine, timeRange, commenceTime, smartStartTime]);
+
   const useNewWinProbData = Object.keys(filteredWinProbHistory).length > 0;
   const bookmakers = useMemo(
     () => Object.keys(filteredBookmakerHistory),
@@ -434,9 +444,9 @@ export default function OddsChart({
     // Prefer backend aggregate_line (weighted median with staleness decay)
     // when available; fall back to naive frontend averaging.
     if (isMultiSource) {
-      if (aggregateLine && aggregateLine.length > 0) {
+      if (filteredAggregateLine && filteredAggregateLine.length > 0) {
         // Use backend-computed aggregate line
-        for (const point of aggregateLine) {
+        for (const point of filteredAggregateLine) {
           const homeProb = point.home_probability * 100;
           const delta = homeProb - 50;
           const dp = ensurePoint(point.timestamp);
@@ -534,7 +544,7 @@ export default function OddsChart({
     }
 
     return sorted;
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, aggregateLine, scoringPlays]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, filteredAggregateLine, scoringPlays]);
 
   // Build scoring play annotations that map to chart data points
   const scoringPlayAnnotations = useMemo(() => {
