@@ -300,15 +300,17 @@ export default function OddsChart({
     );
   }, [espnHistory, timeRange, commenceTime, smartStartTime]);
 
-  // Filter aggregate line
+  // Filter aggregate line — use commenceTime (not smartStartTime) because the
+  // aggregate line is already a clean backend-computed weighted median without
+  // the noisy flat pre-game data that smartStartTime is designed to skip.
   const filteredAggregateLine = useMemo(() => {
     if (!aggregateLine || aggregateLine.length === 0) return [];
     if (timeRange === "all") return aggregateLine;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     return aggregateLine.filter(
       (point) => parseISO(point.timestamp) >= cutoffTime
     );
-  }, [aggregateLine, timeRange, commenceTime, smartStartTime]);
+  }, [aggregateLine, timeRange, commenceTime]);
 
   const useNewWinProbData = Object.keys(filteredWinProbHistory).length > 0;
   const bookmakers = useMemo(
