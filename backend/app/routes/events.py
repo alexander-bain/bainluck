@@ -437,12 +437,12 @@ async def faceted_search(
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Faceted search over events using GIN-indexed taxonomy tags.
-
-    Supports both raw tag arrays and convenience named parameters.
-    Returns matching events plus facet counts grouped by namespace.
-    """
+    """Faceted search over events using GIN-indexed taxonomy tags."""
     import json as _json
+    import traceback as _tb
+    from sqlalchemy import literal_column, text as sql_text
+
+    _VERSION = "v8"
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
@@ -450,7 +450,6 @@ async def faceted_search(
     # Build tag filter from both sources
     tag_filter: list[str] = []
 
-    # Parse raw tags parameter
     if tags:
         try:
             parsed = _json.loads(tags)
@@ -459,117 +458,108 @@ async def faceted_search(
         except (ValueError, TypeError):
             pass
 
-    # Add convenience params
     convenience = {
-        "sport": sport,
-        "status": event_status,
-        "stakes": stakes,
-        "narrative": narrative,
-        "audience": audience,
+        "sport": sport, "status": event_status, "stakes": stakes,
+        "narrative": narrative, "audience": audience,
     }
     for ns, val in convenience.items():
         if val:
             tag_filter.append(f"{ns}:{val}")
 
-    # Build filter conditions
-    conditions = [Event.commence_time >= cutoff]
+    try:
+        # Base conditions
+        conditions = [Event.commence_time >= cutoff]
 
-    # Apply GIN containment filter
-    if tag_filter:
-        valid_tags = [t for t in tag_filter if validate_tag(t)]
-        if valid_tags:
-            from sqlalchemy import type_coerce
-            conditions.append(
-                Event.event_tags.op("@>")(
-                    type_coerce(_json.dumps(valid_tags), JSONB)
+        # GIN containment filter — use literal_column to inline the JSONB
+        # value directly, avoiding asyncpg bind-parameter JSONB casting issues
+        valid_tags: list[str] = []
+        if tag_filter:
+            valid_tags = [t for t in tag_filter if validate_tag(t)]
+            if valid_tags:
+                escaped = _json.dumps(valid_tags).replace("'", "''")
+                conditions.append(
+                    Event.event_tags.op("@>")(
+                        literal_column(f"'{escaped}'::jsonb")
+                    )
                 )
+
+        # Count
+        count_q = select(func.count(Event.id)).where(*conditions)
+        total_count = (await db.execute(count_q)).scalar() or 0
+
+        # Data
+        offset_val = (page - 1) * per_page
+        data_q = (
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(*conditions)
+            .order_by(
+                case(
+                    (Event.status == "live", 0),
+                    (Event.status == "scheduled", 1),
+                    else_=2,
+                ),
+                Event.commence_time.desc(),
             )
-
-    # Count query
-    count_query = select(func.count(Event.id)).where(*conditions)
-    total_result = await db.execute(count_query)
-    total_count = total_result.scalar() or 0
-
-    # Data query with eager loading and ordering
-    offset_val = (page - 1) * per_page
-    query = (
-        select(Event)
-        .options(selectinload(Event.sport))
-        .where(*conditions)
-        .order_by(
-            case(
-                (Event.status == "live", 0),
-                (Event.status == "scheduled", 1),
-                else_=2,
-            ),
-            Event.commence_time.desc(),
+            .offset(offset_val)
+            .limit(per_page)
         )
-        .offset(offset_val)
-        .limit(per_page)
-    )
-    result = await db.execute(query)
-    events = result.scalars().all()
+        events = (await db.execute(data_q)).scalars().all()
 
-    # Build team lookup for colors/logos
-    team_names = []
-    for event in events:
-        if event.home_team_name:
-            team_names.append(event.home_team_name)
-        if event.away_team_name:
-            team_names.append(event.away_team_name)
-    team_lookup = await _build_team_lookup(db, team_names)
+        # Team lookup
+        team_names = []
+        for event in events:
+            if event.home_team_name:
+                team_names.append(event.home_team_name)
+            if event.away_team_name:
+                team_names.append(event.away_team_name)
+        team_lookup = await _build_team_lookup(db, team_names)
 
-    # Format events
-    formatted = []
-    for event in events:
-        evt = _format_event(event, team_lookup=team_lookup)
-        if event.event_tags:
-            evt["event_tags"] = event.event_tags
-        formatted.append(evt)
+        # Format
+        formatted = []
+        for event in events:
+            evt = _format_event(event, team_lookup=team_lookup)
+            if event.event_tags:
+                evt["event_tags"] = event.event_tags
+            formatted.append(evt)
 
-    # Compute facet counts
-    from sqlalchemy import text as sql_text
-
-    facet_query_sql = """
-        SELECT
-            split_part(tag, ':', 1) AS namespace,
-            tag,
-            COUNT(*) AS cnt
-        FROM events, jsonb_array_elements_text(event_tags) AS tag
-        WHERE commence_time >= :cutoff
-    """
-    facet_params: dict = {"cutoff": cutoff}
-
-    if tag_filter:
-        valid_tags = [t for t in tag_filter if validate_tag(t)]
+        # Facet counts — also use inline JSONB literal
+        facet_sql = """
+            SELECT split_part(tag, ':', 1) AS ns, tag, COUNT(*) AS cnt
+            FROM events, jsonb_array_elements_text(event_tags) AS tag
+            WHERE commence_time >= :cutoff
+        """
+        facet_params: dict = {"cutoff": cutoff}
         if valid_tags:
-            facet_query_sql += " AND event_tags @> CAST(:tag_filter AS jsonb)"
-            facet_params["tag_filter"] = _json.dumps(valid_tags)
+            escaped_facet = _json.dumps(valid_tags).replace("'", "''")
+            facet_sql += f" AND event_tags @> '{escaped_facet}'::jsonb"
+        facet_sql += " GROUP BY ns, tag ORDER BY ns, cnt DESC"
 
-    facet_query_sql += """
-        GROUP BY namespace, tag
-        ORDER BY namespace, cnt DESC
-    """
+        facet_rows = (await db.execute(sql_text(facet_sql), facet_params)).all()
+        facets: dict = {}
+        for row in facet_rows:
+            ns = row[0]
+            if ns not in facets:
+                facets[ns] = []
+            facets[ns].append({"tag": row[1], "count": row[2]})
 
-    facet_result = await db.execute(sql_text(facet_query_sql), facet_params)
-    facet_rows = facet_result.all()
-
-    # Group facets by namespace
-    facets: dict[str, list[dict]] = {}
-    for row in facet_rows:
-        ns = row[0]
-        if ns not in facets:
-            facets[ns] = []
-        facets[ns].append({"tag": row[1], "count": row[2]})
-
-    return {
-        "total": total_count,
-        "page": page,
-        "per_page": per_page,
-        "filters": tag_filter,
-        "events": formatted,
-        "facets": facets,
-    }
+        return {
+            "version": _VERSION,
+            "total": total_count,
+            "page": page,
+            "per_page": per_page,
+            "filters": tag_filter,
+            "events": formatted,
+            "facets": facets,
+        }
+    except Exception as exc:
+        return {
+            "version": _VERSION,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "trace": _tb.format_exc().split("\n")[-5:],
+            "filters": tag_filter,
+        }
 
 
 @router.get("/search")
@@ -1915,6 +1905,71 @@ _SCORING_PLAY_TYPES = {
 }
 
 
+def _assign_wall_clock_timestamps(
+    espn_plays: list[dict],
+    espn_history: list[dict],
+) -> list[dict]:
+    """Map ESPN scoring plays to wall-clock timestamps.
+
+    ESPN scoring plays have period + clock (game time) but no wall-clock time.
+    We find the first ESPN snapshot where (home_score, away_score) matches the
+    post-play score. That snapshot's captured_at ≈ the play's wall-clock time.
+
+    Falls back to ordering-based interpolation when no snapshot match is found.
+    """
+    if not espn_plays:
+        return []
+
+    result = []
+
+    # Build index of (home_score, away_score) → first matching timestamp
+    score_to_timestamp: dict[tuple[int, int], str] = {}
+    for snap in espn_history:
+        hs = snap.get("home_score")
+        aw = snap.get("away_score")
+        if hs is not None and aw is not None:
+            key = (int(hs), int(aw))
+            if key not in score_to_timestamp:
+                score_to_timestamp[key] = snap["timestamp"]
+
+    # Track last assigned timestamp for fallback ordering
+    last_timestamp = espn_history[0]["timestamp"] if espn_history else None
+
+    for play in espn_plays:
+        home_score = play.get("home_score")
+        away_score = play.get("away_score")
+
+        timestamp = None
+        if home_score is not None and away_score is not None:
+            timestamp = score_to_timestamp.get((int(home_score), int(away_score)))
+
+        if not timestamp:
+            timestamp = last_timestamp
+
+        if timestamp:
+            last_timestamp = timestamp
+
+        # Format period display string
+        period = play.get("period")
+        period_str = None
+        if period is not None:
+            period_str = str(period)
+
+        result.append({
+            "timestamp": timestamp,
+            "description": play.get("description", ""),
+            "short_text": play.get("short_text", ""),
+            "team": play.get("team", ""),
+            "type": play.get("type", ""),
+            "home_score": home_score,
+            "away_score": away_score,
+            "period": period_str,
+            "clock": play.get("clock"),
+        })
+
+    return [p for p in result if p["timestamp"]]
+
+
 def extract_scoring_plays(raw_plays: list[dict]) -> list[dict]:
     """
     Filter StatPal play-by-play data to scoring plays with timestamps.
@@ -2692,10 +2747,16 @@ async def get_event_odds_history(
         # Table may not exist yet
         pass
 
-    # Extract scoring plays from StatPal play-by-play data
-    scoring_plays = extract_scoring_plays(
-        (event.win_probability_sources or {}).get("statpal_plays", [])
-    )
+    # Extract scoring plays — prefer ESPN (full game history) over StatPal (last 10 only)
+    espn_scoring = (event.box_score_data or {}).get("scoring_plays", [])
+    if espn_scoring:
+        # Assign wall-clock timestamps by matching post-play scores to ESPN snapshots
+        scoring_plays = _assign_wall_clock_timestamps(espn_scoring, espn_history)
+    else:
+        # Fallback to StatPal play-by-play data
+        scoring_plays = extract_scoring_plays(
+            (event.win_probability_sources or {}).get("statpal_plays", [])
+        )
 
     # ── Compute backend aggregate line using the aggregation engine ──
     # Combines sportsbook consensus + all win prob sources into a single
