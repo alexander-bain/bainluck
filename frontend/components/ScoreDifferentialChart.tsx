@@ -231,7 +231,14 @@ export default function ScoreDifferentialChart({
       return point;
     };
 
-    // Add projected score differentials from aggregate history
+    // Seed ALL filtered history timestamps so x-axis matches the Win Probability chart.
+    // Without this, points lacking projected_home_score would be skipped and the
+    // chart would start later than the Win Probability chart.
+    for (const point of filteredHistory) {
+      ensurePoint(point.timestamp);
+    }
+
+    // Add projected score differentials where available
     for (const point of filteredHistory) {
       if (
         point.projected_home_score === null ||
