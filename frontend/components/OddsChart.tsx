@@ -23,6 +23,7 @@ import type {
   WinProbHistoryPoint,
   WinProbSourceMeta,
   ScoringPlay,
+  ActiveChartPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 
@@ -77,6 +78,8 @@ interface OddsChartProps {
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
   awayTeamLogo?: string;
+  /** Callback when user hovers/scrubs chart — null when mouse leaves */
+  onActivePointChange?: (point: ActiveChartPoint | null) => void;
 }
 
 type TimeRange = "all" | "live";
@@ -95,7 +98,13 @@ interface ChartDataPoint {
   espnDelta: number | null;
   /** Bain Luck aggregated probability delta (multi-source mode) */
   bainLuckDelta: number | null;
-  [key: string]: string | number | null | undefined;
+  /** Game state carried through for interactive play-by-play card */
+  _homeScore?: number | null;
+  _awayScore?: number | null;
+  _period?: string | null;
+  _clock?: string | null;
+  _scoringPlay?: ScoringPlay | null;
+  [key: string]: string | number | null | undefined | ScoringPlay;
 }
 
 /** Resolved source info used for rendering */
@@ -142,6 +151,7 @@ export default function OddsChart({
   awayTeamColor,
   homeTeamLogo,
   awayTeamLogo,
+  onActivePointChange,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
   const { track } = useAnalyticsContext();
@@ -450,11 +460,81 @@ export default function OddsChart({
       }
     }
 
-    return Array.from(dataMap.values()).sort(
-      (a, b) =>
-        parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
+    // ── Enrich chart points with game state (score, period, clock) ──
+    // Sources: ESPN history (has score/period/clock) and win_prob_history game_state
+    // ESPN history is the richest source for game context
+    for (const snap of filteredEspnHistory) {
+      const dp = dataMap.get(toMinuteKey(snap.timestamp));
+      if (dp) {
+        if (snap.home_score != null) dp._homeScore = snap.home_score;
+        if (snap.away_score != null) dp._awayScore = snap.away_score;
+        if (snap.period) dp._period = snap.period;
+        if (snap.game_clock) dp._clock = snap.game_clock;
+      }
+    }
+
+    // Win prob history game_state as secondary source
+    if (useNewWinProbData) {
+      for (const points of Object.values(filteredWinProbHistory)) {
+        for (const pt of points) {
+          const gs = pt.game_state;
+          if (!gs) continue;
+          const dp = dataMap.get(toMinuteKey(pt.timestamp));
+          if (!dp) continue;
+          if (dp._homeScore == null && gs.home_score != null)
+            dp._homeScore = gs.home_score as number;
+          if (dp._awayScore == null && gs.away_score != null)
+            dp._awayScore = gs.away_score as number;
+          if (!dp._period && gs.period) dp._period = gs.period as string;
+          if (!dp._clock && gs.clock) dp._clock = gs.clock as string;
+        }
+      }
+    }
+
+    // Map scoring plays onto chart data points
+    if (scoringPlays && scoringPlays.length > 0) {
+      const sortedPoints = Array.from(dataMap.values()).sort(
+        (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
+      );
+      for (const play of scoringPlays) {
+        if (!play.timestamp) continue;
+        const playTime = parseISO(play.timestamp).getTime();
+        let closestIdx = 0;
+        let closestDist = Infinity;
+        for (let i = 0; i < sortedPoints.length; i++) {
+          const dist = Math.abs(parseISO(sortedPoints[i].timestamp).getTime() - playTime);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestIdx = i;
+          }
+        }
+        // Only attach if within 2 minutes
+        if (closestDist < 120000) {
+          sortedPoints[closestIdx]._scoringPlay = play;
+        }
+      }
+    }
+
+    // Forward-fill game state: carry most recent score/period/clock to subsequent points
+    const sorted = Array.from(dataMap.values()).sort(
+      (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, aggregateLine]);
+    let lastScore: { home: number | null; away: number | null } = { home: null, away: null };
+    let lastPeriod: string | null = null;
+    let lastClock: string | null = null;
+    for (const pt of sorted) {
+      if (pt._homeScore != null) lastScore.home = pt._homeScore as number;
+      else pt._homeScore = lastScore.home;
+      if (pt._awayScore != null) lastScore.away = pt._awayScore as number;
+      else pt._awayScore = lastScore.away;
+      if (pt._period) lastPeriod = pt._period as string;
+      else pt._period = lastPeriod;
+      if (pt._clock) lastClock = pt._clock as string;
+      else pt._clock = lastClock;
+    }
+
+    return sorted;
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, aggregateLine, scoringPlays]);
 
   // Build scoring play annotations that map to chart data points
   const scoringPlayAnnotations = useMemo(() => {
@@ -816,6 +896,31 @@ export default function OddsChart({
           <ComposedChart
             data={chartData}
             margin={{ top: 5, right: 10, left: fillContainer ? 5 : 0, bottom: 5 }}
+            onMouseMove={(state: { activeTooltipIndex?: number }) => {
+              if (!onActivePointChange) return;
+              const idx = state?.activeTooltipIndex;
+              if (idx == null || idx < 0 || idx >= chartData.length) {
+                onActivePointChange(null);
+                return;
+              }
+              const pt = chartData[idx];
+              const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
+              const delta = pt[primaryDeltaKey] as number | null;
+              const homeProb = delta != null ? (50 + delta) / 100 : 0.5;
+              onActivePointChange({
+                timestamp: pt.timestamp,
+                homeProb,
+                awayProb: 1 - homeProb,
+                homeScore: pt._homeScore as number | null | undefined,
+                awayScore: pt._awayScore as number | null | undefined,
+                period: pt._period as string | null | undefined,
+                clock: pt._clock as string | null | undefined,
+                scoringPlay: pt._scoringPlay as ScoringPlay | null | undefined,
+              });
+            }}
+            onMouseLeave={() => {
+              if (onActivePointChange) onActivePointChange(null);
+            }}
           >
             <defs>
               <linearGradient id="probFillGradient" x1="0" y1="0" x2="0" y2="1">

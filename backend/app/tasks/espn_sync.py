@@ -700,13 +700,15 @@ async def _sync_espn_live_events():
                             try:
                                 context = await box_espn.get_event_context(sport_key, event.espn_id)
                                 box_score = context.get("box_score", {})
+                                scoring_plays = context.get("scoring_plays", [])
                                 now_str = datetime.now(timezone).isoformat()
 
-                                if box_score:
+                                if box_score or scoring_plays:
                                     event.box_score_data = {
                                         "source": "espn",
                                         "fetched_at": now_str,
                                         "players": box_score,
+                                        "scoring_plays": scoring_plays,
                                     }
                                     stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
                                 else:
@@ -763,12 +765,14 @@ async def _sync_espn_live_events():
                             try:
                                 context = await live_espn.get_event_context(sport_key, ev.espn_id)
                                 box_data = context.get("box_score", {})
+                                scoring_plays = context.get("scoring_plays", [])
                                 now_str = datetime.now(timezone).isoformat()
-                                if box_data:
+                                if box_data or scoring_plays:
                                     ev.box_score_data = {
                                         "source": "espn",
                                         "fetched_at": now_str,
                                         "players": box_data,
+                                        "scoring_plays": scoring_plays,
                                         "live": True,
                                     }
                                     stats["live_box_scores_fetched"] = (
@@ -1164,14 +1168,16 @@ async def _backfill_box_scores(limit: int = 100):
                     try:
                         context = await espn.get_event_context(sport_key, event.espn_id)
                         box_score = context.get("box_score", {})
+                        scoring_plays = context.get("scoring_plays", [])
 
                         now_str = datetime.now(timezone).isoformat()
 
-                        if box_score:
+                        if box_score or scoring_plays:
                             event.box_score_data = {
                                 "source": "espn",
                                 "fetched_at": now_str,
                                 "players": box_score,
+                                "scoring_plays": scoring_plays,
                             }
                             stats["fetched"] += 1
                             logger.info(

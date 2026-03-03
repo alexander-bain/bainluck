@@ -12,6 +12,12 @@ private struct ChartDataPoint: Identifiable {
     let date: Date
     let probability: Double
     let source: String
+    // Game state carried through for play-by-play card
+    var homeScore: Int?
+    var awayScore: Int?
+    var period: String?
+    var clock: String?
+    var scoringPlay: ScoringPlay?
 }
 
 // MARK: - Period Marker
@@ -80,7 +86,10 @@ struct OddsChartView: View {
     var teamColors: (away: Color, home: Color)?
     var commenceTime: String?
     var status: String?
+    /// Binding to expose the selected game play point (for GamePlayCardView)
+    @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
+    @State private var selectedDate: Date?
 
     private var gameStartDate: Date? {
         commenceTime?.asDate
@@ -98,11 +107,13 @@ struct OddsChartView: View {
 
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
          commenceTime: String? = nil, status: String? = nil,
+         selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
         self.status = status
+        _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
 
@@ -129,7 +140,8 @@ struct OddsChartView: View {
                     .frame(height: 260)
             } else if let history = vm.history {
                 let allPoints = buildDataPoints(history)
-                let dataPoints = filterPoints(allPoints)
+                let enrichedPoints = enrichWithGameState(allPoints, history: history)
+                let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 if dataPoints.isEmpty {
                     Text("No odds data available")
@@ -138,6 +150,9 @@ struct OddsChartView: View {
                         .frame(height: 260)
                 } else {
                     chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
+                        .onChange(of: selectedDate) { _, newDate in
+                            updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
+                        }
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                 }
             }
@@ -280,6 +295,13 @@ struct OddsChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
+            // Selection indicator
+            if let selectedDate {
+                RuleMark(x: .value("Selected", selectedDate))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0))
+                    .foregroundStyle(.primary.opacity(0.4))
+            }
+
             // Period marker lines (one per period: Q1, Q2, Q3, Q4 etc.)
             ForEach(visibleMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
@@ -333,6 +355,7 @@ struct OddsChartView: View {
                     .font(.caption2)
             }
         }
+        .chartXSelection(value: $selectedDate)
         .frame(height: 260)
     }
 
@@ -461,6 +484,91 @@ struct OddsChartView: View {
         }
 
         return points
+    }
+
+    // MARK: - Game State Enrichment
+
+    /// Enrich chart data points with game state (score, period, clock, scoring play)
+    /// by matching against ESPN history and scoring plays, then forward-filling.
+    private func enrichWithGameState(_ points: [ChartDataPoint], history: EventHistoryResponse) -> [ChartDataPoint] {
+        // Build time-indexed lookups from ESPN history
+        var espnByTime: [(date: Date, point: ESPNHistoryPoint)] = []
+        for ep in history.espnHistory ?? [] {
+            if let date = ep.timestamp.asDate {
+                espnByTime.append((date, ep))
+            }
+        }
+        espnByTime.sort { $0.date < $1.date }
+
+        // Build scoring plays lookup
+        var playsByTime: [(date: Date, play: ScoringPlay)] = []
+        for sp in history.scoringPlays ?? [] {
+            if let ts = sp.timestamp, let date = ts.asDate {
+                playsByTime.append((date, sp))
+            }
+        }
+        playsByTime.sort { $0.date < $1.date }
+
+        // Sort points by time for forward-fill
+        var sorted = points.sorted { $0.date < $1.date }
+        var lastScore: (home: Int, away: Int)?
+        var lastPeriod: String?
+        var lastClock: String?
+
+        for i in sorted.indices {
+            let pointDate = sorted[i].date
+
+            // Find nearest ESPN history point (within 90s)
+            if let nearest = espnByTime.last(where: { $0.date <= pointDate.addingTimeInterval(90) }) {
+                if let hs = nearest.point.homeScore { lastScore = (hs, nearest.point.awayScore ?? lastScore?.away ?? 0) }
+                if let p = nearest.point.period, !p.isEmpty { lastPeriod = p }
+                if let c = nearest.point.gameClock, !c.isEmpty { lastClock = c }
+            }
+
+            // Forward-fill game state
+            sorted[i].homeScore = lastScore?.home
+            sorted[i].awayScore = lastScore?.away
+            sorted[i].period = lastPeriod
+            sorted[i].clock = lastClock
+
+            // Check for scoring play at this timestamp (within 60s)
+            sorted[i].scoringPlay = playsByTime.first(where: {
+                abs($0.date.timeIntervalSince(pointDate)) < 60
+            })?.play
+        }
+
+        return sorted
+    }
+
+    /// Update the selected play point binding based on chart selection.
+    private func updateSelectedPoint(date: Date?, dataPoints: [ChartDataPoint], history: EventHistoryResponse) {
+        guard let date else {
+            selectedPlayPoint = nil
+            return
+        }
+
+        // Find the primary source points (aggregate or consensus)
+        let primarySource = dataPoints.contains(where: { $0.source == "aggregate" }) ? "aggregate" : "consensus"
+        let primaryPoints = dataPoints.filter { $0.source == primarySource }.sorted { $0.date < $1.date }
+
+        // Find nearest point
+        guard let nearest = primaryPoints.min(by: {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }) else {
+            selectedPlayPoint = nil
+            return
+        }
+
+        selectedPlayPoint = GamePlayPoint(
+            timestamp: nearest.date.ISO8601Format(),
+            homeProb: nearest.probability,
+            awayProb: 1.0 - nearest.probability,
+            homeScore: nearest.homeScore,
+            awayScore: nearest.awayScore,
+            period: nearest.period,
+            clock: nearest.clock,
+            scoringPlay: nearest.scoringPlay
+        )
     }
 
     // MARK: - Source Styling

@@ -487,34 +487,41 @@ class ESPNAPIService:
         self, sport_key: str, event_id: str
     ) -> dict:
         """
-        Get injury reports, news headlines, and box score for an event.
+        Get injury reports, news headlines, box score, and scoring plays for an event.
 
         Uses the /summary endpoint (same as get_event) and parses the
-        injuries, news, and boxscore sections.
+        injuries, news, boxscore, and scoringPlays sections.
 
         Args:
             sport_key: Our internal sport key
             event_id: ESPN event ID
 
         Returns:
-            {"injuries": list[ESPNInjury], "news": list[ESPNNewsHeadline], "box_score": dict}
+            {"injuries": list[ESPNInjury], "news": list[ESPNNewsHeadline],
+             "box_score": dict, "scoring_plays": list[dict]}
         """
         path = self._get_espn_path(sport_key)
         if not path:
-            return {"injuries": [], "news": [], "box_score": {}}
+            return {"injuries": [], "news": [], "box_score": {}, "scoring_plays": []}
 
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/summary?event={event_id}"
 
         data = await self._get(url)
         if not data:
-            return {"injuries": [], "news": [], "box_score": {}}
+            return {"injuries": [], "news": [], "box_score": {}, "scoring_plays": []}
 
         injuries = self._parse_injuries(data)
         news = self._parse_news(data)
         box_score = self._parse_boxscore(data)
+        scoring_plays = self._parse_scoring_plays(data)
 
-        return {"injuries": injuries, "news": news, "box_score": box_score}
+        return {
+            "injuries": injuries,
+            "news": news,
+            "box_score": box_score,
+            "scoring_plays": scoring_plays,
+        }
 
     def _parse_injuries(self, summary_data: dict) -> list[ESPNInjury]:
         """Parse injury data from ESPN summary response."""
@@ -671,6 +678,68 @@ class ESPNAPIService:
             return float(value_str)
         except ValueError:
             return None
+
+    def _parse_scoring_plays(self, summary_data: dict) -> list[dict]:
+        """Parse scoring plays from ESPN summary response.
+
+        ESPN's /summary endpoint has a `scoringPlays` key with an array of plays:
+        [{
+            "type": {"text": "Three Point Jumper"},
+            "text": "J. Tatum makes 24-foot three point jumper",
+            "shortText": "J. Tatum 24' 3PT",
+            "period": {"number": 1},
+            "clock": {"displayValue": "9:42"},
+            "homeScore": "3",
+            "awayScore": "0",
+            "team": {"id": "2"}
+        }]
+
+        Returns a list of parsed play dicts ready for storage.
+        """
+        plays = []
+        for play in summary_data.get("scoringPlays", []):
+            try:
+                description = play.get("text", "")
+                short_text = play.get("shortText", "")
+                play_type = ""
+                type_data = play.get("type")
+                if isinstance(type_data, dict):
+                    play_type = type_data.get("text", "")
+                elif isinstance(type_data, str):
+                    play_type = type_data
+
+                period_data = play.get("period", {})
+                period_num = period_data.get("number") if isinstance(period_data, dict) else None
+
+                clock_data = play.get("clock", {})
+                clock_display = clock_data.get("displayValue", "") if isinstance(clock_data, dict) else ""
+
+                home_score_str = play.get("homeScore", "")
+                away_score_str = play.get("awayScore", "")
+                home_score = int(home_score_str) if home_score_str else None
+                away_score = int(away_score_str) if away_score_str else None
+
+                # Team info
+                team_data = play.get("team", {})
+                team_name = ""
+                if isinstance(team_data, dict):
+                    team_name = team_data.get("displayName", "") or team_data.get("shortDisplayName", "") or ""
+
+                plays.append({
+                    "description": description,
+                    "short_text": short_text,
+                    "type": play_type,
+                    "period": period_num,
+                    "clock": clock_display,
+                    "home_score": home_score,
+                    "away_score": away_score,
+                    "team": team_name,
+                })
+            except Exception as e:
+                logger.debug(f"Error parsing scoring play: {e}")
+                continue
+
+        return plays
 
     async def get_team_roster(self, sport_key: str, team_id: str) -> list[dict]:
         """

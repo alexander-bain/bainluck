@@ -11,6 +11,7 @@ const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferent
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
 const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ssr: false });
 const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExplainer"), { ssr: false });
+const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
@@ -25,6 +26,7 @@ import {
 } from "@/hooks";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
+import type { ActiveChartPoint } from "@/lib/types";
 
 interface EventPageProps {
   params: { id: string };
@@ -292,6 +294,7 @@ export default function EventPage({ params }: EventPageProps) {
   const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
   const hasTrackedDetailView = useRef(false);
+  const [activeChartPoint, setActiveChartPoint] = useState<ActiveChartPoint | null>(null);
 
   // Analytics
   const { track, trackNavigationClick, recordEvent } = useAnalytics();
@@ -440,6 +443,34 @@ export default function EventPage({ params }: EventPageProps) {
       historyData?.scoring_plays,
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
+
+  // Compute the most recent chart point for GamePlayCard default display
+  const lastChartPoint = useMemo<ActiveChartPoint | null>(() => {
+    if (!historyData) return null;
+    // Use the last ESPN history point for score/period/clock
+    const espn = historyData.espn_history;
+    const lastEspn = espn?.length ? espn[espn.length - 1] : null;
+    // Use the last win prob history point for probability
+    const wpHistory = historyData.win_prob_history;
+    const lastWp = wpHistory?.length ? wpHistory[wpHistory.length - 1] : null;
+    // Use latest history point for odds-based probability
+    const hist = historyData.history;
+    const lastHist = hist?.length ? hist[hist.length - 1] : null;
+
+    const homeProb = lastWp?.home_probability
+      ?? (lastHist?.home_probability != null ? lastHist.home_probability / 100 : null)
+      ?? 0.5;
+
+    return {
+      timestamp: lastEspn?.timestamp || lastWp?.timestamp || lastHist?.timestamp || "",
+      homeProb,
+      awayProb: 1 - homeProb,
+      homeScore: lastEspn?.home_score ?? event?.home_score ?? null,
+      awayScore: lastEspn?.away_score ?? event?.away_score ?? null,
+      period: lastEspn?.period?.toString() ?? null,
+      clock: lastEspn?.game_clock ?? null,
+    };
+  }, [historyData, event?.home_score, event?.away_score]);
 
   if (eventLoading) {
     return (
@@ -1214,8 +1245,22 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamColor={event.away_team_data?.primary_color || undefined}
             homeTeamLogo={event.home_team_data?.logo_small || undefined}
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
+            onActivePointChange={setActiveChartPoint}
           />
         )}
+        {/* Game Play Card — shows score/period/play as user hovers the chart */}
+        {(effectivelyLive || isFinished || hasStarted) && historyData?.scoring_plays?.length ? (
+          <GamePlayCard
+            activePoint={activeChartPoint}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+            homeTeamColor={event.home_team_data?.primary_color || undefined}
+            awayTeamColor={event.away_team_data?.primary_color || undefined}
+            homeTeamLogo={event.home_team_data?.logo_small || undefined}
+            awayTeamLogo={event.away_team_data?.logo_small || undefined}
+            lastPoint={lastChartPoint}
+          />
+        ) : null}
       </div>
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}

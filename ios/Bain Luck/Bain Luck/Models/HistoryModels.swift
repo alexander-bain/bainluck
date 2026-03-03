@@ -48,6 +48,8 @@ nonisolated struct ESPNHistoryPoint: Decodable, Sendable {
     let homeProbability: Double?
     let gameClock: String?
     let period: String?
+    let homeScore: Int?
+    let awayScore: Int?
 }
 
 nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
@@ -72,6 +74,8 @@ nonisolated struct ScoringPlay: Decodable, Sendable {
     let timestamp: String?
     let team: String?
     let description: String?
+    let type: String?
+    let shortText: String?
     let homeScore: Int?
     let awayScore: Int?
     let period: String?

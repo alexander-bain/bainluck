@@ -249,12 +249,25 @@ export interface EventHistoryResponse {
 export interface ScoringPlay {
   timestamp: string;
   description: string;
+  short_text?: string;
   team: string;
   type: string;
   home_score: number | null;
   away_score: number | null;
   period?: string | null;
   clock?: string | null;
+}
+
+/** Data emitted by OddsChart when the user hovers/scrubs */
+export interface ActiveChartPoint {
+  timestamp: string;
+  homeProb: number;
+  awayProb: number;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  period?: string | null;
+  clock?: string | null;
+  scoringPlay?: ScoringPlay | null;
 }
 
 export interface SportsResponse {

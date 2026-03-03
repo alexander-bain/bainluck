@@ -74,6 +74,7 @@ struct EventDetailView: View {
     @StateObject private var vm: EventDetailViewModel
     @State private var countdownText: String?
     @State private var countdownTimer: Timer?
+    @State private var selectedPlayPoint: GamePlayPoint?
 
     init(eventId: Int) {
         self.eventId = eventId
@@ -98,9 +99,24 @@ struct EventDetailView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         heroSection(event)
-                        OddsChartView(eventId: event.id, teamColors: teamColors(event),
-                                     commenceTime: event.commenceTime, status: event.status,
-                                     preloadedHistory: vm.history)
+                        VStack(spacing: 0) {
+                            OddsChartView(eventId: event.id, teamColors: teamColors(event),
+                                         commenceTime: event.commenceTime, status: event.status,
+                                         selectedPlayPoint: $selectedPlayPoint,
+                                         preloadedHistory: vm.history)
+                            if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {
+                                GamePlayCardView(
+                                    selectedPoint: selectedPlayPoint,
+                                    homeTeam: event.homeTeam,
+                                    awayTeam: event.awayTeam,
+                                    homeTeamColor: teamColors(event).home,
+                                    awayTeamColor: teamColors(event).away,
+                                    homeTeamLogo: event.homeTeamData?.logoSmall,
+                                    awayTeamLogo: event.awayTeamData?.logoSmall,
+                                    lastPoint: lastPlayPoint(event: event)
+                                )
+                            }
+                        }
                         if let ei = event.ei ?? event.pulse { eiSection(ei) }
                         LineMovementView(eventId: event.id,
                                          homeTeam: event.homeTeam,
@@ -642,6 +658,35 @@ struct EventDetailView: View {
     }
 
     // MARK: - Helpers
+
+    /// Compute the most recent game play point from history data for default card display.
+    private func lastPlayPoint(event: EventDetail) -> GamePlayPoint? {
+        guard let history = vm.history else { return nil }
+
+        let espn = history.espnHistory
+        let lastEspn = espn?.last
+
+        // Get probability from the best available source
+        let wpHistory = history.winProbHistory?.values.flatMap { $0 }
+        let lastWp = wpHistory?.max(by: {
+            ($0.timestamp.asDate ?? .distantPast) < ($1.timestamp.asDate ?? .distantPast)
+        })
+        let lastHist = history.history.last
+
+        let homeProb = lastWp?.homeProbability
+            ?? lastHist?.homeProbability.map { $0 / 100.0 }
+            ?? 0.5
+
+        return GamePlayPoint(
+            timestamp: lastEspn?.timestamp ?? lastWp?.timestamp ?? lastHist?.timestamp ?? "",
+            homeProb: homeProb,
+            awayProb: 1.0 - homeProb,
+            homeScore: lastEspn?.homeScore ?? event.homeScore,
+            awayScore: lastEspn?.awayScore ?? event.awayScore,
+            period: lastEspn?.period,
+            clock: lastEspn?.gameClock
+        )
+    }
 
     private func winnerColor(isAway: Bool, event: EventDetail) -> Color {
         guard isFinished else { return .white }
