@@ -490,6 +490,8 @@ async def _faceted_search_impl(
         if val:
             tag_filter.append(f"{ns}:{val}")
 
+    return {"debug_v2": True, "tag_filter": tag_filter}
+
     # Build filter conditions (shared between count and data queries)
     conditions = [Event.commence_time >= cutoff]
 
