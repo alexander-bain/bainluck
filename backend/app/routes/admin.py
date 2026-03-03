@@ -4351,10 +4351,17 @@ async def clear_line_movement_cache(
 async def backfill_taxonomy(
     secret: str = Query(..., description="Admin secret for authorization"),
     limit: int = Query(500, description="Max items to process"),
+    sync: bool = Query(False, description="Run synchronously instead of via Celery"),
 ):
     """Trigger taxonomy tag computation for events and futures markets."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    if sync:
+        # Run directly in the web process (bypass Celery)
+        from app.tasks.taxonomy import _update_event_tags_impl
+        result = await _update_event_tags_impl(limit)
+        return {"status": "completed", "result": result}
 
     from app.tasks import update_event_tags as task
 
