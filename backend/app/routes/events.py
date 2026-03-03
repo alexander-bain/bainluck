@@ -31,6 +31,31 @@ from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_T
 
 router = APIRouter()
 
+# Common sport abbreviation mapping — short queries like "NBA", "NFL"
+# should match the sport key rather than accidentally matching substrings
+# in team names (e.g., "NBA" matching "Gebenbach" or "Pekanbaru").
+_SPORT_SEARCH_ALIASES: dict[str, list[str]] = {
+    "nba": ["basketball_nba"],
+    "nfl": ["americanfootball_nfl"],
+    "mlb": ["baseball_mlb"],
+    "nhl": ["icehockey_nhl"],
+    "ncaab": ["basketball_ncaab"],
+    "ncaaf": ["americanfootball_ncaaf"],
+    "wnba": ["basketball_wnba"],
+    "mls": ["soccer_usa_mls"],
+    "epl": ["soccer_epl"],
+    "ufc": ["mma_ufc"],
+    "pga": ["golf_pga"],
+    "mma": ["mma_ufc"],
+    "soccer": ["soccer_epl", "soccer_usa_mls", "soccer_uefa_champs_league"],
+    "football": ["americanfootball_nfl", "americanfootball_ncaaf"],
+    "basketball": ["basketball_nba", "basketball_ncaab", "basketball_wnba", "basketball_wncaab"],
+    "baseball": ["baseball_mlb"],
+    "hockey": ["icehockey_nhl"],
+    "golf": ["golf_pga", "golf_lpga"],
+    "tennis": ["tennis_atp", "tennis_wta"],
+}
+
 
 @router.post("/discover")
 @router.get("/discover")
@@ -577,6 +602,8 @@ async def search_events(
     # search_pattern is the full query for futures name search (always works)
     search_pattern = f"%{q}%"
 
+    sport_alias_keys = _SPORT_SEARCH_ALIASES.get(q.strip().lower())
+
     # Split multi-word queries: "USA Canada" should match events where
     # one team is "USA" and the other is "Canada"
     terms = q.strip().split()
@@ -594,10 +621,20 @@ async def search_events(
             )
         team_filter = and_(*term_conditions)
     else:
-        team_filter = or_(
+        # For single-word queries, match team names OR sport key alias.
+        # Sport key matching handles "NBA" → basketball_nba events,
+        # preventing false positives from substring matches like "Gebenbach".
+        name_filter = or_(
             Event.home_team_name.ilike(search_pattern),
             Event.away_team_name.ilike(search_pattern),
         )
+        if sport_alias_keys:
+            team_filter = or_(
+                name_filter,
+                Sport.key.in_(sport_alias_keys),
+            )
+        else:
+            team_filter = name_filter
 
     # Build base query - search both home and away team names
     query = (
@@ -845,10 +882,21 @@ async def typeahead_search(
         event_team_filter = and_(*event_term_conditions)
         team_filter = and_(*team_term_conditions)
     else:
-        event_team_filter = or_(
+        # Sport alias matching for short queries like "NBA", "NFL"
+        sport_alias_keys = _SPORT_SEARCH_ALIASES.get(q.strip().lower())
+
+        name_event_filter = or_(
             Event.home_team_name.ilike(pattern),
             Event.away_team_name.ilike(pattern),
         )
+        if sport_alias_keys:
+            event_team_filter = or_(
+                name_event_filter,
+                Sport.key.in_(sport_alias_keys),
+            )
+        else:
+            event_team_filter = name_event_filter
+
         team_filter = or_(
             Team.name.ilike(pattern),
             Team.abbreviation.ilike(pattern),
