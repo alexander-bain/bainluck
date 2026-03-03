@@ -444,17 +444,50 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
 
-  // Compute the earliest and latest timestamps across all OddsChart data
-  // sources so the Score Differential chart can match its x-axis range.
-  // Uses Date.getTime() comparison instead of string comparison to avoid
-  // format mismatches (e.g. "...T22:30:00.000Z" vs "...T23:00:00+00:00").
+  // Compute the Win Probability chart's actual displayed time bounds so the
+  // Score Differential chart can match its x-axis range.
+  // For completed/live games, applies the same smartStartTime filter that
+  // OddsChart uses internally, preventing raw pre-game data (24+ hours before
+  // the game) from pushing the start time way earlier than what's displayed.
   const { oddsChartStartTime, oddsChartEndTime } = useMemo(() => {
     if (!historyData) return { oddsChartStartTime: undefined, oddsChartEndTime: undefined };
+
+    // Replicate OddsChart's smartStartTime logic for filtering
+    const eventIsFinished = event?.status === "completed" || event?.status === "closed";
+    const eventIsLive = event?.status === "live";
+    const commenceTimeStr = event?.commence_time;
+    const hasPostStart = commenceTimeStr && historyData.history?.length
+      ? historyData.history.some((p: { timestamp: string }) => new Date(p.timestamp) >= new Date(commenceTimeStr))
+      : false;
+    const defaultIsLiveRange = (eventIsFinished || eventIsLive) && hasPostStart;
+
+    let filterCutoff: Date | null = null;
+    if (defaultIsLiveRange && commenceTimeStr && historyData.history?.length) {
+      const cutoff = new Date(commenceTimeStr);
+      const postStart = historyData.history.filter(
+        (p: { timestamp: string }) => new Date(p.timestamp) >= cutoff
+      );
+      if (postStart.length > 2) {
+        const baseline = postStart[0].home_probability;
+        const firstChangeIdx = postStart.findIndex(
+          (p: { home_probability: number }) => Math.abs(p.home_probability - baseline) > 0.02
+        );
+        if (firstChangeIdx > 0) {
+          filterCutoff = new Date(postStart[Math.max(0, firstChangeIdx - 1)].timestamp);
+        } else {
+          filterCutoff = cutoff;
+        }
+      } else {
+        filterCutoff = cutoff;
+      }
+    }
+
     let minMs = Infinity;
     let maxMs = 0;
     const check = (ts: string) => {
       const ms = new Date(ts).getTime();
       if (!isNaN(ms)) {
+        if (filterCutoff && ms < filterCutoff.getTime()) return;
         if (ms < minMs) minMs = ms;
         if (ms > maxMs) maxMs = ms;
       }
@@ -462,42 +495,33 @@ export default function EventPage({ params }: EventPageProps) {
 
     // history (odds snapshots)
     if (historyData.history?.length) {
-      check(historyData.history[0].timestamp);
-      check(historyData.history[historyData.history.length - 1].timestamp);
+      for (const p of historyData.history) check(p.timestamp);
     }
-    // win probability history (Kalshi, Polymarket, ESPN, etc.) — Record<string, WinProbHistoryPoint[]>
+    // win probability history (Kalshi, Polymarket, ESPN, etc.)
     if (historyData.win_prob_history) {
       for (const pts of Object.values(historyData.win_prob_history)) {
-        if (pts.length) {
-          check(pts[0].timestamp);
-          check(pts[pts.length - 1].timestamp);
-        }
+        for (const p of pts) check(p.timestamp);
       }
     }
     // aggregate line
     if (historyData.aggregate_line?.length) {
-      check(historyData.aggregate_line[0].timestamp);
-      check(historyData.aggregate_line[historyData.aggregate_line.length - 1].timestamp);
+      for (const p of historyData.aggregate_line) check(p.timestamp);
     }
     // ESPN history
     if (historyData.espn_history?.length) {
-      check(historyData.espn_history[0].timestamp);
-      check(historyData.espn_history[historyData.espn_history.length - 1].timestamp);
+      for (const p of historyData.espn_history) check(p.timestamp);
     }
     // bookmaker history
     if (historyData.bookmaker_history) {
       for (const pts of Object.values(historyData.bookmaker_history)) {
-        if (pts.length) {
-          check(pts[0].timestamp);
-          check(pts[pts.length - 1].timestamp);
-        }
+        for (const p of pts) check(p.timestamp);
       }
     }
     return {
       oddsChartStartTime: minMs < Infinity ? new Date(minMs).toISOString() : undefined,
       oddsChartEndTime: maxMs > 0 ? new Date(maxMs).toISOString() : undefined,
     };
-  }, [historyData]);
+  }, [historyData, event?.status, event?.commence_time]);
 
   // Compute the most recent chart point for GamePlayCard default display
   const lastChartPoint = useMemo<ActiveChartPoint | null>(() => {

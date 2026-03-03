@@ -328,23 +328,24 @@ export default function ScoreDifferentialChart({
 
     // Fill missing minutes for uniform x-axis spacing.
     // Both charts use categorical XAxis where each category gets equal pixel width.
-    // The Win Probability chart has more data sources (winProbHistory, aggregateLine,
-    // scoringPlays) creating ~120+ minute-level categories. Without filling gaps here,
-    // this chart has fewer categories, causing different pixel-per-minute spacing and
-    // visible x-axis misalignment. If chartEndTime is provided, extend the fill to
-    // match the Win Probability chart's time range.
+    // Without filling gaps, this chart has fewer categories than OddsChart,
+    // causing different pixel-per-minute spacing and visible x-axis misalignment.
+    // chartStartTime clips start later (if OddsChart starts later than our data);
+    // chartEndTime extends end further (if OddsChart ends later than our data).
     const allTimestamps = Array.from(dataMap.keys()).sort();
     if (allTimestamps.length >= 2) {
       let first = parseISO(allTimestamps[0]);
       let last = parseISO(allTimestamps[allTimestamps.length - 1]);
 
-      // Extend to match the Win Probability chart's start time if it starts earlier
+      // Use chartStartTime to clip start LATER (if Win Prob chart starts later),
+      // but never extend backward. Both charts share the same history data and
+      // smartStartTime logic, so their starts align naturally. Extending backward
+      // creates empty chart space (the 24-hour gap bug).
       if (chartStartTime) {
         const startFromParent = parseISO(chartStartTime);
         startFromParent.setSeconds(0, 0);
-        if (startFromParent < first) {
+        if (startFromParent > first) {
           first = startFromParent;
-          ensurePoint(first.toISOString());
         }
       }
 
