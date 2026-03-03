@@ -314,7 +314,6 @@ export default function ExplorePage() {
                   No events match these filters.
                 </div>
               )}
-              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
               {eventsData.events.map((event: any) => (
                 <Link href={`/events/${event.id}`} key={event.id}>
                   <EventCard
@@ -336,7 +335,6 @@ export default function ExplorePage() {
                   No futures markets match these filters.
                 </div>
               )}
-              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
               {futuresData.markets.map((market: any) => (
                 <Link href={`/futures/${market.id}`} key={market.id}>
                   <FuturesCard
