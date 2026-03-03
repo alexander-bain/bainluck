@@ -7,6 +7,7 @@ Runs every 2 minutes to keep tags fresh for live events and new futures.
 
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
