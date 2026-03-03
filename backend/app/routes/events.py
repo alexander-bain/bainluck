@@ -443,6 +443,24 @@ async def faceted_search(
     Returns matching events plus facet counts grouped by namespace.
     """
     import json as _json
+    import traceback
+
+    try:
+        return await _faceted_search_impl(
+            tags, sport, status, stakes, narrative, audience,
+            days, page, per_page, db,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Faceted search error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Faceted search error: {str(e)}")
+
+
+async def _faceted_search_impl(
+    tags, sport, status, stakes, narrative, audience,
+    days, page, per_page, db,
+):
+    import json as _json
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
