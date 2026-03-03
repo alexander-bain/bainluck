@@ -471,40 +471,40 @@ async def faceted_search(
         if val:
             tag_filter.append(f"{ns}:{val}")
 
-    # Base query
-    query = (
-        select(Event)
-        .options(selectinload(Event.sport))
-        .where(Event.commence_time >= cutoff)
-    )
+    # Build filter conditions (shared between count and data queries)
+    conditions = [Event.commence_time >= cutoff]
 
     # Apply GIN containment filter
     if tag_filter:
-        # Only use valid tags
         valid_tags = [t for t in tag_filter if validate_tag(t)]
         if valid_tags:
-            query = query.where(
+            conditions.append(
                 Event.event_tags.op("@>")(cast(_json.dumps(valid_tags), JSONB))
             )
 
-    # Order: live → scheduled → completed
-    query = query.order_by(
-        case(
-            (Event.status == "live", 0),
-            (Event.status == "scheduled", 1),
-            else_=2,
-        ),
-        Event.commence_time.desc(),
-    )
-
-    # Paginate
-    offset = (page - 1) * per_page
-    total_result = await db.execute(
-        select(func.count()).select_from(query.subquery())
-    )
+    # Count query (no ORM loader options — those break subquery)
+    count_query = select(func.count(Event.id)).where(*conditions)
+    total_result = await db.execute(count_query)
     total_count = total_result.scalar() or 0
 
-    result = await db.execute(query.offset(offset).limit(per_page))
+    # Data query with eager loading and ordering
+    offset = (page - 1) * per_page
+    query = (
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(*conditions)
+        .order_by(
+            case(
+                (Event.status == "live", 0),
+                (Event.status == "scheduled", 1),
+                else_=2,
+            ),
+            Event.commence_time.desc(),
+        )
+        .offset(offset)
+        .limit(per_page)
+    )
+    result = await db.execute(query)
     events = result.scalars().all()
 
     # Build team lookup for colors/logos
