@@ -455,9 +455,11 @@ export default function EventPage({ params }: EventPageProps) {
     if (historyData.history?.length) {
       check(historyData.history[historyData.history.length - 1].timestamp);
     }
-    // win probability history (Kalshi, Polymarket, ESPN, etc.)
-    if (historyData.win_prob_history?.length) {
-      check(historyData.win_prob_history[historyData.win_prob_history.length - 1].timestamp);
+    // win probability history (Kalshi, Polymarket, ESPN, etc.) — Record<string, WinProbHistoryPoint[]>
+    if (historyData.win_prob_history) {
+      for (const pts of Object.values(historyData.win_prob_history)) {
+        if (pts.length) check(pts[pts.length - 1].timestamp);
+      }
     }
     // aggregate line
     if (historyData.aggregate_line?.length) {
@@ -482,9 +484,19 @@ export default function EventPage({ params }: EventPageProps) {
     // Use the last ESPN history point for score/period/clock
     const espn = historyData.espn_history;
     const lastEspn = espn?.length ? espn[espn.length - 1] : null;
-    // Use the last win prob history point for probability
+    // Use the last win prob history point for probability — win_prob_history is Record<string, WinProbHistoryPoint[]>
     const wpHistory = historyData.win_prob_history;
-    const lastWp = wpHistory?.length ? wpHistory[wpHistory.length - 1] : null;
+    let lastWp: { home_probability: number; timestamp: string } | null = null;
+    if (wpHistory) {
+      for (const pts of Object.values(wpHistory)) {
+        if (pts.length) {
+          const last = pts[pts.length - 1];
+          if (!lastWp || last.timestamp > lastWp.timestamp) {
+            lastWp = last;
+          }
+        }
+      }
+    }
     // Use latest history point for odds-based probability
     const hist = historyData.history;
     const lastHist = hist?.length ? hist[hist.length - 1] : null;
