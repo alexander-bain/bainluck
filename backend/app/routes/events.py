@@ -3869,3 +3869,64 @@ async def taxonomy_backfill_inline(
             "error": str(e),
             "trace": traceback.format_exc().split("\n")[-5:],
         }
+
+
+@router.post("/taxonomy-backfill-futures")
+async def taxonomy_backfill_futures(
+    limit: int = Query(500, ge=1, le=2000, description="Max futures markets to tag"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run deterministic taxonomy tagging for futures markets inline."""
+    import traceback
+    from app.utils.event_taxonomy import compute_market_tags
+
+    try:
+        stmt = (
+            select(FuturesMarket)
+            .where(
+                or_(
+                    FuturesMarket.market_tags == None,  # noqa: E711
+                    FuturesMarket.market_tags == [],
+                )
+            )
+            .order_by(FuturesMarket.updated_at.desc())
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        markets = result.scalars().all()
+
+        tagged = 0
+        errors = 0
+        for market in markets:
+            try:
+                tags = compute_market_tags(
+                    llm_sport_category=market.llm_sport_category,
+                    llm_league=market.llm_league,
+                    llm_gender=market.llm_gender,
+                    llm_level=market.llm_level,
+                    market_tier=market.market_tier,
+                    category=market.category,
+                    status=market.status,
+                    resolution_date=market.resolution_date,
+                    source=market.source,
+                )
+                market.market_tags = tags
+                tagged += 1
+            except Exception:
+                errors += 1
+
+        if tagged > 0:
+            await db.commit()
+
+        return {
+            "status": "completed",
+            "markets_found": len(markets),
+            "markets_tagged": tagged,
+            "errors": errors,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "trace": traceback.format_exc().split("\n")[-5:],
+        }
