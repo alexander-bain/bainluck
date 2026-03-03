@@ -426,12 +426,12 @@ async def get_ei_rankings(
 
 @router.get("/faceted")
 async def faceted_search(
-    tags: Optional[str] = Query(None, description="JSON array of tags, e.g., [\"sport:basketball\",\"stakes:elimination\"]"),
-    sport: Optional[str] = Query(None, description="Convenience filter: sport tag value (e.g., basketball)"),
-    status: Optional[str] = Query(None, description="Convenience filter: status tag value (e.g., live)"),
-    stakes: Optional[str] = Query(None, description="Convenience filter: stakes tag value (e.g., elimination)"),
-    narrative: Optional[str] = Query(None, description="Convenience filter: narrative tag value (e.g., rivalry)"),
-    audience: Optional[str] = Query(None, description="Convenience filter: audience tag value (e.g., casual_friendly)"),
+    tags: Optional[str] = Query(None, description="JSON array of tags"),
+    sport: Optional[str] = Query(None, description="Sport tag value"),
+    status: Optional[str] = Query(None, description="Status tag value"),
+    stakes: Optional[str] = Query(None, description="Stakes tag value"),
+    narrative: Optional[str] = Query(None, description="Narrative tag value"),
+    audience: Optional[str] = Query(None, description="Audience tag value"),
     days: int = Query(7, ge=1, le=30, description="Time window in days"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
@@ -506,8 +506,10 @@ async def _faceted_search_impl(
     total_result = await db.execute(count_query)
     total_count = total_result.scalar() or 0
 
+    return {"debug": "count_ok", "total": total_count, "filters": tag_filter, "valid_tags": [t for t in tag_filter if validate_tag(t)]}
+
     # Data query with eager loading and ordering
-    offset = (page - 1) * per_page
+    offset_val = (page - 1) * per_page
     query = (
         select(Event)
         .options(selectinload(Event.sport))
@@ -520,7 +522,7 @@ async def _faceted_search_impl(
             ),
             Event.commence_time.desc(),
         )
-        .offset(offset)
+        .offset(offset_val)
         .limit(per_page)
     )
     result = await db.execute(query)
