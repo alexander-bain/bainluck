@@ -568,16 +568,26 @@ async def _poll_all_odds():
                             commence_time,
                         )
                         if statpal_event:
-                            # Attach the Odds API external_id to the existing event
-                            statpal_event.external_id = event_data["id"]
-                            statpal_event.status = event_status
-                            await session.flush()
-                            event_id = statpal_event.id
-                            total_events += 1
-                            logger.info(
-                                "poll_odds: linked Odds API %s to StatPal event %d",
-                                event_data["id"], statpal_event.id,
-                            )
+                            # Guard: ensure external_id isn't already claimed
+                            from app.tasks.sports import _external_id_in_use
+                            claimed_by = await _external_id_in_use(session, event_data["id"])
+                            if claimed_by:
+                                logger.info(
+                                    "poll_odds: external_id %s already used by event %d, skipping",
+                                    event_data["id"], claimed_by,
+                                )
+                                event_id = claimed_by
+                            else:
+                                # Attach the Odds API external_id to the existing event
+                                statpal_event.external_id = event_data["id"]
+                                statpal_event.status = event_status
+                                await session.flush()
+                                event_id = statpal_event.id
+                                total_events += 1
+                                logger.info(
+                                    "poll_odds: linked Odds API %s to StatPal event %d",
+                                    event_data["id"], statpal_event.id,
+                                )
                         else:
                             # Try broader dedup safety net before creating
                             from app.tasks.sports import _find_existing_event_by_teams
@@ -589,19 +599,29 @@ async def _poll_all_odds():
                             )
 
                             if dedup_event and not dedup_event.external_id:
-                                # Orphan event — attach this external_id
-                                dedup_event.external_id = event_data["id"]
-                                dedup_event.status = event_status
-                                await session.flush()
-                                event_id = dedup_event.id
-                                total_events += 1
-                                logger.info(
-                                    "poll_odds dedup: linked Odds API %s to "
-                                    "orphan event %d (%s vs %s)",
-                                    event_data["id"], dedup_event.id,
-                                    event_data["home_team"],
-                                    event_data["away_team"],
-                                )
+                                # Guard: ensure external_id isn't already claimed
+                                from app.tasks.sports import _external_id_in_use
+                                claimed_by = await _external_id_in_use(session, event_data["id"])
+                                if claimed_by:
+                                    logger.info(
+                                        "poll_odds dedup: external_id %s already used by "
+                                        "event %d, skipping", event_data["id"], claimed_by,
+                                    )
+                                    event_id = claimed_by
+                                else:
+                                    # Orphan event — attach this external_id
+                                    dedup_event.external_id = event_data["id"]
+                                    dedup_event.status = event_status
+                                    await session.flush()
+                                    event_id = dedup_event.id
+                                    total_events += 1
+                                    logger.info(
+                                        "poll_odds dedup: linked Odds API %s to "
+                                        "orphan event %d (%s vs %s)",
+                                        event_data["id"], dedup_event.id,
+                                        event_data["home_team"],
+                                        event_data["away_team"],
+                                    )
                             else:
                                 stmt = insert(Event).values(
                                     external_id=event_data["id"],
@@ -964,14 +984,24 @@ async def _poll_sport_odds(sport_key: str):
                         statpal_event = None
 
                 if statpal_event:
-                    statpal_event.external_id = event_data["id"]
-                    statpal_event.status = event_status
-                    await session.flush()
-                    event_id = statpal_event.id
-                    logger.info(
-                        "poll_sport_odds: linked Odds API %s to event %d",
-                        event_data["id"], statpal_event.id,
-                    )
+                    # Guard: ensure external_id isn't already claimed
+                    from app.tasks.sports import _external_id_in_use
+                    claimed_by = await _external_id_in_use(session, event_data["id"])
+                    if claimed_by:
+                        logger.info(
+                            "poll_sport_odds: external_id %s already used by event %d, skipping",
+                            event_data["id"], claimed_by,
+                        )
+                        event_id = claimed_by
+                    else:
+                        statpal_event.external_id = event_data["id"]
+                        statpal_event.status = event_status
+                        await session.flush()
+                        event_id = statpal_event.id
+                        logger.info(
+                            "poll_sport_odds: linked Odds API %s to event %d",
+                            event_data["id"], statpal_event.id,
+                        )
                 else:
                     stmt = insert(Event).values(
                         external_id=event_data["id"],
