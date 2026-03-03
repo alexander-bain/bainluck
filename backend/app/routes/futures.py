@@ -496,6 +496,141 @@ async def list_futures_categories(
     }
 
 
+@router.get("/faceted")
+async def faceted_futures_search(
+    tags: Optional[str] = Query(None, description="JSON array of tags"),
+    sport: Optional[str] = Query(None, description="Sport tag value (e.g., basketball)"),
+    category: Optional[str] = Query(None, description="llm_sport_category filter"),
+    stakes: Optional[str] = Query(None, description="Stakes tag value"),
+    narrative: Optional[str] = Query(None, description="Narrative tag value"),
+    audience: Optional[str] = Query(None, description="Audience tag value"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(25, ge=1, le=100, description="Results per page"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Faceted search over futures markets using GIN-indexed taxonomy tags."""
+    import json as _json
+    from sqlalchemy import literal_column, text as sql_text
+    from app.utils.event_taxonomy import validate_tag
+
+    # Build tag filter from both sources
+    tag_filter: list[str] = []
+    if tags:
+        try:
+            parsed = _json.loads(tags)
+            if isinstance(parsed, list):
+                tag_filter.extend(str(t) for t in parsed)
+        except (ValueError, TypeError):
+            pass
+
+    convenience = {"sport": sport, "stakes": stakes, "narrative": narrative, "audience": audience}
+    for ns, val in convenience.items():
+        if val:
+            tag_filter.append(f"{ns}:{val}")
+
+    # Base conditions — open, non-game-level, unresolved
+    now = datetime.now(timezone.utc)
+    conditions = [
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+    ]
+
+    if category:
+        conditions.append(FuturesMarket.llm_sport_category == category)
+
+    # GIN containment filter
+    valid_tags: list[str] = []
+    if tag_filter:
+        valid_tags = [t for t in tag_filter if validate_tag(t)]
+        if valid_tags:
+            escaped = _json.dumps(valid_tags).replace("'", "''")
+            conditions.append(
+                FuturesMarket.market_tags.op("@>")(
+                    literal_column(f"'{escaped}'::jsonb")
+                )
+            )
+
+    # Count
+    count_q = select(func.count(FuturesMarket.id)).where(*conditions)
+    total_count = (await db.execute(count_q)).scalar() or 0
+
+    # Data
+    offset_val = (page - 1) * per_page
+    data_q = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(*conditions)
+        .order_by(FuturesMarket.resolution_date.asc().nulls_last())
+        .offset(offset_val)
+        .limit(per_page)
+    )
+    markets = (await db.execute(data_q)).scalars().unique().all()
+
+    formatted = []
+    for market in markets:
+        sorted_outcomes = sorted(
+            market.outcomes,
+            key=lambda o: float(o.current_probability) if o.current_probability else 0,
+            reverse=True,
+        )
+        top3 = [
+            {
+                "id": o.id,
+                "name": o.name,
+                "probability": float(o.current_probability) if o.current_probability else None,
+                "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+            }
+            for o in sorted_outcomes[:3]
+        ]
+        formatted.append({
+            "id": market.id,
+            "name": market.name,
+            "llm_sport_category": market.llm_sport_category,
+            "source": market.source,
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "market_tags": market.market_tags or [],
+            "top_outcomes": top3,
+            "outcome_count": len(market.outcomes),
+        })
+
+    # Facet counts
+    facet_sql = """
+        SELECT split_part(tag, ':', 1) AS ns, tag, COUNT(*) AS cnt
+        FROM futures_markets, jsonb_array_elements_text(market_tags) AS tag
+        WHERE status = 'open' AND event_id IS NULL
+          AND (resolution_date IS NULL OR resolution_date >= :now)
+    """
+    facet_params: dict = {"now": now}
+    if category:
+        facet_sql += " AND llm_sport_category = :category"
+        facet_params["category"] = category
+    if valid_tags:
+        escaped_facet = _json.dumps(valid_tags).replace("'", "''")
+        facet_sql += f" AND market_tags @> '{escaped_facet}'::jsonb"
+    facet_sql += " GROUP BY ns, tag ORDER BY ns, cnt DESC"
+
+    facet_rows = (await db.execute(sql_text(facet_sql), facet_params)).all()
+    facets: dict = {}
+    for row in facet_rows:
+        ns = row[0]
+        if ns not in facets:
+            facets[ns] = []
+        facets[ns].append({"tag": row[1], "count": row[2]})
+
+    return {
+        "total": total_count,
+        "page": page,
+        "per_page": per_page,
+        "filters": tag_filter,
+        "markets": formatted,
+        "facets": facets,
+    }
+
+
 @router.get("")
 async def list_futures_markets(
     sport: Optional[str] = Query(None, description="Filter by sport key"),

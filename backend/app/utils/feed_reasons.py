@@ -19,6 +19,7 @@ def generate_event_reason(
     opening_home_prob: Optional[float] = None,
     home_score: Optional[int] = None,
     away_score: Optional[int] = None,
+    event_tags: Optional[list[str]] = None,
 ) -> str:
     """
     Generate a one-line explanation for why an event is interesting.
@@ -97,6 +98,29 @@ def generate_event_reason(
 
     if "starting_soon" in reasons:
         return "Starting soon"
+
+    # ── Tag-based context (LLM enrichment) ─────────────────────────
+    # These add a story angle when no odds-based reason was found.
+    tags = set(event_tags or [])
+    _TAG_REASONS: list[tuple[str, str]] = [
+        ("narrative:historic_rivalry", "Historic rivalry"),
+        ("narrative:rivalry", "Rivalry game"),
+        ("stakes:elimination", "Elimination game"),
+        ("stakes:clinch", "Clinch scenario"),
+        ("stakes:title_defense", "Title defense"),
+        ("narrative:cinderella", "Cinderella story"),
+        ("narrative:revenge_game", "Revenge game"),
+        ("narrative:rematch", "Postseason rematch"),
+        ("narrative:farewell_tour", "Farewell tour"),
+        ("narrative:comeback", "Comeback story"),
+        ("stakes:record_chase", "Record chase"),
+        ("stakes:must_win", "Must-win game"),
+        ("audience:national_interest", "National interest"),
+        ("narrative:david_vs_goliath", "David vs. Goliath"),
+    ]
+    for tag, label in _TAG_REASONS:
+        if tag in tags:
+            return label
 
     # Fallback — the card shows teams and odds, no need for text
     return ""

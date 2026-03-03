@@ -24,6 +24,7 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     let winProbabilitySources: [String: WinProbSource]?
     let ei: EIData?
     let pulse: EIData?
+    let eventTags: [String]?
 }
 
 // MARK: - Standings Context

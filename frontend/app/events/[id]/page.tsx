@@ -746,12 +746,18 @@ export default function EventPage({ params }: EventPageProps) {
 
         {/* Tag chips — contextual labels from taxonomy */}
         {event.event_tags && event.event_tags.length > 0 && (() => {
-          // Show interesting tags (skip sport/league/source — those are visible elsewhere)
+          // Show interesting tags (skip sport/league/source/status/class/level/gender/category — those are visible elsewhere)
           const displayTags = event.event_tags.filter((t: string) => {
             const ns = t.split(":")[0];
-            return ["importance", "signal", "timing", "tier", "ei"].includes(ns);
+            return ["importance", "signal", "timing", "tier", "ei", "stakes", "narrative", "audience", "competitive_structure"].includes(ns);
           });
-          if (displayTags.length === 0) return null;
+          // Filter out low-value tags that add noise
+          const filteredTags = displayTags.filter((t: string) => {
+            return t !== "competitive_structure:head_to_head" // obvious for most games
+              && t !== "audience:local_interest" // too common
+              && t !== "stakes:meaningless"; // negative label
+          });
+          if (filteredTags.length === 0) return null;
 
           const tagLabels: Record<string, string> = {
             "importance:championship": "Championship",
@@ -769,6 +775,41 @@ export default function EventPage({ params }: EventPageProps) {
             "ei:must_watch": "Must-Watch",
             "ei:incredible": "Incredible",
             "ei:exciting": "Exciting",
+            // LLM-enriched stakes
+            "stakes:elimination": "Elimination",
+            "stakes:clinch": "Clinch Scenario",
+            "stakes:playoff_race": "Playoff Race",
+            "stakes:title_defense": "Title Defense",
+            "stakes:must_win": "Must-Win",
+            "stakes:record_chase": "Record Chase",
+            "stakes:seeding": "Seeding",
+            "stakes:streak": "Streak",
+            // LLM-enriched narrative
+            "narrative:rivalry": "Rivalry",
+            "narrative:historic_rivalry": "Historic Rivalry",
+            "narrative:revenge_game": "Revenge Game",
+            "narrative:cinderella": "Cinderella",
+            "narrative:upset_alert": "Upset Alert",
+            "narrative:comeback": "Comeback",
+            "narrative:rematch": "Rematch",
+            "narrative:david_vs_goliath": "David vs. Goliath",
+            "narrative:farewell_tour": "Farewell Tour",
+            "narrative:winning_streak": "Winning Streak",
+            "narrative:losing_streak": "Losing Streak",
+            "narrative:debut": "Debut",
+            "narrative:return_from_injury": "Return from Injury",
+            // LLM-enriched audience
+            "audience:national_interest": "National Interest",
+            "audience:crossover_appeal": "Crossover Appeal",
+            "audience:viral_potential": "Viral Potential",
+            "audience:casual_friendly": "Casual-Friendly",
+            // Competitive structure (only non-obvious ones)
+            "competitive_structure:knockout": "Knockout",
+            "competitive_structure:single_elimination": "Single Elimination",
+            "competitive_structure:bracket": "Bracket",
+            "competitive_structure:series": "Series",
+            "competitive_structure:best_of_7": "Best of 7",
+            "competitive_structure:group_stage": "Group Stage",
           };
 
           const tagColors: Record<string, string> = {
@@ -777,11 +818,15 @@ export default function EventPage({ params }: EventPageProps) {
             timing: "bg-yellow-500/15 text-yellow-400",
             tier: "bg-blue-500/15 text-blue-400",
             ei: "bg-emerald-500/15 text-emerald-400",
+            stakes: "bg-red-500/15 text-red-400",
+            narrative: "bg-amber-500/15 text-amber-400",
+            audience: "bg-cyan-500/15 text-cyan-400",
+            competitive_structure: "bg-indigo-500/15 text-indigo-400",
           };
 
           return (
             <div className="flex flex-wrap gap-1.5 justify-center">
-              {displayTags.map((tag: string) => {
+              {filteredTags.map((tag: string) => {
                 const ns = tag.split(":")[0];
                 const color = tagColors[ns] || "bg-slate/10 text-text-muted";
                 const label = tagLabels[tag] || tag.split(":")[1]?.replace(/_/g, " ");

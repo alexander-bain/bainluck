@@ -676,11 +676,32 @@ async def search_events(
         (Event.status == "scheduled", 1),
         else_=2
     )
+
+    # Tag-based relevance boost within each status group.
+    # Events with contextual LLM tags (rivalry, elimination, etc.) or
+    # importance tags (playoff, championship) rank higher in search.
+    from sqlalchemy import literal_column as _lc
+    tag_boost = case(
+        # Championship/playoff events first
+        (Event.event_tags.op("@>")(_lc("'[\"importance:championship\"]'::jsonb")), 0),
+        (Event.event_tags.op("@>")(_lc("'[\"importance:playoff\"]'::jsonb")), 1),
+        # High-stakes LLM tags
+        (Event.event_tags.op("@>")(_lc("'[\"stakes:elimination\"]'::jsonb")), 2),
+        (Event.event_tags.op("@>")(_lc("'[\"stakes:title_defense\"]'::jsonb")), 2),
+        (Event.event_tags.op("@>")(_lc("'[\"narrative:rivalry\"]'::jsonb")), 3),
+        (Event.event_tags.op("@>")(_lc("'[\"narrative:historic_rivalry\"]'::jsonb")), 3),
+        (Event.event_tags.op("@>")(_lc("'[\"audience:national_interest\"]'::jsonb")), 4),
+        (Event.event_tags.op("@>")(_lc("'[\"stakes:clinch\"]'::jsonb")), 4),
+        (Event.event_tags.op("@>")(_lc("'[\"stakes:playoff_race\"]'::jsonb")), 5),
+        else_=9
+    )
+
     # For scheduled: order by commence_time ASC (soonest first)
     # For completed: order by commence_time DESC (most recent first)
     # We handle this by using different sort keys based on status
     query = query.order_by(
         status_order,
+        tag_boost,
         # For live/scheduled, sort ascending; for completed, we want descending
         # Using a compound sort: status priority, then time
         case(

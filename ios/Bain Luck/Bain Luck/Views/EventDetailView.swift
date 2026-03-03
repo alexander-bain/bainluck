@@ -130,6 +130,7 @@ struct EventDetailView: View {
                                          eventStatus: event.status,
                                          preloadedData: vm.lineMovement)
                         if let context = event.standingsContext { standingsSection(context) }
+                        eventTagsSection(event)
                         RelatedFuturesView(
                             eventId: event.id,
                             awayTeamColor: teamColors(event).away,
@@ -551,6 +552,124 @@ struct EventDetailView: View {
         .padding()
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    // MARK: - Event Tags
+
+    @ViewBuilder
+    private func eventTagsSection(_ event: EventDetail) -> some View {
+        let displayTags = (event.eventTags ?? []).filter { tag in
+            let ns = tag.components(separatedBy: ":").first ?? ""
+            let allowed: Set<String> = ["importance", "signal", "timing", "tier", "ei",
+                                         "stakes", "narrative", "audience", "competitive_structure"]
+            guard allowed.contains(ns) else { return false }
+            let hidden: Set<String> = ["competitive_structure:head_to_head",
+                                        "audience:local_interest", "stakes:meaningless"]
+            return !hidden.contains(tag)
+        }
+        if !displayTags.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "tag")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text("Tags")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                }
+                FlowLayout(spacing: 6) {
+                    ForEach(displayTags, id: \.self) { tag in
+                        Text(Self.tagLabel(tag))
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Self.tagForeground(tag))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Self.tagBackground(tag))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private static func tagLabel(_ tag: String) -> String {
+        let labels: [String: String] = [
+            "importance:championship": "Championship",
+            "importance:playoff": "Playoff",
+            "importance:exhibition": "Exhibition",
+            "signal:upset": "Upset Alert",
+            "signal:favorite_switched": "Favorite Switched",
+            "signal:very_close": "Very Close",
+            "signal:close_matchup": "Close Matchup",
+            "signal:major_prob_swing": "Major Odds Swing",
+            "timing:starting_very_soon": "Starting Very Soon",
+            "timing:starting_soon": "Starting Soon",
+            "stakes:elimination": "Elimination",
+            "stakes:clinch": "Clinch Scenario",
+            "stakes:playoff_race": "Playoff Race",
+            "stakes:relegation": "Relegation",
+            "stakes:promotion": "Promotion",
+            "stakes:seeding": "Seeding",
+            "stakes:title_defense": "Title Defense",
+            "stakes:must_win": "Must Win",
+            "stakes:record_chase": "Record Chase",
+            "stakes:streak": "Streak",
+            "narrative:rivalry": "Rivalry",
+            "narrative:historic_rivalry": "Historic Rivalry",
+            "narrative:revenge_game": "Revenge Game",
+            "narrative:cinderella": "Cinderella Story",
+            "narrative:upset_alert": "Upset Alert",
+            "narrative:comeback": "Comeback",
+            "narrative:legacy_moment": "Legacy Moment",
+            "narrative:debut": "Debut",
+            "narrative:return_from_injury": "Return from Injury",
+            "narrative:farewell_tour": "Farewell Tour",
+            "narrative:rematch": "Rematch",
+            "narrative:david_vs_goliath": "David vs. Goliath",
+            "narrative:redemption": "Redemption",
+            "narrative:winning_streak": "Winning Streak",
+            "narrative:losing_streak": "Losing Streak",
+            "audience:national_interest": "National Interest",
+            "audience:casual_friendly": "Casual Friendly",
+            "audience:crossover_appeal": "Crossover Appeal",
+            "audience:viral_potential": "Viral Potential",
+            "audience:hardcore_only": "Hardcore Only",
+            "competitive_structure:series": "Series",
+            "competitive_structure:best_of_7": "Best of 7",
+            "competitive_structure:bracket": "Bracket",
+            "competitive_structure:knockout": "Knockout",
+            "competitive_structure:group_stage": "Group Stage",
+            "competitive_structure:single_elimination": "Single Elimination",
+            "competitive_structure:round_robin": "Round Robin",
+            "competitive_structure:field": "Field",
+        ]
+        if let label = labels[tag] { return label }
+        // Fallback: strip namespace, capitalize, replace underscores
+        let value = tag.components(separatedBy: ":").last ?? tag
+        return value.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private static func tagForeground(_ tag: String) -> Color {
+        let ns = tag.components(separatedBy: ":").first ?? ""
+        switch ns {
+        case "importance": return Color(hex: "#f59e0b")
+        case "signal": return Color(hex: "#22c55e")
+        case "timing": return Color(hex: "#3b82f6")
+        case "stakes": return Color(hex: "#ef4444")
+        case "narrative": return Color(hex: "#f59e0b")
+        case "audience": return Color(hex: "#06b6d4")
+        case "competitive_structure": return Color(hex: "#818cf8")
+        default: return .secondary
+        }
+    }
+
+    private static func tagBackground(_ tag: String) -> Color {
+        tagForeground(tag).opacity(0.15)
     }
 
     // MARK: - ESPN

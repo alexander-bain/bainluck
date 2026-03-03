@@ -615,6 +615,41 @@ async def _score_events(
                     season_bonus = int(tier_weight * (season_mult - 1.0))
                     base_score += season_bonus
 
+        # LLM taxonomy tag boost: events with contextual tags from LLM
+        # enrichment (stakes, narrative, audience) get a scoring bonus.
+        # These capture things highlight scoring can't — rivalry games,
+        # elimination scenarios, national interest.
+        _event_tags = event.event_tags or []
+        _tag_set = set(_event_tags)
+        _TAG_BOOSTS = {
+            # Stakes — most impactful
+            "stakes:elimination": 12,
+            "stakes:clinch": 10,
+            "stakes:title_defense": 10,
+            "stakes:must_win": 8,
+            "stakes:record_chase": 8,
+            "stakes:seeding": 5,
+            "stakes:playoff_race": 3,  # Most common — small boost
+            # Narrative — story-driven interest
+            "narrative:rivalry": 8,
+            "narrative:historic_rivalry": 10,
+            "narrative:cinderella": 8,
+            "narrative:comeback": 8,
+            "narrative:revenge_game": 6,
+            "narrative:upset_alert": 6,
+            "narrative:rematch": 5,
+            "narrative:farewell_tour": 5,
+            "narrative:david_vs_goliath": 3,
+            # Audience — reach signal
+            "audience:national_interest": 5,
+            "audience:crossover_appeal": 3,
+            "audience:viral_potential": 3,
+        }
+        tag_bonus = sum(pts for tag, pts in _TAG_BOOSTS.items() if tag in _tag_set)
+        if tag_bonus > 0:
+            base_score += tag_bonus
+            highlight_result.reasons.append("llm_tags")
+
         # Boost completed events that had high EI scores — these are the
         # "fascinating outcomes" worth surfacing even hours later.
         if event.status in ("completed", "closed") and event.raw_ei:
@@ -680,6 +715,7 @@ async def _score_events(
             opening_home_prob=opening_home_prob,
             home_score=event.home_score,
             away_score=event.away_score,
+            event_tags=_event_tags,
         )
 
         # Build compact event data for the feed
