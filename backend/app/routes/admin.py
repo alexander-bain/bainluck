@@ -4533,6 +4533,151 @@ async def taxonomy_dashboard(
     }
 
 
+@router.post("/taxonomy/enrich")
+async def enrich_taxonomy(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    event_limit: int = Query(50, description="Max events to enrich"),
+    market_limit: int = Query(30, description="Max futures markets to enrich"),
+):
+    """Trigger LLM taxonomy enrichment for events and futures markets."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import enrich_taxonomy_llm as task
+
+    result = task.delay(event_limit=event_limit, market_limit=market_limit)
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "message": f"LLM enrichment queued (events={event_limit}, markets={market_limit}). "
+                   f"Check status at /api/admin/taxonomy/task/{result.id}",
+    }
+
+
+@router.get("/taxonomy/enrichment-status")
+async def taxonomy_enrichment_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """LLM enrichment coverage — events and markets with/without LLM-generated tags."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text
+    from app.utils.event_taxonomy import LLM_ENRICHMENT_NAMESPACES
+
+    now = datetime.now(timezone.utc)
+    llm_prefixes = [f"{ns}:" for ns in sorted(LLM_ENRICHMENT_NAMESPACES)]
+
+    # Events with any LLM tags vs without (last 7 days)
+    event_result = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(event_tags) AS t
+                        WHERE t LIKE 'stakes:%' OR t LIKE 'narrative:%'
+                           OR t LIKE 'audience:%' OR t LIKE 'competitive_structure:%'
+                    )
+                ) AS enriched,
+                COUNT(*) FILTER (
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(event_tags) AS t
+                        WHERE t LIKE 'stakes:%' OR t LIKE 'narrative:%'
+                           OR t LIKE 'audience:%' OR t LIKE 'competitive_structure:%'
+                    )
+                ) AS unenriched
+            FROM events
+            WHERE status IN ('scheduled', 'live', 'completed')
+              AND commence_time > :cutoff
+        """),
+        {"cutoff": now - timedelta(days=7)},
+    )
+    er = event_result.first()
+    event_enrichment = {
+        "enriched": er.enriched if er else 0,
+        "unenriched": er.unenriched if er else 0,
+    }
+
+    # Futures with LLM tags
+    market_result = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(market_tags) AS t
+                        WHERE t LIKE 'stakes:%' OR t LIKE 'narrative:%'
+                           OR t LIKE 'audience:%'
+                    )
+                ) AS enriched,
+                COUNT(*) FILTER (
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(market_tags) AS t
+                        WHERE t LIKE 'stakes:%' OR t LIKE 'narrative:%'
+                           OR t LIKE 'audience:%'
+                    )
+                ) AS unenriched
+            FROM futures_markets
+            WHERE status = 'open'
+        """)
+    )
+    mr = market_result.first()
+    market_enrichment = {
+        "enriched": mr.enriched if mr else 0,
+        "unenriched": mr.unenriched if mr else 0,
+    }
+
+    # LLM tag distribution
+    llm_tags_result = await db.execute(
+        text("""
+            SELECT tag, COUNT(*) AS count
+            FROM events, jsonb_array_elements_text(event_tags) AS tag
+            WHERE status IN ('scheduled', 'live', 'completed')
+              AND commence_time > :cutoff
+              AND (tag LIKE 'stakes:%' OR tag LIKE 'narrative:%'
+                   OR tag LIKE 'audience:%' OR tag LIKE 'competitive_structure:%')
+            GROUP BY tag
+            ORDER BY count DESC
+            LIMIT 40
+        """),
+        {"cutoff": now - timedelta(days=7)},
+    )
+    llm_tag_distribution = [
+        {"tag": row.tag, "count": row.count}
+        for row in llm_tags_result.all()
+    ]
+
+    # Cache status (taxonomy_enrichment entries in LineMovementAnalysis)
+    cache_result = await db.execute(
+        text("""
+            SELECT
+                analysis_type,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE expires_at IS NULL OR expires_at > NOW()) AS active,
+                COUNT(*) FILTER (WHERE expires_at IS NOT NULL AND expires_at <= NOW()) AS expired
+            FROM line_movement_analyses
+            WHERE analysis_type IN ('taxonomy_enrichment', 'taxonomy_market')
+            GROUP BY analysis_type
+        """)
+    )
+    cache_status = {}
+    for row in cache_result.all():
+        cache_status[row.analysis_type] = {
+            "total": row.total,
+            "active": row.active,
+            "expired": row.expired,
+        }
+
+    return {
+        "generated_at": now.isoformat(),
+        "llm_namespaces": sorted(LLM_ENRICHMENT_NAMESPACES),
+        "event_enrichment": event_enrichment,
+        "market_enrichment": market_enrichment,
+        "llm_tag_distribution": llm_tag_distribution,
+        "cache_status": cache_status,
+    }
+
+
 # ── Duplicate event detection + merge ──────────────────────────────────
 
 

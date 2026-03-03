@@ -17,11 +17,13 @@ import pytest
 
 from app.utils.event_taxonomy import (
     ALLOWED_TAGS,
+    LLM_ENRICHMENT_NAMESPACES,
     _SPORT_KEY_TO_LEAGUE,
     _EXTRA_SPORT_PREFIXES,
     compute_event_tags,
     compute_market_tags,
     validate_tag,
+    merge_llm_tags,
     _extract_sport,
     _extract_league,
     _ei_label,
@@ -709,3 +711,137 @@ class TestComputeAggregateProbability:
 
         result = compute_aggregate_probability(MockEvent())
         assert result is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# LLM enrichment namespaces (Phase 2)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestLLMEnrichmentNamespaces:
+    def test_stakes_namespace_exists(self):
+        assert "stakes" in ALLOWED_TAGS
+
+    def test_narrative_namespace_exists(self):
+        assert "narrative" in ALLOWED_TAGS
+
+    def test_audience_namespace_exists(self):
+        assert "audience" in ALLOWED_TAGS
+
+    def test_competitive_structure_namespace_exists(self):
+        assert "competitive_structure" in ALLOWED_TAGS
+
+    def test_llm_enrichment_namespaces_constant(self):
+        assert LLM_ENRICHMENT_NAMESPACES == {"stakes", "narrative", "audience", "competitive_structure"}
+
+    def test_stakes_values(self):
+        expected = {
+            "elimination", "clinch", "playoff_race", "relegation", "promotion",
+            "seeding", "title_defense", "meaningless", "must_win",
+            "record_chase", "streak",
+        }
+        assert ALLOWED_TAGS["stakes"] == expected
+
+    def test_narrative_values(self):
+        assert "rivalry" in ALLOWED_TAGS["narrative"]
+        assert "cinderella" in ALLOWED_TAGS["narrative"]
+        assert "farewell_tour" in ALLOWED_TAGS["narrative"]
+        assert "david_vs_goliath" in ALLOWED_TAGS["narrative"]
+
+    def test_audience_values(self):
+        assert "national_interest" in ALLOWED_TAGS["audience"]
+        assert "casual_friendly" in ALLOWED_TAGS["audience"]
+        assert "viral_potential" in ALLOWED_TAGS["audience"]
+
+    def test_competitive_structure_values(self):
+        assert "head_to_head" in ALLOWED_TAGS["competitive_structure"]
+        assert "best_of_7" in ALLOWED_TAGS["competitive_structure"]
+        assert "single_elimination" in ALLOWED_TAGS["competitive_structure"]
+
+    def test_validate_stakes_tag(self):
+        assert validate_tag("stakes:elimination") is True
+
+    def test_validate_narrative_tag(self):
+        assert validate_tag("narrative:rivalry") is True
+
+    def test_validate_audience_tag(self):
+        assert validate_tag("audience:casual_friendly") is True
+
+    def test_validate_competitive_structure_tag(self):
+        assert validate_tag("competitive_structure:bracket") is True
+
+    def test_validate_invalid_stakes_value(self):
+        assert validate_tag("stakes:unknown_thing") is False
+
+    def test_validate_invalid_narrative_value(self):
+        assert validate_tag("narrative:boring") is False
+
+
+# ══════════════════════════════════════════════════════════════════════
+# merge_llm_tags
+# ══════════════════════════════════════════════════════════════════════
+
+class TestMergeLLMTags:
+    def test_adds_llm_tags_to_empty(self):
+        result = merge_llm_tags([], ["stakes:elimination", "narrative:rivalry"])
+        assert "stakes:elimination" in result
+        assert "narrative:rivalry" in result
+
+    def test_preserves_deterministic_tags(self):
+        existing = ["sport:basketball", "league:nba", "tier:1", "status:live"]
+        llm = ["stakes:playoff_race", "audience:national_interest"]
+        result = merge_llm_tags(existing, llm)
+        assert "sport:basketball" in result
+        assert "league:nba" in result
+        assert "tier:1" in result
+        assert "status:live" in result
+        assert "stakes:playoff_race" in result
+        assert "audience:national_interest" in result
+
+    def test_replaces_llm_namespaces_on_remerge(self):
+        # First enrichment
+        existing = ["sport:basketball", "stakes:elimination", "narrative:rivalry"]
+        # Second enrichment with different values
+        new_llm = ["stakes:clinch", "narrative:upset_alert"]
+        result = merge_llm_tags(existing, new_llm)
+        # Old LLM tags replaced
+        assert "stakes:elimination" not in result
+        assert "narrative:rivalry" not in result
+        # New LLM tags present
+        assert "stakes:clinch" in result
+        assert "narrative:upset_alert" in result
+        # Deterministic preserved
+        assert "sport:basketball" in result
+
+    def test_rejects_invalid_values(self):
+        result = merge_llm_tags(
+            ["sport:basketball"],
+            ["stakes:nonexistent", "narrative:rivalry"],
+        )
+        assert "stakes:nonexistent" not in result
+        assert "narrative:rivalry" in result
+
+    def test_rejects_invalid_namespace(self):
+        result = merge_llm_tags(
+            ["sport:basketball"],
+            ["badns:value"],
+        )
+        assert "badns:value" not in result
+
+    def test_handles_empty_llm_input(self):
+        existing = ["sport:basketball", "tier:1"]
+        result = merge_llm_tags(existing, [])
+        assert result == existing
+
+    def test_output_sorted(self):
+        result = merge_llm_tags(
+            ["tier:1", "sport:basketball"],
+            ["stakes:elimination", "audience:casual_friendly"],
+        )
+        assert result == sorted(result)
+
+    def test_clears_llm_namespaces_with_empty_remerge(self):
+        existing = ["sport:basketball", "stakes:elimination", "narrative:rivalry"]
+        result = merge_llm_tags(existing, [])
+        assert "stakes:elimination" not in result
+        assert "narrative:rivalry" not in result
+        assert "sport:basketball" in result

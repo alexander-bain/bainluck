@@ -418,6 +418,14 @@ def update_event_tags(self, limit: int = 500):
     return run_async(_update_event_tags_impl(limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
+                 name="app.tasks.enrich_taxonomy_llm")
+def enrich_taxonomy_llm(self, event_limit: int = 50, market_limit: int = 30):
+    """Enrich events and futures with LLM-generated taxonomy tags (stakes, narrative, audience, structure)."""
+    from app.tasks.taxonomy import _enrich_taxonomy_llm_impl
+    return run_async(_enrich_taxonomy_llm_impl(event_limit, market_limit))
+
+
 # --- Duplicate Event Cleanup ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.merge_duplicate_events")
@@ -587,6 +595,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.update_event_tags",
         "schedule": crontab(minute="*/2"),  # Every 2 minutes — keeps live event tags fresh
         "kwargs": {"limit": 500},
+    },
+    "enrich-taxonomy-llm": {
+        "task": "app.tasks.enrich_taxonomy_llm",
+        "schedule": crontab(minute="*/10"),  # Every 10 minutes — LLM-generated tags
+        "kwargs": {"event_limit": 50, "market_limit": 30},
     },
 }
 

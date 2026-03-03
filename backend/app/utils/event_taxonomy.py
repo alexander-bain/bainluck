@@ -71,6 +71,26 @@ ALLOWED_TAGS: dict[str, set[str]] = {
     },
     "source": {"odds_api", "kalshi", "polymarket"},
     "market_status": {"open", "suspended", "resolved"},
+    # LLM-enriched namespaces (Phase 2)
+    "stakes": {
+        "elimination", "clinch", "playoff_race", "relegation", "promotion",
+        "seeding", "title_defense", "meaningless", "must_win",
+        "record_chase", "streak",
+    },
+    "narrative": {
+        "rivalry", "historic_rivalry", "revenge_game", "cinderella",
+        "upset_alert", "comeback", "legacy_moment", "debut",
+        "return_from_injury", "farewell_tour", "rematch",
+        "david_vs_goliath", "redemption", "winning_streak", "losing_streak",
+    },
+    "audience": {
+        "national_interest", "local_interest", "casual_friendly",
+        "hardcore_only", "crossover_appeal", "viral_potential",
+    },
+    "competitive_structure": {
+        "head_to_head", "field", "bracket", "series", "best_of_7",
+        "group_stage", "knockout", "round_robin", "single_elimination",
+    },
 }
 
 # ── Sport key → league mapping ───────────────────────────────────────
@@ -426,3 +446,21 @@ def _extract_timing(
     # National TV
     if broadcast_info and _NATIONAL_TV_RE.search(broadcast_info):
         tags.add("timing:national_tv")
+
+
+# ── LLM enrichment constants ──────────────────────────────────────────
+
+LLM_ENRICHMENT_NAMESPACES = {"stakes", "narrative", "audience", "competitive_structure"}
+
+
+def merge_llm_tags(existing_tags: list[str], llm_tags: list[str]) -> list[str]:
+    """Merge LLM tags into existing deterministic tags.
+
+    LLM namespaces replace entirely; deterministic namespaces are preserved.
+    Invalid tags (wrong namespace or unknown value) are silently dropped.
+    """
+    # Keep all non-LLM namespace tags from existing
+    merged = {t for t in existing_tags if t.split(":")[0] not in LLM_ENRICHMENT_NAMESPACES}
+    # Add validated LLM tags
+    merged.update(t for t in llm_tags if validate_tag(t))
+    return sorted(merged)

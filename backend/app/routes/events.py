@@ -26,7 +26,7 @@ from app.utils import (
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
-from app.utils.event_taxonomy import compute_event_tags
+from app.utils.event_taxonomy import compute_event_tags, validate_tag
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY
 
 router = APIRouter()
@@ -421,6 +421,152 @@ async def get_ei_rankings(
             "sport": sport,
             "limit": limit,
         },
+    }
+
+
+@router.get("/faceted")
+async def faceted_search(
+    tags: Optional[str] = Query(None, description="JSON array of tags, e.g., [\"sport:basketball\",\"stakes:elimination\"]"),
+    sport: Optional[str] = Query(None, description="Convenience filter: sport tag value (e.g., basketball)"),
+    status: Optional[str] = Query(None, description="Convenience filter: status tag value (e.g., live)"),
+    stakes: Optional[str] = Query(None, description="Convenience filter: stakes tag value (e.g., elimination)"),
+    narrative: Optional[str] = Query(None, description="Convenience filter: narrative tag value (e.g., rivalry)"),
+    audience: Optional[str] = Query(None, description="Convenience filter: audience tag value (e.g., casual_friendly)"),
+    days: int = Query(7, ge=1, le=30, description="Time window in days"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(25, ge=1, le=100, description="Results per page"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Faceted search over events using GIN-indexed taxonomy tags.
+
+    Supports both raw tag arrays and convenience named parameters.
+    Returns matching events plus facet counts grouped by namespace.
+    """
+    import json as _json
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    # Build tag filter from both sources
+    tag_filter: list[str] = []
+
+    # Parse raw tags parameter
+    if tags:
+        try:
+            parsed = _json.loads(tags)
+            if isinstance(parsed, list):
+                tag_filter.extend(str(t) for t in parsed)
+        except (ValueError, TypeError):
+            pass
+
+    # Add convenience params
+    convenience = {
+        "sport": sport,
+        "status": status,
+        "stakes": stakes,
+        "narrative": narrative,
+        "audience": audience,
+    }
+    for ns, val in convenience.items():
+        if val:
+            tag_filter.append(f"{ns}:{val}")
+
+    # Base query
+    query = (
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.commence_time >= cutoff)
+    )
+
+    # Apply GIN containment filter
+    if tag_filter:
+        # Only use valid tags
+        valid_tags = [t for t in tag_filter if validate_tag(t)]
+        if valid_tags:
+            query = query.where(
+                Event.event_tags.op("@>")(cast(_json.dumps(valid_tags), JSONB))
+            )
+
+    # Order: live → scheduled → completed
+    query = query.order_by(
+        case(
+            (Event.status == "live", 0),
+            (Event.status == "scheduled", 1),
+            else_=2,
+        ),
+        Event.commence_time.desc(),
+    )
+
+    # Paginate
+    offset = (page - 1) * per_page
+    total_result = await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )
+    total_count = total_result.scalar() or 0
+
+    result = await db.execute(query.offset(offset).limit(per_page))
+    events = result.scalars().all()
+
+    # Build team lookup for colors/logos
+    team_names = []
+    for event in events:
+        if event.home_team_name:
+            team_names.append(event.home_team_name)
+        if event.away_team_name:
+            team_names.append(event.away_team_name)
+    team_lookup = await _build_team_lookup(db, team_names)
+
+    # Format events
+    formatted = []
+    for event in events:
+        evt = _format_event(event, team_lookup=team_lookup)
+        if event.event_tags:
+            evt["event_tags"] = event.event_tags
+        formatted.append(evt)
+
+    # Compute facet counts via jsonb_array_elements_text
+    from sqlalchemy import text as sql_text
+
+    facet_query_sql = """
+        SELECT
+            split_part(tag, ':', 1) AS namespace,
+            tag,
+            COUNT(*) AS count
+        FROM events, jsonb_array_elements_text(event_tags) AS tag
+        WHERE commence_time >= :cutoff
+    """
+    facet_params: dict = {"cutoff": cutoff}
+
+    # Apply same tag filter to facets
+    if tag_filter:
+        valid_tags = [t for t in tag_filter if validate_tag(t)]
+        if valid_tags:
+            facet_query_sql += " AND event_tags @> :tag_filter::jsonb"
+            facet_params["tag_filter"] = _json.dumps(valid_tags)
+
+    facet_query_sql += """
+        GROUP BY namespace, tag
+        ORDER BY namespace, count DESC
+    """
+
+    facet_result = await db.execute(sql_text(facet_query_sql), facet_params)
+    facet_rows = facet_result.all()
+
+    # Group facets by namespace
+    facets: dict[str, list[dict]] = {}
+    for row in facet_rows:
+        ns = row.namespace
+        if ns not in facets:
+            facets[ns] = []
+        facets[ns].append({"tag": row.tag, "count": row.count})
+
+    return {
+        "total": total_count,
+        "page": page,
+        "per_page": per_page,
+        "filters": tag_filter,
+        "events": formatted,
+        "facets": facets,
     }
 
 

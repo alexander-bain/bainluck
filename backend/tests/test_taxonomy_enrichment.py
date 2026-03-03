@@ -1,0 +1,347 @@
+"""Tests for LLM taxonomy enrichment.
+
+Covers:
+- enrich_event_taxonomy: LLM call, response validation, error handling
+- enrich_market_taxonomy: LLM call, response validation
+- Lifecycle caching: stage detection, cache expiry
+- Context assembly helpers: standings formatting, injury extraction
+"""
+
+from datetime import datetime, timezone, timedelta
+from unittest.mock import patch, MagicMock
+
+import pytest
+
+from app.utils.event_taxonomy import ALLOWED_TAGS, LLM_ENRICHMENT_NAMESPACES
+
+
+# ══════════════════════════════════════════════════════════════════════
+# enrich_event_taxonomy
+# ══════════════════════════════════════════════════════════════════════
+
+class TestEnrichEventTaxonomy:
+    def test_valid_response_parsed(self):
+        """Valid LLM JSON response is parsed and validated."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"stakes": ["playoff_race"], "narrative": ["rivalry"], '
+            '"audience": ["national_interest"], "competitive_structure": ["head_to_head"]}'
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_event_taxonomy
+
+            result = enrich_event_taxonomy(
+                home_team="Lakers",
+                away_team="Celtics",
+                sport_key="basketball_nba",
+                status="live",
+            )
+
+        assert result is not None
+        assert result["stakes"] == ["playoff_race"]
+        assert result["narrative"] == ["rivalry"]
+        assert result["audience"] == ["national_interest"]
+        assert result["competitive_structure"] == ["head_to_head"]
+
+    def test_invalid_values_filtered(self):
+        """Invalid tag values are silently dropped."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"stakes": ["playoff_race", "invalid_fake"], '
+            '"narrative": ["rivalry", 123], '
+            '"audience": [], "competitive_structure": ["unknown"]}'
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_event_taxonomy
+
+            result = enrich_event_taxonomy(
+                home_team="Lakers",
+                away_team="Celtics",
+                sport_key="basketball_nba",
+                status="live",
+            )
+
+        assert result is not None
+        assert result["stakes"] == ["playoff_race"]
+        assert result["narrative"] == ["rivalry"]
+        assert "audience" not in result  # empty after filtering
+        assert "competitive_structure" not in result  # "unknown" not valid
+
+    def test_llm_unavailable_returns_none(self):
+        """Returns None when OpenAI client is not available."""
+        with patch("app.services.llm._get_client", return_value=None):
+            from app.services.llm import enrich_event_taxonomy
+
+            result = enrich_event_taxonomy(
+                home_team="Lakers",
+                away_team="Celtics",
+                sport_key="basketball_nba",
+                status="live",
+            )
+
+        assert result is None
+
+    def test_malformed_json_returns_none(self):
+        """Returns None when LLM returns invalid JSON."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "not valid json"
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_event_taxonomy
+
+            result = enrich_event_taxonomy(
+                home_team="Lakers",
+                away_team="Celtics",
+                sport_key="basketball_nba",
+                status="live",
+            )
+
+        assert result is None
+
+    def test_all_empty_returns_none(self):
+        """Returns None when all namespaces have no valid values."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"stakes": [], "narrative": [], "audience": [], "competitive_structure": []}'
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_event_taxonomy
+
+            result = enrich_event_taxonomy(
+                home_team="Lakers",
+                away_team="Celtics",
+                sport_key="basketball_nba",
+                status="live",
+            )
+
+        assert result is None
+
+    def test_context_includes_championship_odds(self):
+        """Championship odds are included in the LLM prompt when provided."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"stakes": ["title_defense"]}'
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_event_taxonomy
+
+            result = enrich_event_taxonomy(
+                home_team="Lakers",
+                away_team="Celtics",
+                sport_key="basketball_nba",
+                status="live",
+                home_champ_odds=0.15,
+                away_champ_odds=0.08,
+            )
+
+        # Verify the prompt included championship odds
+        call_args = mock_client.chat.completions.create.call_args
+        prompt_content = call_args[1]["messages"][0]["content"]
+        assert "15.0%" in prompt_content
+        assert "8.0%" in prompt_content
+
+    def test_api_exception_returns_none(self):
+        """Returns None on API exception without crashing."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception("API timeout")
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_event_taxonomy
+
+            result = enrich_event_taxonomy(
+                home_team="Lakers",
+                away_team="Celtics",
+                sport_key="basketball_nba",
+                status="live",
+            )
+
+        assert result is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# enrich_market_taxonomy
+# ══════════════════════════════════════════════════════════════════════
+
+class TestEnrichMarketTaxonomy:
+    def test_valid_response(self):
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"stakes": ["title_defense"], "narrative": ["legacy_moment"], "audience": ["national_interest"]}'
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_market_taxonomy
+
+            result = enrich_market_taxonomy(
+                market_name="NBA Championship Winner 2025-26",
+                llm_sport_category="basketball",
+                market_tier=1,
+            )
+
+        assert result is not None
+        assert result["stakes"] == ["title_defense"]
+
+    def test_does_not_include_competitive_structure(self):
+        """Market enrichment only generates stakes, narrative, audience."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"stakes": ["playoff_race"], "narrative": [], "audience": [], '
+            '"competitive_structure": ["bracket"]}'
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("app.services.llm._get_client", return_value=mock_client):
+            from app.services.llm import enrich_market_taxonomy
+
+            result = enrich_market_taxonomy(
+                market_name="NBA Championship Winner",
+            )
+
+        assert result is not None
+        assert "competitive_structure" not in result
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Lifecycle caching helpers
+# ══════════════════════════════════════════════════════════════════════
+
+class TestLifecycleCaching:
+    def test_lifecycle_stage_live(self):
+        from app.tasks.taxonomy import _lifecycle_stage
+        assert _lifecycle_stage("live") == "live"
+
+    def test_lifecycle_stage_completed(self):
+        from app.tasks.taxonomy import _lifecycle_stage
+        assert _lifecycle_stage("completed") == "completed"
+
+    def test_lifecycle_stage_closed(self):
+        from app.tasks.taxonomy import _lifecycle_stage
+        assert _lifecycle_stage("closed") == "completed"
+
+    def test_lifecycle_stage_scheduled(self):
+        from app.tasks.taxonomy import _lifecycle_stage
+        assert _lifecycle_stage("scheduled") == "scheduled"
+
+    def test_cache_not_expired_same_stage(self):
+        from app.tasks.taxonomy import _cache_expired
+        now = datetime.now(timezone.utc)
+        cached = {
+            "stage": "live",
+            "expires_at": (now + timedelta(minutes=15)).isoformat(),
+        }
+        assert _cache_expired(cached, "live", now) is False
+
+    def test_cache_expired_by_time(self):
+        from app.tasks.taxonomy import _cache_expired
+        now = datetime.now(timezone.utc)
+        cached = {
+            "stage": "live",
+            "expires_at": (now - timedelta(minutes=1)).isoformat(),
+        }
+        assert _cache_expired(cached, "live", now) is True
+
+    def test_cache_expired_stage_change(self):
+        from app.tasks.taxonomy import _cache_expired
+        now = datetime.now(timezone.utc)
+        cached = {
+            "stage": "scheduled",
+            "expires_at": (now + timedelta(hours=5)).isoformat(),
+        }
+        # Stage changed from scheduled to live
+        assert _cache_expired(cached, "live", now) is True
+
+    def test_completed_never_expires(self):
+        from app.tasks.taxonomy import _cache_expired
+        now = datetime.now(timezone.utc)
+        cached = {
+            "stage": "completed",
+            "expires_at": None,
+        }
+        assert _cache_expired(cached, "completed", now) is False
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Context assembly helpers
+# ══════════════════════════════════════════════════════════════════════
+
+class TestContextHelpers:
+    def test_format_standings(self):
+        from app.tasks.taxonomy import _format_standings
+        result = _format_standings({
+            "position": 3,
+            "wins": 45,
+            "losses": 22,
+            "conference": "Eastern",
+            "division": "Atlantic",
+        })
+        assert "#3" in result
+        assert "45-22" in result
+        assert "Eastern" in result
+
+    def test_format_standings_empty(self):
+        from app.tasks.taxonomy import _format_standings
+        result = _format_standings({})
+        assert result == ""
+
+    def test_extract_injuries_with_list(self):
+        from app.tasks.taxonomy import _extract_injuries_summary
+
+        class MockEvent:
+            box_score_data = {
+                "injuries": [
+                    {"name": "LeBron James", "status": "Out"},
+                    {"name": "Anthony Davis", "status": "Questionable"},
+                ]
+            }
+
+        result = _extract_injuries_summary(MockEvent())
+        assert result is not None
+        assert "LeBron James (Out)" in result
+        assert "Anthony Davis (Questionable)" in result
+
+    def test_extract_injuries_none(self):
+        from app.tasks.taxonomy import _extract_injuries_summary
+
+        class MockEvent:
+            box_score_data = None
+
+        result = _extract_injuries_summary(MockEvent())
+        assert result is None
+
+    def test_extract_injuries_no_key(self):
+        from app.tasks.taxonomy import _extract_injuries_summary
+
+        class MockEvent:
+            box_score_data = {"leaders": []}
+
+        result = _extract_injuries_summary(MockEvent())
+        assert result is None

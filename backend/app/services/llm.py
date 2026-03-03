@@ -1589,3 +1589,185 @@ def audit_match(prompt: str) -> Optional[dict]:
     except Exception as e:
         logger.error(f"Audit match LLM error: {e}")
         return None
+
+
+def enrich_event_taxonomy(
+    home_team: str,
+    away_team: str,
+    sport_key: str,
+    status: str,
+    llm_importance: Optional[str] = None,
+    opening_home_prob: Optional[float] = None,
+    current_home_prob: Optional[float] = None,
+    home_record: Optional[str] = None,
+    away_record: Optional[str] = None,
+    home_standings: Optional[str] = None,
+    away_standings: Optional[str] = None,
+    home_champ_odds: Optional[float] = None,
+    away_champ_odds: Optional[float] = None,
+    broadcast_info: Optional[str] = None,
+    injuries_summary: Optional[str] = None,
+) -> Optional[dict[str, list[str]]]:
+    """Use GPT-4o-mini to generate contextual taxonomy tags for an event.
+
+    Returns dict mapping namespace to list of tag values, e.g.:
+        {"stakes": ["playoff_race"], "narrative": ["rivalry", "upset_alert"]}
+    Returns None if LLM unavailable or parsing fails.
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    from app.utils.event_taxonomy import ALLOWED_TAGS, LLM_ENRICHMENT_NAMESPACES
+
+    # Build context block
+    ctx_lines = [
+        f"Sport: {sport_key}",
+        f"Status: {status}",
+        f"Home: {home_team}",
+        f"Away: {away_team}",
+    ]
+    if llm_importance:
+        ctx_lines.append(f"Importance: {llm_importance}")
+    if opening_home_prob is not None:
+        ctx_lines.append(f"Opening home prob: {opening_home_prob:.1%}")
+    if current_home_prob is not None:
+        ctx_lines.append(f"Current home prob: {current_home_prob:.1%}")
+    if home_record:
+        ctx_lines.append(f"Home record: {home_record}")
+    if away_record:
+        ctx_lines.append(f"Away record: {away_record}")
+    if home_standings:
+        ctx_lines.append(f"Home standings: {home_standings}")
+    if away_standings:
+        ctx_lines.append(f"Away standings: {away_standings}")
+    if home_champ_odds is not None:
+        ctx_lines.append(f"Home championship odds: {home_champ_odds:.1%}")
+    if away_champ_odds is not None:
+        ctx_lines.append(f"Away championship odds: {away_champ_odds:.1%}")
+    if broadcast_info:
+        ctx_lines.append(f"Broadcast: {broadcast_info}")
+    if injuries_summary:
+        ctx_lines.append(f"Injuries: {injuries_summary}")
+
+    context = "\n".join(ctx_lines)
+
+    # Build allowed values per namespace
+    ns_desc = []
+    for ns in sorted(LLM_ENRICHMENT_NAMESPACES):
+        vals = sorted(ALLOWED_TAGS[ns])
+        ns_desc.append(f"  {ns}: {', '.join(vals)}")
+    allowed_block = "\n".join(ns_desc)
+
+    prompt = (
+        "You are a sports analyst. Given the event context below, select the most "
+        "relevant tags from EACH of the 4 dimensions. Only select tags that clearly "
+        "apply — return an empty list for a dimension if nothing fits. Use ONLY the "
+        "allowed values listed.\n\n"
+        f"EVENT CONTEXT:\n{context}\n\n"
+        f"ALLOWED TAG VALUES:\n{allowed_block}\n\n"
+        "Return a JSON object with keys: stakes, narrative, audience, competitive_structure. "
+        "Each value is an array of strings from the allowed values above."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+
+        raw = response.choices[0].message.content.strip()
+        import json
+        parsed = json.loads(raw)
+
+        # Validate: only keep values in the allowed set
+        result = {}
+        for ns in LLM_ENRICHMENT_NAMESPACES:
+            vals = parsed.get(ns, [])
+            if isinstance(vals, list):
+                valid = [v for v in vals if isinstance(v, str) and v in ALLOWED_TAGS[ns]]
+                if valid:
+                    result[ns] = valid
+        return result if result else None
+
+    except Exception as e:
+        logger.error(f"enrich_event_taxonomy LLM error: {e}")
+        return None
+
+
+def enrich_market_taxonomy(
+    market_name: str,
+    llm_sport_category: Optional[str] = None,
+    market_tier: Optional[int] = None,
+    top_outcomes: Optional[list[str]] = None,
+    resolution_date: Optional[str] = None,
+) -> Optional[dict[str, list[str]]]:
+    """Use GPT-4o-mini to generate contextual taxonomy tags for a futures market.
+
+    Returns dict mapping namespace to list of tag values, or None on failure.
+    Only generates stakes, narrative, audience (competitive_structure is deterministic).
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    from app.utils.event_taxonomy import ALLOWED_TAGS
+
+    market_namespaces = {"stakes", "narrative", "audience"}
+
+    ctx_lines = [f"Market: {market_name}"]
+    if llm_sport_category:
+        ctx_lines.append(f"Sport: {llm_sport_category}")
+    if market_tier is not None:
+        ctx_lines.append(f"Tier: {market_tier}")
+    if top_outcomes:
+        ctx_lines.append(f"Top outcomes: {', '.join(top_outcomes[:5])}")
+    if resolution_date:
+        ctx_lines.append(f"Resolution: {resolution_date}")
+
+    context = "\n".join(ctx_lines)
+
+    ns_desc = []
+    for ns in sorted(market_namespaces):
+        vals = sorted(ALLOWED_TAGS[ns])
+        ns_desc.append(f"  {ns}: {', '.join(vals)}")
+    allowed_block = "\n".join(ns_desc)
+
+    prompt = (
+        "You are a sports/prediction market analyst. Given the market context below, "
+        "select the most relevant tags from each dimension. Only select tags that clearly "
+        "apply — return an empty list if nothing fits. Use ONLY the allowed values.\n\n"
+        f"MARKET CONTEXT:\n{context}\n\n"
+        f"ALLOWED TAG VALUES:\n{allowed_block}\n\n"
+        "Return a JSON object with keys: stakes, narrative, audience. "
+        "Each value is an array of strings from the allowed values above."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+
+        raw = response.choices[0].message.content.strip()
+        import json
+        parsed = json.loads(raw)
+
+        result = {}
+        for ns in market_namespaces:
+            vals = parsed.get(ns, [])
+            if isinstance(vals, list):
+                valid = [v for v in vals if isinstance(v, str) and v in ALLOWED_TAGS[ns]]
+                if valid:
+                    result[ns] = valid
+        return result if result else None
+
+    except Exception as e:
+        logger.error(f"enrich_market_taxonomy LLM error: {e}")
+        return None
