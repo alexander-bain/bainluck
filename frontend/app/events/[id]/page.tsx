@@ -50,7 +50,7 @@ function formatCountdown(targetTime: string): string {
   const now = new Date();
   const diff = target.getTime() - now.getTime();
 
-  if (diff <= 0) return "Started";
+  if (diff <= 0) return "";
 
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
   const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -778,11 +778,17 @@ export default function EventPage({ params }: EventPageProps) {
             </div>
           ) : (
             <div className="space-y-1">
-              {gameCountdown && (
+              {gameCountdown && !hasStarted && (
                 <div className="text-2xl font-bold text-text-primary">
                   Starts in {gameCountdown}
                 </div>
               )}
+              {hasStarted && (
+                <div className="text-sm text-text-secondary font-medium">
+                  Started {formatStartTime(event.commence_time)}
+                </div>
+              )}
+              {!hasStarted && (
               <div className="text-base text-text-primary">
                 {new Date(event.commence_time).toLocaleDateString("en-US", {
                   weekday: "short",
@@ -794,6 +800,7 @@ export default function EventPage({ params }: EventPageProps) {
                   timeZoneName: "short",
                 })}
               </div>
+              )}
               {event.espn?.broadcast && (
                 <div className="text-sm text-text-secondary">{event.espn.broadcast}</div>
               )}
@@ -802,7 +809,7 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
 
         {/* Score display for live/finished games */}
-        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
+        {(isLive || isFinished || hasStarted) && event.home_score !== null && event.away_score !== null && (
           <div className="mb-3 py-3 bg-surface-card/50 rounded-lg">
             <div className="flex items-center justify-center gap-6">
               <div className="text-center">

@@ -551,7 +551,14 @@ export default function OddsChart({
   }, [chartData]);
 
   // Early return for empty data across ALL sources (not just sportsbook odds)
+  // If "Since Start" filter caused empty data, auto-reset to "all"
   if (chartData.length === 0) {
+    if (timeRange === "live" && history && history.length > 0) {
+      // Data exists but all pre-start — reset filter silently
+      setTimeRange("all");
+      setHasUserOverridden(false);
+      return null; // Will re-render with "all" data
+    }
     return (
       <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg text-gray-500">
         No history data available
@@ -743,10 +750,14 @@ export default function OddsChart({
     <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}>
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
-        {TIME_RANGE_OPTIONS.map((option) => (
+        {TIME_RANGE_OPTIONS.map((option) => {
+          const isDisabled = option.value === "live" && !hasPostStartData;
+          return (
           <button
             key={option.value}
+            disabled={isDisabled}
             onClick={() => {
+              if (isDisabled) return;
               const previousRange = timeRange;
               setTimeRange(option.value);
               setHasUserOverridden(true);
@@ -762,7 +773,9 @@ export default function OddsChart({
               }
             }}
             className={`font-medium rounded-full transition-colors ${
-              fillContainer
+              isDisabled
+                ? "opacity-30 cursor-not-allowed px-3 py-1.5 text-xs bg-surface-elevated text-text-secondary"
+                : fillContainer
                 ? `px-[0.4vw] py-[0.1vh] text-[0.9vh] ${
                     timeRange === option.value
                       ? "bg-surface-card/10 text-white/40"
@@ -777,7 +790,8 @@ export default function OddsChart({
           >
             {option.label}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       {/* Team labels flanking the chart */}
