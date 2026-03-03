@@ -2179,6 +2179,35 @@ async def get_task_metrics_endpoint(task_name: str):
     return get_task_metrics(task_name)
 
 
+@router.get("/celery/inspect")
+async def celery_inspect():
+    """Inspect Celery worker: registered tasks, active tasks, reserved queue."""
+    from app.tasks import celery_app
+    i = celery_app.control.inspect(timeout=5)
+    registered = i.registered() or {}
+    active = i.active() or {}
+    reserved = i.reserved() or {}
+
+    result = {}
+    for worker_name in set(list(registered) + list(active) + list(reserved)):
+        worker_tasks = registered.get(worker_name, [])
+        taxonomy = [t for t in worker_tasks if "taxonomy" in t or "event_tag" in t]
+        result[worker_name] = {
+            "total_registered": len(worker_tasks),
+            "taxonomy_tasks": taxonomy,
+            "active": [
+                {"name": t.get("name"), "id": t.get("id")}
+                for t in active.get(worker_name, [])
+            ],
+            "reserved_count": len(reserved.get(worker_name, [])),
+            "reserved_sample": [
+                {"name": t.get("name"), "id": t.get("id")}
+                for t in reserved.get(worker_name, [])[:10]
+            ],
+        }
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Odds API Quota Monitoring
 # ---------------------------------------------------------------------------
