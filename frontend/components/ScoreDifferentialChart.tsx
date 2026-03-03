@@ -330,32 +330,26 @@ export default function ScoreDifferentialChart({
     // Both charts use categorical XAxis where each category gets equal pixel width.
     // Without filling gaps, this chart has fewer categories than OddsChart,
     // causing different pixel-per-minute spacing and visible x-axis misalignment.
-    // chartStartTime clips start later (if OddsChart starts later than our data);
-    // chartEndTime extends end further (if OddsChart ends later than our data).
+    // chartStartTime/chartEndTime are the EXACT rendered bounds from OddsChart.
     const allTimestamps = Array.from(dataMap.keys()).sort();
     if (allTimestamps.length >= 2) {
       let first = parseISO(allTimestamps[0]);
       let last = parseISO(allTimestamps[allTimestamps.length - 1]);
 
-      // Use chartStartTime to clip start LATER (if Win Prob chart starts later),
-      // but never extend backward. Both charts share the same history data and
-      // smartStartTime logic, so their starts align naturally. Extending backward
-      // creates empty chart space (the 24-hour gap bug).
+      // Use chartStartTime/chartEndTime from OddsChart's actual rendered domain.
+      // These are the EXACT first and last timestamps OddsChart displays,
+      // reported via the onRenderedDomain callback — no replication of logic needed.
       if (chartStartTime) {
         const startFromParent = parseISO(chartStartTime);
         startFromParent.setSeconds(0, 0);
-        if (startFromParent > first) {
-          first = startFromParent;
-        }
+        first = startFromParent;
       }
 
-      // Extend to match the Win Probability chart's end time if it goes further
+      // Match the Win Probability chart's end time exactly
       if (chartEndTime) {
         const endFromParent = parseISO(chartEndTime);
         endFromParent.setSeconds(0, 0);
-        if (endFromParent > last) {
-          last = endFromParent;
-        }
+        last = endFromParent;
       }
 
       const cursor = new Date(first.getTime());

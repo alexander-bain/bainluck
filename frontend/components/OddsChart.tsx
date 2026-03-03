@@ -80,6 +80,9 @@ interface OddsChartProps {
   awayTeamLogo?: string;
   /** Callback when user hovers/scrubs chart — null when mouse leaves */
   onActivePointChange?: (point: ActiveChartPoint | null) => void;
+  /** Callback reporting the chart's actual rendered time domain (first & last timestamps).
+   *  Used by ScoreDifferentialChart to match its x-axis exactly. */
+  onRenderedDomain?: (startISO: string, endISO: string) => void;
 }
 
 type TimeRange = "all" | "live";
@@ -152,6 +155,7 @@ export default function OddsChart({
   homeTeamLogo,
   awayTeamLogo,
   onActivePointChange,
+  onRenderedDomain,
 }: OddsChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
   const { track } = useAnalyticsContext();
@@ -547,6 +551,15 @@ export default function OddsChart({
 
     return sorted;
   }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, filteredAggregateLine, scoringPlays]);
+
+  // Report the chart's actual rendered time domain to parent so
+  // ScoreDifferentialChart can match its x-axis exactly.
+  useEffect(() => {
+    if (!onRenderedDomain || chartData.length === 0) return;
+    const first = chartData[0].timestamp;
+    const last = chartData[chartData.length - 1].timestamp;
+    onRenderedDomain(first, last);
+  }, [chartData, onRenderedDomain]);
 
   // Build scoring play annotations that map to chart data points
   const scoringPlayAnnotations = useMemo(() => {

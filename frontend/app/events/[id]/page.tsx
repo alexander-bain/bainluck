@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import useSWR from "swr";
@@ -295,6 +295,13 @@ export default function EventPage({ params }: EventPageProps) {
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
   const hasTrackedDetailView = useRef(false);
   const [activeChartPoint, setActiveChartPoint] = useState<ActiveChartPoint | null>(null);
+  const [oddsChartDomain, setOddsChartDomain] = useState<{ start: string; end: string } | null>(null);
+  const handleRenderedDomain = useCallback((start: string, end: string) => {
+    setOddsChartDomain((prev) => {
+      if (prev && prev.start === start && prev.end === end) return prev;
+      return { start, end };
+    });
+  }, []);
 
   // Analytics
   const { track, trackNavigationClick, recordEvent } = useAnalytics();
@@ -444,84 +451,9 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays]);
 
-  // Compute the Win Probability chart's actual displayed time bounds so the
-  // Score Differential chart can match its x-axis range.
-  // For completed/live games, applies the same smartStartTime filter that
-  // OddsChart uses internally, preventing raw pre-game data (24+ hours before
-  // the game) from pushing the start time way earlier than what's displayed.
-  const { oddsChartStartTime, oddsChartEndTime } = useMemo(() => {
-    if (!historyData) return { oddsChartStartTime: undefined, oddsChartEndTime: undefined };
-
-    // Replicate OddsChart's smartStartTime logic for filtering
-    const eventIsFinished = event?.status === "completed" || event?.status === "closed";
-    const eventIsLive = event?.status === "live";
-    const commenceTimeStr = event?.commence_time;
-    const hasPostStart = commenceTimeStr && historyData.history?.length
-      ? historyData.history.some((p: { timestamp: string }) => new Date(p.timestamp) >= new Date(commenceTimeStr))
-      : false;
-    const defaultIsLiveRange = (eventIsFinished || eventIsLive) && hasPostStart;
-
-    let filterCutoff: Date | null = null;
-    if (defaultIsLiveRange && commenceTimeStr && historyData.history?.length) {
-      const cutoff = new Date(commenceTimeStr);
-      const postStart = historyData.history.filter(
-        (p: { timestamp: string }) => new Date(p.timestamp) >= cutoff
-      );
-      if (postStart.length > 2) {
-        const baseline = postStart[0].home_probability;
-        const firstChangeIdx = postStart.findIndex(
-          (p: { home_probability: number }) => Math.abs(p.home_probability - baseline) > 0.02
-        );
-        if (firstChangeIdx > 0) {
-          filterCutoff = new Date(postStart[Math.max(0, firstChangeIdx - 1)].timestamp);
-        } else {
-          filterCutoff = cutoff;
-        }
-      } else {
-        filterCutoff = cutoff;
-      }
-    }
-
-    let minMs = Infinity;
-    let maxMs = 0;
-    const check = (ts: string) => {
-      const ms = new Date(ts).getTime();
-      if (!isNaN(ms)) {
-        if (filterCutoff && ms < filterCutoff.getTime()) return;
-        if (ms < minMs) minMs = ms;
-        if (ms > maxMs) maxMs = ms;
-      }
-    };
-
-    // history (odds snapshots)
-    if (historyData.history?.length) {
-      for (const p of historyData.history) check(p.timestamp);
-    }
-    // win probability history (Kalshi, Polymarket, ESPN, etc.)
-    if (historyData.win_prob_history) {
-      for (const pts of Object.values(historyData.win_prob_history)) {
-        for (const p of pts) check(p.timestamp);
-      }
-    }
-    // aggregate line
-    if (historyData.aggregate_line?.length) {
-      for (const p of historyData.aggregate_line) check(p.timestamp);
-    }
-    // ESPN history
-    if (historyData.espn_history?.length) {
-      for (const p of historyData.espn_history) check(p.timestamp);
-    }
-    // bookmaker history
-    if (historyData.bookmaker_history) {
-      for (const pts of Object.values(historyData.bookmaker_history)) {
-        for (const p of pts) check(p.timestamp);
-      }
-    }
-    return {
-      oddsChartStartTime: minMs < Infinity ? new Date(minMs).toISOString() : undefined,
-      oddsChartEndTime: maxMs > 0 ? new Date(maxMs).toISOString() : undefined,
-    };
-  }, [historyData, event?.status, event?.commence_time]);
+  // OddsChart reports its actual rendered time domain via onRenderedDomain callback,
+  // stored in oddsChartDomain state. Passed directly to ScoreDifferentialChart as
+  // chartStartTime/chartEndTime so both charts share the exact same x-axis range.
 
   // Compute the most recent chart point for GamePlayCard default display
   const lastChartPoint = useMemo<ActiveChartPoint | null>(() => {
@@ -1380,6 +1312,7 @@ export default function EventPage({ params }: EventPageProps) {
             homeTeamLogo={event.home_team_data?.logo_small || undefined}
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
             onActivePointChange={setActiveChartPoint}
+            onRenderedDomain={handleRenderedDomain}
           />
         )}
         {/* Game Play Card — shows score/period/play as user hovers the chart */}
@@ -1420,8 +1353,8 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamColor={event.away_team_data?.primary_color || undefined}
             homeTeamLogo={event.home_team_data?.logo_small || undefined}
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
-            chartStartTime={oddsChartStartTime}
-            chartEndTime={oddsChartEndTime}
+            chartStartTime={oddsChartDomain?.start}
+            chartEndTime={oddsChartDomain?.end}
           />
         </div>
       )}
