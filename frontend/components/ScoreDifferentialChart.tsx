@@ -320,6 +320,24 @@ export default function ScoreDifferentialChart({
       }
     }
 
+    // Fill missing minutes for uniform x-axis spacing.
+    // Both charts use categorical XAxis where each category gets equal pixel width.
+    // The Win Probability chart has more data sources (winProbHistory, aggregateLine,
+    // scoringPlays) creating ~120+ minute-level categories. Without filling gaps here,
+    // this chart has fewer categories, causing different pixel-per-minute spacing and
+    // visible x-axis misalignment.
+    const allTimestamps = Array.from(dataMap.keys()).sort();
+    if (allTimestamps.length >= 2) {
+      const first = parseISO(allTimestamps[0]);
+      const last = parseISO(allTimestamps[allTimestamps.length - 1]);
+      const cursor = new Date(first.getTime());
+      cursor.setMinutes(cursor.getMinutes() + 1);
+      while (cursor <= last) {
+        ensurePoint(cursor.toISOString());
+        cursor.setMinutes(cursor.getMinutes() + 1);
+      }
+    }
+
     return Array.from(dataMap.values()).sort(
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
