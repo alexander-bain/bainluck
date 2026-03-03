@@ -239,6 +239,7 @@ async def _enrich_taxonomy_llm_impl(
 
         # ── Process events in chunks ──
         chunk_size = 10
+        llm_calls = 0
         for i in range(0, len(events), chunk_size):
             chunk = events[i:i + chunk_size]
             for event in chunk:
@@ -250,6 +251,10 @@ async def _enrich_taxonomy_llm_impl(
                     if cached and not _cache_expired(cached, stage, now):
                         stats["events_skipped_cached"] += 1
                         continue
+
+                    # Enforce LLM call limit
+                    if llm_calls >= event_limit:
+                        break
 
                     # Assemble context
                     sport_key = event.sport.key if event.sport else ""
@@ -326,11 +331,15 @@ async def _enrich_taxonomy_llm_impl(
                         # LLM returned no applicable tags (not an error)
                         stats["events_no_tags"] += 1
 
+                    llm_calls += 1
+
                 except Exception:
                     logger.exception("Failed to enrich event %s", event.id)
                     stats["events_errors"] += 1
 
             await session.commit()
+            if llm_calls >= event_limit:
+                break
             await asyncio.sleep(0.1)  # Rate limit between chunks
 
         # ── Process futures markets ──
@@ -479,39 +488,34 @@ async def _fetch_enrichment_candidates(session, limit: int, now: datetime):
             candidates.append(event)
 
     # ── Backfill: historical tier 1-3 events not yet enriched ──
-    remaining = limit - len(candidates)
-    if remaining > 0:
-        # Find events that have no LLM tags in any enrichment namespace
-        # An event is "unenriched" if event_tags is null, empty, or lacks
-        # any tag from LLM namespaces
-        backfill_stmt = (
-            select(Event)
-            .options(selectinload(Event.sport))
-            .where(
-                Event.status.in_(["completed", "closed"]),
-                Event.commence_time < cutoff_24h,
-                # Only events with no LLM tags yet — check for absence of any
-                # LLM namespace prefix in event_tags
-                or_(
-                    Event.event_tags == None,  # noqa: E711
-                    Event.event_tags == [],
-                    # Has deterministic tags but none from LLM namespaces
-                    ~sa_cast(Event.event_tags, String).like('%stakes:%'),
-                ),
-            )
-            .order_by(Event.commence_time.desc())
-            .limit(remaining * 3)
+    # Always fetch backfill candidates regardless of recent window count,
+    # because many recent candidates will be cache-hits (skipped in processing).
+    # The processing loop handles the actual limit enforcement.
+    backfill_stmt = (
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(
+            Event.status.in_(["completed", "closed"]),
+            Event.commence_time < cutoff_24h,
+            # Only events with no LLM tags yet
+            or_(
+                Event.event_tags == None,  # noqa: E711
+                Event.event_tags == [],
+                # Has deterministic tags but none from LLM namespaces
+                ~sa_cast(Event.event_tags, String).like('%stakes:%'),
+            ),
         )
-        result = await session.execute(backfill_stmt)
-        backfill_events = result.scalars().all()
+        .order_by(Event.commence_time.desc())
+        .limit(limit * 3)
+    )
+    result = await session.execute(backfill_stmt)
+    backfill_events = result.scalars().all()
 
-        for event in backfill_events:
-            if len(candidates) >= limit:
-                break
-            sport_key = event.sport.key if event.sport else None
-            tier = get_league_tier(sport_key)
-            if tier <= 3 or event.llm_importance in ("championship", "playoff"):
-                candidates.append(event)
+    for event in backfill_events:
+        sport_key = event.sport.key if event.sport else None
+        tier = get_league_tier(sport_key)
+        if tier <= 3 or event.llm_importance in ("championship", "playoff"):
+            candidates.append(event)
 
     return candidates
 
