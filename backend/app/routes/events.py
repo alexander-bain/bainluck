@@ -442,7 +442,7 @@ async def faceted_search(
     import traceback as _tb
     from sqlalchemy import literal_column, text as sql_text
 
-    _VERSION = "v8"
+    _VERSION = "v9"
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
@@ -3768,3 +3768,117 @@ def _format_futures_for_search(market: FuturesMarket) -> dict:
         "outcome_count": len(market.outcomes),
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
     }
+
+
+# =============================================================================
+# Taxonomy debug — inline tag computation (no Celery)
+# =============================================================================
+
+@router.post("/taxonomy-backfill")
+async def taxonomy_backfill_inline(
+    limit: int = Query(10, ge=1, le=500, description="Max events to tag"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run deterministic taxonomy tagging inline (bypass Celery).
+
+    Tags events that have null/empty event_tags. Commits directly.
+    """
+    import traceback
+    from app.utils.aggregation import compute_aggregate_probability
+
+    try:
+        # Find untagged events
+        stmt = (
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                or_(
+                    Event.event_tags == None,  # noqa: E711
+                    Event.event_tags == [],
+                )
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        events = result.scalars().all()
+
+        tagged = 0
+        errors = []
+
+        for event in events:
+            try:
+                sport_key = event.sport.key if event.sport else ""
+
+                current_home_prob = compute_aggregate_probability(event)
+                opening_home_prob = (
+                    float(event.opening_home_probability)
+                    if event.opening_home_probability is not None
+                    else None
+                )
+                current_away_prob = (1.0 - current_home_prob) if current_home_prob else None
+                opening_away_prob = (1.0 - opening_home_prob) if opening_home_prob else None
+
+                highlight_result = None
+                if opening_home_prob is not None and current_home_prob is not None:
+                    highlight_result = compute_highlight(
+                        status=event.status,
+                        commence_time=event.commence_time,
+                        sport_key=sport_key,
+                        opening_home_prob=opening_home_prob,
+                        opening_away_prob=opening_away_prob,
+                        current_home_prob=current_home_prob,
+                        current_away_prob=current_away_prob,
+                    )
+
+                raw_ei = float(event.raw_ei) if event.raw_ei is not None else None
+
+                tags = compute_event_tags(
+                    sport_key=sport_key,
+                    status=event.status,
+                    commence_time=event.commence_time,
+                    llm_importance=event.llm_importance,
+                    llm_gender=event.llm_gender,
+                    llm_level=event.llm_level,
+                    llm_league=event.llm_league,
+                    raw_ei=raw_ei,
+                    broadcast_info=getattr(event, "broadcast_info", None),
+                    highlight_result=highlight_result,
+                )
+
+                event.event_tags = tags
+                tagged += 1
+
+                if tagged <= 3:
+                    errors.append({
+                        "event_id": event.id,
+                        "teams": f"{event.home_team_name} vs {event.away_team_name}",
+                        "sport": sport_key,
+                        "status": event.status,
+                        "tags": tags,
+                        "tag_count": len(tags),
+                    })
+
+            except Exception as e:
+                errors.append({
+                    "event_id": event.id,
+                    "error": str(e),
+                    "trace": traceback.format_exc().split("\n")[-4:],
+                })
+
+        if tagged > 0:
+            await db.commit()
+
+        return {
+            "status": "completed",
+            "events_found": len(events),
+            "events_tagged": tagged,
+            "samples": errors,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "trace": traceback.format_exc().split("\n")[-5:],
+        }
