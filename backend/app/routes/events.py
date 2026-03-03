@@ -452,8 +452,9 @@ async def faceted_search(
         )
     except Exception as e:
         import logging
+        import traceback
         logging.getLogger(__name__).error(f"Faceted search error: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Faceted search error: {str(e)}")
+        return {"error": str(e), "type": type(e).__name__, "traceback": traceback.format_exc().split("\n")[-4:]}
 
 
 async def _faceted_search_impl(
