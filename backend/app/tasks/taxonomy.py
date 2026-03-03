@@ -331,21 +331,14 @@ async def _enrich_taxonomy_llm_impl(
             await asyncio.sleep(0.1)  # Rate limit between chunks
 
         # ── Process futures markets ──
+        # Note: no cache for markets (event_id FK prevents storing market IDs).
+        # Markets are re-enriched each cycle but it's cheap (~30 markets, ~$0.01).
         markets = await _fetch_market_enrichment_candidates(session, market_limit, now)
-        market_ids = [m.id for m in markets]
-        market_cache_map = await _load_taxonomy_caches(
-            session, market_ids, "taxonomy_market", id_field="event_id",
-        )
 
         for i in range(0, len(markets), chunk_size):
             chunk = markets[i:i + chunk_size]
             for market in chunk:
                 try:
-                    cached = market_cache_map.get(market.id)
-                    if cached and not _cache_expired(cached, "open", now):
-                        stats["markets_skipped_cached"] += 1
-                        continue
-
                     # Top outcomes
                     top_outcomes = []
                     if market.outcomes:
@@ -378,10 +371,9 @@ async def _enrich_taxonomy_llm_impl(
                         existing = market.market_tags or []
                         market.market_tags = merge_llm_tags(existing, llm_tags)
 
-                        await _upsert_taxonomy_cache(
-                            session, market.id, "taxonomy_market",
-                            "open", llm_tags, now,
-                        )
+                        # Note: skip taxonomy cache for markets — LineMovementAnalysis
+                        # event_id FK references events.id, can't store market IDs.
+                        # Market tags are re-enriched cheaply (~$0.01/cycle).
                         stats["markets_enriched"] += 1
                     else:
                         stats["markets_errors"] += 1

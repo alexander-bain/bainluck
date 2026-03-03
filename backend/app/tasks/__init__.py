@@ -19,6 +19,7 @@ to conserve API calls.
 Estimated capacity: ~1.9 calls/second, ~166K calls/day.
 """
 
+import logging
 import os
 
 import sentry_sdk
@@ -28,6 +29,8 @@ from celery.schedules import crontab
 from app.tasks.base import run_async
 
 import time as _time
+
+logger = logging.getLogger(__name__)
 
 
 def _tracked_run(task_name: str, async_fn):
@@ -118,32 +121,17 @@ def sync_sports(self):
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.discover_events")
 def discover_events(self):
     """Discover events for ALL active sports, then update taxonomy tags."""
-    import sys
     from app.tasks.sports import _discover_events
     try:
         result = _tracked_run("discover_events", _discover_events())
         # Piggyback taxonomy update — worker concurrency=2 means dedicated
         # taxonomy tasks never get a slot. Run inline after discovery.
-        sys.stderr.write("[TAXONOMY] discover_events succeeded, starting piggyback\n")
-        sys.stderr.flush()
-        # Write a Redis marker so we can check from outside
-        try:
-            from app.tasks.redis_state import get_redis_client
-            r = get_redis_client()
-            r.set("bainluck:taxonomy_debug", f"reached_piggyback_at_{_time.time()}", ex=3600)
-        except Exception:
-            pass
         try:
             from app.tasks.taxonomy import _update_event_tags_impl
-            sys.stderr.write("[TAXONOMY] imported _update_event_tags_impl\n")
-            sys.stderr.flush()
             tag_result = _tracked_run("update_event_tags", _update_event_tags_impl(500))
             result["taxonomy"] = tag_result
-            sys.stderr.write(f"[TAXONOMY] update_event_tags done: {tag_result}\n")
-            sys.stderr.flush()
         except Exception as tag_exc:
-            sys.stderr.write(f"[TAXONOMY] update_event_tags FAILED: {tag_exc}\n")
-            sys.stderr.flush()
+            logger.warning("Taxonomy update failed: %s", tag_exc)
             result["taxonomy_error"] = str(tag_exc)[:200]
         # LLM enrichment — gated to run at most every 10 min
         try:
@@ -152,20 +140,15 @@ def discover_events(self):
             lock_key = "bainluck:llm_enrich_gate"
             if r.set(lock_key, "1", nx=True, ex=600):  # 10 min TTL
                 from app.tasks.taxonomy import _enrich_taxonomy_llm_impl
-                sys.stderr.write("[TAXONOMY] LLM enrichment gate acquired\n")
-                sys.stderr.flush()
                 llm_result = _tracked_run(
                     "enrich_taxonomy_llm",
                     _enrich_taxonomy_llm_impl(event_limit=50, market_limit=30),
                 )
                 result["llm_enrichment"] = llm_result
-                sys.stderr.write(f"[TAXONOMY] LLM enrichment done: {llm_result}\n")
-                sys.stderr.flush()
             else:
                 result["llm_enrichment"] = "skipped (gate)"
         except Exception as llm_exc:
-            sys.stderr.write(f"[TAXONOMY] LLM enrichment FAILED: {llm_exc}\n")
-            sys.stderr.flush()
+            logger.warning("LLM enrichment failed: %s", llm_exc)
             result["llm_enrichment_error"] = str(llm_exc)[:200]
         return result
     except Exception as exc:
