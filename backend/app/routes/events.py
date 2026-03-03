@@ -428,7 +428,7 @@ async def get_ei_rankings(
 async def faceted_search(
     tags: Optional[str] = Query(None, description="JSON array of tags"),
     sport: Optional[str] = Query(None, description="Sport tag value"),
-    status: Optional[str] = Query(None, description="Status tag value"),
+    event_status: Optional[str] = Query(None, alias="status", description="Status tag value"),
     stakes: Optional[str] = Query(None, description="Stakes tag value"),
     narrative: Optional[str] = Query(None, description="Narrative tag value"),
     audience: Optional[str] = Query(None, description="Audience tag value"),
@@ -442,25 +442,6 @@ async def faceted_search(
     Supports both raw tag arrays and convenience named parameters.
     Returns matching events plus facet counts grouped by namespace.
     """
-    import json as _json
-    import traceback
-
-    try:
-        return await _faceted_search_impl(
-            tags, sport, status, stakes, narrative, audience,
-            days, page, per_page, db,
-        )
-    except Exception as e:
-        import logging
-        import traceback
-        logging.getLogger(__name__).error(f"Faceted search error: {e}\n{traceback.format_exc()}")
-        return {"error": str(e), "type": type(e).__name__, "traceback": traceback.format_exc().split("\n")[-4:]}
-
-
-async def _faceted_search_impl(
-    tags, sport, status, stakes, narrative, audience,
-    days, page, per_page, db,
-):
     import json as _json
 
     now = datetime.now(timezone.utc)
@@ -481,7 +462,7 @@ async def _faceted_search_impl(
     # Add convenience params
     convenience = {
         "sport": sport,
-        "status": status,
+        "status": event_status,
         "stakes": stakes,
         "narrative": narrative,
         "audience": audience,
@@ -490,9 +471,7 @@ async def _faceted_search_impl(
         if val:
             tag_filter.append(f"{ns}:{val}")
 
-    return {"debug_v2": True, "tag_filter": tag_filter}
-
-    # Build filter conditions (shared between count and data queries)
+    # Build filter conditions
     conditions = [Event.commence_time >= cutoff]
 
     # Apply GIN containment filter
@@ -503,12 +482,10 @@ async def _faceted_search_impl(
                 Event.event_tags.op("@>")(cast(_json.dumps(valid_tags), JSONB))
             )
 
-    # Count query (no ORM loader options — those break subquery)
+    # Count query
     count_query = select(func.count(Event.id)).where(*conditions)
     total_result = await db.execute(count_query)
     total_count = total_result.scalar() or 0
-
-    return {"debug": "count_ok", "total": total_count, "filters": tag_filter, "valid_tags": [t for t in tag_filter if validate_tag(t)]}
 
     # Data query with eager loading and ordering
     offset_val = (page - 1) * per_page
@@ -547,20 +524,19 @@ async def _faceted_search_impl(
             evt["event_tags"] = event.event_tags
         formatted.append(evt)
 
-    # Compute facet counts via jsonb_array_elements_text
+    # Compute facet counts
     from sqlalchemy import text as sql_text
 
     facet_query_sql = """
         SELECT
             split_part(tag, ':', 1) AS namespace,
             tag,
-            COUNT(*) AS count
+            COUNT(*) AS cnt
         FROM events, jsonb_array_elements_text(event_tags) AS tag
         WHERE commence_time >= :cutoff
     """
     facet_params: dict = {"cutoff": cutoff}
 
-    # Apply same tag filter to facets
     if tag_filter:
         valid_tags = [t for t in tag_filter if validate_tag(t)]
         if valid_tags:
@@ -569,7 +545,7 @@ async def _faceted_search_impl(
 
     facet_query_sql += """
         GROUP BY namespace, tag
-        ORDER BY namespace, count DESC
+        ORDER BY namespace, cnt DESC
     """
 
     facet_result = await db.execute(sql_text(facet_query_sql), facet_params)
@@ -578,10 +554,10 @@ async def _faceted_search_impl(
     # Group facets by namespace
     facets: dict[str, list[dict]] = {}
     for row in facet_rows:
-        ns = row.namespace
+        ns = row[0]
         if ns not in facets:
             facets[ns] = []
-        facets[ns].append({"tag": row.tag, "count": row.count})
+        facets[ns].append({"tag": row[1], "count": row[2]})
 
     return {
         "total": total_count,
