@@ -478,8 +478,11 @@ async def faceted_search(
     if tag_filter:
         valid_tags = [t for t in tag_filter if validate_tag(t)]
         if valid_tags:
+            from sqlalchemy import text as sql_text, literal_column
             conditions.append(
-                Event.event_tags.op("@>")(cast(_json.dumps(valid_tags), JSONB))
+                sql_text("event_tags @> CAST(:_tags AS jsonb)").bindparams(
+                    _tags=_json.dumps(valid_tags)
+                )
             )
 
     # Count query
