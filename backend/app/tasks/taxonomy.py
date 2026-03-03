@@ -420,7 +420,17 @@ def _cache_expired(cached: dict, current_stage: str, now: datetime) -> bool:
 
 
 async def _fetch_enrichment_candidates(session, limit: int, now: datetime):
-    """Fetch events that need LLM enrichment, in priority order."""
+    """Fetch events that need LLM enrichment, in priority order.
+
+    Only enriches events users will actually see:
+    - Live events (always — regardless of tier)
+    - Tier 1-3 league events (scheduled within 24h or recently completed)
+    - Events with importance flags (playoff/championship) regardless of tier
+    Skips tier 4 (minor leagues, youth, obscure international) to avoid
+    wasting LLM calls on events where no tags apply.
+    """
+    from app.utils.highlights import get_league_tier
+
     cutoff_24h = now - timedelta(hours=24)
 
     stmt = (
@@ -428,15 +438,15 @@ async def _fetch_enrichment_candidates(session, limit: int, now: datetime):
         .options(selectinload(Event.sport))
         .where(
             or_(
-                # Live events
+                # Live events — always enrich
                 Event.status == "live",
-                # Scheduled events starting within 24h
+                # Scheduled events starting within 24h (tier 1-3 or has importance)
                 and_(
                     Event.status == "scheduled",
                     Event.commence_time <= now + timedelta(hours=24),
                     Event.commence_time >= now,
                 ),
-                # Recently completed
+                # Recently completed (tier 1-3 or has importance)
                 and_(
                     Event.status.in_(["completed", "closed"]),
                     Event.commence_time >= cutoff_24h,
@@ -448,8 +458,26 @@ async def _fetch_enrichment_candidates(session, limit: int, now: datetime):
             Event.status.desc(),
             Event.commence_time.asc(),
         )
-        .limit(limit)
+        .limit(limit * 3)  # Over-fetch to allow filtering
     )
+    result = await session.execute(stmt)
+    all_events = result.scalars().all()
+
+    # Filter: only tier 1-3 or events with importance flags or live
+    candidates = []
+    for event in all_events:
+        if len(candidates) >= limit:
+            break
+        sport_key = event.sport.key if event.sport else None
+        tier = get_league_tier(sport_key)
+        if (
+            event.status == "live"
+            or tier <= 3
+            or event.llm_importance in ("championship", "playoff")
+        ):
+            candidates.append(event)
+
+    return candidates
     result = await session.execute(stmt)
     return result.scalars().all()
 
