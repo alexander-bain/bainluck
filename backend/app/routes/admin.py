@@ -2208,6 +2208,18 @@ async def celery_inspect():
     return result
 
 
+@router.get("/taxonomy/debug-redis")
+async def taxonomy_debug_redis():
+    """Check Redis markers set by taxonomy piggybacking code."""
+    import redis
+    import os
+    r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    return {
+        "taxonomy_debug": r.get("bainluck:taxonomy_debug"),
+        "llm_enrich_gate": r.get("bainluck:llm_enrich_gate"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Odds API Quota Monitoring
 # ---------------------------------------------------------------------------
