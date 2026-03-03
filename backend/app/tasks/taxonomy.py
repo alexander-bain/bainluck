@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, String, cast as sa_cast
 from sqlalchemy.orm import selectinload
 
 from app.tasks.base import get_task_session
@@ -428,25 +428,27 @@ async def _fetch_enrichment_candidates(session, limit: int, now: datetime):
     - Events with importance flags (playoff/championship) regardless of tier
     Skips tier 4 (minor leagues, youth, obscure international) to avoid
     wasting LLM calls on events where no tags apply.
+
+    When the recent window doesn't fill the limit, backfills from historical
+    tier 1-3 completed events (newest first) that haven't been enriched yet.
     """
     from app.utils.highlights import get_league_tier
+    from app.utils.event_taxonomy import LLM_ENRICHMENT_NAMESPACES
 
     cutoff_24h = now - timedelta(hours=24)
 
+    # ── Primary: recent events (live, scheduled 24h, completed 24h) ──
     stmt = (
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             or_(
-                # Live events — always enrich
                 Event.status == "live",
-                # Scheduled events starting within 24h (tier 1-3 or has importance)
                 and_(
                     Event.status == "scheduled",
                     Event.commence_time <= now + timedelta(hours=24),
                     Event.commence_time >= now,
                 ),
-                # Recently completed (tier 1-3 or has importance)
                 and_(
                     Event.status.in_(["completed", "closed"]),
                     Event.commence_time >= cutoff_24h,
@@ -454,11 +456,10 @@ async def _fetch_enrichment_candidates(session, limit: int, now: datetime):
             )
         )
         .order_by(
-            # Live first, then upcoming, then completed
             Event.status.desc(),
             Event.commence_time.asc(),
         )
-        .limit(limit * 3)  # Over-fetch to allow filtering
+        .limit(limit * 3)
     )
     result = await session.execute(stmt)
     all_events = result.scalars().all()
@@ -477,13 +478,52 @@ async def _fetch_enrichment_candidates(session, limit: int, now: datetime):
         ):
             candidates.append(event)
 
+    # ── Backfill: historical tier 1-3 events not yet enriched ──
+    remaining = limit - len(candidates)
+    if remaining > 0:
+        # Find events that have no LLM tags in any enrichment namespace
+        # An event is "unenriched" if event_tags is null, empty, or lacks
+        # any tag from LLM namespaces
+        backfill_stmt = (
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.status.in_(["completed", "closed"]),
+                Event.commence_time < cutoff_24h,
+                # Only events with no LLM tags yet — check for absence of any
+                # LLM namespace prefix in event_tags
+                or_(
+                    Event.event_tags == None,  # noqa: E711
+                    Event.event_tags == [],
+                    # Has deterministic tags but none from LLM namespaces
+                    ~sa_cast(Event.event_tags, String).like('%stakes:%'),
+                ),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(remaining * 3)
+        )
+        result = await session.execute(backfill_stmt)
+        backfill_events = result.scalars().all()
+
+        for event in backfill_events:
+            if len(candidates) >= limit:
+                break
+            sport_key = event.sport.key if event.sport else None
+            tier = get_league_tier(sport_key)
+            if tier <= 3 or event.llm_importance in ("championship", "playoff"):
+                candidates.append(event)
+
     return candidates
-    result = await session.execute(stmt)
-    return result.scalars().all()
 
 
 async def _fetch_market_enrichment_candidates(session, limit: int, now: datetime):
-    """Fetch open futures markets needing LLM enrichment."""
+    """Fetch futures markets needing LLM enrichment.
+
+    Prioritizes:
+    1. Open markets without LLM tags (tier 1-3 or null tier)
+    2. Resolved markets without LLM tags (backfill, newest first)
+    """
+    # Primary: open markets without LLM tags
     stmt = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -493,12 +533,44 @@ async def _fetch_market_enrichment_candidates(session, limit: int, now: datetime
                 FuturesMarket.market_tier <= 3,
                 FuturesMarket.market_tier == None,  # noqa: E711
             ),
+            # Skip already-enriched markets
+            or_(
+                FuturesMarket.market_tags == None,  # noqa: E711
+                FuturesMarket.market_tags == [],
+                ~sa_cast(FuturesMarket.market_tags, String).like('%stakes:%'),
+            ),
         )
         .order_by(FuturesMarket.updated_at.desc())
         .limit(limit)
     )
     result = await session.execute(stmt)
-    return result.scalars().all()
+    candidates = list(result.scalars().all())
+
+    # Backfill: resolved markets without LLM tags (newest first)
+    remaining = limit - len(candidates)
+    if remaining > 0:
+        backfill_stmt = (
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(
+                FuturesMarket.status != "open",
+                or_(
+                    FuturesMarket.market_tier <= 3,
+                    FuturesMarket.market_tier == None,  # noqa: E711
+                ),
+                or_(
+                    FuturesMarket.market_tags == None,  # noqa: E711
+                    FuturesMarket.market_tags == [],
+                    ~sa_cast(FuturesMarket.market_tags, String).like('%stakes:%'),
+                ),
+            )
+            .order_by(FuturesMarket.updated_at.desc())
+            .limit(remaining)
+        )
+        result = await session.execute(backfill_stmt)
+        candidates.extend(result.scalars().all())
+
+    return candidates
 
 
 async def _load_taxonomy_caches(

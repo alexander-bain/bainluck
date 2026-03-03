@@ -1621,7 +1621,10 @@ def enrich_event_taxonomy(
     from app.utils.event_taxonomy import ALLOWED_TAGS, LLM_ENRICHMENT_NAMESPACES
 
     # Build context block
+    from datetime import datetime as _dt
+    month_name = _dt.now().strftime("%B %Y")
     ctx_lines = [
+        f"Date: {month_name}",
         f"Sport: {sport_key}",
         f"Status: {status}",
         f"Home: {home_team}",
@@ -1665,11 +1668,26 @@ def enrich_event_taxonomy(
         "GUIDANCE:\n"
         "- EVERY game has a competitive_structure (usually head_to_head).\n"
         "- EVERY game has an audience (national_interest for major leagues, "
-        "local_interest for most others).\n"
-        "- stakes: regular season games with playoff implications → playoff_race. "
-        "Games where a large underdog could win → look at odds.\n"
-        "- narrative: big favorites vs underdogs → david_vs_goliath. "
-        "Close odds with two strong teams → consider rivalry or rematch.\n"
+        "local_interest for most others).\n\n"
+        "STAKES (apply broadly — most games have stakes):\n"
+        "- playoff_race: ANY regular season game in a major league during the season "
+        "(NBA, NFL, MLB, NHL, EPL, La Liga, etc.) — these all matter for standings.\n"
+        "- seeding: games where both teams are strong (close odds, good records) — "
+        "seeding implications even if both will make playoffs.\n"
+        "- must_win: team is a big underdog (30% or less) but the game matters.\n"
+        "- streak: if a team has a notable winning or losing streak in their record.\n"
+        "- elimination: tournament knockout rounds, March Madness, cup matches.\n"
+        "- clinch: late-season games where a win clinches something.\n"
+        "- title_defense: championship/finals games or defending champion playing.\n"
+        "- meaningless: ONLY for preseason/exhibition games.\n"
+        "- record_chase: player/team pursuing a milestone or record.\n\n"
+        "NARRATIVE (look for story angles):\n"
+        "- david_vs_goliath: one team is a clear underdog (<35% probability).\n"
+        "- rivalry: teams from same city, division, or conference with history.\n"
+        "- upset_alert: underdog is winning or odds have shifted toward them.\n"
+        "- winning_streak/losing_streak: team's record suggests a streak.\n"
+        "- rematch: if importance is 'playoff' or 'championship', it's likely a rematch "
+        "of a recent game.\n"
         "Return an empty list for a dimension ONLY if truly nothing fits.\n\n"
         f"EVENT CONTEXT:\n{context}\n\n"
         f"ALLOWED TAG VALUES:\n{allowed_block}\n\n"
