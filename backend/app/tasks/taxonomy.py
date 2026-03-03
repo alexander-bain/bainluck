@@ -218,9 +218,11 @@ async def _enrich_taxonomy_llm_impl(
     stats = {
         "events_enriched": 0,
         "events_skipped_cached": 0,
+        "events_no_tags": 0,
         "events_errors": 0,
         "markets_enriched": 0,
         "markets_skipped_cached": 0,
+        "markets_no_tags": 0,
         "markets_errors": 0,
     }
 
@@ -321,7 +323,8 @@ async def _enrich_taxonomy_llm_impl(
                         )
                         stats["events_enriched"] += 1
                     else:
-                        stats["events_errors"] += 1
+                        # LLM returned no applicable tags (not an error)
+                        stats["events_no_tags"] += 1
 
                 except Exception:
                     logger.exception("Failed to enrich event %s", event.id)
@@ -376,7 +379,8 @@ async def _enrich_taxonomy_llm_impl(
                         # Market tags are re-enriched cheaply (~$0.01/cycle).
                         stats["markets_enriched"] += 1
                     else:
-                        stats["markets_errors"] += 1
+                        # LLM returned no applicable tags (not an error)
+                        stats["markets_no_tags"] += 1
 
                 except Exception:
                     logger.exception("Failed to enrich market %s", market.id)

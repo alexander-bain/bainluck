@@ -1737,9 +1737,17 @@ def enrich_market_taxonomy(
     allowed_block = "\n".join(ns_desc)
 
     prompt = (
-        "You are a sports/prediction market analyst. Given the market context below, "
-        "select the most relevant tags from each dimension. Only select tags that clearly "
-        "apply — return an empty list if nothing fits. Use ONLY the allowed values.\n\n"
+        "You are a sports/prediction market analyst. Given the futures market context below, "
+        "select the most relevant tags from each dimension. Use ONLY the allowed values.\n\n"
+        "GUIDANCE for futures markets:\n"
+        "- Championship/title markets → stakes: title_defense; audience: national_interest\n"
+        "- Award markets (MVP, etc.) → narrative: legacy_moment; audience: national_interest\n"
+        "- Win totals / season props → stakes: playoff_race or seeding\n"
+        "- Conference/division → stakes: seeding\n"
+        "- Major league markets → audience: national_interest\n"
+        "- Minor league / niche → audience: hardcore_only\n"
+        "- Political/entertainment markets → audience: crossover_appeal\n"
+        "Return an empty list for a dimension ONLY if truly nothing fits.\n\n"
         f"MARKET CONTEXT:\n{context}\n\n"
         f"ALLOWED TAG VALUES:\n{allowed_block}\n\n"
         "Return a JSON object with keys: stakes, narrative, audience. "
