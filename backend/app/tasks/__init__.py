@@ -123,13 +123,15 @@ def discover_events(self):
         result = _tracked_run("discover_events", _discover_events())
         # Piggyback taxonomy update — worker concurrency=2 means dedicated
         # taxonomy tasks never get a slot. Run inline after discovery.
+        print("[TAXONOMY] discover_events succeeded, starting taxonomy piggyback")
         try:
             from app.tasks.taxonomy import _update_event_tags_impl
+            print("[TAXONOMY] imported _update_event_tags_impl, calling _tracked_run")
             tag_result = _tracked_run("update_event_tags", _update_event_tags_impl(500))
             result["taxonomy"] = tag_result
+            print(f"[TAXONOMY] update_event_tags completed: {tag_result}")
         except Exception as tag_exc:
-            import logging
-            logging.getLogger(__name__).warning("Taxonomy update failed: %s", tag_exc)
+            print(f"[TAXONOMY] update_event_tags FAILED: {tag_exc}")
             result["taxonomy_error"] = str(tag_exc)[:200]
         # LLM enrichment — gated to run at most every 10 min
         try:
@@ -138,16 +140,18 @@ def discover_events(self):
             lock_key = "bainluck:llm_enrich_gate"
             if r.set(lock_key, "1", nx=True, ex=600):  # 10 min TTL
                 from app.tasks.taxonomy import _enrich_taxonomy_llm_impl
+                print("[TAXONOMY] LLM enrichment gate acquired, starting")
                 llm_result = _tracked_run(
                     "enrich_taxonomy_llm",
                     _enrich_taxonomy_llm_impl(event_limit=50, market_limit=30),
                 )
                 result["llm_enrichment"] = llm_result
+                print(f"[TAXONOMY] LLM enrichment completed: {llm_result}")
             else:
                 result["llm_enrichment"] = "skipped (gate)"
+                print("[TAXONOMY] LLM enrichment skipped (gate)")
         except Exception as llm_exc:
-            import logging
-            logging.getLogger(__name__).warning("LLM enrichment failed: %s", llm_exc)
+            print(f"[TAXONOMY] LLM enrichment FAILED: {llm_exc}")
             result["llm_enrichment_error"] = str(llm_exc)[:200]
         return result
     except Exception as exc:
