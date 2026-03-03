@@ -565,12 +565,23 @@ def compute_highlight(
                 opening_home_prob is not None
                 and abs(current_home_prob - opening_home_prob) >= MIN_PREGAME_MOVEMENT
             )
+            # When opening odds exactly match current odds, the event was
+            # just discovered and we have no trend data yet.  Give benefit
+            # of the doubt — a close game is interesting until proven
+            # otherwise.  Without this, newly-discovered events (e.g.
+            # after duplicate cleanup) get no close_matchup bonus and
+            # fall below the feed threshold even for marquee matchups.
+            no_trend_data = (
+                opening_home_prob is not None
+                and abs(current_home_prob - opening_home_prob) < 0.005
+            )
             closeness_is_interesting = (
                 not is_pre_game  # Live/finished: closeness always matters
                 or flags.is_starting_soon  # Starting soon: closeness is action-relevant
                 or not opening_was_close  # Line tightened from lopsided to close
                 or has_movement  # Significant movement even if both close
                 or opening_home_prob is None  # No opening data, give benefit of doubt
+                or no_trend_data  # Just discovered — no movement data yet
             )
 
             if closeness_is_interesting:
