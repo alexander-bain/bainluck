@@ -815,6 +815,7 @@ export interface GolfGolfer {
 export interface GolfTournament {
   key: string;
   name: string;
+  slug?: string;
   is_major: boolean;
   is_tour_event?: boolean;
   is_womens?: boolean;
@@ -823,6 +824,7 @@ export interface GolfTournament {
   start_date?: string | null;
   end_date?: string | null;
   venue?: string | null;
+  location?: string | null;
   schedule_status?: string | null;
   market_ids: number[];
   market_names?: string[];
@@ -847,6 +849,7 @@ export interface GolfUpcomingEvent {
 export interface GolfCurrentEvent {
   key: string;
   name: string;
+  slug?: string;
   resolution_date: string | null;
   start_date: string | null;
   end_date: string | null;
@@ -879,6 +882,38 @@ export interface GolfScheduleEvent {
 }
 
 // ============================================================================
+// Golf Tournament Detail types
+// ============================================================================
+
+export interface GolfMarketGroup {
+  type: string;
+  label: string;
+  market_ids: number[];
+  market_names?: string[];
+}
+
+export interface GolfTournamentDetailResponse {
+  tournament: {
+    name: string;
+    slug: string;
+    key: string;
+    is_major: boolean;
+    is_womens: boolean;
+    start_date: string | null;
+    end_date: string | null;
+    venue: string | null;
+    location: string | null;
+    schedule_status: string | null;
+    commence_time: string | null;
+    resolution_date: string | null;
+  };
+  golfers: GolfGolfer[];
+  markets: GolfMarketGroup[];
+  evolution_market_id: number | null;
+  biggest_movers: GolfMover[];
+}
+
+// ============================================================================
 // Tournament Progression types
 // ============================================================================
 
@@ -904,6 +939,7 @@ export interface ProgressionParticipant {
 
 export interface ProgressionResponse {
   sport: string;
+  tournament_name: string | null;
   stages: ProgressionStage[];
   participants: ProgressionParticipant[];
 }

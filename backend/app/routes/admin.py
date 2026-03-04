@@ -5269,4 +5269,82 @@ async def datagolf_status(
     }
 
 
+@router.get("/schedule/accuracy")
+async def schedule_accuracy(
+    secret: str = Query("", description="Admin secret"),
+    days: int = Query(30, description="Look back period in days"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-sport breakdown of commence_time_source to audit date accuracy."""
+    from sqlalchemy import func as sqlfunc, text
+    from app.models import Sport
 
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    # Get per-sport breakdown of commence_time_source
+    result = await db.execute(
+        select(
+            Sport.key,
+            Event.commence_time_source,
+            sqlfunc.count(Event.id).label("count"),
+        )
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(Event.commence_time >= cutoff)
+        .group_by(Sport.key, Event.commence_time_source)
+        .order_by(Sport.key, Event.commence_time_source)
+    )
+    rows = result.all()
+
+    # Aggregate by sport
+    sports: dict[str, dict] = {}
+    for row in rows:
+        sport_key = row.key
+        source = row.commence_time_source or "null"
+        count = row.count
+
+        if sport_key not in sports:
+            sports[sport_key] = {"total": 0, "sources": {}}
+        sports[sport_key]["total"] += count
+        sports[sport_key]["sources"][source] = count
+
+    # Calculate reliability ratings
+    for sport_key, data in sports.items():
+        total = data["total"]
+        espn_count = data["sources"].get("espn", 0)
+        statpal_count = data["sources"].get("statpal", 0)
+        null_count = data["sources"].get("null", 0)
+        corrected = espn_count + statpal_count
+        corrected_pct = round(corrected / total * 100, 1) if total > 0 else 0
+        null_pct = round(null_count / total * 100, 1) if total > 0 else 0
+
+        if corrected_pct >= 80:
+            rating = "HIGH"
+        elif corrected_pct >= 40:
+            rating = "MEDIUM"
+        else:
+            rating = "LOW"
+
+        data["corrected_pct"] = corrected_pct
+        data["uncorrected_pct"] = null_pct
+        data["reliability"] = rating
+
+    # Sort by reliability (LOW first to surface problems)
+    reliability_order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+    sorted_sports = dict(
+        sorted(
+            sports.items(),
+            key=lambda item: (reliability_order.get(item[1].get("reliability", "LOW"), 3), item[0])
+        )
+    )
+
+    return {
+        "period_days": days,
+        "sports": sorted_sports,
+        "summary": {
+            "total_sports": len(sorted_sports),
+            "high_reliability": sum(1 for s in sorted_sports.values() if s.get("reliability") == "HIGH"),
+            "medium_reliability": sum(1 for s in sorted_sports.values() if s.get("reliability") == "MEDIUM"),
+            "low_reliability": sum(1 for s in sorted_sports.values() if s.get("reliability") == "LOW"),
+        },
+    }

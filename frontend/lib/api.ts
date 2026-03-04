@@ -27,6 +27,7 @@ import type {
   TeamFuturesResponse,
   SharedTeamFuturesResponse,
   GolfResponse,
+  GolfTournamentDetailResponse,
   ProgressionResponse,
 } from "./types";
 
@@ -762,6 +763,13 @@ export async function fetchOscarsData(): Promise<OscarsResponse> {
  */
 export async function fetchGolfData(): Promise<GolfResponse> {
   return apiFetch<GolfResponse>("/api/golf");
+}
+
+/**
+ * Fetch Golf tournament detail — markets grouped by type for a single tournament
+ */
+export async function fetchGolfTournament(slug: string): Promise<GolfTournamentDetailResponse> {
+  return apiFetch<GolfTournamentDetailResponse>(`/api/golf/tournaments/${encodeURIComponent(slug)}`);
 }
 
 // ============================================================================

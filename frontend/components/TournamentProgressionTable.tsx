@@ -145,6 +145,12 @@ export default function TournamentProgressionTable({
 
   return (
     <div className={className}>
+      {/* Tournament name header */}
+      {data.tournament_name && (
+        <h3 className="text-base font-semibold text-text-primary mb-1">
+          {data.tournament_name}
+        </h3>
+      )}
       {/* Stage coverage indicator */}
       {sportStageCount > stagesAvailable && (
         <p className="text-xs text-text-secondary mb-2">

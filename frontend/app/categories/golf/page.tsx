@@ -342,7 +342,7 @@ export default function GolfPage() {
                   <span>📊</span>
                   Tournament Progression
                 </h2>
-                <TournamentProgressionTable data={progressionData} />
+                <TournamentProgressionTable data={progressionData} pageType="golf" />
               </section>
             )}
 
@@ -1058,11 +1058,12 @@ function TournamentCard({
   const emoji = TOURNAMENT_EMOJI[tournament.key] || "\u26F3";
   const venue = TOURNAMENT_VENUES[tournament.key];
   const topGolfers = tournament.golfers.slice(0, 8);
+  const slug = tournament.slug || tournament.key.replace(/_/g, "-");
 
   return (
-    <div
-      onClick={onClick}
-      className="group bg-surface-card rounded-xl border border-l-4 border-surface-border border-l-[#006747] p-4 hover:shadow-card-hover hover:border-[#006747]/30 transition-all cursor-pointer h-full"
+    <Link
+      href={`/categories/golf/tournaments/${slug}`}
+      className="group bg-surface-card rounded-xl border border-l-4 border-surface-border border-l-[#006747] p-4 hover:shadow-card-hover hover:border-[#006747]/30 transition-all cursor-pointer h-full block"
     >
       <div className="flex items-center gap-2 mb-1">
         <span className="text-lg">{emoji}</span>
@@ -1092,7 +1093,7 @@ function TournamentCard({
           View all {tournament.golfers.length} golfers &rarr;
         </p>
       )}
-    </div>
+    </Link>
   );
 }
 
@@ -1110,6 +1111,7 @@ function ExpandableTournamentRow({
   const [expanded, setExpanded] = useState(false);
   const emoji = TOURNAMENT_EMOJI[tournament.key] || "\u26F3";
   const leader = tournament.golfers[0];
+  const slug = tournament.slug || tournament.key.replace(/_/g, "-");
 
   let timingLabel = "";
   if (tournament.start_date && tournament.end_date) {
@@ -1158,9 +1160,13 @@ function ExpandableTournamentRow({
       >
         <span>{emoji}</span>
         <div className="flex-1 min-w-0">
-          <span className="text-sm text-text-primary font-medium">
+          <Link
+            href={`/categories/golf/tournaments/${slug}`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-sm text-text-primary font-medium hover:text-[#006747] hover:underline"
+          >
             {tournament.name}
-          </span>
+          </Link>
           {(tournament.venue || timingLabel) && (
             <span className="text-xs text-text-muted ml-2">
               {tournament.venue && tournament.venue}
@@ -1198,15 +1204,13 @@ function ExpandableTournamentRow({
             />
           ))}
           {tournament.golfers.length > 15 && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClickFull();
-              }}
-              className="text-xs text-[#006747] hover:underline mt-1"
+            <Link
+              href={`/categories/golf/tournaments/${slug}`}
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs text-[#006747] hover:underline mt-1 inline-block"
             >
               View all {tournament.golfers.length} golfers &rarr;
-            </button>
+            </Link>
           )}
         </div>
       )}

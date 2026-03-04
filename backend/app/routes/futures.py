@@ -18,6 +18,9 @@ from app.utils.tournament_stages import (
     get_stages_for_sport,
     classify_market_stage,
     get_datagolf_prefix,
+    extract_tournament_name,
+    tournament_names_match,
+    is_game_level_market,
 )
 
 router = APIRouter()
@@ -964,6 +967,7 @@ async def get_progression(
 
     # --- Discover sibling markets ---
     sibling_markets: list[FuturesMarket] = [market]
+    source_tournament_name = extract_tournament_name(market.name)
 
     # Method 1: DataGolf prefix matching
     dg_prefix = get_datagolf_prefix(market.external_id) if market.external_id else None
@@ -1000,9 +1004,9 @@ async def get_progression(
             )
             sibling_markets.extend(ck_result.scalars().unique().all())
 
-    # Method 3: Sport + season name scan (fallback)
-    if len(sibling_markets) < 2:
-        # Query same sport category, similar resolution window
+    # Method 3: Tournament name matching (fallback)
+    # Only include markets whose extracted tournament name matches the source market
+    if len(sibling_markets) < 2 and source_tournament_name:
         filters = [
             FuturesMarket.llm_sport_category == sport_cat,
             FuturesMarket.id != market_id,
@@ -1022,9 +1026,16 @@ async def get_progression(
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
             .where(*filters)
-            .limit(50)
+            .limit(100)
         )
-        sibling_markets.extend(scan_result.scalars().unique().all())
+        candidates = scan_result.scalars().unique().all()
+        # Filter: must be same tournament AND not a game-level market
+        for candidate in candidates:
+            if is_game_level_market(candidate.name):
+                continue
+            candidate_name = extract_tournament_name(candidate.name)
+            if tournament_names_match(source_tournament_name, candidate_name):
+                sibling_markets.append(candidate)
 
     # Deduplicate by market ID
     seen_ids: set[int] = set()
@@ -1136,6 +1147,7 @@ async def get_progression(
 
     return {
         "sport": sport_cat,
+        "tournament_name": source_tournament_name,
         "stages": stages_response,
         "participants": sorted_participants,
     }

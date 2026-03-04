@@ -61,6 +61,20 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "baseball_mlb_preseason": "baseball/mlb",
     "soccer_usa_mls": "soccer/usa.1",
     "soccer_epl": "soccer/eng.1",
+    # New — match SPORT_LEAGUE_MAP coverage for live sync correction
+    "basketball_wnba": "basketball/wnba",
+    "americanfootball_cfl": "football/cfl",
+    "soccer_uefa_champs_league": "soccer/uefa.champions",
+    "golf_pga": "golf/pga",
+    "golf_lpga": "golf/lpga",
+    # Additional European soccer leagues
+    "soccer_spain_la_liga": "soccer/esp.1",
+    "soccer_germany_bundesliga": "soccer/ger.1",
+    "soccer_italy_serie_a": "soccer/ita.1",
+    "soccer_france_ligue_one": "soccer/fra.1",
+    # Tennis and MMA have ESPN pages but scoreboard format may differ
+    # "tennis_atp": "tennis/atp",  # TODO: verify ESPN scoreboard format
+    # "mma_ufc": "mma/ufc",        # TODO: verify ESPN scoreboard format
 }
 
 

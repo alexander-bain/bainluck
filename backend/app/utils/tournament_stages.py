@@ -9,6 +9,47 @@ import re
 from typing import Optional
 
 
+# Matches game-level markets that should never be included in progression tables
+_GAME_MARKET_RE = re.compile(
+    r"""
+    \bvs\.?\b       |   # "Team A vs Team B"
+    \bat\b.*:       |   # "Team A at Team B: ..."
+    first.half      |   # "First Half Winner"
+    second.half     |   # "Second Half Winner"
+    \bmoneyline\b   |   # "Game Moneyline"
+    \bspread\b      |   # "Game Spread"
+    \btotal\b       |   # "Game Total"
+    \bover.under\b  |   # "Over/Under"
+    \bquarter\b     |   # "1st Quarter Winner"
+    \binning\b      |   # "1st Inning"
+    \bperiod\b          # "1st Period"
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Stage suffix patterns to strip when extracting tournament names
+_STAGE_SUFFIX_RE = re.compile(
+    r"""
+    \s*[-:]\s*(
+        winner\??                   |
+        to\s+win\??                 |
+        top\s+\d+\s+finisher\??    |
+        make\s+the\s+cut\??        |
+        to\s+make\s+the\s+cut\??   |
+        end\s+of\s+round\s+\d+\s+leader\?? |
+        round\s+\d+\s+leader\??
+    )\s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Also strip trailing stage suffixes without a separator (colon/dash)
+_TRAILING_STAGE_RE = re.compile(
+    r"\s+(winner|to win|to make the cut|end of round \d+ leader|round \d+ leader)\??\s*$",
+    re.IGNORECASE,
+)
+
+
 SPORT_STAGES: dict[str, list[dict]] = {
     "golf": [
         {
@@ -206,6 +247,76 @@ def get_stages_for_sport(llm_sport_category: str) -> list[dict] | None:
     return SPORT_STAGES.get(llm_sport_category)
 
 
+def is_game_level_market(market_name: str) -> bool:
+    """Return True if the market name looks like a game-level market.
+
+    Game-level markets (moneylines, spreads, totals, first-half props) should
+    never appear in progression tables.
+    """
+    return bool(_GAME_MARKET_RE.search(market_name))
+
+
+def extract_tournament_name(market_name: str) -> str:
+    """Extract the base tournament name from a market name by stripping stage suffixes.
+
+    Examples:
+        "Joburg Open Winner?" → "Joburg Open"
+        "Joburg Open: To Make the Cut" → "Joburg Open"
+        "Puerto Rico Open Top 5 Finisher" → "Puerto Rico Open"
+        "Arnold Palmer Invitational presented by Mastercard Top 10 Finisher"
+            → "Arnold Palmer Invitational presented by Mastercard"
+        "NBA Championship Winner 2025-26" → "NBA Championship"
+    """
+    name = market_name.strip()
+
+    # Strip "... : Winner?" / "... - Top 5 Finisher" style suffixes
+    name = _STAGE_SUFFIX_RE.sub("", name)
+
+    # Strip trailing year/season (e.g., "2025-26", "2026") — before stage words
+    # so "NBA Championship Winner 2025-26" → "NBA Championship Winner" → "NBA Championship"
+    name = re.sub(r"\s+\d{4}(-\d{2,4})?\s*$", "", name)
+
+    # Strip trailing "Winner?" / "to win" / "end of round N leader" without separator
+    name = _TRAILING_STAGE_RE.sub("", name)
+
+    # Strip trailing "Top N Finisher" without separator
+    name = re.sub(r"\s+top\s+\d+\s+finisher\??\s*$", "", name, flags=re.IGNORECASE)
+
+    # Strip trailing year/season again (catches "PGA Championship 2026 Winner?" → after
+    # "Winner?" stripped, "PGA Championship 2026" still has trailing year)
+    name = re.sub(r"\s+\d{4}(-\d{2,4})?\s*$", "", name)
+
+    # Strip trailing "?"
+    name = name.rstrip("? ").strip()
+
+    return name
+
+
+def tournament_names_match(name_a: str, name_b: str) -> bool:
+    """Check if two tournament names refer to the same tournament.
+
+    Uses word-set overlap scoring similar to ESPN team matching.
+    Requires >60% overlap in both directions.
+    """
+    words_a = set(name_a.lower().split())
+    words_b = set(name_b.lower().split())
+
+    # Remove common stopwords
+    stopwords = {"the", "of", "a", "an", "by", "presented", "at", "in", "and"}
+    words_a -= stopwords
+    words_b -= stopwords
+
+    if not words_a or not words_b:
+        return False
+
+    overlap = len(words_a & words_b)
+    score_a = overlap / len(words_a)
+    score_b = overlap / len(words_b)
+
+    # Require meaningful overlap in both directions
+    return min(score_a, score_b) > 0.6
+
+
 def classify_market_stage(
     market_name: str,
     external_id: str | None,
@@ -216,7 +327,13 @@ def classify_market_stage(
 
     Tries DataGolf suffix matching first (fastest), then pattern matching
     on market name, then falls back to market_tier heuristic.
+
+    Returns None for game-level markets (moneylines, spreads, etc.).
     """
+    # Reject game-level markets
+    if is_game_level_market(market_name):
+        return None
+
     name_lower = market_name.lower()
     ext_lower = (external_id or "").lower()
 

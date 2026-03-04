@@ -3,7 +3,7 @@ Golf category landing page endpoint.
 
 Aggregates futures market odds across Polymarket, Kalshi, and The Odds API for golf tournaments.
 Groups by tournament, merges cross-source golfer odds, and computes biggest movers.
-Enriches with PGA tour schedule from StatPal for accurate current-event detection.
+Enriches with PGA tour schedule from DataGolf for accurate current-event detection.
 """
 
 import logging
@@ -13,7 +13,7 @@ import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -242,7 +242,7 @@ def _extract_tour_event(market_name: str) -> str | None:
 
 
 # ============================================================================
-# StatPal PGA schedule cache
+# DataGolf PGA schedule cache
 # ============================================================================
 
 _golf_schedule_cache: dict = {"data": None, "ts": 0}
@@ -250,88 +250,50 @@ _GOLF_SCHEDULE_TTL = 3600  # 1 hour
 
 
 async def _get_golf_schedule() -> list[dict]:
-    """Fetch PGA tour schedule from StatPal with 1-hour in-process cache.
+    """Fetch PGA tour schedule from DataGolf with 1-hour in-process cache.
 
     Returns a list of tournament dicts with name, start/end dates, venue, status.
-    Returns empty list if StatPal is unavailable.
+    Returns empty list if DataGolf is unavailable.
     """
     now_ts = time.time()
     if _golf_schedule_cache["data"] is not None and (now_ts - _golf_schedule_cache["ts"]) < _GOLF_SCHEDULE_TTL:
         return _golf_schedule_cache["data"]
 
-    from app.services.statpal_api import StatPalAPIService, is_available
+    from app.services.datagolf_api import DataGolfAPIService
 
-    if not is_available():
-        return []
-
-    service = StatPalAPIService()
+    service = DataGolfAPIService()
     try:
-        # StatPal golf endpoint returns {"fixtures": {"tournament": [...]}}
-        data = await service._get("pga", "schedule")
-        if not data or not isinstance(data, dict):
-            logger.info("StatPal PGA schedule: empty or invalid response")
-            return []
-
-        # Extract tournament items from the response
-        items = service._extract_match_items(data)
-        logger.info("StatPal PGA schedule: extracted %d tournament items", len(items))
+        tournaments = await service.get_schedule(tour="pga")
 
         result = []
-        for item in items:
-            if not isinstance(item, dict):
+        for t in tournaments:
+            if not t.event_name:
                 continue
 
-            name = item.get("name", item.get("tournament", item.get("league", "")))
-            if not name:
-                continue
-
-            # Parse dates — StatPal uses DD.MM.YYYY or YYYY-MM-DD
-            start_str = item.get("date", item.get("start_date", ""))
-            end_str = item.get("end_date", "")
-            venue = item.get("venue", item.get("course", ""))
-            status = (item.get("status", "") or "").lower()
-            round_info = item.get("round", "")
-
-            start_date = _parse_statpal_date(start_str)
-            end_date = _parse_statpal_date(end_str)
-
-            # Try to match to our tournament key
-            tourn_key = _normalize_tournament(name)
+            # Generate a stable key from the event name
+            key = re.sub(r"[^a-z0-9]+", "_", t.event_name.lower()).strip("_")
 
             result.append({
-                "name": name,
-                "key": tourn_key,
-                "start_date": start_date,
-                "end_date": end_date,
-                "venue": venue if isinstance(venue, str) else "",
-                "status": status,
-                "round": round_info if isinstance(round_info, str) else "",
+                "name": t.event_name,
+                "key": key,
+                "start_date": f"{t.start_date}T00:00:00+00:00" if t.start_date else None,
+                "end_date": f"{t.end_date}T00:00:00+00:00" if t.end_date else None,
+                "venue": t.course or "",
+                "location": t.location or "",
+                "status": t.status or "",
+                "round": str(t.current_round) if t.current_round else "",
             })
 
         _golf_schedule_cache["data"] = result
         _golf_schedule_cache["ts"] = now_ts
+        logger.info("DataGolf PGA schedule: loaded %d tournaments", len(result))
         return result
 
     except Exception as e:
-        logger.warning("Failed to fetch golf schedule from StatPal: %s", e)
+        logger.warning("Failed to fetch golf schedule from DataGolf: %s", e)
         return []
     finally:
         await service.close()
-
-
-def _parse_statpal_date(date_str: str) -> str | None:
-    """Parse a date string from StatPal (DD.MM.YYYY or YYYY-MM-DD) to ISO format."""
-    if not date_str:
-        return None
-    # DD.MM.YYYY format
-    m = re.match(r"(\d{2})\.(\d{2})\.(\d{4})", date_str)
-    if m:
-        return f"{m.group(3)}-{m.group(2)}-{m.group(1)}T00:00:00+00:00"
-    # YYYY-MM-DD format
-    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
-    if m:
-        return f"{date_str}T00:00:00+00:00"
-    return None
 
 
 # Characters that NFD decomposition doesn't handle (e.g., ø, đ, ł)
@@ -355,6 +317,48 @@ def _strip_diacritics(s: str) -> str:
         c for c in unicodedata.normalize("NFD", s)
         if unicodedata.category(c) != "Mn"
     )
+
+
+# Stopwords to strip when matching tournament names
+_TOURN_STOPWORDS = {"the", "a", "at", "in", "of", "presented", "by", "pga", "tour"}
+
+
+def _match_market_to_schedule(market_name: str, schedule: list[dict]) -> str | None:
+    """Fuzzy-match a futures market name against DataGolf tournament names.
+
+    Returns the DataGolf schedule key if matched, None otherwise.
+    """
+    if not schedule:
+        return None
+
+    # Clean market name: strip "PGA Tour:" prefix and common suffixes
+    clean_market = re.sub(r"^PGA\s+Tour:\s*", "", market_name, flags=re.I)
+    clean_market = re.sub(r"\s+(Winner|Top\s+\d+|End\s+of|Round\s+\d+|Make\s+Cut|Made\s+Cut)\b.*", "", clean_market, flags=re.I)
+    clean_market = re.sub(r"\s*\?\s*$", "", clean_market)
+
+    market_words = {w.lower() for w in re.findall(r"[a-z]{3,}", clean_market, re.I)} - _TOURN_STOPWORDS
+
+    if len(market_words) < 2:
+        return None
+
+    best_match = None
+    best_overlap = 0
+
+    for entry in schedule:
+        event_name = entry.get("name", "")
+        # Strip "presented by X", "at X" suffixes for matching
+        clean_event = re.sub(r"\s+(?:presented\s+by|at)\s+.*$", "", event_name, flags=re.I)
+        event_words = {w.lower() for w in re.findall(r"[a-z]{3,}", clean_event, re.I)} - _TOURN_STOPWORDS
+
+        if len(event_words) < 2:
+            continue
+
+        overlap = len(market_words & event_words)
+        if overlap >= 2 and overlap > best_overlap:
+            best_overlap = overlap
+            best_match = entry.get("key")
+
+    return best_match
 
 
 def _normalize_golfer_name(name: str) -> str:
@@ -399,19 +403,24 @@ def _match_key(name: str) -> str:
     return clean
 
 
-def _normalize_tournament(market_name: str) -> str:
+def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) -> str:
     """Extract tournament key from a market name. Returns 'other' if no match."""
+    # Priority 1: Hardcoded major/special patterns
     for pattern, key in _TOURNAMENT_PATTERNS:
         if pattern.search(market_name):
-            # Exclude non-Open Championship events that match "open championship"
             if key == "the_open" and _NOT_THE_OPEN_RE.search(market_name):
                 continue
             return key
 
-    # Try to extract a specific tour event name (creates dynamic tournament sections)
+    # Priority 2: DataGolf schedule fuzzy match
+    if schedule:
+        schedule_key = _match_market_to_schedule(market_name, schedule)
+        if schedule_key:
+            return schedule_key
+
+    # Priority 3: Hardcoded tour event regex
     tour_event = _extract_tour_event(market_name)
     if tour_event:
-        # Create a stable key from the tour event name
         key = re.sub(r"[^a-z0-9]+", "_", tour_event.lower()).strip("_")
         return key
 
@@ -499,12 +508,22 @@ async def get_golf(
                 len(prob_24h_ago), len(all_outcome_ids))
 
     # ========================================================================
+    # Fetch DataGolf schedule for date enrichment + tournament matching
+    # ========================================================================
+    schedule = await _get_golf_schedule()
+    schedule_by_key: dict[str, dict] = {}
+    for s_event in schedule:
+        key = s_event.get("key", "other")
+        if key != "other" and key not in schedule_by_key:
+            schedule_by_key[key] = s_event
+
+    # ========================================================================
     # Group markets by tournament and aggregate golfer odds
     # ========================================================================
     tournament_markets: dict[str, list] = defaultdict(list)
 
     for market in markets:
-        tournament_key = _normalize_tournament(market.name)
+        tournament_key = _normalize_tournament(market.name, schedule)
         if tournament_key == "other":
             # Don't merge unrelated markets — give each its own entry
             per_market_key = f"other_{market.id}"
@@ -673,20 +692,16 @@ async def get_golf(
         t.pop("sort_date", None)
 
     # ========================================================================
-    # StatPal PGA schedule — enrich with real tournament dates
+    # Enrich tournaments with DataGolf schedule data
     # ========================================================================
-    schedule = await _get_golf_schedule()
-    schedule_by_key: dict[str, dict] = {}
-    for s_event in schedule:
-        key = s_event.get("key", "other")
-        if key != "other" and key not in schedule_by_key:
-            schedule_by_key[key] = s_event
-
-    # Enrich tournaments with schedule data
     for t in tournaments:
+        # Add slug for tournament detail page URLs
+        t["slug"] = re.sub(r"[^a-z0-9]+", "-", t["name"].lower()).strip("-")
+
         sched = schedule_by_key.get(t["key"])
         if sched:
-            t["venue"] = sched.get("venue") or None
+            t["venue"] = sched.get("venue") or t.get("venue") or None
+            t["location"] = sched.get("location") or None
             t["schedule_status"] = sched.get("status") or None
             if sched.get("start_date"):
                 t["start_date"] = sched["start_date"]
@@ -744,7 +759,7 @@ async def get_golf(
     ]
 
     # ========================================================================
-    # Current tour event — smart detection using StatPal dates + fallback
+    # Current tour event — smart detection using DataGolf dates + fallback
     # ========================================================================
     current_event = _find_current_event(tournaments, schedule_by_key, now)
 
@@ -764,11 +779,11 @@ def _find_current_event(
     schedule_by_key: dict[str, dict],
     now: datetime,
 ) -> dict | None:
-    """Find the current tour event using StatPal dates with fallback heuristics.
+    """Find the current tour event using DataGolf dates with fallback heuristics.
 
     Priority order:
-    1. StatPal schedule: event whose start_date <= now <= end_date
-    2. StatPal schedule: nearest upcoming event (start_date > now, within 7 days)
+    1. DataGolf schedule: event whose start_date <= now <= end_date
+    2. DataGolf schedule: nearest upcoming event (start_date > now, within 7 days)
     3. Fallback: tour event with most sources/golfer data (highest activity)
     """
     tour_events = [t for t in tournaments if t.get("is_tour_event")]
@@ -777,7 +792,7 @@ def _find_current_event(
 
     now_str = now.isoformat()
 
-    # Phase 1: Use StatPal schedule dates if available
+    # Phase 1: Use DataGolf schedule dates if available
     if schedule_by_key:
         # Find event currently in progress
         for t in tour_events:
@@ -892,6 +907,7 @@ def _build_current_event(t: dict) -> dict:
     return {
         "key": t["key"],
         "name": t["name"],
+        "slug": re.sub(r"[^a-z0-9]+", "-", t["name"].lower()).strip("-"),
         "resolution_date": t.get("resolution_date"),
         "start_date": t.get("start_date"),
         "end_date": t.get("end_date"),
@@ -902,4 +918,118 @@ def _build_current_event(t: dict) -> dict:
         "top_golfers": t["golfers"][:5],
         "market_ids": sorted_ids,
         "market_names": sorted_names,
+    }
+
+
+# ============================================================================
+# Tournament detail page
+# ============================================================================
+
+# Market type detection patterns for sub-grouping
+_MARKET_TYPE_PATTERNS = [
+    (re.compile(r"\bWinner\b(?!.*Round)", re.I), "winner", "Winner"),
+    (re.compile(r"\bTop\s+5\b", re.I), "top_5", "Top 5"),
+    (re.compile(r"\bTop\s+10\b", re.I), "top_10", "Top 10"),
+    (re.compile(r"\bTop\s+20\b", re.I), "top_20", "Top 20"),
+    (re.compile(r"\bMa[dk]e\s+Cut\b", re.I), "make_cut", "Make Cut"),
+    (re.compile(r"\bRound\s+\d+\s+Leader\b", re.I), "round_leader", "Round Leader"),
+]
+
+
+def _detect_market_type(market_name: str) -> tuple[str, str]:
+    """Detect the market type from a market name. Returns (type_key, label)."""
+    for pattern, type_key, label in _MARKET_TYPE_PATTERNS:
+        if pattern.search(market_name):
+            return type_key, label
+    return "other", "Other"
+
+
+@router.get("/tournaments/{slug}")
+async def get_golf_tournament(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get detailed tournament data for a specific golf tournament."""
+    # Reuse get_golf() for its caching and aggregation
+    golf_data = await get_golf(db=db)
+
+    tournaments = golf_data.get("tournaments", [])
+
+    # Find matching tournament by slug
+    tournament = None
+    for t in tournaments:
+        t_slug = t.get("slug") or re.sub(r"[^a-z0-9]+", "-", t["name"].lower()).strip("-")
+        if t_slug == slug:
+            tournament = t
+            break
+
+    if not tournament:
+        raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
+
+    # Sub-group markets by type (winner, top_5, top_10, etc.)
+    market_ids = tournament.get("market_ids", [])
+    market_names = tournament.get("market_names", [])
+
+    # Build market_id -> market_name mapping
+    id_to_name: dict[int, str] = {}
+    if len(market_ids) == len(market_names):
+        id_to_name = dict(zip(market_ids, market_names))
+
+    # Group by type
+    market_groups: dict[str, dict] = {}
+    for mid in market_ids:
+        mname = id_to_name.get(mid, "")
+        type_key, label = _detect_market_type(mname)
+        if type_key not in market_groups:
+            market_groups[type_key] = {
+                "type": type_key,
+                "label": label,
+                "market_ids": [],
+                "market_names": [],
+            }
+        market_groups[type_key]["market_ids"].append(mid)
+        market_groups[type_key]["market_names"].append(mname)
+
+    # Order: winner first, then top_5/10/20, make_cut, round_leader, other
+    type_order = ["winner", "top_5", "top_10", "top_20", "make_cut", "round_leader", "other"]
+    sorted_groups = sorted(
+        market_groups.values(),
+        key=lambda g: type_order.index(g["type"]) if g["type"] in type_order else 99
+    )
+
+    # Find winner market for evolution chart
+    evolution_market_id = None
+    for g in sorted_groups:
+        if g["type"] == "winner" and g["market_ids"]:
+            evolution_market_id = g["market_ids"][0]
+            break
+    if not evolution_market_id and market_ids:
+        evolution_market_id = market_ids[0]
+
+    # Filter movers for this tournament
+    all_movers = golf_data.get("biggest_movers", [])
+    tournament_movers = [
+        m for m in all_movers
+        if m.get("tournament_key") == tournament.get("key")
+    ]
+
+    return {
+        "tournament": {
+            "name": tournament["name"],
+            "slug": slug,
+            "key": tournament.get("key"),
+            "is_major": tournament.get("is_major", False),
+            "is_womens": tournament.get("is_womens", False),
+            "start_date": tournament.get("start_date"),
+            "end_date": tournament.get("end_date"),
+            "venue": tournament.get("venue"),
+            "location": tournament.get("location"),
+            "schedule_status": tournament.get("schedule_status"),
+            "commence_time": tournament.get("commence_time"),
+            "resolution_date": tournament.get("resolution_date"),
+        },
+        "golfers": tournament.get("golfers", []),
+        "markets": sorted_groups,
+        "evolution_market_id": evolution_market_id,
+        "biggest_movers": tournament_movers,
     }

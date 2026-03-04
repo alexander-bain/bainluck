@@ -559,11 +559,10 @@ async def _discover_events():
                                         espn_commence_time or commence_time
                                     ),
                                     "status": event_status,
+                                    "commence_time_source": (
+                                        "espn" if espn_commence_time else "odds_api"
+                                    ),
                                 }
-                                if espn_commence_time:
-                                    insert_vals[
-                                        "commence_time_source"
-                                    ] = "espn"
                                 if espn_event_id:
                                     insert_vals["espn_id"] = espn_event_id
                                 stmt = insert(Event).values(
