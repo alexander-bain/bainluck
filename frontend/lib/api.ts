@@ -27,6 +27,7 @@ import type {
   TeamFuturesResponse,
   SharedTeamFuturesResponse,
   GolfResponse,
+  ProgressionResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -418,6 +419,20 @@ export async function fetchFuturesMovers(
 ): Promise<FuturesMoversResponse> {
   return apiFetch<FuturesMoversResponse>(
     `/api/futures/movers?hours=${hours}&limit=${limit}`
+  );
+}
+
+/**
+ * Fetch tournament progression table for a futures market.
+ * Cross-references sibling markets at different stages.
+ */
+export async function fetchProgression(
+  marketId: number,
+  topN?: number
+): Promise<ProgressionResponse> {
+  const params = topN ? `?top_n=${topN}` : "";
+  return apiFetch<ProgressionResponse>(
+    `/api/futures/${marketId}/progression${params}`
   );
 }
 

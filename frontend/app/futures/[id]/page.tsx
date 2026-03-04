@@ -7,6 +7,7 @@ import {
   fetchFuturesMarket,
   fetchFuturesHistory,
   fetchRelatedEvents,
+  fetchProgression,
   formatProbability,
   formatAmericanOdds,
 } from "@/lib/api";
@@ -17,6 +18,7 @@ import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
+import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
@@ -89,6 +91,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [selectedOutcomes, setSelectedOutcomes] = useState<Set<number>>(new Set());
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
+  const [trendView, setTrendView] = useState<"evolution" | "progression">("evolution");
 
   // Pinned futures
   const { isPinned, togglePin, isMaxReached } = usePinnedFutures();
@@ -120,6 +123,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () => fetchRelatedEvents(marketId),
     { revalidateOnFocus: false }
   );
+
+  // Tournament progression (cross-stage table)
+  const { data: progressionData } = useSWR(
+    market ? ["futures-progression", marketId] : null,
+    () => fetchProgression(marketId, 40),
+    { revalidateOnFocus: false, refreshInterval: 120_000 }
+  );
+  const hasProgression = !!(progressionData && progressionData.stages.length >= 2);
 
   // Sort outcomes
   const sortedOutcomes = useMemo(() => {
@@ -421,11 +432,40 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* Probability Chart (if history available) */}
       {historyData && historyData.outcomes.length > 0 && (
         <div className="bg-surface-card rounded-card shadow-card p-6">
-          <h2 className="text-title-3 font-semibold text-text-primary mb-4 flex items-center gap-2">
-            <span>📈</span>
-            Probability Trends
-          </h2>
-          {market && market.outcomes.length > 10 ? (
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
+              <span>📈</span>
+              Probability Trends
+            </h2>
+            {/* Tab toggle: Over Time / By Stage */}
+            {hasProgression && (
+              <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
+                <button
+                  onClick={() => setTrendView("evolution")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    trendView === "evolution"
+                      ? "bg-white/10 text-text-primary"
+                      : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  Over Time
+                </button>
+                <button
+                  onClick={() => setTrendView("progression")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    trendView === "progression"
+                      ? "bg-white/10 text-text-primary"
+                      : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  By Stage
+                </button>
+              </div>
+            )}
+          </div>
+          {trendView === "progression" && hasProgression && progressionData ? (
+            <TournamentProgressionTable data={progressionData} />
+          ) : market && market.outcomes.length > 10 ? (
             <EvolutionView
               marketId={marketId}
               marketName={market.name}

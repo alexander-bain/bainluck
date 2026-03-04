@@ -140,7 +140,7 @@ export function EvolutionChart({
 
   // Build name lookup and color assignment
   const outcomeInfo = useMemo(() => {
-    const info = new Map<number, { name: string; color: string }>();
+    const info = new Map<number, { name: string; color: string; eliminated: boolean }>();
     // Sort selected by current probability (highest first) for color assignment
     const sorted = historyData
       .filter((o) => selectedOutcomeIds.has(o.outcome_id))
@@ -152,7 +152,8 @@ export function EvolutionChart({
     sorted.forEach((o, i) => {
       info.set(o.outcome_id, {
         name: o.name,
-        color: EVOLUTION_COLORS[i % EVOLUTION_COLORS.length],
+        color: o.eliminated ? "#4b5563" : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length],
+        eliminated: !!o.eliminated,
       });
     });
     return info;
@@ -328,11 +329,14 @@ export function EvolutionChart({
                   ? 3
                   : highlightedOutcomeId
                     ? 1
-                    : 2
+                    : info.eliminated ? 1 : 2
               }
               strokeOpacity={
-                highlightedOutcomeId && highlightedOutcomeId !== oid ? 0.3 : 1
+                highlightedOutcomeId && highlightedOutcomeId !== oid
+                  ? 0.3
+                  : info.eliminated ? 0.4 : 1
               }
+              strokeDasharray={info.eliminated ? "4 3" : undefined}
               dot={false}
               connectNulls
               name={info.name}

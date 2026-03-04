@@ -36,6 +36,8 @@ interface LeaderboardRow {
   todayScore?: number | null;
   /** DataGolf thru holes (e.g., "14", "F") */
   thru?: string | null;
+  /** Whether this participant has been eliminated */
+  eliminated?: boolean;
 }
 
 function formatScore(score: number | null | undefined): string {
@@ -93,9 +95,15 @@ export function EvolutionLeaderboard({
           totalScore: lb?.total_score,
           todayScore: lb?.today_score,
           thru: lb?.thru,
+          eliminated: outcome.eliminated,
         };
       })
-      .sort((a, b) => b.currentProbability - a.currentProbability);
+      .sort((a, b) => {
+        // Push eliminated participants to the bottom
+        if (a.eliminated && !b.eliminated) return 1;
+        if (!a.eliminated && b.eliminated) return -1;
+        return b.currentProbability - a.currentProbability;
+      });
   }, [historyData, leaderboard]);
 
   const hasLeaderboardData = rows.some((r) => r.position != null);
@@ -169,11 +177,18 @@ export function EvolutionLeaderboard({
 
               {/* Name */}
               <span
-                className={`truncate ${
-                  isSelected ? "text-white" : "text-gray-400"
+                className={`truncate flex items-center gap-1.5 ${
+                  row.eliminated
+                    ? "text-gray-600 line-through"
+                    : isSelected ? "text-white" : "text-gray-400"
                 }`}
               >
                 {row.name}
+                {row.eliminated && (
+                  <span className="text-[9px] text-red-400/70 bg-red-400/10 px-1 py-0.5 rounded font-medium no-underline inline-block">
+                    OUT
+                  </span>
+                )}
               </span>
 
               {/* DataGolf leaderboard columns */}

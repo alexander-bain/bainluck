@@ -339,6 +339,26 @@ export interface FeedFilterChipParams {
 }
 
 // ============================================================================
+// Progression Table Events
+// ============================================================================
+
+export interface ProgressionSortParams {
+  stage_key: string;
+  stage_label: string;
+  direction: 'asc' | 'desc';
+  sport: string;
+  page_type: string;
+}
+
+export interface ProgressionStageClickParams {
+  stage_key: string;
+  stage_label: string;
+  market_id: number;
+  sport: string;
+  page_type: string;
+}
+
+// ============================================================================
 // Event Map (all events with their parameters)
 // ============================================================================
 
@@ -386,6 +406,10 @@ export interface AnalyticsEventMap {
 
   // Feed filter chips
   feed_filter_chip: FeedFilterChipParams;
+
+  // Progression table
+  progression_sort: ProgressionSortParams;
+  progression_stage_click: ProgressionStageClickParams;
 
   // Account (future)
   sign_up: SignUpParams;

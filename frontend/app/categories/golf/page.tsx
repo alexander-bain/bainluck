@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { fetchGolfData, fetchFuturesHistory } from "@/lib/api";
+import { fetchGolfData, fetchFuturesHistory, fetchProgression } from "@/lib/api";
 import type {
   GolfResponse,
   GolfTournament,
@@ -11,6 +11,7 @@ import type {
   GolfMover,
   FuturesOutcomeHistory,
   FuturesHistoryPoint,
+  ProgressionResponse,
 } from "@/lib/types";
 import {
   MAJOR_TOURNAMENTS,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/golfData";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
+import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
@@ -147,6 +149,7 @@ export default function GolfPage() {
   const [currentEventHistory, setCurrentEventHistory] = useState<
     FuturesOutcomeHistory[] | null
   >(null);
+  const [progressionData, setProgressionData] = useState<ProgressionResponse | null>(null);
 
   // Phase 1: Fetch golf data
   useEffect(() => {
@@ -212,6 +215,18 @@ export default function GolfPage() {
       })
       .catch(() => {});
   }, [data?.current_event, currentEventHistory]);
+
+  // Phase 2c: Fetch progression table for current tournament
+  useEffect(() => {
+    if (!data?.current_event?.market_ids?.length) return;
+    if (progressionData) return;
+    const marketId = data.current_event.market_ids[0];
+    fetchProgression(marketId, 40)
+      .then((p) => {
+        if (p?.stages?.length >= 2) setProgressionData(p);
+      })
+      .catch(() => {});
+  }, [data?.current_event, progressionData]);
 
   // Derived data
   const majors = data?.tournaments.filter((t) => t.is_major) ?? [];
@@ -317,6 +332,17 @@ export default function GolfPage() {
                   defaultTopN={8}
                   hours={168}
                 />
+              </section>
+            )}
+
+            {/* Progression Table for current tournament */}
+            {progressionData && progressionData.stages.length >= 2 && (
+              <section className="bg-surface-card rounded-card shadow-card p-6">
+                <h2 className="text-title-3 font-semibold text-text-primary mb-4 flex items-center gap-2">
+                  <span>📊</span>
+                  Tournament Progression
+                </h2>
+                <TournamentProgressionTable data={progressionData} />
               </section>
             )}
 

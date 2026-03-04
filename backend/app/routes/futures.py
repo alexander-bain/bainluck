@@ -1,5 +1,6 @@
 """Futures/Outrights API endpoints."""
 
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean
@@ -10,12 +11,69 @@ from sqlalchemy import select, and_, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
+from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import probability_to_american
+from app.utils.tournament_stages import (
+    get_stages_for_sport,
+    classify_market_stage,
+    get_datagolf_prefix,
+)
 
 router = APIRouter()
 
+
+
+
+def _detect_elimination(history, threshold=0.005):
+    """Detect if a participant has been eliminated from a tournament."""
+    if len(history) < 3:
+        return {"eliminated": False, "eliminated_at": None}
+    tail = history[-3:]
+    if all((p.get("probability") or 0) <= threshold for p in tail):
+        for i, point in enumerate(history):
+            if (point.get("probability") or 0) <= threshold:
+                remaining = history[i:]
+                if all((p.get("probability") or 0) <= threshold for p in remaining):
+                    return {"eliminated": True, "eliminated_at": point["timestamp"]}
+        return {"eliminated": True, "eliminated_at": tail[0]["timestamp"]}
+    return {"eliminated": False, "eliminated_at": None}
+
+
+def _detect_round_boundaries_from_eliminations(outcome_histories, existing_boundaries):
+    """Detect round boundaries from simultaneous elimination patterns."""
+    if existing_boundaries:
+        return existing_boundaries
+    elimination_times = []
+    for info in outcome_histories.values():
+        elim = info.get("eliminated_at")
+        if elim:
+            try:
+                ts = datetime.fromisoformat(elim.replace("Z", "+00:00")).timestamp()
+                elimination_times.append(ts)
+            except (ValueError, AttributeError):
+                continue
+    if len(elimination_times) < 2:
+        return None
+    elimination_times.sort()
+    clusters = []
+    current_cluster = [elimination_times[0]]
+    for ts_val in elimination_times[1:]:
+        if ts_val - current_cluster[-1] < 24 * 3600:
+            current_cluster.append(ts_val)
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [ts_val]
+    clusters.append(current_cluster)
+    boundaries = []
+    for i, cluster in enumerate(clusters):
+        if len(cluster) >= 2:
+            avg_ts = sum(cluster) / len(cluster)
+            boundaries.append({
+                "timestamp": datetime.fromtimestamp(avg_ts, tz=timezone.utc).isoformat(),
+                "label": "Round " + str(i + 1),
+            })
+    return boundaries if boundaries else None
 
 def _derive_round_boundaries(metadata: dict | None) -> list[dict] | None:
     """Extract round boundary markers from FuturesMarket.market_metadata.round_history.
@@ -873,7 +931,227 @@ async def get_related_events(
     }
 
 
-@router.get("/{market_id}/history")
+@router.get("/{market_id}/progression")
+async def get_progression(
+    market_id: int,
+    top_n: int = Query(32, ge=1, le=64, description="Max participants to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get tournament progression table for a futures market.
+
+    Given any market, finds sibling markets at different stages for the same
+    sport/season and assembles a cross-stage pivot showing each participant's
+    probability at each stage (e.g., Make Cut → Top 20 → Top 10 → Top 5 → Win).
+    """
+    # Load starting market
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.id == market_id)
+    )
+    market = result.scalar_one_or_none()
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+
+    sport_cat = market.llm_sport_category
+    if not sport_cat:
+        return {"sport": None, "stages": [], "participants": []}
+
+    stages = get_stages_for_sport(sport_cat)
+    if not stages:
+        return {"sport": sport_cat, "stages": [], "participants": []}
+
+    # --- Discover sibling markets ---
+    sibling_markets: list[FuturesMarket] = [market]
+
+    # Method 1: DataGolf prefix matching
+    dg_prefix = get_datagolf_prefix(market.external_id) if market.external_id else None
+    if dg_prefix:
+        dg_result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(
+                FuturesMarket.external_id.ilike(f"{dg_prefix}:%"),
+                FuturesMarket.id != market_id,
+                FuturesMarket.status == "open",
+            )
+        )
+        sibling_markets.extend(dg_result.scalars().unique().all())
+
+    # Method 2: Canonical key siblings
+    if len(sibling_markets) < 2 and market.canonical_market_key:
+        # Parse key: "sport:league:category:season" → find same sport:league:*:season
+        parts = market.canonical_market_key.split(":")
+        if len(parts) >= 4:
+            sport_part, league_part = parts[0], parts[1]
+            season_part = parts[-1]
+            # Search for markets sharing sport:league:*:season
+            ck_result = await db.execute(
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.canonical_market_key.ilike(
+                        f"{sport_part}:{league_part}:%:{season_part}"
+                    ),
+                    FuturesMarket.id != market_id,
+                    FuturesMarket.status == "open",
+                )
+            )
+            sibling_markets.extend(ck_result.scalars().unique().all())
+
+    # Method 3: Sport + season name scan (fallback)
+    if len(sibling_markets) < 2:
+        # Query same sport category, similar resolution window
+        filters = [
+            FuturesMarket.llm_sport_category == sport_cat,
+            FuturesMarket.id != market_id,
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),  # Not game-level
+        ]
+        if market.resolution_date:
+            # Look for markets resolving within 30 days of this one
+            window = timedelta(days=30)
+            filters.append(
+                FuturesMarket.resolution_date.between(
+                    market.resolution_date - window,
+                    market.resolution_date + window,
+                )
+            )
+        scan_result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(*filters)
+            .limit(50)
+        )
+        sibling_markets.extend(scan_result.scalars().unique().all())
+
+    # Deduplicate by market ID
+    seen_ids: set[int] = set()
+    unique_markets: list[FuturesMarket] = []
+    for m in sibling_markets:
+        if m.id not in seen_ids:
+            seen_ids.add(m.id)
+            unique_markets.append(m)
+
+    # --- Classify each market into a stage ---
+    stage_markets: dict[str, FuturesMarket] = {}
+    for m in unique_markets:
+        stage_key = classify_market_stage(
+            m.name, m.external_id, m.market_tier, stages
+        )
+        if stage_key and stage_key not in stage_markets:
+            stage_markets[stage_key] = m
+
+    if len(stage_markets) < 1:
+        return {"sport": sport_cat, "stages": [], "participants": []}
+
+    # --- Build participant cross-reference ---
+    # outcome merge key → {name, team_id, probabilities by stage, ...}
+    participants: dict[str, dict] = {}
+
+    # Load team info for team_id lookups
+    all_team_ids = set()
+    for m in stage_markets.values():
+        for o in m.outcomes:
+            if o.team_id:
+                all_team_ids.add(o.team_id)
+
+    team_info: dict[int, dict] = {}
+    if all_team_ids:
+        team_result = await db.execute(
+            select(Team).where(Team.id.in_(all_team_ids))
+        )
+        for t in team_result.scalars().all():
+            team_info[t.id] = {
+                "logo_url": t.logo_url_small or t.logo_url,
+                "primary_color": t.primary_color,
+                "record": t.current_record,
+                "conference": (t.standings_data or {}).get("conference"),
+            }
+
+    for stage_key, m in stage_markets.items():
+        for o in m.outcomes:
+            merge_key = _progression_merge_key(o)
+            if merge_key not in participants:
+                t_info = team_info.get(o.team_id) if o.team_id else None
+                participants[merge_key] = {
+                    "name": o.name,
+                    "team_id": o.team_id,
+                    "logo_url": t_info["logo_url"] if t_info else None,
+                    "primary_color": t_info["primary_color"] if t_info else None,
+                    "conference": t_info["conference"] if t_info else None,
+                    "record": t_info["record"] if t_info else None,
+                    "probabilities": {},
+                    "changes_24h": {},
+                    "status": {},
+                }
+            p = participants[merge_key]
+            prob = float(o.current_probability) if o.current_probability else None
+            p["probabilities"][stage_key] = prob
+            if o.probability_change_24h:
+                p["changes_24h"][stage_key] = float(o.probability_change_24h)
+            # Detect clinched / eliminated
+            if prob is not None:
+                if prob >= 0.999:
+                    p["status"][stage_key] = "clinched"
+                elif prob <= 0.001:
+                    p["status"][stage_key] = "eliminated"
+            # Update team_id if we found one in a later stage
+            if o.team_id and not p["team_id"]:
+                p["team_id"] = o.team_id
+                t_info = team_info.get(o.team_id)
+                if t_info:
+                    p["logo_url"] = t_info["logo_url"]
+                    p["primary_color"] = t_info["primary_color"]
+                    p["conference"] = t_info["conference"]
+                    p["record"] = t_info["record"]
+
+    # Sort participants by highest-stage probability (rightmost stage first)
+    stage_order = sorted(stage_markets.keys(), key=lambda k: next(
+        (s["order"] for s in stages if s["key"] == k), 0
+    ), reverse=True)
+
+    def sort_key(p: dict) -> tuple:
+        for sk in stage_order:
+            prob = p["probabilities"].get(sk)
+            if prob is not None:
+                return (1, prob)
+        return (0, 0)
+
+    sorted_participants = sorted(participants.values(), key=sort_key, reverse=True)[:top_n]
+
+    # Build ordered stages response (only include stages that have markets)
+    stages_response = []
+    for stage in sorted(stages, key=lambda s: s["order"]):
+        if stage["key"] in stage_markets:
+            m = stage_markets[stage["key"]]
+            stages_response.append({
+                "key": stage["key"],
+                "label": stage["label"],
+                "order": stage["order"],
+                "market_id": m.id,
+                "market_name": m.name,
+            })
+
+    return {
+        "sport": sport_cat,
+        "stages": stages_response,
+        "participants": sorted_participants,
+    }
+
+
+def _progression_merge_key(outcome: FuturesOutcome) -> str:
+    """Generate a merge key for cross-market participant matching.
+
+    Priority: team_id (most reliable) > normalized name (fallback).
+    """
+    if outcome.team_id:
+        return f"team:{outcome.team_id}"
+    # Normalize: strip accents, lowercase
+    normalized = unicodedata.normalize("NFD", outcome.name)
+    normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    return f"name:{normalized.lower().strip()}"
 async def get_futures_history(
     market_id: int,
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
@@ -955,18 +1233,28 @@ async def get_futures_history(
                 "american_odds": probability_to_american(avg_prob) if avg_prob > 0 else None,
                 "bookmaker": "consensus",
             })
+        elim = _detect_elimination(history)
         outcome_history[oid] = {
             "outcome_id": oid,
             "name": outcome_names.get(oid, "Unknown"),
             "history": history,
+            "eliminated": elim["eliminated"],
+            "eliminated_at": elim["eliminated_at"],
         }
+
+    # Round boundaries: prefer DataGolf round_history, fall back to
+    # inferring rounds from simultaneous elimination patterns
+    explicit_boundaries = _derive_round_boundaries(market.market_metadata)
+    round_boundaries = _detect_round_boundaries_from_eliminations(
+        outcome_history, explicit_boundaries
+    )
 
     return {
         "market_id": market_id,
         "market_name": market.name,
         "hours": hours,
         "outcomes": list(outcome_history.values()),
-        "round_boundaries": _derive_round_boundaries(market.market_metadata),
+        "round_boundaries": round_boundaries,
         "leaderboard": (market.market_metadata or {}).get("leaderboard"),
     }
 

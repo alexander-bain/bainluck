@@ -358,6 +358,10 @@ export interface FuturesOutcomeHistory {
   outcome_id: number;
   name: string;
   history: FuturesHistoryPoint[];
+  /** Whether this participant has been eliminated (probability stayed at ~0%) */
+  eliminated?: boolean;
+  /** ISO timestamp when the participant was first detected as eliminated */
+  eliminated_at?: string | null;
 }
 
 export interface FuturesHistoryResponse {
@@ -872,4 +876,34 @@ export interface GolfScheduleEvent {
   venue: string;
   status: string;
   round: string;
+}
+
+// ============================================================================
+// Tournament Progression types
+// ============================================================================
+
+export interface ProgressionStage {
+  key: string;
+  label: string;
+  order: number;
+  market_id: number | null;
+  market_name: string | null;
+}
+
+export interface ProgressionParticipant {
+  name: string;
+  team_id: number | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  conference: string | null;
+  record: string | null;
+  probabilities: Record<string, number | null>;
+  changes_24h: Record<string, number | null>;
+  status: Record<string, "clinched" | "eliminated" | null>;
+}
+
+export interface ProgressionResponse {
+  sport: string;
+  stages: ProgressionStage[];
+  participants: ProgressionParticipant[];
 }

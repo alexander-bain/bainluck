@@ -48,7 +48,10 @@ export function EvolutionView({
       const bLast = b.history[b.history.length - 1]?.probability ?? 0;
       return bLast - aLast;
     });
-    return new Set(sorted.slice(0, defaultTopN).map((o) => o.outcome_id));
+    // Exclude eliminated participants from default selection
+    const active = sorted.filter((o) => !o.eliminated);
+    const selected = active.slice(0, defaultTopN).map((o) => o.outcome_id);
+    return new Set(selected);
   }, [data, selectedOutcomeIds, defaultTopN]);
 
   const handleToggleOutcome = useCallback(
