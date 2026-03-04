@@ -150,6 +150,20 @@ def discover_events(self):
         except Exception as llm_exc:
             logger.warning("LLM enrichment failed: %s", llm_exc)
             result["llm_enrichment_error"] = str(llm_exc)[:200]
+        # Piggyback DataGolf hourly poll — same starvation issue as taxonomy
+        try:
+            from app.tasks.redis_state import get_redis_client as _get_rc
+            _r = _get_rc()
+            dg_gate_key = "bainluck:datagolf_poll_gate"
+            if _r.set(dg_gate_key, "1", nx=True, ex=3600):  # 1 hour TTL
+                from app.tasks.datagolf import _poll_datagolf_markets
+                dg_result = _tracked_run("poll_datagolf", _poll_datagolf_markets())
+                result["datagolf"] = dg_result
+            else:
+                result["datagolf"] = "skipped (gate)"
+        except Exception as dg_exc:
+            logger.warning("DataGolf poll failed: %s", dg_exc)
+            result["datagolf_error"] = str(dg_exc)[:200]
         return result
     except Exception as exc:
         raise self.retry(exc=exc, countdown=120)
@@ -169,6 +183,20 @@ def poll_all_odds(self):
 
     try:
         result = _tracked_run("poll_odds", _poll_all_odds())
+        # Piggyback DataGolf live poll — Redis-gated to 5 min
+        try:
+            from app.tasks.redis_state import get_redis_client
+            r = get_redis_client()
+            dg_live_key = "bainluck:datagolf_live_gate"
+            if r.set(dg_live_key, "1", nx=True, ex=300):  # 5 min TTL
+                from app.tasks.datagolf import _poll_datagolf_live
+                dg_result = _tracked_run("datagolf_live", _poll_datagolf_live())
+                result["datagolf_live"] = dg_result
+            else:
+                result["datagolf_live"] = "skipped (gate)"
+        except Exception as dg_exc:
+            logger.warning("DataGolf live poll failed: %s", dg_exc)
+            result["datagolf_live_error"] = str(dg_exc)[:200]
         return {**result, "poll_reason": reason}
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)
@@ -664,18 +692,13 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour=9),  # Daily at 9:30 AM UTC
         "kwargs": {"limit": 30},
     },
-    "poll-datagolf-markets-hourly": {
-        "task": "app.tasks.poll_datagolf_markets",
-        "schedule": crontab(minute=0),  # Hourly at :00
-    },
-    "poll-datagolf-live": {
-        "task": "app.tasks.poll_datagolf_live",
-        "schedule": 300.0,  # Every 5 minutes — Redis-gated (only runs during live tournaments)
-    },
-    # Note: update_event_tags and enrich_taxonomy_llm are piggybacked on
-    # discover_events since the worker only has 2 concurrency slots which
-    # are permanently occupied by high-frequency tasks (poll_odds 30s,
-    # espn_sync 60s). Standalone beat entries would queue but never execute.
+    # Note: update_event_tags, enrich_taxonomy_llm, and DataGolf polls are
+    # piggybacked on discover_events (hourly) and poll_all_odds (live) since
+    # the worker only has 2 concurrency slots which are permanently occupied
+    # by high-frequency tasks (poll_odds 30s, espn_sync 60s). Standalone
+    # beat entries would queue but never execute. DataGolf hourly poll is
+    # Redis-gated to 1h on discover_events; live poll is gated to 5min on
+    # poll_all_odds. Admin endpoints run tasks inline (not via .delay()).
 }
 
 

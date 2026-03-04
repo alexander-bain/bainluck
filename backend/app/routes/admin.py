@@ -5120,34 +5120,36 @@ async def check_merge_task(
 async def trigger_datagolf_poll(
     secret: str = Query(..., description="Admin secret for authorization"),
 ):
-    """Manually trigger DataGolf market polling (schedule + pre-tournament predictions)."""
+    """Manually trigger DataGolf market polling (runs inline, not via Celery queue).
+
+    The worker only has 2 concurrency slots permanently occupied by
+    high-frequency tasks, so Celery .delay() would queue but never execute.
+    """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.tasks import poll_datagolf_markets
-    result = poll_datagolf_markets.delay()
-    return {
-        "status": "queued",
-        "task_id": result.id,
-        "message": "DataGolf market polling task queued.",
-    }
+    from app.tasks.datagolf import _poll_datagolf_markets
+    try:
+        result = await _poll_datagolf_markets()
+        return {"status": "completed", "result": result}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)[:500]}
 
 
 @router.post("/datagolf/poll-live")
 async def trigger_datagolf_live_poll(
     secret: str = Query(..., description="Admin secret for authorization"),
 ):
-    """Manually trigger DataGolf live in-play polling (bypasses Redis gate)."""
+    """Manually trigger DataGolf live in-play polling (runs inline)."""
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.tasks import poll_datagolf_live
-    result = poll_datagolf_live.delay()
-    return {
-        "status": "queued",
-        "task_id": result.id,
-        "message": "DataGolf live polling task queued.",
-    }
+    from app.tasks.datagolf import _poll_datagolf_live
+    try:
+        result = await _poll_datagolf_live()
+        return {"status": "completed", "result": result}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)[:500]}
 
 
 @router.get("/datagolf/status")
@@ -5241,25 +5243,4 @@ async def datagolf_status(
     }
 
 
-@router.get("/datagolf/task/{task_id}")
-async def get_datagolf_task_status(
-    task_id: str,
-    secret: str = Query(..., description="Admin secret for authorization"),
-):
-    """Check status of a DataGolf background task."""
-    if not _check_admin_secret(secret):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
-
-    from celery.result import AsyncResult
-    from app.tasks import celery_app
-    result = AsyncResult(task_id, app=celery_app)
-    response = {
-        "task_id": task_id,
-        "state": result.state,
-    }
-    if result.ready():
-        response["result"] = result.result
-    elif result.state == "FAILURE":
-        response["error"] = str(result.result)
-    return response
 
