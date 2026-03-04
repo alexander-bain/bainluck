@@ -22,6 +22,112 @@ import { EvolutionView } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
+// Evolution Chart with market fallback — tries market IDs in order until
+// one has history data. Backend sorts Winner markets first.
+// ============================================================================
+
+function EvolutionViewWithFallback({
+  marketIds,
+  marketName,
+  defaultTopN,
+  hours,
+}: {
+  marketIds: number[];
+  marketName: string;
+  defaultTopN: number;
+  hours: number;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [failedIds, setFailedIds] = useState<Set<number>>(new Set());
+
+  // Reset when marketIds change
+  useEffect(() => {
+    setCurrentIndex(0);
+    setFailedIds(new Set());
+  }, [marketIds.join(",")]);
+
+  const marketId = marketIds[currentIndex];
+  if (!marketId) return null;
+
+  return (
+    <EvolutionViewWithCallback
+      key={marketId}
+      marketId={marketId}
+      marketName={marketName}
+      defaultTopN={defaultTopN}
+      hours={hours}
+      onEmpty={() => {
+        // Try next market_id if this one has no data
+        setFailedIds((prev) => new Set([...prev, marketId]));
+        if (currentIndex + 1 < marketIds.length) {
+          setCurrentIndex(currentIndex + 1);
+        }
+      }}
+    />
+  );
+}
+
+function EvolutionViewWithCallback({
+  marketId,
+  marketName,
+  defaultTopN,
+  hours,
+  onEmpty,
+}: {
+  marketId: number;
+  marketName: string;
+  defaultTopN: number;
+  hours: number;
+  onEmpty: () => void;
+}) {
+  const [hasData, setHasData] = useState<boolean | null>(null);
+
+  // Check if this market has history data before rendering EvolutionView
+  useEffect(() => {
+    let cancelled = false;
+    fetchFuturesHistory(marketId, hours, undefined, 30)
+      .then((data) => {
+        if (cancelled) return;
+        if (data.outcomes.length === 0) {
+          setHasData(false);
+          onEmpty();
+        } else {
+          setHasData(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHasData(false);
+          onEmpty();
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [marketId, hours]);
+
+  if (hasData === null) {
+    return (
+      <div className="animate-pulse">
+        <div className="h-8 bg-gray-800 rounded w-48 mb-4" />
+        <div className="h-[400px] bg-gray-800/50 rounded-lg" />
+      </div>
+    );
+  }
+
+  if (!hasData) return null;
+
+  return (
+    <EvolutionView
+      marketId={marketId}
+      marketName={marketName}
+      defaultTopN={defaultTopN}
+      hours={hours}
+    />
+  );
+}
+
+// ============================================================================
 // Main Page
 // ============================================================================
 
@@ -203,10 +309,10 @@ export default function GolfPage() {
             )}
 
             {/* Evolution Chart for current tournament */}
-            {data.current_event?.market_ids?.[0] && (
+            {data.current_event?.market_ids?.length > 0 && (
               <section>
-                <EvolutionView
-                  marketId={data.current_event.market_ids[0]}
+                <EvolutionViewWithFallback
+                  marketIds={data.current_event.market_ids}
                   marketName={`${data.current_event.name} — Win Probability`}
                   defaultTopN={8}
                   hours={168}

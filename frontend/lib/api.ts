@@ -396,11 +396,13 @@ export async function fetchFuturesByIds(ids: number[]): Promise<FuturesMarketDet
 export async function fetchFuturesHistory(
   marketId: number,
   hours = 168,
-  outcomeId?: number
+  outcomeId?: number,
+  topN?: number
 ): Promise<FuturesHistoryResponse> {
   const params = new URLSearchParams();
   params.set("hours", hours.toString());
   if (outcomeId) params.set("outcome_id", outcomeId.toString());
+  if (topN) params.set("top_n", topN.toString());
 
   return apiFetch<FuturesHistoryResponse>(
     `/api/futures/${marketId}/history?${params.toString()}`

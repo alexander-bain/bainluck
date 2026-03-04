@@ -425,9 +425,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             <span>📈</span>
             Probability Trends
           </h2>
-          {historyData.outcomes.length > 10 ? (
+          {market && market.outcomes.length > 10 ? (
             <EvolutionView
               marketId={marketId}
+              marketName={market.name}
               hours={168}
             />
           ) : (

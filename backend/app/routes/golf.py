@@ -809,20 +809,40 @@ def _find_current_event(
         if nearest:
             return _build_current_event(nearest)
 
-    # Phase 2: Fallback — pick the tour event with the most odds movement.
-    # Active events (currently in progress) will have significant 24h movement,
-    # while future events will be static. Use movement as the primary signal,
-    # with activity score (sources + golfers) as tiebreaker.
+    # Phase 2: Fallback — pick the tour event closest to "right now".
+    # Primary signal: commence_time proximity to now (nearest current/upcoming wins).
+    # Secondary: odds movement (active events have more movement).
+    # Tertiary: source count as tiebreaker.
     candidates = []
     for t in tour_events:
-        if not t.get("resolution_date"):
+        # Use commence_time to determine relevance
+        commence_str = t.get("commence_time")
+        resolution_str = t.get("resolution_date")
+
+        # Need at least one date signal
+        if not commence_str and not resolution_str:
             continue
-        try:
-            res_dt = datetime.fromisoformat(t["resolution_date"])
-            if res_dt < now - timedelta(days=2):
-                continue  # Already resolved
-        except (ValueError, TypeError):
-            continue
+
+        # Filter out events that ended >7 days ago based on commence_time
+        # (resolution_date can be misleading — Kalshi markets resolve weeks after
+        # tournaments end, so a finished tournament might have a far-future resolution_date)
+        if commence_str:
+            try:
+                commence_dt = datetime.fromisoformat(commence_str)
+                # Golf tournaments are ~4 days. Skip if commenced >6 days ago.
+                if commence_dt < now - timedelta(days=6):
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # Compute proximity to now (lower = better)
+        proximity_days = 999.0
+        if commence_str:
+            try:
+                commence_dt = datetime.fromisoformat(commence_str)
+                proximity_days = abs((now - commence_dt).total_seconds()) / 86400
+            except (ValueError, TypeError):
+                pass
 
         # Movement signals: how many golfers moved + total movement magnitude
         movers = sum(
@@ -834,18 +854,41 @@ def _find_current_event(
             if g.get("movement_24h") is not None
         )
         total_sources = sum(len(g.get("sources", {})) for g in t["golfers"])
-        candidates.append((t, movers, total_movement, total_sources))
+        candidates.append((t, movers, total_movement, total_sources, proximity_days))
 
     if candidates:
-        # Sort by: movers desc, total_movement desc, sources desc
-        candidates.sort(key=lambda c: (-c[1], -c[2], -c[3]))
+        # Sort by: movers desc, total_movement desc, proximity asc, sources desc
+        candidates.sort(key=lambda c: (-c[1], -c[2], c[4], -c[3]))
         return _build_current_event(candidates[0][0])
 
     return None
 
 
 def _build_current_event(t: dict) -> dict:
-    """Build the current_event response dict from a tournament."""
+    """Build the current_event response dict from a tournament.
+
+    Sorts market_ids so "Winner" markets appear first — the frontend uses
+    market_ids[0] for the EvolutionView chart, and Winner markets have the
+    richest probability evolution data.
+    """
+    raw_ids = t.get("market_ids", [])
+    raw_names = t.get("market_names", [])
+
+    # Pair IDs with names and sort: Winner markets first, then others
+    pairs = list(zip(raw_ids, raw_names)) if len(raw_ids) == len(raw_names) else [(mid, "") for mid in raw_ids]
+
+    def _winner_sort_key(pair):
+        _id, name = pair
+        name_lower = name.lower()
+        # Winner markets get priority 0, others get 1
+        if "winner" in name_lower and "round" not in name_lower:
+            return (0, _id)
+        return (1, _id)
+
+    pairs.sort(key=_winner_sort_key)
+    sorted_ids = [p[0] for p in pairs]
+    sorted_names = [p[1] for p in pairs]
+
     return {
         "key": t["key"],
         "name": t["name"],
@@ -857,5 +900,6 @@ def _build_current_event(t: dict) -> dict:
         "leader": t["golfers"][0]["name"] if t["golfers"] else None,
         "leader_probability": t["golfers"][0]["probability"] if t["golfers"] else None,
         "top_golfers": t["golfers"][:5],
-        "market_ids": t.get("market_ids", []),
+        "market_ids": sorted_ids,
+        "market_names": sorted_names,
     }

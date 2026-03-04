@@ -30,10 +30,11 @@ export function EvolutionView({
   const [highlightedOutcomeId, setHighlightedOutcomeId] = useState<number | null>(null);
   const [selectedOutcomeIds, setSelectedOutcomeIds] = useState<Set<number> | null>(null);
 
-  // Fetch history data
+  // Fetch history data — request more outcomes than the default 10
+  // so the chart has a rich participant pool to select from
   const { data, error, isLoading } = useSWR(
     `futures-evolution-${marketId}-${hours}`,
-    () => fetchFuturesHistory(marketId, hours),
+    () => fetchFuturesHistory(marketId, hours, undefined, 30),
     { refreshInterval: 60_000 } // Refresh every minute
   );
 

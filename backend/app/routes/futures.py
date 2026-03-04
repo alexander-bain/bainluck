@@ -878,6 +878,7 @@ async def get_futures_history(
     market_id: int,
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
     hours: int = Query(168, description="Hours of history (default 7 days)"),
+    top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -902,12 +903,13 @@ async def get_futures_history(
     if outcome_id:
         outcome_ids = [outcome_id]
     else:
-        # Default to top 10 outcomes by current probability
+        # Default to top N outcomes by current probability
+        capped_n = min(top_n, 50)
         sorted_outcomes = sorted(
             market.outcomes,
             key=lambda o: o.current_probability or 0,
             reverse=True
-        )[:10]
+        )[:capped_n]
         outcome_ids = [o.id for o in sorted_outcomes]
 
     # Fetch snapshots for these outcomes
