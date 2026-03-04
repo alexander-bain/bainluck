@@ -579,7 +579,6 @@ async def trigger_polymarket_history_backfill(
 @router.post("/polymarket/fix-outcome-names")
 async def fix_polymarket_outcome_names(
     secret: str = Query(..., description="Admin secret for authorization"),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Fix Polymarket outcome names using groupItemTitle from Gamma API.
@@ -587,86 +586,23 @@ async def fix_polymarket_outcome_names(
     Finds FuturesMarket records (source='polymarket') where multiple outcomes
     share the same name, re-fetches the event from Polymarket's Gamma API,
     and updates outcome names using the groupItemTitle field.
+
+    Runs as a background Celery task to avoid Heroku's 30-second HTTP timeout.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from sqlalchemy import func as sqla_func
-    from app.services.polymarket_api import PolymarketAPIService
-
-    stats = {"markets_checked": 0, "outcomes_fixed": 0, "errors": []}
+    from app.tasks import fix_outcome_names
 
     try:
-        service = PolymarketAPIService()
-
-        # Find Polymarket markets where multiple outcomes share a name
-        dup_query = (
-            select(FuturesOutcome.market_id)
-            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-            .where(FuturesMarket.source == "polymarket")
-            .group_by(FuturesOutcome.market_id, FuturesOutcome.name)
-            .having(sqla_func.count(FuturesOutcome.id) > 1)
-        )
-        dup_result = await db.execute(dup_query)
-        affected_market_ids = list(set(row[0] for row in dup_result.all()))
-
-        if not affected_market_ids:
-            await service.close()
-            return {"status": "ok", "message": "No markets with duplicate outcome names found", **stats}
-
-        # Process each affected market
-        for market_id in affected_market_ids:
-            try:
-                # Get the market and its outcomes
-                market_result = await db.execute(
-                    select(FuturesMarket).where(FuturesMarket.id == market_id)
-                )
-                market = market_result.scalar_one_or_none()
-                if not market or not market.external_id:
-                    continue
-
-                outcomes_result = await db.execute(
-                    select(FuturesOutcome).where(FuturesOutcome.market_id == market_id)
-                )
-                outcomes = outcomes_result.scalars().all()
-
-                # Re-fetch the event from Polymarket
-                event_data = await service.get_event_by_id(market.external_id)
-                if not event_data:
-                    stats["errors"].append(f"Market {market_id}: could not fetch event {market.external_id}")
-                    continue
-
-                stats["markets_checked"] += 1
-
-                # Build condition_id → groupItemTitle mapping
-                title_map = {}
-                for mkt in event_data.get("markets", []):
-                    cid = mkt.get("conditionId", "")
-                    git = mkt.get("groupItemTitle")
-                    if cid and git:
-                        title_map[cid] = git
-
-                # Update outcomes using their external_id (= conditionId)
-                for outcome in outcomes:
-                    new_name = title_map.get(outcome.external_id)
-                    if new_name and new_name != outcome.name:
-                        outcome.name = new_name
-                        stats["outcomes_fixed"] += 1
-
-            except Exception as e:
-                stats["errors"].append(f"Market {market_id}: {str(e)}")
-
-        await db.commit()
-        await service.close()
-
+        task = fix_outcome_names.delay()
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "message": "Outcome names fix queued. Use /api/admin/polymarket/task/{task_id} to check status.",
+        }
     except Exception as e:
-        stats["errors"].append(f"Top-level error: {str(e)}")
-
-    return {
-        "status": "ok",
-        "message": f"Fixed {stats['outcomes_fixed']} outcomes across {stats['markets_checked']} markets",
-        **stats,
-    }
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
 @router.post("/futures/poll")

@@ -828,6 +828,91 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
     return stats
 
 
+async def _fix_outcome_names_impl():
+    """Fix Polymarket outcome names using groupItemTitle from Gamma API."""
+    import asyncio
+    from sqlalchemy import func as sqla_func
+    from app.models import FuturesMarket, FuturesOutcome
+    from app.services.polymarket_api import PolymarketAPIService
+
+    stats = {"markets_checked": 0, "outcomes_fixed": 0, "errors": []}
+
+    try:
+        service = PolymarketAPIService()
+
+        async with get_task_session() as session:
+            # Find Polymarket markets where multiple outcomes share a name
+            dup_query = (
+                select(FuturesOutcome.market_id)
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                .where(FuturesMarket.source == "polymarket")
+                .group_by(FuturesOutcome.market_id, FuturesOutcome.name)
+                .having(sqla_func.count(FuturesOutcome.id) > 1)
+            )
+            dup_result = await session.execute(dup_query)
+            affected_market_ids = list(set(row[0] for row in dup_result.all()))
+
+            if not affected_market_ids:
+                await service.close()
+                logger.info("fix_outcome_names: no markets with duplicate outcome names found")
+                return stats
+
+            for market_id in affected_market_ids:
+                try:
+                    market_result = await session.execute(
+                        select(FuturesMarket).where(FuturesMarket.id == market_id)
+                    )
+                    market = market_result.scalar_one_or_none()
+                    if not market or not market.external_id:
+                        continue
+
+                    outcomes_result = await session.execute(
+                        select(FuturesOutcome).where(FuturesOutcome.market_id == market_id)
+                    )
+                    outcomes = outcomes_result.scalars().all()
+
+                    event_data = await service.get_event_by_id(market.external_id)
+                    if not event_data:
+                        stats["errors"].append(f"Market {market_id}: could not fetch event {market.external_id}")
+                        continue
+
+                    stats["markets_checked"] += 1
+
+                    # Build condition_id → groupItemTitle mapping
+                    title_map = {}
+                    for mkt in event_data.get("markets", []):
+                        cid = mkt.get("conditionId", "")
+                        git = mkt.get("groupItemTitle")
+                        if cid and git:
+                            title_map[cid] = git
+
+                    for outcome in outcomes:
+                        new_name = title_map.get(outcome.external_id)
+                        if new_name and new_name != outcome.name:
+                            outcome.name = new_name
+                            stats["outcomes_fixed"] += 1
+
+                    # Rate limit Polymarket API calls
+                    await asyncio.sleep(0.3)
+
+                except Exception as e:
+                    stats["errors"].append(f"Market {market_id}: {str(e)}")
+
+            await session.commit()
+
+        await service.close()
+
+    except Exception as e:
+        stats["errors"].append(f"Top-level error: {str(e)}")
+
+    logger.info(
+        "fix_outcome_names: fixed %d outcomes across %d markets",
+        stats["outcomes_fixed"],
+        stats["markets_checked"],
+    )
+    return stats
+
+
 async def _mark_resolved_impl():
     """Mark futures markets as resolved when their resolution_date has passed."""
     from sqlalchemy import update

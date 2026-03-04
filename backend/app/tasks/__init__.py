@@ -268,6 +268,13 @@ def mark_resolved_futures(self):
     return run_async(_mark_resolved_impl())
 
 
+@celery_app.task(bind=True, name="app.tasks.fix_outcome_names")
+def fix_outcome_names(self):
+    """Fix Polymarket outcome names using groupItemTitle from Gamma API."""
+    from app.tasks.futures import _fix_outcome_names_impl
+    return run_async(_fix_outcome_names_impl())
+
+
 # --- ESPN ---
 
 @celery_app.task(bind=True, name="app.tasks.enrich_events_metadata")
