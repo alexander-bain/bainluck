@@ -351,6 +351,9 @@ export default function GolfPage() {
               <MoversStrip movers={data.biggest_movers} />
             )}
 
+            {/* Source Legend — shown before first section using source dots */}
+            <SourceLegend />
+
             {/* The Majors */}
             {majors.length > 0 && (
               <section>
@@ -456,27 +459,6 @@ export default function GolfPage() {
                 </div>
               </section>
             )}
-
-            {/* Source Legend */}
-            <div className="flex items-center justify-center gap-4 text-xs text-text-muted pt-4 border-t border-surface-border flex-wrap">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
-                Sportsbooks
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                Kalshi
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
-                Polymarket
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-500 inline-block ring-1 ring-amber-400/50" />
-                DG Model
-                <span className="text-amber-400/60 text-[9px]">(model)</span>
-              </span>
-            </div>
           </>
         )}
       </div>
@@ -530,9 +512,7 @@ function CurrentEventBanner({
       dateLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
     }
   } else if (hasActiveMovement) {
-    // No schedule dates but significant odds movement → tournament is in progress
     statusLabel = "In Progress";
-    // Don't show resolution_date — it's market close, not tournament date
   } else if (event.resolution_date) {
     const resDate = new Date(event.resolution_date);
     const daysUntil = Math.ceil(
@@ -551,14 +531,12 @@ function CurrentEventBanner({
     }
   }
 
-  const leaderProb = topGolfers.length > 0 ? topGolfers[0].probability : 0;
-
   return (
     <div className="bg-gradient-to-r from-[#006747]/20 via-[#006747]/10 to-[#006747]/20 border border-[#006747]/30 rounded-xl p-5">
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <p className="text-[#006747] text-xs font-semibold uppercase tracking-wider mb-1">
-            {statusLabel}
+            &#x1F3CC;&#xFE0F; {statusLabel}
           </p>
           <h2 className="text-xl font-bold text-text-primary">{event.name}</h2>
           <p className="text-text-muted text-sm mt-1">
@@ -567,79 +545,21 @@ function CurrentEventBanner({
             {dateLabel && <span> &middot; {dateLabel}</span>}
           </p>
         </div>
+        {/* Leader callout (compact, no full leaderboard) */}
+        {topGolfers.length > 0 && (
+          <div className="text-right">
+            <p className="text-xs text-text-muted uppercase tracking-wider">
+              Favorite
+            </p>
+            <p className="text-lg font-semibold text-text-primary">
+              {topGolfers[0].name}
+            </p>
+            <p className="text-[#006747] font-mono text-sm">
+              {Math.round(topGolfers[0].probability * 100)}%
+            </p>
+          </div>
+        )}
       </div>
-
-      {/* Odds Trend Sparkline */}
-      {historyData && historyData.length > 0 && (
-        <TrendSparkline historyData={historyData} topGolfers={topGolfers} />
-      )}
-
-      {/* Mini-Leaderboard */}
-      {topGolfers.length > 0 && (
-        <div className="space-y-2">
-          {topGolfers.map((golfer) => {
-            const pct = Math.round(golfer.probability * 100);
-            const barWidth = leaderProb > 0
-              ? Math.max(Math.round((golfer.probability / leaderProb) * 100), 4)
-              : pct;
-            const isLeader = golfer.rank === 1;
-
-            return (
-              <div key={golfer.name}>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-xs font-mono w-5 text-right ${
-                      isLeader ? "text-[#006747] font-bold" : "text-text-muted"
-                    }`}
-                  >
-                    {golfer.rank}
-                  </span>
-                  <span
-                    className={`text-sm flex-1 truncate ${
-                      isLeader ? "text-text-primary font-medium" : "text-text-secondary"
-                    }`}
-                  >
-                    {golfer.name}
-                  </span>
-                  <MovementBadge movement={golfer.movement_24h} />
-                  <span className="text-sm font-mono text-text-primary w-10 text-right">
-                    {pct}%
-                  </span>
-                </div>
-                <div className="ml-7 mr-14 mt-0.5 mb-0.5">
-                  <div className="h-1.5 bg-[#006747]/10 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${barWidth}%`,
-                        background: isLeader
-                          ? "linear-gradient(90deg, #006747, #2d8659)"
-                          : "#2d8659",
-                        opacity: isLeader ? 1 : 0.5,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Fallback if no top_golfers (shouldn't happen, but safe) */}
-      {topGolfers.length === 0 && event.leader && event.leader_probability !== null && (
-        <div className="text-right">
-          <p className="text-xs text-text-muted uppercase tracking-wider">
-            Favorite
-          </p>
-          <p className="text-lg font-semibold text-text-primary">
-            {event.leader}
-          </p>
-          <p className="text-[#006747] font-mono text-sm">
-            {Math.round(event.leader_probability * 100)}%
-          </p>
-        </div>
-      )}
     </div>
   );
 }
@@ -825,6 +745,35 @@ function Countdown({ targetDate }: { targetDate: string }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// Source Legend
+// ============================================================================
+
+function SourceLegend() {
+  return (
+    <div className="flex items-center gap-4 text-xs text-text-muted flex-wrap">
+      <span className="text-text-secondary font-medium">Sources:</span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: "#3b82f6" }} />
+        Sportsbooks
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: "#22c55e" }} />
+        Kalshi
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: "#8b5cf6" }} />
+        Polymarket
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full inline-block ring-1 ring-amber-400/50" style={{ backgroundColor: "#f59e0b" }} />
+        DG Model
+        <span className="text-amber-400/60 text-[9px]">(model)</span>
+      </span>
     </div>
   );
 }
@@ -1025,15 +974,25 @@ const SOURCE_META: Record<string, { color: string; type: "model" | "market" }> =
   datagolf_model: { color: "#f59e0b", type: "model" },
 };
 
+const SOURCE_LABELS: Record<string, string> = {
+  odds_api: "Sportsbooks",
+  kalshi: "Kalshi",
+  polymarket: "Polymarket",
+  datagolf_model: "DG Model",
+};
+
 function SourceDots({ sources }: { sources: Record<string, number> }) {
   return (
     <div className="flex gap-1 items-center">
       {Object.keys(sources).map((s) => {
         const meta = SOURCE_META[s];
+        const label = SOURCE_LABELS[s] || s;
+        const pct = (sources[s] * 100).toFixed(1);
         return (
           <span
             key={s}
-            className={`w-1.5 h-1.5 rounded-full inline-block ${
+            title={`${label}: ${pct}%`}
+            className={`w-1.5 h-1.5 rounded-full inline-block cursor-help ${
               meta?.type === "model" ? "ring-1 ring-amber-400/50" : ""
             }`}
             style={{ backgroundColor: meta?.color || "#6b7280" }}
@@ -1070,13 +1029,32 @@ function TournamentCard({
         <h3 className="text-body-strong text-text-primary">{tournament.name}</h3>
       </div>
       {venue && <p className="text-xs text-text-muted mb-3">{venue}</p>}
-      {tournament.commence_time && (
+      {(tournament.start_date || tournament.commence_time) && (
         <p className="text-xs text-text-muted mb-3">
-          {new Date(tournament.commence_time).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
+          {tournament.start_date ? (
+            <>
+              {new Date(tournament.start_date).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              })}
+              {tournament.end_date && (
+                <>
+                  {" \u2013 "}
+                  {new Date(tournament.end_date).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </>
+              )}
+            </>
+          ) : (
+            new Date(tournament.commence_time!).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })
+          )}
         </p>
       )}
       <div className="space-y-1.5">

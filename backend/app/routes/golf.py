@@ -189,6 +189,45 @@ _PROP_OUTCOME_RE = re.compile(
 _WOMENS_RE = re.compile(r"\b(?:lpga|women'?s?|ladies)\b", re.I)
 
 # ============================================================================
+# Tour classification — classify each tournament by tour
+# ============================================================================
+
+_TOUR_CLASSIFICATION_PATTERNS = [
+    (re.compile(r"\b(?:dp\s+world|european\s+tour|rolex\s+series)\b", re.I), "dp_world"),
+    (re.compile(r"\b(?:lpga|women'?s?\s+(?:open|championship|tour))\b", re.I), "lpga"),
+    (re.compile(r"\bliv\s+golf\b", re.I), "liv"),
+    (re.compile(r"\b(?:korn\s+ferry|nationwide)\b", re.I), "korn_ferry"),
+    (re.compile(r"\b(?:sunshine\s+tour)\b", re.I), "sunshine"),
+    (re.compile(r"\b(?:asian\s+tour)\b", re.I), "asian"),
+    (re.compile(r"\btgl\b|tomorrow'?s?\s+golf", re.I), "tgl"),
+]
+
+TOUR_DISPLAY_NAMES = {
+    "pga": "PGA Tour",
+    "dp_world": "DP World Tour",
+    "lpga": "LPGA Tour",
+    "liv": "LIV Golf",
+    "korn_ferry": "Korn Ferry Tour",
+    "sunshine": "Sunshine Tour",
+    "asian": "Asian Tour",
+    "tgl": "TGL",
+    "major": "Major",
+}
+
+
+def _classify_tour(market_name: str, tournament_key: str, is_major: bool, is_womens: bool) -> str:
+    """Classify a tournament into a tour. Returns tour key."""
+    if is_major:
+        return "major"
+    if is_womens:
+        return "lpga"
+    for pattern, tour in _TOUR_CLASSIFICATION_PATTERNS:
+        if pattern.search(market_name):
+            return tour
+    # Default to PGA Tour for non-major, non-women's, non-pattern-matched
+    return "pga"
+
+# ============================================================================
 # Tour event extraction — sub-group "other" into named tour events
 # ============================================================================
 
@@ -629,9 +668,14 @@ async def get_golf(
         # Normalize probabilities so they sum to ~100%
         total_prob = sum(g["probability"] for g in golfers)
         if total_prob > 0:
+            norm_scale = 1.0 / total_prob
             for g in golfers:
                 g["probability"] = round(g["probability"] / total_prob, 3)
                 g["american_odds"] = probability_to_american(g["probability"])
+                # Scale 24h movement by the same normalization factor so arrows
+                # reflect changes in displayed (normalized) probabilities, not raw
+                if g["movement_24h"] is not None:
+                    g["movement_24h"] = round(g["movement_24h"] * norm_scale, 4)
         else:
             for g in golfers:
                 g["probability"] = round(g["probability"], 3)
@@ -669,12 +713,23 @@ async def get_golf(
             or any(_WOMENS_RE.search(m.name) for m in tourn_markets)
         )
 
+        # Classify tour
+        tour_name_for_classify = display_name
+        if tourn_markets:
+            tour_name_for_classify = tourn_markets[0].name
+        tour = _classify_tour(
+            tour_name_for_classify, tourn_key,
+            tourn_key in MAJOR_TOURNAMENTS, is_womens,
+        )
+
         tournaments.append({
             "key": tourn_key,
             "name": display_name,
             "is_major": tourn_key in MAJOR_TOURNAMENTS,
             "is_tour_event": is_tour_event,
             "is_womens": is_womens,
+            "tour": tour,
+            "tour_label": TOUR_DISPLAY_NAMES.get(tour, tour),
             "order": order_idx,
             "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
             "commence_time": earliest_commence.isoformat() if earliest_commence else None,
@@ -707,6 +762,24 @@ async def get_golf(
                 t["start_date"] = sched["start_date"]
             if sched.get("end_date"):
                 t["end_date"] = sched["end_date"]
+
+    # ========================================================================
+    # Filter out completed tournaments (end_date in the past, >1 day buffer)
+    # ========================================================================
+    now_date = now.date()
+    filtered_tournaments = []
+    for t in tournaments:
+        end_date_str = t.get("end_date")
+        if end_date_str:
+            try:
+                end_dt = datetime.fromisoformat(end_date_str).date()
+                if end_dt < now_date - timedelta(days=1):
+                    logger.debug("Golf: filtering completed tournament '%s' (ended %s)", t["name"], end_dt)
+                    continue
+            except (ValueError, TypeError):
+                pass
+        filtered_tournaments.append(t)
+    tournaments = filtered_tournaments
 
     # ========================================================================
     # Biggest movers — top 5 golfers across all tournaments by |movement_24h|

@@ -1045,6 +1045,11 @@ async def get_progression(
             seen_ids.add(m.id)
             unique_markets.append(m)
 
+    # Filter out non-golf false positives (soccer, esports, etc.) for golf markets
+    if sport_cat == "golf":
+        from app.routes.golf import _is_golf_market
+        unique_markets = [m for m in unique_markets if _is_golf_market(m)]
+
     # --- Classify each market into a stage ---
     stage_markets: dict[str, FuturesMarket] = {}
     for m in unique_markets:
