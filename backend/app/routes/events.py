@@ -830,6 +830,10 @@ async def search_events(
                 FuturesMarket.outcomes.any(FuturesOutcome.name.ilike(search_pattern)),
             ),
             FuturesMarket.status == "open",
+            or_(
+                FuturesMarket.resolution_date.is_(None),
+                FuturesMarket.resolution_date >= datetime.now(timezone.utc),
+            ),
         )
         .order_by(FuturesMarket.updated_at.desc())
         .limit(10)  # Limit futures results
@@ -976,6 +980,10 @@ async def typeahead_search(
         .where(
             FuturesMarket.name.ilike(pattern),
             FuturesMarket.status == "open",
+            or_(
+                FuturesMarket.resolution_date.is_(None),
+                FuturesMarket.resolution_date >= now,
+            ),
         )
         .order_by(FuturesMarket.market_tier.asc().nulls_last())
         .limit(3)

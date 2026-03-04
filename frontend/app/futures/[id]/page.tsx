@@ -229,6 +229,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </Link>
       </div>
 
+      {/* Expired market banner */}
+      {market.resolution_date && new Date(market.resolution_date) < new Date() && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 text-sm text-amber-400">
+          This market resolved on {new Date(market.resolution_date).toLocaleDateString()}.
+          Showing final probabilities.
+        </div>
+      )}
+
       {/* Hero Section */}
       <div
         className={`rounded-card shadow-card p-6 ${

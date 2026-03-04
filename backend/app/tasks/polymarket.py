@@ -464,7 +464,8 @@ async def _process_event_batch(
                         if prob is None or prob <= 0:
                             continue
 
-                        outcome_name = _extract_outcome_name(
+                        # Prefer groupItemTitle (e.g., "33°F or below") over question parsing
+                        outcome_name = market.group_item_title or _extract_outcome_name(
                             market.question, event.title
                         )
 
@@ -489,7 +490,8 @@ async def _process_event_batch(
                         if len(event.markets) == 1:
                             outcome_name = "Yes"
                         else:
-                            outcome_name = _extract_outcome_name(
+                            # Prefer groupItemTitle over question parsing
+                            outcome_name = market.group_item_title or _extract_outcome_name(
                                 market.question, event.title
                             )
 

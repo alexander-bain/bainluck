@@ -160,10 +160,18 @@ async def get_futures_movers(
     Useful for discovering betting line movement and market sentiment shifts.
     """
     # Get outcomes with significant 24h changes
+    now = datetime.now(timezone.utc)
     query = (
         select(FuturesOutcome)
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
         .options(selectinload(FuturesOutcome.market))
-        .where(FuturesOutcome.probability_change_24h.isnot(None))
+        .where(
+            FuturesOutcome.probability_change_24h.isnot(None),
+            or_(
+                FuturesMarket.resolution_date.is_(None),
+                FuturesMarket.resolution_date >= now,
+            ),
+        )
         .order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
         .limit(limit)
     )
@@ -653,6 +661,14 @@ async def list_futures_markets(
     conditions = []
     if status != "all":
         conditions.append(FuturesMarket.status == status)
+        # Exclude resolved markets (past resolution_date) from non-"all" queries
+        now = datetime.now(timezone.utc)
+        conditions.append(
+            or_(
+                FuturesMarket.resolution_date.is_(None),
+                FuturesMarket.resolution_date >= now,
+            )
+        )
 
     if source:
         conditions.append(FuturesMarket.source == source)

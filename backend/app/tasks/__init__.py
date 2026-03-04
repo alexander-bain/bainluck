@@ -261,6 +261,13 @@ def regenerate_tags_task(self, limit: int = 5000, category: str = None):
     return run_async(_regenerate_tags_impl(limit, category=category))
 
 
+@celery_app.task(bind=True, name="app.tasks.mark_resolved_futures")
+def mark_resolved_futures(self):
+    """Mark futures markets as resolved when their resolution_date has passed."""
+    from app.tasks.futures import _mark_resolved_impl
+    return run_async(_mark_resolved_impl())
+
+
 # --- ESPN ---
 
 @celery_app.task(bind=True, name="app.tasks.enrich_events_metadata")
@@ -600,6 +607,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.recategorize_other",
         "schedule": crontab(minute=0, hour=8),  # Daily at 8:00 AM UTC
         "kwargs": {"limit": 2000},
+    },
+    "mark-resolved-futures-daily": {
+        "task": "app.tasks.mark_resolved_futures",
+        "schedule": crontab(minute=15, hour=8),  # Daily at 8:15 AM UTC
     },
     "backfill-canonical-keys-daily": {
         "task": "app.tasks.backfill_canonical_keys",

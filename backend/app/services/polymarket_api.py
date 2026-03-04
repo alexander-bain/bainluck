@@ -50,6 +50,9 @@ class PolymarketMarket(BaseModel):
     # NegRisk (multi-outcome event markets)
     neg_risk: bool = False
 
+    # Group item title (e.g., "33°F or below" for weather markets)
+    group_item_title: Optional[str] = None
+
 
 class PolymarketEvent(BaseModel):
     """A Polymarket event containing one or more markets."""
@@ -450,6 +453,7 @@ class PolymarketAPIService:
                 condition_id=market_data.get("conditionId", ""),
                 question=market_data.get("question", ""),
                 slug=market_data.get("slug"),
+                group_item_title=market_data.get("groupItemTitle"),
                 outcomes=outcomes,
                 outcome_prices=outcome_prices,
                 clob_token_ids=clob_token_ids,

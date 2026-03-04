@@ -828,6 +828,37 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
     return stats
 
 
+async def _mark_resolved_impl():
+    """Mark futures markets as resolved when their resolution_date has passed."""
+    from sqlalchemy import update
+    from app.models import FuturesMarket
+
+    stats = {"marked_resolved": 0, "errors": []}
+
+    try:
+        async with get_task_session() as session:
+            now = datetime.now(timezone.utc)
+            result = await session.execute(
+                update(FuturesMarket)
+                .where(
+                    FuturesMarket.status == "open",
+                    FuturesMarket.resolution_date.isnot(None),
+                    FuturesMarket.resolution_date < now,
+                )
+                .values(status="resolved")
+            )
+            await session.commit()
+            stats["marked_resolved"] = result.rowcount
+    except Exception as e:
+        stats["errors"].append(f"Error: {str(e)}")
+
+    logger.info(
+        "mark_resolved_futures: marked %d markets as resolved",
+        stats["marked_resolved"],
+    )
+    return stats
+
+
 async def _regenerate_tags_impl(limit: int = 5000, category: str = None):
     """
     Regenerate category_tags for existing markets using current patterns.
