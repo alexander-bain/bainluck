@@ -204,9 +204,9 @@ class DataGolfAPIService:
             result.append(DataGolfTournament(
                 event_id=str(entry.get("event_id", "")),
                 event_name=entry.get("event_name", ""),
-                course=entry.get("course"),
-                start_date=entry.get("start_date"),
-                end_date=entry.get("end_date"),
+                course=entry.get("course_name") or entry.get("course"),
+                start_date=entry.get("date_start") or entry.get("start_date"),
+                end_date=entry.get("date_end") or entry.get("end_date"),
                 tour=tour,
                 current_round=entry.get("current_round"),
             ))
