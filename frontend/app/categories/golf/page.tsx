@@ -439,22 +439,28 @@ export default function GolfPage() {
                 </h2>
                 <div className="space-y-2">
                   {data.upcoming_events.map((event) => (
-                    <div
+                    <Link
+                      href={`/events/${event.id}`}
                       key={event.id}
-                      className="bg-surface-card rounded-lg border border-surface-border p-3 flex items-center justify-between"
+                      className="bg-surface-card rounded-lg border border-surface-border p-3 flex items-center justify-between hover:shadow-card-hover hover:border-[#006747]/30 transition-all group"
                     >
-                      <span className="text-sm text-text-primary">
+                      <span className="text-sm text-text-primary group-hover:text-[#006747] transition-colors">
                         {event.name}
                       </span>
-                      {event.commence_time && (
-                        <span className="text-xs text-text-muted">
-                          {new Date(event.commence_time).toLocaleDateString(
-                            "en-US",
-                            { weekday: "short", month: "short", day: "numeric" }
-                          )}
+                      <div className="flex items-center gap-2">
+                        {event.commence_time && (
+                          <span className="text-xs text-text-muted">
+                            {new Date(event.commence_time).toLocaleDateString(
+                              "en-US",
+                              { weekday: "short", month: "short", day: "numeric" }
+                            )}
+                          </span>
+                        )}
+                        <span className="text-xs text-text-muted group-hover:text-[#006747] transition-colors">
+                          &rarr;
                         </span>
-                      )}
-                    </div>
+                      </div>
+                    </Link>
                   ))}
                 </div>
               </section>
@@ -1066,9 +1072,13 @@ function TournamentCard({
           />
         ))}
       </div>
-      {tournament.golfers.length > 8 && (
+      {tournament.golfers.length > 8 ? (
         <p className="text-xs text-[#006747] mt-3 group-hover:underline">
           View all {tournament.golfers.length} golfers &rarr;
+        </p>
+      ) : (
+        <p className="text-xs text-[#006747]/60 mt-3 group-hover:text-[#006747] group-hover:underline transition-colors">
+          View details &rarr;
         </p>
       )}
     </Link>
@@ -1141,9 +1151,10 @@ function ExpandableTournamentRow({
           <Link
             href={`/categories/golf/tournaments/${slug}`}
             onClick={(e) => e.stopPropagation()}
-            className="text-sm text-text-primary font-medium hover:text-[#006747] hover:underline"
+            className="group/link text-sm text-text-primary font-medium hover:text-[#006747] hover:underline inline-flex items-center gap-1"
           >
             {tournament.name}
+            <span className="text-[10px] text-text-muted group-hover/link:text-[#006747] transition-colors">&rsaquo;</span>
           </Link>
           {(tournament.venue || timingLabel) && (
             <span className="text-xs text-text-muted ml-2">

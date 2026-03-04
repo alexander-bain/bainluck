@@ -165,6 +165,34 @@ TOURNAMENT_DISPLAY_NAMES = {
 
 MAJOR_TOURNAMENTS = {"masters", "pga_championship", "us_open", "the_open"}
 
+# PGA Tour Signature Events — elevated purse/field, top-tier regular season events
+_SIGNATURE_EVENTS = {
+    "arnold_palmer_invitational",
+    "the_genesis_invitational",
+    "genesis_invitational",
+    "the_players_championship",
+    "memorial_tournament",
+    "the_sentry",
+    "at_t_pebble_beach",
+    "at_t_pebble_beach_pro_am",
+    "rbc_heritage",
+    "wells_fargo_championship",
+    "travelers_championship",
+    "fedex_st_jude_championship",
+}
+
+# Sponsor suffix pattern — strip "Presented By X", "Sponsored By X", etc. before slugifying
+_SPONSOR_SUFFIX_RE = re.compile(
+    r"\s+(?:presented|sponsored|hosted|powered)\s+by\s+.*$",
+    re.I,
+)
+
+
+def _clean_slug(name: str) -> str:
+    """Generate a clean URL slug from a tournament name, stripping sponsor suffixes."""
+    cleaned = _SPONSOR_SUFFIX_RE.sub("", name)
+    return re.sub(r"[^a-z0-9]+", "-", cleaned.lower()).strip("-")
+
 TOURNAMENT_ORDER = [
     "masters", "pga_championship", "us_open", "the_open",
     "players", "ryder_cup", "presidents_cup", "liv", "tgl", "other",
@@ -751,7 +779,7 @@ async def get_golf(
     # ========================================================================
     for t in tournaments:
         # Add slug for tournament detail page URLs
-        t["slug"] = re.sub(r"[^a-z0-9]+", "-", t["name"].lower()).strip("-")
+        t["slug"] = _clean_slug(t["name"])
 
         sched = schedule_by_key.get(t["key"])
         if sched:
@@ -847,6 +875,15 @@ async def get_golf(
     }
 
 
+def _tournament_importance(key: str) -> int:
+    """Return importance tier for a tournament key. Higher = more important."""
+    if key in MAJOR_TOURNAMENTS:
+        return 3
+    if key in _SIGNATURE_EVENTS:
+        return 2
+    return 1
+
+
 def _find_current_event(
     tournaments: list[dict],
     schedule_by_key: dict[str, dict],
@@ -855,9 +892,9 @@ def _find_current_event(
     """Find the current tour event using DataGolf dates with fallback heuristics.
 
     Priority order:
-    1. DataGolf schedule: event whose start_date <= now <= end_date
-    2. DataGolf schedule: nearest upcoming event (start_date > now, within 7 days)
-    3. Fallback: tour event with most sources/golfer data (highest activity)
+    1. DataGolf schedule: event whose start_date <= now <= end_date (prefer most important)
+    2. DataGolf schedule: nearest upcoming event (start_date > now, within 7 days, prefer most important)
+    3. Fallback: tour event closest to now, weighted by importance + activity
     """
     tour_events = [t for t in tournaments if t.get("is_tour_event")]
     if not tour_events:
@@ -867,7 +904,8 @@ def _find_current_event(
 
     # Phase 1: Use DataGolf schedule dates if available
     if schedule_by_key:
-        # Find event currently in progress
+        # Find events currently in progress — collect all, pick most important
+        in_progress = []
         for t in tour_events:
             sched = schedule_by_key.get(t["key"])
             if not sched:
@@ -875,11 +913,14 @@ def _find_current_event(
             start = sched.get("start_date")
             end = sched.get("end_date")
             if start and end and start <= now_str <= end:
-                return _build_current_event(t)
+                in_progress.append(t)
 
-        # Find nearest upcoming event from schedule
-        nearest = None
-        nearest_start = None
+        if in_progress:
+            in_progress.sort(key=lambda t: -_tournament_importance(t["key"]))
+            return _build_current_event(in_progress[0])
+
+        # Find nearest upcoming events — collect all in nearest date, pick most important
+        upcoming_by_start: dict[str, list[dict]] = defaultdict(list)
         for t in tour_events:
             sched = schedule_by_key.get(t["key"])
             if not sched:
@@ -889,13 +930,16 @@ def _find_current_event(
                 try:
                     start_dt = datetime.fromisoformat(start)
                     if (start_dt - now).days <= 7:
-                        if nearest_start is None or start < nearest_start:
-                            nearest_start = start
-                            nearest = t
+                        upcoming_by_start[start].append(t)
                 except (ValueError, TypeError):
                     continue
-        if nearest:
-            return _build_current_event(nearest)
+
+        if upcoming_by_start:
+            # Get the nearest start date group
+            nearest_start = min(upcoming_by_start.keys())
+            nearest_group = upcoming_by_start[nearest_start]
+            nearest_group.sort(key=lambda t: -_tournament_importance(t["key"]))
+            return _build_current_event(nearest_group[0])
 
     # Phase 2: Fallback — pick the tour event closest to "right now".
     # Primary signal: commence_time proximity to now (nearest current/upcoming wins).
@@ -942,11 +986,12 @@ def _find_current_event(
             if g.get("movement_24h") is not None
         )
         total_sources = sum(len(g.get("sources", {})) for g in t["golfers"])
-        candidates.append((t, movers, total_movement, total_sources, proximity_days))
+        importance = _tournament_importance(t["key"])
+        candidates.append((t, importance, movers, total_movement, total_sources, proximity_days))
 
     if candidates:
-        # Sort by: movers desc, total_movement desc, proximity asc, sources desc
-        candidates.sort(key=lambda c: (-c[1], -c[2], c[4], -c[3]))
+        # Sort by: importance desc, proximity asc, movers desc, total_movement desc, sources desc
+        candidates.sort(key=lambda c: (-c[1], c[5], -c[2], -c[3], -c[4]))
         return _build_current_event(candidates[0][0])
 
     return None
@@ -980,7 +1025,7 @@ def _build_current_event(t: dict) -> dict:
     return {
         "key": t["key"],
         "name": t["name"],
-        "slug": re.sub(r"[^a-z0-9]+", "-", t["name"].lower()).strip("-"),
+        "slug": _clean_slug(t["name"]),
         "resolution_date": t.get("resolution_date"),
         "start_date": t.get("start_date"),
         "end_date": t.get("end_date"),
@@ -1031,7 +1076,7 @@ async def get_golf_tournament(
     # Find matching tournament by slug
     tournament = None
     for t in tournaments:
-        t_slug = t.get("slug") or re.sub(r"[^a-z0-9]+", "-", t["name"].lower()).strip("-")
+        t_slug = t.get("slug") or _clean_slug(t["name"])
         if t_slug == slug:
             tournament = t
             break
