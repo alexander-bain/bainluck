@@ -272,8 +272,66 @@ async def _poll_datagolf_live() -> dict:
                     markets = market_result.scalars().all()
 
                     if not markets:
-                        logger.info("DataGolf live: no markets found for tour=%s, run hourly poll first", tour)
-                        continue
+                        # Auto-create markets from schedule + in-play data
+                        logger.info("DataGolf live: no markets for tour=%s, auto-creating from schedule", tour)
+                        stats["markets_created"] = 0
+                        try:
+                            schedule = await service.get_schedule(tour=tour)
+                            current_event = None
+                            for t in schedule:
+                                if t.status and t.status != "completed":
+                                    current_event = t
+                                    break
+                            if current_event:
+                                for market_type, category in MARKET_TYPES:
+                                    ext_id = _external_id(tour, current_event.event_id, market_type)
+                                    market_name = f"{current_event.event_name} - {_market_label(market_type)}"
+                                    market = FuturesMarket(
+                                        source="datagolf",
+                                        external_id=ext_id,
+                                        name=market_name,
+                                        category=category,
+                                        llm_sport_category="golf",
+                                        status="open",
+                                        mutually_exclusive=(market_type == "win"),
+                                        market_metadata={
+                                            "datagolf_event_id": current_event.event_id,
+                                            "course": current_event.course,
+                                            "tour": tour,
+                                        },
+                                    )
+                                    if current_event.start_date:
+                                        try:
+                                            market.commence_time = datetime.strptime(
+                                                current_event.start_date, "%Y-%m-%d"
+                                            ).replace(tzinfo=timezone.utc)
+                                        except ValueError:
+                                            pass
+                                    if current_event.end_date:
+                                        try:
+                                            market.resolution_date = datetime.strptime(
+                                                current_event.end_date, "%Y-%m-%d"
+                                            ).replace(tzinfo=timezone.utc)
+                                        except ValueError:
+                                            pass
+                                    session.add(market)
+                                    stats["markets_created"] += 1
+                                await session.flush()
+                                # Re-query to get the newly created markets
+                                market_result = await session.execute(
+                                    select(FuturesMarket).where(
+                                        FuturesMarket.source == "datagolf",
+                                        FuturesMarket.external_id.like(f"datagolf:{tour}:%"),
+                                        FuturesMarket.status == "open",
+                                    )
+                                )
+                                markets = market_result.scalars().all()
+                            else:
+                                logger.info("DataGolf live: no current event in schedule for tour=%s", tour)
+                                continue
+                        except Exception as create_exc:
+                            logger.error("DataGolf live: market creation failed for tour=%s: %s", tour, create_exc)
+                            continue
 
                     now = datetime.now(timezone.utc)
 
