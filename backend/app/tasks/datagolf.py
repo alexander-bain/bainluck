@@ -64,10 +64,15 @@ async def _poll_datagolf_markets() -> dict:
                         stats["debug"][tour] = "no_schedule"
                         continue
 
-                    # Find the current/next event (first with a future or ongoing date)
+                    # Find the current/next event (first non-completed event)
                     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     current_event = None
                     for t in schedule:
+                        # Prefer status-based detection (API provides "completed" etc.)
+                        if t.status and t.status != "completed":
+                            current_event = t
+                            break
+                        # Fallback: check computed end_date
                         if t.end_date and t.end_date >= now_str:
                             current_event = t
                             break

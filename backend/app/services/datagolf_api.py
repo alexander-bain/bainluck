@@ -50,9 +50,12 @@ class DataGolfTournament(BaseModel):
     event_name: str
     course: Optional[str] = None
     start_date: Optional[str] = None  # "2026-04-10"
-    end_date: Optional[str] = None  # "2026-04-13"
+    end_date: Optional[str] = None  # Computed: start_date + 3 days (not in API)
+    status: Optional[str] = None  # "completed", "in-progress", "upcoming", etc.
     tour: str  # "pga", "euro", "kft", "liv", etc.
     current_round: Optional[int] = None
+    location: Optional[str] = None  # "Honolulu, HI"
+    country: Optional[str] = None
 
 
 class DataGolfOddsPlayer(BaseModel):
@@ -201,14 +204,27 @@ class DataGolfAPIService:
         schedule = data.get("schedule", [])
         result = []
         for entry in schedule:
+            start = entry.get("start_date")
+            # Compute end_date as start + 3 days (standard 4-day PGA event)
+            end = None
+            if start:
+                try:
+                    from datetime import timedelta as td
+                    end = (datetime.strptime(start, "%Y-%m-%d") + td(days=3)).strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+
             result.append(DataGolfTournament(
                 event_id=str(entry.get("event_id", "")),
                 event_name=entry.get("event_name", ""),
-                course=entry.get("course_name") or entry.get("course"),
-                start_date=entry.get("date_start") or entry.get("start_date"),
-                end_date=entry.get("date_end") or entry.get("end_date"),
+                course=entry.get("course"),
+                start_date=start,
+                end_date=end,
+                status=entry.get("status"),
                 tour=tour,
                 current_round=entry.get("current_round"),
+                location=entry.get("location"),
+                country=entry.get("country"),
             ))
         return result
 
