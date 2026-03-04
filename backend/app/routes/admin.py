@@ -5224,11 +5224,11 @@ async def datagolf_status(
             "external_id": m.external_id,
             "category": m.category,
         }
-        if m.metadata:
-            entry["tour"] = m.metadata.get("tour")
-            entry["course"] = m.metadata.get("course")
-            entry["has_leaderboard"] = "leaderboard" in m.metadata
-            entry["round_history_count"] = len(m.metadata.get("round_history", []))
+        if m.market_metadata:
+            entry["tour"] = m.market_metadata.get("tour")
+            entry["course"] = m.market_metadata.get("course")
+            entry["has_leaderboard"] = "leaderboard" in m.market_metadata
+            entry["round_history_count"] = len(m.market_metadata.get("round_history", []))
         latest_markets.append(entry)
 
     return {

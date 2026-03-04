@@ -10,8 +10,8 @@ Data flow:
     → FuturesMarket (source="datagolf", external_id="datagolf:pga:{event_id}:win")
       → FuturesOutcome (external_id="dg_{dg_id}", name="Scottie Scheffler")
         → FuturesOddsSnapshot (bookmaker="datagolf_model", probability=0.15)
-    → FuturesMarket.metadata.leaderboard (pos, score, round, thru per player)
-    → FuturesMarket.metadata.round_history (round transition timestamps)
+    → FuturesMarket.market_metadata.leaderboard (pos, score, round, thru per player)
+    → FuturesMarket.market_metadata.round_history (round transition timestamps)
 """
 
 import logging
@@ -128,12 +128,12 @@ async def _poll_datagolf_markets() -> dict:
                         stats["markets_upserted"] += 1
 
                         # Initialize metadata if needed
-                        if not market.metadata:
-                            market.metadata = {}
+                        if not market.market_metadata:
+                            market.market_metadata = {}
 
                         # Store event info in metadata
-                        market.metadata = {
-                            **market.metadata,
+                        market.market_metadata = {
+                            **market.market_metadata,
                             "datagolf_event_id": current_event.event_id,
                             "course": current_event.course,
                             "tour": tour,
@@ -263,15 +263,15 @@ async def _poll_datagolf_live() -> dict:
                         market_type = market.external_id.rsplit(":", 1)[-1]  # "win", "top_5", etc.
 
                         # Update round_history in metadata
-                        if current_round and market.metadata:
-                            round_history = market.metadata.get("round_history", [])
+                        if current_round and market.market_metadata:
+                            round_history = market.market_metadata.get("round_history", [])
                             if not round_history or round_history[-1].get("round") != current_round:
                                 round_history.append({
                                     "round": current_round,
                                     "timestamp": now.isoformat(),
                                     "label": f"R{current_round}",
                                 })
-                                market.metadata = {**market.metadata, "round_history": round_history}
+                                market.market_metadata = {**market.market_metadata, "round_history": round_history}
 
                         # Build leaderboard from in-play data
                         leaderboard = []
@@ -287,8 +287,8 @@ async def _poll_datagolf_live() -> dict:
                             }
                             leaderboard.append(entry)
 
-                        market.metadata = {
-                            **(market.metadata or {}),
+                        market.market_metadata = {
+                            **(market.market_metadata or {}),
                             "leaderboard": leaderboard[:50],  # Top 50 for metadata size
                         }
 

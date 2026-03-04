@@ -1,4 +1,4 @@
-"""Add metadata JSONB column to futures_markets.
+"""Add market_metadata JSONB column to futures_markets.
 
 Revision ID: add_fm_metadata
 Revises: add_market_tags
@@ -17,8 +17,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 def upgrade():
-    op.add_column("futures_markets", sa.Column("metadata", JSONB, nullable=True))
+    op.add_column("futures_markets", sa.Column("market_metadata", JSONB, nullable=True))
 
 
 def downgrade():
-    op.drop_column("futures_markets", "metadata")
+    op.drop_column("futures_markets", "market_metadata")

@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 def _derive_round_boundaries(metadata: dict | None) -> list[dict] | None:
-    """Extract round boundary markers from FuturesMarket.metadata.round_history.
+    """Extract round boundary markers from FuturesMarket.market_metadata.round_history.
 
     Returns a list of {timestamp, label} dicts suitable for chart ReferenceLine markers,
     or None if no round history exists.
@@ -964,8 +964,8 @@ async def get_futures_history(
         "market_name": market.name,
         "hours": hours,
         "outcomes": list(outcome_history.values()),
-        "round_boundaries": _derive_round_boundaries(market.metadata),
-        "leaderboard": (market.metadata or {}).get("leaderboard"),
+        "round_boundaries": _derive_round_boundaries(market.market_metadata),
+        "leaderboard": (market.market_metadata or {}).get("leaderboard"),
     }
 
 
