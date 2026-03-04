@@ -365,6 +365,21 @@ export interface FuturesHistoryResponse {
   market_name: string;
   hours: number;
   outcomes: FuturesOutcomeHistory[];
+  /** Round/phase boundaries for chart reference lines (from DataGolf round_history) */
+  round_boundaries?: { timestamp: string; label: string }[] | null;
+  /** Live leaderboard data (from DataGolf metadata) */
+  leaderboard?: DataGolfLeaderboardEntry[] | null;
+}
+
+/** DataGolf leaderboard entry stored in FuturesMarket.metadata.leaderboard */
+export interface DataGolfLeaderboardEntry {
+  dg_id: number;
+  name: string;
+  position: string | null;
+  total_score: number | null;
+  today_score: number | null;
+  thru: string | null;
+  current_round: number | null;
 }
 
 export interface FuturesMover {

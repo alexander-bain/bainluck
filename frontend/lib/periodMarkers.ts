@@ -66,6 +66,14 @@ export function normalizePeriodLabel(raw: string): string {
   // Already short like "Q1", "P2", "1H", "OT"
   if (/^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$/i.test(s)) return s.toUpperCase();
 
+  // Golf round labels: "R1", "R2", "R3", "R4", "PO" (playoff)
+  if (/^R\d$/i.test(s)) return s.toUpperCase();
+  if (/^round\s+(\d+)$/i.test(s)) {
+    const rMatch = s.match(/^round\s+(\d+)$/i);
+    return rMatch ? `R${rMatch[1]}` : s;
+  }
+  if (/^playoff$/i.test(s)) return "PO";
+
   return s;
 }
 

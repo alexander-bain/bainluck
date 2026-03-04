@@ -525,6 +525,9 @@ class FuturesMarket(Base):
     # Taxonomy tags (namespaced, e.g., ["sport:basketball", "tier:1", "category:championship"])
     market_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
 
+    # Flexible metadata (leaderboard state, round history, source-specific data)
+    metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
     # For multi-outcome markets, whether exactly one outcome can win
     mutually_exclusive: Mapped[bool] = mapped_column(Boolean, default=True)
 

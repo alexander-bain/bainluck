@@ -99,6 +99,10 @@ def _is_golf_market(market) -> bool:
     external_id = (market.external_id or "").lower()
     name = market.name or ""
 
+    # DataGolf markets: always golf
+    if source == "datagolf":
+        return True
+
     # Odds API markets: trust the sport key prefix
     if source == "odds_api":
         return external_id.startswith("golf_")
@@ -330,8 +334,23 @@ def _parse_statpal_date(date_str: str) -> str | None:
     return None
 
 
+# Characters that NFD decomposition doesn't handle (e.g., ø, đ, ł)
+_EXTRA_TRANSLITERATIONS = str.maketrans({
+    "ø": "o", "Ø": "O",
+    "đ": "d", "Đ": "D",
+    "ł": "l", "Ł": "L",
+    "æ": "ae", "Æ": "AE",
+})
+
+
 def _strip_diacritics(s: str) -> str:
-    """Remove accent marks: e->e, a->a, u->u, etc."""
+    """Remove accent marks and transliterate special letters.
+
+    Handles both NFD-decomposable marks (ü→u, é→e, å→a) and
+    non-decomposable letters (ø→o, đ→d, ł→l) that appear in
+    Nordic and Eastern European golfer names.
+    """
+    s = s.translate(_EXTRA_TRANSLITERATIONS)
     return "".join(
         c for c in unicodedata.normalize("NFD", s)
         if unicodedata.category(c) != "Mn"
@@ -339,18 +358,33 @@ def _strip_diacritics(s: str) -> str:
 
 
 def _normalize_golfer_name(name: str) -> str:
-    """Normalize a golfer name for display."""
+    """Normalize a golfer name for display.
+
+    Handles DataGolf 'Last, First' format, Polymarket quoted names,
+    and common prefix/suffix noise from prediction market outcomes.
+    """
     name = name.strip()
     name = re.sub(r"^(Yes|No)\s*[-:]\s*", "", name, flags=re.I)
     # Strip wrapping quotes (Polymarket NegRisk format)
     name = re.sub(r'^"(.*)"$', r"\1", name)
+    # Convert "Last, First" to "First Last" (DataGolf format)
+    # Unicode \w handles accented capitals (Højgaard, Müller, Skarsgård)
+    comma_match = re.match(r"^(\w[\w'-]+),\s+(\w[\w'-]+.*)$", name, flags=re.UNICODE)
+    if comma_match:
+        name = f"{comma_match.group(2)} {comma_match.group(1)}"
     return name
 
 
 def _match_key(name: str) -> str:
     """
     Create a matching key from a golfer name for cross-source dedup.
-    Strips diacritics, normalizes whitespace.
+
+    Handles name variations across DataGolf, Polymarket, Kalshi, and Odds API:
+    - DataGolf: "Scheffler, Scottie" → "scottie scheffler"
+    - Polymarket: "Scottie Scheffler" → "scottie scheffler"
+    - Kalshi: "Yes: Scottie Scheffler" → "scottie scheffler"
+    - Odds API: "S. Scheffler" → "s scheffler"
+    - Diacritics: "Skarsgård" → "skarsgard"
     """
     clean = _normalize_golfer_name(name)
     clean = re.split(r"\s+[-\u2013]\s+|\s+for\s+", clean, maxsplit=1)[0]
@@ -358,6 +392,8 @@ def _match_key(name: str) -> str:
     clean = clean.lower()
     clean = re.sub(r"^the\s+", "", clean)
     clean = clean.split(":")[0].strip()
+    # Remove Jr./Sr./III suffixes for matching
+    clean = re.sub(r"\b(?:jr|sr|iii|ii|iv)\.?\b", "", clean)
     clean = re.sub(r"[^a-z0-9\s]", "", clean).strip()
     clean = re.sub(r"\s+", " ", clean)
     return clean
@@ -489,6 +525,8 @@ async def get_golf(
         for market in tourn_markets:
             market_ids.append(market.id)
             source = market.source or "unknown"
+            # DataGolf provides model predictions, not market prices — label accordingly
+            source_label = "datagolf_model" if source == "datagolf" else source
 
             # Track tournament timing
             if market.commence_time:
@@ -532,7 +570,7 @@ async def get_golf(
                         "opening_probability": None,
                     }
 
-                golfer_data[key]["sources"][source] = round(prob, 3)
+                golfer_data[key]["sources"][source_label] = round(prob, 3)
                 golfer_data[key]["probabilities"].append(prob)
 
                 # Compute 24h movement from snapshots

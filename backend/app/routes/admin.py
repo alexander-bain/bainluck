@@ -5110,3 +5110,156 @@ async def check_merge_task(
         response["error"] = str(result.result)
     return response
 
+
+# =============================================================================
+# DataGolf Admin Endpoints
+# =============================================================================
+
+
+@router.post("/datagolf/poll")
+async def trigger_datagolf_poll(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Manually trigger DataGolf market polling (schedule + pre-tournament predictions)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import poll_datagolf_markets
+    result = poll_datagolf_markets.delay()
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "message": "DataGolf market polling task queued.",
+    }
+
+
+@router.post("/datagolf/poll-live")
+async def trigger_datagolf_live_poll(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Manually trigger DataGolf live in-play polling (bypasses Redis gate)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import poll_datagolf_live
+    result = poll_datagolf_live.delay()
+    return {
+        "status": "queued",
+        "task_id": result.id,
+        "message": "DataGolf live polling task queued.",
+    }
+
+
+@router.get("/datagolf/status")
+async def datagolf_status(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check DataGolf integration status: markets, outcomes, live flags."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func
+
+    # Count DataGolf markets
+    market_result = await db.execute(
+        select(func.count(FuturesMarket.id)).where(
+            FuturesMarket.source == "datagolf"
+        )
+    )
+    total_markets = market_result.scalar() or 0
+
+    # Count open DataGolf markets
+    open_result = await db.execute(
+        select(func.count(FuturesMarket.id)).where(
+            FuturesMarket.source == "datagolf",
+            FuturesMarket.status == "open",
+        )
+    )
+    open_markets = open_result.scalar() or 0
+
+    # Count outcomes across DataGolf markets
+    outcome_result = await db.execute(
+        select(func.count(FuturesOutcome.id)).where(
+            FuturesOutcome.market_id.in_(
+                select(FuturesMarket.id).where(FuturesMarket.source == "datagolf")
+            )
+        )
+    )
+    total_outcomes = outcome_result.scalar() or 0
+
+    # Count snapshots (last 24h)
+    snap_result = await db.execute(
+        select(func.count(FuturesOddsSnapshot.id)).where(
+            FuturesOddsSnapshot.bookmaker == "datagolf_model",
+            FuturesOddsSnapshot.captured_at >= datetime.now(timezone.utc) - timedelta(hours=24),
+        )
+    )
+    recent_snapshots = snap_result.scalar() or 0
+
+    # Check Redis live flags
+    live_tours = {}
+    try:
+        from app.tasks.redis_state import get_redis_client
+        from app.tasks.datagolf import LIVE_KEY_PREFIX, POLL_TOURS
+        r = get_redis_client()
+        for tour in POLL_TOURS:
+            key = f"{LIVE_KEY_PREFIX}:{tour}"
+            live_tours[tour] = r.exists(key) == 1
+    except Exception:
+        live_tours = {"error": "Redis unavailable"}
+
+    # Get latest DataGolf markets with metadata
+    latest_result = await db.execute(
+        select(FuturesMarket)
+        .where(FuturesMarket.source == "datagolf", FuturesMarket.status == "open")
+        .order_by(FuturesMarket.id.desc())
+        .limit(10)
+    )
+    latest_markets = []
+    for m in latest_result.scalars().all():
+        entry = {
+            "id": m.id,
+            "name": m.name,
+            "external_id": m.external_id,
+            "category": m.category,
+        }
+        if m.metadata:
+            entry["tour"] = m.metadata.get("tour")
+            entry["course"] = m.metadata.get("course")
+            entry["has_leaderboard"] = "leaderboard" in m.metadata
+            entry["round_history_count"] = len(m.metadata.get("round_history", []))
+        latest_markets.append(entry)
+
+    return {
+        "total_markets": total_markets,
+        "open_markets": open_markets,
+        "total_outcomes": total_outcomes,
+        "recent_snapshots_24h": recent_snapshots,
+        "live_tours": live_tours,
+        "latest_markets": latest_markets,
+    }
+
+
+@router.get("/datagolf/task/{task_id}")
+async def get_datagolf_task_status(
+    task_id: str,
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Check status of a DataGolf background task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from celery.result import AsyncResult
+    from app.tasks import celery_app
+    result = AsyncResult(task_id, app=celery_app)
+    response = {
+        "task_id": task_id,
+        "state": result.state,
+    }
+    if result.ready():
+        response["result"] = result.result
+    elif result.state == "FAILURE":
+        response["error"] = str(result.result)
+    return response
+

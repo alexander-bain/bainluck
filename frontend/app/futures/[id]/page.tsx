@@ -16,6 +16,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { FuturesChart } from "@/components/FuturesChart";
+import { EvolutionView } from "@/components/EvolutionView";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
@@ -424,11 +425,18 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             <span>📈</span>
             Probability Trends
           </h2>
-          <FuturesChart
-            historyData={historyData.outcomes}
-            selectedOutcomes={selectedOutcomes}
-            onToggleOutcome={toggleOutcomeSelection}
-          />
+          {historyData.outcomes.length > 10 ? (
+            <EvolutionView
+              marketId={marketId}
+              hours={168}
+            />
+          ) : (
+            <FuturesChart
+              historyData={historyData.outcomes}
+              selectedOutcomes={selectedOutcomes}
+              onToggleOutcome={toggleOutcomeSelection}
+            />
+          )}
         </div>
       )}
 

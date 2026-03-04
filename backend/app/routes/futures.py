@@ -17,6 +17,24 @@ from app.utils import probability_to_american
 router = APIRouter()
 
 
+def _derive_round_boundaries(metadata: dict | None) -> list[dict] | None:
+    """Extract round boundary markers from FuturesMarket.metadata.round_history.
+
+    Returns a list of {timestamp, label} dicts suitable for chart ReferenceLine markers,
+    or None if no round history exists.
+    """
+    if not metadata:
+        return None
+    round_history = metadata.get("round_history")
+    if not round_history:
+        return None
+    return [
+        {"timestamp": entry["timestamp"], "label": entry.get("label", f"R{entry.get('round', '?')}")}
+        for entry in round_history
+        if "timestamp" in entry
+    ]
+
+
 # NOTE: Specific routes MUST come before /{market_id} to avoid being matched as IDs
 
 
@@ -946,6 +964,8 @@ async def get_futures_history(
         "market_name": market.name,
         "hours": hours,
         "outcomes": list(outcome_history.values()),
+        "round_boundaries": _derive_round_boundaries(market.metadata),
+        "leaderboard": (market.metadata or {}).get("leaderboard"),
     }
 
 

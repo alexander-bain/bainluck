@@ -453,6 +453,31 @@ def backfill_team_identities(self):
     return run_async(_backfill_team_identities())
 
 
+# --- DataGolf ---
+
+@celery_app.task(bind=True, name="app.tasks.poll_datagolf_markets")
+def poll_datagolf_markets(self):
+    """Poll DataGolf schedule + pre-tournament predictions (hourly)."""
+    from app.tasks.datagolf import _poll_datagolf_markets
+    return _tracked_run("poll_datagolf", _poll_datagolf_markets())
+
+
+@celery_app.task(bind=True, name="app.tasks.poll_datagolf_live")
+def poll_datagolf_live(self):
+    """Poll DataGolf live in-play probabilities (every 5 min, Redis-gated)."""
+    from app.tasks.datagolf import _poll_datagolf_live, LIVE_KEY_PREFIX, POLL_TOURS
+    from app.tasks.redis_state import get_redis_client
+
+    # Only run if there's a live tournament (set by the live task itself or hourly poll)
+    r = get_redis_client()
+    any_live = any(r.get(f"{LIVE_KEY_PREFIX}:{tour}") for tour in POLL_TOURS)
+    if not any_live:
+        # Still run to detect if a tournament just went live
+        pass
+
+    return _tracked_run("datagolf_live", _poll_datagolf_live())
+
+
 # --- Event Taxonomy ---
 
 @celery_app.task(bind=True, name="app.tasks.update_event_tags")
@@ -638,6 +663,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.audit_related_futures",
         "schedule": crontab(minute=30, hour=9),  # Daily at 9:30 AM UTC
         "kwargs": {"limit": 30},
+    },
+    "poll-datagolf-markets-hourly": {
+        "task": "app.tasks.poll_datagolf_markets",
+        "schedule": crontab(minute=0),  # Hourly at :00
+    },
+    "poll-datagolf-live": {
+        "task": "app.tasks.poll_datagolf_live",
+        "schedule": 300.0,  # Every 5 minutes — Redis-gated (only runs during live tournaments)
     },
     # Note: update_event_tags and enrich_taxonomy_llm are piggybacked on
     # discover_events since the worker only has 2 concurrency slots which

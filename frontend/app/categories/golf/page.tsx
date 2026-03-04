@@ -18,6 +18,7 @@ import {
   TOURNAMENT_EMOJI,
 } from "@/lib/golfData";
 import { FuturesChart } from "@/components/FuturesChart";
+import { EvolutionView } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
@@ -137,7 +138,7 @@ export default function GolfPage() {
             Golf Odds &amp; Futures
           </h1>
           <p className="text-text-secondary mt-2 text-lg">
-            Tournament odds from Polymarket, Kalshi &amp; sportsbooks
+            Tournament odds from Polymarket, Kalshi, sportsbooks &amp; DataGolf
           </p>
 
           {nextMajor && nextMajor.commence_time && (
@@ -199,6 +200,18 @@ export default function GolfPage() {
                 event={data.current_event}
                 historyData={currentEventHistory}
               />
+            )}
+
+            {/* Evolution Chart for current tournament */}
+            {data.current_event?.market_ids?.[0] && (
+              <section>
+                <EvolutionView
+                  marketId={data.current_event.market_ids[0]}
+                  marketName={`${data.current_event.name} — Win Probability`}
+                  defaultTopN={8}
+                  hours={168}
+                />
+              </section>
             )}
 
             {/* Biggest Movers Strip */}
@@ -313,7 +326,7 @@ export default function GolfPage() {
             )}
 
             {/* Source Legend */}
-            <div className="flex items-center justify-center gap-4 text-xs text-text-muted pt-4 border-t border-surface-border">
+            <div className="flex items-center justify-center gap-4 text-xs text-text-muted pt-4 border-t border-surface-border flex-wrap">
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
                 Sportsbooks
@@ -325,6 +338,11 @@ export default function GolfPage() {
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
                 Polymarket
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 inline-block ring-1 ring-amber-400/50" />
+                DG Model
+                <span className="text-amber-400/60 text-[9px]">(model)</span>
               </span>
             </div>
           </>
@@ -768,6 +786,21 @@ function GolferRow({
   const isLeader = golfer.rank === 1;
   const sourceCount = Object.keys(golfer.sources).length;
 
+  // Compute model-vs-market divergence
+  const modelProb = golfer.sources["datagolf_model"];
+  const marketProbs = Object.entries(golfer.sources)
+    .filter(([k]) => SOURCE_META[k]?.type === "market")
+    .map(([, v]) => v);
+  const avgMarketProb =
+    marketProbs.length > 0
+      ? marketProbs.reduce((a, b) => a + b, 0) / marketProbs.length
+      : null;
+  const divergence =
+    modelProb != null && avgMarketProb != null
+      ? modelProb - avgMarketProb
+      : null;
+  const hasDivergence = divergence != null && Math.abs(divergence) > 0.03;
+
   return (
     <div>
       <div className="flex items-center gap-2">
@@ -785,6 +818,19 @@ function GolferRow({
         >
           {golfer.name}
         </span>
+        {hasDivergence && (
+          <span
+            className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+              divergence! > 0
+                ? "bg-amber-500/15 text-amber-400"
+                : "bg-blue-500/15 text-blue-400"
+            }`}
+            title={`DataGolf model ${divergence! > 0 ? "higher" : "lower"} than market consensus by ${Math.round(Math.abs(divergence!) * 100)}%`}
+          >
+            {divergence! > 0 ? "Model +" : "Model "}
+            {Math.round(divergence! * 100)}%
+          </span>
+        )}
         <MovementBadge movement={golfer.movement_24h} />
         <span className="text-sm font-mono text-text-primary w-10 text-right">
           {pct}%
@@ -809,18 +855,26 @@ function GolferRow({
         <div className="ml-7 mb-1 flex flex-wrap gap-x-3 gap-y-0.5">
           {Object.entries(golfer.sources)
             .sort(([, a], [, b]) => b - a)
-            .map(([source, prob]) => (
-              <span key={source} className="text-[10px] text-text-muted">
-                {source === "odds_api"
-                  ? "Sportsbooks"
-                  : source === "kalshi"
-                    ? "Kalshi"
-                    : source === "polymarket"
-                      ? "Polymarket"
-                      : source}
-                : {Math.round(prob * 100)}%
-              </span>
-            ))}
+            .map(([source, prob]) => {
+              const meta = SOURCE_META[source];
+              return (
+                <span key={source} className="text-[10px] text-text-muted">
+                  {source === "odds_api"
+                    ? "Sportsbooks"
+                    : source === "kalshi"
+                      ? "Kalshi"
+                      : source === "polymarket"
+                        ? "Polymarket"
+                        : source === "datagolf_model"
+                          ? "DG Model"
+                          : source}
+                  {meta?.type === "model" && (
+                    <span className="ml-0.5 text-amber-400/70 text-[9px]">M</span>
+                  )}
+                  : {Math.round(prob * 100)}%
+                </span>
+              );
+            })}
         </div>
       )}
     </div>
@@ -831,21 +885,29 @@ function GolferRow({
 // Source Dots
 // ============================================================================
 
+/** Source metadata: color and type (model vs market) */
+const SOURCE_META: Record<string, { color: string; type: "model" | "market" }> = {
+  odds_api: { color: "#3b82f6", type: "market" },
+  kalshi: { color: "#22c55e", type: "market" },
+  polymarket: { color: "#8b5cf6", type: "market" },
+  datagolf_model: { color: "#f59e0b", type: "model" },
+};
+
 function SourceDots({ sources }: { sources: Record<string, number> }) {
-  const sourceColors: Record<string, string> = {
-    odds_api: "#3b82f6",
-    kalshi: "#22c55e",
-    polymarket: "#8b5cf6",
-  };
   return (
-    <div className="flex gap-1">
-      {Object.keys(sources).map((s) => (
-        <span
-          key={s}
-          className="w-1.5 h-1.5 rounded-full inline-block"
-          style={{ backgroundColor: sourceColors[s] || "#6b7280" }}
-        />
-      ))}
+    <div className="flex gap-1 items-center">
+      {Object.keys(sources).map((s) => {
+        const meta = SOURCE_META[s];
+        return (
+          <span
+            key={s}
+            className={`w-1.5 h-1.5 rounded-full inline-block ${
+              meta?.type === "model" ? "ring-1 ring-amber-400/50" : ""
+            }`}
+            style={{ backgroundColor: meta?.color || "#6b7280" }}
+          />
+        );
+      })}
     </div>
   );
 }
