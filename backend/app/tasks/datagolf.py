@@ -77,6 +77,14 @@ async def _poll_datagolf_markets() -> dict:
                         stats["debug"][tour] = f"no_upcoming_event (schedule_count={len(schedule)}, now={now_str})"
                         if schedule:
                             stats["debug"][f"{tour}_last_end_date"] = schedule[-1].end_date
+                            stats["debug"][f"{tour}_first_start_date"] = schedule[0].start_date
+                            # Sample first event for diagnosis
+                            stats["debug"][f"{tour}_sample"] = {
+                                "name": schedule[0].event_name,
+                                "start": schedule[0].start_date,
+                                "end": schedule[0].end_date,
+                                "id": schedule[0].event_id,
+                            }
                         continue
 
                     stats["debug"][f"{tour}_event"] = f"{current_event.event_name} ({current_event.event_id})"

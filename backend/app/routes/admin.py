@@ -5152,6 +5152,32 @@ async def trigger_datagolf_live_poll(
         return {"status": "error", "error": str(exc)[:500]}
 
 
+@router.get("/datagolf/debug-schedule")
+async def datagolf_debug_schedule(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Fetch raw DataGolf schedule for field name discovery."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.services.datagolf_api import DataGolfAPIService
+    service = DataGolfAPIService()
+    try:
+        data = await service._get("get-schedule", {"tour": "pga"})
+        schedule = data.get("schedule", [])
+        sample = schedule[:3] if schedule else []
+        return {
+            "top_level_keys": list(data.keys()),
+            "schedule_count": len(schedule),
+            "sample_entries": sample,
+            "all_keys_first_entry": list(schedule[0].keys()) if schedule else [],
+        }
+    except Exception as exc:
+        return {"error": str(exc)[:500]}
+    finally:
+        await service.close()
+
+
 @router.get("/datagolf/status")
 async def datagolf_status(
     secret: str = Query(..., description="Admin secret for authorization"),
