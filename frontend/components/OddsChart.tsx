@@ -180,24 +180,13 @@ export default function OddsChart({
     }
   }, [defaultTimeRange, hasUserOverridden]);
 
-  // Compute smart start time: find first significant odds movement after commence_time
-  // This skips flat pre-game data that persists after the scheduled tip time
-  const smartStartTime = useMemo(() => {
-    if (!commenceTime || !history || history.length === 0) return null;
-    const cutoff = parseISO(commenceTime);
-    const postStart = history.filter((p) => parseISO(p.timestamp) >= cutoff);
-    if (postStart.length <= 2) return cutoff;
-
-    const baseline = postStart[0].home_probability;
-    const firstChangeIdx = postStart.findIndex(
-      (p) => Math.abs(p.home_probability - baseline) > 0.02
-    );
-    if (firstChangeIdx > 0) {
-      // Start 1 point before the first change for context
-      return parseISO(postStart[Math.max(0, firstChangeIdx - 1)].timestamp);
-    }
-    return cutoff;
-  }, [history, commenceTime]);
+  // For "Since Start" mode, use commenceTime directly as the start cutoff.
+  // Previously used a "smartStartTime" that scanned for the first 2% odds
+  // change — but with sparse betting data (one point every ~30 min), this
+  // often skipped 1-2 hours past the actual game start, showing 6:20 PM
+  // instead of 4:30 PM for a game that started at 4:30 PM.
+  // commenceTime is the actual game start from ESPN/StatPal/Odds API —
+  // use it directly.
 
   // Compute smart end time for completed/closed games:
   // Bookmakers keep reporting stale data 15-20 min after a game ends,
@@ -241,20 +230,20 @@ export default function OddsChart({
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
     if (timeRange === "all") return history;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     let filtered = history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
     if (smartEndTime) {
       filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
     }
     return filtered;
-  }, [history, timeRange, commenceTime, smartStartTime, smartEndTime]);
+  }, [history, timeRange, commenceTime, smartEndTime]);
 
   // Filter bookmaker history
   const filteredBookmakerHistory = useMemo(() => {
     if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0)
       return {};
     if (timeRange === "all") return bookmakerHistory;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
       let pts = points.filter(
@@ -266,7 +255,7 @@ export default function OddsChart({
       filtered[bookmaker] = pts;
     }
     return filtered;
-  }, [bookmakerHistory, timeRange, commenceTime, smartStartTime, smartEndTime]);
+  }, [bookmakerHistory, timeRange, commenceTime, smartEndTime]);
 
   // Build the list of all sources to display (betting + model sources)
   const resolvedSources = useMemo((): ResolvedSource[] => {
@@ -330,7 +319,7 @@ export default function OddsChart({
   const filteredWinProbHistory = useMemo(() => {
     if (!winProbHistory || Object.keys(winProbHistory).length === 0) return {};
     if (timeRange === "all") return winProbHistory;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     const filtered: Record<string, WinProbHistoryPoint[]> = {};
     for (const [source, points] of Object.entries(winProbHistory)) {
       let pts = points.filter(
@@ -342,13 +331,13 @@ export default function OddsChart({
       filtered[source] = pts;
     }
     return filtered;
-  }, [winProbHistory, timeRange, commenceTime, smartStartTime, smartEndTime]);
+  }, [winProbHistory, timeRange, commenceTime, smartEndTime]);
 
   // Filter ESPN history (legacy fallback)
   const filteredEspnHistory = useMemo(() => {
     if (!espnHistory || espnHistory.length === 0) return [];
     if (timeRange === "all") return espnHistory;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     let filtered = espnHistory.filter(
       (point) => parseISO(point.timestamp) >= cutoffTime
     );
@@ -356,7 +345,7 @@ export default function OddsChart({
       filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
     }
     return filtered;
-  }, [espnHistory, timeRange, commenceTime, smartStartTime, smartEndTime]);
+  }, [espnHistory, timeRange, commenceTime, smartEndTime]);
 
   // Filter aggregate line — use commenceTime (not smartStartTime) because the
   // aggregate line is already a clean backend-computed weighted median without
@@ -589,6 +578,26 @@ export default function OddsChart({
       }
     }
 
+    // Fill missing minutes for uniform x-axis spacing.
+    // Both OddsChart and ScoreDifferentialChart use categorical XAxis where
+    // each category gets equal pixel width. Without filling gaps, the two
+    // charts have different numbers of categories, causing period markers
+    // to appear at different pixel positions. Filling every minute ensures
+    // both charts have identical category sets.
+    if (timeRange === "live") {
+      const allTimestamps = Array.from(dataMap.keys()).sort();
+      if (allTimestamps.length >= 2) {
+        const first = parseISO(allTimestamps[0]);
+        const last = parseISO(allTimestamps[allTimestamps.length - 1]);
+        const cursor = new Date(first.getTime());
+        cursor.setMinutes(cursor.getMinutes() + 1);
+        while (cursor <= last) {
+          ensurePoint(cursor.toISOString());
+          cursor.setMinutes(cursor.getMinutes() + 1);
+        }
+      }
+    }
+
     // Forward-fill game state: carry most recent score/period/clock to subsequent points
     const sorted = Array.from(dataMap.values()).sort(
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
@@ -608,7 +617,7 @@ export default function OddsChart({
     }
 
     return sorted;
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, filteredAggregateLine, scoringPlays]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, isMultiSource, resolvedSources, filteredAggregateLine, scoringPlays, timeRange]);
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.

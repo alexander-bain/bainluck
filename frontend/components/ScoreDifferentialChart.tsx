@@ -113,31 +113,14 @@ export default function ScoreDifferentialChart({
     }
   }, [defaultTimeRange, hasUserOverridden]);
 
-  // Compute smart start time: find first significant odds movement after commence_time
-  // This skips flat pre-game data that persists after the scheduled tip time
-  const smartStartTime = useMemo(() => {
-    if (!commenceTime || !history || history.length === 0) return null;
-    const cutoff = parseISO(commenceTime);
-    const postStart = history.filter((p) => parseISO(p.timestamp) >= cutoff);
-    if (postStart.length <= 2) return cutoff;
-
-    const baseline = postStart[0].home_probability;
-    const firstChangeIdx = postStart.findIndex(
-      (p) => Math.abs(p.home_probability - baseline) > 0.02
-    );
-    if (firstChangeIdx > 0) {
-      return parseISO(postStart[Math.max(0, firstChangeIdx - 1)].timestamp);
-    }
-    return cutoff;
-  }, [history, commenceTime]);
-
   // Filter projected history based on time range
+  // Use commenceTime directly — no "smart" start skipping (see OddsChart for rationale)
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
     if (timeRange === "all") return history;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     return history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
-  }, [history, timeRange, commenceTime, smartStartTime]);
+  }, [history, timeRange, commenceTime]);
 
   // Filter bookmaker history based on time range
   const filteredBookmakerHistory = useMemo(() => {
@@ -156,7 +139,7 @@ export default function ScoreDifferentialChart({
       }
       return filtered;
     }
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of entries) {
       const withScores = points.filter((point) => {
@@ -169,27 +152,27 @@ export default function ScoreDifferentialChart({
       if (withScores.length > 0) filtered[bookmaker] = withScores;
     }
     return filtered;
-  }, [bookmakerHistory, timeRange, commenceTime, smartStartTime]);
+  }, [bookmakerHistory, timeRange, commenceTime]);
 
   // Filter score history based on time range
   const filteredScoreHistory = useMemo(() => {
     if (!scoreHistory || scoreHistory.length === 0) return [];
     if (timeRange === "all") return scoreHistory;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     return scoreHistory.filter(
       (point) => parseISO(point.timestamp) >= cutoffTime
     );
-  }, [scoreHistory, timeRange, commenceTime, smartStartTime]);
+  }, [scoreHistory, timeRange, commenceTime]);
 
   // Filter ESPN history based on time range (dense score updates every 60s)
   const filteredEspnHistory = useMemo(() => {
     if (!espnHistory || espnHistory.length === 0) return [];
     if (timeRange === "all") return espnHistory;
-    const cutoffTime = smartStartTime || (commenceTime ? parseISO(commenceTime) : new Date());
+    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
     return espnHistory.filter(
       (point) => parseISO(point.timestamp) >= cutoffTime
     );
-  }, [espnHistory, timeRange, commenceTime, smartStartTime]);
+  }, [espnHistory, timeRange, commenceTime]);
 
   const bookmakers = useMemo(
     () => Object.keys(filteredBookmakerHistory),
