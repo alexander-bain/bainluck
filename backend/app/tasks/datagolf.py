@@ -51,7 +51,7 @@ async def _poll_datagolf_markets() -> dict:
     from app.models.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 
     service = DataGolfAPIService()
-    stats = {"tours_polled": 0, "markets_upserted": 0, "outcomes_upserted": 0, "snapshots_written": 0}
+    stats = {"tours_polled": 0, "markets_upserted": 0, "outcomes_upserted": 0, "snapshots_written": 0, "debug": {}}
 
     try:
         async with get_task_session() as session:
@@ -61,6 +61,7 @@ async def _poll_datagolf_markets() -> dict:
                     schedule = await service.get_schedule(tour=tour)
                     if not schedule:
                         logger.info("DataGolf: no schedule for tour=%s", tour)
+                        stats["debug"][tour] = "no_schedule"
                         continue
 
                     # Find the current/next event (first with a future or ongoing date)
@@ -73,12 +74,18 @@ async def _poll_datagolf_markets() -> dict:
 
                     if not current_event:
                         logger.info("DataGolf: no upcoming event for tour=%s", tour)
+                        stats["debug"][tour] = f"no_upcoming_event (schedule_count={len(schedule)}, now={now_str})"
+                        if schedule:
+                            stats["debug"][f"{tour}_last_end_date"] = schedule[-1].end_date
                         continue
+
+                    stats["debug"][f"{tour}_event"] = f"{current_event.event_name} ({current_event.event_id})"
 
                     # 2. Fetch pre-tournament predictions
                     players = await service.get_pre_tournament(tour=tour)
                     if not players:
                         logger.info("DataGolf: no pre-tournament data for tour=%s", tour)
+                        stats["debug"][tour] = "no_pre_tournament_data"
                         continue
 
                     # 3. Upsert FuturesMarket + FuturesOutcome + Snapshot per market type
@@ -205,6 +212,7 @@ async def _poll_datagolf_markets() -> dict:
 
                 except Exception as e:
                     logger.error("DataGolf poll error for tour=%s: %s", tour, e)
+                    stats["debug"][f"{tour}_error"] = str(e)[:300]
                     continue
 
     finally:
