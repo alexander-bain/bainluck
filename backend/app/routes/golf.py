@@ -337,8 +337,11 @@ async def _get_golf_schedule() -> list[dict]:
             if not t.event_name:
                 continue
 
-            # Generate a stable key from the event name
-            key = re.sub(r"[^a-z0-9]+", "_", t.event_name.lower()).strip("_")
+            # Generate a stable key from the event name, stripping sponsor suffixes
+            # so "Arnold Palmer Invitational Presented By Mastercard" -> "arnold_palmer_invitational"
+            # This ensures keys match _SIGNATURE_EVENTS entries.
+            clean_name = _SPONSOR_SUFFIX_RE.sub("", t.event_name)
+            key = re.sub(r"[^a-z0-9]+", "_", clean_name.lower()).strip("_")
 
             result.append({
                 "name": t.event_name,
@@ -880,6 +883,11 @@ def _tournament_importance(key: str) -> int:
     if key in MAJOR_TOURNAMENTS:
         return 3
     if key in _SIGNATURE_EVENTS:
+        return 2
+    # Safety net: strip sponsor suffixes that may remain in the key
+    # e.g. "arnold_palmer_invitational_presented_by_mastercard" -> check without suffix
+    clean_key = re.sub(r"_(?:presented|sponsored|hosted|powered)_by_.*$", "", key)
+    if clean_key != key and clean_key in _SIGNATURE_EVENTS:
         return 2
     return 1
 
