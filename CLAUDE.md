@@ -107,7 +107,9 @@ bainluck/
 │   │       ├── team_linking.py  # Team name matching utilities
 │   │       ├── sport_keys.py   # Canonical sport key translation maps (10 dicts, 7 functions)
 │   │       ├── event_taxonomy.py # Tag-based event/futures classification
-│   │       └── prediction_market_matching.py  # Game-level market detection + matching
+│   │       ├── prediction_market_matching.py  # Game-level market detection + matching
+│   │       ├── series_probability.py # Series win probability (best-of-N, negative binomial)
+│   │       └── market_grouping.py # Market grouping: source hierarchy + threshold variant detection
 │   ├── alembic/                 # Database migrations
 │   └── requirements.txt
 ├── frontend/
@@ -122,7 +124,11 @@ bainluck/
 │   │   └── market-moves/page.tsx # "Market Was Wrong" page
 │   ├── components/              # React components
 │   │   ├── SearchBar.tsx        # Typeahead search with keyboard nav
-│   │   └── OnboardingBanner.tsx # CTA banner for unonboarded users
+│   │   ├── OnboardingBanner.tsx # CTA banner for unonboarded users
+│   │   ├── TournamentChart.tsx  # Multi-line SVG chart for futures (Top 5/10/All, Field area)
+│   │   ├── CombinedMarketCard.tsx # Cross-source market comparison card
+│   │   ├── ProgressionTable.tsx # Threshold progression table (Bitcoin targets, etc.)
+│   │   └── ThresholdGrid.tsx    # Grid display for threshold variant markets
 │   ├── lib/
 │   │   ├── api.ts              # API client
 │   │   ├── types.ts            # TypeScript interfaces
@@ -241,6 +247,9 @@ bainluck/
 | `ios/Bain Luck/Bain Luck/Services/APIClient.swift` | iOS API client (async/await, auth headers) |
 | `ios/Bain Luck/Bain Luck/Views/FeedView.swift` | iOS feed tab (sections, filter chips, skeleton loading) |
 | `ios/Bain Luck/Bain Luck/Views/EventDetailView.swift` | iOS event detail (chart, related futures, line movement) |
+| `backend/app/utils/series_probability.py` | Series win probability computation (best-of-N, negative binomial) |
+| `backend/app/utils/market_grouping.py` | Market grouping: source hierarchy recovery + threshold variant detection |
+| `frontend/components/TournamentChart.tsx` | Multi-line SVG chart for tournament/futures probability timelines |
 
 ---
 
@@ -255,7 +264,7 @@ Development happens primarily through **Claude Code on the web** (GitHub-based).
 - **Running tests**:
   - Backend: `cd backend && python -m pytest tests/ -v` (requires `sqlalchemy`, `asyncpg`, `pydantic`, `openai`, `httpx`)
   - Frontend: `cd frontend && npx jest` (requires `jest`, `ts-jest`, `@types/jest` — already in devDependencies)
-  - Backend tests cover (1700+ pytest items across 22+ files): Excitement Index algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing, team name match scoring), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (27 tests: detection thresholds, direction classification, prompt building with injuries/news/game context, 3-tier prompt verification), matching audit (22 tests: LLM helper, finding structures, task registration, schedule times). See `docs/test-coverage-analysis.md` for full breakdown.
+  - Backend tests cover (2500+ pytest items across 25+ files): Excitement Index algorithm, Highlights scoring (incl. Level 2 time-series metrics, event importance), odds math, futures categorization rules, LLM classification (mocked), win probability model, team linking, stale bookmaker filtering, snapshot collapse (pure-function + SQL simulation), task wiring, odds polling helpers, ESPN API parsing (both endpoint formats, season type, injury/news parsing, team name match scoring), redis state hashing, win prob source config, onboarding (metro aliases, sport affinity expansion/compression, reverse mapping), prediction market matching (291 tests: ticker detection, ticker abbreviation parsing, ticker fragment matching, name building, false positives, sport prefix mapping, ticker fallback, live poll wiring, matchup-name outcome fallback, prop/spread outcome filtering), retention SQL (19 tests: CTE logic simulation, table config, NULL handling), MLB Stats API (33 tests: team matching, schedule parsing, win probability), stale bookmaker filter (23 tests: valid_until dedup, recency filter), line movement (27 tests: detection thresholds, direction classification, prompt building with injuries/news/game context, 3-tier prompt verification), matching audit (22 tests: LLM helper, finding structures, task registration, schedule times), series probability (37 tests: boundary conditions, clinch scenarios, probability tables), market grouping (315 tests: threshold detection, canonical key grouping, source hierarchy), futures timeline (20 tests: time bucketing, outcome aggregation). See `docs/test-coverage-analysis.md` for full breakdown.
   - Frontend tests cover (117+ tests across 4 files): sportCategories (prefix matching, futures categorization, athlete disambiguation), pinned storage logic, EventCard, API client
 
 ### Querying the Production API
@@ -917,14 +926,13 @@ The chart can display win probabilities from multiple independent sources, each 
 - **Dual compute paths**: Stat model computes in both ESPN sync (every 60s) AND odds polling (every 30-60s) for redundancy
 - **Frontend**: OddsChart.tsx renders N sources dynamically; legend labels link to `/events/[id]/models` detail page
 
-**Current sources (5+2 stubs):**
+**Current sources (5+1):**
 - **Betting Odds** (market, solid dark line) — consensus from 5-15 sportsbooks via The Odds API
 - **ESPN** (model, orange dashed) — ESPN's proprietary predictor, only available during live games
 - **Bain Luck Model** (model, purple dashed) — our statistical model, attribution to nflfastR/PFR methodology
 - **Kalshi** (market, green `#22c55e`) — prediction market prices from game-level Kalshi markets
 - **Polymarket** (market, blue `#3b82f6`) — prediction market prices from game-level Polymarket markets
-- **MLB Model** (model, formerly "FanGraphs" key, teal `#0d9488`) — MLB Stats API live win probability (see MLB integration below)
-- **MoneyPuck** (stub, cyan `#06b6d4`) — NHL advanced stats, stub only (no public API)
+- **MLB Model** (model, source key `"mlb"`, teal `#0d9488`) — MLB Stats API live win probability (see MLB integration below)
 
 **Supported sports for stat model:** NFL, NCAAF, NBA, NCAAB, WNCAAB, NHL
 
@@ -935,9 +943,9 @@ MLB's official Stats API (`statsapi.mlb.com`) provides live win probability data
 
 **Architecture:**
 - **API client**: `backend/app/services/mlb_api.py` — `MLBAPIService` with game schedule, live game filtering, context metrics win probability, and play-by-play history
-- **Sync task**: `backend/app/tasks/mlb_sync.py` — Celery task that polls live MLB games every 2 minutes, matches to our events, writes `win_prob_snapshots` with source `"fangraphs"` (legacy key)
+- **Sync task**: `backend/app/tasks/mlb_sync.py` — Celery task that polls live MLB games every 2 minutes, matches to our events, writes `win_prob_snapshots` with source `"mlb"`
 - **Team matching**: `_name_matches()` uses suffix, mascot extraction, and containment matching (handles "Red Sox" vs "Boston Red Sox")
-- **Source config**: `WIN_PROB_SOURCES["fangraphs"]` — display name "MLB Model", color teal `#0d9488`
+- **Source config**: `WIN_PROB_SOURCES["mlb"]` — display name "MLB Model", color teal `#0d9488`
 
 **Key endpoints:**
 - `GET /api/v1/schedule?sportId=1&date=YYYY-MM-DD` — Today's MLB games
@@ -1353,6 +1361,88 @@ The EI scaling constant was iteratively calibrated:
 
 **Files:** `backend/app/utils/excitement_index.py` (scaling constant), `backend/app/routes/admin.py` (diagnosis endpoint)
 
+### Probability Timeline (Futures Charts)
+Time-bucketed probability history for futures markets with many outcomes (golf tournaments, championship races, awards).
+
+**Endpoint:** `GET /api/futures/{market_id}/probability-timeline?top=10&hours=168`
+
+**Architecture:**
+- Queries `futures_odds_snapshots` for the market's outcomes
+- Aggregates into time buckets (default 30 min, auto-scales based on time range)
+- Returns top N outcomes by current probability, plus a "Field" remainder
+- Used by `TournamentChart` component on futures detail pages
+
+**Response shape:**
+```json
+{
+  "market_id": 123,
+  "market_name": "NBA Championship Winner 2025-26",
+  "hours": 168,
+  "top": 10,
+  "bucket_seconds": 1800,
+  "timeline": [{"timestamp": "2026-03-01T00:00:00Z", "outcomes": {"Celtics": 0.22, "Thunder": 0.18, "Field": 0.15}}],
+  "outcomes": [{"id": 456, "name": "Celtics", "current_probability": 0.22}]
+}
+```
+
+**Frontend:** `TournamentChart.tsx` — custom SVG multi-line chart. Fetches `top=50` from API and filters client-side to Top 5/10/All via toggle. Re-aggregates "Field" probability for non-displayed outcomes. Position-based color palette (10 colors), leader gets thicker stroke (2.5px), interactive crosshair tooltip with nearest-bucket snapping. Replaces `EvolutionView` for markets with >10 outcomes.
+
+**Files:**
+- Backend endpoint: `backend/app/routes/futures.py` (probability-timeline section)
+- Frontend component: `frontend/components/TournamentChart.tsx`
+- Types: `ProbabilityTimelineResponse`, `TimelineEntry`, `TimelineOutcomeMeta` in `frontend/lib/types.ts`
+- API client: `fetchProbabilityTimeline()` in `frontend/lib/api.ts`
+
+### Series Probability
+Computes the probability of winning a best-of-N elimination series (NBA Playoffs, World Series, Stanley Cup) given current game-by-game win probability and series score.
+
+**Algorithm:** Negative binomial distribution — given P(win each remaining game), compute P(reaching `games_to_win` before opponent). Handles series tied, one team leading, and clinch scenarios.
+
+**API:** Available via `GET /api/futures/{market_id}/series-probability?team_games_won=2&opponent_games_won=1&game_win_prob=0.55&games_to_win=4`
+
+**Files:**
+- Algorithm: `backend/app/utils/series_probability.py` (`compute_series_win_prob`, `series_probability_table`)
+- Tests: `backend/tests/test_series_probability.py` (37 tests)
+
+### Market Grouping System
+Groups related futures markets for unified display. Two strategies:
+
+**1. Source hierarchy recovery:**
+Markets sharing the same `canonical_market_key` from different sources (Polymarket, Kalshi, Odds API) are the same market. During Kalshi/Polymarket polling, `canonical_market_key` is now set on ingest (`tasks/kalshi.py`, `tasks/polymarket.py`) using sport+league+type+season patterns.
+
+**2. Threshold variant detection:**
+Markets differing only by a numeric threshold (e.g., "Will Bitcoin exceed $80,000?" / "$90,000?" / "$100,000?") are grouped into progressions. `_THRESHOLD_RE` regex extracts thresholds with units ($, °F, points, etc.). `detect_threshold_group()` clusters markets by normalized base name.
+
+**Frontend components (3):**
+- `CombinedMarketCard.tsx` — Cross-source comparison card showing same market from multiple sources
+- `ProgressionTable.tsx` — Table of threshold variants sorted by value with probability bars
+- `ThresholdGrid.tsx` — Grid display for threshold variant markets
+
+**Admin endpoints:**
+```bash
+# Discover and backfill canonical market keys
+curl -X POST "https://api.bainluck.com/api/admin/market-grouping/backfill-keys?secret=any"
+
+# View grouped markets
+curl "https://api.bainluck.com/api/admin/market-grouping/groups?secret=any"
+
+# Detect threshold progressions
+curl "https://api.bainluck.com/api/admin/market-grouping/thresholds?secret=any"
+```
+
+**API endpoints:**
+- `GET /api/futures/grouped/{canonical_key}` — Combined view of a market across sources
+- `GET /api/futures/thresholds/{group_id}` — Threshold progression for a group
+
+**Files:**
+- Grouping logic: `backend/app/utils/market_grouping.py`
+- API endpoints: `backend/app/routes/futures.py` (grouped/thresholds sections)
+- Admin endpoints: `backend/app/routes/admin.py` (market-grouping section)
+- Kalshi key assignment: `backend/app/tasks/kalshi.py`
+- Polymarket key assignment: `backend/app/tasks/polymarket.py`
+- Frontend: `frontend/components/CombinedMarketCard.tsx`, `ProgressionTable.tsx`, `ThresholdGrid.tsx`
+- Tests: `backend/tests/test_market_grouping.py` (315 tests), `backend/tests/test_futures_timeline.py` (20 tests)
+
 ---
 
 ## API Patterns
@@ -1545,6 +1635,11 @@ These are the current focus. Resist the urge to build new features until these a
 44. 🟢 **Search ranking + LLM anti-speculation (shipped)** — Search results ranked by highlight score for relevance. LLM line movement prompts now include 3-tier anti-speculation rules preventing vague hedging when no injury/news context is available.
 45. 🟢 **Feed resilience (shipped)** — Aggregate probability fallback when bookmaker consensus unavailable. Resolved futures filtered. "No odds yet" placeholder for events without odds data. My Stuff sort order fixed (soonest first).
 46. 🟢 **Clock-prefix period parsing fix (shipped)** — `_parse_game_progress()` in `highlights.py` falsely detected overtime when `event.period` contained a clock prefix (e.g., `"6:55 - 1st Quarter"`). The regex `r"(\d+)"` matched `6` from the clock instead of `1` from "1st", and `6 > 4` quarters triggered `is_overtime=True`, causing a false "Overtime" tag on live feed cards. Fix: strip `"clock - "` prefix before parsing, use word-boundary regex for OT keywords, use specific period-number patterns (ordinals, Q-prefix) instead of greedy digit matching. Same clock-prefix stripping applied to `win_probability.py`. 125 highlights + 67 win probability tests pass.
+47. 🟢 **Architecture improvement plan (shipped)** — Comprehensive 5-phase plan covering backend cleanup, design system foundation, win probability chart improvements, futures grouping, and design component migration. See `docs/architecture-improvement-plan.md`.
+48. 🟢 **Backend cleanup Phase 1 (shipped)** — 5-step refactoring: (a) `fangraphs` source key renamed to `mlb` across backend/frontend/iOS, dead `fangraphs_api.py` + `gei.py` + `tasks/pulse.py` removed, (b) stat model verification — confirmed model runs correctly for college games via wall-clock fallback, (c) MoneyPuck stub removed from `win_prob_sources.py` and `aggregation.py`, (d) design system foundation: shadcn/ui + Framer Motion installed, CSS design tokens, team-color theming utility, EI/status animation utilities.
+49. 🟢 **Probability timeline endpoint + TournamentChart (shipped)** — `GET /api/futures/{market_id}/probability-timeline` endpoint returns time-bucketed probability history for multi-outcome markets. `TournamentChart.tsx` SVG component with Top 5/10/All toggle, Field area fill, position-based 10-color palette, interactive crosshair tooltip. Replaces EvolutionView for markets with >10 outcomes. 20 tests.
+50. 🟢 **Series probability computation (shipped)** — `compute_series_win_prob()` in `utils/series_probability.py` computes best-of-N series win probability using negative binomial distribution. Handles all series states (tied, leading, trailing, clinch). API endpoint at `GET /api/futures/{market_id}/series-probability`. 37 tests.
+51. 🟢 **Market grouping system (shipped)** — Two grouping strategies: (a) source hierarchy recovery — `canonical_market_key` set during Kalshi/Polymarket polling using sport+league+type+season patterns, (b) threshold variant detection — regex-based extraction of numeric thresholds from market names for grouped display. Three frontend components: `CombinedMarketCard`, `ProgressionTable`, `ThresholdGrid`. Admin backfill + API endpoints. 315 tests.
 
 ### Horizon — AI-Native Sports Intelligence (ESPN + MySportsFeeds + The Odds API + AI)
 These are differentiated features that can't be built with odds data alone. They require sports data enrichment (rosters, injuries, standings, schedules from ESPN free API + MySportsFeeds) combined with AI interpretation. Ordered by estimated impact and feasibility.
@@ -1633,12 +1728,12 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Task-level monitoring dashboard: `redis_state.py` metrics system tracks success/failure/duration/output per task in Redis. Dashboard at `GET /api/admin/celery/dashboard` with health classification. 7 key tasks instrumented via `_tracked_run()`.
 - ✅ Polymarket price history backfill: `POST /api/admin/polymarket/backfill-history` fetches CLOB `/prices-history` for outcomes with sparse data, stores as `FuturesOddsSnapshot` rows. Resolves clob_token_ids via Gamma API event lookup.
 - ✅ Ranking Level 2: Time-series aware scoring using `compute_time_series_metrics()` from odds_snapshots. Computes volatility (RMS), lead changes, recent momentum. Batch SQL query for live events. New labels: "Lead change", "Odds shifting fast", "Wild game". 21 new tests.
-- ✅ MLB Stats API integration: Live baseball win probability from `statsapi.mlb.com` (no API key). Celery task polls every 2 min during live games. Source key `"fangraphs"` (display name "MLB Model"). 33 tests.
+- ✅ MLB Stats API integration: Live baseball win probability from `statsapi.mlb.com` (no API key). Celery task polls every 2 min during live games. Source key `"mlb"` (formerly `"fangraphs"`, display name "MLB Model"). 33 tests.
 - ✅ Divergence badge: Frontend detects when prediction market odds (Kalshi/Polymarket) diverge >5% from sportsbook consensus. Purple badge for >10% gap, blue for >5%.
 - ✅ Non-sports tier promotion: Politics, Entertainment, Crypto promoted from tier 3 to tier 2 in frontend categorization.
 - ✅ Safari auth 3-tier fallback: signInWithCredential (4s) → backend custom token + signInWithCustomToken (4s) → backend-only PyJWT session token. Prevents hanging on Safari ITP. Auth persistence switched to `browserLocalPersistence` (localStorage) from IndexedDB.
 - ✅ Anonymous feed ranking overhaul: 4-tier league system (Tier 1 +20 pts, Tier 3 -5, Tier 4 -45 penalty), expanded to ~70 league entries, anonymous min_score raised to 30. Regular-season tennis/golf demoted to tier 4. Prevents minor league and obscure events from appearing.
-- ✅ MoneyPuck stub: Source config entry for future NHL advanced stats integration.
+- ✅ MoneyPuck stub removed: Was a placeholder source config entry for future NHL advanced stats — removed since no public API exists and it cluttered the source registry.
 - ✅ Typeahead search: `SearchBar` component with 200ms debounce, keyboard navigation, integrated into layout header. Backend `GET /api/events/typeahead` endpoint. Mobile search icon + desktop inline bar.
 - ✅ "Market Was Wrong" page: `GET /api/market-moves` endpoint + `/market-moves` frontend page showing post-game championship odds shifts.
 - ✅ Kalshi ticker abbreviation parsing: `extract_teams_from_ticker()` parses team names from Kalshi game tickers (e.g., `KXNBAGAME-26FEB21DETCHI` → Pistons, Bulls). 100+ team abbreviations across NBA/NFL/NHL/MLB. Solves matching failure for generic-named markets like "Professional Basketball Game" when multiple games exist. 223 tests (up from 195).
@@ -1683,6 +1778,11 @@ These are differentiated features that can't be built with odds data alone. They
 - ✅ Search ranking improvements: Search results ranked by highlight score for relevance. LLM anti-speculation: 3-tier prompt instructions prevent vague hedging in line movement explanations when no injury/news context is available.
 - ✅ Feed resilience: Aggregate probability fallback when bookmaker consensus unavailable. Resolved 100% futures filtered from display. "No odds yet" placeholder for events without data. My Stuff soonest-first sorting. Reserve team match filtering.
 - ✅ Clock-prefix period parsing fix: `_parse_game_progress()` falsely detected overtime when `event.period` had clock prefix (e.g., `"6:55 - 1st Quarter"` → regex matched `6` from clock, `6 > 4 quarters` = overtime). Fix: strip clock prefix, word-boundary OT regex, specific period-number patterns. Same fix in `win_probability.py`.
+- ✅ Architecture improvement plan: 5-phase comprehensive plan covering backend cleanup, design system foundation, win probability charts, futures grouping, and design component migration. See `docs/architecture-improvement-plan.md`.
+- ✅ Backend cleanup Phase 1 (5-step refactoring): (a) `fangraphs` source key renamed to `mlb` across backend/frontend/iOS + DB migration, (b) dead code removed (`fangraphs_api.py`, `gei.py`, `tasks/pulse.py`), (c) MoneyPuck stub removed from source registry, (d) stat model verification confirmed for college games, (e) design system foundation: shadcn/ui + Framer Motion, CSS design tokens, team-color theming, EI/status animation utilities.
+- ✅ Probability timeline endpoint + TournamentChart: `GET /api/futures/{market_id}/probability-timeline` returns time-bucketed probability history. `TournamentChart.tsx` SVG component with Top 5/10/All toggle, Field area fill, position-based 10-color palette, interactive crosshair tooltip. 20 tests.
+- ✅ Series probability computation: `compute_series_win_prob()` in `utils/series_probability.py` — negative binomial distribution for best-of-N series. API endpoint. 37 tests.
+- ✅ Market grouping system: Source hierarchy recovery (canonical_market_key set during Kalshi/Polymarket polling) + threshold variant detection (regex-based numeric threshold extraction). Three frontend components (`CombinedMarketCard`, `ProgressionTable`, `ThresholdGrid`). Admin + API endpoints. 315 tests.
 </details>
 
 See `docs/PRD.md` for full roadmap.
