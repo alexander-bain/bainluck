@@ -15,7 +15,6 @@ Auto-registration: when fuzzy matching succeeds, the mapping is registered
 so subsequent lookups are O(1).
 """
 
-import unicodedata
 import logging
 from typing import Optional
 
@@ -24,30 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.models import Team, TeamIdentityMapping
+from app.utils.name_normalization import normalize_name
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Name normalization (canonical copy — replaces copies in team_linking.py
-# and espn_sync.py)
-# =============================================================================
-
-# Apostrophe/quote variants to unify
-_APOSTROPHE_CHARS = ("\u2018", "\u2019", "\u02BB", "\u02BC", "\u0060", "\u00B4", "\u2032")
-
-
-def normalize_name(name: str) -> str:
-    """Normalize team name for matching.
-
-    NFD decomposition + accent stripping + apostrophe unification + lowercase.
-    Consolidates the copies in team_linking.py and espn_sync.py.
-    """
-    nfkd = unicodedata.normalize("NFD", name)
-    stripped = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
-    for ch in _APOSTROPHE_CHARS:
-        stripped = stripped.replace(ch, "'")
-    return stripped.lower().strip()
 
 
 def _fuzzy_score(candidate: str, target: str) -> int:

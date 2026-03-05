@@ -32,7 +32,7 @@ SOURCE_WEIGHTS: dict[str, float] = {
     "stat_model": 1.0,     # Bain Luck statistical model
     "kalshi": 0.8,         # Kalshi prediction market
     "polymarket": 0.8,     # Polymarket prediction market
-    "fangraphs": 0.8,      # MLB Model (MLB Stats API)
+    "mlb": 0.8,            # MLB Model (MLB Stats API)
     "moneypuck": 0.8,      # MoneyPuck (NHL) — stub
 }
 

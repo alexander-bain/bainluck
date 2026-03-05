@@ -692,15 +692,15 @@ class TestWinProbSources:
         assert mp["color"] == "#10b981"
         assert mp["dash_pattern"] == "4 4"
 
-    def test_fangraphs_source_config(self):
-        """FanGraphs source should be MLB-only model."""
+    def test_mlb_source_config(self):
+        """MLB source should be MLB-only model."""
         from app.config.win_prob_sources import WIN_PROB_SOURCES
-        assert "fangraphs" in WIN_PROB_SOURCES
-        fg = WIN_PROB_SOURCES["fangraphs"]
-        assert fg["source_type"] == "model"
-        assert fg["sports"] == ["baseball_mlb"]
-        assert fg["color"] == "#06b6d4"
-        assert fg["dash_pattern"] == "4 4"
+        assert "mlb" in WIN_PROB_SOURCES
+        mlb = WIN_PROB_SOURCES["mlb"]
+        assert mlb["source_type"] == "model"
+        assert mlb["sports"] == ["baseball_mlb"]
+        assert mlb["color"] == "#06b6d4"
+        assert mlb["dash_pattern"] == "4 4"
 
     def test_all_sources(self):
         """Verify we have all expected sources including the aggregate."""
@@ -708,7 +708,7 @@ class TestWinProbSources:
         assert len(WIN_PROB_SOURCES) == 8
         assert set(WIN_PROB_SOURCES.keys()) == {
             "betting", "espn", "stat_model", "kalshi", "polymarket",
-            "moneypuck", "fangraphs", "bainluck_aggregate",
+            "moneypuck", "mlb", "bainluck_aggregate",
         }
 
 

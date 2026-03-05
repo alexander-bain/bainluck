@@ -83,7 +83,9 @@ WIN_PROB_SOURCES = {
         "attribution_url": "https://moneypuck.com",
         "attribution_name": "MoneyPuck",
     },
-    "fangraphs": {
+    # NOTE: Source was renamed from "fangraphs" to "mlb" on 2026-03-05.
+    # iOS app may cache "fangraphs" key. Remove this note after April 2026.
+    "mlb": {
         "display_name": "MLB Model",
         "source_type": "model",
         "sports": ["baseball_mlb"],

@@ -13,7 +13,6 @@ from app.models.models import (
     TournamentOdds,
     ScoreSnapshot,
     EIPercentile,
-    GEIPercentile,  # backward-compatible alias for EIPercentile
     Venue,
     FuturesMarket,
     FuturesOutcome,
@@ -36,7 +35,6 @@ __all__ = [
     "TournamentOdds",
     "ScoreSnapshot",
     "EIPercentile",
-    "GEIPercentile",
     "Venue",
     "FuturesMarket",
     "FuturesOutcome",

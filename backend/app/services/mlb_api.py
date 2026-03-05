@@ -21,6 +21,8 @@ from typing import Optional
 
 import httpx
 
+from app.utils.name_normalization import names_match
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://statsapi.mlb.com/api"
@@ -337,26 +339,19 @@ def _name_matches(our_name: str, mlb_name: str) -> bool:
     """
     Check if our team name matches the MLB API team name.
 
-    Handles cases like:
-    - "Boston Red Sox" matching "Boston Red Sox"
-    - "Red Sox" matching "Boston Red Sox"
-    - "New York Yankees" matching "New York Yankees"
+    Uses the unified names_match() for normalization and matching, with
+    an additional mascot-extraction fallback for abbreviations like
+    "NY Yankees" that don't share enough tokens with "New York Yankees".
     """
     if not our_name or not mlb_name:
         return False
-    # Exact match
-    if our_name == mlb_name:
+    # Unified matching (handles exact, suffix word-boundary, token overlap)
+    if names_match(our_name, mlb_name):
         return True
-    # Our name is a suffix of MLB name (e.g., "Red Sox" in "Boston Red Sox")
-    if mlb_name.endswith(our_name):
-        return True
-    # Our name contains the MLB mascot (last word)
-    mlb_parts = mlb_name.split()
+    # Fallback: mascot extraction — MLB name's last word found in our name
+    mlb_parts = mlb_name.lower().split()
     if len(mlb_parts) >= 2:
-        mascot = mlb_parts[-1]  # e.g., "Sox", "Yankees"
-        if mascot in our_name:
+        mascot = mlb_parts[-1]
+        if len(mascot) >= 4 and mascot in our_name.lower():
             return True
-    # MLB name is contained in our name
-    if mlb_name in our_name:
-        return True
     return False

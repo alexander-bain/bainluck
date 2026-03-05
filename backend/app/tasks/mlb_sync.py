@@ -10,10 +10,9 @@ Architecture:
 - Filters to in-progress games
 - For each live game, fetches current win probability via /api/v1/game/{gamePk}/contextMetrics
 - Matches to our Event records by team name + commence_time proximity
-- Writes win_prob_snapshots with source="mlb_model"
+- Writes win_prob_snapshots with source="mlb"
 
-Source key: "mlb_model" (registered in win_prob_sources.py as "fangraphs" for now,
-but using the official MLB data rather than FanGraphs scraped data).
+Source key: "mlb" (registered in win_prob_sources.py).
 """
 
 import logging
@@ -29,7 +28,7 @@ from app.tasks.snapshots import _create_or_update_win_prob_snapshot
 logger = logging.getLogger(__name__)
 
 # Source key for win_prob_snapshots — matches the registry entry
-WIN_PROB_SOURCE_KEY = "fangraphs"
+WIN_PROB_SOURCE_KEY = "mlb"
 
 # Time window for matching MLB games to our events (±4 hours)
 MATCH_WINDOW_HOURS = 4

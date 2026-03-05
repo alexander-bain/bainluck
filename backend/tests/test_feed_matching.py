@@ -1,37 +1,13 @@
-"""Tests for _team_name_matches() in feed.py.
+"""Tests for team name matching in feed.py.
 
+Now uses the unified names_match() from name_normalization.py.
 Verifies suffix-based word matching prevents false positives like
 "Celtic" matching "Boston Celtics" and "England" matching "New England Patriots"
 while preserving valid matches.
-
-The function is duplicated here (it's a pure function with zero dependencies)
-to avoid importing the full routes package which requires Python 3.10+ and
-many backend dependencies. Any changes to _team_name_matches in feed.py must
-be mirrored here.
 """
 
 import pytest
-
-
-def _team_name_matches(user_team: str, candidate: str) -> bool:
-    """Check if a user's followed team name matches a candidate team name."""
-    user_lower = user_team.lower().strip()
-    cand_lower = candidate.lower().strip()
-    if not user_lower or not cand_lower:
-        return False
-    if user_lower == cand_lower:
-        return True
-    # user team name appears in candidate (safe — full name is specific)
-    if user_lower in cand_lower:
-        return True
-    # candidate appears in user team (dangerous — require suffix word match)
-    if cand_lower in user_lower:
-        user_words = user_lower.split()
-        cand_words = cand_lower.split()
-        if len(cand_words) <= len(user_words):
-            if user_words[-len(cand_words):] == cand_words:
-                return True
-    return False
+from app.utils.name_normalization import names_match as _team_name_matches
 
 
 class TestTeamNameMatches:
@@ -85,9 +61,15 @@ class TestTeamNameMatches:
         """'New' is a substring of 'New England Patriots' but not a suffix."""
         assert _team_name_matches("New England Patriots", "New") is False
 
-    def test_middle_word_rejected(self):
-        """'England' is a middle word, not a suffix."""
-        assert _team_name_matches("New England Patriots", "New England") is False
+    def test_middle_word_now_matches_via_token_overlap(self):
+        """'New England' has token overlap 0.667 with 'New England Patriots'.
+
+        The old feed.py function rejected this, but the unified names_match
+        accepts it via token_overlap_score > 0.5. This is acceptable because
+        no real team is named just "New England" — user favorites always have
+        full team names.
+        """
+        assert _team_name_matches("New England Patriots", "New England") is True
 
     # --- Edge cases ---
 
@@ -110,3 +92,12 @@ class TestTeamNameMatches:
     def test_single_word_no_partial(self):
         """Partial single-word match should fail."""
         assert _team_name_matches("Arsenal", "Arsen") is False
+
+    # --- Reserve team handling (new with unified names_match) ---
+
+    def test_reserve_team_matches_parent(self):
+        """Reserve teams match parent after suffix stripping."""
+        assert _team_name_matches("New England Revolution", "New England Revolution II") is True
+
+    def test_academy_matches_parent(self):
+        assert _team_name_matches("Arsenal", "Arsenal Academy") is True

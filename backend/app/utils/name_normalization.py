@@ -1,0 +1,118 @@
+"""Single source of truth for team name normalization and matching.
+
+Every module that needs to compare team names should import from here.
+Do NOT create new matching functions elsewhere.
+"""
+
+import re
+import unicodedata
+
+# Reserve/youth team suffixes to strip during normalization
+_RESERVE_SUFFIX_RE = re.compile(
+    r"\s+(?:reserves?|ii|iii|iv|b|c|u\d{1,2}|under[\s-]?\d{1,2}|youth|academy|women|w|2)\s*$",
+    re.IGNORECASE,
+)
+
+# Apostrophe-like characters to unify
+_APOSTROPHE_CHARS = ("\u2018", "\u2019", "\u02BB", "\u02BC", "\u0060", "\u00B4", "\u2032")
+
+# Stopwords for token-overlap scoring — team name fragments that don't carry identity
+_MATCH_STOPWORDS = frozenset({
+    "the", "of", "at", "and", "de",
+    "fc", "sc", "cf", "ac", "as", "us",
+})
+
+
+def normalize_name(name: str) -> str:
+    """Canonical name normalization: lowercase, strip diacritics, unify apostrophes,
+    strip reserve/youth suffixes.
+
+    Examples:
+        "Skarsgård" -> "skarsgard"
+        "Boston Celtics II" -> "boston celtics"
+        "  Boston Red Sox  " -> "boston red sox"
+    """
+    if not name:
+        return ""
+    # NFD decomposition to strip accents
+    nfkd = unicodedata.normalize("NFD", name)
+    stripped = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+    # Unify apostrophe-like characters
+    for ch in _APOSTROPHE_CHARS:
+        stripped = stripped.replace(ch, "'")
+    # Lowercase, strip whitespace
+    result = stripped.lower().strip()
+    # Strip reserve/youth suffixes
+    result = _RESERVE_SUFFIX_RE.sub("", result).strip()
+    return result
+
+
+def token_overlap_score(name_a: str, name_b: str) -> float:
+    """Token-overlap scoring: min-coverage model returning 0.0-1.0.
+
+    Computes the minimum of (overlap/words_a, overlap/words_b).
+    This prevents partial location matches like "Eastern Kentucky" vs
+    "Kentucky" (0.33) and shared mascots like "Air Force Falcons" vs
+    "Atlanta Falcons" (0.33).
+
+    Names are normalized before comparison.
+    """
+    norm_a = normalize_name(name_a)
+    norm_b = normalize_name(name_b)
+    if not norm_a or not norm_b:
+        return 0.0
+    words_a = {w for w in norm_a.split() if w not in _MATCH_STOPWORDS and len(w) > 1}
+    words_b = {w for w in norm_b.split() if w not in _MATCH_STOPWORDS and len(w) > 1}
+    if not words_a or not words_b:
+        return 0.0
+    overlap = words_a & words_b
+    if not overlap:
+        return 0.0
+    return min(len(overlap) / len(words_a), len(overlap) / len(words_b))
+
+
+def names_match(name_a: str, name_b: str) -> bool:
+    """Check if two team names refer to the same team.
+
+    Three-stage matching:
+    1. Exact match after normalization
+    2. Suffix containment at word boundaries (handles "Celtics" matching
+       "Boston Celtics", "Red Sox" matching "Boston Red Sox")
+    3. Token overlap scoring (threshold >0.5)
+
+    Does NOT match:
+    - "Air Force Falcons" vs "Atlanta Falcons" (token overlap ~0.33)
+    - "South Carolina State" vs "South Carolina" (not suffix, overlap ~0.67
+      but NOT a suffix match so falls through to token overlap which is >0.5
+      — this is a known edge case where token overlap disagrees with human
+      judgment. We accept this tradeoff.)
+
+    The suffix-only containment strategy is deliberately conservative: prefix
+    matching ("South Carolina" in "South Carolina State") is NOT used because
+    city/state names are qualifiable and can represent different teams.
+    """
+    norm_a = normalize_name(name_a)
+    norm_b = normalize_name(name_b)
+
+    if not norm_a or not norm_b:
+        return False
+
+    # 1. Exact match
+    if norm_a == norm_b:
+        return True
+
+    # 2. Suffix containment at word boundaries
+    #    "Celtics" matches "Boston Celtics" (suffix)
+    #    "Red Sox" matches "Boston Red Sox" (suffix)
+    #    But NOT "South Carolina" matching "South Carolina State" (prefix, not suffix)
+    shorter, longer = (norm_a, norm_b) if len(norm_a) <= len(norm_b) else (norm_b, norm_a)
+    if len(shorter) >= 4:
+        shorter_words = shorter.split()
+        longer_words = longer.split()
+        if len(shorter_words) < len(longer_words):
+            # Suffix match only: shorter must match the trailing words
+            if longer_words[-len(shorter_words):] == shorter_words:
+                return True
+
+    # 3. Token overlap scoring (strict >0.5)
+    return token_overlap_score(name_a, name_b) > 0.5

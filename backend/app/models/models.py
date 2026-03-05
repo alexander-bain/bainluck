@@ -468,10 +468,6 @@ class EIPercentile(Base):
     )
 
 
-# Backward-compatible alias
-GEIPercentile = EIPercentile
-
-
 class Venue(Base):
     """Venue/arena information from ESPN."""
 
@@ -508,6 +504,7 @@ class FuturesMarket(Base):
     category: Mapped[str] = mapped_column(String(50), default="championship")  # championship, mvp, division, prop
     llm_sport_category: Mapped[Optional[str]] = mapped_column(String(50))  # LLM-assigned sport category
     market_tier: Mapped[Optional[int]] = mapped_column(Integer)  # 1=championship, 2=conference, 3=awards, 4=division, 5=props/other
+    market_type: Mapped[Optional[str]] = mapped_column(String(30))  # Pattern-classified type (championship, conference, award, division, game, stat_prop, other)
 
     # LLM metadata enrichment
     llm_gender: Mapped[Optional[str]] = mapped_column(String(20))  # men/women/mixed/unknown
@@ -536,6 +533,11 @@ class FuturesMarket(Base):
     # When the market resolves (e.g., when the champion is crowned)
     resolution_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)  # open, suspended, resolved
+
+    # Cross-source event grouping (e.g., "NBA Championship 2025-26" from multiple sources)
+    group_id: Mapped[Optional[str]] = mapped_column(String(200), index=True)
+    group_type: Mapped[Optional[str]] = mapped_column(String(50))  # championship, conference, division, award, game, prop
+    group_position: Mapped[Optional[int]] = mapped_column(Integer)  # Display order within group (e.g., by liquidity)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

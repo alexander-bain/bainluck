@@ -11,8 +11,9 @@ Also assigns market_tier values to FuturesMarket records.
 
 import logging
 import re
-import unicodedata
 from typing import Optional
+
+from app.utils.name_normalization import normalize_name as _normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -112,16 +113,8 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
 
 
 # =============================================================================
-# Name normalization (shared with ESPN sync)
+# Name matching for futures outcomes
 # =============================================================================
-
-def _normalize_name(name: str) -> str:
-    """Normalize a name for matching: strip accents, lowercase, unify quotes."""
-    normalized = unicodedata.normalize("NFD", name)
-    normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-    for ch in ("\u2018", "\u2019", "\u02BB", "\u02BC", "\u0060", "\u00B4", "\u2032"):
-        normalized = normalized.replace(ch, "'")
-    return normalized.lower().strip()
 
 
 def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = None) -> bool:

@@ -3,7 +3,6 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 """
 
 import logging
-import unicodedata
 from datetime import datetime, timezone
 
 from sqlalchemy import select, distinct, and_, or_
@@ -12,39 +11,9 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, Sport
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import ESPN_SPORT_MAPPING
+from app.utils.name_normalization import token_overlap_score as _team_name_match_score
 
 logger = logging.getLogger(__name__)
-
-# Words to exclude from token-overlap scoring (common noise)
-_MATCH_STOPWORDS = frozenset({"the", "of", "at", "and", "de", "fc", "sc", "cf"})
-
-
-def _normalize_for_scoring(name: str) -> str:
-    """Normalize a team name for scoring: strip accents, lowercase, unify apostrophes."""
-    normalized = unicodedata.normalize("NFD", name)
-    normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-    for ch in ("\u2018", "\u2019", "\u02BB", "\u02BC", "\u0060", "\u00B4", "\u2032"):
-        normalized = normalized.replace(ch, "'")
-    return normalized.lower().strip()
-
-
-def _team_name_match_score(name_a: str, name_b: str) -> float:
-    """Score team name match quality via word overlap. Returns 0.0-1.0.
-
-    Uses min-coverage: both sides need reasonable overlap. This prevents
-    partial location matches like "Eastern Kentucky" vs "Kentucky" (0.33)
-    and shared mascots like "Air Force Falcons" vs "Atlanta Falcons" (0.33).
-    """
-    if not name_a or not name_b:
-        return 0.0
-    words_a = set(_normalize_for_scoring(name_a).split()) - _MATCH_STOPWORDS
-    words_b = set(_normalize_for_scoring(name_b).split()) - _MATCH_STOPWORDS
-    if not words_a or not words_b:
-        return 0.0
-    overlap = words_a & words_b
-    if not overlap:
-        return 0.0
-    return min(len(overlap) / len(words_a), len(overlap) / len(words_b))
 
 
 async def _enrich_events_metadata(limit: int = 50):
