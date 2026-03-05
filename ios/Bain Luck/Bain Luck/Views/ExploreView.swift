@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import os
 
@@ -47,7 +48,7 @@ private func tagLabel(_ tag: String) -> String {
 
 // MARK: - Tab
 
-private enum ExploreTab: String, CaseIterable {
+enum ExploreTab: String, CaseIterable {
     case events = "Events"
     case futures = "Futures"
 }
