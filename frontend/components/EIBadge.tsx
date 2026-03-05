@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { motion } from "framer-motion";
 import type { EIData } from "@/lib/types";
+import { getEIClasses } from "@/lib/eiColors";
+import { eiBreathingTransition } from "@/lib/animations";
 import Tooltip from "./Tooltip";
 
 interface EIBadgeProps {
@@ -9,6 +12,8 @@ interface EIBadgeProps {
   size?: "sm" | "md" | "lg";
   showTooltip?: boolean;
   linkToExplainer?: boolean;
+  /** When true, badge pulses with EI-mapped breathing speed */
+  isLive?: boolean;
 }
 
 /**
@@ -22,6 +27,7 @@ export default function EIBadge({
   size = "sm",
   showTooltip = true,
   linkToExplainer = true,
+  isLive = false,
 }: EIBadgeProps) {
   const sizeClasses = {
     sm: "text-xs px-2 py-0.5",
@@ -29,20 +35,18 @@ export default function EIBadge({
     lg: "text-base px-3 py-1.5",
   };
 
-  const colorClasses = ei.score >= 81
-    ? "bg-red-500/15 text-red-400"
-    : ei.score >= 61
-    ? "bg-orange-500/15 text-orange-400"
-    : ei.score >= 41
-    ? "bg-amber-500/15 text-amber-400"
-    : "bg-surface-elevated text-text-muted";
+  const colorClasses = getEIClasses(ei.score);
 
   const badge = (
-    <span
+    <motion.span
       className={`flex items-center gap-1 rounded-full font-semibold cursor-help ${sizeClasses[size]} ${colorClasses}`}
+      {...(isLive ? {
+        animate: { scale: [1, 1.03, 1] },
+        transition: eiBreathingTransition(ei.score),
+      } : {})}
     >
       {ei.emoji} {ei.score}
-    </span>
+    </motion.span>
   );
 
   const tooltipContent = (

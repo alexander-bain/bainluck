@@ -2,8 +2,10 @@
 
 import { useState, useMemo, useCallback, useRef } from "react";
 import useSWR from "swr";
+import { motion } from "framer-motion";
 import { fetchEventsByIds, fetchFuturesByIds, fetchFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
+import { staggerContainer, staggerItem } from "@/lib/animations";
 import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -281,31 +283,39 @@ export default function HomePage() {
                       {pinnedEvents.length + pinnedFutures.length}
                     </span>
                   </div>
-                  <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
+                  <motion.div
+                    className="grid gap-3"
+                    style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                    variants={staggerContainer}
+                    initial="hidden"
+                    animate="visible"
+                  >
                     {pinnedEvents.map((event, index) => (
-                      <EventCard
-                        key={`pinned-${event.id}`}
-                        event={event}
-                        showSport={true}
-                        sourceSection="pinned"
-                        positionIndex={index}
-                        highlightLabel={event.highlight?.label}
-                        isPinned={true}
-                        onPinToggle={togglePin}
-                        pinDisabled={isMaxReached}
-                      />
+                      <motion.div key={`pinned-${event.id}`} variants={staggerItem}>
+                        <EventCard
+                          event={event}
+                          showSport={true}
+                          sourceSection="pinned"
+                          positionIndex={index}
+                          highlightLabel={event.highlight?.label}
+                          isPinned={true}
+                          onPinToggle={togglePin}
+                          pinDisabled={isMaxReached}
+                        />
+                      </motion.div>
                     ))}
                     {pinnedFutures.map((market) => (
-                      <FuturesCard
-                        key={`pinned-futures-${market.id}`}
-                        market={market}
-                        showSport={true}
-                        isPinned={true}
-                        onPinToggle={toggleFuturesPin}
-                        pinDisabled={isFuturesMaxReached}
-                      />
+                      <motion.div key={`pinned-futures-${market.id}`} variants={staggerItem}>
+                        <FuturesCard
+                          market={market}
+                          showSport={true}
+                          isPinned={true}
+                          onPinToggle={toggleFuturesPin}
+                          pinDisabled={isFuturesMaxReached}
+                        />
+                      </motion.div>
                     ))}
-                  </div>
+                  </motion.div>
                 </section>
               )}
 
@@ -324,9 +334,13 @@ export default function HomePage() {
                       {section.items.length}
                     </span>
                   </div>
-                  <div
+                  <motion.div
                     className="grid gap-3"
                     style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                    variants={staggerContainer}
+                    initial="hidden"
+                    animate="visible"
+                    key={section.key}
                   >
                     {section.items.map((item) => {
                       const key = item.type === "event"
@@ -336,16 +350,17 @@ export default function HomePage() {
                         ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
                         : (item.data as FeedFuturesData).llm_sport_category ?? "other";
                       return (
-                        <FeedCard
-                          key={key}
-                          item={item}
-                          onThumbsUp={handleThumbsUp}
-                          onThumbsDown={handleThumbsDown}
-                          category={category}
-                        />
+                        <motion.div key={key} variants={staggerItem}>
+                          <FeedCard
+                            item={item}
+                            onThumbsUp={handleThumbsUp}
+                            onThumbsDown={handleThumbsDown}
+                            category={category}
+                          />
+                        </motion.div>
                       );
                     })}
-                  </div>
+                  </motion.div>
                 </section>
               ))}
             </div>

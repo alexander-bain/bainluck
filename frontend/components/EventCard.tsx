@@ -9,6 +9,7 @@ import EIBadge from "./EIBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl } from "@/lib/images";
+import { teamColorStyle } from "@/lib/teamColors";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -91,10 +92,6 @@ export default function EventCard({
     minute: "2-digit",
   });
 
-  // Team colors
-  const homeColor = event.home_team_data?.primary_color || "#94A3B8";
-  const awayColor = event.away_team_data?.primary_color || "#64748B";
-
   // International sport detection — show flags instead of team logos
   const showFlags = isInternationalSport(event.sport);
   const homeFlagUrl = showFlags ? flagUrl(event.home_team) : null;
@@ -114,6 +111,12 @@ export default function EventCard({
           ${isLive ? "ring-1 ring-accent-live/30" : ""}
           ${isFinished ? "opacity-75 hover:opacity-100" : ""}
         `}
+        style={teamColorStyle(
+          event.home_team_data?.primary_color,
+          event.away_team_data?.primary_color,
+          event.home_team_data?.secondary_color,
+          event.away_team_data?.secondary_color,
+        )}
       >
         {/* Top bar: league + status + pin */}
         <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -143,7 +146,7 @@ export default function EventCard({
               </span>
             )}
             {isLive && (event.ei || event.pulse) && (
-              <EIBadge ei={(event.ei || event.pulse)!} size="sm" />
+              <EIBadge ei={(event.ei || event.pulse)!} size="sm" isLive />
             )}
             {!isLive && !isFinished && (
               <span className="text-micro text-text-muted">{timeStr}</span>
@@ -235,7 +238,7 @@ export default function EventCard({
               ) : (
                 <div
                   className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
-                  style={{ backgroundColor: homeColor }}
+                  style={{ backgroundColor: "rgb(var(--team-home-primary))" }}
                 >
                   {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
                 </div>
@@ -259,16 +262,18 @@ export default function EventCard({
               className="prob-bar-segment"
               style={{
                 width: `${(homeProb ?? 0.5) * 100}%`,
-                backgroundColor: homeColor,
+                backgroundColor: "rgb(var(--team-home-primary))",
                 opacity: homeFavorite ? 1 : 0.5,
+                transition: "width 400ms ease-out",
               }}
             />
             <div
               className="prob-bar-segment"
               style={{
                 width: `${(awayProb ?? 0.5) * 100}%`,
-                backgroundColor: awayColor,
+                backgroundColor: "rgb(var(--team-away-primary))",
                 opacity: !homeFavorite ? 1 : 0.5,
+                transition: "width 400ms ease-out",
               }}
             />
           </div>
@@ -297,7 +302,7 @@ export default function EventCard({
               ) : (
                 <div
                   className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
-                  style={{ backgroundColor: awayColor }}
+                  style={{ backgroundColor: "rgb(var(--team-away-primary))" }}
                 >
                   {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
                 </div>
