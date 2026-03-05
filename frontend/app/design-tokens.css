@@ -1,0 +1,67 @@
+/**
+ * Design System Tokens
+ *
+ * Centralized CSS custom properties for the Bain Luck design system.
+ * Imported at the top of globals.css.
+ *
+ * These tokens supplement the existing :root variables in globals.css
+ * (surfaces, text, accents, spacing, transitions) and the shadcn/ui
+ * @layer base variables. They add STATUS, EI, BRAND, TEAM, and
+ * ANIMATION tokens that existing globals.css doesn't cover.
+ *
+ * NOTE: No @layer base here — that directive requires @tailwind base
+ * in the same file. CSS custom properties on :root don't need layer
+ * specificity since they're just value declarations.
+ */
+
+:root {
+  /* ── STATUS COLORS ── */
+  --color-status-live: 34 197 94;         /* green-500 — matches --accent-live */
+  --color-status-upcoming: 139 92 246;    /* violet-500 — matches --accent-futures */
+  --color-status-completed: 107 114 128;  /* gray-500 */
+  --color-status-closed: 75 85 99;        /* gray-600 */
+  --color-status-scheduled: 59 130 246;   /* blue-500 */
+
+  /* ── EI SEVERITY ── */
+  --color-ei-incredible: 239 68 68;       /* red-500 — score 90+ */
+  --color-ei-must-watch: 239 68 68;       /* red-500 — score 80+ */
+  --color-ei-exciting: 249 115 22;        /* orange-500 — score 70+ */
+  --color-ei-engaging: 249 115 22;        /* orange-500 — score 60+ */
+  --color-ei-competitive: 234 179 8;      /* yellow-500 — score 50+ */
+  --color-ei-average: 234 179 8;          /* yellow-500 — score 40+ */
+  --color-ei-quiet: 107 114 128;          /* gray-500 — score 25+ */
+  --color-ei-flat: 75 85 99;             /* gray-600 — score <25 */
+
+  /* ── BRAND ── */
+  --color-brand-primary: 15 23 42;        /* slate-900 */
+  --color-brand-accent: 16 185 129;       /* emerald-500 — matches --accent-brand */
+
+  /* ── DYNAMIC TEAM COLORS ──
+   * Set per-component via style prop using teamColorStyle().
+   * Components inside will inherit via var(--team-home-primary) etc.
+   */
+  --team-home-primary: 107 114 128;       /* gray-500 fallback */
+  --team-home-secondary: 156 163 175;     /* gray-400 fallback */
+  --team-away-primary: 107 114 128;       /* gray-500 fallback */
+  --team-away-secondary: 156 163 175;     /* gray-400 fallback */
+
+  /* ── ANIMATION DURATIONS ── */
+  --duration-instant: 100ms;
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+  --duration-probability: 400ms;
+
+  /* ── WIN PROBABILITY SOURCE COLORS ── */
+  --color-source-odds: 248 250 252;       /* slate-50 — betting consensus */
+  --color-source-espn: 249 115 22;        /* orange-500 */
+  --color-source-stat-model: 168 85 247;  /* purple-500 */
+  --color-source-kalshi: 34 197 94;       /* green-500 */
+  --color-source-polymarket: 59 130 246;  /* blue-500 */
+  --color-source-mlb: 13 148 136;         /* teal-500 */
+}
+
+/* Dark mode overrides (brand only — most tokens are already dark-first) */
+.dark {
+  --color-brand-primary: 241 245 249;     /* slate-100 */
+}
