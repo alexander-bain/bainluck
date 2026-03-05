@@ -321,6 +321,31 @@ struct EventDetailView: View {
 
     // MARK: - Hero Probability
 
+    /// For live games, cross-check current_odds against the latest valid history point.
+    /// If they diverge >5%, trust the history data (catches stale bookmaker issues).
+    /// Mirrors the web frontend logic in events/[id]/page.tsx.
+    private func resolvedLiveProbability(_ event: EventDetail) -> (away: Double, home: Double, label: String)? {
+        var awayProb = event.currentOdds?.awayProbability
+        var homeProb = event.currentOdds?.homeProbability
+        var label = "Live Win Probability"
+
+        if let historyPoints = vm.history?.history,
+           let latestValid = historyPoints.last(where: { $0.homeProbability != nil }) {
+            let historyHome = latestValid.homeProbability!
+            // If current odds are missing OR diverge >5% from history, trust history
+            if homeProb == nil || abs(historyHome - (homeProb ?? 0)) > 0.05 {
+                homeProb = historyHome
+                awayProb = latestValid.awayProbability ?? (1.0 - historyHome)
+                if let count = latestValid.bookmakerCount, count > 0 {
+                    label = "Live · \(count) sportsbook\(count != 1 ? "s" : "")"
+                }
+            }
+        }
+
+        guard let away = awayProb, let home = homeProb else { return nil }
+        return (away, home, label)
+    }
+
     private func heroProbability(_ event: EventDetail, colors: (away: Color, home: Color)) -> some View {
         VStack(spacing: 6) {
             if isFinished {
@@ -350,8 +375,44 @@ struct EventDetailView: View {
                         height: 12
                     )
                 }
+            } else if isLive, let resolved = resolvedLiveProbability(event) {
+                // Live: show cross-checked odds (history-verified to catch stale bookmaker data)
+                HStack {
+                    Text(formatProbability(resolved.away))
+                        .font(.title3).fontWeight(.bold).monospacedDigit()
+                        .foregroundStyle(colors.away)
+                    Spacer()
+                    Text(resolved.label)
+                        .font(.caption2).fontWeight(.medium)
+                        .foregroundStyle(.white.opacity(0.5))
+                    Spacer()
+                    Text(formatProbability(resolved.home))
+                        .font(.title3).fontWeight(.bold).monospacedDigit()
+                        .foregroundStyle(colors.home)
+                }
+                ProbabilityBar(
+                    awayProb: resolved.away, homeProb: resolved.home,
+                    awayColor: colors.away, homeColor: colors.home,
+                    height: 14, animated: true, glowing: true
+                )
+
+                // Show opening odds as secondary reference
+                if let opening = event.openingOdds,
+                   let awayOpen = opening.awayProbability,
+                   let homeOpen = opening.homeProbability {
+                    HStack {
+                        Text(formatProbability(awayOpen))
+                            .font(.caption2).foregroundStyle(.white.opacity(0.5))
+                        Spacer()
+                        Text("Opened")
+                            .font(.caption2).foregroundStyle(.white.opacity(0.35))
+                        Spacer()
+                        Text(formatProbability(homeOpen))
+                            .font(.caption2).foregroundStyle(.white.opacity(0.5))
+                    }
+                }
             } else {
-                // Live / Scheduled: show current odds prominently
+                // Scheduled (or live before history loads): show current odds
                 if let odds = event.currentOdds,
                    let away = odds.awayProbability,
                    let home = odds.homeProbability {
@@ -360,7 +421,7 @@ struct EventDetailView: View {
                             .font(.title3).fontWeight(.bold).monospacedDigit()
                             .foregroundStyle(colors.away)
                         Spacer()
-                        Text(isLive ? "Live Win Probability" : "Win Probability")
+                        Text("Win Probability")
                             .font(.caption2).fontWeight(.medium)
                             .foregroundStyle(.white.opacity(0.5))
                         Spacer()
@@ -799,7 +860,7 @@ struct EventDetailView: View {
         let lastHist = history.history.last
 
         let homeProb = lastWp?.homeProbability
-            ?? lastHist?.homeProbability.map { $0 / 100.0 }
+            ?? lastHist?.homeProbability
             ?? 0.5
 
         return GamePlayPoint(

@@ -23,14 +23,11 @@ final class SportCategoryViewModel: ObservableObject {
         let isInitial = items.isEmpty
         if isInitial { loading = true }
         do {
-            let feed = try await APIClient.shared.fetchFeed(limit: 200)
-            let category = sportCategories.first { $0.id == categoryKey }
-            items = feed.items.filter { item in
-                category?.matches(item) ?? false
-            }
+            let feed = try await APIClient.shared.fetchFeed(sport: categoryKey, limit: 200)
+            items = feed.items
             error = nil
             loading = false
-            logger.info("Category \(self.categoryKey) loaded: \(self.items.count) items")
+            logger.info("Category \(self.categoryKey) loaded: \(self.items.count) items (server-filtered)")
         } catch {
             if isInitial {
                 self.error = error.localizedDescription
