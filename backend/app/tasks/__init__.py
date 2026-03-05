@@ -605,7 +605,7 @@ celery_app.conf.beat_schedule = {
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",
         "schedule": crontab(minute="5,20,35,50"),  # Every 15 min: after Polymarket (:15) and Kalshi (:45)
-        "kwargs": {"limit": 500},
+        "kwargs": {"limit": 200},
     },
     "poll-live-prediction-markets": {
         "task": "app.tasks.poll_live_prediction_markets",

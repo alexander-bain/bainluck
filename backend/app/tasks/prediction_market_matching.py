@@ -185,7 +185,7 @@ async def _match_prediction_markets(limit: int = 500):
 
     import time as _time
     _task_start = _time.monotonic()
-    _TIME_BUDGET_SECONDS = 780  # Leave 60s buffer before the 840s soft limit
+    _TIME_BUDGET_SECONDS = 660  # Leave 60s buffer before the 720s soft limit
 
     def _time_remaining() -> float:
         return _TIME_BUDGET_SECONDS - (_time.monotonic() - _task_start)
@@ -196,6 +196,7 @@ async def _match_prediction_markets(limit: int = 500):
 
     async with get_task_session() as session:
         # ── Phase 1: Link unlinked game-level markets ────────────────────
+        logger.info("Phase 1 starting — %.0fs budget remaining", _time_remaining())
         #
         # Two-pass strategy:
         # Pass 1 (targeted): Directly query Kalshi markets with game ticker
@@ -225,6 +226,9 @@ async def _match_prediction_markets(limit: int = 500):
         processed_ids = set()
 
         for market in ticker_markets:
+            if _time_remaining() < 120:
+                logger.info("Phase 1 Pass 1 time budget exhausted after %d/%d ticker markets", stats["markets_scanned"], len(ticker_markets))
+                break
             processed_ids.add(market.id)
             stats["markets_scanned"] += 1
             stats["funnel"]["game_level_detected"] += 1
@@ -368,6 +372,9 @@ async def _match_prediction_markets(limit: int = 500):
         stats["funnel"]["remaining_scan_count"] = len(remaining_markets)
 
         for market in unlinked_markets:
+            if _time_remaining() < 120:
+                logger.info("Phase 1 Pass 2 time budget exhausted after %d markets scanned", stats["markets_scanned"])
+                break
             # Skip markets already processed in Pass 1
             if market.id in processed_ids:
                 continue
@@ -477,6 +484,7 @@ async def _match_prediction_markets(limit: int = 500):
                         )
 
         # ── Phase 1.5: Fix stale and mislinked markets ────────────────────
+        logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining", stats["markets_scanned"], stats["newly_linked"], _time_remaining())
         # Scan ALL linked markets for two problems:
         # (a) Stale: linked to completed/closed events — try to find the next game
         # (b) Mislinked: teams don't both match the linked event (e.g.,
