@@ -4,7 +4,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from statistics import mean
+from statistics import mean, median
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -1237,6 +1237,168 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
     return f"name:{name}"
 
 
+@router.get("/{market_id}/probability-timeline")
+async def get_probability_timeline(
+    market_id: int,
+    top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
+    hours: int = Query(168, ge=1, le=8760, description="Hours of history (default 7 days)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get a time-bucketed probability timeline for a futures market.
+
+    Aggregates FuturesOddsSnapshot data into time buckets, takes the median
+    probability across bookmakers per outcome, and returns the top N outcomes
+    plus a "Field" entry that sums all remaining outcomes' probabilities.
+
+    Designed for multi-participant charts (golf tournaments, championship
+    markets with many contestants).
+    """
+    # Verify market exists and load outcomes
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.id == market_id)
+    )
+    market = result.scalar_one_or_none()
+
+    if not market:
+        raise HTTPException(status_code=404, detail="Market not found")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    # Get ALL outcome IDs (we need them all to compute Field)
+    all_outcome_ids = [o.id for o in market.outcomes]
+
+    if not all_outcome_ids:
+        return {
+            "market_id": market_id,
+            "market_name": market.name,
+            "hours": hours,
+            "top": top,
+            "timeline": [],
+            "outcomes": [],
+        }
+
+    # Fetch all snapshots
+    snapshot_query = (
+        select(FuturesOddsSnapshot)
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
+            FuturesOddsSnapshot.captured_at >= cutoff,
+        )
+        .order_by(FuturesOddsSnapshot.captured_at)
+    )
+
+    result = await db.execute(snapshot_query)
+    snapshots = result.scalars().all()
+
+    if not snapshots:
+        return {
+            "market_id": market_id,
+            "market_name": market.name,
+            "hours": hours,
+            "top": top,
+            "timeline": [],
+            "outcomes": [],
+        }
+
+    # Determine bucket size based on market state.
+    # If commence_time is set and we're past it, use 15-min buckets.
+    # Otherwise use 1-hour buckets.
+    now = datetime.now(timezone.utc)
+    if market.commence_time and now >= market.commence_time:
+        bucket_seconds = 900  # 15 minutes
+    else:
+        bucket_seconds = 3600  # 1 hour
+
+    # Determine the top N outcomes by current probability
+    sorted_outcomes = sorted(
+        market.outcomes,
+        key=lambda o: o.current_probability or 0,
+        reverse=True,
+    )
+    top_outcome_ids = {o.id for o in sorted_outcomes[:top]}
+    outcome_names = {o.id: o.name for o in market.outcomes}
+
+    # Group snapshots: outcome_id -> bucket_key -> [probabilities]
+    # bucket_key is the truncated timestamp
+    outcome_buckets: dict[int, dict[int, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
+    for snap in snapshots:
+        if snap.probability is not None:
+            ts = int(snap.captured_at.timestamp())
+            bucket_key = (ts // bucket_seconds) * bucket_seconds
+            outcome_buckets[snap.outcome_id][bucket_key].append(
+                float(snap.probability)
+            )
+
+    # Collect all bucket keys across all outcomes
+    all_bucket_keys = set()
+    for buckets in outcome_buckets.values():
+        all_bucket_keys.update(buckets.keys())
+    sorted_bucket_keys = sorted(all_bucket_keys)
+
+    # Build timeline: for each time bucket, compute median probability per outcome
+    timeline = []
+    for bucket_key in sorted_bucket_keys:
+        bucket_ts = datetime.fromtimestamp(bucket_key, tz=timezone.utc).isoformat()
+        entry = {"timestamp": bucket_ts, "outcomes": {}}
+
+        field_prob = 0.0
+
+        for outcome in market.outcomes:
+            oid = outcome.id
+            probs = outcome_buckets.get(oid, {}).get(bucket_key, [])
+            if not probs:
+                continue
+
+            med_prob = median(probs)
+
+            if oid in top_outcome_ids:
+                entry["outcomes"][outcome_names[oid]] = round(med_prob, 6)
+            else:
+                field_prob += med_prob
+
+        # Add Field if there are outcomes outside the top N
+        if len(market.outcomes) > top:
+            entry["outcomes"]["Field"] = round(field_prob, 6)
+
+        timeline.append(entry)
+
+    # Build outcome metadata list (ordered by current probability)
+    outcomes_meta = []
+    for o in sorted_outcomes[:top]:
+        outcomes_meta.append({
+            "id": o.id,
+            "name": o.name,
+            "current_probability": float(o.current_probability) if o.current_probability else None,
+        })
+    if len(market.outcomes) > top:
+        # Sum remaining probabilities for Field
+        field_current = sum(
+            float(o.current_probability) for o in sorted_outcomes[top:]
+            if o.current_probability
+        )
+        outcomes_meta.append({
+            "id": None,
+            "name": "Field",
+            "current_probability": round(field_current, 6),
+        })
+
+    return {
+        "market_id": market_id,
+        "market_name": market.name,
+        "hours": hours,
+        "top": top,
+        "bucket_seconds": bucket_seconds,
+        "timeline": timeline,
+        "outcomes": outcomes_meta,
+    }
+
+
 @router.get("/{market_id}/history")
 async def get_futures_history(
     market_id: int,
@@ -1465,3 +1627,171 @@ def _avg_probability(by_source: dict) -> float:
         if v.get("probability") is not None
     ]
     return sum(probs) / len(probs) if probs else 0.0
+
+
+# ── Market Grouping Endpoints ──
+
+
+@router.get("/groups/{group_id:path}")
+async def get_group(
+    group_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all markets in a specific group, with their outcomes.
+
+    Returns markets sharing the same group_id, enriched with
+    threshold detection and cross-source comparison data.
+    """
+    from app.utils.market_grouping import detect_threshold_groups
+
+    # Fetch markets in this group
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(FuturesMarket.group_id == group_id)
+        .order_by(FuturesMarket.group_position.nulls_last(), FuturesMarket.id)
+    )
+    result = await db.execute(stmt)
+    markets = result.scalars().all()
+
+    if not markets:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # Build market list
+    market_list = []
+    all_outcomes = []
+    for m in markets:
+        outcomes = []
+        for o in sorted(m.outcomes, key=lambda x: -(x.current_probability or 0)):
+            od = {
+                "id": o.id,
+                "name": o.name,
+                "probability": o.current_probability,
+                "american_odds": probability_to_american(o.current_probability) if o.current_probability and 0 < o.current_probability < 1 else None,
+                "market_id": m.id,
+                "source": m.source,
+            }
+            outcomes.append(od)
+            all_outcomes.append(od)
+
+        market_list.append({
+            "id": m.id,
+            "name": m.name,
+            "source": m.source,
+            "external_id": m.external_id,
+            "group_type": m.group_type,
+            "group_position": m.group_position,
+            "canonical_market_key": m.canonical_market_key,
+            "market_tier": m.market_tier,
+            "llm_sport_category": m.llm_sport_category,
+            "status": m.status,
+            "market_metadata": m.market_metadata,
+            "commence_time": m.commence_time.isoformat() if m.commence_time else None,
+            "resolution_date": m.resolution_date.isoformat() if m.resolution_date else None,
+            "outcomes": outcomes,
+            "outcome_count": len(outcomes),
+        })
+
+    # Detect threshold groups across all outcomes
+    threshold_groups = detect_threshold_groups(all_outcomes)
+
+    # Determine group title from market metadata or market names
+    group_title = None
+    for m in markets:
+        if m.market_metadata and m.market_metadata.get("event_title"):
+            group_title = m.market_metadata["event_title"]
+            break
+    if not group_title and markets:
+        group_title = markets[0].name
+
+    return {
+        "group_id": group_id,
+        "group_title": group_title,
+        "group_type": markets[0].group_type if markets else None,
+        "market_count": len(market_list),
+        "markets": market_list,
+        "threshold_groups": {
+            stem: [
+                {
+                    "outcome_id": o["id"],
+                    "name": o["name"],
+                    "probability": o["probability"],
+                    "threshold_value": o["threshold_value"],
+                    "threshold_unit": o["threshold_unit"],
+                    "threshold_direction": o["threshold_direction"],
+                    "source": o["source"],
+                }
+                for o in outcomes_list
+            ]
+            for stem, outcomes_list in threshold_groups.items()
+        },
+        "sources": list({m.source for m in markets}),
+    }
+
+
+@router.get("/groups")
+async def list_groups(
+    source: Optional[str] = Query(None, description="Filter by source (polymarket, kalshi)"),
+    group_type: Optional[str] = Query(None, description="Filter by group type"),
+    sport: Optional[str] = Query(None, description="Filter by sport category"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all market groups.
+
+    Returns distinct group_ids with summary information.
+    """
+    # Subquery: get distinct group_ids with their first market's info
+    filters = [FuturesMarket.group_id.isnot(None)]
+    if source:
+        filters.append(FuturesMarket.source == source)
+    if group_type:
+        filters.append(FuturesMarket.group_type == group_type)
+    if sport:
+        filters.append(FuturesMarket.llm_sport_category == sport)
+
+    # Get distinct group_ids with count and representative market info
+    stmt = (
+        select(
+            FuturesMarket.group_id,
+            FuturesMarket.group_type,
+            func.count(FuturesMarket.id).label("market_count"),
+            func.min(FuturesMarket.name).label("representative_name"),
+            func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
+            func.max(FuturesMarket.updated_at).label("last_updated"),
+        )
+        .where(and_(*filters))
+        .group_by(FuturesMarket.group_id, FuturesMarket.group_type)
+        .order_by(func.max(FuturesMarket.updated_at).desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Count total
+    count_stmt = (
+        select(func.count(func.distinct(FuturesMarket.group_id)))
+        .where(and_(*filters))
+    )
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "groups": [
+            {
+                "group_id": row.group_id,
+                "group_type": row.group_type,
+                "market_count": row.market_count,
+                "representative_name": row.representative_name,
+                "sources": row.sources or [],
+                "last_updated": row.last_updated.isoformat() if row.last_updated else None,
+            }
+            for row in rows
+        ],
+    }

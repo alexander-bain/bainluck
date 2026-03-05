@@ -34,7 +34,6 @@ const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: stri
   stat_model: { display_name: "Bain Luck Model", color: "#8b5cf6", dash_pattern: "4 4", type: "model" },
   kalshi: { display_name: "Kalshi", color: "#22c55e", dash_pattern: "8 4", type: "market" },
   polymarket: { display_name: "Polymarket", color: "#3b82f6", dash_pattern: "8 4", type: "market" },
-  moneypuck: { display_name: "MoneyPuck", color: "#10b981", dash_pattern: "4 4", type: "model" },
   fangraphs: { display_name: "MLB Model", color: "#06b6d4", dash_pattern: "4 4", type: "model" },
 };
 

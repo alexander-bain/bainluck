@@ -72,17 +72,6 @@ WIN_PROB_SOURCES = {
         "attribution_url": "https://polymarket.com",
         "attribution_name": "Polymarket",
     },
-    "moneypuck": {
-        "display_name": "MoneyPuck",
-        "source_type": "model",
-        "sports": ["icehockey_nhl"],
-        "color": "#10b981",
-        "dash_pattern": "4 4",
-        "description": "Hockey win probability from MoneyPuck's statistical model, widely considered the gold standard for NHL analytics. Uses shot metrics, expected goals (xG), and real-time game state.",
-        "methodology": "MoneyPuck uses a machine learning model trained on historical NHL play-by-play data. The model incorporates shot quality, expected goals (xG), team strength in various on-ice situations (5v5, power play, penalty kill), score effects, and venue adjustments. Updates in real-time during live games.",
-        "attribution_url": "https://moneypuck.com",
-        "attribution_name": "MoneyPuck",
-    },
     # NOTE: Source was renamed from "fangraphs" to "mlb" on 2026-03-05.
     # iOS app may cache "fangraphs" key. Remove this note after April 2026.
     "mlb": {

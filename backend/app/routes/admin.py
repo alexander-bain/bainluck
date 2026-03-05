@@ -5348,3 +5348,146 @@ async def schedule_accuracy(
             "low_reliability": sum(1 for s in sorted_sports.values() if s.get("reliability") == "LOW"),
         },
     }
+
+
+# ── Market Grouping Admin Endpoints ──
+
+
+@router.post("/futures/groups/discover")
+async def discover_market_groups(
+    secret: str = Query(""),
+    limit: int = Query(500, ge=1, le=5000),
+    source: Optional[str] = Query(None, description="Filter by source (polymarket, kalshi, odds_api)"),
+    dry_run: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Discover and set group_id on existing markets that don't have one.
+
+    Scans markets without group_id and assigns based on:
+    1. Source-specific hierarchy (polymarket:X, kalshi:X)
+    2. Canonical market key grouping
+
+    Use dry_run=true to preview without saving.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.utils.market_grouping import discover_group_id_for_market
+    from sqlalchemy import func as sqla_func
+
+    # Find markets without group_id
+    filters = [FuturesMarket.group_id.is_(None)]
+    if source:
+        filters.append(FuturesMarket.source == source)
+
+    stmt = (
+        select(FuturesMarket)
+        .where(*filters)
+        .order_by(FuturesMarket.id)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    markets = result.scalars().all()
+
+    stats = {
+        "scanned": 0,
+        "assigned": 0,
+        "skipped": 0,
+        "by_type": {},
+        "dry_run": dry_run,
+    }
+
+    for market in markets:
+        stats["scanned"] += 1
+
+        group_info = discover_group_id_for_market(
+            source=market.source,
+            external_id=market.external_id,
+            canonical_market_key=market.canonical_market_key,
+            name=market.name,
+            market_id=market.id,
+        )
+
+        if group_info:
+            group_id, group_type = group_info
+            stats["assigned"] += 1
+            stats["by_type"][group_type] = stats["by_type"].get(group_type, 0) + 1
+
+            if not dry_run:
+                market.group_id = group_id
+                market.group_type = group_type
+                market.group_position = 0
+        else:
+            stats["skipped"] += 1
+
+    if not dry_run:
+        await db.commit()
+
+    return stats
+
+
+@router.get("/futures/groups/status")
+async def group_status(
+    secret: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Show current market grouping status.
+
+    Returns counts of grouped vs ungrouped markets, breakdown by group_type.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func as sqla_func
+
+    # Total markets
+    total_stmt = select(sqla_func.count(FuturesMarket.id))
+    total = (await db.execute(total_stmt)).scalar() or 0
+
+    # Markets with group_id
+    grouped_stmt = select(sqla_func.count(FuturesMarket.id)).where(
+        FuturesMarket.group_id.isnot(None)
+    )
+    grouped = (await db.execute(grouped_stmt)).scalar() or 0
+
+    # Breakdown by group_type
+    type_stmt = (
+        select(
+            FuturesMarket.group_type,
+            sqla_func.count(FuturesMarket.id),
+        )
+        .where(FuturesMarket.group_id.isnot(None))
+        .group_by(FuturesMarket.group_type)
+    )
+    type_result = await db.execute(type_stmt)
+    by_type = {row[0]: row[1] for row in type_result.all()}
+
+    # Breakdown by source
+    source_stmt = (
+        select(
+            FuturesMarket.source,
+            sqla_func.count(FuturesMarket.id),
+        )
+        .where(FuturesMarket.group_id.isnot(None))
+        .group_by(FuturesMarket.source)
+    )
+    source_result = await db.execute(source_stmt)
+    by_source = {row[0]: row[1] for row in source_result.all()}
+
+    # Distinct group count
+    distinct_stmt = select(
+        sqla_func.count(sqla_func.distinct(FuturesMarket.group_id))
+    ).where(FuturesMarket.group_id.isnot(None))
+    distinct_groups = (await db.execute(distinct_stmt)).scalar() or 0
+
+    return {
+        "total_markets": total,
+        "grouped": grouped,
+        "ungrouped": total - grouped,
+        "grouped_pct": round(grouped / total * 100, 1) if total > 0 else 0,
+        "distinct_groups": distinct_groups,
+        "by_type": by_type,
+        "by_source": by_source,
+    }

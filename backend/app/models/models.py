@@ -277,7 +277,7 @@ class WinProbSnapshot(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
-    source: Mapped[str] = mapped_column(String(30))  # "espn", "stat_model", "moneypuck", etc.
+    source: Mapped[str] = mapped_column(String(30))  # "espn", "stat_model", "kalshi", etc.
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

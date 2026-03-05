@@ -411,6 +411,26 @@ async def _process_event_batch(
                     event.title, llm_sport_category, league, category,
                 )
 
+                # Determine group hierarchy from Polymarket event structure
+                has_multiple_markets = len(event.markets) > 1
+                if event.neg_risk or has_multiple_markets:
+                    poly_group_id = f"polymarket:{event.id}"
+                    poly_group_type = "negrisk" if event.neg_risk else "polymarket_event"
+                else:
+                    poly_group_id = None
+                    poly_group_type = None
+
+                # Build market_metadata with event-level context
+                poly_metadata: dict = {}
+                if event.id:
+                    poly_metadata["polymarket_event_id"] = event.id
+                if event.title:
+                    poly_metadata["event_title"] = event.title
+                if event.neg_risk:
+                    poly_metadata["neg_risk"] = True
+                if has_multiple_markets:
+                    poly_metadata["market_count"] = len(event.markets)
+
                 # Build update set for on-conflict
                 update_set = {
                     "name": event.title,
@@ -421,6 +441,10 @@ async def _process_event_batch(
                     "resolution_date": resolution_date,
                     "status": "open" if event.active else "resolved",
                     "category_tags": tags,
+                    "group_id": poly_group_id,
+                    "group_type": poly_group_type,
+                    "group_position": 0,
+                    "market_metadata": poly_metadata if poly_metadata else None,
                     "updated_at": func.now(),
                 }
                 # Only update llm_sport_category if we have a non-"other" value
@@ -442,6 +466,10 @@ async def _process_event_batch(
                     resolution_date=resolution_date,
                     status="open" if event.active else "resolved",
                     category_tags=tags,
+                    group_id=poly_group_id,
+                    group_type=poly_group_type,
+                    group_position=0,
+                    market_metadata=poly_metadata if poly_metadata else None,
                 ).on_conflict_do_update(
                     index_elements=["source", "external_id"],
                     set_=update_set,

@@ -943,3 +943,25 @@ export interface ProgressionResponse {
   stages: ProgressionStage[];
   participants: ProgressionParticipant[];
 }
+
+/** Probability timeline types (for TournamentChart) */
+export interface TimelineOutcomeMeta {
+  id: number | null;
+  name: string;
+  current_probability: number | null;
+}
+
+export interface TimelineEntry {
+  timestamp: string;
+  outcomes: Record<string, number>;
+}
+
+export interface ProbabilityTimelineResponse {
+  market_id: number;
+  market_name: string;
+  hours: number;
+  top: number;
+  bucket_seconds: number;
+  timeline: TimelineEntry[];
+  outcomes: TimelineOutcomeMeta[];
+}

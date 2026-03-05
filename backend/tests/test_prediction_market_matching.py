@@ -682,15 +682,10 @@ class TestWinProbSources:
         assert WIN_PROB_SOURCES["polymarket"]["source_type"] == "market"
         assert WIN_PROB_SOURCES["polymarket"]["color"] == "#3b82f6"
 
-    def test_moneypuck_source_config(self):
-        """MoneyPuck source should be NHL-only model."""
+    def test_moneypuck_removed(self):
+        """MoneyPuck stub should be removed from source registry."""
         from app.config.win_prob_sources import WIN_PROB_SOURCES
-        assert "moneypuck" in WIN_PROB_SOURCES
-        mp = WIN_PROB_SOURCES["moneypuck"]
-        assert mp["source_type"] == "model"
-        assert mp["sports"] == ["icehockey_nhl"]
-        assert mp["color"] == "#10b981"
-        assert mp["dash_pattern"] == "4 4"
+        assert "moneypuck" not in WIN_PROB_SOURCES
 
     def test_mlb_source_config(self):
         """MLB source should be MLB-only model."""

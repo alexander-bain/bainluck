@@ -29,6 +29,7 @@ import type {
   GolfResponse,
   GolfTournamentDetailResponse,
   ProgressionResponse,
+  ProbabilityTimelineResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -434,6 +435,24 @@ export async function fetchProgression(
   const params = topN ? `?top_n=${topN}` : "";
   return apiFetch<ProgressionResponse>(
     `/api/futures/${marketId}/progression${params}`
+  );
+}
+
+/**
+ * Fetch probability timeline for a futures market.
+ * Returns time-bucketed median probabilities per outcome for multi-line charts.
+ */
+export async function fetchProbabilityTimeline(
+  marketId: number,
+  top?: number,
+  hours?: number
+): Promise<ProbabilityTimelineResponse> {
+  const params = new URLSearchParams();
+  if (top !== undefined) params.set("top", String(top));
+  if (hours !== undefined) params.set("hours", String(hours));
+  const qs = params.toString();
+  return apiFetch<ProbabilityTimelineResponse>(
+    `/api/futures/${marketId}/probability-timeline${qs ? `?${qs}` : ""}`
   );
 }
 

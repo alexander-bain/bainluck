@@ -33,7 +33,6 @@ SOURCE_WEIGHTS: dict[str, float] = {
     "kalshi": 0.8,         # Kalshi prediction market
     "polymarket": 0.8,     # Polymarket prediction market
     "mlb": 0.8,            # MLB Model (MLB Stats API)
-    "moneypuck": 0.8,      # MoneyPuck (NHL) — stub
 }
 
 # Staleness parameters (in seconds)

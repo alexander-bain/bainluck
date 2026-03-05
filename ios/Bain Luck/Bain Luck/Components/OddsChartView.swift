@@ -667,7 +667,6 @@ struct OddsChartView: View {
         case "kalshi": return "Kalshi"
         case "polymarket": return "Polymarket"
         case "fangraphs": return "MLB Model"
-        case "moneypuck": return "MoneyPuck"
         default: return source.capitalized
         }
     }
@@ -675,7 +674,7 @@ struct OddsChartView: View {
     /// Fallback source types matching web's FALLBACK_SOURCE_CONFIG
     private func fallbackType(_ source: String) -> String {
         switch source {
-        case "espn", "stat_model", "bainluck_model", "fangraphs", "moneypuck":
+        case "espn", "stat_model", "bainluck_model", "fangraphs":
             return "model"
         case "kalshi", "polymarket":
             return "market"

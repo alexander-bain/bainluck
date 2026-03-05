@@ -18,6 +18,7 @@ import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
+import TournamentChart from "@/components/TournamentChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
@@ -466,9 +467,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           {trendView === "progression" && hasProgression && progressionData ? (
             <TournamentProgressionTable data={progressionData} />
           ) : market && market.outcomes.length > 10 ? (
-            <EvolutionView
+            <TournamentChart
               marketId={marketId}
-              marketName={market.name}
               hours={168}
             />
           ) : (

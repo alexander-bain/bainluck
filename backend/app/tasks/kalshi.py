@@ -310,6 +310,24 @@ async def _poll_kalshi_markets():
                     if is_game_prop(market_name):
                         category = "game_prop"
 
+                    # Determine group hierarchy from Kalshi event structure
+                    has_multiple_markets = len(event.markets) > 1
+                    if has_multiple_markets or event.mutually_exclusive:
+                        kalshi_group_id = f"kalshi:{event.event_ticker}"
+                        kalshi_group_type = "kalshi_event"
+                    else:
+                        kalshi_group_id = None
+                        kalshi_group_type = None
+
+                    # Build market_metadata with event-level context
+                    kalshi_metadata: dict = {}
+                    if event.event_ticker:
+                        kalshi_metadata["kalshi_event_ticker"] = event.event_ticker
+                    if event.title:
+                        kalshi_metadata["event_title"] = event.title
+                    if has_multiple_markets:
+                        kalshi_metadata["market_count"] = len(event.markets)
+
                     # Upsert the FuturesMarket
                     upsert_values = {
                         "source": "kalshi",
@@ -323,6 +341,10 @@ async def _poll_kalshi_markets():
                         "resolution_date": expiration_time,
                         "status": "open",
                         "category_tags": tags,
+                        "group_id": kalshi_group_id,
+                        "group_type": kalshi_group_type,
+                        "group_position": 0,
+                        "market_metadata": kalshi_metadata if kalshi_metadata else None,
                     }
                     update_set = {
                         "name": market_name,
@@ -331,6 +353,10 @@ async def _poll_kalshi_markets():
                         "commence_time": commence_time,
                         "resolution_date": expiration_time,
                         "category_tags": tags,
+                        "group_id": kalshi_group_id,
+                        "group_type": kalshi_group_type,
+                        "group_position": 0,
+                        "market_metadata": kalshi_metadata if kalshi_metadata else None,
                         "updated_at": func.now(),
                     }
                     # Always update llm_sport_category unless new value is "other"
