@@ -43,6 +43,11 @@ _NON_GOLF_RE = re.compile(
     r"\bnba\b|\bnfl\b|\bnhl\b|\bmlb\b|\bwnba\b|\bmls\b|\bufc\b|\bmma\b|"
     r"\bepl\b|la\s+liga|serie\s+a|\bbundesliga\b|"
     r"super\s+bowl|world\s+series|stanley\s+cup|"
+    # English football / EFL (prevents "EFL Championship" matching golf)
+    r"\befl\b|english\s+football|football\s+league|"
+    r"\bleague\s+(?:one|two)\b|championship\s+(?:relegation|promotion)|"
+    r"\bfa\s+cup\b|\bcarabao\b|\bpremier\s+league\b|"
+    r"\bligue\s+1\b|\beredivisie\b|\bscottish\b|"
     # Entertainment / media
     r"\boscar|emmy|grammy|golden\s+globe|tony\s+award|"
     r"netflix|hulu|disney\+|streaming|tv\s+show|television|"
@@ -72,14 +77,15 @@ _GOLF_SIGNAL_RE = re.compile(
     r"golf|golfer|pga|lpga|"
     r"masters|"
     r"open|"
-    r"championship|"
     r"classic|invitational|"
     r"ryder|presidents?\s+cup|"
     r"major|hole[-\s]in[-\s]one|"
-    r"wgc|winner|"
+    r"wgc|"
     r"liv\s+golf|korn\s+ferry|"
     r"dp\s+world|sunshine\s+tour|"
-    r"asian\s+tour|european\s+tour"
+    r"asian\s+tour|european\s+tour|"
+    r"top\s+\d+\s+finish|make\s+the?\s+cut|"
+    r"birdie|bogey|eagle|par\s+\d|under\s+par"
     r")\b",
     re.I,
 )
@@ -608,11 +614,13 @@ async def get_golf(
         golfer_data: dict[str, dict] = {}  # match_key -> aggregated data
 
         market_ids = []
+        market_sources = []
         earliest_commence = None
         latest_resolution = None
 
         for market in tourn_markets:
             market_ids.append(market.id)
+            market_sources.append(market.source or "unknown")
             source = market.source or "unknown"
             # DataGolf provides model predictions, not market prices — label accordingly
             source_label = "datagolf_model" if source == "datagolf" else source
@@ -766,6 +774,7 @@ async def get_golf(
             "commence_time": earliest_commence.isoformat() if earliest_commence else None,
             "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
             "market_ids": market_ids,
+            "market_sources": market_sources,
             "market_names": market_names,
             "golfers": golfers,
         })
@@ -1008,27 +1017,39 @@ def _find_current_event(
 def _build_current_event(t: dict) -> dict:
     """Build the current_event response dict from a tournament.
 
-    Sorts market_ids so "Winner" markets appear first — the frontend uses
-    market_ids[0] for the EvolutionView chart, and Winner markets have the
-    richest probability evolution data.
+    Sorts market_ids so DataGolf Winner markets appear first, then other Winner
+    markets, then remaining. DataGolf markets give best progression results
+    (exact prefix-based sibling discovery via Method 1).
     """
     raw_ids = t.get("market_ids", [])
     raw_names = t.get("market_names", [])
+    raw_sources = t.get("market_sources", [])
 
-    # Pair IDs with names and sort: Winner markets first, then others
-    pairs = list(zip(raw_ids, raw_names)) if len(raw_ids) == len(raw_names) else [(mid, "") for mid in raw_ids]
+    # Build triples: (id, name, source)
+    if len(raw_ids) == len(raw_names) == len(raw_sources):
+        triples = list(zip(raw_ids, raw_names, raw_sources))
+    elif len(raw_ids) == len(raw_names):
+        triples = [(mid, nm, "") for mid, nm in zip(raw_ids, raw_names)]
+    else:
+        triples = [(mid, "", "") for mid in raw_ids]
 
-    def _winner_sort_key(pair):
-        _id, name = pair
+    def _sort_key(triple):
+        _id, name, source = triple
         name_lower = name.lower()
-        # Winner markets get priority 0, others get 1
-        if "winner" in name_lower and "round" not in name_lower:
+        is_winner = "winner" in name_lower and "round" not in name_lower
+        is_datagolf = source == "datagolf"
+        # DataGolf Winner = 0, Other Winner = 1, DataGolf Non-Winner = 2, Rest = 3
+        if is_winner and is_datagolf:
             return (0, _id)
-        return (1, _id)
+        elif is_winner:
+            return (1, _id)
+        elif is_datagolf:
+            return (2, _id)
+        return (3, _id)
 
-    pairs.sort(key=_winner_sort_key)
-    sorted_ids = [p[0] for p in pairs]
-    sorted_names = [p[1] for p in pairs]
+    triples.sort(key=_sort_key)
+    sorted_ids = [t[0] for t in triples]
+    sorted_names = [t[1] for t in triples]
 
     return {
         "key": t["key"],

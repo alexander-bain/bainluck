@@ -1,5 +1,6 @@
 """Futures/Outrights API endpoints."""
 
+import re
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,30 @@ from app.utils.tournament_stages import (
 router = APIRouter()
 
 
+# Kalshi ticker suffix extraction for sibling market discovery.
+# Kalshi golf tickers: KX{TYPE}-{SUFFIX} where SUFFIX = tournament abbreviation + year
+# e.g., KXPGATOP10-ARPIPBM26 → suffix "ARPIPBM26"
+_KALSHI_TICKER_RE = re.compile(r"^[A-Z0-9]+-([A-Z0-9]{4,})$", re.IGNORECASE)
+
+# Non-decomposable letters that NFD normalization can't handle.
+# Must be transliterated before NFD strip — used in _progression_merge_key().
+_MERGE_KEY_TRANSLITERATIONS = str.maketrans({
+    "ø": "o", "Ø": "O",
+    "đ": "d", "Đ": "D",
+    "ł": "l", "Ł": "L",
+    "æ": "ae", "Æ": "AE",
+})
+
+
+def _extract_kalshi_suffix(external_id: str) -> Optional[str]:
+    """Extract the tournament suffix from a Kalshi external_id.
+
+    Returns None if the external_id doesn't match Kalshi ticker format.
+    """
+    if not external_id:
+        return None
+    m = _KALSHI_TICKER_RE.match(external_id)
+    return m.group(1) if m else None
 
 
 def _detect_elimination(history, threshold=0.005):
@@ -983,6 +1008,23 @@ async def get_progression(
         )
         sibling_markets.extend(dg_result.scalars().unique().all())
 
+    # Method 1b: Kalshi ticker suffix matching
+    # Kalshi golf tickers: KX{TYPE}-{SUFFIX} where SUFFIX identifies the tournament
+    # e.g., KXPGATOP10-ARPIPBM26 and KXPGAR3LEAD-ARPIPBM26 share suffix ARPIPBM26
+    if len(sibling_markets) < 2 and market.external_id:
+        kalshi_suffix = _extract_kalshi_suffix(market.external_id)
+        if kalshi_suffix and len(kalshi_suffix) >= 4:
+            ks_result = await db.execute(
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.external_id.ilike(f"%-{kalshi_suffix}"),
+                    FuturesMarket.id != market_id,
+                    FuturesMarket.status == "open",
+                )
+            )
+            sibling_markets.extend(ks_result.scalars().unique().all())
+
     # Method 2: Canonical key siblings
     if len(sibling_markets) < 2 and market.canonical_market_key:
         # Parse key: "sport:league:category:season" → find same sport:league:*:season
@@ -1162,13 +1204,39 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
     """Generate a merge key for cross-market participant matching.
 
     Priority: team_id (most reliable) > normalized name (fallback).
+
+    Name normalization handles cross-source variations:
+    - DataGolf: "Scheffler, Scottie" → "scottie scheffler"
+    - Kalshi: "Yes: Scottie Scheffler" → "scottie scheffler"
+    - Polymarket: "Scottie Scheffler" → "scottie scheffler"
+    - Diacritics: "Skarsgård" → "skarsgard"
+    - Suffixes: "Jr.", "Sr.", "III" stripped
     """
     if outcome.team_id:
         return f"team:{outcome.team_id}"
-    # Normalize: strip accents, lowercase
-    normalized = unicodedata.normalize("NFD", outcome.name)
-    normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-    return f"name:{normalized.lower().strip()}"
+    name = outcome.name or ""
+    # Strip "Yes: " / "No: " prefixes (Kalshi format)
+    name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", name, flags=re.IGNORECASE)
+    # Strip wrapping quotes (Polymarket NegRisk format)
+    name = re.sub(r'^"(.*)"$', r"\1", name)
+    # Convert "Last, First" to "First Last" (DataGolf format)
+    comma_match = re.match(r"^(\w[\w'-]+),\s+(\w[\w'-]+.*)$", name, flags=re.UNICODE)
+    if comma_match:
+        name = f"{comma_match.group(2)} {comma_match.group(1)}"
+    # Strip diacritics: transliterate non-decomposable letters first (ø→o, đ→d),
+    # then NFD decomposition + remove combining marks for the rest (ü→u, é→e)
+    name = name.translate(_MERGE_KEY_TRANSLITERATIONS)
+    name = unicodedata.normalize("NFD", name)
+    name = "".join(c for c in name if unicodedata.category(c) != "Mn")
+    name = name.lower().strip()
+    # Remove Jr./Sr./III suffixes
+    name = re.sub(r"\b(?:jr|sr|iii|ii|iv)\.?\b", "", name)
+    # Remove non-alphanumeric (keep spaces)
+    name = re.sub(r"[^a-z0-9\s]", "", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    return f"name:{name}"
+
+
 async def get_futures_history(
     market_id: int,
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
