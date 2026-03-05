@@ -201,10 +201,18 @@ def _parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) ->
     if not period_str:
         return 0.0, False  # Unknown — don't assume any progress
 
-    period_lower = period_str.lower().strip()
+    # Strip clock prefix: "6:55 - 1st Quarter" → "1st Quarter"
+    # The period field sometimes includes "clock - period" format
+    cleaned = period_str.strip()
+    if " - " in cleaned:
+        cleaned = cleaned.split(" - ", 1)[1]
 
-    # Overtime detection
-    if any(kw in period_lower for kw in ("ot", "overtime", "extra", "so", "shootout", "penalties")):
+    period_lower = cleaned.lower().strip()
+
+    # Overtime detection — use word boundaries to avoid false matches
+    # (e.g., "1st Quarter" should NOT match "ot" substring)
+    import re
+    if re.search(r"\bot\b|\bovertime\b|\bextra\s*time\b|\bshootout\b|\bpenalties\b|\bso\b", period_lower):
         return 1.0, True
 
     # Half-based sports (soccer, college basketball)
@@ -216,8 +224,11 @@ def _parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) ->
         return 0.5, False
 
     # Quarter/period-based: extract number from "Q4", "3rd", "Period 2", etc.
-    import re
-    num_match = re.search(r"(\d+)", period_str)
+    # Use specific patterns to avoid matching clock digits like "6:55"
+    num_match = re.search(r"(?:^|q|quarter\s*|period\s*|half\s*)(\d+)", period_lower)
+    if not num_match:
+        # Fallback: match ordinal patterns like "1st", "2nd", "3rd", "4th"
+        num_match = re.search(r"(\d+)(?:st|nd|rd|th)\b", period_lower)
     if num_match:
         period_num = int(num_match.group(1))
         total = SPORT_TOTAL_PERIODS.get(sport_key or "", 4)

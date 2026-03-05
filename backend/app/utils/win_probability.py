@@ -73,7 +73,11 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
         return None
 
     # Parse period to determine how many periods are left
-    period_lower = period.lower().strip()
+    # Strip clock prefix: "6:55 - 1st Quarter" → "1st Quarter"
+    period_cleaned = period.strip()
+    if " - " in period_cleaned:
+        period_cleaned = period_cleaned.split(" - ", 1)[1]
+    period_lower = period_cleaned.lower().strip()
 
     # Extract numeric period from various formats: "1", "Q1", "q2", etc.
     period_num = None
