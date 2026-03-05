@@ -344,6 +344,33 @@ actor APIClient {
         return try await fetch("/api/events/ei-rankings", query: q)
     }
 
+    // MARK: - Faceted Search
+
+    func fetchFacetedEvents(tags: [String] = [], page: Int = 1, days: Int = 14) async throws -> FacetedEventsResponse {
+        var q: [String: String] = [
+            "page": "\(page)",
+            "per_page": "20",
+            "days": "\(days)",
+        ]
+        if !tags.isEmpty, let json = try? JSONSerialization.data(withJSONObject: tags),
+           let str = String(data: json, encoding: .utf8) {
+            q["tags"] = str
+        }
+        return try await fetch("/api/events/faceted", query: q, cacheTTL: 30)
+    }
+
+    func fetchFacetedFutures(tags: [String] = [], page: Int = 1) async throws -> FacetedFuturesResponse {
+        var q: [String: String] = [
+            "page": "\(page)",
+            "per_page": "20",
+        ]
+        if !tags.isEmpty, let json = try? JSONSerialization.data(withJSONObject: tags),
+           let str = String(data: json, encoding: .utf8) {
+            q["tags"] = str
+        }
+        return try await fetch("/api/futures/faceted", query: q, cacheTTL: 30)
+    }
+
     // MARK: - Auth
 
     func signInWithApple(idToken: String, firstName: String?, lastName: String?) async throws -> AppleAuthResponse {

@@ -4,6 +4,14 @@ import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "futuresDetail")
 
+// MARK: - Sort
+
+private enum FuturesSortField: String, CaseIterable {
+    case probability = "Probability"
+    case change = "24h Change"
+    case name = "Name"
+}
+
 // MARK: - ViewModel
 
 final class FuturesDetailViewModel: ObservableObject {
@@ -37,6 +45,9 @@ final class FuturesDetailViewModel: ObservableObject {
 struct FuturesDetailView: View {
     let marketId: Int
     @StateObject private var vm: FuturesDetailViewModel
+    @State private var sortField: FuturesSortField = .probability
+    @State private var sortAscending = false
+    @State private var showAllOutcomes = false
 
     init(marketId: Int) {
         self.marketId = marketId
@@ -57,6 +68,7 @@ struct FuturesDetailView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         headerSection(market)
+                        leaderSection(market)
                         outcomesSection(market)
                     }
                     .padding()
@@ -85,7 +97,9 @@ struct FuturesDetailView: View {
     // MARK: - Header
 
     private func headerSection(_ market: FuturesMarketDetail) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let isResolved = market.status == "resolved"
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 if let category = market.llmSportCategory {
                     Text(category.capitalized)
@@ -98,6 +112,16 @@ struct FuturesDetailView: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
+                if isResolved {
+                    Text("Resolved")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(Capsule())
+                }
                 if let source = market.source {
                     sourceBadge(source)
                 }
@@ -107,8 +131,15 @@ struct FuturesDetailView: View {
                 .font(.title3)
                 .fontWeight(.semibold)
 
+            if let desc = market.description, !desc.isEmpty {
+                Text(desc)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Info strip
             HStack(spacing: 12) {
-                if let status = market.status {
+                if let status = market.status, !isResolved {
                     HStack(spacing: 4) {
                         Circle()
                             .fill(status == "active" ? .green : .secondary)
@@ -126,14 +157,110 @@ struct FuturesDetailView: View {
                         .font(.caption2)
                 }
                 .foregroundStyle(.secondary)
-                if let date = market.resolutionDate {
-                    RelativeTimeText(dateString: date)
+
+                if let commence = market.commenceTime, let date = commence.asDate {
+                    HStack(spacing: 3) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 9))
+                        Text("Starts \(date, style: .date)")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+
+                if let resolution = market.resolutionDate {
+                    RelativeTimeText(dateString: resolution)
+                }
+            }
+
+            if let updatedAt = market.updatedAt, let date = updatedAt.asDate {
+                Text("Updated \(date, format: .dateTime.month(.abbreviated).day().hour().minute())")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            // Bookmakers
+            if let bookmakers = market.bookmakers, !bookmakers.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Divider()
+                    Text("Odds from \(bookmakers.count) sportsbook\(bookmakers.count != 1 ? "s" : "")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(bookmakers, id: \.self) { bk in
+                                Text(formatBookmaker(bk))
+                                    .font(.system(size: 10))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.secondary.opacity(0.08))
+                                    .clipShape(Capsule())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
             }
         }
         .padding()
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    // MARK: - Current Leader
+
+    @ViewBuilder
+    private func leaderSection(_ market: FuturesMarketDetail) -> some View {
+        if let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) }),
+           let prob = leader.probability {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Current Favorite")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    HStack(spacing: 8) {
+                        Text("1")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .frame(width: 28, height: 28)
+                            .background(Color.orange.opacity(0.15))
+                            .foregroundStyle(.orange)
+                            .clipShape(Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
+                                Text(leader.name)
+                                    .font(.headline)
+                                    .fontWeight(.semibold)
+                                if leader.isWinner == true {
+                                    Text("Winner")
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(.green)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(.green.opacity(0.12))
+                                        .clipShape(Capsule())
+                                }
+                            }
+                            if let odds = leader.americanOdds {
+                                Text(odds > 0 ? "+\(odds)" : "\(odds)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                    Spacer()
+                    Text(formatProbability(prob))
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .monospacedDigit()
+                }
+            }
+            .padding()
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
     }
 
     // MARK: - Source Badge
@@ -187,7 +314,11 @@ struct FuturesDetailView: View {
 
     private func outcomesSection(_ market: FuturesMarketDetail) -> some View {
         let color = categoryColor(market)
-        return VStack(alignment: .leading, spacing: 6) {
+        let sorted = sortedOutcomes(market.outcomes)
+        let displayed = showAllOutcomes ? sorted : Array(sorted.prefix(25))
+        let hasMore = sorted.count > 25
+
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.fill")
                     .font(.system(size: 12))
@@ -196,21 +327,46 @@ struct FuturesDetailView: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 Spacer()
-                Text("\(market.outcomes.count)")
+                if hasMore {
+                    Button(showAllOutcomes ? "Show less" : "Show all \(sorted.count)") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showAllOutcomes.toggle()
+                        }
+                    }
                     .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
+                    .foregroundStyle(.blue)
+                }
             }
 
-            ForEach(market.outcomes) { outcome in
-                outcomeRow(outcome, color: color)
-                if outcome.id != market.outcomes.last?.id {
+            // Sort controls
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(FuturesSortField.allCases, id: \.self) { field in
+                        sortChip(field)
+                    }
+                }
+            }
+
+            ForEach(Array(displayed.enumerated()), id: \.element.id) { index, outcome in
+                outcomeRow(outcome, rank: index + 1, color: color, leaderId: sorted.first?.id)
+                if index < displayed.count - 1 {
                     Divider()
                 }
+            }
+
+            if hasMore && !showAllOutcomes {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showAllOutcomes = true
+                    }
+                } label: {
+                    Text("Show \(sorted.count - 25) more outcomes")
+                        .font(.caption)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .foregroundStyle(.secondary)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
             }
         }
         .padding()
@@ -218,22 +374,78 @@ struct FuturesDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    private func outcomeRow(_ outcome: FuturesOutcome, color: Color) -> some View {
-        VStack(spacing: 4) {
+    private func sortChip(_ field: FuturesSortField) -> some View {
+        let isActive = sortField == field
+        return Button {
+            if sortField == field {
+                sortAscending.toggle()
+            } else {
+                sortField = field
+                sortAscending = field == .name
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text(field.rawValue)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                if isActive {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isActive ? Color.primary.opacity(0.12) : Color.secondary.opacity(0.08))
+            .foregroundStyle(isActive ? .primary : .secondary)
+            .clipShape(Capsule())
+        }
+    }
+
+    private func sortedOutcomes(_ outcomes: [FuturesOutcome]) -> [FuturesOutcome] {
+        outcomes.sorted { a, b in
+            let cmp: Bool
+            switch sortField {
+            case .probability:
+                cmp = (a.probability ?? 0) > (b.probability ?? 0)
+            case .change:
+                cmp = (a.probabilityChange24h ?? 0) > (b.probabilityChange24h ?? 0)
+            case .name:
+                cmp = a.name.localizedCompare(b.name) == .orderedAscending
+            }
+            return sortAscending ? !cmp : cmp
+        }
+    }
+
+    private func outcomeRow(_ outcome: FuturesOutcome, rank: Int, color: Color, leaderId: Int?) -> some View {
+        let isLeader = outcome.id == leaderId
+
+        return VStack(spacing: 4) {
             HStack(alignment: .top) {
-                if let rank = outcome.rank {
-                    Text("#\(rank)")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, alignment: .leading)
+                Text("#\(rank)")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(isLeader ? .orange : .secondary)
+                    .frame(width: 28, alignment: .leading)
+
+                // Rank change indicator
+                if let rankChange = outcome.rankChange24h, rankChange != 0 {
+                    HStack(spacing: 1) {
+                        Image(systemName: rankChange < 0 ? "arrow.up" : "arrow.down")
+                            .font(.system(size: 7))
+                        Text("\(abs(rankChange))")
+                            .font(.system(size: 9))
+                    }
+                    .foregroundStyle(rankChange < 0 ? .green : .red)
+                    .frame(width: 22, alignment: .leading)
+                } else {
+                    Spacer().frame(width: 22)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(outcome.name)
                             .font(.subheadline)
-                            .fontWeight(.medium)
+                            .fontWeight(isLeader ? .semibold : .medium)
                         if outcome.isWinner == true {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.caption)
@@ -276,7 +488,7 @@ struct FuturesDetailView: View {
                         Capsule()
                             .fill(Color.barTrack)
                         Capsule()
-                            .fill(color.opacity(0.5))
+                            .fill(color.opacity(isLeader ? 0.7 : 0.4))
                             .frame(width: geo.size.width * prob)
                     }
                 }
@@ -297,5 +509,27 @@ struct FuturesDetailView: View {
             }
             .foregroundStyle(change > 0 ? .green : .red)
         }
+    }
+
+    // MARK: - Bookmaker Formatting
+
+    private func formatBookmaker(_ key: String) -> String {
+        let names: [String: String] = [
+            "draftkings": "DraftKings",
+            "fanduel": "FanDuel",
+            "betmgm": "BetMGM",
+            "caesars": "Caesars",
+            "pointsbet": "PointsBet",
+            "betrivers": "BetRivers",
+            "bovada": "Bovada",
+            "pinnacle": "Pinnacle",
+            "espnbet": "ESPN BET",
+            "betonlineag": "BetOnline",
+            "superbook": "SuperBook",
+            "williamhill_us": "Caesars",
+            "fliff": "Fliff",
+            "hardrockbet": "Hard Rock",
+        ]
+        return names[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }

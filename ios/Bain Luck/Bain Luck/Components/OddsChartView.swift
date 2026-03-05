@@ -294,6 +294,15 @@ struct OddsChartView: View {
             visibleMarkers = periodMarkers
         }
 
+        // Auto-zoom Y-axis to data range with 5% padding (matches web behavior)
+        let probs = dataPoints.map(\.probability)
+        let dataMin = probs.min() ?? 0
+        let dataMax = probs.max() ?? 1
+        let dataRange = max(dataMax - dataMin, 0.05) // Minimum 5% range
+        let padding = dataRange * 0.05
+        let yMin = max(0, dataMin - padding)
+        let yMax = min(1, dataMax + padding)
+
         return Chart {
             // 50% reference line
             RuleMark(y: .value("Even", 0.5))
@@ -339,10 +348,10 @@ struct OddsChartView: View {
                 }
             }
         }
-        .chartYScale(domain: 0...1)
+        .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: xAxisDomain(for: dataPoints))
         .chartYAxis {
-            AxisMarks(values: [0.0, 0.25, 0.5, 0.75, 1.0]) { value in
+            AxisMarks(values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {

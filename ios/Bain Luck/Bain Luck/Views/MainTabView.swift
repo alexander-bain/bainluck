@@ -24,6 +24,12 @@ struct MainTabView: View {
                 .tag(AppTab.feed)
                 .badge(navCoordinator.liveGameCount > 0 ? "\(navCoordinator.liveGameCount) live" : nil)
 
+            ExploreView()
+                .tabItem {
+                    Label("Explore", systemImage: "binoculars.fill")
+                }
+                .tag(AppTab.explore)
+
             SearchView()
                 .tabItem {
                     Label("Search", systemImage: "magnifyingglass")
@@ -68,6 +74,9 @@ struct MainTabView: View {
                     }
                     .tag(AppTab.feed)
 
+                    Label("Explore", systemImage: "binoculars.fill")
+                        .tag(AppTab.explore)
+
                     Label("Search", systemImage: "magnifyingglass")
                         .tag(AppTab.search)
 
@@ -103,6 +112,8 @@ struct MainTabView: View {
             switch navCoordinator.selectedTab {
             case .feed:
                 FeedView()
+            case .explore:
+                ExploreView()
             case .search:
                 SearchView()
             case .myStuff:

@@ -77,6 +77,51 @@ nonisolated struct SearchFilters: Decodable, Sendable {
     let includeUpcoming: Bool?
 }
 
+// MARK: - Faceted Events Response
+
+nonisolated struct FacetedEventsResponse: Decodable, Sendable {
+    let total: Int
+    let page: Int
+    let perPage: Int
+    let filters: [String]
+    let events: [FeedEventData]
+    let facets: [String: [FacetTag]]
+}
+
+// MARK: - Faceted Futures Response
+
+nonisolated struct FacetedFuturesResponse: Decodable, Sendable {
+    let total: Int
+    let page: Int
+    let perPage: Int
+    let filters: [String]
+    let markets: [FacetedFuturesMarket]
+    let facets: [String: [FacetTag]]
+}
+
+nonisolated struct FacetedFuturesMarket: Decodable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let llmSportCategory: String?
+    let source: String?
+    let resolutionDate: String?
+    let marketTags: [String]?
+    let topOutcomes: [FacetedFuturesOutcome]?
+    let outcomeCount: Int?
+}
+
+nonisolated struct FacetedFuturesOutcome: Decodable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let probability: Double?
+    let movement: Double?
+}
+
+nonisolated struct FacetTag: Decodable, Sendable {
+    let tag: String
+    let count: Int
+}
+
 // MARK: - Typeahead Response
 
 nonisolated struct TypeaheadResponse: Decodable, Sendable {

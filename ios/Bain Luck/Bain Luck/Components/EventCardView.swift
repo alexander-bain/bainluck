@@ -51,6 +51,17 @@ struct EventCardView: View {
                     .clipShape(Capsule())
             }
             Spacer()
+            if let broadcast = event.espn?.broadcast?.split(separator: ",").first.map(String.init),
+               !broadcast.isEmpty, isScheduled || isLive {
+                HStack(spacing: 2) {
+                    Image(systemName: "tv")
+                        .font(.system(size: 8))
+                    Text(broadcast.trimmingCharacters(in: .whitespaces))
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
             if isScheduled || isFinished {
                 RelativeTimeText(dateString: event.commenceTime)
             }

@@ -5,8 +5,9 @@ import SwiftUI
 /// Tab identifiers for programmatic tab switching.
 enum AppTab: Int, Hashable {
     case feed = 0
-    case search = 1
-    case myStuff = 2
+    case explore = 1
+    case search = 2
+    case myStuff = 3
 }
 
 /// Coordinates deep link and universal link URL handling with tab navigation.
@@ -65,6 +66,10 @@ final class NavigationCoordinator: ObservableObject {
             if let query, !query.isEmpty {
                 pendingSearchQuery = query
             }
+            return true
+
+        case "explore":
+            selectedTab = .explore
             return true
 
         case "my-stuff":

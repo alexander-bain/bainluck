@@ -16,6 +16,9 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let mutuallyExclusive: Bool?
     let commenceTime: String?
     let resolutionDate: String?
+    let updatedAt: String?
+    let outcomeCount: Int?
+    let bookmakers: [String]?
     let outcomes: [FuturesOutcome]
 }
 
