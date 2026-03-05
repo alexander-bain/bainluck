@@ -492,7 +492,14 @@ def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) 
     if schedule:
         schedule_key = _match_market_to_schedule(market_name, schedule)
         if schedule_key:
-            return schedule_key
+            # Guard: don't let South African/Joburg/Kenya Open
+            # fuzzy-match The Open Championship schedule entry
+            if "open" in schedule_key and _NOT_THE_OPEN_RE.search(market_name):
+                pass  # Skip — fall through to tour event regex
+            elif schedule_key == "the_open_championship":
+                return "the_open"  # Canonical key for The Open
+            else:
+                return schedule_key
 
     # Priority 3: Hardcoded tour event regex
     tour_event = _extract_tour_event(market_name)
@@ -711,10 +718,8 @@ async def get_golf(
             for g in golfers:
                 g["probability"] = round(g["probability"] / total_prob, 3)
                 g["american_odds"] = probability_to_american(g["probability"])
-                # Scale 24h movement by the same normalization factor so arrows
-                # reflect changes in displayed (normalized) probabilities, not raw
-                if g["movement_24h"] is not None:
-                    g["movement_24h"] = round(g["movement_24h"] * norm_scale, 4)
+                # movement_24h stays as raw delta — normalizing it inflates
+                # movements by 1.5-2x and isn't applied to historical values
         else:
             for g in golfers:
                 g["probability"] = round(g["probability"], 3)

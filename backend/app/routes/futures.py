@@ -1237,6 +1237,7 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
     return f"name:{name}"
 
 
+@router.get("/{market_id}/history")
 async def get_futures_history(
     market_id: int,
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),

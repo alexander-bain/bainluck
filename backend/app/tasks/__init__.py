@@ -358,7 +358,7 @@ def backfill_canonical_keys(self, limit: int = 500):
 
 # --- Prediction Market → Event Matching ---
 
-@celery_app.task(bind=True, name="app.tasks.match_prediction_markets", time_limit=780, soft_time_limit=720)
+@celery_app.task(bind=True, name="app.tasks.match_prediction_markets", time_limit=870, soft_time_limit=840)
 def match_prediction_markets(self, limit: int = 500):
     """Match game-level prediction markets to events and write win_prob_snapshots."""
     from app.tasks.prediction_market_matching import _match_prediction_markets
