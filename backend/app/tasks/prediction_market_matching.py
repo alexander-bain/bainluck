@@ -185,7 +185,7 @@ async def _match_prediction_markets(limit: int = 500):
 
     import time as _time
     _task_start = _time.monotonic()
-    _TIME_BUDGET_SECONDS = 660  # Leave 60s buffer before the 720s soft limit
+    _TIME_BUDGET_SECONDS = 780  # Leave 60s buffer before the 840s soft limit
 
     def _time_remaining() -> float:
         return _TIME_BUDGET_SECONDS - (_time.monotonic() - _task_start)
@@ -639,7 +639,12 @@ async def _match_prediction_markets(limit: int = 500):
             )
             linked_rows = linked_result.all()
 
+        phase2_processed = 0
         for market, event in linked_rows:
+            if _time_remaining() < 60:
+                logger.info("Phase 2 time budget exhausted after %d/%d markets", phase2_processed, len(linked_rows))
+                break
+            phase2_processed += 1
             try:
                 # Re-extract matchup to determine team mapping
                 # Uses ticker fallback for generic-named Kalshi markets
@@ -717,25 +722,34 @@ async def _match_prediction_markets(limit: int = 500):
     # Runs outside the main DB session to avoid holding transactions open
     # during API calls. Each backfill is independent and idempotent.
     if polymarket_backfill_queue:
-        stats["funnel"]["polymarket_backfills_queued"] = len(polymarket_backfill_queue)
-        for market_id, event_id in polymarket_backfill_queue:
-            try:
-                backfill_stats = await _backfill_polymarket_win_prob_history(
-                    market_id, event_id,
-                )
-                stats["funnel"].setdefault("polymarket_backfill_snapshots", 0)
-                stats["funnel"]["polymarket_backfill_snapshots"] += (
-                    backfill_stats.get("snapshots_created", 0)
-                )
-            except Exception as e:
-                stats["errors"].append(f"backfill_{market_id}: {str(e)[:100]}")
+        if _time_remaining() < 60:
+            logger.info("Skipping Phase 3 — only %.0fs remaining", _time_remaining())
+            stats["funnel"]["polymarket_backfills_skipped_budget"] = True
+        else:
+            stats["funnel"]["polymarket_backfills_queued"] = len(polymarket_backfill_queue)
+            for market_id, event_id in polymarket_backfill_queue:
+                if _time_remaining() < 30:
+                    logger.info("Phase 3 time budget exhausted after %d/%d backfills",
+                                stats["funnel"].get("polymarket_backfill_snapshots", 0),
+                                len(polymarket_backfill_queue))
+                    break
+                try:
+                    backfill_stats = await _backfill_polymarket_win_prob_history(
+                        market_id, event_id,
+                    )
+                    stats["funnel"].setdefault("polymarket_backfill_snapshots", 0)
+                    stats["funnel"]["polymarket_backfill_snapshots"] += (
+                        backfill_stats.get("snapshots_created", 0)
+                    )
+                except Exception as e:
+                    stats["errors"].append(f"backfill_{market_id}: {str(e)[:100]}")
 
     logger.info(
         "Prediction market matching: scanned=%d, linked=%d, "
-        "snapshots_written=%d, deduped=%d, errors=%d",
+        "snapshots_written=%d, deduped=%d, errors=%d, %.0fs remaining",
         stats["markets_scanned"], stats["newly_linked"],
         stats["snapshots_written"], stats["snapshots_deduped"],
-        len(stats["errors"]),
+        len(stats["errors"]), _time_remaining(),
     )
     return stats
 
