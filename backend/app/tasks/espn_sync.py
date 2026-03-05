@@ -150,7 +150,8 @@ async def _sync_espn_live_events():
     def names_match(our_names: list, espn_name: str) -> bool:
         """Name matching with unicode normalization.
 
-        Primary: substring containment (exact when it works).
+        Primary: substring containment (only for longer names ≥8 chars to prevent
+        "Miami" matching "Miami (OH)" or "Kansas" matching "Kansas State").
         Fallback: token-overlap scoring via _team_name_match_score()
         to handle abbreviation differences common in college sports
         (e.g., "Ohio St Buckeyes" vs "Ohio State Buckeyes").
@@ -158,8 +159,11 @@ async def _sync_espn_live_events():
         espn_lower = _normalize_name(espn_name or "")
         for name in our_names:
             name_lower = _normalize_name(name)
-            if name_lower in espn_lower or espn_lower in name_lower:
-                return True
+            # Only allow substring matching if both names are substantial
+            # Prevents short names from causing false positives
+            if len(name_lower) >= 8 and len(espn_lower) >= 8:
+                if name_lower in espn_lower or espn_lower in name_lower:
+                    return True
         # Fallback: token-overlap scoring for abbreviation handling
         for name in our_names:
             if _team_name_match_score(name, espn_name) > 0.5:
@@ -189,7 +193,15 @@ async def _sync_espn_live_events():
             session.add(team)
             await session.flush()  # Assign team.id for FK linking
 
-        # Update ESPN fields
+        # Update ESPN fields — but guard against overwriting correct data
+        # with mismatched ESPN data (e.g., from a wrong event-level match).
+        # If the team already has an espn_id that differs from this ESPN team,
+        # don't apply any ESPN data — the existing ID is likely correct.
+        if team.espn_id and team.espn_id != espn_team.espn_id:
+            # ESPN ID mismatch — skip all ESPN data updates
+            stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
+            return team
+
         team.espn_id = espn_team.espn_id
         if espn_team.abbreviation:
             team.abbreviation = espn_team.abbreviation
@@ -337,26 +349,14 @@ async def _sync_espn_live_events():
                                     match_method = "name"
                                     break
 
-                        # 3. Fall back to commence_time proximity matching
-                        # Only when names don't match (common for college teams)
-                        if not matched_espn and event.commence_time:
-                            candidates = []
-                            for ee in espn_events:
-                                if not ee.date or ee.status == "scheduled":
-                                    continue
-                                time_diff = abs((ee.date - event.commence_time).total_seconds())
-                                if time_diff <= 21600:  # Within 6 hours
-                                    candidates.append((time_diff, ee))
-                            if len(candidates) == 1:
-                                # Exactly one candidate — safe to match
-                                matched_espn = candidates[0][1]
-                                match_method = "time"
-                                logger.info(
-                                    f"ESPN time-match: event {event.id} "
-                                    f"({event.home_team_name} vs {event.away_team_name}) "
-                                    f"matched to ESPN {matched_espn.espn_id} via commence_time "
-                                    f"(diff: {candidates[0][0]/60:.0f}min)"
-                                )
+                        # 3. Commence_time proximity fallback REMOVED
+                        # Previously matched by time proximity when exactly 1 ESPN
+                        # candidate was within 6 hours. This caused logo contamination
+                        # for college sports — a single-candidate time match assigned
+                        # wrong team data (same issue documented in the scheduled pass
+                        # at lines 609-616 where 29 teams got Purdue's ESPN ID/logo).
+                        # Name matching (step 2) is sufficient; ESPN ID (step 1)
+                        # handles teams that have already been correctly linked.
 
                         if not matched_espn:
                             stats["events_unmatched"] = stats.get("events_unmatched", 0) + 1
@@ -675,7 +675,7 @@ async def _sync_espn_live_events():
             # This catches games that just finished during the previous sync cycle.
             try:
                 from datetime import timedelta
-                recent_cutoff = datetime.now(timezone) - timedelta(hours=48)
+                recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
                 completed_result = await session.execute(
                     select(Event)
                     .options(selectinload(Event.sport))
@@ -701,7 +701,7 @@ async def _sync_espn_live_events():
                                 context = await box_espn.get_event_context(sport_key, event.espn_id)
                                 box_score = context.get("box_score", {})
                                 scoring_plays = context.get("scoring_plays", [])
-                                now_str = datetime.now(timezone).isoformat()
+                                now_str = datetime.now(timezone.utc).isoformat()
 
                                 if box_score or scoring_plays:
                                     event.box_score_data = {
@@ -726,7 +726,7 @@ async def _sync_espn_live_events():
 
             # Fourth pass: update box scores for live events (every 2 minutes)
             try:
-                stale_cutoff = datetime.now(timezone) - timedelta(minutes=2)
+                stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
                 live_box_result = await session.execute(
                     select(Event)
                     .options(selectinload(Event.sport))
@@ -766,7 +766,7 @@ async def _sync_espn_live_events():
                                 context = await live_espn.get_event_context(sport_key, ev.espn_id)
                                 box_data = context.get("box_score", {})
                                 scoring_plays = context.get("scoring_plays", [])
-                                now_str = datetime.now(timezone).isoformat()
+                                now_str = datetime.now(timezone.utc).isoformat()
                                 if box_data or scoring_plays:
                                     ev.box_score_data = {
                                         "source": "espn",
@@ -938,7 +938,7 @@ async def _cleanup_bad_espn_matches():
              data (ID, logos, colors) for teams that don't pass the threshold.
     """
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
-    from app.models.models import Team, Sport
+    from app.models.models import Team, Sport, TeamIdentityMapping
 
     stats = {
         "teams_checked": 0,
@@ -946,9 +946,13 @@ async def _cleanup_bad_espn_matches():
         "teams_cleared": 0,
         "duplicate_groups_found": 0,
         "duplicates_cleared": 0,
+        "identity_mappings_cleared": 0,
         "errors": [],
         "cleared_teams": [],
     }
+
+    # Track team IDs that had ESPN data cleared, for identity mapping cleanup
+    cleared_team_ids = []
 
     def _clear_espn_data(team, reason, extra=None):
         """Clear all ESPN-sourced data from a team record."""
@@ -961,6 +965,7 @@ async def _cleanup_bad_espn_matches():
         if extra:
             info.update(extra)
         stats["cleared_teams"].append(info)
+        cleared_team_ids.append(team.id)
         team.espn_id = None
         team.logo_url_small = None
         team.logo_url_large = None
@@ -1102,6 +1107,23 @@ async def _cleanup_bad_espn_matches():
             finally:
                 await espn.close()
 
+            # --- Phase 3: Clear poisoned identity mappings ---
+            # Delete team_identity_mapping rows for cleared teams where source='espn'
+            # to prevent poisoned fast-path lookups from re-contaminating teams.
+            if cleared_team_ids:
+                from sqlalchemy import delete
+                result = await session.execute(
+                    delete(TeamIdentityMapping).where(
+                        TeamIdentityMapping.team_id.in_(cleared_team_ids),
+                        TeamIdentityMapping.source == "espn",
+                    )
+                )
+                stats["identity_mappings_cleared"] = result.rowcount
+                logger.info(
+                    f"Cleanup: cleared {result.rowcount} ESPN identity mappings "
+                    f"for {len(cleared_team_ids)} teams"
+                )
+
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
@@ -1170,7 +1192,7 @@ async def _backfill_box_scores(limit: int = 100):
                         box_score = context.get("box_score", {})
                         scoring_plays = context.get("scoring_plays", [])
 
-                        now_str = datetime.now(timezone).isoformat()
+                        now_str = datetime.now(timezone.utc).isoformat()
 
                         if box_score or scoring_plays:
                             event.box_score_data = {
