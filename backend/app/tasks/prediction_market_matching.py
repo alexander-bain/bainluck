@@ -1097,6 +1097,18 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     # Create a unique external_id from the prediction market
     external_id = f"pm_{market.source}_{market.external_id}"
 
+    # Check if an event with this external_id already exists (race condition guard)
+    existing_by_ext = await session.execute(
+        select(Event).where(Event.external_id == external_id).limit(1)
+    )
+    existing_event = existing_by_ext.scalar_one_or_none()
+    if existing_event:
+        logger.debug(
+            "Event already exists with external_id=%s (event %d), skipping auto-create",
+            external_id, existing_event.id,
+        )
+        return None
+
     # Create the Event
     event = Event(
         sport_id=sport.id,
