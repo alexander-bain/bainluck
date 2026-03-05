@@ -35,6 +35,10 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "soccer_epl": ("soccer", "eng.1"),
     "soccer_usa_mls": ("soccer", "usa.1"),
     "soccer_uefa_champs_league": ("soccer", "uefa.champions"),
+    "soccer_spain_la_liga": ("soccer", "esp.1"),
+    "soccer_germany_bundesliga": ("soccer", "ger.1"),
+    "soccer_italy_serie_a": ("soccer", "ita.1"),
+    "soccer_france_ligue_one": ("soccer", "fra.1"),
     # Golf
     "golf_pga": ("golf", "pga"),
     "golf_lpga": ("golf", "lpga"),

@@ -183,6 +183,7 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-rosters-daily",
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
+        "mark-resolved-futures-daily",
     }
 
     def test_no_missing_entries(self):

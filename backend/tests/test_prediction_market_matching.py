@@ -700,10 +700,10 @@ class TestWinProbSources:
     def test_all_sources(self):
         """Verify we have all expected sources including the aggregate."""
         from app.config.win_prob_sources import WIN_PROB_SOURCES
-        assert len(WIN_PROB_SOURCES) == 8
+        assert len(WIN_PROB_SOURCES) == 7
         assert set(WIN_PROB_SOURCES.keys()) == {
             "betting", "espn", "stat_model", "kalshi", "polymarket",
-            "moneypuck", "mlb", "bainluck_aggregate",
+            "mlb", "bainluck_aggregate",
         }
 
 
