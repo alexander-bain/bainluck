@@ -183,6 +183,13 @@ async def _match_prediction_markets(limit: int = 500):
         },
     }
 
+    import time as _time
+    _task_start = _time.monotonic()
+    _TIME_BUDGET_SECONDS = 780  # Leave 60s buffer before the 840s soft limit
+
+    def _time_remaining() -> float:
+        return _TIME_BUDGET_SECONDS - (_time.monotonic() - _task_start)
+
     now = datetime.now(timezone.utc)
     # Track newly linked Polymarket markets for price history backfill
     polymarket_backfill_queue = []
@@ -475,21 +482,37 @@ async def _match_prediction_markets(limit: int = 500):
         # (b) Mislinked: teams don't both match the linked event (e.g.,
         #     "Pistons vs. Bulls" linked to "Georgia Southern vs South Florida Bulls"
         #     because "Bulls" substring-matched but "Pistons" didn't)
+        #
+        # Time-budgeted: skip if running low on time (most expensive phase)
         stats["funnel"].setdefault("stale_relinked", 0)
         stats["funnel"].setdefault("mislink_fixed", 0)
+        stats["funnel"].setdefault("phase15_skipped_budget", False)
+        stats["funnel"].setdefault("phase15_checked", 0)
 
-        all_linked_result = await session.execute(
-            select(FuturesMarket, Event)
-            .join(Event, FuturesMarket.event_id == Event.id)
-            .where(
-                FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                FuturesMarket.event_id.isnot(None),
+        _skip_phase15 = _time_remaining() < 120
+        if _skip_phase15:
+            logger.info("Skipping Phase 1.5 — only %.0fs remaining", _time_remaining())
+            stats["funnel"]["phase15_skipped_budget"] = True
+
+        all_linked_rows = []
+        if not _skip_phase15:
+            all_linked_result = await session.execute(
+                select(FuturesMarket, Event)
+                .join(Event, FuturesMarket.event_id == Event.id)
+                .where(
+                    FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                    FuturesMarket.event_id.isnot(None),
+                )
+                .limit(1000)
             )
-            .limit(1000)
-        )
-        all_linked_rows = all_linked_result.all()
+            all_linked_rows = all_linked_result.all()
 
         for market, linked_event in all_linked_rows:
+            # Time budget check inside the loop
+            if _time_remaining() < 60:
+                logger.info("Phase 1.5 time budget exhausted after %d/%d markets", stats["funnel"]["phase15_checked"], len(all_linked_rows))
+                break
+            stats["funnel"]["phase15_checked"] += 1
             try:
                 if not is_game_level_market(
                     market.name, market.category,
@@ -579,27 +602,34 @@ async def _match_prediction_markets(limit: int = 500):
         # - Scheduled/live events (upcoming or in progress)
         # - Recently completed events (<12h, to capture final prices)
         #
+        # Time-budgeted: skip if running low on time
+        stats["funnel"].setdefault("phase2_skipped_budget", False)
         # This filters at the SQL level to avoid loading all 5,000+ linked
         # markets when most are for events that finished days/weeks ago.
         # Live events are also handled by poll_live_prediction_markets (every
         # 2 min), so this is a supplementary pass.
-        recent_cutoff = now - timedelta(hours=12)
-        linked_result = await session.execute(
-            select(FuturesMarket, Event)
-            .join(Event, FuturesMarket.event_id == Event.id)
-            .where(
-                FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                FuturesMarket.event_id.isnot(None),
-                or_(
-                    Event.status.in_(["scheduled", "live"]),
-                    and_(
-                        Event.status.in_(["completed", "closed"]),
-                        Event.commence_time >= recent_cutoff,
+        linked_rows = []
+        if _time_remaining() < 60:
+            logger.info("Skipping Phase 2 — only %.0fs remaining", _time_remaining())
+            stats["funnel"]["phase2_skipped_budget"] = True
+        else:
+            recent_cutoff = now - timedelta(hours=12)
+            linked_result = await session.execute(
+                select(FuturesMarket, Event)
+                .join(Event, FuturesMarket.event_id == Event.id)
+                .where(
+                    FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                    FuturesMarket.event_id.isnot(None),
+                    or_(
+                        Event.status.in_(["scheduled", "live"]),
+                        and_(
+                            Event.status.in_(["completed", "closed"]),
+                            Event.commence_time >= recent_cutoff,
+                        ),
                     ),
-                ),
+                )
             )
-        )
-        linked_rows = linked_result.all()
+            linked_rows = linked_result.all()
 
         for market, event in linked_rows:
             try:
