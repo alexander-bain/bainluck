@@ -86,11 +86,16 @@ export function normalizePeriodLabel(raw: string): string {
  *
  * Returns boundaries for period *transitions* (not the first period).
  * E.g., for a basketball game: returns boundaries for Q2, Q3, Q4 starts.
+ *
+ * @param commenceTime — ISO timestamp of game start. When provided, the first
+ *   period boundary (e.g., Q1) uses this as its timestamp instead of the first
+ *   data point, which may arrive late.
  */
 export function derivePeriodBoundaries(
   espnHistory?: ESPNHistoryPoint[],
   winProbHistory?: Record<string, WinProbHistoryPoint[]>,
   scoringPlays?: ScoringPlay[],
+  commenceTime?: string,
 ): PeriodBoundary[] {
   // Prefer win prob history — its timestamps are always present in chartData
   // (added via ensurePoint), so ReferenceLine x values will match chart categories.
@@ -98,22 +103,47 @@ export function derivePeriodBoundaries(
   // have matching entries in the chart data when win_prob_snapshots deduped them.
   if (winProbHistory) {
     const boundaries = deriveBoundariesFromWinProb(winProbHistory);
-    if (boundaries.length > 0) return boundaries;
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   // Fallback to ESPN history (explicit period field, different table)
   if (espnHistory && espnHistory.length > 1) {
     const boundaries = deriveBoundariesFromEspn(espnHistory);
-    if (boundaries.length > 0) return boundaries;
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   // Try scoring plays
   if (scoringPlays && scoringPlays.length > 1) {
     const boundaries = deriveBoundariesFromScoringPlays(scoringPlays);
-    if (boundaries.length > 0) return boundaries;
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
   }
 
   return [];
+}
+
+/**
+ * Post-process boundaries:
+ * - Use commenceTime for the first period (Q1/P1/1H) since data may arrive late.
+ * - Move "Final" to the last data point timestamp (not the first "Final" point).
+ */
+function applyCommenceTime(
+  boundaries: PeriodBoundary[],
+  commenceTime?: string,
+): PeriodBoundary[] {
+  if (boundaries.length === 0) return boundaries;
+
+  const result = [...boundaries];
+
+  // Fix first period: use commenceTime if available
+  if (commenceTime) {
+    const first = result[0];
+    const isFirstPeriod = /^(Q1|P1|1H|1|R1)$/i.test(first.label);
+    if (isFirstPeriod) {
+      result[0] = { ...first, timestamp: commenceTime };
+    }
+  }
+
+  return result;
 }
 
 function deriveBoundariesFromEspn(history: ESPNHistoryPoint[]): PeriodBoundary[] {

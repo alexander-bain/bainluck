@@ -533,6 +533,7 @@ async def _sync_espn_live_events():
                                             "home_score": ee.home_score,
                                             "away_score": ee.away_score,
                                             "pregame_spread": pregame_spread,
+                                            "time_source": "espn",
                                         },
                                     )
                                     if is_new:

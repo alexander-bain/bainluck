@@ -27,7 +27,10 @@ from app.utils import (
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.prediction_market_matching import is_kalshi_game_ticker
 from app.utils.event_taxonomy import compute_event_tags, validate_tag
-from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.sport_keys import (
+    SPORT_PREFIX_TO_LLM_CATEGORY as _SPORT_PREFIX_TO_LLM_CATEGORY,
+    get_sport_key_from_ticker as _get_sport_key_from_ticker,
+)
 
 router = APIRouter()
 
@@ -2075,7 +2078,7 @@ _GAME_STAT_PROP_RE = re.compile(
     re.IGNORECASE,
 )
 _GAME_MATCHUP_RE = re.compile(
-    r"\bvs\.?\s|\s–\s|\bat\b.*:\s*\w",
+    r"\bvs\.?\s|\s–\s|\bat\b.*:\s*\w|^[\w][\w\s.'\-()]+\bat\b\s+[\w][\w\s.'\-()]+$",
     re.IGNORECASE,
 )
 
@@ -2364,6 +2367,17 @@ async def get_related_futures(
         seen_ids.add(outcome.id)
 
         market = outcome.market
+
+        # ── Ticker-based sport validation ──
+        # Reject markets whose Kalshi game ticker indicates a different sport
+        # family than the event. Catches LLM miscategorization (e.g., NHL game
+        # markets with llm_sport_category='basketball').
+        if market.external_id:
+            ticker_sport_key = _get_sport_key_from_ticker(market.external_id)
+            if ticker_sport_key:
+                ticker_prefix = ticker_sport_key.split("_")[0]
+                if ticker_prefix != sport_prefix:
+                    continue
 
         # ── Filter game-specific markets ──
         # For finished events: show stat props IF we have box score data,

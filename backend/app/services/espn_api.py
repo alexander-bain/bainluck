@@ -370,6 +370,9 @@ class ESPNAPIService:
             situation = competition.get("situation", {})
             if situation:
                 home_win_prob = situation.get("lastPlay", {}).get("probability", {}).get("homeWinPercentage")
+                # ESPN returns percentage (e.g., 83.1 = 83.1%) — convert to decimal
+                if home_win_prob is not None and home_win_prob > 1.0:
+                    home_win_prob = home_win_prob / 100.0
 
             # Parse date
             date_str = event_data.get("date")

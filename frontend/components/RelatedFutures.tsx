@@ -77,6 +77,7 @@ const GAME_MARKET_PATTERNS = [
   /more\s+markets$/i,     // "... - More Markets" (Polymarket suffix)
   /moneyline$/i,          // "Game X Moneyline"
   /\bgame\s+\d/i,         // "Game 1", "Game 7"
+  /^\w[\w\s.'()-]+\bat\b\s+\w[\w\s.'()-]+$/i, // "Stanford at Miami" (bare matchup with "at")
 ];
 
 /** Award market name patterns */
@@ -1403,7 +1404,9 @@ export default function RelatedFutures({
   const isFinished = event_status === "completed" || event_status === "closed";
   const isLive = event_status === "live";
   const boxScore = box_score ?? null;
-  const hasSummary = !!summary;
+  // LLM summary disabled — data quality issues cause nonsensical output.
+  // Re-enable after fixing related futures sport filtering + data validation.
+  const hasSummary = false;
 
   // Find championship futures for the comparison bar.
   // Prefer markets with "championship" in the name (most reliable signal),

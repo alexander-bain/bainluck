@@ -525,7 +525,16 @@ export default function ScoreDifferentialChart({
               minTickGap={50}
             />
             <YAxis
-              domain={[-domainMax, domainMax]}
+              domain={[Math.min(0, -domainMax), Math.max(0, domainMax)]}
+              ticks={(() => {
+                const step = Math.max(2, Math.ceil(domainMax / 3));
+                const ticks: number[] = [];
+                for (let v = -domainMax; v <= domainMax; v += step) {
+                  ticks.push(v);
+                }
+                if (!ticks.includes(0)) ticks.push(0);
+                return ticks.sort((a, b) => a - b);
+              })()}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
@@ -625,7 +634,6 @@ export default function ScoreDifferentialChart({
                 strokeWidth={2.5}
                 dot={false}
                 activeDot={{ r: 5 }}
-                connectNulls
               />
             )}
           </ComposedChart>

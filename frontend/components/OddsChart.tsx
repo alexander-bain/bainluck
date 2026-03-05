@@ -278,6 +278,16 @@ export default function OddsChart({
     if (winProbHistory && Object.keys(winProbHistory).length > 0) {
       for (const [key, points] of Object.entries(winProbHistory)) {
         if (points.length === 0) continue;
+
+        // Hide stat model when most data points used wall-clock estimation
+        // (imprecise fallback for games where ESPN name matching fails).
+        if (key === "stat_model" && points.length >= 3) {
+          const wallClockCount = points.filter(
+            (p) => p.game_state?.time_source === "wall_clock"
+          ).length;
+          if (wallClockCount > points.length * 0.5) continue;
+        }
+
         const meta = winProbSources?.[key];
         const fallback = FALLBACK_SOURCE_CONFIG[key];
         sources.push({
