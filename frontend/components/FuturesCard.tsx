@@ -135,6 +135,11 @@ export default function FuturesCard({
                   {market.category}
                 </span>
               )}
+              {market.source_count && market.source_count > 1 && (
+                <span className="text-[10px] bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded font-medium">
+                  {market.source_count} sources
+                </span>
+              )}
               <PersonalizedBadge
                 personalized={personalized}
                 multiplier={multiplier}

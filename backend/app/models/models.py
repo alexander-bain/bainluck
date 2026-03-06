@@ -149,6 +149,14 @@ class Event(Base):
     # Taxonomy tags (namespaced, e.g., ["sport:basketball", "tier:1", "signal:upset"])
     event_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
 
+    # March Madness / NCAA tournament fields (nullable — only set for tournament games)
+    tournament_seed_home: Mapped[Optional[int]] = mapped_column()
+    tournament_seed_away: Mapped[Optional[int]] = mapped_column()
+    tournament_region: Mapped[Optional[str]] = mapped_column(String(30))  # "East", "West", "Midwest", "South"
+    tournament_round: Mapped[Optional[str]] = mapped_column(String(30))  # "First Four", "Round of 64", etc.
+    tournament_type: Mapped[Optional[str]] = mapped_column(String(10))  # "mens" or "womens"
+    is_tournament_game: Mapped[Optional[bool]] = mapped_column(default=False)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

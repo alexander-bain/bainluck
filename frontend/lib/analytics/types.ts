@@ -48,7 +48,8 @@ export interface PageViewParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore';
+    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore'
+    | 'march_madness' | 'march_madness_picks';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -223,7 +224,8 @@ export interface ScrollDepthParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore';
+    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore'
+    | 'march_madness' | 'march_madness_picks';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -236,7 +238,8 @@ export interface TimeOnPageParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore';
+    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore'
+    | 'march_madness' | 'march_madness_picks';
   seconds: number;
   page_path: string;
   event_id?: number;

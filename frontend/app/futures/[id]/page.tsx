@@ -8,6 +8,7 @@ import {
   fetchFuturesHistory,
   fetchRelatedEvents,
   fetchProgression,
+  fetchFuturesGroup,
   formatProbability,
   formatAmericanOdds,
 } from "@/lib/api";
@@ -20,6 +21,9 @@ import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentChart from "@/components/TournamentChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
+import CombinedMarketCard from "@/components/CombinedMarketCard";
+import ThresholdGrid from "@/components/ThresholdGrid";
+import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
@@ -132,6 +136,24 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     { revalidateOnFocus: false, refreshInterval: 120_000 }
   );
   const hasProgression = !!(progressionData && progressionData.stages.length >= 2);
+
+  // Market group (cross-source comparison + threshold variants)
+  const { data: groupData } = useSWR(
+    market?.group_id ? ["futures-group", market.group_id] : null,
+    () => fetchFuturesGroup(market!.group_id!),
+    { revalidateOnFocus: false }
+  );
+  const hasMultipleSources = !!(groupData && groupData.sources.length >= 2);
+  const thresholdEntries = groupData
+    ? Object.entries(groupData.threshold_groups).filter(([, outcomes]) => outcomes.length >= 2)
+    : [];
+  // Progression-ordered markets (e.g., playoff rounds)
+  const progressionMarkets = groupData
+    ? groupData.markets
+        .filter((m) => m.group_position !== null && m.group_position !== undefined)
+        .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0))
+    : [];
+  const hasGroupProgression = progressionMarkets.length >= 2;
 
   // Sort outcomes
   const sortedOutcomes = useMemo(() => {
@@ -403,6 +425,64 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </div>
         )}
       </div>
+
+      {/* Cross-Source Comparison (when market is tracked by multiple sources) */}
+      {hasMultipleSources && groupData && (
+        <CombinedMarketCard
+          title={groupData.group_title}
+          markets={groupData.markets.map((m) => ({
+            id: m.id,
+            name: m.name,
+            source: m.source,
+            external_id: m.external_id,
+            status: m.status,
+            outcome_count: m.outcome_count,
+            outcomes: m.outcomes.map((o) => ({
+              id: o.id,
+              name: o.name,
+              probability: o.probability,
+              american_odds: o.american_odds,
+              source: m.source,
+            })),
+          }))}
+        />
+      )}
+
+      {/* Threshold Variants (e.g., "Bitcoin > $80K / $90K / $100K") */}
+      {thresholdEntries.map(([stem, outcomes]) => (
+        <ThresholdGrid
+          key={stem}
+          title={stem}
+          outcomes={outcomes}
+        />
+      ))}
+
+      {/* Progression (e.g., playoff rounds ordered by stage) */}
+      {hasGroupProgression && (
+        <div className="bg-surface-card rounded-card shadow-card p-6">
+          <h2 className="text-title-3 font-semibold text-text-primary mb-4 flex items-center gap-2">
+            <span>🏅</span>
+            Round by Round
+          </h2>
+          <ProgressionTable
+            markets={progressionMarkets.map((m) => ({
+              id: m.id,
+              name: m.name,
+              source: m.source,
+              group_position: m.group_position,
+              status: m.status,
+              outcomes: m.outcomes.map((o) => ({
+                id: o.id,
+                name: o.name,
+                probability: o.probability,
+                american_odds: o.american_odds,
+                source: m.source,
+                market_id: m.id,
+              })),
+            }))}
+          />
+        </div>
+      )}
 
       {/* Games This Week */}
       {relatedEventsData && relatedEventsData.events.length > 0 && (

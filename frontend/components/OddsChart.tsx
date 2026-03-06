@@ -195,29 +195,30 @@ export default function OddsChart({
   const smartEndTime = useMemo(() => {
     if (!isClosed) return null; // Only clip completed games
 
-    let latestGameSignal: Date | null = null;
+    const candidates: Date[] = [];
 
     // Signal 1: last ESPN history point (most reliable game-end signal)
     if (espnHistory && espnHistory.length > 0) {
-      const lastEspn = parseISO(espnHistory[espnHistory.length - 1].timestamp);
-      if (!latestGameSignal || lastEspn > latestGameSignal) latestGameSignal = lastEspn;
+      candidates.push(parseISO(espnHistory[espnHistory.length - 1].timestamp));
     }
 
     // Signal 2: last win probability model point (stat_model, ESPN source, etc.)
     if (winProbHistory) {
       for (const points of Object.values(winProbHistory)) {
         if (points.length > 0) {
-          const lastPt = parseISO(points[points.length - 1].timestamp);
-          if (!latestGameSignal || lastPt > latestGameSignal) latestGameSignal = lastPt;
+          candidates.push(parseISO(points[points.length - 1].timestamp));
         }
       }
     }
 
     // Signal 3: last aggregate line point
     if (aggregateLine && aggregateLine.length > 0) {
-      const lastAgg = parseISO(aggregateLine[aggregateLine.length - 1].timestamp);
-      if (!latestGameSignal || lastAgg > latestGameSignal) latestGameSignal = lastAgg;
+      candidates.push(parseISO(aggregateLine[aggregateLine.length - 1].timestamp));
     }
+
+    const latestGameSignal = candidates.length > 0
+      ? candidates.reduce((a, b) => (a > b ? a : b))
+      : null;
 
     if (!latestGameSignal) return null;
 
@@ -732,34 +733,46 @@ export default function OddsChart({
   }, [chartData]);
 
   // ── Compute lead change points (50% crossings) ──
-  const leadChangePoints = useMemo(() => {
-    if (chartData.length < 2) return [];
+  // Instead of creating a separate data array (which breaks Recharts categorical
+  // X-axis domain), we stamp `leadChangeDelta` directly onto chartData points.
+  const leadChangeCount = useMemo(() => {
+    if (chartData.length < 2) return 0;
     const key = isMultiSource ? "bainLuckDelta" : "homeDelta";
-    const changes: { time: string; timestamp: string }[] = [];
+    // Clear any previous stamps
+    for (const pt of chartData) {
+      delete pt.leadChangeDelta;
+    }
+    let count = 0;
     let prevDelta: number | null = null;
     for (const pt of chartData) {
       const delta = pt[key] as number | null;
       if (delta === null) continue;
       if (prevDelta !== null) {
-        // Crossing: one side positive, the other negative (or touching zero)
         if ((prevDelta > 0 && delta <= 0) || (prevDelta < 0 && delta >= 0)) {
-          changes.push({ time: pt.time, timestamp: pt.timestamp });
+          pt.leadChangeDelta = 0; // Stamp onto chartData point at y=0 (50% line)
+          count++;
         }
       }
       prevDelta = delta;
     }
-    return changes;
+    return count;
   }, [chartData, isMultiSource]);
 
   // ── Current probability callout (last non-null data point) ──
+  // Stamp `calloutDelta` directly onto the chartData point (same reason as above).
   const currentCallout = useMemo(() => {
     if (chartData.length === 0) return null;
     const key = isMultiSource ? "bainLuckDelta" : "homeDelta";
+    // Clear any previous stamps
+    for (const pt of chartData) {
+      delete pt.calloutDelta;
+    }
     // Walk backwards to find last non-null value
     for (let i = chartData.length - 1; i >= 0; i--) {
       const delta = chartData[i][key] as number | null;
       if (delta !== null) {
         const homeProb = 50 + delta;
+        chartData[i].calloutDelta = delta; // Stamp onto chartData point
         return {
           time: chartData[i].time,
           delta,
@@ -1293,9 +1306,8 @@ export default function OddsChart({
             )}
 
             {/* Lead change markers — diamonds at 50% crossings */}
-            {leadChangePoints.length > 0 && (
+            {leadChangeCount > 0 && (
               <Scatter
-                data={leadChangePoints.map((lc) => ({ time: lc.time, leadChangeDelta: 0 }))}
                 dataKey="leadChangeDelta"
                 fill="none"
                 shape={(props: { cx?: number; cy?: number }) => {
@@ -1322,7 +1334,6 @@ export default function OddsChart({
             {/* Current probability callout — dot at the last data point */}
             {currentCallout && (
               <Scatter
-                data={[{ time: currentCallout.time, calloutDelta: currentCallout.delta }]}
                 dataKey="calloutDelta"
                 fill="none"
                 shape={(props: { cx?: number; cy?: number }) => {
@@ -1440,13 +1451,13 @@ export default function OddsChart({
         )}
 
         {/* Lead changes legend */}
-        {leadChangePoints.length > 0 && (
+        {leadChangeCount > 0 && (
           <div className="flex items-center gap-1.5">
             <svg width="10" height="10" className="shrink-0">
               <polygon points="5,1 9,5 5,9 1,5" fill="#fbbf24" />
             </svg>
             <span className="text-xs text-text-muted">
-              Lead change{leadChangePoints.length > 1 ? "s" : ""} ({leadChangePoints.length})
+              Lead change{leadChangeCount > 1 ? "s" : ""} ({leadChangeCount})
             </span>
           </div>
         )}

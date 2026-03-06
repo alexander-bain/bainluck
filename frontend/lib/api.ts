@@ -30,6 +30,9 @@ import type {
   GolfTournamentDetailResponse,
   ProgressionResponse,
   ProbabilityTimelineResponse,
+  MarchMadnessResponse,
+  FuturesGroupResponse,
+  FuturesGroupsListResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -377,6 +380,35 @@ export async function fetchFuturesMarkets(params?: {
  */
 export async function fetchFuturesMarket(id: number): Promise<FuturesMarketDetailResponse> {
   return apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}`);
+}
+
+/**
+ * Fetch a futures market group (cross-source comparison + threshold variants)
+ */
+export async function fetchFuturesGroup(groupId: string): Promise<FuturesGroupResponse> {
+  return apiFetch<FuturesGroupResponse>(
+    `/api/futures/groups/${encodeURIComponent(groupId)}`
+  );
+}
+
+/**
+ * List all market groups (multi-source and threshold groups)
+ */
+export async function fetchFuturesGroups(opts?: {
+  source?: string;
+  group_type?: string;
+  sport?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<FuturesGroupsListResponse> {
+  const params = new URLSearchParams();
+  if (opts?.source) params.set("source", opts.source);
+  if (opts?.group_type) params.set("group_type", opts.group_type);
+  if (opts?.sport) params.set("sport", opts.sport);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.offset) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  return apiFetch<FuturesGroupsListResponse>(`/api/futures/groups${qs ? `?${qs}` : ""}`);
 }
 
 /**
@@ -789,6 +821,14 @@ export async function fetchGolfData(): Promise<GolfResponse> {
  */
 export async function fetchGolfTournament(slug: string): Promise<GolfTournamentDetailResponse> {
   return apiFetch<GolfTournamentDetailResponse>(`/api/golf/tournaments/${encodeURIComponent(slug)}`);
+}
+
+// ============================================================================
+// March Madness API
+// ============================================================================
+
+export async function fetchMarchMadness(type: 'mens' | 'womens'): Promise<MarchMadnessResponse> {
+  return apiFetch<MarchMadnessResponse>(`/api/march-madness/${type}`);
 }
 
 // ============================================================================

@@ -336,6 +336,68 @@ export interface FuturesMarket {
   created_at: string | null;
   updated_at: string | null;
   source_count?: number;
+  group_id?: string | null;
+  canonical_market_key?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Futures group (cross-source comparison + threshold variants)
+// ---------------------------------------------------------------------------
+
+export interface FuturesGroupSourceMarket {
+  id: number;
+  name: string;
+  source: string;
+  external_id: string | null;
+  status: string;
+  outcome_count: number;
+  group_type: string | null;
+  group_position: number | null;
+  canonical_market_key: string | null;
+  outcomes: {
+    id: number;
+    name: string;
+    probability: number | null;
+    american_odds?: number | null;
+    source: string;
+  }[];
+}
+
+export interface FuturesGroupThresholdOutcome {
+  outcome_id: number;
+  name: string;
+  probability: number | null;
+  threshold_value: number;
+  threshold_unit: string;
+  threshold_direction: string;
+  source: string;
+}
+
+export interface FuturesGroupResponse {
+  group_id: string;
+  group_title: string;
+  group_type: string | null;
+  market_count: number;
+  markets: FuturesGroupSourceMarket[];
+  threshold_groups: Record<string, FuturesGroupThresholdOutcome[]>;
+  sources: string[];
+}
+
+export interface FuturesGroupSummary {
+  group_id: string;
+  group_type: string | null;
+  market_count: number;
+  representative_name: string;
+  representative_id: number;
+  sources: string[];
+  last_updated: string | null;
+}
+
+export interface FuturesGroupsListResponse {
+  total: number;
+  offset: number;
+  limit: number;
+  groups: FuturesGroupSummary[];
 }
 
 export interface FuturesMarketsResponse {
@@ -964,4 +1026,124 @@ export interface ProbabilityTimelineResponse {
   bucket_seconds: number;
   timeline: TimelineEntry[];
   outcomes: TimelineOutcomeMeta[];
+}
+
+// ============================================================================
+// March Madness types
+// ============================================================================
+
+export interface MarchMadnessTeam {
+  team_name: string;
+  probability: number;
+  movement_24h: number | null;
+  opening_probability: number | null;
+  sources: Record<string, number>;
+  seed: number | null;
+  region: string | null;
+  is_eliminated: boolean;
+  is_alma_mater: boolean;
+  american_odds: string;
+}
+
+export interface BracketGame {
+  event_id: number;
+  round: string | null;
+  region: string | null;
+  home_team: string;
+  away_team: string;
+  seed_home: number | null;
+  seed_away: number | null;
+  score_home: number | null;
+  score_away: number | null;
+  status: string;
+  commence_time: string | null;
+  prob_home: number | null;
+  prob_away: number | null;
+  historical_upset_rate: number | null;
+  seed_context: string | null;
+  ei: number | null;
+}
+
+export interface MarchMadnessBracket {
+  regions: string[];
+  games: BracketGame[];
+}
+
+export interface MarchMadnessUpset {
+  event_id: number;
+  winner: string;
+  loser: string;
+  seed_winner: number;
+  seed_loser: number;
+  score: string;
+  winner_pre_game_prob: number | null;
+  historical_upset_rate: number | null;
+  round: string | null;
+}
+
+export interface MarchMadnessCinderella {
+  team_name: string;
+  seed: number;
+  region: string | null;
+  title_odds: number;
+  games_won: number;
+  games_played: number;
+}
+
+export interface MarchMadnessMover {
+  team_name: string;
+  movement_24h: number;
+  probability: number;
+  seed: number | null;
+}
+
+export interface SeedHistoryEntry {
+  higher_seed: number;
+  lower_seed: number;
+  matchups: number;
+  higher_wins: number;
+  upset_pct: number;
+  label: string;
+}
+
+export interface NotableUpset {
+  year: number;
+  seed_winner: number;
+  seed_loser: number;
+  winner: string;
+  loser: string;
+  score: string;
+  note: string;
+}
+
+export interface BracketBusterInsight {
+  event_id: number | null;
+  winner: string;
+  loser: string;
+  seed_winner: number | null;
+  seed_loser: number | null;
+  score: string;
+  round: string | null;
+  title_odds_before: number;
+  title_odds_after: number;
+  title_odds_delta: number;
+  narrative: string | null;
+}
+
+export interface MarchMadnessResponse {
+  tournament_type: 'mens' | 'womens';
+  tournament_state: 'pre_selection' | 'pre_tournament' | 'in_progress' | 'completed';
+  display_name: string;
+  selection_sunday: string;
+  championship_date: string;
+  championship_odds: MarchMadnessTeam[];
+  bracket: MarchMadnessBracket | null;
+  live_games: BracketGame[];
+  upsets: MarchMadnessUpset[];
+  cinderellas: MarchMadnessCinderella[];
+  biggest_movers: MarchMadnessMover[];
+  seed_history: SeedHistoryEntry[];
+  notable_upsets: NotableUpset[];
+  alma_mater_teams: string[] | null;
+  bracket_buster_insights: BracketBusterInsight[];
 }

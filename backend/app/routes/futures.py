@@ -1604,6 +1604,8 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         "category_tags": market.category_tags or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,
         "updated_at": market.updated_at.isoformat() if market.updated_at else None,
+        "group_id": market.group_id,
+        "canonical_market_key": market.canonical_market_key,
     }
 
 
@@ -1760,6 +1762,7 @@ async def list_groups(
             FuturesMarket.group_type,
             func.count(FuturesMarket.id).label("market_count"),
             func.min(FuturesMarket.name).label("representative_name"),
+            func.min(FuturesMarket.id).label("representative_id"),
             func.array_agg(func.distinct(FuturesMarket.source)).label("sources"),
             func.max(FuturesMarket.updated_at).label("last_updated"),
         )
@@ -1789,6 +1792,7 @@ async def list_groups(
                 "group_type": row.group_type,
                 "market_count": row.market_count,
                 "representative_name": row.representative_name,
+                "representative_id": row.representative_id,
                 "sources": row.sources or [],
                 "last_updated": row.last_updated.isoformat() if row.last_updated else None,
             }

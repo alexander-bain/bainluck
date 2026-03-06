@@ -3,8 +3,8 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchFuturesMarkets, fetchFuturesMovers } from "@/lib/api";
-import type { FuturesMarket, FuturesMover } from "@/lib/types";
+import { fetchFuturesMarkets, fetchFuturesMovers, fetchFuturesGroups } from "@/lib/api";
+import type { FuturesMarket, FuturesMover, FuturesGroupSummary } from "@/lib/types";
 import FuturesCard from "@/components/FuturesCard";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -57,6 +57,16 @@ export default function FuturesPage() {
     error: moversError,
     isLoading: moversLoading,
   } = useSWR("futures-movers", () => fetchFuturesMovers(24, 10));
+
+  // Multi-source / grouped markets
+  const { data: groupsData } = useSWR(
+    statusFilter === "open" ? "futures-groups" : null,
+    () => fetchFuturesGroups({ limit: 20 }),
+    { revalidateOnFocus: false }
+  );
+  const multiSourceGroups = (groupsData?.groups ?? []).filter(
+    (g) => g.sources.length >= 2
+  );
 
   // Group markets by sport
   const sportGroups = useMemo((): SportGroup[] => {
@@ -190,6 +200,26 @@ export default function FuturesPage() {
                     <MoverCard key={mover.outcome_id} mover={mover} />
                   ))}
                 </div>
+              </div>
+            </section>
+          )}
+
+          {/* Multi-Source Groups */}
+          {multiSourceGroups.length > 0 && statusFilter === "open" && (
+            <section className="mb-8">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-lg">🔗</span>
+                <h2 className="text-title-3 font-semibold text-text-primary">
+                  Tracked Across Sources
+                </h2>
+                <span className="text-caption text-text-secondary bg-surface-border/50 px-2 py-0.5 rounded">
+                  {multiSourceGroups.length}
+                </span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {multiSourceGroups.map((group) => (
+                  <GroupCard key={group.group_id} group={group} />
+                ))}
               </div>
             </section>
           )}
@@ -346,6 +376,58 @@ function MoverCard({ mover }: { mover: FuturesMover }) {
       </div>
     </Link>
   );
+}
+
+/**
+ * Group card linking to a multi-source grouped market
+ */
+function GroupCard({ group }: { group: FuturesGroupSummary }) {
+  return (
+    <Link href={`/futures/${group.representative_id}`}>
+      <div className="p-3 rounded-lg border border-surface-border hover:border-accent-futures/30 hover:shadow-card transition-all cursor-pointer bg-surface-card">
+        <div className="text-sm font-medium text-text-primary line-clamp-2 mb-2">
+          {group.representative_name}
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            {group.sources.map((src) => (
+              <span
+                key={src}
+                className={`text-[10px] px-1.5 py-0.5 rounded ${sourceStyle(src)}`}
+              >
+                {formatSourceLabel(src)}
+              </span>
+            ))}
+          </div>
+          <span className="text-caption text-text-muted">
+            {group.market_count} market{group.market_count !== 1 ? "s" : ""}
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function sourceStyle(source: string): string {
+  switch (source) {
+    case "polymarket":
+      return "bg-blue-500/15 text-blue-400";
+    case "kalshi":
+      return "bg-green-500/15 text-green-400";
+    case "odds_api":
+      return "bg-slate-500/15 text-slate-300";
+    default:
+      return "bg-gray-500/15 text-gray-400";
+  }
+}
+
+function formatSourceLabel(source: string): string {
+  const names: Record<string, string> = {
+    odds_api: "Sportsbooks",
+    kalshi: "Kalshi",
+    polymarket: "Polymarket",
+  };
+  return names[source] || source;
 }
 
 /**

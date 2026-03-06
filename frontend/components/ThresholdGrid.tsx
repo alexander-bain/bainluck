@@ -27,6 +27,8 @@ interface ThresholdGridProps {
   outcomes: ThresholdOutcome[];
   /** Optional title for the group (e.g., "Bitcoin Price Targets") */
   title?: string;
+  /** When set, the card matching this threshold_value gets a highlighted ring */
+  highlightedValue?: number;
 }
 
 function formatThreshold(value: number, unit: string): string {
@@ -53,7 +55,7 @@ function probabilityBg(prob: number): string {
   return "bg-red-500/15";
 }
 
-export default function ThresholdGrid({ outcomes, title }: ThresholdGridProps) {
+export default function ThresholdGrid({ outcomes, title, highlightedValue }: ThresholdGridProps) {
   if (!outcomes || outcomes.length === 0) return null;
 
   return (
@@ -72,16 +74,20 @@ export default function ThresholdGrid({ outcomes, title }: ThresholdGridProps) {
         {outcomes.map((o) => {
           const prob = o.probability ?? 0;
           const pct = (prob * 100).toFixed(0);
+          const isHighlighted = highlightedValue !== undefined && o.threshold_value === highlightedValue;
 
           return (
             <motion.div
               key={o.outcome_id}
               variants={staggerItem}
               className={`
-                rounded-lg border border-[var(--surface-border)]
-                bg-[var(--surface-card)] p-3
+                rounded-lg border p-3
                 hover:border-[var(--accent-brand)]/30
                 transition-colors duration-[var(--duration-fast)]
+                ${isHighlighted
+                  ? "border-[var(--accent-brand)] ring-1 ring-[var(--accent-brand)]/30 bg-[var(--accent-brand)]/5"
+                  : "border-[var(--surface-border)] bg-[var(--surface-card)]"
+                }
               `}
             >
               {/* Threshold label */}
