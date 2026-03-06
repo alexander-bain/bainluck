@@ -274,7 +274,12 @@ export default function HomePage() {
               {/* Pinned Section */}
               {(pinnedEvents.length > 0 || pinnedFutures.length > 0) && (
                 <section>
-                  <div className="flex items-center gap-2 mb-3">
+                  <motion.div
+                    className="flex items-center gap-2 mb-3"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
+                  >
                     <span className="text-sm">📌</span>
                     <h2 className="text-sm font-semibold text-text-primary">
                       Pinned
@@ -282,7 +287,7 @@ export default function HomePage() {
                     <span className="text-micro text-text-muted">
                       {pinnedEvents.length + pinnedFutures.length}
                     </span>
-                  </div>
+                  </motion.div>
                   <motion.div
                     className="grid gap-3"
                     style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
@@ -323,9 +328,18 @@ export default function HomePage() {
               <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
 
               {/* Grouped feed sections */}
-              {feedSections.map((section) => (
+              {feedSections.map((section, sectionIndex) => (
                 <section key={section.key}>
-                  <div className="flex items-center gap-2 mb-3">
+                  {/* Divider between sections */}
+                  {sectionIndex > 0 && (
+                    <div className="border-t border-surface-border/30 -mt-1 mb-5" />
+                  )}
+                  <motion.div
+                    className="flex items-center gap-2 mb-3"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
+                  >
                     <span className="text-sm">{section.emoji}</span>
                     <h2 className={`text-sm font-semibold ${section.accent}`}>
                       {section.title}
@@ -333,16 +347,12 @@ export default function HomePage() {
                     <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
                       {section.items.length}
                     </span>
-                  </div>
-                  <motion.div
+                  </motion.div>
+                  <div
                     className="grid gap-3"
                     style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
-                    variants={staggerContainer}
-                    initial="hidden"
-                    animate="visible"
-                    key={section.key}
                   >
-                    {section.items.map((item) => {
+                    {section.items.map((item, itemIndex) => {
                       const key = item.type === "event"
                         ? `feed-event-${(item.data as FeedEventData).id}`
                         : `feed-futures-${(item.data as FeedFuturesData).id}`;
@@ -350,7 +360,16 @@ export default function HomePage() {
                         ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
                         : (item.data as FeedFuturesData).llm_sport_category ?? "other";
                       return (
-                        <motion.div key={key} variants={staggerItem}>
+                        <motion.div
+                          key={key}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{
+                            duration: 0.3,
+                            ease: "easeOut",
+                            delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                          }}
+                        >
                           <FeedCard
                             item={item}
                             onThumbsUp={handleThumbsUp}
@@ -360,7 +379,7 @@ export default function HomePage() {
                         </motion.div>
                       );
                     })}
-                  </motion.div>
+                  </div>
                 </section>
               ))}
             </div>

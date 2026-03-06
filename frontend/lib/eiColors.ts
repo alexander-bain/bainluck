@@ -19,6 +19,8 @@ export interface EILevel {
   bgClass: string;
   /** Tailwind text class */
   textClass: string;
+  /** Tailwind ring class for pulsing glow on live high-EI games */
+  ringClass: string;
   /** Hex color for charts and non-Tailwind contexts */
   hex: string;
   /** RGB string for CSS custom property usage: "239 68 68" */
@@ -33,6 +35,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u{1F525}", // 🔥
       bgClass: "bg-red-500/15",
       textClass: "text-red-400",
+      ringClass: "ring-red-500/40",
       hex: "#ef4444",
       rgb: "239 68 68",
     },
@@ -44,6 +47,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u26A1",  // ⚡
       bgClass: "bg-red-500/15",
       textClass: "text-red-400",
+      ringClass: "ring-red-500/30",
       hex: "#ef4444",
       rgb: "239 68 68",
     },
@@ -55,6 +59,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u26A1",  // ⚡
       bgClass: "bg-orange-500/15",
       textClass: "text-orange-400",
+      ringClass: "ring-orange-500/30",
       hex: "#f97316",
       rgb: "249 115 22",
     },
@@ -66,6 +71,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u{1F3AF}", // 🎯
       bgClass: "bg-orange-500/15",
       textClass: "text-orange-400",
+      ringClass: "ring-orange-500/20",
       hex: "#f97316",
       rgb: "249 115 22",
     },
@@ -77,6 +83,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u{1F3C6}", // 🏆
       bgClass: "bg-amber-500/15",
       textClass: "text-amber-400",
+      ringClass: "ring-amber-500/20",
       hex: "#eab308",
       rgb: "234 179 8",
     },
@@ -88,6 +95,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u{1F44D}", // 👍
       bgClass: "bg-amber-500/15",
       textClass: "text-amber-400",
+      ringClass: "ring-amber-500/10",
       hex: "#eab308",
       rgb: "234 179 8",
     },
@@ -99,6 +107,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u{1F634}", // 😴
       bgClass: "bg-gray-500/15",
       textClass: "text-gray-400",
+      ringClass: "ring-gray-500/10",
       hex: "#6b7280",
       rgb: "107 114 128",
     },
@@ -110,6 +119,7 @@ const EI_LEVELS: { minScore: number; level: EILevel }[] = [
       emoji: "\u{1F634}", // 😴
       bgClass: "bg-gray-500/15",
       textClass: "text-gray-500",
+      ringClass: "ring-gray-500/0",
       hex: "#4b5563",
       rgb: "75 85 99",
     },
@@ -151,4 +161,12 @@ export function getEIClasses(score: number): string {
  */
 export function getEILabel(score: number): string {
   return getEILevel(score).label;
+}
+
+/**
+ * Get the Tailwind ring class for a given EI score.
+ * Used for pulsing glow on live high-EI game badges.
+ */
+export function getEIRingClass(score: number): string {
+  return getEILevel(score).ringClass;
 }

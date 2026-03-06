@@ -1,15 +1,20 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
+import { motion, useSpring, useTransform } from "framer-motion";
 import type { Event } from "@/lib/types";
-import { formatProbability } from "@/lib/api";
-import { getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
+import { getLeagueDisplay } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
+import { cn } from "@/lib/utils";
+import { Card } from "@/components/ui/card";
 import EIBadge from "./EIBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
+import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
 import { isInternationalSport, flagUrl } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
+import { fadeIn } from "@/lib/animations";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -34,6 +39,35 @@ interface EventCardProps {
   multiplier?: number;
   /** Personalization reason strings */
   personalizationReasons?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// AnimatedProbability — smoothly counts between probability values
+// ---------------------------------------------------------------------------
+function AnimatedProbability({
+  value,
+  className,
+}: {
+  value: number | null;
+  className?: string;
+}) {
+  const springValue = useSpring(value !== null ? value * 100 : 0, {
+    stiffness: 80,
+    damping: 20,
+    mass: 0.5,
+  });
+  const display = useTransform(springValue, (v: number) => `${Math.round(v)}%`);
+
+  // Update spring target when value changes
+  useEffect(() => {
+    springValue.set(value !== null ? value * 100 : 0);
+  }, [value, springValue]);
+
+  if (value === null) {
+    return <span className={className}>-</span>;
+  }
+
+  return <motion.span className={className}>{display}</motion.span>;
 }
 
 export default function EventCard({
@@ -103,246 +137,246 @@ export default function EventCard({
 
   return (
     <Link href={`/events/${event.id}`} className="h-full" onClick={handleCardClick}>
-      <div
-        className={`
-          h-full flex flex-col rounded-card p-3 sm:p-4 transition-all cursor-pointer group/card
-          bg-surface-card border border-surface-border
-          hover:bg-surface-elevated hover:border-surface-elevated hover:shadow-card-hover
-          ${isLive ? "ring-1 ring-accent-live/30" : ""}
-          ${isFinished ? "opacity-75 hover:opacity-100" : ""}
-        `}
-        style={teamColorStyle(
-          event.home_team_data?.primary_color,
-          event.away_team_data?.primary_color,
-          event.home_team_data?.secondary_color,
-          event.away_team_data?.secondary_color,
-        )}
+      <motion.div
+        variants={fadeIn}
+        initial="hidden"
+        animate="visible"
       >
-        {/* Top bar: league + status + pin */}
-        <div className="flex items-center justify-between gap-2 mb-2.5">
-          <div className="flex items-center gap-1.5 min-w-0">
-            {showSport && event.sport && (
-              <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
-                {getLeagueDisplay(event.sport)}
-              </span>
-            )}
-            {highlightLabel && !isLive && (
-              <span className="text-micro-xs bg-accent-warning/15 text-accent-warning px-1.5 py-0.5 rounded">
-                {highlightLabel}
-              </span>
-            )}
-            <PersonalizedBadge
-              personalized={personalized}
-              multiplier={multiplier}
-              personalizationReasons={personalizationReasons}
-            />
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {isLive && (
-              <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-2 py-0.5 rounded text-micro-xs font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-                {highlightLabel || "LIVE"}
-              </span>
-            )}
-            {isLive && (event.ei || event.pulse) && (
-              <EIBadge ei={(event.ei || event.pulse)!} size="sm" isLive />
-            )}
-            {!isLive && !isFinished && (
-              <span className="text-micro text-text-muted">{timeStr}</span>
-            )}
-            {isFinished && (
-              <>
-                <span className="text-micro-xs text-text-muted uppercase">Final</span>
-                {(event.ei || event.pulse) && <EIBadge ei={(event.ei || event.pulse)!} size="sm" />}
-              </>
-            )}
-            {/* Pin button */}
-            {onPinToggle && (
-              <button
-                onClick={handlePinClick}
-                disabled={pinDisabled && !isPinned}
-                className={`
-                  p-1 rounded transition-all
-                  ${isPinned
-                    ? 'text-accent-warning'
-                    : 'text-text-muted/30 hover:text-text-muted group-hover/card:text-text-muted/50'
-                  }
-                  ${pinDisabled && !isPinned ? 'cursor-not-allowed opacity-30' : ''}
-                `}
-                title={isPinned ? 'Unpin' : pinDisabled ? 'Max 6 pins' : 'Pin'}
-                aria-label={isPinned ? 'Unpin event' : 'Pin event'}
-              >
-                <PinIcon filled={isPinned} className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Score display for live/finished */}
-        {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
-          <div className={`flex items-center justify-center gap-6 py-2 mb-2 rounded-lg ${
-            isLive ? "bg-accent-live/5" : "bg-surface-elevated/50"
-          }`}>
-            <div className="text-center">
-              <div className={`font-mono text-2xl font-bold ${
-                isFinished
-                  ? (event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted")
-                  : "text-accent-live"
-              }`}>
-                {event.home_score}
-              </div>
-              <div className="text-micro-xs text-text-muted uppercase tracking-wide">
-                {homeShort}
-              </div>
-            </div>
-            <span className="text-text-muted font-light text-lg">—</span>
-            <div className="text-center">
-              <div className={`font-mono text-2xl font-bold ${
-                isFinished
-                  ? (event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted")
-                  : "text-accent-live"
-              }`}>
-                {event.away_score}
-              </div>
-              <div className="text-micro-xs text-text-muted uppercase tracking-wide">
-                {awayShort}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Teams + Probabilities */}
-        <div className="space-y-1.5 flex-grow">
-          {/* Home team */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              {homeFlagUrl ? (
-                <img
-                  src={homeFlagUrl}
-                  alt={event.home_team}
-                  width={20}
-                  height={15}
-                  loading="lazy"
-                  className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
-                />
-              ) : event.home_team_data?.logo_small ? (
-                <img
-                  src={event.home_team_data.logo_small}
-                  alt=""
-                  width={20}
-                  height={20}
-                  loading="lazy"
-                  className="w-5 h-5 object-contain flex-shrink-0"
-                />
-              ) : (
-                <div
-                  className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
-                  style={{ backgroundColor: "rgb(var(--team-home-primary))" }}
-                >
-                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
-                </div>
-              )}
-              <span className={`text-sm font-medium truncate ${
-                homeFavorite ? "text-text-primary" : "text-text-secondary"
-              }`}>
-                {event.home_team}
-              </span>
-            </div>
-            <span className={`font-mono tabular-nums ${
-              homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary"
-            }`}>
-              {formatProbability(homeProb)}
-            </span>
-          </div>
-
-          {/* Team-colored probability bar (signature element) */}
-          <div className="prob-bar" style={{ background: "rgba(255,255,255,0.06)" }}>
-            <div
-              className="prob-bar-segment"
-              style={{
-                width: `${(homeProb ?? 0.5) * 100}%`,
-                backgroundColor: "rgb(var(--team-home-primary))",
-                opacity: homeFavorite ? 1 : 0.5,
-                transition: "width 400ms ease-out",
-              }}
-            />
-            <div
-              className="prob-bar-segment"
-              style={{
-                width: `${(awayProb ?? 0.5) * 100}%`,
-                backgroundColor: "rgb(var(--team-away-primary))",
-                opacity: !homeFavorite ? 1 : 0.5,
-                transition: "width 400ms ease-out",
-              }}
-            />
-          </div>
-
-          {/* Away team */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              {awayFlagUrl ? (
-                <img
-                  src={awayFlagUrl}
-                  alt={event.away_team}
-                  width={20}
-                  height={15}
-                  loading="lazy"
-                  className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
-                />
-              ) : event.away_team_data?.logo_small ? (
-                <img
-                  src={event.away_team_data.logo_small}
-                  alt=""
-                  width={20}
-                  height={20}
-                  loading="lazy"
-                  className="w-5 h-5 object-contain flex-shrink-0"
-                />
-              ) : (
-                <div
-                  className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
-                  style={{ backgroundColor: "rgb(var(--team-away-primary))" }}
-                >
-                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
-                </div>
-              )}
-              <span className={`text-sm font-medium truncate ${
-                !homeFavorite ? "text-text-primary" : "text-text-secondary"
-              }`}>
-                {event.away_team}
-              </span>
-            </div>
-            <span className={`font-mono tabular-nums ${
-              !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary"
-            }`}>
-              {formatProbability(awayProb)}
-            </span>
-          </div>
-        </div>
-
-        {/* Footer — contextual info */}
-        <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
-          {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
-            <span className="text-text-muted">
-              Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
-            </span>
-          ) : isLive && opening ? (
-            <span className="text-text-muted">
-              Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
-            </span>
-          ) : isFinished ? (
-            <span className="text-text-muted">
-              Pre-game: <span className="font-mono text-text-secondary">{formatProbability(homeProb)}/{formatProbability(awayProb)}</span>
-            </span>
-          ) : null}
-          {event.espn?.broadcast && (
-            <span className="text-text-muted truncate ml-auto">
-              📺 {event.espn.broadcast.split(",")[0].trim()}
-            </span>
+        <Card
+          className={cn(
+            "h-full flex flex-col p-3 sm:p-4 transition-all cursor-pointer group/card",
+            "bg-surface-card border-surface-border",
+            "hover:bg-surface-elevated hover:shadow-card-hover hover:scale-[1.005] hover:border-surface-elevated",
+            isLive && "border-l-[3px] border-l-accent-live ring-1 ring-accent-live/20",
+            isFinished && "opacity-80 hover:opacity-100 hover:scale-100",
           )}
-        </div>
-      </div>
+          style={teamColorStyle(
+            event.home_team_data?.primary_color,
+            event.away_team_data?.primary_color,
+            event.home_team_data?.secondary_color,
+            event.away_team_data?.secondary_color,
+          )}
+        >
+          {/* Top bar: league + status + pin */}
+          <div className="flex items-center justify-between gap-2 mb-2.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {showSport && event.sport && (
+                <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
+                  {getLeagueDisplay(event.sport)}
+                </span>
+              )}
+              {highlightLabel && !isLive && (
+                <span className="text-micro-xs bg-accent-warning/15 text-accent-warning px-1.5 py-0.5 rounded">
+                  {highlightLabel}
+                </span>
+              )}
+              <PersonalizedBadge
+                personalized={personalized}
+                multiplier={multiplier}
+                personalizationReasons={personalizationReasons}
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {isLive && (
+                <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-2 py-0.5 rounded text-micro-xs font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
+                  {highlightLabel || "LIVE"}
+                </span>
+              )}
+              {isLive && (event.ei || event.pulse) && (
+                <EIBadge ei={(event.ei || event.pulse)!} size="sm" isLive />
+              )}
+              {!isLive && !isFinished && (
+                <span className="text-micro text-text-muted">{timeStr}</span>
+              )}
+              {isFinished && (
+                <>
+                  <span className="text-micro-xs text-text-muted uppercase">Final</span>
+                  {(event.ei || event.pulse) && <EIBadge ei={(event.ei || event.pulse)!} size="sm" />}
+                </>
+              )}
+              {/* Pin button */}
+              {onPinToggle && (
+                <button
+                  onClick={handlePinClick}
+                  disabled={pinDisabled && !isPinned}
+                  className={cn(
+                    "p-1 rounded transition-all",
+                    isPinned
+                      ? 'text-accent-warning'
+                      : 'text-text-muted/30 hover:text-text-muted group-hover/card:text-text-muted/50',
+                    pinDisabled && !isPinned && 'cursor-not-allowed opacity-30',
+                  )}
+                  title={isPinned ? 'Unpin' : pinDisabled ? 'Max 6 pins' : 'Pin'}
+                  aria-label={isPinned ? 'Unpin event' : 'Pin event'}
+                >
+                  <PinIcon filled={isPinned} className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Score display for live/finished */}
+          {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
+            <div className={cn(
+              "flex items-center justify-center gap-6 py-2 mb-2 rounded-lg",
+              isLive ? "bg-accent-live/5" : "bg-surface-elevated/50",
+            )}>
+              <div className="text-center">
+                <div className={cn(
+                  "font-mono text-2xl font-bold",
+                  isFinished
+                    ? (event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted")
+                    : "text-accent-live",
+                )}>
+                  {event.home_score}
+                </div>
+                <div className="text-micro-xs text-text-muted uppercase tracking-wide">
+                  {homeShort}
+                </div>
+              </div>
+              <span className="text-text-muted font-light text-lg">—</span>
+              <div className="text-center">
+                <div className={cn(
+                  "font-mono text-2xl font-bold",
+                  isFinished
+                    ? (event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted")
+                    : "text-accent-live",
+                )}>
+                  {event.away_score}
+                </div>
+                <div className="text-micro-xs text-text-muted uppercase tracking-wide">
+                  {awayShort}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Teams + Probabilities */}
+          <div className="space-y-1.5 flex-grow">
+            {/* Home team */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                {homeFlagUrl ? (
+                  <img
+                    src={homeFlagUrl}
+                    alt={event.home_team}
+                    width={20}
+                    height={15}
+                    loading="lazy"
+                    className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
+                  />
+                ) : event.home_team_data?.logo_small ? (
+                  <img
+                    src={event.home_team_data.logo_small}
+                    alt=""
+                    width={20}
+                    height={20}
+                    loading="lazy"
+                    className="w-5 h-5 object-contain flex-shrink-0"
+                  />
+                ) : (
+                  <div
+                    className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+                    style={{ backgroundColor: "rgb(var(--team-home-primary))" }}
+                  >
+                    {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <span className={cn(
+                  "text-sm font-medium truncate",
+                  homeFavorite ? "text-text-primary" : "text-text-secondary",
+                )}>
+                  {event.home_team}
+                </span>
+              </div>
+              <AnimatedProbability
+                value={homeProb}
+                className={cn(
+                  "font-mono tabular-nums",
+                  homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                )}
+              />
+            </div>
+
+            {/* Team-colored probability bar */}
+            <ProbabilityBar
+              homeProbability={homeProb}
+              homeFavorite={homeFavorite}
+              useCSSVars
+              height={5}
+            />
+
+            {/* Away team */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                {awayFlagUrl ? (
+                  <img
+                    src={awayFlagUrl}
+                    alt={event.away_team}
+                    width={20}
+                    height={15}
+                    loading="lazy"
+                    className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
+                  />
+                ) : event.away_team_data?.logo_small ? (
+                  <img
+                    src={event.away_team_data.logo_small}
+                    alt=""
+                    width={20}
+                    height={20}
+                    loading="lazy"
+                    className="w-5 h-5 object-contain flex-shrink-0"
+                  />
+                ) : (
+                  <div
+                    className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+                    style={{ backgroundColor: "rgb(var(--team-away-primary))" }}
+                  >
+                    {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <span className={cn(
+                  "text-sm font-medium truncate",
+                  !homeFavorite ? "text-text-primary" : "text-text-secondary",
+                )}>
+                  {event.away_team}
+                </span>
+              </div>
+              <AnimatedProbability
+                value={awayProb}
+                className={cn(
+                  "font-mono tabular-nums",
+                  !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                )}
+              />
+            </div>
+          </div>
+
+          {/* Footer — contextual info */}
+          <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
+            {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
+              <span className="text-text-muted">
+                Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
+              </span>
+            ) : isLive && opening ? (
+              <span className="text-text-muted">
+                Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
+              </span>
+            ) : isFinished ? (
+              <span className="text-text-muted">
+                Pre-game: <span className="font-mono text-text-secondary">{Math.round((homeProb ?? 0) * 100)}%/{Math.round((awayProb ?? 0) * 100)}%</span>
+              </span>
+            ) : null}
+            {event.espn?.broadcast && (
+              <span className="text-text-muted truncate ml-auto">
+                {event.espn.broadcast.split(",")[0].trim()}
+              </span>
+            )}
+          </div>
+        </Card>
+      </motion.div>
     </Link>
   );
 }

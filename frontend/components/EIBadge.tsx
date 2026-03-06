@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import type { EIData } from "@/lib/types";
-import { getEIClasses } from "@/lib/eiColors";
+import { getEIClasses, getEIRingClass } from "@/lib/eiColors";
 import { eiBreathingTransition } from "@/lib/animations";
 import Tooltip from "./Tooltip";
 
@@ -36,10 +36,14 @@ export default function EIBadge({
   };
 
   const colorClasses = getEIClasses(ei.score);
+  const ringClass = getEIRingClass(ei.score);
+  const showRingGlow = isLive && ei.score >= 70;
 
   const badge = (
     <motion.span
-      className={`flex items-center gap-1 rounded-full font-semibold cursor-help ${sizeClasses[size]} ${colorClasses}`}
+      className={`flex items-center gap-1 rounded-full font-semibold cursor-help ${sizeClasses[size]} ${colorClasses} ${
+        showRingGlow ? `ring-2 ${ringClass}` : ""
+      }`}
       {...(isLive ? {
         animate: { scale: [1, 1.03, 1] },
         transition: eiBreathingTransition(ei.score),

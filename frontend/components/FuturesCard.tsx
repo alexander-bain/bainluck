@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { motion } from "framer-motion";
 import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
-import { formatProbability, formatAmericanOdds } from "@/lib/api";
-import { getEmojiForCategory, getEmojiForLeague } from "@/lib/sportCategories";
+import { formatProbability } from "@/lib/api";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import { isCryptoCategory, isNonSportsCategory, extractCoinName } from "@/lib/images";
+import { cn } from "@/lib/utils";
+import { Card } from "@/components/ui/card";
+import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -39,16 +42,45 @@ function formatSourceName(source: string): string {
   return names[source] || source.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// ---------------------------------------------------------------------------
+// Category accent border — top border color based on market category
+// ---------------------------------------------------------------------------
+const CATEGORY_ACCENT: Record<string, string> = {
+  politics: "border-t-blue-500/60",
+  entertainment: "border-t-yellow-500/60",
+  crypto: "border-t-orange-500/60",
+  economics: "border-t-emerald-500/60",
+  tech: "border-t-cyan-500/60",
+};
+
+function getCategoryAccent(category: string | null): string {
+  if (!category) return "border-t-accent-futures/40";
+  return CATEGORY_ACCENT[category.toLowerCase()] ?? "border-t-accent-futures/40";
+}
+
+// ---------------------------------------------------------------------------
+// MovementIndicator — pulse animation on significant movements
+// ---------------------------------------------------------------------------
 function MovementIndicator({ change }: { change: number | null | undefined }) {
   if (change === null || change === undefined || change === 0 || !Number.isFinite(change)) return null;
 
   const isPositive = change > 0;
   const absChange = Math.abs(change * 100);
+  const isSignificant = absChange >= 2;
 
   return (
-    <span className={`text-[11px] font-medium ${isPositive ? "text-accent-live" : "text-accent-danger"}`}>
+    <motion.span
+      className={cn(
+        "text-[11px] font-medium",
+        isPositive ? "text-accent-live" : "text-accent-danger",
+      )}
+      {...(isSignificant ? {
+        animate: { opacity: [1, 0.5, 1] },
+        transition: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+      } : {})}
+    >
       {isPositive ? "↑" : "↓"} {absChange.toFixed(1)}%
-    </span>
+    </motion.span>
   );
 }
 
@@ -76,106 +108,120 @@ export default function FuturesCard({
 
   return (
     <Link href={`/futures/${market.id}`} className="h-full">
-      <div className={`
-        h-full flex flex-col rounded-card p-3 sm:p-4 transition-all cursor-pointer group/card
-        bg-surface-card border border-surface-border
-        hover:bg-surface-elevated hover:shadow-card-hover
-        ${isResolved ? "opacity-70 hover:opacity-100" : ""}
-      `}>
-        {/* Header */}
-        <div className="flex justify-between items-start gap-2 mb-2">
-          <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
-            {showSport && (
-              <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
-                {market.llm_sport_category || formatSportName(market.sport, market.sport_name)}
-              </span>
-            )}
-            {market.category && (
-              <span className="text-[10px] bg-accent-futures/15 text-accent-futures px-1.5 py-0.5 rounded">
-                {market.category}
-              </span>
-            )}
-            <PersonalizedBadge
-              personalized={personalized}
-              multiplier={multiplier}
-              personalizationReasons={personalizationReasons}
-            />
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {isResolved && (
-              <span className="text-micro-xs text-text-muted uppercase">Resolved</span>
-            )}
-            {market.outcome_count > 0 && (
-              <span className="text-micro text-text-muted">
-                {market.outcome_count}
-              </span>
-            )}
-            {onPinToggle && (
-              <button
-                onClick={handlePinClick}
-                disabled={pinDisabled && !isPinned}
-                className={`
-                  p-1 rounded transition-all
-                  ${isPinned
-                    ? 'text-accent-warning'
-                    : 'text-text-muted/30 hover:text-text-muted group-hover/card:text-text-muted/50'
-                  }
-                  ${pinDisabled && !isPinned ? 'cursor-not-allowed opacity-30' : ''}
-                `}
-                title={isPinned ? 'Unpin' : pinDisabled ? 'Max 6 pins' : 'Pin'}
-                aria-label={isPinned ? 'Unpin market' : 'Pin market'}
-              >
-                <PinIcon filled={isPinned} className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Market Name */}
-        <h3 className="text-sm font-medium text-text-primary mb-3 line-clamp-2 leading-snug">
-          {market.name}
-        </h3>
-
-        {/* Top Outcomes */}
-        <div className="space-y-2 flex-grow">
-          {topOutcomes.map((outcome, index) => (
-            <OutcomeRow
-              key={outcome.id}
-              outcome={outcome}
-              rank={index + 1}
-              isLeader={index === 0}
-              isResolved={isResolved}
-              marketCategory={market.llm_sport_category}
-              marketName={market.name}
-            />
-          ))}
-
-          {outcomes.length === 0 && (
-            <div className="text-sm text-text-muted text-center py-4">
-              No outcomes available
+      <motion.div
+        variants={fadeIn}
+        initial="hidden"
+        animate="visible"
+      >
+        <Card
+          className={cn(
+            "h-full flex flex-col p-3 sm:p-4 transition-all cursor-pointer group/card",
+            "bg-surface-card border-surface-border border-t-2",
+            "hover:bg-surface-elevated hover:shadow-card-hover hover:scale-[1.005] hover:border-surface-elevated",
+            getCategoryAccent(market.llm_sport_category),
+            isResolved && "opacity-70 hover:opacity-100 hover:scale-100",
+          )}
+        >
+          {/* Header */}
+          <div className="flex justify-between items-start gap-2 mb-2">
+            <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
+              {showSport && (
+                <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
+                  {market.llm_sport_category || formatSportName(market.sport, market.sport_name)}
+                </span>
+              )}
+              {market.category && (
+                <span className="text-[10px] bg-accent-futures/15 text-accent-futures px-1.5 py-0.5 rounded">
+                  {market.category}
+                </span>
+              )}
+              <PersonalizedBadge
+                personalized={personalized}
+                multiplier={multiplier}
+                personalizationReasons={personalizationReasons}
+              />
             </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center">
-          <div className="text-micro text-text-muted">
-            {market.source_count && market.source_count > 1 ? (
-              <span className="bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium">
-                {market.source_count} sources
-              </span>
-            ) : market.source ? (
-              <span>{formatSourceName(market.source)}</span>
-            ) : null}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {isResolved && (
+                <span className="text-micro-xs text-text-muted uppercase">Resolved</span>
+              )}
+              {market.outcome_count > 0 && (
+                <span className="text-micro text-text-muted">
+                  {market.outcome_count}
+                </span>
+              )}
+              {onPinToggle && (
+                <button
+                  onClick={handlePinClick}
+                  disabled={pinDisabled && !isPinned}
+                  className={cn(
+                    "p-1 rounded transition-all",
+                    isPinned
+                      ? 'text-accent-warning'
+                      : 'text-text-muted/30 hover:text-text-muted group-hover/card:text-text-muted/50',
+                    pinDisabled && !isPinned && 'cursor-not-allowed opacity-30',
+                  )}
+                  title={isPinned ? 'Unpin' : pinDisabled ? 'Max 6 pins' : 'Pin'}
+                  aria-label={isPinned ? 'Unpin market' : 'Pin market'}
+                >
+                  <PinIcon filled={isPinned} className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
-          {market.updated_at && (
-            <span className="text-micro text-text-muted">
-              {formatRelativeTime(market.updated_at)}
-            </span>
-          )}
-        </div>
-      </div>
+
+          {/* Market Name */}
+          <h3 className="text-sm font-medium text-text-primary mb-3 line-clamp-2 leading-snug">
+            {market.name}
+          </h3>
+
+          {/* Top Outcomes — staggered entrance */}
+          <motion.div
+            className="space-y-2 flex-grow"
+            variants={staggerContainer}
+            initial="hidden"
+            animate="visible"
+          >
+            {topOutcomes.map((outcome, index) => (
+              <motion.div key={outcome.id} variants={staggerItem}>
+                <OutcomeRow
+                  outcome={outcome}
+                  rank={index + 1}
+                  isLeader={index === 0}
+                  isResolved={isResolved}
+                  marketCategory={market.llm_sport_category}
+                  marketName={market.name}
+                />
+              </motion.div>
+            ))}
+
+            {outcomes.length === 0 && (
+              <div className="text-sm text-text-muted text-center py-4">
+                No outcomes available
+              </div>
+            )}
+          </motion.div>
+
+          {/* Footer */}
+          <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center">
+            <div className="text-micro text-text-muted">
+              {market.source_count && market.source_count > 1 ? (
+                <span className="bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium">
+                  {market.source_count} sources
+                </span>
+              ) : market.source ? (
+                <span>{formatSourceName(market.source)}</span>
+              ) : null}
+            </div>
+            {market.updated_at && (
+              <span className="text-micro text-text-muted">
+                {formatRelativeTime(market.updated_at)}
+              </span>
+            )}
+          </div>
+        </Card>
+      </motion.div>
     </Link>
   );
 }
@@ -211,11 +257,12 @@ function OutcomeRow({
       ) : isNonSports && !isCrypto ? (
         <EntityImage type="wikipedia" name={outcome.name} size={20} className="flex-shrink-0" />
       ) : (
-        <span className={`w-5 h-5 flex items-center justify-center text-[10px] rounded flex-shrink-0 ${
+        <span className={cn(
+          "w-5 h-5 flex items-center justify-center text-[10px] rounded flex-shrink-0",
           isLeader
             ? "bg-accent-warning/15 text-accent-warning font-bold"
-            : "text-text-muted"
-        }`}>
+            : "text-text-muted",
+        )}>
           {rank}
         </span>
       )}
@@ -223,9 +270,10 @@ function OutcomeRow({
       {/* Name + mini bar */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className={`text-sm truncate ${
-            isLeader ? "font-medium text-text-primary" : "text-text-secondary"
-          }`}>
+          <span className={cn(
+            "text-sm truncate",
+            isLeader ? "font-medium text-text-primary" : "text-text-secondary",
+          )}>
             {outcome.name}
           </span>
           {outcome.is_winner && (
@@ -236,13 +284,14 @@ function OutcomeRow({
         </div>
         {/* Mini probability bar */}
         <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all"
+          <motion.div
+            className="h-full rounded-full"
             style={{
-              width: `${Math.min(prob * 100, 100)}%`,
               backgroundColor: isLeader ? "var(--accent-futures)" : "var(--text-muted)",
               opacity: isLeader ? 0.7 : 0.3,
             }}
+            animate={{ width: `${Math.min(prob * 100, 100)}%` }}
+            transition={{ duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }}
           />
         </div>
       </div>
@@ -250,9 +299,10 @@ function OutcomeRow({
       {/* Probability + movement */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
         <MovementIndicator change={movement} />
-        <span className={`font-mono text-sm tabular-nums ${
-          isLeader ? "font-bold text-text-primary" : "text-text-muted"
-        }`}>
+        <span className={cn(
+          "font-mono text-sm tabular-nums",
+          isLeader ? "font-bold text-text-primary" : "text-text-muted",
+        )}>
           {formatProbability(outcome.probability)}
         </span>
       </div>
