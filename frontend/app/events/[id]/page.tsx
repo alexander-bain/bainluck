@@ -12,6 +12,7 @@ const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ss
 const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ssr: false });
 const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExplainer"), { ssr: false });
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
+const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
@@ -1381,6 +1382,29 @@ export default function EventPage({ params }: EventPageProps) {
         awayTeam={event.away_team}
         eventStatus={event.status}
       />
+
+      {/* Series Probability — playoff series context */}
+      {event.event_tags && (
+        event.event_tags.includes("competitive_structure:series") ||
+        event.event_tags.includes("competitive_structure:best_of_7")
+      ) && event.current_odds?.home_probability != null && (() => {
+        // Detect series wins from ESPN data or default to 0-0
+        const homeSeriesWins = (event.espn as any)?.series_home_wins ?? 0;
+        const awaySeriesWins = (event.espn as any)?.series_away_wins ?? 0;
+        const gamesToWin = event.event_tags!.includes("competitive_structure:best_of_7") ? 4 : 4;
+        return (
+          <SeriesProbability
+            homeWinProb={event.current_odds!.home_probability!}
+            homeSeriesWins={homeSeriesWins}
+            awaySeriesWins={awaySeriesWins}
+            gamesToWin={gamesToWin}
+            homeTeam={event.home_team}
+            awayTeam={event.away_team}
+            homeTeamColor={event.home_team_data?.primary_color || undefined}
+            awayTeamColor={event.away_team_data?.primary_color || undefined}
+          />
+        );
+      })()}
 
       {/* Related Futures — bigger picture context (below charts) */}
       <RelatedFutures

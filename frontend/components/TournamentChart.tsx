@@ -31,6 +31,8 @@ interface TournamentChartProps {
   height?: number;
   /** Optional CSS class */
   className?: string;
+  /** Anchor ID for deep-linking from category pages */
+  id?: string;
 }
 
 export default function TournamentChart({
@@ -38,6 +40,7 @@ export default function TournamentChart({
   hours = 168,
   height = 280,
   className,
+  id,
 }: TournamentChartProps) {
   const [topFilter, setTopFilter] = useState<TopFilter>(5);
 
@@ -101,7 +104,7 @@ export default function TournamentChart({
 
   // SVG chart dimensions
   const chartWidth = 800;
-  const padding = { top: 20, right: 20, bottom: 40, left: 55 };
+  const padding = { top: 20, right: 120, bottom: 40, left: 55 };
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
 
@@ -273,7 +276,7 @@ export default function TournamentChart({
   }
 
   return (
-    <div className={`space-y-3 ${className ?? ""}`}>
+    <div id={id} className={`space-y-3 ${className ?? ""}`}>
       {/* Top filter toggle */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-text-secondary">Show:</span>
@@ -281,10 +284,10 @@ export default function TournamentChart({
           <button
             key={String(f)}
             onClick={() => setTopFilter(f)}
-            className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+            className={`px-2.5 py-1 text-xs rounded-md transition-all duration-200 ${
               topFilter === f
-                ? "bg-blue-600 text-white"
-                : "bg-surface-elevated text-text-secondary hover:text-text-primary"
+                ? "bg-blue-600 text-white shadow-sm scale-105"
+                : "bg-surface-elevated text-text-secondary hover:text-text-primary hover:bg-surface-border"
             }`}
           >
             {f === "all" ? "All" : `Top ${f}`}
@@ -420,6 +423,44 @@ export default function TournamentChart({
             );
           })}
 
+          {/* End-of-line name labels for top 3 outcomes */}
+          {displayedNames.slice(0, 3).map((name, idx) => {
+            // Find the last data point with a value for this outcome
+            let lastProb: number | undefined;
+            let lastTime: number | undefined;
+            for (let i = chartData.length - 1; i >= 0; i--) {
+              const prob = chartData[i].outcomes[name];
+              if (prob !== undefined) {
+                lastProb = prob;
+                lastTime = new Date(chartData[i].timestamp).getTime();
+                break;
+              }
+            }
+            if (lastProb === undefined || lastTime === undefined) return null;
+            const x = xScale(lastTime);
+            const y = yScale(lastProb);
+            const color = POSITION_COLORS[idx % POSITION_COLORS.length];
+            // Truncate long names
+            const label = name.length > 14 ? name.slice(0, 12) + "…" : name;
+            return (
+              <g key={`label-${name}`}>
+                <circle cx={x} cy={y} r={3} fill={color} stroke="#0C0F14" strokeWidth={1.5} />
+                <text
+                  x={x + 6}
+                  y={y}
+                  textAnchor="start"
+                  dominantBaseline="central"
+                  fill={color}
+                  fontSize={idx === 0 ? 11 : 10}
+                  fontWeight={idx === 0 ? 700 : 600}
+                  style={{ textShadow: "0 0 4px rgba(0,0,0,0.8)" }}
+                >
+                  {label} {Math.round(lastProb * 100)}%
+                </text>
+              </g>
+            );
+          })}
+
           {/* Hover crosshair and dots */}
           {hoverInfo && (
             <>
@@ -486,15 +527,33 @@ export default function TournamentChart({
 
       {/* Legend */}
       <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-        {displayedNames.map((name, idx) => (
-          <div key={name} className="flex items-center gap-1.5 text-xs">
-            <span
-              className="w-2.5 h-2.5 rounded-full"
-              style={{ backgroundColor: POSITION_COLORS[idx % POSITION_COLORS.length] }}
-            />
-            <span className="text-text-secondary">{name}</span>
-          </div>
-        ))}
+        {displayedNames.map((name, idx) => {
+          // Find current probability for legend display
+          let currentProb: number | undefined;
+          for (let i = chartData.length - 1; i >= 0; i--) {
+            const prob = chartData[i].outcomes[name];
+            if (prob !== undefined) {
+              currentProb = prob;
+              break;
+            }
+          }
+          return (
+            <div key={name} className="flex items-center gap-1.5 text-xs">
+              <span
+                className={`rounded-full ${idx === 0 ? "w-3 h-3" : "w-2.5 h-2.5"}`}
+                style={{ backgroundColor: POSITION_COLORS[idx % POSITION_COLORS.length] }}
+              />
+              <span className={idx === 0 ? "text-text-primary font-semibold" : "text-text-secondary"}>
+                {name}
+              </span>
+              {currentProb !== undefined && (
+                <span className="text-text-muted font-mono">
+                  {Math.round(currentProb * 100)}%
+                </span>
+              )}
+            </div>
+          );
+        })}
         {hasField && (
           <div className="flex items-center gap-1.5 text-xs">
             <span

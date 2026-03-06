@@ -731,6 +731,46 @@ export default function OddsChart({
     return { yDomain: [lo, hi] as [number, number], yTicks: ticks };
   }, [chartData]);
 
+  // ── Compute lead change points (50% crossings) ──
+  const leadChangePoints = useMemo(() => {
+    if (chartData.length < 2) return [];
+    const key = isMultiSource ? "bainLuckDelta" : "homeDelta";
+    const changes: { time: string; timestamp: string }[] = [];
+    let prevDelta: number | null = null;
+    for (const pt of chartData) {
+      const delta = pt[key] as number | null;
+      if (delta === null) continue;
+      if (prevDelta !== null) {
+        // Crossing: one side positive, the other negative (or touching zero)
+        if ((prevDelta > 0 && delta <= 0) || (prevDelta < 0 && delta >= 0)) {
+          changes.push({ time: pt.time, timestamp: pt.timestamp });
+        }
+      }
+      prevDelta = delta;
+    }
+    return changes;
+  }, [chartData, isMultiSource]);
+
+  // ── Current probability callout (last non-null data point) ──
+  const currentCallout = useMemo(() => {
+    if (chartData.length === 0) return null;
+    const key = isMultiSource ? "bainLuckDelta" : "homeDelta";
+    // Walk backwards to find last non-null value
+    for (let i = chartData.length - 1; i >= 0; i--) {
+      const delta = chartData[i][key] as number | null;
+      if (delta !== null) {
+        const homeProb = 50 + delta;
+        return {
+          time: chartData[i].time,
+          delta,
+          homeProb: Math.round(homeProb),
+          awayProb: Math.round(100 - homeProb),
+        };
+      }
+    }
+    return null;
+  }, [chartData, isMultiSource]);
+
   // Early return for empty data across ALL sources (not just sportsbook odds)
   // If "Since Start" filter caused empty data, auto-reset to "all"
   if (chartData.length === 0) {
@@ -740,9 +780,21 @@ export default function OddsChart({
       setHasUserOverridden(false);
       return null; // Will re-render with "all" data
     }
+    const isPreGame = eventStatus === "scheduled";
     return (
-      <div className="h-64 flex items-center justify-center bg-surface-elevated rounded-lg text-text-muted">
-        No history data available
+      <div className="h-64 flex flex-col items-center justify-center bg-surface-elevated rounded-lg text-text-muted gap-2">
+        {isPreGame ? (
+          <>
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="opacity-30">
+              <circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2" strokeDasharray="4 4" />
+              <path d="M24 14v10l7 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <p className="text-sm font-medium">Chart available at game time</p>
+            <p className="text-xs">Win probability will update live once the game starts</p>
+          </>
+        ) : (
+          <p className="text-sm">No history data available</p>
+        )}
       </div>
     );
   }
@@ -807,6 +859,10 @@ export default function OddsChart({
         return `${homeTeam}: ${homeProb.toFixed(1)}% | ${awayTeam}: ${awayProb.toFixed(1)}%`;
       };
 
+      // Look up game state from chartData for this time label
+      const matchingPoint = chartData.find((d) => d.time === label);
+      const hasGameState = matchingPoint && (matchingPoint._homeScore != null || matchingPoint._period);
+
       // Bain Luck aggregated line (multi-source mode)
       const bainLuckEntry = isMultiSource
         ? payload.find((e) => e.dataKey === "bainLuckDelta" && e.value !== null)
@@ -836,7 +892,31 @@ export default function OddsChart({
 
       return (
         <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-white/10 max-w-sm">
-          <p className="text-xs text-text-muted mb-2">{label}</p>
+          {/* Game state header — score, period, clock */}
+          {hasGameState ? (
+            <div className="mb-2 pb-2 border-b border-white/10">
+              <div className="flex items-center justify-between gap-3">
+                {matchingPoint._homeScore != null && matchingPoint._awayScore != null ? (
+                  <span className="text-sm font-bold text-text-primary font-mono">
+                    {homeShort} {matchingPoint._homeScore as number} – {matchingPoint._awayScore as number} {awayShort}
+                  </span>
+                ) : (
+                  <span className="text-xs text-text-muted">{label}</span>
+                )}
+                {matchingPoint._period && (
+                  <span className="text-xs text-text-muted whitespace-nowrap">
+                    {matchingPoint._period as string}
+                    {matchingPoint._clock ? ` ${matchingPoint._clock as string}` : ""}
+                  </span>
+                )}
+              </div>
+              {!(matchingPoint._homeScore != null && matchingPoint._awayScore != null) && (
+                <p className="text-[10px] text-text-muted mt-0.5">{label}</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-text-muted mb-2">{label}</p>
+          )}
           {/* Scoring play annotation */}
           {scoringPlayAnnotations.length > 0 && (() => {
             const match = scoringPlayAnnotations.find((p) => p.time === label);
@@ -1024,16 +1104,16 @@ export default function OddsChart({
             }}
           >
             <defs>
-              <linearGradient id="probFillGradient" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={`probFillGradient-${eventId ?? 0}`} x1="0" y1="0" x2="0" y2="1">
                 <stop
                   offset={gradientOffset}
-                  stopColor="#22c55e"
-                  stopOpacity={0.35}
+                  stopColor={homeTeamColor || "#22c55e"}
+                  stopOpacity={0.3}
                 />
                 <stop
                   offset={gradientOffset}
-                  stopColor="#3b82f6"
-                  stopOpacity={0.35}
+                  stopColor={awayTeamColor || "#3b82f6"}
+                  stopOpacity={0.3}
                 />
               </linearGradient>
             </defs>
@@ -1154,7 +1234,7 @@ export default function OddsChart({
               type="monotone"
               dataKey={primaryDeltaKey}
               stroke="none"
-              fill="url(#probFillGradient)"
+              fill={`url(#probFillGradient-${eventId ?? 0})`}
               connectNulls
               legendType="none"
               isAnimationActive={false}
@@ -1206,6 +1286,70 @@ export default function OddsChart({
                       strokeWidth={1.5}
                       style={{ cursor: "pointer" }}
                     />
+                  );
+                }}
+                legendType="none"
+              />
+            )}
+
+            {/* Lead change markers — diamonds at 50% crossings */}
+            {leadChangePoints.length > 0 && (
+              <Scatter
+                data={leadChangePoints.map((lc) => ({ time: lc.time, leadChangeDelta: 0 }))}
+                dataKey="leadChangeDelta"
+                fill="none"
+                shape={(props: { cx?: number; cy?: number }) => {
+                  const { cx = 0, cy = 0 } = props;
+                  return (
+                    <g>
+                      <polygon
+                        points={`${cx},${cy - 6} ${cx + 5},${cy} ${cx},${cy + 6} ${cx - 5},${cy}`}
+                        fill="rgba(255,255,255,0.9)"
+                        stroke="rgba(255,255,255,0.5)"
+                        strokeWidth={1}
+                      />
+                      <polygon
+                        points={`${cx},${cy - 3} ${cx + 2.5},${cy} ${cx},${cy + 3} ${cx - 2.5},${cy}`}
+                        fill="#fbbf24"
+                      />
+                    </g>
+                  );
+                }}
+                legendType="none"
+              />
+            )}
+
+            {/* Current probability callout — dot at the last data point */}
+            {currentCallout && (
+              <Scatter
+                data={[{ time: currentCallout.time, calloutDelta: currentCallout.delta }]}
+                dataKey="calloutDelta"
+                fill="none"
+                shape={(props: { cx?: number; cy?: number }) => {
+                  const { cx = 0, cy = 0 } = props;
+                  const fillColor = isMultiSource
+                    ? BAIN_LUCK_CONFIG.color
+                    : "#e5e7eb";
+                  return (
+                    <g>
+                      {/* Outer glow */}
+                      <circle cx={cx} cy={cy} r={8} fill={fillColor} fillOpacity={0.2} />
+                      {/* Inner dot */}
+                      <circle cx={cx} cy={cy} r={5} fill={fillColor} stroke="#0C0F14" strokeWidth={2} />
+                      {/* Probability label */}
+                      <text
+                        x={cx + 12}
+                        y={cy}
+                        textAnchor="start"
+                        dominantBaseline="central"
+                        fill={fillColor}
+                        fontSize={11}
+                        fontWeight={700}
+                        fontFamily="monospace"
+                      >
+                        {currentCallout.homeProb}%
+                      </text>
+                    </g>
                   );
                 }}
                 legendType="none"
@@ -1291,6 +1435,18 @@ export default function OddsChart({
             </svg>
             <span className="text-xs text-text-muted">
               Scoring plays
+            </span>
+          </div>
+        )}
+
+        {/* Lead changes legend */}
+        {leadChangePoints.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <svg width="10" height="10" className="shrink-0">
+              <polygon points="5,1 9,5 5,9 1,5" fill="#fbbf24" />
+            </svg>
+            <span className="text-xs text-text-muted">
+              Lead change{leadChangePoints.length > 1 ? "s" : ""} ({leadChangePoints.length})
             </span>
           </div>
         )}
