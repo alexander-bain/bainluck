@@ -400,6 +400,94 @@ export interface FuturesGroupsListResponse {
   groups: FuturesGroupSummary[];
 }
 
+// ── GROUPED FEED TYPES ──
+
+export interface StatPropLine {
+  id: number;
+  name: string;
+  probability: number | null;
+  threshold_value: number;
+  threshold_direction: string;
+  source: string;
+}
+
+export interface StatPropFeedItem {
+  type: "stat_prop";
+  group_key: string;
+  player_name: string;
+  stat_category: string;
+  lines: StatPropLine[];
+  market_count: number;
+}
+
+export interface PlayoffStage {
+  id: number;
+  name: string;
+  stage_name: string;
+  stage_order: number;
+  probability: number | null;
+  source: string;
+}
+
+export interface PlayoffProgressionFeedItem {
+  type: "playoff_progression";
+  group_key: string;
+  entity_name: string;
+  stages: PlayoffStage[];
+  market_count: number;
+}
+
+export interface ThresholdPoint {
+  id: number;
+  name: string;
+  probability: number | null;
+  threshold_value: number;
+  threshold_unit: string;
+  threshold_direction: string;
+}
+
+export interface ThresholdFeedItem {
+  type: "threshold";
+  group_key: string;
+  title: string;
+  points: ThresholdPoint[];
+  outcome_count: number;
+}
+
+export interface UngroupedMarketFeedItem {
+  type: "market";
+  market: {
+    id: number;
+    name: string;
+    source: string;
+    category: string | null;
+    sport: string | null;
+    outcomes: {
+      id: number;
+      name: string;
+      probability: number | null;
+      american_odds?: number | null;
+    }[];
+  };
+}
+
+export type GroupedFeedItem =
+  | StatPropFeedItem
+  | PlayoffProgressionFeedItem
+  | ThresholdFeedItem
+  | UngroupedMarketFeedItem;
+
+export interface GroupedFeedResponse {
+  feed: GroupedFeedItem[];
+  total_grouped: number;
+  total_ungrouped: number;
+  group_counts: {
+    stat_prop: number;
+    playoff_progression: number;
+    threshold: number;
+  };
+}
+
 export interface FuturesMarketsResponse {
   markets: FuturesMarket[];
   count: number;

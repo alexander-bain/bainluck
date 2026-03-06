@@ -33,6 +33,7 @@ import type {
   MarchMadnessResponse,
   FuturesGroupResponse,
   FuturesGroupsListResponse,
+  GroupedFeedResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -409,6 +410,26 @@ export async function fetchFuturesGroups(opts?: {
   if (opts?.offset) params.set("offset", String(opts.offset));
   const qs = params.toString();
   return apiFetch<FuturesGroupsListResponse>(`/api/futures/groups${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * Fetch grouped futures feed for display.
+ *
+ * Returns markets intelligently grouped into stat props, playoff progressions,
+ * threshold variants, and ungrouped markets - ready for rendering with the
+ * appropriate card components.
+ */
+export async function fetchGroupedFeed(opts?: {
+  category?: string;
+  sport?: string;
+  limit?: number;
+}): Promise<GroupedFeedResponse> {
+  const params = new URLSearchParams();
+  if (opts?.category) params.set("category", opts.category);
+  if (opts?.sport) params.set("sport", opts.sport);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return apiFetch<GroupedFeedResponse>(`/api/futures/grouped-feed${qs ? `?${qs}` : ""}`);
 }
 
 /**

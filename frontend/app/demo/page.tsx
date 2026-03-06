@@ -8,6 +8,9 @@ import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SkeletonCard from "@/components/SkeletonCard";
 import FeedFilterChips from "@/components/FeedFilterChips";
+import PlayerStatCard from "@/components/PlayerStatCard";
+import ProgressionLadder from "@/components/ProgressionLadder";
+import ThresholdSparkline from "@/components/ThresholdSparkline";
 import { staggerContainer, staggerItem } from "@/lib/animations";
 
 // =============================================================================
@@ -600,6 +603,111 @@ export default function DemoPage() {
               </motion.div>
             ))}
           </motion.div>
+        </section>
+
+        {/* NEW: Grouped Futures Section */}
+        <section className="border-t border-surface-border pt-10">
+          <SectionHeader
+            title="Grouped Futures (New)"
+            subtitle="Intelligent market grouping for player props, thresholds, and progressions"
+            accent="futures"
+          />
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Player Stat Card */}
+            <PlayerStatCard
+              playerName="Jayson Tatum"
+              statCategory="points"
+              lines={[
+                { id: 1, name: "Tatum 20+ Points", probability: 0.92, threshold_value: 20, threshold_direction: "above", source: "kalshi" },
+                { id: 2, name: "Tatum 25+ Points", probability: 0.78, threshold_value: 25, threshold_direction: "above", source: "kalshi" },
+                { id: 3, name: "Tatum 30+ Points", probability: 0.52, threshold_value: 30, threshold_direction: "above", source: "kalshi" },
+                { id: 4, name: "Tatum 35+ Points", probability: 0.28, threshold_value: 35, threshold_direction: "above", source: "kalshi" },
+                { id: 5, name: "Tatum 40+ Points", probability: 0.12, threshold_value: 40, threshold_direction: "above", source: "kalshi" },
+              ]}
+            />
+
+            {/* Progression Ladder */}
+            <ProgressionLadder
+              entityName="Los Angeles Lakers"
+              stages={[
+                { id: 1, name: "Lakers Make Playoffs", stage_name: "Make Playoffs", stage_order: 1, probability: 0.85, status: "achieved" },
+                { id: 2, name: "Lakers Make Round 2", stage_name: "Make Round 2", stage_order: 2, probability: 0.45 },
+                { id: 3, name: "Lakers Make WCF", stage_name: "Make Conference Finals", stage_order: 3, probability: 0.22 },
+                { id: 4, name: "Lakers Make Finals", stage_name: "Make Finals", stage_order: 4, probability: 0.12 },
+                { id: 5, name: "Lakers Win Championship", stage_name: "Win Championship", stage_order: 5, probability: 0.06 },
+              ]}
+              teamColors={{ primary: "85, 37, 130", secondary: "253, 185, 39" }}
+            />
+          </div>
+
+          {/* Threshold Sparkline in a card */}
+          <div className="mt-6 bg-surface-card border border-surface-border rounded-xl p-4">
+            <h3 className="text-sm font-medium text-text-secondary mb-3">
+              Bitcoin Price Targets
+            </h3>
+            <ThresholdSparkline
+              points={[
+                { id: 1, name: "BTC > $80K", probability: 0.95, threshold_value: 80000, threshold_unit: "$" },
+                { id: 2, name: "BTC > $90K", probability: 0.72, threshold_value: 90000, threshold_unit: "$" },
+                { id: 3, name: "BTC > $100K", probability: 0.48, threshold_value: 100000, threshold_unit: "$" },
+                { id: 4, name: "BTC > $120K", probability: 0.25, threshold_value: 120000, threshold_unit: "$" },
+                { id: 5, name: "BTC > $150K", probability: 0.08, threshold_value: 150000, threshold_unit: "$" },
+              ]}
+              height={56}
+              showLabels
+            />
+          </div>
+
+          {/* Compact Player Stat Cards Row */}
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <PlayerStatCard
+              playerName="LeBron James"
+              statCategory="rebounds"
+              lines={[
+                { id: 10, name: "LeBron 6+ Rebounds", probability: 0.88, threshold_value: 6, threshold_direction: "above", source: "polymarket" },
+                { id: 11, name: "LeBron 8+ Rebounds", probability: 0.62, threshold_value: 8, threshold_direction: "above", source: "polymarket" },
+                { id: 12, name: "LeBron 10+ Rebounds", probability: 0.35, threshold_value: 10, threshold_direction: "above", source: "polymarket" },
+              ]}
+              compact
+            />
+            <PlayerStatCard
+              playerName="Stephen Curry"
+              statCategory="threes"
+              lines={[
+                { id: 20, name: "Curry 3+ Threes", probability: 0.92, threshold_value: 3, threshold_direction: "above", source: "kalshi" },
+                { id: 21, name: "Curry 5+ Threes", probability: 0.58, threshold_value: 5, threshold_direction: "above", source: "kalshi" },
+                { id: 22, name: "Curry 7+ Threes", probability: 0.22, threshold_value: 7, threshold_direction: "above", source: "kalshi" },
+              ]}
+              compact
+            />
+            <PlayerStatCard
+              playerName="Nikola Jokic"
+              statCategory="assists"
+              lines={[
+                { id: 30, name: "Jokic 8+ Assists", probability: 0.75, threshold_value: 8, threshold_direction: "above", source: "odds_api" },
+                { id: 31, name: "Jokic 10+ Assists", probability: 0.42, threshold_value: 10, threshold_direction: "above", source: "odds_api" },
+                { id: 32, name: "Jokic 12+ Assists", probability: 0.18, threshold_value: 12, threshold_direction: "above", source: "odds_api" },
+              ]}
+              compact
+            />
+          </div>
+
+          {/* Horizontal Progression Ladder */}
+          <div className="mt-6">
+            <ProgressionLadder
+              entityName="Boston Celtics"
+              stages={[
+                { id: 40, name: "Celtics Make Playoffs", stage_name: "Playoffs", stage_order: 1, probability: 0.99, status: "achieved" },
+                { id: 41, name: "Celtics Make R2", stage_name: "Round 2", stage_order: 2, probability: 0.82, status: "achieved" },
+                { id: 42, name: "Celtics Make ECF", stage_name: "ECF", stage_order: 3, probability: 0.65 },
+                { id: 43, name: "Celtics Make Finals", stage_name: "Finals", stage_order: 4, probability: 0.45 },
+                { id: 44, name: "Celtics Win Title", stage_name: "Champion", stage_order: 5, probability: 0.28 },
+              ]}
+              teamColors={{ primary: "0, 122, 51", secondary: "186, 150, 83" }}
+              horizontal
+            />
+          </div>
         </section>
 
         {/* Visual Comparison Section */}
