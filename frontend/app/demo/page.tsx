@@ -444,7 +444,7 @@ const MOCK_FUTURES: FuturesMarket[] = [
 
 export default function DemoPage() {
   const [showLoading, setShowLoading] = useState(false);
-  const [activeFilter, setActiveFilter] = useState("All");
+  const [activeTags, setActiveTags] = useState<string[] | null>(null);
 
   const scheduledEvents = MOCK_EVENTS.filter(e => e.status === "scheduled");
   const liveEvents = MOCK_EVENTS.filter(e => e.status === "live");
@@ -475,8 +475,8 @@ export default function DemoPage() {
 
           {/* Filter Chips */}
           <FeedFilterChips
-            activeFilter={activeFilter}
-            onFilterChange={setActiveFilter}
+            activeTags={activeTags}
+            onTagChange={setActiveTags}
           />
         </div>
       </header>
