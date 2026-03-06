@@ -1,0 +1,431 @@
+/* March Madness Wood Texture Theme */
+
+.mm-page {
+  --mm-wood-dark: #5C3317;
+  --mm-wood-medium: #8B4513;
+  --mm-wood-light: #A0522D;
+  --mm-wood-accent: #CD853F;
+  --mm-wood-pale: #DEB887;
+  --mm-court-line: rgba(255, 255, 255, 0.15);
+  --mm-gold: #FFD700;
+  --mm-orange: #FF6B35;
+  --mm-bg: #1a0e08;
+  --mm-card-bg: rgba(139, 69, 19, 0.12);
+  --mm-card-border: rgba(139, 69, 19, 0.25);
+  --mm-text: #F5F0EB;
+  --mm-text-dim: rgba(245, 240, 235, 0.6);
+  --mm-upset-red: #EF4444;
+  --mm-cinderella: #A78BFA;
+  min-height: 100vh;
+  background: var(--mm-bg);
+  color: var(--mm-text);
+}
+
+/* Subtle wood grain texture overlay */
+.mm-page::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 2px,
+      rgba(139, 69, 19, 0.03) 2px,
+      rgba(139, 69, 19, 0.03) 4px
+    );
+  z-index: 0;
+}
+
+.mm-content {
+  position: relative;
+  z-index: 1;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+/* Hero section */
+.mm-hero {
+  padding: 48px 0 32px;
+  text-align: center;
+  border-bottom: 1px solid var(--mm-card-border);
+  margin-bottom: 32px;
+}
+
+.mm-hero h1 {
+  font-size: 2.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+  background: linear-gradient(135deg, var(--mm-wood-pale), var(--mm-gold));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.mm-hero-subtitle {
+  font-size: 1.1rem;
+  color: var(--mm-text-dim);
+  margin: 0 0 16px;
+}
+
+.mm-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  border-radius: 24px;
+  background: rgba(139, 69, 19, 0.2);
+  border: 1px solid var(--mm-card-border);
+  font-size: 0.95rem;
+  color: var(--mm-wood-pale);
+}
+
+.mm-countdown-value {
+  font-weight: 700;
+  color: var(--mm-gold);
+}
+
+/* Section headers */
+.mm-section {
+  margin-bottom: 40px;
+}
+
+.mm-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--mm-card-border);
+}
+
+.mm-section-title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--mm-wood-pale);
+  margin: 0;
+}
+
+.mm-section-badge {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: rgba(139, 69, 19, 0.25);
+  color: var(--mm-wood-accent);
+  font-weight: 600;
+}
+
+/* Team odds grid */
+.mm-odds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.mm-team-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--mm-card-bg);
+  border: 1px solid var(--mm-card-border);
+  transition: border-color 0.2s;
+}
+
+.mm-team-card:hover {
+  border-color: var(--mm-wood-accent);
+}
+
+.mm-team-card.alma-mater {
+  border-color: var(--mm-gold);
+  background: rgba(255, 215, 0, 0.06);
+}
+
+.mm-team-rank {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(139, 69, 19, 0.3);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--mm-wood-accent);
+  flex-shrink: 0;
+}
+
+.mm-team-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mm-team-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mm-team-meta {
+  font-size: 0.8rem;
+  color: var(--mm-text-dim);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mm-seed-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: rgba(139, 69, 19, 0.4);
+  color: var(--mm-wood-pale);
+}
+
+.mm-team-prob {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.mm-prob-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--mm-wood-pale);
+}
+
+.mm-prob-movement {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.mm-prob-movement.up { color: #22c55e; }
+.mm-prob-movement.down { color: #ef4444; }
+
+/* Seed history cards */
+.mm-seed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.mm-seed-card {
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--mm-card-bg);
+  border: 1px solid var(--mm-card-border);
+}
+
+.mm-seed-matchup {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--mm-wood-pale);
+  margin-bottom: 8px;
+}
+
+.mm-seed-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(139, 69, 19, 0.2);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.mm-seed-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease-out;
+}
+
+.mm-seed-stats {
+  font-size: 0.8rem;
+  color: var(--mm-text-dim);
+}
+
+/* Movers section */
+.mm-movers-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.mm-mover-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--mm-card-bg);
+  border: 1px solid var(--mm-card-border);
+}
+
+.mm-mover-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.mm-mover-change {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.mm-mover-change.positive { color: #22c55e; }
+.mm-mover-change.negative { color: #ef4444; }
+
+/* Notable upsets cards */
+.mm-notable-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.mm-notable-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--mm-card-bg);
+  border: 1px solid var(--mm-card-border);
+}
+
+.mm-notable-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.mm-notable-year {
+  font-size: 0.8rem;
+  color: var(--mm-wood-accent);
+  font-weight: 600;
+}
+
+.mm-notable-seeds {
+  font-size: 0.75rem;
+  color: var(--mm-text-dim);
+}
+
+.mm-notable-result {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.mm-notable-note {
+  font-size: 0.8rem;
+  color: var(--mm-text-dim);
+  line-height: 1.4;
+}
+
+/* Hub page */
+.mm-hub {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80vh;
+  gap: 32px;
+  text-align: center;
+}
+
+.mm-hub h1 {
+  font-size: 3rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--mm-wood-pale), var(--mm-gold));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.mm-hub-cards {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.mm-hub-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 48px;
+  border-radius: 16px;
+  background: var(--mm-card-bg);
+  border: 2px solid var(--mm-card-border);
+  text-decoration: none;
+  color: var(--mm-text);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.mm-hub-card:hover {
+  border-color: var(--mm-gold);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(139, 69, 19, 0.15);
+}
+
+.mm-hub-card-emoji {
+  font-size: 3rem;
+}
+
+.mm-hub-card-label {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--mm-wood-pale);
+}
+
+/* Loading skeleton */
+.mm-skeleton {
+  background: linear-gradient(90deg, var(--mm-card-bg) 0%, rgba(139, 69, 19, 0.2) 50%, var(--mm-card-bg) 100%);
+  background-size: 200% 100%;
+  animation: mm-shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+@keyframes mm-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Court line decorations */
+.mm-court-line {
+  height: 1px;
+  background: var(--mm-court-line);
+  margin: 24px 0;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .mm-hero h1 {
+    font-size: 1.8rem;
+  }
+
+  .mm-odds-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mm-hub h1 {
+    font-size: 2rem;
+  }
+
+  .mm-hub-cards {
+    flex-direction: column;
+  }
+
+  .mm-hub-card {
+    padding: 24px 32px;
+  }
+}

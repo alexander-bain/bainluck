@@ -506,6 +506,15 @@ def poll_datagolf_live(self):
     return _tracked_run("datagolf_live", _poll_datagolf_live())
 
 
+# --- March Madness Bracket Sync ---
+
+@celery_app.task(bind=True, name="app.tasks.sync_mm_bracket")
+def sync_mm_bracket(self):
+    """Sync NCAA tournament bracket data from ESPN (seeds, regions, rounds)."""
+    from app.tasks.march_madness import _sync_march_madness_bracket
+    return _tracked_run("mm_bracket_sync", _sync_march_madness_bracket())
+
+
 # --- Event Taxonomy ---
 
 @celery_app.task(bind=True, name="app.tasks.update_event_tags")
@@ -647,6 +656,10 @@ celery_app.conf.beat_schedule = {
     "sync-statpal-team-stats-weekly": {
         "task": "app.tasks.sync_statpal_team_stats",
         "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Weekly Monday 9:00 AM UTC
+    },
+    "sync-mm-bracket": {
+        "task": "app.tasks.sync_mm_bracket",
+        "schedule": crontab(minute="*/15", hour="*", day_of_month="15-30", month_of_year="3,4"),
     },
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
