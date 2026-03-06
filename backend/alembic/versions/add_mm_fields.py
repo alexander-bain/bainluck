@@ -7,7 +7,7 @@ Create Date: 2026-03-05
 
 # revision identifiers
 revision = "add_mm_fields"
-down_revision = "rename_fg_to_mlb"
+down_revision = "add_fm_market_type"
 branch_labels = None
 depends_on = None
 
