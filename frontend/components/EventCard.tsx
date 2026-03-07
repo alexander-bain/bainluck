@@ -283,6 +283,7 @@ export default function EventCard({
                 ) : (event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport)) ? (
                   <img
                     src={(event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport))!}
+                    crossOrigin="anonymous"
                     alt=""
                     width={20}
                     height={20}
@@ -349,6 +350,7 @@ export default function EventCard({
                   <img
                     src={(event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport))!}
                     alt=""
+                    crossOrigin="anonymous"
                     width={20}
                     height={20}
                     loading="lazy"

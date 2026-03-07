@@ -61,8 +61,9 @@ export function espnHeadshotUrl(espnId: string, sport?: string): string {
  * No API call needed — URL pattern is deterministic.
  * Size: 500 (full), 100 (small)
  */
-export function espnTeamLogoUrl(espnTeamId: string, sport: string = "nba", size: 100 | 500 = 100): string {
-  return `https://a.espncdn.com/i/teamlogos/${sport}/${size}/${espnTeamId}.png`;
+export function espnTeamLogoUrl(espnTeamId: string, sport: string = "nba", size: 100 | 500 = 500): string {
+  // Use the combiner URL which is more reliable for cross-origin access
+  return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/${sport}/${size}/${espnTeamId}.png&w=40&h=40&transparent=true`;
 }
 
 /**
@@ -208,9 +209,7 @@ export function espnTeamLogoByName(teamName: string, sportKey?: string | null): 
   const key = teamName.toLowerCase().trim();
   const entry = ESPN_TEAM_IDS[key];
   if (!entry) return null;
-  // Use the sport from the lookup unless overridden
-  const sport = entry.sport;
-  return espnTeamLogoUrl(entry.id, sport, 100);
+  return espnTeamLogoUrl(entry.id, entry.sport, 500);
 }
 
 /**
