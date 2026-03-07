@@ -17,6 +17,50 @@ struct EventCardView: View {
     private var awayColor: Color { Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280") }
     private var homeColor: Color { Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280") }
 
+    /// "Today 7:00 PM", "Tomorrow 3:30 PM", or "Mar 8 7:00 PM"
+    @ViewBuilder
+    private var formattedDateTime: some View {
+        if let dateStr = event.commenceTime, let date = dateStr.asDate {
+            let calendar = Calendar.current
+            let timeFormatter = DateFormatter()
+            timeFormatter.dateFormat = "h:mm a"
+            let timeStr = timeFormatter.string(from: date)
+
+            if calendar.isDateInToday(date) {
+                Text("Today \(timeStr)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if calendar.isDateInTomorrow(date) {
+                Text("Tomorrow \(timeStr)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "MMM d"
+                Text("\(dateFormatter.string(from: date)) \(timeStr)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// "Mar 5" for finished events
+    @ViewBuilder
+    private var formattedDate: some View {
+        if let dateStr = event.commenceTime, let date = dateStr.asDate {
+            let formatter = DateFormatter()
+            let calendar = Calendar.current
+            if calendar.component(.year, from: date) != calendar.component(.year, from: Date()) {
+                formatter.dateFormat = "MMM d, yyyy"
+            } else {
+                formatter.dateFormat = "MMM d"
+            }
+            Text(formatter.string(from: date))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             topBar
@@ -33,7 +77,12 @@ struct EventCardView: View {
             Text(event.sportName ?? sportDisplayName(for: event.sport))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            StatusBadge(status: event.status)
+            StatusBadge(
+                status: event.status,
+                commenceTime: event.commenceTime,
+                gameClock: event.espn?.gameClock,
+                period: event.espn?.period
+            )
             if let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
@@ -62,8 +111,12 @@ struct EventCardView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            if isScheduled || isFinished {
-                RelativeTimeText(dateString: event.commenceTime)
+            if isScheduled {
+                // Upcoming: Show "Today 7:00 PM" or "Mar 8 7:00 PM"
+                formattedDateTime
+            } else if isFinished {
+                // Finished: Show date only "Mar 5"
+                formattedDate
             }
             PinButton(type: "event", id: event.id, compact: true)
         }

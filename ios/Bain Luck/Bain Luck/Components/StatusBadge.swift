@@ -1,9 +1,19 @@
 import SwiftUI
 
-/// Live (red pulse), Scheduled countdown, Final (gray).
+/// Live (red pulse with optional game clock), Scheduled countdown, Final (gray).
 struct StatusBadge: View {
     let status: String?
     var commenceTime: String? = nil
+    /// ESPN game clock, e.g., "5:42"
+    var gameClock: String? = nil
+    /// ESPN period/quarter, e.g., "Q3", "2nd", "3rd Period"
+    var period: String? = nil
+
+    /// Formatted live text: "Q3 5:42", "2nd Half", or "LIVE"
+    private var liveText: String {
+        let parts = [period, gameClock].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? "LIVE" : parts.joined(separator: " ")
+    }
 
     var body: some View {
         switch status {
@@ -13,7 +23,7 @@ struct StatusBadge: View {
                     .fill(.red)
                     .frame(width: 6, height: 6)
                     .modifier(PulseAnimation())
-                Text("LIVE")
+                Text(liveText)
                     .font(.caption2)
                     .fontWeight(.bold)
                     .foregroundStyle(.red)
