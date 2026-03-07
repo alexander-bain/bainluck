@@ -9,7 +9,7 @@ import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { staggerItem } from "@/lib/animations";
 import { cn } from "@/lib/utils";
-import { espnHeadshotUrl, getWikipediaImage } from "@/lib/images";
+import { espnHeadshotUrl, sportKeyToEspnHeadshotSport, getWikipediaImage } from "@/lib/images";
 
 interface StatLine {
   id: number;
@@ -59,7 +59,7 @@ function PlayerAvatar({
   size?: number;
 }) {
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(
-    headshotUrl || (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKey) : null)
+    headshotUrl || (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKeyToEspnHeadshotSport(sportKey)) : null)
   );
   const [failed, setFailed] = useState(false);
 
