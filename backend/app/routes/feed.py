@@ -682,6 +682,18 @@ async def _score_events(
             "away_score": event.away_score,
         }
 
+        # Include ESPN live data for live events (game clock, period, broadcast)
+        if event.status == "live":
+            espn_data = {}
+            if hasattr(event, "game_clock") and event.game_clock:
+                espn_data["game_clock"] = event.game_clock
+            if hasattr(event, "period") and event.period:
+                espn_data["period"] = event.period
+            if hasattr(event, "broadcast_info") and event.broadcast_info:
+                espn_data["broadcast"] = event.broadcast_info
+            if espn_data:
+                event_data["espn"] = espn_data
+
         if current_home_prob is not None:
             odds_data = {
                 "home_probability": current_home_prob,
