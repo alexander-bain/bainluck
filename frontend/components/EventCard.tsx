@@ -217,34 +217,27 @@ export default function EventCard({
             </div>
           </div>
 
-          {/* Score display for live/finished — compact inline for live, centered for finished */}
-          {isLive && event.home_score !== null && event.away_score !== null && (
-            <div className="flex items-center justify-center gap-2 py-1 mb-1.5 bg-accent-live/5 rounded">
-              <span className="font-mono text-lg font-bold text-accent-live">{event.home_score}</span>
-              <span className="text-text-muted text-sm">-</span>
-              <span className="font-mono text-lg font-bold text-accent-live">{event.away_score}</span>
-            </div>
-          )}
+          {/* Finished: centered score block */}
           {isFinished && event.home_score !== null && event.away_score !== null && (
-            <div className="flex items-center justify-center gap-4 py-1.5 mb-2 bg-surface-elevated/50 rounded-lg">
+            <div className="flex items-center justify-center gap-3 py-1.5 mb-2 bg-surface-elevated/50 rounded">
               <div className="text-center">
                 <div className={cn(
-                  "font-mono text-xl font-bold",
+                  "font-mono text-lg font-bold",
                   event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted",
                 )}>
                   {event.home_score}
                 </div>
-                <div className="text-micro-xs text-text-muted uppercase">{homeShort}</div>
+                <div className="text-[9px] text-text-muted uppercase">{homeShort}</div>
               </div>
-              <span className="text-text-muted">—</span>
+              <span className="text-text-muted text-xs">—</span>
               <div className="text-center">
                 <div className={cn(
-                  "font-mono text-xl font-bold",
+                  "font-mono text-lg font-bold",
                   event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted",
                 )}>
                   {event.away_score}
                 </div>
-                <div className="text-micro-xs text-text-muted uppercase">{awayShort}</div>
+                <div className="text-[9px] text-text-muted uppercase">{awayShort}</div>
               </div>
             </div>
           )}
@@ -286,14 +279,26 @@ export default function EventCard({
                 )}>
                   {event.home_team}
                 </span>
-              </div>
-              <AnimatedProbability
-                value={homeProb}
-                className={cn(
-                  "font-mono tabular-nums",
-                  homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                {/* Inline live score */}
+                {isLive && event.home_score !== null && (
+                  <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.home_score}</span>
                 )}
-              />
+              </div>
+              {!isLive && (
+                <AnimatedProbability
+                  value={homeProb}
+                  className={cn(
+                    "font-mono tabular-nums",
+                    homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                  )}
+                />
+              )}
+              {isLive && (
+                <AnimatedProbability
+                  value={homeProb}
+                  className="font-mono tabular-nums text-xs text-text-muted"
+                />
+              )}
             </div>
 
             {/* Team-colored probability bar */}
@@ -301,7 +306,7 @@ export default function EventCard({
               homeProbability={homeProb}
               homeFavorite={homeFavorite}
               useCSSVars
-              height={5}
+              height={isLive ? 3 : 5}
             />
 
             {/* Away team */}
@@ -339,39 +344,48 @@ export default function EventCard({
                 )}>
                   {event.away_team}
                 </span>
-              </div>
-              <AnimatedProbability
-                value={awayProb}
-                className={cn(
-                  "font-mono tabular-nums",
-                  !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                {/* Inline live score */}
+                {isLive && event.away_score !== null && (
+                  <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.away_score}</span>
                 )}
-              />
+              </div>
+              {!isLive && (
+                <AnimatedProbability
+                  value={awayProb}
+                  className={cn(
+                    "font-mono tabular-nums",
+                    !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                  )}
+                />
+              )}
+              {isLive && (
+                <AnimatedProbability
+                  value={awayProb}
+                  className="font-mono tabular-nums text-xs text-text-muted"
+                />
+              )}
             </div>
           </div>
 
-          {/* Footer — contextual info */}
-          <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
-            {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
-              <span className="text-text-muted">
-                Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
-              </span>
-            ) : isLive && opening ? (
-              <span className="text-text-muted">
-                Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
-              </span>
-            ) : isFinished && odds ? (
-              // For finished games, show final live odds (not opening, which is already shown above)
-              <span className="text-text-muted">
-                Final odds: <span className="font-mono text-text-secondary">{Math.round((odds.home_probability ?? 0) * 100)}%/{Math.round((odds.away_probability ?? 0) * 100)}%</span>
-              </span>
-            ) : null}
-            {event.espn?.broadcast && (
-              <span className="text-text-muted truncate ml-auto">
-                {event.espn.broadcast.split(",")[0].trim()}
-              </span>
-            )}
-          </div>
+          {/* Footer — contextual info (hide for finished games) */}
+          {!isFinished && (
+            <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
+              {!isLive && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
+                <span className="text-text-muted">
+                  Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
+                </span>
+              ) : isLive && opening ? (
+                <span className="text-text-muted">
+                  Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
+                </span>
+              ) : null}
+              {event.espn?.broadcast && (
+                <span className="text-text-muted truncate ml-auto">
+                  {event.espn.broadcast.split(",")[0].trim()}
+                </span>
+              )}
+            </div>
+          )}
         </Card>
       </motion.div>
     </Link>

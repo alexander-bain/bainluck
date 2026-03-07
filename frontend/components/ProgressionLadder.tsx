@@ -1,66 +1,38 @@
 "use client";
 
 /**
- * ProgressionLadder — Visual ladder showing playoff/tournament progression.
- *
- * For a single team/player, shows probability of reaching each stage
- * as a vertical "ladder" with rungs representing stages. Higher stages
- * at top, lower probability as you go up (harder to reach).
- *
- * Visual design:
- * - Vertical layout with stages as horizontal "rungs"
- * - Connecting line shows progression path
- * - Probability bar fills each rung proportionally
- * - Color intensity indicates likelihood
- * - Optional "achieved" state for completed stages
+ * ProgressionLadder — Compact grouped display for playoff progression markets.
+ * Designed to be similar in size/style to FuturesCard.
  */
 
 import { motion } from "framer-motion";
-import { staggerContainer, staggerItem, transitionNormal } from "@/lib/animations";
+import { staggerItem } from "@/lib/animations";
+import { cn } from "@/lib/utils";
 
-interface ProgressionStage {
+interface Stage {
   id: number;
   name: string;
   stage_name: string;
   stage_order: number;
   probability: number | null;
-  status?: "pending" | "achieved" | "eliminated";
+  status?: "achieved" | "eliminated" | "pending";
   source?: string;
 }
 
 interface ProgressionLadderProps {
-  /** Team or player name */
   entityName: string;
-  /** Stages in order (lowest to highest) */
-  stages: ProgressionStage[];
-  /** Optional logo/avatar URL */
+  stages: Stage[];
   logoUrl?: string;
-  /** Team colors for styling */
   teamColors?: { primary: string; secondary: string };
-  /** Click handler for stages */
-  onStageClick?: (stage: ProgressionStage) => void;
-  /** Compact horizontal layout */
+  onStageClick?: (stage: Stage) => void;
   horizontal?: boolean;
 }
 
-function probabilityColor(prob: number): string {
-  if (prob >= 0.7) return "text-green-400";
-  if (prob >= 0.4) return "text-amber-400";
-  if (prob >= 0.15) return "text-orange-400";
+function probColor(p: number): string {
+  if (p >= 0.7) return "text-green-400";
+  if (p >= 0.4) return "text-text-primary";
+  if (p >= 0.15) return "text-orange-400";
   return "text-red-400";
-}
-
-function probabilityBgClass(prob: number): string {
-  if (prob >= 0.7) return "bg-green-500";
-  if (prob >= 0.4) return "bg-amber-500";
-  if (prob >= 0.15) return "bg-orange-500";
-  return "bg-red-500";
-}
-
-function stageStatusIcon(status?: string): string | null {
-  if (status === "achieved") return "\u2713"; // checkmark
-  if (status === "eliminated") return "\u2717"; // x mark
-  return null;
 }
 
 export default function ProgressionLadder({
@@ -71,69 +43,39 @@ export default function ProgressionLadder({
   onStageClick,
   horizontal = false,
 }: ProgressionLadderProps) {
-  // Sort stages by order (highest first for vertical, lowest first for horizontal)
-  const sortedStages = [...stages].sort((a, b) =>
-    horizontal ? a.stage_order - b.stage_order : b.stage_order - a.stage_order
-  );
+  const sorted = [...stages].sort((a, b) => a.stage_order - b.stage_order);
+  const display = sorted.slice(0, 5);
 
   if (horizontal) {
     return (
       <motion.div
-        className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-lg p-3"
-        style={
-          teamColors
-            ? {
-                borderTopColor: `rgb(${teamColors.primary})`,
-                borderTopWidth: "2px",
-              }
-            : undefined
-        }
+        className="bg-surface-card border border-surface-border rounded-lg p-3"
+        style={teamColors ? { borderLeftColor: `rgb(${teamColors.primary})`, borderLeftWidth: "3px" } : undefined}
         variants={staggerItem}
       >
-        {/* Compact Header */}
         <div className="flex items-center gap-2 mb-2">
-          {logoUrl && (
-            <img
-              src={logoUrl}
-              alt={entityName}
-              className="w-5 h-5 rounded-full object-contain bg-[var(--surface-elevated)]"
-            />
-          )}
-          <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate flex-1">
-            {entityName}
-          </h3>
+          {logoUrl && <img src={logoUrl} alt="" className="w-5 h-5 rounded-full object-contain" />}
+          <span className="text-sm font-medium text-text-primary truncate">{entityName}</span>
         </div>
-
-        {/* Compact horizontal stages */}
-        <div className="flex items-end gap-0.5">
-          {sortedStages.map((stage) => {
+        <div className="flex gap-1 overflow-x-auto">
+          {display.map((stage) => {
             const prob = stage.probability ?? 0;
-            const height = Math.max(12, prob * 48); // 12px min, 60px max
-            const isAchieved = stage.status === "achieved";
-
+            const achieved = stage.status === "achieved";
             return (
               <button
                 key={stage.id}
-                className="flex-1 flex flex-col items-center gap-0.5"
                 onClick={() => onStageClick?.(stage)}
+                className={cn(
+                  "flex-shrink-0 px-2 py-1 rounded text-xs transition-colors",
+                  achieved ? "bg-green-500/15 text-green-400" : "bg-surface-elevated hover:bg-surface-elevated/80"
+                )}
               >
-                {/* Probability */}
-                <span className={`text-[10px] font-mono font-bold ${probabilityColor(prob)}`}>
-                  {(prob * 100).toFixed(0)}%
-                </span>
-
-                {/* Bar */}
-                <div
-                  className={`w-full rounded-t-sm ${probabilityBgClass(prob)} ${
-                    isAchieved ? "ring-1 ring-green-400" : ""
-                  } ${stage.status === "eliminated" ? "opacity-30" : ""}`}
-                  style={{ height }}
-                />
-
-                {/* Stage name - abbreviated */}
-                <span className="text-[9px] text-[var(--text-muted)] text-center truncate w-full">
-                  {stage.stage_name.replace(/^(Make |Win )/, "").slice(0, 6)}
-                </span>
+                <div className="text-[10px] text-text-muted truncate max-w-[60px]">
+                  {stage.stage_name.replace(/^(Make |Win )/, "")}
+                </div>
+                <div className={cn("font-mono font-medium", achieved ? "text-green-400" : probColor(prob))}>
+                  {achieved ? "done" : `${(prob * 100).toFixed(0)}%`}
+                </div>
               </button>
             );
           })}
@@ -142,80 +84,51 @@ export default function ProgressionLadder({
     );
   }
 
-  // Vertical layout (default) - compact version
   return (
     <motion.div
-      className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-lg overflow-hidden"
-      style={
-        teamColors
-          ? {
-              borderLeftColor: `rgb(${teamColors.primary})`,
-              borderLeftWidth: "3px",
-            }
-          : undefined
-      }
+      className="bg-surface-card border border-surface-border rounded-lg p-3 hover:bg-surface-elevated transition-colors"
+      style={teamColors ? { borderLeftColor: `rgb(${teamColors.primary})`, borderLeftWidth: "3px" } : undefined}
       variants={staggerItem}
     >
-      {/* Compact Header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-[var(--surface-border)]/50">
-        {logoUrl && (
-          <img
-            src={logoUrl}
-            alt={entityName}
-            className="w-6 h-6 rounded-full object-contain bg-[var(--surface-elevated)]"
-          />
-        )}
-        <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate flex-1">
-          {entityName}
-        </h3>
-        <span className="text-[10px] text-[var(--text-muted)] uppercase">Playoffs</span>
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2">
+        {logoUrl && <img src={logoUrl} alt="" className="w-6 h-6 rounded-full object-contain" />}
+        <span className="text-sm font-medium text-text-primary truncate flex-1">{entityName}</span>
+        <span className="text-[10px] text-text-muted">PLAYOFFS</span>
       </div>
 
-      {/* Compact vertical stages */}
-      <div className="px-2 py-2 space-y-1">
-        {sortedStages.map((stage) => {
+      {/* Stages as simple rows */}
+      <div className="space-y-1">
+        {display.map((stage, i) => {
           const prob = stage.probability ?? 0;
-          const statusIcon = stageStatusIcon(stage.status);
-          const isAchieved = stage.status === "achieved";
-          const isEliminated = stage.status === "eliminated";
-
+          const achieved = stage.status === "achieved";
+          const eliminated = stage.status === "eliminated";
+          
           return (
             <button
               key={stage.id}
               onClick={() => onStageClick?.(stage)}
-              className={`
-                w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs
-                transition-colors duration-[var(--duration-fast)]
-                ${isAchieved ? "bg-green-500/10" : ""}
-                ${isEliminated ? "opacity-40" : ""}
-                ${!isAchieved && !isEliminated ? "hover:bg-[var(--surface-elevated)]" : ""}
-              `}
+              className={cn(
+                "w-full flex items-center gap-2 text-xs rounded px-1 py-0.5 transition-colors",
+                achieved ? "bg-green-500/10" : "hover:bg-surface-elevated/50",
+                eliminated && "opacity-40"
+              )}
             >
-              {/* Status dot */}
-              <div
-                className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  isAchieved ? "bg-green-500" : 
-                  isEliminated ? "bg-red-500/50" : 
-                  probabilityBgClass(prob)
-                }`}
-              />
-
-              {/* Stage name */}
-              <span className="flex-1 text-left text-[var(--text-secondary)] truncate">
+              <span className={cn(
+                "w-2 h-2 rounded-full flex-shrink-0",
+                achieved ? "bg-green-500" : eliminated ? "bg-red-500/50" : "bg-text-muted/30"
+              )} />
+              <span className="text-text-secondary flex-1 text-left truncate">
                 {stage.stage_name.replace(/^(Make |Win )/, "")}
               </span>
-
-              {/* Mini probability bar */}
-              <div className="w-12 h-1 bg-[var(--surface-base)] rounded-full overflow-hidden">
+              <div className="w-10 h-1 bg-surface-border rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full ${probabilityBgClass(prob)}`}
+                  className={cn("h-full rounded-full", achieved ? "bg-green-500" : "bg-text-muted/40")}
                   style={{ width: `${prob * 100}%` }}
                 />
               </div>
-
-              {/* Percentage */}
-              <span className={`font-mono font-bold min-w-[32px] text-right ${probabilityColor(prob)}`}>
-                {(prob * 100).toFixed(0)}%
+              <span className={cn("font-mono font-medium min-w-[32px] text-right", achieved ? "text-green-400" : probColor(prob))}>
+                {achieved ? "done" : `${(prob * 100).toFixed(0)}%`}
               </span>
             </button>
           );
