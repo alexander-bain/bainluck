@@ -38,6 +38,12 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Debug: log the API URL on load
+if (typeof window !== "undefined") {
+  console.log("[v0] API_URL configured as:", API_URL);
+  console.log("[v0] NEXT_PUBLIC_API_URL env:", process.env.NEXT_PUBLIC_API_URL);
+}
+
 /**
  * Auth token getter — set by AuthProvider when user signs in.
  * This avoids a circular dependency between api.ts and useAuth.ts.
@@ -64,13 +70,19 @@ async function apiFetch<T>(endpoint: string, options?: RequestInit): Promise<T> 
     }
   }
 
-  const res = await fetch(`${API_URL}${endpoint}`, {
+  const fullUrl = `${API_URL}${endpoint}`;
+  console.log("[v0] apiFetch calling:", fullUrl);
+  
+  const res = await fetch(fullUrl, {
     ...options,
     headers,
   });
 
+  console.log("[v0] apiFetch response status:", res.status, "for", endpoint);
+
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+    console.log("[v0] apiFetch error:", error);
     throw new Error(error.detail || `API error: ${res.status}`);
   }
 
