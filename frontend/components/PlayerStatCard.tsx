@@ -173,123 +173,72 @@ export default function PlayerStatCard({
 
   return (
     <motion.div
-      className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-xl overflow-hidden"
+      className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-lg overflow-hidden"
       style={
         teamColors
           ? {
               borderTopColor: `rgb(${teamColors.primary})`,
-              borderTopWidth: "3px",
+              borderTopWidth: "2px",
             }
           : undefined
       }
       variants={staggerItem}
     >
-      {/* Header */}
-      <div className="p-4 pb-2 flex items-center gap-3">
-        {/* Player headshot */}
+      {/* Compact Header */}
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[var(--surface-border)]/50">
         {headshotUrl && (
-          <div className="relative">
-            <img
-              src={headshotUrl}
-              alt={playerName}
-              className="w-12 h-12 rounded-full object-cover bg-[var(--surface-elevated)]"
-            />
-          </div>
+          <img
+            src={headshotUrl}
+            alt={playerName}
+            className="w-7 h-7 rounded-full object-cover bg-[var(--surface-elevated)]"
+          />
         )}
-
-        {/* Player name + stat */}
-        <div className="flex-1 min-w-0">
-          <h3 className="text-base font-semibold text-[var(--text-primary)] truncate">
-            {playerName}
-          </h3>
-          <span
-            className={`inline-block mt-1 px-2 py-0.5 text-xs font-mono font-semibold rounded border ${getStatColorClass(statCategory)}`}
-          >
-            {getStatLabel(statCategory)}
-          </span>
-        </div>
-
-        {/* Line count */}
-        <div className="text-right">
-          <div className="text-xs text-[var(--text-muted)]">Lines</div>
-          <div className="text-lg font-mono font-bold text-[var(--text-primary)]">
-            {lines.length}
-          </div>
-        </div>
+        <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate flex-1">
+          {playerName}
+        </h3>
+        <span
+          className={`px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded ${getStatColorClass(statCategory)}`}
+        >
+          {getStatLabel(statCategory)}
+        </span>
       </div>
 
-      {/* Sparkline */}
-      <div className="px-4 py-2">
+      {/* Compact sparkline */}
+      <div className="px-3 py-1.5">
         <ThresholdSparkline
           points={sparklinePoints}
           highlightValue={sweetSpotLine.threshold_value}
-          height={40}
+          height={28}
           showLabels
         />
       </div>
 
-      {/* Lines list */}
-      <motion.div
-        className="px-4 pb-4 pt-2 space-y-1"
-        variants={staggerContainer}
-        initial="hidden"
-        animate="visible"
-      >
-        {sortedLines.map((line) => {
+      {/* Compact lines grid - 2 columns */}
+      <div className="px-2 pb-2 grid grid-cols-2 gap-1">
+        {sortedLines.slice(0, 6).map((line) => {
           const prob = line.probability ?? 0;
           const isSweet = line.id === sweetSpotLine.id;
 
           return (
-            <motion.button
+            <button
               key={line.id}
-              variants={staggerItem}
               onClick={() => onLineClick?.(line)}
               className={`
-                w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg
+                flex items-center justify-between gap-1 px-2 py-1 rounded text-xs
                 transition-colors duration-[var(--duration-fast)]
-                ${
-                  isSweet
-                    ? "bg-[var(--accent-brand)]/10 border border-[var(--accent-brand)]/30"
-                    : "bg-[var(--surface-elevated)] hover:bg-[var(--surface-elevated)]/80"
-                }
+                ${isSweet ? "bg-[var(--accent-brand)]/15" : "bg-[var(--surface-elevated)]/50 hover:bg-[var(--surface-elevated)]"}
               `}
             >
-              {/* Threshold */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[var(--text-muted)]">
-                  {line.threshold_direction === "below" ? "U" : "O"}
-                </span>
-                <span className="text-sm font-mono font-semibold text-[var(--text-primary)]">
-                  {line.threshold_value}
-                </span>
-              </div>
-
-              {/* Probability bar + value */}
-              <div className="flex items-center gap-2 flex-1 max-w-[120px]">
-                <div className="flex-1 h-1.5 bg-[var(--surface-base)] rounded-full overflow-hidden">
-                  <motion.div
-                    className={`h-full rounded-full ${
-                      prob >= 0.7
-                        ? "bg-green-500"
-                        : prob >= 0.4
-                          ? "bg-amber-500"
-                          : prob >= 0.15
-                            ? "bg-orange-500"
-                            : "bg-red-500"
-                    }`}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${prob * 100}%` }}
-                    transition={transitionNormal}
-                  />
-                </div>
-                <span className={`text-sm font-mono font-bold min-w-[36px] text-right ${probabilityColor(prob)}`}>
-                  {(prob * 100).toFixed(0)}%
-                </span>
-              </div>
-            </motion.button>
+              <span className="font-mono text-[var(--text-secondary)]">
+                {line.threshold_value}+
+              </span>
+              <span className={`font-mono font-bold ${probabilityColor(prob)}`}>
+                {(prob * 100).toFixed(0)}%
+              </span>
+            </button>
           );
         })}
-      </motion.div>
+      </div>
     </motion.div>
   );
 }

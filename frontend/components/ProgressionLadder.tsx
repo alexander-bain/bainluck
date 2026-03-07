@@ -79,76 +79,62 @@ export default function ProgressionLadder({
   if (horizontal) {
     return (
       <motion.div
-        className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-xl p-4"
+        className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-lg p-3"
         style={
           teamColors
             ? {
                 borderTopColor: `rgb(${teamColors.primary})`,
-                borderTopWidth: "3px",
+                borderTopWidth: "2px",
               }
             : undefined
         }
         variants={staggerItem}
       >
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-4">
+        {/* Compact Header */}
+        <div className="flex items-center gap-2 mb-2">
           {logoUrl && (
             <img
               src={logoUrl}
               alt={entityName}
-              className="w-8 h-8 rounded-full object-contain bg-[var(--surface-elevated)]"
+              className="w-5 h-5 rounded-full object-contain bg-[var(--surface-elevated)]"
             />
           )}
-          <h3 className="text-base font-semibold text-[var(--text-primary)]">
+          <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate flex-1">
             {entityName}
           </h3>
         </div>
 
-        {/* Horizontal stages */}
-        <div className="flex items-end gap-1">
-          {sortedStages.map((stage, idx) => {
+        {/* Compact horizontal stages */}
+        <div className="flex items-end gap-0.5">
+          {sortedStages.map((stage) => {
             const prob = stage.probability ?? 0;
-            const height = Math.max(20, prob * 80); // 20px min, 100px max
-            const statusIcon = stageStatusIcon(stage.status);
+            const height = Math.max(12, prob * 48); // 12px min, 60px max
+            const isAchieved = stage.status === "achieved";
 
             return (
-              <motion.button
+              <button
                 key={stage.id}
-                className="flex-1 flex flex-col items-center gap-1"
+                className="flex-1 flex flex-col items-center gap-0.5"
                 onClick={() => onStageClick?.(stage)}
-                variants={staggerItem}
               >
                 {/* Probability */}
-                <span className={`text-xs font-mono font-bold ${probabilityColor(prob)}`}>
+                <span className={`text-[10px] font-mono font-bold ${probabilityColor(prob)}`}>
                   {(prob * 100).toFixed(0)}%
                 </span>
 
                 {/* Bar */}
-                <motion.div
+                <div
                   className={`w-full rounded-t-sm ${probabilityBgClass(prob)} ${
-                    stage.status === "achieved" ? "ring-2 ring-green-400" : ""
+                    isAchieved ? "ring-1 ring-green-400" : ""
                   } ${stage.status === "eliminated" ? "opacity-30" : ""}`}
-                  initial={{ height: 0 }}
-                  animate={{ height }}
-                  transition={transitionNormal}
+                  style={{ height }}
                 />
 
-                {/* Stage name */}
-                <span className="text-[10px] text-[var(--text-muted)] text-center mt-1 truncate w-full">
-                  {stage.stage_name.replace(/^(Make |Win )/, "")}
+                {/* Stage name - abbreviated */}
+                <span className="text-[9px] text-[var(--text-muted)] text-center truncate w-full">
+                  {stage.stage_name.replace(/^(Make |Win )/, "").slice(0, 6)}
                 </span>
-
-                {/* Status icon */}
-                {statusIcon && (
-                  <span
-                    className={`text-xs ${
-                      stage.status === "achieved" ? "text-green-400" : "text-red-400"
-                    }`}
-                  >
-                    {statusIcon}
-                  </span>
-                )}
-              </motion.button>
+              </button>
             );
           })}
         </div>
@@ -156,111 +142,85 @@ export default function ProgressionLadder({
     );
   }
 
-  // Vertical layout (default)
+  // Vertical layout (default) - compact version
   return (
     <motion.div
-      className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-xl overflow-hidden"
+      className="bg-[var(--surface-card)] border border-[var(--surface-border)] rounded-lg overflow-hidden"
       style={
         teamColors
           ? {
               borderLeftColor: `rgb(${teamColors.primary})`,
-              borderLeftWidth: "4px",
+              borderLeftWidth: "3px",
             }
           : undefined
       }
       variants={staggerItem}
     >
-      {/* Header */}
-      <div className="p-4 pb-2 flex items-center gap-3 border-b border-[var(--surface-border)]">
+      {/* Compact Header */}
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-[var(--surface-border)]/50">
         {logoUrl && (
           <img
             src={logoUrl}
             alt={entityName}
-            className="w-10 h-10 rounded-full object-contain bg-[var(--surface-elevated)]"
+            className="w-6 h-6 rounded-full object-contain bg-[var(--surface-elevated)]"
           />
         )}
-        <div>
-          <h3 className="text-base font-semibold text-[var(--text-primary)]">
-            {entityName}
-          </h3>
-          <p className="text-xs text-[var(--text-muted)]">Playoff Progression</p>
-        </div>
+        <h3 className="text-sm font-semibold text-[var(--text-primary)] truncate flex-1">
+          {entityName}
+        </h3>
+        <span className="text-[10px] text-[var(--text-muted)] uppercase">Playoffs</span>
       </div>
 
-      {/* Vertical ladder */}
-      <motion.div
-        className="p-4 relative"
-        variants={staggerContainer}
-        initial="hidden"
-        animate="visible"
-      >
-        {/* Connecting line */}
-        <div className="absolute left-8 top-4 bottom-4 w-0.5 bg-[var(--surface-border)]" />
+      {/* Compact vertical stages */}
+      <div className="px-2 py-2 space-y-1">
+        {sortedStages.map((stage) => {
+          const prob = stage.probability ?? 0;
+          const statusIcon = stageStatusIcon(stage.status);
+          const isAchieved = stage.status === "achieved";
+          const isEliminated = stage.status === "eliminated";
 
-        {/* Stages */}
-        <div className="space-y-3 relative">
-          {sortedStages.map((stage, idx) => {
-            const prob = stage.probability ?? 0;
-            const statusIcon = stageStatusIcon(stage.status);
-            const isAchieved = stage.status === "achieved";
-            const isEliminated = stage.status === "eliminated";
+          return (
+            <button
+              key={stage.id}
+              onClick={() => onStageClick?.(stage)}
+              className={`
+                w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs
+                transition-colors duration-[var(--duration-fast)]
+                ${isAchieved ? "bg-green-500/10" : ""}
+                ${isEliminated ? "opacity-40" : ""}
+                ${!isAchieved && !isEliminated ? "hover:bg-[var(--surface-elevated)]" : ""}
+              `}
+            >
+              {/* Status dot */}
+              <div
+                className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  isAchieved ? "bg-green-500" : 
+                  isEliminated ? "bg-red-500/50" : 
+                  probabilityBgClass(prob)
+                }`}
+              />
 
-            return (
-              <motion.button
-                key={stage.id}
-                variants={staggerItem}
-                onClick={() => onStageClick?.(stage)}
-                className={`
-                  w-full flex items-center gap-4 p-3 rounded-lg
-                  transition-colors duration-[var(--duration-fast)]
-                  ${isAchieved ? "bg-green-500/10 border border-green-500/30" : ""}
-                  ${isEliminated ? "opacity-50" : ""}
-                  ${!isAchieved && !isEliminated ? "bg-[var(--surface-elevated)] hover:bg-[var(--surface-elevated)]/80" : ""}
-                `}
-              >
-                {/* Stage indicator dot */}
+              {/* Stage name */}
+              <span className="flex-1 text-left text-[var(--text-secondary)] truncate">
+                {stage.stage_name.replace(/^(Make |Win )/, "")}
+              </span>
+
+              {/* Mini probability bar */}
+              <div className="w-12 h-1 bg-[var(--surface-base)] rounded-full overflow-hidden">
                 <div
-                  className={`
-                    w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold
-                    ${isAchieved ? "bg-green-500 text-white" : ""}
-                    ${isEliminated ? "bg-red-500/50 text-white" : ""}
-                    ${!isAchieved && !isEliminated ? `${probabilityBgClass(prob)}/30` : ""}
-                  `}
-                >
-                  {statusIcon}
-                </div>
+                  className={`h-full rounded-full ${probabilityBgClass(prob)}`}
+                  style={{ width: `${prob * 100}%` }}
+                />
+              </div>
 
-                {/* Stage name */}
-                <div className="flex-1 text-left">
-                  <div className="text-sm font-medium text-[var(--text-primary)]">
-                    {stage.stage_name}
-                  </div>
-                </div>
-
-                {/* Probability */}
-                <div className="flex items-center gap-2">
-                  {/* Mini bar */}
-                  <div className="w-16 h-1.5 bg-[var(--surface-base)] rounded-full overflow-hidden">
-                    <motion.div
-                      className={`h-full rounded-full ${probabilityBgClass(prob)}`}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${prob * 100}%` }}
-                      transition={transitionNormal}
-                    />
-                  </div>
-
-                  {/* Percentage */}
-                  <span
-                    className={`text-sm font-mono font-bold min-w-[40px] text-right ${probabilityColor(prob)}`}
-                  >
-                    {(prob * 100).toFixed(0)}%
-                  </span>
-                </div>
-              </motion.button>
-            );
-          })}
-        </div>
-      </motion.div>
+              {/* Percentage */}
+              <span className={`font-mono font-bold min-w-[32px] text-right ${probabilityColor(prob)}`}>
+                {(prob * 100).toFixed(0)}%
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </motion.div>
   );
 }

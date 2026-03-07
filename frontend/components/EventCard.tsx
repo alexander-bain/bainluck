@@ -217,38 +217,34 @@ export default function EventCard({
             </div>
           </div>
 
-          {/* Score display for live/finished */}
-          {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
-            <div className={cn(
-              "flex items-center justify-center gap-6 py-2 mb-2 rounded-lg",
-              isLive ? "bg-accent-live/5" : "bg-surface-elevated/50",
-            )}>
+          {/* Score display for live/finished — compact inline for live, centered for finished */}
+          {isLive && event.home_score !== null && event.away_score !== null && (
+            <div className="flex items-center justify-center gap-2 py-1 mb-1.5 bg-accent-live/5 rounded">
+              <span className="font-mono text-lg font-bold text-accent-live">{event.home_score}</span>
+              <span className="text-text-muted text-sm">-</span>
+              <span className="font-mono text-lg font-bold text-accent-live">{event.away_score}</span>
+            </div>
+          )}
+          {isFinished && event.home_score !== null && event.away_score !== null && (
+            <div className="flex items-center justify-center gap-4 py-1.5 mb-2 bg-surface-elevated/50 rounded-lg">
               <div className="text-center">
                 <div className={cn(
-                  "font-mono text-2xl font-bold",
-                  isFinished
-                    ? (event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted")
-                    : "text-accent-live",
+                  "font-mono text-xl font-bold",
+                  event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted",
                 )}>
                   {event.home_score}
                 </div>
-                <div className="text-micro-xs text-text-muted uppercase tracking-wide">
-                  {homeShort}
-                </div>
+                <div className="text-micro-xs text-text-muted uppercase">{homeShort}</div>
               </div>
-              <span className="text-text-muted font-light text-lg">—</span>
+              <span className="text-text-muted">—</span>
               <div className="text-center">
                 <div className={cn(
-                  "font-mono text-2xl font-bold",
-                  isFinished
-                    ? (event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted")
-                    : "text-accent-live",
+                  "font-mono text-xl font-bold",
+                  event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted",
                 )}>
                   {event.away_score}
                 </div>
-                <div className="text-micro-xs text-text-muted uppercase tracking-wide">
-                  {awayShort}
-                </div>
+                <div className="text-micro-xs text-text-muted uppercase">{awayShort}</div>
               </div>
             </div>
           )}
@@ -364,9 +360,10 @@ export default function EventCard({
               <span className="text-text-muted">
                 Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
               </span>
-            ) : isFinished ? (
+            ) : isFinished && odds ? (
+              // For finished games, show final live odds (not opening, which is already shown above)
               <span className="text-text-muted">
-                Pre-game: <span className="font-mono text-text-secondary">{Math.round((homeProb ?? 0) * 100)}%/{Math.round((awayProb ?? 0) * 100)}%</span>
+                Final odds: <span className="font-mono text-text-secondary">{Math.round((odds.home_probability ?? 0) * 100)}%/{Math.round((odds.away_probability ?? 0) * 100)}%</span>
               </span>
             ) : null}
             {event.espn?.broadcast && (
