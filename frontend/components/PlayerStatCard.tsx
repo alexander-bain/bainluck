@@ -25,6 +25,10 @@ interface PlayerStatCardProps {
   headshotUrl?: string;
   onLineClick?: (line: StatLine) => void;
   compact?: boolean;
+  /** Event context - e.g. "vs Lakers" or "LAL @ BOS" */
+  eventMatchup?: string;
+  /** Event start time (ISO string) */
+  eventTime?: string;
 }
 
 const STAT_LABELS: Record<string, string> = {
@@ -50,7 +54,17 @@ export default function PlayerStatCard({
   lines,
   headshotUrl,
   onLineClick,
+  eventMatchup,
+  eventTime,
 }: PlayerStatCardProps) {
+  // Format event time
+  const eventTimeStr = eventTime ? (() => {
+    const d = new Date(eventTime);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    return isToday ? time : `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${time}`;
+  })() : null;
   const sorted = [...lines].sort((a, b) => a.threshold_value - b.threshold_value);
   // Show max 4 lines
   const display = sorted.slice(0, 4);
@@ -61,7 +75,7 @@ export default function PlayerStatCard({
       variants={staggerItem}
     >
       {/* Header: Player + Stat */}
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-1.5">
         {headshotUrl && (
           <img src={headshotUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
         )}
@@ -72,6 +86,15 @@ export default function PlayerStatCard({
           {getStatLabel(statCategory)}
         </span>
       </div>
+      
+      {/* Event context */}
+      {(eventMatchup || eventTimeStr) && (
+        <div className="text-[10px] text-text-muted mb-2 flex items-center gap-1.5">
+          {eventMatchup && <span>{eventMatchup}</span>}
+          {eventMatchup && eventTimeStr && <span className="opacity-50">·</span>}
+          {eventTimeStr && <span>{eventTimeStr}</span>}
+        </div>
+      )}
 
       {/* Lines as simple rows */}
       <div className="space-y-1">

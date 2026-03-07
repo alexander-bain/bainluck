@@ -617,6 +617,8 @@ export default function DemoPage() {
             <PlayerStatCard
               playerName="Jayson Tatum"
               statCategory="points"
+              eventMatchup="BOS @ MIA"
+              eventTime={new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()}
               lines={[
                 { id: 1, name: "Tatum 20+ Points", probability: 0.92, threshold_value: 20, threshold_direction: "above", source: "kalshi" },
                 { id: 2, name: "Tatum 25+ Points", probability: 0.78, threshold_value: 25, threshold_direction: "above", source: "kalshi" },
@@ -627,6 +629,8 @@ export default function DemoPage() {
             <PlayerStatCard
               playerName="LeBron James"
               statCategory="rebounds"
+              eventMatchup="LAL @ DEN"
+              eventTime={new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString()}
               lines={[
                 { id: 10, name: "LeBron 6+ Rebounds", probability: 0.88, threshold_value: 6, threshold_direction: "above", source: "polymarket" },
                 { id: 11, name: "LeBron 8+ Rebounds", probability: 0.62, threshold_value: 8, threshold_direction: "above", source: "polymarket" },
@@ -636,6 +640,8 @@ export default function DemoPage() {
             <PlayerStatCard
               playerName="Stephen Curry"
               statCategory="threes"
+              eventMatchup="GSW @ PHX"
+              eventTime={new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()}
               lines={[
                 { id: 20, name: "Curry 3+ Threes", probability: 0.92, threshold_value: 3, threshold_direction: "above", source: "kalshi" },
                 { id: 21, name: "Curry 5+ Threes", probability: 0.58, threshold_value: 5, threshold_direction: "above", source: "kalshi" },
@@ -665,6 +671,8 @@ export default function DemoPage() {
             <PlayerStatCard
               playerName="Nikola Jokic"
               statCategory="assists"
+              eventMatchup="DEN vs LAL"
+              eventTime={new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString()}
               lines={[
                 { id: 30, name: "Jokic 8+ Assists", probability: 0.75, threshold_value: 8, threshold_direction: "above", source: "odds_api" },
                 { id: 31, name: "Jokic 10+ Assists", probability: 0.42, threshold_value: 10, threshold_direction: "above", source: "odds_api" },

@@ -119,11 +119,31 @@ export default function EventCard({
   const isFinished = isCompleted || isClosed;
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
-  // Format time compactly
+  // Format time and date compactly
   const gameTime = new Date(event.commence_time);
+  const now = new Date();
+  const isToday = gameTime.toDateString() === now.toDateString();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = gameTime.toDateString() === tomorrow.toDateString();
+  
   const timeStr = gameTime.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+  });
+  
+  // For upcoming: show "Today 7:00 PM" or "Mar 8 7:00 PM"
+  const dateTimeStr = isToday
+    ? `Today ${timeStr}`
+    : isTomorrow
+      ? `Tomorrow ${timeStr}`
+      : `${gameTime.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${timeStr}`;
+  
+  // For finished: show just the date
+  const finishedDateStr = gameTime.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: gameTime.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
   });
 
   // International sport detection — show flags instead of team logos
@@ -181,17 +201,21 @@ export default function EventCard({
               {isLive && (
                 <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-2 py-0.5 rounded text-micro-xs font-semibold">
                   <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-                  {highlightLabel || "LIVE"}
+                  {/* Show period/clock if available, otherwise LIVE */}
+                  {event.espn?.period || event.espn?.game_clock
+                    ? `${event.espn.period || ""}${event.espn.period && event.espn.game_clock ? " " : ""}${event.espn.game_clock || ""}`
+                    : highlightLabel || "LIVE"}
                 </span>
               )}
               {isLive && (event.ei || event.pulse) && (
                 <EIBadge ei={(event.ei || event.pulse)!} size="sm" isLive />
               )}
               {!isLive && !isFinished && (
-                <span className="text-micro text-text-muted">{timeStr}</span>
+                <span className="text-micro text-text-muted">{dateTimeStr}</span>
               )}
               {isFinished && (
                 <>
+                  <span className="text-micro-xs text-text-muted">{finishedDateStr}</span>
                   <span className="text-micro-xs text-text-muted uppercase">Final</span>
                   {(event.ei || event.pulse) && <EIBadge ei={(event.ei || event.pulse)!} size="sm" />}
                 </>
