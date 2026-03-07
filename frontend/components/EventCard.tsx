@@ -12,7 +12,7 @@ import EIBadge from "./EIBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
 import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
-import { isInternationalSport, flagUrl } from "@/lib/images";
+import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
 import { fadeIn } from "@/lib/animations";
 
@@ -280,9 +280,9 @@ export default function EventCard({
                     loading="lazy"
                     className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
                   />
-                ) : event.home_team_data?.logo_small ? (
+                ) : (event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport)) ? (
                   <img
-                    src={event.home_team_data.logo_small}
+                    src={(event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport))!}
                     alt=""
                     width={20}
                     height={20}
@@ -345,9 +345,9 @@ export default function EventCard({
                     loading="lazy"
                     className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
                   />
-                ) : event.away_team_data?.logo_small ? (
+                ) : (event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport)) ? (
                   <img
-                    src={event.away_team_data.logo_small}
+                    src={(event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport))!}
                     alt=""
                     width={20}
                     height={20}

@@ -57,6 +57,163 @@ export function espnHeadshotUrl(espnId: string, sport?: string): string {
 }
 
 /**
+ * Construct ESPN team logo URL from a team ID.
+ * No API call needed — URL pattern is deterministic.
+ * Size: 500 (full), 100 (small)
+ */
+export function espnTeamLogoUrl(espnTeamId: string, sport: string = "nba", size: 100 | 500 = 100): string {
+  return `https://a.espncdn.com/i/teamlogos/${sport}/${size}/${espnTeamId}.png`;
+}
+
+/**
+ * Known ESPN team IDs for major North American teams.
+ * Key format: "Team Name" (lowercased).
+ */
+const ESPN_TEAM_IDS: Record<string, { id: string; sport: string }> = {
+  // NBA
+  "atlanta hawks": { id: "1", sport: "nba" },
+  "boston celtics": { id: "2", sport: "nba" },
+  "brooklyn nets": { id: "17", sport: "nba" },
+  "charlotte hornets": { id: "30", sport: "nba" },
+  "chicago bulls": { id: "4", sport: "nba" },
+  "cleveland cavaliers": { id: "5", sport: "nba" },
+  "dallas mavericks": { id: "6", sport: "nba" },
+  "denver nuggets": { id: "7", sport: "nba" },
+  "detroit pistons": { id: "8", sport: "nba" },
+  "golden state warriors": { id: "9", sport: "nba" },
+  "houston rockets": { id: "10", sport: "nba" },
+  "indiana pacers": { id: "11", sport: "nba" },
+  "los angeles clippers": { id: "12", sport: "nba" },
+  "los angeles lakers": { id: "13", sport: "nba" },
+  "memphis grizzlies": { id: "29", sport: "nba" },
+  "miami heat": { id: "14", sport: "nba" },
+  "milwaukee bucks": { id: "15", sport: "nba" },
+  "minnesota timberwolves": { id: "16", sport: "nba" },
+  "new orleans pelicans": { id: "3", sport: "nba" },
+  "new york knicks": { id: "18", sport: "nba" },
+  "oklahoma city thunder": { id: "25", sport: "nba" },
+  "orlando magic": { id: "19", sport: "nba" },
+  "philadelphia 76ers": { id: "20", sport: "nba" },
+  "phoenix suns": { id: "21", sport: "nba" },
+  "portland trail blazers": { id: "22", sport: "nba" },
+  "sacramento kings": { id: "23", sport: "nba" },
+  "san antonio spurs": { id: "24", sport: "nba" },
+  "toronto raptors": { id: "28", sport: "nba" },
+  "utah jazz": { id: "26", sport: "nba" },
+  "washington wizards": { id: "27", sport: "nba" },
+  // NFL
+  "arizona cardinals": { id: "22", sport: "nfl" },
+  "atlanta falcons": { id: "1", sport: "nfl" },
+  "baltimore ravens": { id: "33", sport: "nfl" },
+  "buffalo bills": { id: "2", sport: "nfl" },
+  "carolina panthers": { id: "29", sport: "nfl" },
+  "chicago bears": { id: "3", sport: "nfl" },
+  "cincinnati bengals": { id: "4", sport: "nfl" },
+  "cleveland browns": { id: "5", sport: "nfl" },
+  "dallas cowboys": { id: "6", sport: "nfl" },
+  "denver broncos": { id: "7", sport: "nfl" },
+  "detroit lions": { id: "8", sport: "nfl" },
+  "green bay packers": { id: "9", sport: "nfl" },
+  "houston texans": { id: "34", sport: "nfl" },
+  "indianapolis colts": { id: "11", sport: "nfl" },
+  "jacksonville jaguars": { id: "30", sport: "nfl" },
+  "kansas city chiefs": { id: "12", sport: "nfl" },
+  "las vegas raiders": { id: "13", sport: "nfl" },
+  "los angeles chargers": { id: "24", sport: "nfl" },
+  "los angeles rams": { id: "14", sport: "nfl" },
+  "miami dolphins": { id: "15", sport: "nfl" },
+  "minnesota vikings": { id: "16", sport: "nfl" },
+  "new england patriots": { id: "17", sport: "nfl" },
+  "new orleans saints": { id: "18", sport: "nfl" },
+  "new york giants": { id: "19", sport: "nfl" },
+  "new york jets": { id: "20", sport: "nfl" },
+  "philadelphia eagles": { id: "21", sport: "nfl" },
+  "pittsburgh steelers": { id: "23", sport: "nfl" },
+  "san francisco 49ers": { id: "25", sport: "nfl" },
+  "seattle seahawks": { id: "26", sport: "nfl" },
+  "tampa bay buccaneers": { id: "27", sport: "nfl" },
+  "tennessee titans": { id: "10", sport: "nfl" },
+  "washington commanders": { id: "28", sport: "nfl" },
+  // MLB
+  "arizona diamondbacks": { id: "29", sport: "mlb" },
+  "atlanta braves": { id: "15", sport: "mlb" },
+  "baltimore orioles": { id: "1", sport: "mlb" },
+  "boston red sox": { id: "2", sport: "mlb" },
+  "chicago cubs": { id: "16", sport: "mlb" },
+  "chicago white sox": { id: "4", sport: "mlb" },
+  "cincinnati reds": { id: "17", sport: "mlb" },
+  "cleveland guardians": { id: "5", sport: "mlb" },
+  "colorado rockies": { id: "27", sport: "mlb" },
+  "detroit tigers": { id: "6", sport: "mlb" },
+  "houston astros": { id: "18", sport: "mlb" },
+  "kansas city royals": { id: "7", sport: "mlb" },
+  "los angeles angels": { id: "3", sport: "mlb" },
+  "los angeles dodgers": { id: "19", sport: "mlb" },
+  "miami marlins": { id: "28", sport: "mlb" },
+  "milwaukee brewers": { id: "21", sport: "mlb" },
+  "minnesota twins": { id: "9", sport: "mlb" },
+  "new york mets": { id: "21", sport: "mlb" },
+  "new york yankees": { id: "10", sport: "mlb" },
+  "oakland athletics": { id: "11", sport: "mlb" },
+  "philadelphia phillies": { id: "22", sport: "mlb" },
+  "pittsburgh pirates": { id: "23", sport: "mlb" },
+  "san diego padres": { id: "25", sport: "mlb" },
+  "san francisco giants": { id: "26", sport: "mlb" },
+  "seattle mariners": { id: "12", sport: "mlb" },
+  "st. louis cardinals": { id: "24", sport: "mlb" },
+  "tampa bay rays": { id: "30", sport: "mlb" },
+  "texas rangers": { id: "13", sport: "mlb" },
+  "toronto blue jays": { id: "14", sport: "mlb" },
+  "washington nationals": { id: "20", sport: "mlb" },
+  // NHL
+  "anaheim ducks": { id: "25", sport: "nhl" },
+  "boston bruins": { id: "1", sport: "nhl" },
+  "buffalo sabres": { id: "2", sport: "nhl" },
+  "calgary flames": { id: "20", sport: "nhl" },
+  "carolina hurricanes": { id: "12", sport: "nhl" },
+  "chicago blackhawks": { id: "4", sport: "nhl" },
+  "colorado avalanche": { id: "17", sport: "nhl" },
+  "columbus blue jackets": { id: "29", sport: "nhl" },
+  "dallas stars": { id: "9", sport: "nhl" },
+  "detroit red wings": { id: "5", sport: "nhl" },
+  "edmonton oilers": { id: "22", sport: "nhl" },
+  "florida panthers": { id: "13", sport: "nhl" },
+  "los angeles kings": { id: "26", sport: "nhl" },
+  "minnesota wild": { id: "30", sport: "nhl" },
+  "montreal canadiens": { id: "8", sport: "nhl" },
+  "nashville predators": { id: "18", sport: "nhl" },
+  "new jersey devils": { id: "1", sport: "nhl" },
+  "new york islanders": { id: "2", sport: "nhl" },
+  "new york rangers": { id: "3", sport: "nhl" },
+  "ottawa senators": { id: "9", sport: "nhl" },
+  "philadelphia flyers": { id: "4", sport: "nhl" },
+  "pittsburgh penguins": { id: "5", sport: "nhl" },
+  "san jose sharks": { id: "28", sport: "nhl" },
+  "seattle kraken": { id: "55", sport: "nhl" },
+  "st. louis blues": { id: "19", sport: "nhl" },
+  "tampa bay lightning": { id: "14", sport: "nhl" },
+  "toronto maple leafs": { id: "10", sport: "nhl" },
+  "utah hockey club": { id: "56", sport: "nhl" },
+  "vancouver canucks": { id: "23", sport: "nhl" },
+  "vegas golden knights": { id: "54", sport: "nhl" },
+  "washington capitals": { id: "15", sport: "nhl" },
+  "winnipeg jets": { id: "52", sport: "nhl" },
+};
+
+/**
+ * Get an ESPN team logo URL by team name (no API call needed).
+ * Returns null if team is not in the lookup table.
+ */
+export function espnTeamLogoByName(teamName: string, sportKey?: string | null): string | null {
+  const key = teamName.toLowerCase().trim();
+  const entry = ESPN_TEAM_IDS[key];
+  if (!entry) return null;
+  // Use the sport from the lookup unless overridden
+  const sport = entry.sport;
+  return espnTeamLogoUrl(entry.id, sport, 100);
+}
+
+/**
  * Map our sport_key to ESPN headshot sport path.
  */
 export function sportKeyToEspnHeadshotSport(sportKey: string | null): string {
