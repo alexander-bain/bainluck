@@ -31,14 +31,25 @@ interface PlayerStatCardProps {
   eventTime?: string;
 }
 
-const STAT_LABELS: Record<string, string> = {
-  points: "PTS", rebounds: "REB", assists: "AST", steals: "STL", blocks: "BLK",
-  threes: "3PM", strikeouts: "K", hits: "H", home_runs: "HR", goals: "G",
-  touchdowns: "TD", passing_yards: "PASS", rushing_yards: "RUSH",
+const STAT_LABELS: Record<string, { abbr: string; full: string }> = {
+  points:        { abbr: "PTS",  full: "Points" },
+  rebounds:      { abbr: "REB",  full: "Rebounds" },
+  assists:       { abbr: "AST",  full: "Assists" },
+  steals:        { abbr: "STL",  full: "Steals" },
+  blocks:        { abbr: "BLK",  full: "Blocks" },
+  threes:        { abbr: "3PM",  full: "3-Pointers Made" },
+  strikeouts:    { abbr: "K",    full: "Strikeouts" },
+  hits:          { abbr: "H",    full: "Hits" },
+  home_runs:     { abbr: "HR",   full: "Home Runs" },
+  rbis:          { abbr: "RBI",  full: "RBIs" },
+  goals:         { abbr: "G",    full: "Goals" },
+  touchdowns:    { abbr: "TD",   full: "Touchdowns" },
+  passing_yards: { abbr: "PASS", full: "Passing Yards" },
+  rushing_yards: { abbr: "RUSH", full: "Rushing Yards" },
 };
 
-function getStatLabel(cat: string): string {
-  return STAT_LABELS[cat] || cat.toUpperCase().slice(0, 3);
+function getStatInfo(cat: string): { abbr: string; full: string } {
+  return STAT_LABELS[cat] || { abbr: cat.toUpperCase().slice(0, 4), full: cat };
 }
 
 function probColor(p: number): string {
@@ -65,8 +76,8 @@ export default function PlayerStatCard({
     const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
     return isToday ? time : `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${time}`;
   })() : null;
+  const stat = getStatInfo(statCategory);
   const sorted = [...lines].sort((a, b) => a.threshold_value - b.threshold_value);
-  // Show max 4 lines
   const display = sorted.slice(0, 4);
 
   return (
@@ -74,24 +85,27 @@ export default function PlayerStatCard({
       className="bg-surface-card border border-surface-border rounded-lg p-3 hover:bg-surface-elevated transition-colors"
       variants={staggerItem}
     >
-      {/* Header: Player + Stat */}
-      <div className="flex items-center gap-2 mb-1.5">
-        {headshotUrl && (
-          <img src={headshotUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
-        )}
-        <span className="text-sm font-medium text-text-primary truncate flex-1">
-          {playerName}
-        </span>
-        <span className="text-[10px] font-mono text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded">
-          {getStatLabel(statCategory)}
-        </span>
+      {/* Header: Stat name prominent, player name secondary */}
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-semibold text-text-primary">{stat.full}</span>
+            <span className="text-[10px] font-mono text-text-muted">{stat.abbr}</span>
+          </div>
+          <div className="flex items-center gap-1 mt-0.5">
+            {headshotUrl && (
+              <img src={headshotUrl} alt="" className="w-4 h-4 rounded-full object-cover" />
+            )}
+            <span className="text-[11px] text-text-muted truncate">{playerName}</span>
+          </div>
+        </div>
       </div>
-      
+
       {/* Event context */}
       {(eventMatchup || eventTimeStr) && (
-        <div className="text-[10px] text-text-muted mb-2 flex items-center gap-1.5">
-          {eventMatchup && <span>{eventMatchup}</span>}
-          {eventMatchup && eventTimeStr && <span className="opacity-50">·</span>}
+        <div className="text-[10px] text-text-muted mb-2 flex items-center gap-1 border-t border-surface-border/40 pt-1.5 mt-1.5">
+          {eventMatchup && <span className="font-medium text-text-secondary">{eventMatchup}</span>}
+          {eventMatchup && eventTimeStr && <span className="opacity-40">·</span>}
           {eventTimeStr && <span>{eventTimeStr}</span>}
         </div>
       )}
