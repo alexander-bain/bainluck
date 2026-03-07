@@ -6,8 +6,10 @@
  */
 
 import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
 import { staggerItem } from "@/lib/animations";
 import { cn } from "@/lib/utils";
+import { espnHeadshotUrl, getWikipediaImage } from "@/lib/images";
 
 interface StatLine {
   id: number;
@@ -22,13 +24,90 @@ interface PlayerStatCardProps {
   playerName: string;
   statCategory: string;
   lines: StatLine[];
+  /** Direct headshot URL if already resolved */
   headshotUrl?: string;
+  /** ESPN player ID — used to construct headshot URL directly */
+  espnPlayerId?: string;
+  /** Sport key for ESPN headshot path (e.g. "basketball_nba") */
+  sportKey?: string;
   onLineClick?: (line: StatLine) => void;
   compact?: boolean;
   /** Event context - e.g. "vs Lakers" or "LAL @ BOS" */
   eventMatchup?: string;
   /** Event start time (ISO string) */
   eventTime?: string;
+}
+
+/**
+ * PlayerAvatar — resolves headshot with fallback chain:
+ * 1. Direct headshotUrl prop
+ * 2. ESPN via espnPlayerId
+ * 3. Wikipedia image search by name
+ * 4. Initials
+ */
+function PlayerAvatar({
+  playerName,
+  headshotUrl,
+  espnPlayerId,
+  sportKey,
+  size = 28,
+}: {
+  playerName: string;
+  headshotUrl?: string;
+  espnPlayerId?: string;
+  sportKey?: string;
+  size?: number;
+}) {
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(
+    headshotUrl || (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKey) : null)
+  );
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (resolvedUrl || failed) return;
+    // Fallback to Wikipedia
+    getWikipediaImage(playerName).then((url) => {
+      if (url) setResolvedUrl(url);
+      else setFailed(true);
+    });
+  }, [playerName, resolvedUrl, failed]);
+
+  const initials = playerName
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  const dim = `${size}px`;
+
+  if (resolvedUrl && !failed) {
+    return (
+      <img
+        src={resolvedUrl}
+        alt={playerName}
+        width={size}
+        height={size}
+        className="rounded-full object-cover flex-shrink-0 bg-surface-elevated"
+        style={{ width: dim, height: dim }}
+        onError={() => {
+          setResolvedUrl(null);
+          setFailed(true);
+        }}
+      />
+    );
+  }
+
+  // Initials fallback
+  return (
+    <div
+      className="rounded-full bg-accent-brand/20 flex items-center justify-center flex-shrink-0 text-accent-brand font-semibold"
+      style={{ width: dim, height: dim, fontSize: size * 0.38 }}
+      aria-label={playerName}
+    >
+      {initials}
+    </div>
+  );
 }
 
 const STAT_LABELS: Record<string, { abbr: string; full: string }> = {
@@ -64,6 +143,8 @@ export default function PlayerStatCard({
   statCategory,
   lines,
   headshotUrl,
+  espnPlayerId,
+  sportKey,
   onLineClick,
   eventMatchup,
   eventTime,
@@ -85,19 +166,21 @@ export default function PlayerStatCard({
       className="bg-surface-card border border-surface-border rounded-lg p-3 hover:bg-surface-elevated transition-colors"
       variants={staggerItem}
     >
-      {/* Header: Stat name prominent, player name secondary */}
-      <div className="flex items-start justify-between gap-2 mb-1">
+      {/* Header: Avatar + stat name prominent, player name secondary */}
+      <div className="flex items-center gap-2.5 mb-1">
+        <PlayerAvatar
+          playerName={playerName}
+          headshotUrl={headshotUrl}
+          espnPlayerId={espnPlayerId}
+          sportKey={sportKey}
+          size={32}
+        />
         <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold text-text-primary">{stat.full}</span>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-sm font-semibold text-text-primary leading-tight">{stat.full}</span>
             <span className="text-[10px] font-mono text-text-muted">{stat.abbr}</span>
           </div>
-          <div className="flex items-center gap-1 mt-0.5">
-            {headshotUrl && (
-              <img src={headshotUrl} alt="" className="w-4 h-4 rounded-full object-cover" />
-            )}
-            <span className="text-[11px] text-text-muted truncate">{playerName}</span>
-          </div>
+          <span className="text-[11px] text-text-muted truncate block">{playerName}</span>
         </div>
       </div>
 

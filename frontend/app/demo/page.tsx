@@ -616,6 +616,8 @@ export default function DemoPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <PlayerStatCard
               playerName="Jayson Tatum"
+              espnPlayerId="4065648"
+              sportKey="basketball_nba"
               statCategory="points"
               eventMatchup="BOS @ MIA"
               eventTime={new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()}
@@ -628,6 +630,8 @@ export default function DemoPage() {
             />
             <PlayerStatCard
               playerName="LeBron James"
+              espnPlayerId="1966"
+              sportKey="basketball_nba"
               statCategory="rebounds"
               eventMatchup="LAL @ DEN"
               eventTime={new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString()}
@@ -639,6 +643,8 @@ export default function DemoPage() {
             />
             <PlayerStatCard
               playerName="Stephen Curry"
+              espnPlayerId="3975"
+              sportKey="basketball_nba"
               statCategory="threes"
               eventMatchup="GSW @ PHX"
               eventTime={new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()}
@@ -670,6 +676,8 @@ export default function DemoPage() {
             />
             <PlayerStatCard
               playerName="Nikola Jokic"
+              espnPlayerId="3112335"
+              sportKey="basketball_nba"
               statCategory="assists"
               eventMatchup="DEN vs LAL"
               eventTime={new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString()}

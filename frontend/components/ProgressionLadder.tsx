@@ -6,8 +6,74 @@
  */
 
 import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
 import { staggerItem } from "@/lib/animations";
 import { cn } from "@/lib/utils";
+import { getWikipediaImage } from "@/lib/images";
+
+/**
+ * TeamLogo — resolves a team logo with fallback:
+ * 1. Direct logoUrl prop
+ * 2. Wikipedia image search by team name
+ * 3. Colored initials square using teamColors
+ */
+function TeamLogo({
+  entityName,
+  logoUrl,
+  teamColors,
+  size = 28,
+}: {
+  entityName: string;
+  logoUrl?: string;
+  teamColors?: { primary: string };
+  size?: number;
+}) {
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(logoUrl || null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (resolvedUrl || failed) return;
+    getWikipediaImage(entityName).then((url) => {
+      if (url) setResolvedUrl(url);
+      else setFailed(true);
+    });
+  }, [entityName, resolvedUrl, failed]);
+
+  const initials = entityName
+    .split(" ")
+    .filter((w) => w.length > 2)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 3)
+    .toUpperCase();
+
+  const dim = `${size}px`;
+  const bg = teamColors ? `rgb(${teamColors.primary})` : undefined;
+
+  if (resolvedUrl && !failed) {
+    return (
+      <img
+        src={resolvedUrl}
+        alt={entityName}
+        width={size}
+        height={size}
+        className="rounded object-contain flex-shrink-0 bg-surface-elevated/30"
+        style={{ width: dim, height: dim }}
+        onError={() => { setResolvedUrl(null); setFailed(true); }}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="rounded flex items-center justify-center flex-shrink-0 text-white font-bold"
+      style={{ width: dim, height: dim, backgroundColor: bg || "rgb(var(--surface-elevated))", fontSize: size * 0.32 }}
+      aria-label={entityName}
+    >
+      {initials}
+    </div>
+  );
+}
 
 interface Stage {
   id: number;
@@ -54,7 +120,7 @@ export default function ProgressionLadder({
         variants={staggerItem}
       >
         <div className="flex items-center gap-2 mb-2">
-          {logoUrl && <img src={logoUrl} alt="" className="w-5 h-5 rounded-full object-contain" />}
+          <TeamLogo entityName={entityName} logoUrl={logoUrl} teamColors={teamColors} size={22} />
           <span className="text-sm font-medium text-text-primary truncate">{entityName}</span>
         </div>
         <div className="flex gap-1 overflow-x-auto">
@@ -92,7 +158,12 @@ export default function ProgressionLadder({
     >
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
-        {logoUrl && <img src={logoUrl} alt="" className="w-6 h-6 rounded-full object-contain" />}
+        <TeamLogo
+          entityName={entityName}
+          logoUrl={logoUrl}
+          teamColors={teamColors}
+          size={28}
+        />
         <span className="text-sm font-medium text-text-primary truncate flex-1">{entityName}</span>
         <span className="text-[10px] text-text-muted">PLAYOFFS</span>
       </div>
