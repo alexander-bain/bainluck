@@ -49,6 +49,10 @@ function StatPropItem({
       statCategory={item.stat_category}
       lines={item.lines}
       compact={compact}
+      espnPlayerId={item.espn_player_id}
+      sportKey={item.sport_key}
+      eventMatchup={item.event_matchup}
+      eventTime={item.event_time}
       onLineClick={() => onClick?.()}
     />
   );
@@ -151,7 +155,8 @@ export default function GroupedFeedRenderer({
 
   return (
     <motion.div
-      className="space-y-4"
+      className="grid gap-3"
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
       variants={staggerContainer}
       initial="hidden"
       animate="visible"

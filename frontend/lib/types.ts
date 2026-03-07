@@ -418,6 +418,14 @@ export interface StatPropFeedItem {
   stat_category: string;
   lines: StatPropLine[];
   market_count: number;
+  /** ESPN player ID for headshot lookup */
+  espn_player_id?: string;
+  /** Sport key for ESPN headshot path */
+  sport_key?: string;
+  /** Event matchup, e.g., "BOS @ MIA" */
+  event_matchup?: string;
+  /** Event start time (ISO string) */
+  event_time?: string;
 }
 
 export interface PlayoffStage {

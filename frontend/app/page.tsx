@@ -3,10 +3,11 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { motion } from "framer-motion";
-import { fetchEventsByIds, fetchFuturesByIds, fetchFeed } from "@/lib/api";
+import { fetchEventsByIds, fetchFuturesByIds, fetchFeed, fetchGroupedFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import { staggerContainer, staggerItem } from "@/lib/animations";
-import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type { Event, FuturesMarketDetailResponse, FeedItem, FeedEventData, FeedFuturesData, GroupedFeedResponse } from "@/lib/types";
+import GroupedFeedRenderer from "@/components/GroupedFeedRenderer";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import FeedCard from "@/components/FeedCard";
@@ -75,6 +76,17 @@ export default function HomePage() {
         : ["feed-anon", ...(activeTags ?? [])],
     () => fetchFeed({ limit: 200, tags: activeTags ?? undefined }),
     { refreshInterval: 30000 }
+  );
+
+  // Grouped futures feed (player props, playoff progressions, etc.)
+  const {
+    data: groupedData,
+    error: groupedError,
+    isLoading: groupedLoading,
+  } = useSWR<GroupedFeedResponse>(
+    authLoading ? null : ["grouped-feed", ...(activeTags ?? [])],
+    () => fetchGroupedFeed({ limit: 20 }),
+    { refreshInterval: 60000 }
   );
 
   // =========================================================================
@@ -326,6 +338,27 @@ export default function HomePage() {
 
               {/* Onboarding CTA */}
               <OnboardingBanner teamCount={feedData?.personalization?.team_count} />
+
+              {/* Grouped Futures Section (Player Props, Playoff Progressions) */}
+              {groupedData && groupedData.feed.length > 0 && (
+                <section>
+                  <motion.div
+                    className="flex items-center gap-2 mb-3"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
+                  >
+                    <span className="text-sm">🎯</span>
+                    <h2 className="text-sm font-semibold text-text-primary">
+                      Player Props & Progressions
+                    </h2>
+                    <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                      {groupedData.feed.length}
+                    </span>
+                  </motion.div>
+                  <GroupedFeedRenderer items={groupedData.feed} compact />
+                </section>
+              )}
 
               {/* Grouped feed sections */}
               {feedSections.map((section, sectionIndex) => (
