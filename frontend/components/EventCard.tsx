@@ -12,7 +12,7 @@ import EIBadge from "./EIBadge";
 import PersonalizedBadge from "./PersonalizedBadge";
 import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
-import { isInternationalSport, flagUrl } from "@/lib/images";
+import { isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { teamColorStyle } from "@/lib/teamColors";
 import { fadeIn } from "@/lib/animations";
 
@@ -119,11 +119,31 @@ export default function EventCard({
   const isFinished = isCompleted || isClosed;
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
-  // Format time compactly
+  // Format time and date compactly
   const gameTime = new Date(event.commence_time);
+  const now = new Date();
+  const isToday = gameTime.toDateString() === now.toDateString();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = gameTime.toDateString() === tomorrow.toDateString();
+  
   const timeStr = gameTime.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+  });
+  
+  // For upcoming: show "Today 7:00 PM" or "Mar 8 7:00 PM"
+  const dateTimeStr = isToday
+    ? `Today ${timeStr}`
+    : isTomorrow
+      ? `Tomorrow ${timeStr}`
+      : `${gameTime.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${timeStr}`;
+  
+  // For finished: show just the date
+  const finishedDateStr = gameTime.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: gameTime.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
   });
 
   // International sport detection — show flags instead of team logos
@@ -181,17 +201,21 @@ export default function EventCard({
               {isLive && (
                 <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-2 py-0.5 rounded text-micro-xs font-semibold">
                   <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-                  {highlightLabel || "LIVE"}
+                  {/* Show period/clock if available, otherwise LIVE */}
+                  {event.espn?.period || event.espn?.game_clock
+                    ? `${event.espn.period || ""}${event.espn.period && event.espn.game_clock ? " " : ""}${event.espn.game_clock || ""}`
+                    : highlightLabel || "LIVE"}
                 </span>
               )}
               {isLive && (event.ei || event.pulse) && (
                 <EIBadge ei={(event.ei || event.pulse)!} size="sm" isLive />
               )}
               {!isLive && !isFinished && (
-                <span className="text-micro text-text-muted">{timeStr}</span>
+                <span className="text-micro text-text-muted">{dateTimeStr}</span>
               )}
               {isFinished && (
                 <>
+                  <span className="text-micro-xs text-text-muted">{finishedDateStr}</span>
                   <span className="text-micro-xs text-text-muted uppercase">Final</span>
                   {(event.ei || event.pulse) && <EIBadge ei={(event.ei || event.pulse)!} size="sm" />}
                 </>
@@ -217,38 +241,27 @@ export default function EventCard({
             </div>
           </div>
 
-          {/* Score display for live/finished */}
-          {(isLive || isFinished) && event.home_score !== null && event.away_score !== null && (
-            <div className={cn(
-              "flex items-center justify-center gap-6 py-2 mb-2 rounded-lg",
-              isLive ? "bg-accent-live/5" : "bg-surface-elevated/50",
-            )}>
+          {/* Finished: centered score block */}
+          {isFinished && event.home_score !== null && event.away_score !== null && (
+            <div className="flex items-center justify-center gap-3 py-1.5 mb-2 bg-surface-elevated/50 rounded">
               <div className="text-center">
                 <div className={cn(
-                  "font-mono text-2xl font-bold",
-                  isFinished
-                    ? (event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted")
-                    : "text-accent-live",
+                  "font-mono text-lg font-bold",
+                  event.home_score! > event.away_score! ? "text-text-primary" : "text-text-muted",
                 )}>
                   {event.home_score}
                 </div>
-                <div className="text-micro-xs text-text-muted uppercase tracking-wide">
-                  {homeShort}
-                </div>
+                <div className="text-[9px] text-text-muted uppercase">{homeShort}</div>
               </div>
-              <span className="text-text-muted font-light text-lg">—</span>
+              <span className="text-text-muted text-xs">—</span>
               <div className="text-center">
                 <div className={cn(
-                  "font-mono text-2xl font-bold",
-                  isFinished
-                    ? (event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted")
-                    : "text-accent-live",
+                  "font-mono text-lg font-bold",
+                  event.away_score! > event.home_score! ? "text-text-primary" : "text-text-muted",
                 )}>
                   {event.away_score}
                 </div>
-                <div className="text-micro-xs text-text-muted uppercase tracking-wide">
-                  {awayShort}
-                </div>
+                <div className="text-[9px] text-text-muted uppercase">{awayShort}</div>
               </div>
             </div>
           )}
@@ -267,9 +280,10 @@ export default function EventCard({
                     loading="lazy"
                     className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
                   />
-                ) : event.home_team_data?.logo_small ? (
+                ) : (event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport)) ? (
                   <img
-                    src={event.home_team_data.logo_small}
+                    src={(event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport))!}
+                    crossOrigin="anonymous"
                     alt=""
                     width={20}
                     height={20}
@@ -290,14 +304,26 @@ export default function EventCard({
                 )}>
                   {event.home_team}
                 </span>
-              </div>
-              <AnimatedProbability
-                value={homeProb}
-                className={cn(
-                  "font-mono tabular-nums",
-                  homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                {/* Inline live score */}
+                {isLive && event.home_score !== null && (
+                  <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.home_score}</span>
                 )}
-              />
+              </div>
+              {!isLive && (
+                <AnimatedProbability
+                  value={homeProb}
+                  className={cn(
+                    "font-mono tabular-nums",
+                    homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                  )}
+                />
+              )}
+              {isLive && (
+                <AnimatedProbability
+                  value={homeProb}
+                  className="font-mono tabular-nums text-xs text-text-muted"
+                />
+              )}
             </div>
 
             {/* Team-colored probability bar */}
@@ -305,7 +331,7 @@ export default function EventCard({
               homeProbability={homeProb}
               homeFavorite={homeFavorite}
               useCSSVars
-              height={5}
+              height={isLive ? 3 : 5}
             />
 
             {/* Away team */}
@@ -320,10 +346,11 @@ export default function EventCard({
                     loading="lazy"
                     className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
                   />
-                ) : event.away_team_data?.logo_small ? (
+                ) : (event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport)) ? (
                   <img
-                    src={event.away_team_data.logo_small}
+                    src={(event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport))!}
                     alt=""
+                    crossOrigin="anonymous"
                     width={20}
                     height={20}
                     loading="lazy"
@@ -343,38 +370,48 @@ export default function EventCard({
                 )}>
                   {event.away_team}
                 </span>
-              </div>
-              <AnimatedProbability
-                value={awayProb}
-                className={cn(
-                  "font-mono tabular-nums",
-                  !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                {/* Inline live score */}
+                {isLive && event.away_score !== null && (
+                  <span className="font-mono text-sm font-bold text-accent-live ml-auto">{event.away_score}</span>
                 )}
-              />
+              </div>
+              {!isLive && (
+                <AnimatedProbability
+                  value={awayProb}
+                  className={cn(
+                    "font-mono tabular-nums",
+                    !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
+                  )}
+                />
+              )}
+              {isLive && (
+                <AnimatedProbability
+                  value={awayProb}
+                  className="font-mono tabular-nums text-xs text-text-muted"
+                />
+              )}
             </div>
           </div>
 
-          {/* Footer — contextual info */}
-          <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
-            {!isLive && !isFinished && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
-              <span className="text-text-muted">
-                Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
-              </span>
-            ) : isLive && opening ? (
-              <span className="text-text-muted">
-                Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
-              </span>
-            ) : isFinished ? (
-              <span className="text-text-muted">
-                Pre-game: <span className="font-mono text-text-secondary">{Math.round((homeProb ?? 0) * 100)}%/{Math.round((awayProb ?? 0) * 100)}%</span>
-              </span>
-            ) : null}
-            {event.espn?.broadcast && (
-              <span className="text-text-muted truncate ml-auto">
-                {event.espn.broadcast.split(",")[0].trim()}
-              </span>
-            )}
-          </div>
+          {/* Footer — contextual info (hide for finished games) */}
+          {!isFinished && (
+            <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
+              {!isLive && odds && odds.projected_home_score !== null && odds.projected_away_score !== null ? (
+                <span className="text-text-muted">
+                  Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
+                </span>
+              ) : isLive && opening ? (
+                <span className="text-text-muted">
+                  Opened <span className="font-mono text-text-secondary">{Math.round(opening.home_probability * 100)}/{Math.round((opening.away_probability ?? (1 - opening.home_probability)) * 100)}</span>
+                </span>
+              ) : null}
+              {event.espn?.broadcast && (
+                <span className="text-text-muted truncate ml-auto">
+                  {event.espn.broadcast.split(",")[0].trim()}
+                </span>
+              )}
+            </div>
+          )}
         </Card>
       </motion.div>
     </Link>
