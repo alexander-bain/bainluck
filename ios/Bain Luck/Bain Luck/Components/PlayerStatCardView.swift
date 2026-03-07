@@ -1,29 +1,26 @@
 import SwiftUI
 
-/// Data for a single stat line in a player prop market.
-struct StatLine: Identifiable {
-    let id: Int
-    let name: String
-    let probability: Double?
-    let thresholdValue: Int
-    let thresholdDirection: String
-    let source: String?
-}
-
 /// Compact grouped display for player prop markets — matches web PlayerStatCard.
 struct PlayerStatCardView: View {
     let playerName: String
     let statCategory: String
-    let lines: [StatLine]
+    let lines: [StatPropLine]
     var headshotUrl: String? = nil
     var espnPlayerId: String? = nil
     var sportKey: String? = nil
     var eventMatchup: String? = nil
-    var eventTime: Date? = nil
-    var onLineClick: ((StatLine) -> Void)? = nil
+    var eventTime: String? = nil
+    var onLineClick: ((StatPropLine) -> Void)? = nil
 
-    private var sortedLines: [StatLine] {
+    private var sortedLines: [StatPropLine] {
         lines.sorted { $0.thresholdValue < $1.thresholdValue }.prefix(4).map { $0 }
+    }
+    
+    private var parsedEventTime: Date? {
+        guard let eventTime else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: eventTime) ?? ISO8601DateFormatter().date(from: eventTime)
     }
 
     private var statInfo: (abbr: String, full: String) {
@@ -31,7 +28,7 @@ struct PlayerStatCardView: View {
     }
 
     private var eventTimeStr: String? {
-        guard let date = eventTime else { return nil }
+        guard let date = parsedEventTime else { return nil }
         let calendar = Calendar.current
         let timeFormatter = DateFormatter()
         timeFormatter.dateFormat = "h:mm a"

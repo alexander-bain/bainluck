@@ -9,6 +9,7 @@ private let logger = Logger(subsystem: "com.bainluck", category: "feed")
 
 final class FeedViewModel: ObservableObject {
     @Published var items: [FeedItem] = []
+    @Published var groupedItems: [GroupedFeedItem] = []
     @Published var total = 0
     @Published var loading = true
     @Published var error: String?
@@ -46,9 +47,20 @@ final class FeedViewModel: ObservableObject {
         let isInitial = items.isEmpty
         if isInitial { loading = true }
         do {
-            let feed = try await APIClient.shared.fetchFeed(limit: 200)
+            // Fetch both feeds in parallel
+            async let feedTask = APIClient.shared.fetchFeed(limit: 200)
+            async let groupedTask = APIClient.shared.fetchGroupedFeed(limit: 20)
+            
+            let feed = try await feedTask
             items = feed.items
             total = feed.total
+            
+            // Grouped feed is optional — don't fail if it errors
+            if let grouped = try? await groupedTask {
+                groupedItems = grouped.feed
+                logger.info("Grouped feed loaded: \(grouped.feed.count) items")
+            }
+            
             error = nil
             loading = false
             liveCount = liveNow.count
@@ -252,6 +264,11 @@ struct FeedView: View {
             if !markets.isEmpty {
                 feedSection(title: "Top Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: markets)
             }
+
+            // Grouped futures (player props, playoff progressions)
+            if !vm.groupedItems.isEmpty {
+                groupedFuturesSection
+            }
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
@@ -302,6 +319,66 @@ struct FeedView: View {
                     .background(Color.secondary.opacity(0.12))
                     .clipShape(Capsule())
             }
+        }
+    }
+
+    // MARK: - Grouped Futures Section
+
+    private var groupedFuturesSection: some View {
+        Section {
+            if sizeClass == .regular {
+                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
+                    ForEach(vm.groupedItems) { item in
+                        groupedRow(item)
+                            .padding(12)
+                            .background(Color(.tertiarySystemGroupedBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            } else {
+                ForEach(vm.groupedItems) { item in
+                    groupedRow(item)
+                }
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Label("Player Props", systemImage: "person.fill")
+                    .foregroundStyle(.green)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .textCase(nil)
+                Text("\(vm.groupedItems.count)")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func groupedRow(_ item: GroupedFeedItem) -> some View {
+        if item.type == "stat_prop", let playerName = item.playerName, let statCategory = item.statCategory, let lines = item.lines {
+            PlayerStatCardView(
+                playerName: playerName,
+                statCategory: statCategory,
+                lines: lines,
+                espnPlayerId: item.espnPlayerId,
+                sportKey: item.sportKey,
+                eventMatchup: item.eventMatchup,
+                eventTime: item.eventTime
+            )
+        } else if item.type == "playoff_progression", let entityName = item.entityName, let stages = item.stages {
+            ProgressionLadderView(
+                entityName: entityName,
+                stages: stages,
+                logoUrl: item.logoUrl,
+                teamColors: item.teamColors
+            )
         }
     }
 

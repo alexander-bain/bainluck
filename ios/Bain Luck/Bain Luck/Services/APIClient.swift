@@ -292,6 +292,16 @@ actor APIClient {
         return try await fetch("/api/feed", query: q, cacheTTL: 30)
     }
 
+    // MARK: - Grouped Futures Feed
+
+    func fetchGroupedFeed(limit: Int = 20, offset: Int = 0) async throws -> GroupedFeedResponse {
+        let q: [String: String] = [
+            "limit": "\(limit)",
+            "offset": "\(offset)",
+        ]
+        return try await fetch("/api/futures/grouped-feed", query: q, cacheTTL: 60)
+    }
+
     // MARK: - Event Detail
 
     func fetchEvent(id: Int) async throws -> EventDetail {
