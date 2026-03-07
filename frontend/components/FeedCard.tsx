@@ -7,7 +7,7 @@ import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
-import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
+import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
 
 interface FeedCardProps {
@@ -179,11 +179,14 @@ function ThumbButtons({
 // Team logo — small inline logo with fallback
 // ============================================================================
 
-function TeamLogo({ url, name, color, isFlag }: { url: string | null | undefined; name: string; color?: string | null; isFlag?: boolean }) {
-  if (url) {
+function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | undefined; name: string; color?: string | null; isFlag?: boolean; sport?: string | null }) {
+  // Try primary URL, then ESPN fallback
+  const resolvedUrl = url || (!isFlag ? espnTeamLogoByName(name, sport) : null);
+  
+  if (resolvedUrl) {
     return (
       <Image
-        src={url}
+        src={resolvedUrl}
         alt={name}
         width={20}
         height={isFlag ? 15 : 20}
@@ -299,7 +302,10 @@ function EventFeedCard({
             {isLive && (
               <span className="flex items-center gap-1 bg-accent-live/15 text-accent-live px-1.5 py-0.5 rounded text-[11px] font-semibold flex-shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-                LIVE
+                {/* Show period/clock if available */}
+                {data.espn?.period || data.espn?.game_clock
+                  ? `${data.espn.period || ""}${data.espn.period && data.espn.game_clock ? " " : ""}${data.espn.game_clock || ""}`
+                  : "LIVE"}
               </span>
             )}
             {isFinished && (
@@ -360,7 +366,7 @@ function EventFeedCard({
           <div className="flex-1 min-w-0">
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
-              <TeamLogo url={awayFlagImgUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={!!awayFlagImgUrl} />
+              <TeamLogo url={awayFlagImgUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={!!awayFlagImgUrl} sport={data.sport} />
               <span className={`text-sm truncate ${
                 isFinished
                   ? (awayWon ? "font-semibold text-text-primary" : "text-text-muted")
@@ -376,7 +382,7 @@ function EventFeedCard({
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
-              <TeamLogo url={homeFlagImgUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={!!homeFlagImgUrl} />
+              <TeamLogo url={homeFlagImgUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={!!homeFlagImgUrl} sport={data.sport} />
               <span className={`text-sm truncate ${
                 isFinished
                   ? (homeWon ? "font-semibold text-text-primary" : "text-text-muted")

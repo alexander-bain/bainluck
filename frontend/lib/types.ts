@@ -781,6 +781,12 @@ export interface FeedEventData {
     label: string;
   };
   event_tags?: string[];
+  /** ESPN live game data */
+  espn?: {
+    game_clock?: string;
+    period?: string;
+    broadcast?: string;
+  };
 }
 
 export interface FeedFuturesOutcome {
