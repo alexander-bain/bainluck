@@ -440,6 +440,12 @@ actor APIClient {
         return try await fetch("/api/me/pins")
     }
 
+    // MARK: - Team Futures
+
+    func fetchMyTeamFutures(limit: Int = 50) async throws -> TeamFuturesResponse {
+        return try await fetch("/api/me/team-futures", query: ["limit": "\(limit)"], cacheTTL: 300)
+    }
+
     func addPin(type: String, id: Int) async throws -> StatusResponse {
         return try await postEncodable("/api/me/pins", body: PinRequest(pinType: type, targetId: id))
     }

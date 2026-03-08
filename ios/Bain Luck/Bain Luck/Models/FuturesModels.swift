@@ -82,3 +82,36 @@ nonisolated struct MatchedPlayer: Decodable, Sendable {
     let headshot: String?
     let espnId: String?
 }
+
+// MARK: - Team Futures (My Stuff)
+
+nonisolated struct TeamFuturesResponse: Decodable, Sendable {
+    let items: [TeamFutureItem]
+    let teamIds: [Int]
+    let totalCount: Int
+}
+
+nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
+    let outcomeId: Int
+    let outcomeName: String
+    let marketId: Int
+    let marketName: String
+    let marketTier: Int?
+    let category: String?
+    let source: String?
+    let probability: Double?
+    let probabilityChange24h: Double?
+    let rank: Int?
+    let totalOutcomes: Int?
+    let resolutionDate: String?
+    let matchedTeam: TeamFutureTeam
+
+    var id: Int { outcomeId }
+}
+
+nonisolated struct TeamFutureTeam: Decodable, Sendable {
+    let id: Int
+    let name: String
+    let logoSmall: String?
+    let primaryColor: String?
+}
