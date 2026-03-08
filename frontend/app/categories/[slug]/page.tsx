@@ -5,9 +5,10 @@ import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import { getCategoryByKey, SPORT_CATEGORIES } from "@/lib/sportCategories";
-import { groupFeedIntoSections } from "@/lib/feedSections";
+import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
+import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import Link from "next/link";
@@ -123,34 +124,59 @@ export default function CategoryPage({
             </div>
           ) : (
             <div className="space-y-6">
-              {feedSections.map((section) => (
-                <section key={section.key}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-sm">{section.emoji}</span>
-                    <h2 className={`text-sm font-semibold ${section.accent}`}>
-                      {section.title}
-                    </h2>
-                    <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-                      {section.items.length}
-                    </span>
-                  </div>
-                  <div
-                    className="grid gap-3"
-                    style={{
-                      gridTemplateColumns:
-                        "repeat(auto-fill, minmax(min(100%, 320px), 1fr))",
-                    }}
-                  >
-                    {section.items.map((item) => {
-                      const key =
-                        item.type === "event"
-                          ? `cat-event-${(item.data as FeedEventData).id}`
-                          : `cat-futures-${(item.data as FeedFuturesData).id}`;
-                      return <FeedCard key={key} item={item} />;
-                    })}
-                  </div>
-                </section>
-              ))}
+              {feedSections.map((section) => {
+                const isMarkets = section.key === "markets";
+                const groupedMarkets = isMarkets
+                  ? groupTopMarkets(section.items)
+                  : null;
+
+                return (
+                  <section key={section.key}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-sm">{section.emoji}</span>
+                      <h2 className={`text-sm font-semibold ${section.accent}`}>
+                        {section.title}
+                      </h2>
+                      <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                        {section.items.length}
+                      </span>
+                    </div>
+                    <div
+                      className="grid gap-3"
+                      style={{
+                        gridTemplateColumns:
+                          "repeat(auto-fill, minmax(min(100%, 320px), 1fr))",
+                      }}
+                    >
+                      {isMarkets && groupedMarkets
+                        ? groupedMarkets.ordered.map((entry) => {
+                            if (isGroupedMarket(entry)) {
+                              return (
+                                <CombinedFeedCard
+                                  key={`grouped-${entry.canonicalKey}`}
+                                  group={entry}
+                                />
+                              );
+                            }
+                            const data = entry.data as FeedFuturesData;
+                            return (
+                              <FeedCard
+                                key={`cat-futures-${data.id}`}
+                                item={entry}
+                              />
+                            );
+                          })
+                        : section.items.map((item) => {
+                            const key =
+                              item.type === "event"
+                                ? `cat-event-${(item.data as FeedEventData).id}`
+                                : `cat-futures-${(item.data as FeedFuturesData).id}`;
+                            return <FeedCard key={key} item={item} />;
+                          })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           )}
         </>

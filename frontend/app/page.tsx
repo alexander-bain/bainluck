@@ -16,7 +16,8 @@ import OnboardingBanner from "@/components/OnboardingBanner";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import { getCategoryForLeague } from "@/lib/sportCategories";
-import { groupFeedIntoSections } from "@/lib/feedSections";
+import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
+import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
 import {
   useAnalytics,
@@ -361,60 +362,110 @@ export default function HomePage() {
               )}
 
               {/* Grouped feed sections */}
-              {feedSections.map((section, sectionIndex) => (
-                <section key={section.key}>
-                  {/* Divider between sections */}
-                  {sectionIndex > 0 && (
-                    <div className="border-t border-surface-border/30 -mt-1 mb-5" />
-                  )}
-                  <motion.div
-                    className="flex items-center gap-2 mb-3"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.3, ease: "easeOut" }}
-                  >
-                    <span className="text-sm">{section.emoji}</span>
-                    <h2 className={`text-sm font-semibold ${section.accent}`}>
-                      {section.title}
-                    </h2>
-                    <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-                      {section.items.length}
-                    </span>
-                  </motion.div>
-                  <div
-                    className="grid gap-3"
-                    style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
-                  >
-                    {section.items.map((item, itemIndex) => {
-                      const key = item.type === "event"
-                        ? `feed-event-${(item.data as FeedEventData).id}`
-                        : `feed-futures-${(item.data as FeedFuturesData).id}`;
-                      const category = item.type === "event"
-                        ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
-                        : (item.data as FeedFuturesData).llm_sport_category ?? "other";
-                      return (
-                        <motion.div
-                          key={key}
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{
-                            duration: 0.3,
-                            ease: "easeOut",
-                            delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
-                          }}
-                        >
-                          <FeedCard
-                            item={item}
-                            onThumbsUp={handleThumbsUp}
-                            onThumbsDown={handleThumbsDown}
-                            category={category}
-                          />
-                        </motion.div>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
+              {feedSections.map((section, sectionIndex) => {
+                // For "markets" section, group futures by canonical_market_key
+                const isMarkets = section.key === "markets";
+                const groupedMarkets = isMarkets
+                  ? groupTopMarkets(section.items)
+                  : null;
+
+                return (
+                  <section key={section.key}>
+                    {/* Divider between sections */}
+                    {sectionIndex > 0 && (
+                      <div className="border-t border-surface-border/30 -mt-1 mb-5" />
+                    )}
+                    <motion.div
+                      className="flex items-center gap-2 mb-3"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                    >
+                      <span className="text-sm">{section.emoji}</span>
+                      <h2 className={`text-sm font-semibold ${section.accent}`}>
+                        {section.title}
+                      </h2>
+                      <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                        {section.items.length}
+                      </span>
+                    </motion.div>
+                    <div
+                      className="grid gap-3"
+                      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                    >
+                      {isMarkets && groupedMarkets
+                        ? /* Top Markets: render grouped cross-source cards + singles */
+                          groupedMarkets.ordered.map((entry, itemIndex) => {
+                            if (isGroupedMarket(entry)) {
+                              return (
+                                <motion.div
+                                  key={`grouped-${entry.canonicalKey}`}
+                                  initial={{ opacity: 0, y: 8 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{
+                                    duration: 0.3,
+                                    ease: "easeOut",
+                                    delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                                  }}
+                                >
+                                  <CombinedFeedCard group={entry} />
+                                </motion.div>
+                              );
+                            }
+                            const singleData = entry.data as FeedFuturesData;
+                            const category = singleData.llm_sport_category ?? "other";
+                            return (
+                              <motion.div
+                                key={`feed-futures-${singleData.id}`}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{
+                                  duration: 0.3,
+                                  ease: "easeOut",
+                                  delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                                }}
+                              >
+                                <FeedCard
+                                  item={entry}
+                                  onThumbsUp={handleThumbsUp}
+                                  onThumbsDown={handleThumbsDown}
+                                  category={category}
+                                />
+                              </motion.div>
+                            );
+                          })
+                        : /* Other sections: render as before */
+                          section.items.map((item, itemIndex) => {
+                            const key = item.type === "event"
+                              ? `feed-event-${(item.data as FeedEventData).id}`
+                              : `feed-futures-${(item.data as FeedFuturesData).id}`;
+                            const category = item.type === "event"
+                              ? getCategoryForLeague((item.data as FeedEventData).sport ?? "")?.key ?? "other"
+                              : (item.data as FeedFuturesData).llm_sport_category ?? "other";
+                            return (
+                              <motion.div
+                                key={key}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{
+                                  duration: 0.3,
+                                  ease: "easeOut",
+                                  delay: Math.min(itemIndex, 10) * 0.05 + 0.15,
+                                }}
+                              >
+                                <FeedCard
+                                  item={item}
+                                  onThumbsUp={handleThumbsUp}
+                                  onThumbsDown={handleThumbsDown}
+                                  category={category}
+                                />
+                              </motion.div>
+                            );
+                          })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           )}
 

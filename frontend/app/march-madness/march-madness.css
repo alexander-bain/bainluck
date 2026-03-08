@@ -400,6 +400,26 @@
   100% { background-position: -200% 0; }
 }
 
+/* Bracket card hover */
+.mm-bracket-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mm-bracket-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Live game pulsing dot */
+.mm-live-dot {
+  animation: mm-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes mm-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
 /* Court line decorations */
 .mm-court-line {
   height: 1px;
