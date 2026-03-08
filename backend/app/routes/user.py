@@ -1202,7 +1202,7 @@ async def get_team_futures(
     if not team_ids:
         return {"items": [], "team_ids": [], "total_count": 0}
 
-    data = await _query_team_futures(team_ids, db, limit=min(limit, 50))
+    data = await _query_team_futures(team_ids, db, limit=min(limit, 100))
     return data
 
 

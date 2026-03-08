@@ -117,7 +117,7 @@ function MyTeamsFeed() {
   // Fetch team futures ("Your Teams' Odds")
   const { data: teamFuturesData } = useSWR(
     "my-team-futures",
-    () => fetchMyTeamFutures(50),
+    () => fetchMyTeamFutures(100),
     { refreshInterval: 300000 }, // 5 min
   );
 
@@ -520,8 +520,14 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
     } else {
       canonKey = `market_${item.market_id}`;
     }
-    const outcomeName = (item.outcome_name || "").toLowerCase().trim();
-    const groupKey = `${canonKey}::${outcomeName}`;
+    // For progression stages, merge by team_id so "Boston Celtics", "Celtics",
+    // and "BOS" all group together for the same team across sources.
+    // For non-progression items, merge by outcome name as before.
+    const isProgression = detectedType != null && PROGRESSION_STAGES[detectedType] != null;
+    const groupSuffix = isProgression
+      ? `team_${item.matched_team.id}`
+      : (item.outcome_name || "").toLowerCase().trim();
+    const groupKey = `${canonKey}::${groupSuffix}`;
 
     if (!byKey.has(groupKey)) {
       byKey.set(groupKey, {
