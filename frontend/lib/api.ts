@@ -510,6 +510,24 @@ export async function fetchProbabilityTimeline(
 }
 
 /**
+ * Fetch cross-source merged probability timeline for markets sharing a canonical key.
+ * Returns averaged probabilities across sources in the same shape as fetchProbabilityTimeline.
+ */
+export async function fetchCrossSourceTimeline(
+  canonicalKey: string,
+  top?: number,
+  hours?: number
+): Promise<ProbabilityTimelineResponse> {
+  const params = new URLSearchParams();
+  params.set("canonical_key", canonicalKey);
+  if (top !== undefined) params.set("top", String(top));
+  if (hours !== undefined) params.set("hours", String(hours));
+  return apiFetch<ProbabilityTimelineResponse>(
+    `/api/futures/cross-source-timeline?${params.toString()}`
+  );
+}
+
+/**
  * Fetch related futures for an event (team-linked championship/award markets)
  */
 export async function fetchRelatedFutures(

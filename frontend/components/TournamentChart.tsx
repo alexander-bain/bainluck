@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import useSWR from "swr";
-import { fetchProbabilityTimeline } from "@/lib/api";
+import { fetchProbabilityTimeline, fetchCrossSourceTimeline } from "@/lib/api";
 import type { ProbabilityTimelineResponse, TimelineEntry, TimelineOutcomeMeta } from "@/lib/types";
 import {
   ComposedChart,
@@ -30,6 +30,13 @@ const POSITION_COLORS = [
 
 const FIELD_COLOR = "#6b7280";
 
+/** Source display labels and colors for cross-source legend */
+const SOURCE_DISPLAY: Record<string, { label: string; color: string }> = {
+  odds_api: { label: "Sportsbooks", color: "#94a3b8" },
+  kalshi: { label: "Kalshi", color: "#22c55e" },
+  polymarket: { label: "Polymarket", color: "#3b82f6" },
+};
+
 type TopFilter = 5 | 10 | "all";
 type SortColumn = "prob" | "change" | "name";
 
@@ -39,6 +46,8 @@ type SortColumn = "prob" | "change" | "name";
 
 interface TournamentChartProps {
   marketId: number;
+  /** Canonical market key — when provided, fetches cross-source merged timeline */
+  canonicalKey?: string | null;
   /** Hours of history to fetch (default 168 = 7 days) */
   hours?: number;
   /** Chart height in px (default 300) */
@@ -133,6 +142,7 @@ function formatXAxisTick(ts: string, rangeHours: number): string {
 
 export default function TournamentChart({
   marketId,
+  canonicalKey,
   hours = 168,
   height = 300,
   className,
@@ -144,9 +154,19 @@ export default function TournamentChart({
   const [sortAsc, setSortAsc] = useState(false);
 
   // Fetch with top=50 to get all outcomes, then filter client-side
+  // Use cross-source endpoint when canonical key is available
+  const swrKey = canonicalKey
+    ? `tournament-timeline-cross-${canonicalKey}-${hours}`
+    : `tournament-timeline-${marketId}-${hours}`;
+
+  const fetcher = () =>
+    canonicalKey
+      ? fetchCrossSourceTimeline(canonicalKey, 50, hours)
+      : fetchProbabilityTimeline(marketId, 50, hours);
+
   const { data, error, isLoading } = useSWR(
-    `tournament-timeline-${marketId}-${hours}`,
-    () => fetchProbabilityTimeline(marketId, 50, hours),
+    swrKey,
+    fetcher,
     { revalidateOnFocus: false, dedupingInterval: 60_000 }
   );
 
@@ -331,6 +351,29 @@ export default function TournamentChart({
             ))}
           </div>
         </div>
+        {/* Cross-source badge */}
+        {data.sources && data.sources.length > 1 && (
+          <div className="flex items-center gap-2">
+            {data.sources.map((src) => {
+              const label = SOURCE_DISPLAY[src]?.label ?? src;
+              const color = SOURCE_DISPLAY[src]?.color ?? "#6b7280";
+              return (
+                <div key={src} className="flex items-center gap-1">
+                  <div
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-[10px] text-muted-foreground">
+                    {label}
+                  </span>
+                </div>
+              );
+            })}
+            <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">
+              Merged
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Evolution Chart + Player Selection Panel */}

@@ -549,6 +549,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           ) : market && market.outcomes.length > 10 ? (
             <TournamentChart
               marketId={marketId}
+              canonicalKey={
+                market.canonical_market_key && (market.source_count ?? 1) > 1
+                  ? market.canonical_market_key
+                  : undefined
+              }
               hours={168}
             />
           ) : (

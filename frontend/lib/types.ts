@@ -1138,6 +1138,10 @@ export interface ProbabilityTimelineResponse {
   market_name: string;
   sport_category?: string | null;
   source?: string | null;
+  /** Present when this is a cross-source merged timeline */
+  canonical_key?: string | null;
+  /** Sources contributing to the merged timeline */
+  sources?: string[];
   hours: number;
   top: number;
   bucket_seconds: number;
