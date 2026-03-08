@@ -16,6 +16,8 @@ import { fetchEventsByIds, fetchFuturesByIds } from "@/lib/api";
 import type { Event, FuturesMarketDetailResponse } from "@/lib/types";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
+import ProgressionLadder from "@/components/ProgressionLadder";
+import { useRouter } from "next/navigation";
 
 export default function MyStuffPage() {
   // Analytics hooks must be called before conditional returns
@@ -406,6 +408,7 @@ function MyTeamsFeed() {
 
 // ---------------------------------------------------------------------------
 // Your Teams' Odds section — grouped by market type with cross-source merging
+// and playoff journey detection
 // ---------------------------------------------------------------------------
 
 const INITIAL_SHOW = 10;
@@ -437,6 +440,47 @@ interface MergedTeamFuture {
   avgProbability: number | null;
   /** Best movement (largest absolute change). */
   bestChange: number | null;
+  /** Extracted market_type from canonical_market_key (e.g., "championship", "make_playoffs"). */
+  marketType: string | null;
+}
+
+// Playoff progression stages — order determines funnel display.
+// Labels match ProgressionLadder demo style (short, no "Make"/"Win" prefix).
+const PROGRESSION_STAGES: Record<string, { order: number; label: string }> = {
+  make_playoffs: { order: 1, label: "Playoffs" },
+  division_winner: { order: 2, label: "Division" },
+  conference_winner: { order: 3, label: "Conf Finals" },
+  championship: { order: 4, label: "Champion" },
+};
+
+/** Extract market_type from canonical_market_key (format: sport:league:type:season). */
+function extractMarketType(key: string | null | undefined): string | null {
+  if (!key) return null;
+  const parts = key.split(":");
+  return parts.length >= 3 ? parts[2] : null;
+}
+
+/** Convert hex color (e.g. "1D428A" or "#1D428A") to RGB string (e.g. "29, 66, 138"). */
+function hexToRgb(hex: string): string {
+  const h = hex.replace(/^#/, "");
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `${r}, ${g}, ${b}`;
+}
+
+/** A team's playoff journey — multiple stages from "Make Playoffs" to "Championship". */
+interface PlayoffJourney {
+  teamId: number;
+  teamName: string;
+  teamLogo: string | null;
+  teamColor: string | null;
+  /** Stages sorted by progression order (make_playoffs → championship). */
+  stages: {
+    merged: MergedTeamFuture;
+    stageOrder: number;
+    stageLabel: string;
+  }[];
 }
 
 /**
@@ -458,6 +502,7 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
         sources: [],
         avgProbability: null,
         bestChange: null,
+        marketType: extractMarketType(item.canonical_market_key),
       });
     }
 
@@ -499,6 +544,71 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
   return Array.from(byKey.values());
 }
 
+/**
+ * Detect playoff journeys: teams with 2+ progression stages.
+ * Returns journeys and remaining items that aren't part of any journey.
+ */
+function detectPlayoffJourneys(merged: MergedTeamFuture[]): {
+  journeys: PlayoffJourney[];
+  remaining: MergedTeamFuture[];
+} {
+  // Group by team across progression stages
+  const teamStages = new Map<number, { team: TeamFutureItem["matched_team"]; stages: { merged: MergedTeamFuture; stageOrder: number; stageLabel: string }[] }>();
+  const remaining: MergedTeamFuture[] = [];
+
+  for (const m of merged) {
+    const mType = m.marketType;
+    const stage = mType ? PROGRESSION_STAGES[mType] : null;
+
+    if (!stage) {
+      remaining.push(m);
+      continue;
+    }
+
+    const teamId = m.primary.matched_team.id;
+    if (!teamStages.has(teamId)) {
+      teamStages.set(teamId, {
+        team: m.primary.matched_team,
+        stages: [],
+      });
+    }
+
+    teamStages.get(teamId)!.stages.push({
+      merged: m,
+      stageOrder: stage.order,
+      stageLabel: stage.label,
+    });
+  }
+
+  // Build journeys for teams with 2+ stages; singles go to remaining
+  const journeys: PlayoffJourney[] = [];
+  for (const [teamId, data] of Array.from(teamStages.entries())) {
+    if (data.stages.length >= 2) {
+      // Sort by progression order (make_playoffs first → championship last)
+      data.stages.sort((a, b) => a.stageOrder - b.stageOrder);
+      journeys.push({
+        teamId,
+        teamName: data.team.name,
+        teamLogo: data.team.logo_small,
+        teamColor: data.team.primary_color,
+        stages: data.stages,
+      });
+    } else {
+      // Single stage — treat as regular item
+      remaining.push(data.stages[0].merged);
+    }
+  }
+
+  // Sort journeys by championship probability (descending)
+  journeys.sort((a, b) => {
+    const champA = a.stages.find((s) => s.stageOrder === 4)?.merged.avgProbability ?? 0;
+    const champB = b.stages.find((s) => s.stageOrder === 4)?.merged.avgProbability ?? 0;
+    return champB - champA;
+  });
+
+  return { journeys, remaining };
+}
+
 function TeamFuturesSection({
   items,
   teamIds,
@@ -510,29 +620,19 @@ function TeamFuturesSection({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const router = useRouter();
 
-  // Merge cross-source duplicates, then group by market type
-  const { orderedMerged, groupedMerged } = useMemo(() => {
+  // Merge cross-source duplicates, detect journeys, then group remainder
+  const { journeys, awards, other, uniqueCount } = useMemo(() => {
     const merged = mergeTeamFutures(items);
+    const { journeys: detectedJourneys, remaining } = detectPlayoffJourneys(merged);
 
-    const championships: MergedTeamFuture[] = [];
-    const awards: MergedTeamFuture[] = [];
-    const other: MergedTeamFuture[] = [];
+    const awardItems: MergedTeamFuture[] = [];
+    const otherItems: MergedTeamFuture[] = [];
 
-    for (const m of merged) {
+    for (const m of remaining) {
       const name = (m.primary.market_name || "").toLowerCase();
-      const tier = m.primary.market_tier;
       if (
-        tier === 1 ||
-        name.includes("champion") ||
-        name.includes("winner") ||
-        name.includes("world series") ||
-        name.includes("super bowl") ||
-        name.includes("stanley cup") ||
-        name.includes("finals")
-      ) {
-        championships.push(m);
-      } else if (
         name.includes("mvp") ||
         name.includes("award") ||
         name.includes("player") ||
@@ -545,28 +645,27 @@ function TeamFuturesSection({
         name.includes("sixth man") ||
         name.includes("clutch")
       ) {
-        awards.push(m);
+        awardItems.push(m);
       } else {
-        other.push(m);
+        otherItems.push(m);
       }
     }
 
-    // Sort each group: highest avg probability first
     const sortByProb = (a: MergedTeamFuture, b: MergedTeamFuture) =>
       (b.avgProbability ?? 0) - (a.avgProbability ?? 0);
-    championships.sort(sortByProb);
-    awards.sort(sortByProb);
-    other.sort(sortByProb);
+    awardItems.sort(sortByProb);
+    otherItems.sort(sortByProb);
+
+    // Count unique entries: each journey counts as 1 + individual items
+    const count = detectedJourneys.length + awardItems.length + otherItems.length;
 
     return {
-      orderedMerged: [...championships, ...awards, ...other],
-      groupedMerged: { championships, awards, other },
+      journeys: detectedJourneys,
+      awards: awardItems,
+      other: otherItems,
+      uniqueCount: count,
     };
   }, [items]);
-
-  const displayed = expanded
-    ? orderedMerged
-    : orderedMerged.slice(0, INITIAL_SHOW);
 
   const handleShare = useCallback(async () => {
     const url = `${window.location.origin}/share/my-odds?teams=${teamIds.join(",")}`;
@@ -579,19 +678,14 @@ function TeamFuturesSection({
     }
   }, [teamIds]);
 
-  // Build display groups from displayed items
-  const displayedChampionships = displayed.filter((m) =>
-    groupedMerged.championships.includes(m)
-  );
-  const displayedAwards = displayed.filter((m) =>
-    groupedMerged.awards.includes(m)
-  );
-  const displayedOther = displayed.filter((m) =>
-    groupedMerged.other.includes(m)
-  );
-
-  // Unique market count after merging
-  const uniqueCount = orderedMerged.length;
+  // Apply show-more limit to flat items (journeys always show)
+  const allFlatItems = [...awards, ...other];
+  const displayedFlat = expanded
+    ? allFlatItems
+    : allFlatItems.slice(0, Math.max(0, INITIAL_SHOW - journeys.length));
+  const displayedAwards = displayedFlat.filter((m) => awards.includes(m));
+  const displayedOther = displayedFlat.filter((m) => other.includes(m));
+  const totalItems = journeys.length + allFlatItems.length;
 
   return (
     <section>
@@ -613,32 +707,53 @@ function TeamFuturesSection({
         </button>
       </div>
 
-      <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
-        {/* Championship odds */}
-        {displayedChampionships.length > 0 && (
-          <MergedFuturesGroup label="Championships" items={displayedChampionships} />
-        )}
+      {/* Playoff Journey cards — using ProgressionLadder from demo */}
+      {journeys.length > 0 && (
+        <div className="grid gap-3 mb-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
+          {journeys.map((journey) => (
+            <ProgressionLadder
+              key={journey.teamId}
+              entityName={journey.teamName}
+              stages={journey.stages.map((s) => ({
+                id: s.merged.primary.market_id,
+                name: s.merged.primary.market_name || "",
+                stage_name: s.stageLabel,
+                stage_order: s.stageOrder,
+                probability: s.merged.avgProbability,
+                status:
+                  s.merged.avgProbability !== null && s.merged.avgProbability >= 0.99
+                    ? ("achieved" as const)
+                    : undefined,
+              }))}
+              logoUrl={journey.teamLogo || undefined}
+              teamColors={
+                journey.teamColor
+                  ? { primary: hexToRgb(journey.teamColor), secondary: "128, 128, 128" }
+                  : undefined
+              }
+              onStageClick={(stage) => router.push(`/futures/${stage.id}`)}
+            />
+          ))}
+        </div>
+      )}
 
-        {/* Award/player odds */}
-        {displayedAwards.length > 0 && (
-          <MergedFuturesGroup
-            label="Awards & Players"
-            items={displayedAwards}
-            borderTop={displayedChampionships.length > 0}
-          />
-        )}
+      {/* Remaining items (awards + other) */}
+      {(displayedAwards.length > 0 || displayedOther.length > 0) && (
+        <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
+          {displayedAwards.length > 0 && (
+            <MergedFuturesGroup label="Awards & Players" items={displayedAwards} />
+          )}
+          {displayedOther.length > 0 && (
+            <MergedFuturesGroup
+              label="Other Markets"
+              items={displayedOther}
+              borderTop={displayedAwards.length > 0}
+            />
+          )}
+        </div>
+      )}
 
-        {/* Other markets */}
-        {displayedOther.length > 0 && (
-          <MergedFuturesGroup
-            label="Other Markets"
-            items={displayedOther}
-            borderTop={displayedChampionships.length > 0 || displayedAwards.length > 0}
-          />
-        )}
-      </div>
-
-      {orderedMerged.length > INITIAL_SHOW && (
+      {totalItems > INITIAL_SHOW && (
         <button
           onClick={() => setExpanded(!expanded)}
           className="mt-2 text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity w-full text-center py-1.5"
@@ -651,6 +766,10 @@ function TeamFuturesSection({
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Flat items (awards, other) — individual rows with cross-source merging
+// ---------------------------------------------------------------------------
 
 function MergedFuturesGroup({
   label,
