@@ -594,7 +594,8 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
 }
 
 /**
- * Detect playoff journeys: teams with 2+ progression stages.
+ * Detect playoff journeys: teams with any progression stages.
+ * Enforces monotonicity: P(championship) <= P(conference) <= P(playoffs).
  * Returns journeys and remaining items that aren't part of any journey.
  */
 function detectPlayoffJourneys(merged: MergedTeamFuture[]): {
@@ -629,30 +630,41 @@ function detectPlayoffJourneys(merged: MergedTeamFuture[]): {
     });
   }
 
-  // Build journeys for teams with 2+ stages; singles go to remaining
+  // Build journeys for teams with 1+ stages
   const journeys: PlayoffJourney[] = [];
   for (const [teamId, data] of Array.from(teamStages.entries())) {
-    if (data.stages.length >= 2) {
-      // Sort by progression order (make_playoffs first → championship last)
-      data.stages.sort((a, b) => a.stageOrder - b.stageOrder);
-      journeys.push({
-        teamId,
-        teamName: data.team.name,
-        teamLogo: data.team.logo_small,
-        teamColor: data.team.primary_color,
-        stages: data.stages,
-      });
-    } else {
-      // Single stage — treat as regular item
-      remaining.push(data.stages[0].merged);
+    // Sort by progression order (make_playoffs first → championship last)
+    data.stages.sort((a, b) => a.stageOrder - b.stageOrder);
+
+    // Enforce monotonicity: earlier stages can't be less likely than later stages.
+    // Walk backward from championship → playoffs, bumping earlier stages up.
+    // Order: 1=make_playoffs, 2=division_winner, 3=conference_winner, 4=championship
+    // Constraints: P(champ) <= P(conf) <= P(playoffs), P(div) <= P(playoffs)
+    for (let i = data.stages.length - 1; i > 0; i--) {
+      const laterProb = data.stages[i].merged.avgProbability ?? 0;
+      const earlierProb = data.stages[i - 1].merged.avgProbability ?? 0;
+      if (laterProb > earlierProb) {
+        data.stages[i - 1].merged.avgProbability = laterProb;
+      }
     }
+
+    journeys.push({
+      teamId,
+      teamName: data.team.name,
+      teamLogo: data.team.logo_small,
+      teamColor: data.team.primary_color,
+      stages: data.stages,
+    });
   }
 
-  // Sort journeys by championship probability (descending)
+  // Sort journeys by highest stage probability (championship preferred, fallback to any)
   journeys.sort((a, b) => {
-    const champA = a.stages.find((s) => s.stageOrder === 4)?.merged.avgProbability ?? 0;
-    const champB = b.stages.find((s) => s.stageOrder === 4)?.merged.avgProbability ?? 0;
-    return champB - champA;
+    const bestProb = (j: PlayoffJourney) => {
+      const champ = j.stages.find((s) => s.stageOrder === 4)?.merged.avgProbability;
+      if (champ != null) return champ;
+      return j.stages[j.stages.length - 1]?.merged.avgProbability ?? 0;
+    };
+    return bestProb(b) - bestProb(a);
   });
 
   return { journeys, remaining };

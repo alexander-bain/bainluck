@@ -616,7 +616,7 @@ private struct PlayoffJourney: Identifiable {
     var id: Int { teamId }
 }
 
-/// Detect playoff journeys from merged items.
+/// Detect playoff journeys from merged items. Enforces monotonicity.
 private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [PlayoffJourney], remaining: [MergedTeamFuture]) {
     var teamStages: [Int: (team: TeamFutureTeam, stages: [(merged: MergedTeamFuture, order: Int, label: String)])] = [:]
     var remaining: [MergedTeamFuture] = []
@@ -636,26 +636,38 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
 
     var journeys: [PlayoffJourney] = []
     for (teamId, data) in teamStages {
-        if data.stages.count >= 2 {
-            var sorted = data.stages
-            sorted.sort { $0.order < $1.order }
-            journeys.append(PlayoffJourney(
-                teamId: teamId,
-                teamName: data.team.name,
-                teamLogo: data.team.logoSmall,
-                teamColor: data.team.primaryColor,
-                stages: sorted
-            ))
-        } else {
-            remaining.append(data.stages[0].merged)
+        var sorted = data.stages
+        sorted.sort { $0.order < $1.order }
+
+        // Enforce monotonicity: earlier stages can't be less likely than later stages.
+        // Walk backward from championship → playoffs, bumping earlier stages up.
+        // Constraints: P(champ) <= P(conf) <= P(playoffs), P(div) <= P(playoffs)
+        for i in stride(from: sorted.count - 1, through: 1, by: -1) {
+            let laterProb = sorted[i].merged.avgProbability ?? 0
+            let earlierProb = sorted[i - 1].merged.avgProbability ?? 0
+            if laterProb > earlierProb {
+                sorted[i - 1].merged.avgProbability = laterProb
+            }
         }
+
+        journeys.append(PlayoffJourney(
+            teamId: teamId,
+            teamName: data.team.name,
+            teamLogo: data.team.logoSmall,
+            teamColor: data.team.primaryColor,
+            stages: sorted
+        ))
     }
 
-    // Sort by championship probability descending
+    // Sort by highest stage probability (championship preferred, fallback to any)
     journeys.sort { a, b in
-        let champA = a.stages.first(where: { $0.order == 4 })?.merged.avgProbability ?? 0
-        let champB = b.stages.first(where: { $0.order == 4 })?.merged.avgProbability ?? 0
-        return champA > champB
+        func bestProb(_ j: PlayoffJourney) -> Double {
+            if let champ = j.stages.first(where: { $0.order == 4 })?.merged.avgProbability {
+                return champ
+            }
+            return j.stages.last?.merged.avgProbability ?? 0
+        }
+        return bestProb(a) > bestProb(b)
     }
 
     return (journeys, remaining)
