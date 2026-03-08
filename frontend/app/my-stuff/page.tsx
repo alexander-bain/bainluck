@@ -460,6 +460,19 @@ function extractMarketType(key: string | null | undefined): string | null {
   return parts.length >= 3 ? parts[2] : null;
 }
 
+/**
+ * Detect market type from market name when canonical_market_key is missing.
+ * Mirrors backend _MARKET_TYPE_PATTERNS in futures_categorization.py.
+ */
+function detectMarketTypeFromName(name: string): string | null {
+  const n = name.toLowerCase();
+  if (/make.*playoffs|playoffs.*qualification|will make.*playoffs/i.test(n)) return "make_playoffs";
+  if (/division\s*(winner|champion|title)/i.test(n)) return "division_winner";
+  if (/conference\s*(winner|champion|title|finals)|eastern\s+conf|western\s+conf/i.test(n)) return "conference_winner";
+  if (/champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup/i.test(n)) return "championship";
+  return null;
+}
+
 /** Convert hex color (e.g. "1D428A" or "#1D428A") to RGB string (e.g. "29, 66, 138"). */
 function hexToRgb(hex: string): string {
   const h = hex.replace(/^#/, "");
@@ -502,7 +515,8 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
         sources: [],
         avgProbability: null,
         bestChange: null,
-        marketType: extractMarketType(item.canonical_market_key),
+        marketType: extractMarketType(item.canonical_market_key)
+          ?? detectMarketTypeFromName(item.market_name || ""),
       });
     }
 
