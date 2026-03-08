@@ -468,7 +468,7 @@ function detectMarketTypeFromName(name: string): string | null {
   const n = name.toLowerCase();
   if (/make.*playoffs|playoffs.*qualification|will make.*playoffs/i.test(n)) return "make_playoffs";
   if (/division\s*(winner|champion|title)/i.test(n)) return "division_winner";
-  if (/conference\s*(winner|champion|title|finals)|eastern\s+conf|western\s+conf/i.test(n)) return "conference_winner";
+  if (/conference\s*(winner|champion|title|finals)/i.test(n) && !/seed|#\d/i.test(n)) return "conference_winner";
   if (/champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup/i.test(n)) return "championship";
   return null;
 }
@@ -504,8 +504,22 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
   const byKey = new Map<string, MergedTeamFuture>();
 
   for (const item of items) {
-    // Build grouping key: canonical_market_key + normalized outcome name
-    const canonKey = item.canonical_market_key || `market_${item.market_id}`;
+    const detectedType = extractMarketType(item.canonical_market_key)
+      ?? detectMarketTypeFromName(item.market_name || "");
+
+    // Build grouping key:
+    // 1. If canonical_market_key exists, use it + outcome (cross-source merge)
+    // 2. If we detected a progression type, use type + category + outcome
+    //    so "NBA Championship Winner" from 3 sources merges for the same team
+    // 3. Fallback: unique per market (no merge)
+    let canonKey: string;
+    if (item.canonical_market_key) {
+      canonKey = item.canonical_market_key;
+    } else if (detectedType) {
+      canonKey = `synth:${item.category || "unknown"}:${detectedType}`;
+    } else {
+      canonKey = `market_${item.market_id}`;
+    }
     const outcomeName = (item.outcome_name || "").toLowerCase().trim();
     const groupKey = `${canonKey}::${outcomeName}`;
 
@@ -515,8 +529,7 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
         sources: [],
         avgProbability: null,
         bestChange: null,
-        marketType: extractMarketType(item.canonical_market_key)
-          ?? detectMarketTypeFromName(item.market_name || ""),
+        marketType: detectedType,
       });
     }
 
