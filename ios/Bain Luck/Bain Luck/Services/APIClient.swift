@@ -449,7 +449,7 @@ actor APIClient {
 
     // MARK: - Team Futures
 
-    func fetchMyTeamFutures(limit: Int = 50) async throws -> TeamFuturesResponse {
+    func fetchMyTeamFutures(limit: Int = 100) async throws -> TeamFuturesResponse {
         return try await fetch("/api/me/team-futures", query: ["limit": "\(limit)"], cacheTTL: 300)
     }
 

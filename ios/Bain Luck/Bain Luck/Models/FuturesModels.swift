@@ -105,6 +105,7 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     let totalOutcomes: Int?
     let resolutionDate: String?
     let matchedTeam: TeamFutureTeam
+    let canonicalMarketKey: String?
 
     var id: Int { outcomeId }
 }

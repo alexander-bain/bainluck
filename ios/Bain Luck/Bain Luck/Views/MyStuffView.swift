@@ -46,7 +46,7 @@ final class MyStuffViewModel: ObservableObject {
         if isInitial { loading = true }
         do {
             async let feedTask = APIClient.shared.fetchFeed(myTeamsOnly: true)
-            async let futuresTask = APIClient.shared.fetchMyTeamFutures(limit: 50)
+            async let futuresTask = APIClient.shared.fetchMyTeamFutures(limit: 100)
 
             let feed = try await feedTask
             let futures = try? await futuresTask
@@ -466,79 +466,358 @@ struct MyStuffView: View {
     }
 }
 
-// MARK: - Your Teams' Odds Section
+// MARK: - Cross-Source Merging + Progression Detection
+
+/// Source display metadata.
+private let sourceColors: [String: Color] = [
+    "polymarket": Color.blue,
+    "kalshi": Color.green,
+    "odds_api": Color(white: 0.6),
+]
+private let sourceLabels: [String: String] = [
+    "odds_api": "Sportsbooks",
+    "kalshi": "Kalshi",
+    "polymarket": "Polymarket",
+]
+
+/// Merged view of the same outcome across sources.
+private struct MergedTeamFuture: Identifiable {
+    let primary: TeamFutureItem
+    var sources: [(source: String, probability: Double?, change: Double?, marketId: Int)]
+    var avgProbability: Double?
+    var bestChange: Double?
+    var marketType: String?
+
+    var id: String { "\(primary.matchedTeam.id)-\(marketType ?? "nil")-\(primary.marketId)" }
+}
+
+/// Progression stage definitions.
+private let progressionStages: [String: (order: Int, label: String)] = [
+    "make_playoffs": (1, "Playoffs"),
+    "division_winner": (2, "Division"),
+    "conference_winner": (3, "Conf Finals"),
+    "championship": (4, "Champion"),
+]
+
+/// Detect market type from name (mirrors web detectMarketTypeFromName).
+private func detectMarketTypeFromName(_ name: String) -> String? {
+    let n = name.lowercased()
+    if n.range(of: #"make.*playoffs|playoffs.*qualification|will make.*playoffs"#, options: .regularExpression) != nil {
+        return "make_playoffs"
+    }
+    if n.range(of: #"division\s*(winner|champion|title)"#, options: .regularExpression) != nil {
+        return "division_winner"
+    }
+    if n.range(of: #"conference\s*(winner|champion|title|finals)"#, options: .regularExpression) != nil,
+       n.range(of: #"seed|#\d"#, options: .regularExpression) == nil {
+        return "conference_winner"
+    }
+    if n.range(of: #"champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup"#, options: .regularExpression) != nil {
+        return "championship"
+    }
+    return nil
+}
+
+/// Extract market type from canonical key (format: sport:league:type:season).
+private func extractMarketType(_ key: String?) -> String? {
+    guard let key else { return nil }
+    let parts = key.split(separator: ":")
+    return parts.count >= 3 ? String(parts[2]) : nil
+}
+
+/// Merge TeamFutureItems sharing the same market type + team.
+private func mergeTeamFutures(_ items: [TeamFutureItem]) -> [MergedTeamFuture] {
+    var byKey: [String: MergedTeamFuture] = [:]
+    var keyOrder: [String] = []
+
+    for item in items {
+        let detectedType = extractMarketType(item.canonicalMarketKey)
+            ?? detectMarketTypeFromName(item.marketName)
+
+        let isProgression = detectedType != nil && progressionStages[detectedType!] != nil
+
+        let groupKey: String
+        if isProgression {
+            groupKey = "progression:\(item.category ?? "unknown"):\(detectedType!):team_\(item.matchedTeam.id)"
+        } else if let ck = item.canonicalMarketKey {
+            groupKey = "\(ck)::\(item.outcomeName.lowercased().trimmingCharacters(in: .whitespaces))"
+        } else {
+            groupKey = "market_\(item.marketId)::\(item.outcomeName.lowercased().trimmingCharacters(in: .whitespaces))"
+        }
+
+        if byKey[groupKey] == nil {
+            byKey[groupKey] = MergedTeamFuture(
+                primary: item,
+                sources: [],
+                avgProbability: nil,
+                bestChange: nil,
+                marketType: detectedType
+            )
+            keyOrder.append(groupKey)
+        }
+
+        byKey[groupKey]!.sources.append((
+            source: item.source ?? "unknown",
+            probability: item.probability,
+            change: item.probabilityChange24h,
+            marketId: item.marketId
+        ))
+
+        // Use highest-ranked item as primary
+        if let rank = item.rank,
+           byKey[groupKey]!.primary.rank == nil || rank < (byKey[groupKey]!.primary.rank ?? Int.max) {
+            byKey[groupKey]!.primary = item
+        }
+    }
+
+    // Compute averages
+    for key in keyOrder {
+        guard var entry = byKey[key] else { continue }
+        let probs = entry.sources.compactMap(\.probability).filter { $0 > 0 }
+        entry.avgProbability = probs.isEmpty ? nil : probs.reduce(0, +) / Double(probs.count)
+
+        var best: Double? = nil
+        for s in entry.sources {
+            if let c = s.change, (best == nil || abs(c) > abs(best!)) {
+                best = c
+            }
+        }
+        entry.bestChange = best
+        byKey[key] = entry
+    }
+
+    return keyOrder.compactMap { byKey[$0] }
+}
+
+/// A team's playoff journey — multiple stages.
+private struct PlayoffJourney: Identifiable {
+    let teamId: Int
+    let teamName: String
+    let teamLogo: String?
+    let teamColor: String?
+    var stages: [(merged: MergedTeamFuture, order: Int, label: String)]
+    var id: Int { teamId }
+}
+
+/// Detect playoff journeys from merged items.
+private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [PlayoffJourney], remaining: [MergedTeamFuture]) {
+    var teamStages: [Int: (team: TeamFutureTeam, stages: [(merged: MergedTeamFuture, order: Int, label: String)])] = [:]
+    var remaining: [MergedTeamFuture] = []
+
+    for m in merged {
+        guard let mType = m.marketType, let stage = progressionStages[mType] else {
+            remaining.append(m)
+            continue
+        }
+
+        let teamId = m.primary.matchedTeam.id
+        if teamStages[teamId] == nil {
+            teamStages[teamId] = (team: m.primary.matchedTeam, stages: [])
+        }
+        teamStages[teamId]!.stages.append((merged: m, order: stage.order, label: stage.label))
+    }
+
+    var journeys: [PlayoffJourney] = []
+    for (teamId, data) in teamStages {
+        if data.stages.count >= 2 {
+            var sorted = data.stages
+            sorted.sort { $0.order < $1.order }
+            journeys.append(PlayoffJourney(
+                teamId: teamId,
+                teamName: data.team.name,
+                teamLogo: data.team.logoSmall,
+                teamColor: data.team.primaryColor,
+                stages: sorted
+            ))
+        } else {
+            remaining.append(data.stages[0].merged)
+        }
+    }
+
+    // Sort by championship probability descending
+    journeys.sort { a, b in
+        let champA = a.stages.first(where: { $0.order == 4 })?.merged.avgProbability ?? 0
+        let champB = b.stages.first(where: { $0.order == 4 })?.merged.avgProbability ?? 0
+        return champA > champB
+    }
+
+    return (journeys, remaining)
+}
+
+// MARK: - ProgressionLadderView (native SwiftUI)
+
+private struct ProgressionLadderView: View {
+    let journey: PlayoffJourney
+    let onStageTap: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Header: logo + name + PLAYOFFS label
+            HStack(spacing: 8) {
+                TeamLogoView(
+                    url: journey.teamLogo,
+                    teamName: journey.teamName,
+                    color: Color(hex: journey.teamColor ?? "#6b7280"),
+                    size: 28
+                )
+                Text(journey.teamName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Spacer()
+                Text("PLAYOFFS")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Stage rows
+            ForEach(journey.stages, id: \.order) { stage in
+                let prob = stage.merged.avgProbability ?? 0
+                let achieved = prob >= 0.99
+
+                Button {
+                    onStageTap(stage.merged.primary.marketId)
+                } label: {
+                    HStack(spacing: 6) {
+                        // Status dot
+                        Circle()
+                            .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
+                            .frame(width: 7, height: 7)
+
+                        // Stage label
+                        Text(stage.label)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Probability bar
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill(Color.secondary.opacity(0.15))
+                                Capsule()
+                                    .fill(achieved
+                                          ? Color.green
+                                          : Color(hex: journey.teamColor ?? "#6b7280").opacity(0.5))
+                                    .frame(width: geo.size.width * min(prob, 1.0))
+                            }
+                        }
+                        .frame(width: 40, height: 4)
+
+                        // Probability value
+                        Text(achieved ? "done" : formatProbability(prob))
+                            .font(.system(.caption, design: .monospaced))
+                            .fontWeight(.medium)
+                            .foregroundStyle(probTextColor(prob, achieved: achieved))
+                            .frame(minWidth: 34, alignment: .trailing)
+
+                        // Source dots
+                        if stage.merged.sources.count > 1 {
+                            HStack(spacing: 2) {
+                                ForEach(stage.merged.sources, id: \.source) { s in
+                                    Circle()
+                                        .fill(sourceColors[s.source] ?? .gray)
+                                        .frame(width: 4, height: 4)
+                                }
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(Color(.tertiarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(alignment: .leading) {
+            if let c = journey.teamColor {
+                UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, bottomTrailingRadius: 0, topTrailingRadius: 0)
+                    .fill(Color(hex: c))
+                    .frame(width: 3)
+            }
+        }
+    }
+
+    private func probTextColor(_ p: Double, achieved: Bool) -> Color {
+        if achieved { return .green }
+        if p >= 0.7 { return .green }
+        if p >= 0.4 { return .primary }
+        if p >= 0.15 { return .orange }
+        return .red
+    }
+}
+
+// MARK: - Your Teams' Odds Section (with merging + progression)
 
 private struct TeamFuturesSection: View {
     let futures: TeamFuturesResponse
     @Binding var path: NavigationPath
     @State private var expanded = false
 
-    private static let initialShow = 6
+    private static let initialShow = 10
 
-    private enum FutureGroup {
-        case championships, awards, other
-    }
+    private var processed: (journeys: [PlayoffJourney], awards: [MergedTeamFuture], other: [MergedTeamFuture]) {
+        let merged = mergeTeamFutures(futures.items)
+        let (journeys, remaining) = detectPlayoffJourneys(merged)
 
-    private var grouped: (championships: [TeamFutureItem], awards: [TeamFutureItem], other: [TeamFutureItem]) {
-        var championships: [TeamFutureItem] = []
-        var awards: [TeamFutureItem] = []
-        var other: [TeamFutureItem] = []
+        var awards: [MergedTeamFuture] = []
+        var other: [MergedTeamFuture] = []
 
-        for item in futures.items {
-            let name = item.marketName.lowercased()
-            let tier = item.marketTier
-            if tier == 1
-                || name.contains("champion") || name.contains("winner")
-                || name.contains("world series") || name.contains("super bowl")
-                || name.contains("stanley cup") || name.contains("finals") {
-                championships.append(item)
-            } else if name.contains("mvp") || name.contains("award")
+        for m in remaining {
+            let name = m.primary.marketName.lowercased()
+            if name.contains("mvp") || name.contains("award")
                 || name.contains("player") || name.contains("rookie")
                 || name.contains("defensive") || name.contains("coach")
                 || name.contains("cy young") || name.contains("heisman")
                 || name.contains("improved") || name.contains("sixth man")
                 || name.contains("clutch") {
-                awards.append(item)
+                awards.append(m)
             } else {
-                other.append(item)
+                other.append(m)
             }
         }
 
-        return (championships, awards, other)
-    }
+        awards.sort { ($0.avgProbability ?? 0) > ($1.avgProbability ?? 0) }
+        other.sort { ($0.avgProbability ?? 0) > ($1.avgProbability ?? 0) }
 
-    private var orderedItems: [TeamFutureItem] {
-        grouped.championships + grouped.awards + grouped.other
-    }
-
-    private var displayed: [TeamFutureItem] {
-        expanded ? orderedItems : Array(orderedItems.prefix(Self.initialShow))
+        return (journeys, awards, other)
     }
 
     var body: some View {
+        let data = processed
+        let allFlat = data.awards + data.other
+        let displayedFlat = expanded
+            ? allFlat
+            : Array(allFlat.prefix(max(0, Self.initialShow - data.journeys.count)))
+        let uniqueCount = data.journeys.count + allFlat.count
+
         Section {
-            let g = grouped
-            let disp = displayed
-
-            let dispChamp = disp.filter { item in g.championships.contains(where: { $0.id == item.id }) }
-            let dispAwards = disp.filter { item in g.awards.contains(where: { $0.id == item.id }) }
-            let dispOther = disp.filter { item in g.other.contains(where: { $0.id == item.id }) }
-
-            if !dispChamp.isEmpty {
-                futuresGroup(label: "Championships", items: dispChamp)
+            // Progression ladder cards
+            if !data.journeys.isEmpty {
+                ForEach(data.journeys) { journey in
+                    ProgressionLadderView(journey: journey) { marketId in
+                        path.append(Route.futuresDetail(id: marketId))
+                    }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                }
             }
+
+            // Flat items (awards + other)
+            let dispAwards = displayedFlat.filter { m in data.awards.contains(where: { $0.id == m.id }) }
+            let dispOther = displayedFlat.filter { m in data.other.contains(where: { $0.id == m.id }) }
+
             if !dispAwards.isEmpty {
-                futuresGroup(label: "Awards & Players", items: dispAwards)
+                mergedGroup(label: "Awards & Players", items: dispAwards)
             }
             if !dispOther.isEmpty {
-                futuresGroup(label: "Other Markets", items: dispOther)
+                mergedGroup(label: "Other Markets", items: dispOther, borderTop: !dispAwards.isEmpty)
             }
 
-            if orderedItems.count > Self.initialShow {
+            if allFlat.count + data.journeys.count > Self.initialShow {
                 Button {
                     withAnimation { expanded.toggle() }
                 } label: {
-                    Text(expanded ? "Show less" : "See all \(futures.totalCount) markets →")
+                    Text(expanded ? "Show less" : "See all \(uniqueCount) markets →")
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(.blue)
@@ -557,7 +836,7 @@ private struct TeamFuturesSection: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .textCase(nil)
-                Text("\(futures.totalCount)")
+                Text("\(processed.journeys.count + processed.awards.count + processed.other.count)")
                     .font(.caption2)
                     .fontWeight(.medium)
                     .foregroundStyle(.secondary)
@@ -570,7 +849,7 @@ private struct TeamFuturesSection: View {
     }
 
     @ViewBuilder
-    private func futuresGroup(label: String, items: [TeamFutureItem]) -> some View {
+    private func mergedGroup(label: String, items: [MergedTeamFuture], borderTop: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased())
                 .font(.system(size: 10, weight: .medium))
@@ -582,17 +861,21 @@ private struct TeamFuturesSection: View {
 
             ForEach(items) { item in
                 Button {
-                    path.append(Route.futuresDetail(id: item.marketId))
+                    path.append(Route.futuresDetail(id: item.primary.marketId))
                 } label: {
-                    teamFutureRow(item)
+                    mergedFutureRow(item)
                 }
                 .buttonStyle(.plain)
             }
         }
     }
 
-    private func teamFutureRow(_ item: TeamFutureItem) -> some View {
-        HStack(spacing: 10) {
+    private func mergedFutureRow(_ merged: MergedTeamFuture) -> some View {
+        let isMultiSource = merged.sources.count > 1
+        let displayProb = isMultiSource ? merged.avgProbability : merged.primary.probability
+        let item = merged.primary
+
+        return HStack(spacing: 10) {
             // Team logo
             TeamLogoView(
                 url: item.matchedTeam.logoSmall,
@@ -601,35 +884,33 @@ private struct TeamFuturesSection: View {
                 size: 28
             )
 
-            // Name + market
+            // Name + market + source dots
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.outcomeName)
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .lineLimit(1)
-                Text(cleanMarketName(item.marketName))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(cleanMarketName(item.marketName))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    if isMultiSource {
+                        HStack(spacing: 2) {
+                            ForEach(merged.sources, id: \.source) { s in
+                                Circle()
+                                    .fill(sourceColors[s.source] ?? .gray)
+                                    .frame(width: 4, height: 4)
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer()
 
-            // Rank
-            if let rank = item.rank {
-                if let total = item.totalOutcomes {
-                    Text("#\(rank)/\(total)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("#\(rank)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
             // 24h change
-            if let change = item.probabilityChange24h, abs(change) >= 0.001 {
+            if let change = merged.bestChange, abs(change) >= 0.001 {
                 let isUp = change > 0
                 Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
                     .font(.caption2)
@@ -638,7 +919,23 @@ private struct TeamFuturesSection: View {
             }
 
             // Probability
-            if let prob = item.probability {
+            if isMultiSource {
+                // Per-source probabilities
+                HStack(spacing: 4) {
+                    ForEach(merged.sources, id: \.source) { s in
+                        if let p = s.probability {
+                            Text(formatProbability(p))
+                                .font(.system(.caption2, design: .monospaced))
+                                .fontWeight(.semibold)
+                                .foregroundStyle(sourceColors[s.source] ?? .gray)
+                        } else {
+                            Text("—")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else if let prob = displayProb {
                 Text(formatProbability(prob))
                     .font(.subheadline)
                     .fontWeight(.semibold)
@@ -652,11 +949,9 @@ private struct TeamFuturesSection: View {
 
     private func cleanMarketName(_ name: String) -> String {
         var result = name
-        // Strip "Winner" suffix
         if let range = result.range(of: #"\s*Winner\s*$"#, options: .regularExpression) {
             result.removeSubrange(range)
         }
-        // Strip year suffix
         if let range = result.range(of: #"\s*20\d{2}(-\d{2})?\s*$"#, options: .regularExpression) {
             result.removeSubrange(range)
         }
