@@ -405,10 +405,99 @@ function MyTeamsFeed() {
 }
 
 // ---------------------------------------------------------------------------
-// Your Teams' Odds section — grouped by market type with context
+// Your Teams' Odds section — grouped by market type with cross-source merging
 // ---------------------------------------------------------------------------
 
 const INITIAL_SHOW = 10;
+
+// Source display helpers (same palette as CombinedFeedCard)
+const SOURCE_LABELS: Record<string, string> = {
+  odds_api: "Sportsbooks",
+  kalshi: "Kalshi",
+  polymarket: "Polymarket",
+};
+const SOURCE_COLORS: Record<string, { dot: string; text: string }> = {
+  polymarket: { dot: "bg-blue-500", text: "text-blue-400" },
+  kalshi: { dot: "bg-green-500", text: "text-green-400" },
+  odds_api: { dot: "bg-slate-400", text: "text-slate-300" },
+};
+
+/** Merged view of the same outcome across multiple sources. */
+interface MergedTeamFuture {
+  /** Primary item used for display metadata (team logo, market name, rank). */
+  primary: TeamFutureItem;
+  /** Per-source probability data. */
+  sources: {
+    source: string;
+    probability: number | null;
+    change: number | null;
+    market_id: number;
+  }[];
+  /** Average probability across sources. */
+  avgProbability: number | null;
+  /** Best movement (largest absolute change). */
+  bestChange: number | null;
+}
+
+/**
+ * Merge TeamFutureItems that share the same canonical_market_key + outcome_name
+ * into single entries with multi-source probabilities.
+ */
+function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
+  const byKey = new Map<string, MergedTeamFuture>();
+
+  for (const item of items) {
+    // Build grouping key: canonical_market_key + normalized outcome name
+    const canonKey = item.canonical_market_key || `market_${item.market_id}`;
+    const outcomeName = (item.outcome_name || "").toLowerCase().trim();
+    const groupKey = `${canonKey}::${outcomeName}`;
+
+    if (!byKey.has(groupKey)) {
+      byKey.set(groupKey, {
+        primary: item,
+        sources: [],
+        avgProbability: null,
+        bestChange: null,
+      });
+    }
+
+    const entry = byKey.get(groupKey)!;
+    entry.sources.push({
+      source: item.source || "unknown",
+      probability: item.probability,
+      change: item.probability_change_24h,
+      market_id: item.market_id,
+    });
+
+    // Use the item with the highest rank (best rank = lowest number) as primary
+    if (
+      item.rank !== null &&
+      (entry.primary.rank === null || item.rank < entry.primary.rank)
+    ) {
+      entry.primary = item;
+    }
+  }
+
+  // Compute averages
+  for (const entry of Array.from(byKey.values())) {
+    const probs = entry.sources
+      .map((s: MergedTeamFuture["sources"][0]) => s.probability)
+      .filter((p: number | null): p is number => p !== null && p > 0);
+    entry.avgProbability =
+      probs.length > 0 ? probs.reduce((a: number, b: number) => a + b, 0) / probs.length : null;
+
+    // Best movement: largest absolute change
+    let best: number | null = null;
+    for (const s of entry.sources) {
+      if (s.change !== null && (best === null || Math.abs(s.change) > Math.abs(best))) {
+        best = s.change;
+      }
+    }
+    entry.bestChange = best;
+  }
+
+  return Array.from(byKey.values());
+}
 
 function TeamFuturesSection({
   items,
@@ -422,15 +511,17 @@ function TeamFuturesSection({
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Group by market type for better organization
-  const grouped = useMemo(() => {
-    const championships: TeamFutureItem[] = [];
-    const awards: TeamFutureItem[] = [];
-    const other: TeamFutureItem[] = [];
+  // Merge cross-source duplicates, then group by market type
+  const { orderedMerged, groupedMerged } = useMemo(() => {
+    const merged = mergeTeamFutures(items);
 
-    for (const item of items) {
-      const name = (item.market_name || "").toLowerCase();
-      const tier = item.market_tier;
+    const championships: MergedTeamFuture[] = [];
+    const awards: MergedTeamFuture[] = [];
+    const other: MergedTeamFuture[] = [];
+
+    for (const m of merged) {
+      const name = (m.primary.market_name || "").toLowerCase();
+      const tier = m.primary.market_tier;
       if (
         tier === 1 ||
         name.includes("champion") ||
@@ -440,7 +531,7 @@ function TeamFuturesSection({
         name.includes("stanley cup") ||
         name.includes("finals")
       ) {
-        championships.push(item);
+        championships.push(m);
       } else if (
         name.includes("mvp") ||
         name.includes("award") ||
@@ -454,21 +545,28 @@ function TeamFuturesSection({
         name.includes("sixth man") ||
         name.includes("clutch")
       ) {
-        awards.push(item);
+        awards.push(m);
       } else {
-        other.push(item);
+        other.push(m);
       }
     }
 
-    return { championships, awards, other };
+    // Sort each group: highest avg probability first
+    const sortByProb = (a: MergedTeamFuture, b: MergedTeamFuture) =>
+      (b.avgProbability ?? 0) - (a.avgProbability ?? 0);
+    championships.sort(sortByProb);
+    awards.sort(sortByProb);
+    other.sort(sortByProb);
+
+    return {
+      orderedMerged: [...championships, ...awards, ...other],
+      groupedMerged: { championships, awards, other },
+    };
   }, [items]);
 
-  // Flatten for display: championships first, then awards, then other
-  const orderedItems = useMemo(() => {
-    return [...grouped.championships, ...grouped.awards, ...grouped.other];
-  }, [grouped]);
-
-  const displayed = expanded ? orderedItems : orderedItems.slice(0, INITIAL_SHOW);
+  const displayed = expanded
+    ? orderedMerged
+    : orderedMerged.slice(0, INITIAL_SHOW);
 
   const handleShare = useCallback(async () => {
     const url = `${window.location.origin}/share/my-odds?teams=${teamIds.join(",")}`;
@@ -482,9 +580,18 @@ function TeamFuturesSection({
   }, [teamIds]);
 
   // Build display groups from displayed items
-  const displayedChampionships = displayed.filter(i => grouped.championships.includes(i));
-  const displayedAwards = displayed.filter(i => grouped.awards.includes(i));
-  const displayedOther = displayed.filter(i => grouped.other.includes(i));
+  const displayedChampionships = displayed.filter((m) =>
+    groupedMerged.championships.includes(m)
+  );
+  const displayedAwards = displayed.filter((m) =>
+    groupedMerged.awards.includes(m)
+  );
+  const displayedOther = displayed.filter((m) =>
+    groupedMerged.other.includes(m)
+  );
+
+  // Unique market count after merging
+  const uniqueCount = orderedMerged.length;
 
   return (
     <section>
@@ -495,7 +602,7 @@ function TeamFuturesSection({
             Your Teams&apos; Odds
           </h2>
           <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-            {totalCount}
+            {uniqueCount}
           </span>
         </div>
         <button
@@ -509,12 +616,12 @@ function TeamFuturesSection({
       <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
         {/* Championship odds */}
         {displayedChampionships.length > 0 && (
-          <FuturesGroup label="Championships" items={displayedChampionships} />
+          <MergedFuturesGroup label="Championships" items={displayedChampionships} />
         )}
 
         {/* Award/player odds */}
         {displayedAwards.length > 0 && (
-          <FuturesGroup
+          <MergedFuturesGroup
             label="Awards & Players"
             items={displayedAwards}
             borderTop={displayedChampionships.length > 0}
@@ -523,7 +630,7 @@ function TeamFuturesSection({
 
         {/* Other markets */}
         {displayedOther.length > 0 && (
-          <FuturesGroup
+          <MergedFuturesGroup
             label="Other Markets"
             items={displayedOther}
             borderTop={displayedChampionships.length > 0 || displayedAwards.length > 0}
@@ -531,27 +638,27 @@ function TeamFuturesSection({
         )}
       </div>
 
-      {orderedItems.length > INITIAL_SHOW && (
+      {orderedMerged.length > INITIAL_SHOW && (
         <button
           onClick={() => setExpanded(!expanded)}
           className="mt-2 text-xs text-accent-brand font-medium hover:opacity-80 transition-opacity w-full text-center py-1.5"
         >
           {expanded
             ? "Show less"
-            : `See all ${totalCount} markets \u2192`}
+            : `See all ${uniqueCount} markets \u2192`}
         </button>
       )}
     </section>
   );
 }
 
-function FuturesGroup({
+function MergedFuturesGroup({
   label,
   items,
   borderTop = false,
 }: {
   label: string;
-  items: TeamFutureItem[];
+  items: MergedTeamFuture[];
   borderTop?: boolean;
 }) {
   return (
@@ -560,21 +667,29 @@ function FuturesGroup({
         {label}
       </p>
       <div className="divide-y divide-surface-border/40">
-        {items.map(item => (
-          <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+        {items.map((m) => (
+          <MergedTeamFutureRow
+            key={`${m.primary.market_id}-${m.primary.outcome_id}`}
+            merged={m}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function TeamFutureRow({ item }: { item: TeamFutureItem }) {
-  const prob = item.probability;
-  const change = item.probability_change_24h;
-  const probPct = prob !== null ? Math.round(prob * 100) : null;
+function MergedTeamFutureRow({ merged }: { merged: MergedTeamFuture }) {
+  const { primary, sources, avgProbability, bestChange } = merged;
+  const isMultiSource = sources.length > 1;
+
+  // Display average probability for multi-source, single probability otherwise
+  const displayProb = isMultiSource ? avgProbability : primary.probability;
+  const probPct = displayProb !== null ? Math.round(displayProb * 100) : null;
   const probStr = probPct !== null ? `${probPct}%` : "-";
 
+  // Movement indicator
   let changeEl: React.ReactNode = null;
+  const change = bestChange;
   if (change !== null && change !== 0 && Math.abs(change) >= 0.001) {
     const isUp = change > 0;
     changeEl = (
@@ -585,38 +700,41 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
   }
 
   // Make market name more readable
-  const marketName = (item.market_name || "")
+  const marketName = (primary.market_name || "")
     .replace(/\s*Winner\s*$/i, "")
     .replace(/\s*20\d{2}(-\d{2})?\s*$/i, "")
     .replace(/\s*20\d{2}-\d{2}\s*/i, " ")
     .trim();
 
   // Build rank context
-  const rankStr = item.rank && item.total_outcomes
-    ? `#${item.rank} of ${item.total_outcomes}`
-    : item.rank
-      ? `#${item.rank}`
+  const rankStr = primary.rank && primary.total_outcomes
+    ? `#${primary.rank} of ${primary.total_outcomes}`
+    : primary.rank
+      ? `#${primary.rank}`
       : null;
+
+  // Link to primary market's detail page
+  const linkMarketId = primary.market_id;
 
   return (
     <Link
-      href={`/futures/${item.market_id}`}
+      href={`/futures/${linkMarketId}`}
       className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-elevated/50 transition-colors group"
     >
       {/* Team logo */}
       <div className="w-7 h-7 flex-shrink-0">
-        {item.matched_team.logo_small ? (
+        {primary.matched_team.logo_small ? (
           <img
-            src={item.matched_team.logo_small}
-            alt={item.matched_team.name}
+            src={primary.matched_team.logo_small}
+            alt={primary.matched_team.name}
             className="w-7 h-7 object-contain"
           />
         ) : (
           <div
             className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white"
-            style={{ backgroundColor: item.matched_team.primary_color || "#666" }}
+            style={{ backgroundColor: primary.matched_team.primary_color || "#666" }}
           >
-            {(item.matched_team.name || "?")[0]}
+            {(primary.matched_team.name || "?")[0]}
           </div>
         )}
       </div>
@@ -624,12 +742,29 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
       {/* Market info */}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-text-primary truncate leading-tight">
-          <span className="font-medium">{item.outcome_name}</span>
+          <span className="font-medium">{primary.outcome_name}</span>
         </p>
-        <p className="text-[11px] text-text-muted truncate mt-0.5">
-          {marketName}
-          {rankStr && <span className="text-text-muted/70"> &middot; {rankStr}</span>}
-        </p>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <p className="text-[11px] text-text-muted truncate">
+            {marketName}
+            {rankStr && <span className="text-text-muted/70"> &middot; {rankStr}</span>}
+          </p>
+          {/* Source dots */}
+          {isMultiSource && (
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {sources.map((s) => {
+                const colors = SOURCE_COLORS[s.source] || { dot: "bg-gray-500", text: "text-gray-400" };
+                return (
+                  <div
+                    key={s.source}
+                    className={`w-1.5 h-1.5 rounded-full ${colors.dot}`}
+                    title={SOURCE_LABELS[s.source] || s.source}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
         {/* Probability bar */}
         {probPct !== null && (
           <div className="h-1 rounded-full bg-surface-border mt-1.5 overflow-hidden max-w-[140px]">
@@ -637,7 +772,7 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
               className="h-full rounded-full transition-all"
               style={{
                 width: `${Math.min(probPct, 100)}%`,
-                backgroundColor: item.matched_team.primary_color || "var(--accent-futures)",
+                backgroundColor: primary.matched_team.primary_color || "var(--accent-futures)",
                 opacity: 0.7,
               }}
             />
@@ -645,12 +780,36 @@ function TeamFutureRow({ item }: { item: TeamFutureItem }) {
         )}
       </div>
 
-      {/* Probability + movement */}
+      {/* Probability + source breakdown */}
       <div className="flex flex-col items-end flex-shrink-0 gap-0.5">
-        <p className="text-sm font-bold text-text-primary font-mono tabular-nums">
-          {probStr}
-        </p>
-        {changeEl}
+        {isMultiSource ? (
+          <>
+            {/* Per-source probabilities */}
+            <div className="flex items-center gap-1.5">
+              {sources.map((s) => {
+                const colors = SOURCE_COLORS[s.source] || { dot: "bg-gray-500", text: "text-gray-400" };
+                const p = s.probability !== null ? Math.round(s.probability * 100) : null;
+                return (
+                  <span
+                    key={s.source}
+                    className={`text-[11px] font-mono font-semibold tabular-nums ${colors.text}`}
+                    title={SOURCE_LABELS[s.source] || s.source}
+                  >
+                    {p !== null ? `${p}%` : "—"}
+                  </span>
+                );
+              })}
+            </div>
+            {changeEl}
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-bold text-text-primary font-mono tabular-nums">
+              {probStr}
+            </p>
+            {changeEl}
+          </>
+        )}
       </div>
     </Link>
   );

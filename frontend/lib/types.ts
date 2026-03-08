@@ -942,6 +942,7 @@ export interface TeamFutureItem {
   rank: number | null;
   total_outcomes: number | null;
   resolution_date: string | null;
+  canonical_market_key?: string | null;
   matched_team: {
     id: number;
     name: string;

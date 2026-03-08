@@ -1150,6 +1150,7 @@ async def _query_team_futures(
             "total_outcomes": outcome_total,
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
             "matched_team": matched,
+            "canonical_market_key": market.canonical_market_key,
         })
 
         if len(items) >= limit:
