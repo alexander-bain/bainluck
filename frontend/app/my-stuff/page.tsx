@@ -468,7 +468,7 @@ function detectMarketTypeFromName(name: string): string | null {
   const n = name.toLowerCase();
   if (/make.*playoffs|playoffs.*qualification|will make.*playoffs/i.test(n)) return "make_playoffs";
   if (/division\s*(winner|champion|title)|\b(afc|nfc|al|nl)\s+(east|west|north|south|central)\b/i.test(n)) return "division_winner";
-  if (/conference\s*(winner|champion|title|finals)|\b(afc|nfc)\s+(champion|winner)\b/i.test(n) && !/seed|#\d/i.test(n)) return "conference_winner";
+  if (/conference\s*(winner|champion|title|finals)|\b(afc|nfc)\s+(champion|winner)\b/i.test(n) && !/seed|#\d|mvp/i.test(n)) return "conference_winner";
   if (/champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup/i.test(n)) return "championship";
   return null;
 }
@@ -504,8 +504,10 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
   const byKey = new Map<string, MergedTeamFuture>();
 
   for (const item of items) {
-    const detectedType = extractMarketType(item.canonical_market_key)
-      ?? detectMarketTypeFromName(item.market_name || "");
+    // Name-based detection is more specific than canonical key extraction.
+    // Canonical keys can be wrong (e.g., conference markets tagged as "championship").
+    const detectedType = detectMarketTypeFromName(item.market_name || "")
+      ?? extractMarketType(item.canonical_market_key);
 
     // Build grouping key.
     // For progression stages (championship, division, etc.), merge ALL markets

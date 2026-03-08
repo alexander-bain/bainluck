@@ -509,7 +509,7 @@ private func detectMarketTypeFromName(_ name: String) -> String? {
         return "division_winner"
     }
     if n.range(of: #"conference\s*(winner|champion|title|finals)|\b(afc|nfc)\s+(champion|winner)\b"#, options: .regularExpression) != nil,
-       n.range(of: #"seed|#\d"#, options: .regularExpression) == nil {
+       n.range(of: #"seed|#\d|mvp"#, options: .regularExpression) == nil {
         return "conference_winner"
     }
     if n.range(of: #"champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup"#, options: .regularExpression) != nil {
@@ -531,8 +531,10 @@ private func mergeTeamFutures(_ items: [TeamFutureItem]) -> [MergedTeamFuture] {
     var keyOrder: [String] = []
 
     for item in items {
-        let detectedType = extractMarketType(item.canonicalMarketKey)
-            ?? detectMarketTypeFromName(item.marketName)
+        // Name-based detection is more specific than canonical key extraction.
+        // Canonical keys can be wrong (e.g., conference markets tagged as "championship").
+        let detectedType = detectMarketTypeFromName(item.marketName)
+            ?? extractMarketType(item.canonicalMarketKey)
 
         let isProgression = detectedType != nil && progressionStages[detectedType!] != nil
 
