@@ -467,8 +467,8 @@ function extractMarketType(key: string | null | undefined): string | null {
 function detectMarketTypeFromName(name: string): string | null {
   const n = name.toLowerCase();
   if (/make.*playoffs|playoffs.*qualification|will make.*playoffs/i.test(n)) return "make_playoffs";
-  if (/division\s*(winner|champion|title)/i.test(n)) return "division_winner";
-  if (/conference\s*(winner|champion|title|finals)/i.test(n) && !/seed|#\d/i.test(n)) return "conference_winner";
+  if (/division\s*(winner|champion|title)|\b(afc|nfc|al|nl)\s+(east|west|north|south|central)\b/i.test(n)) return "division_winner";
+  if (/conference\s*(winner|champion|title|finals)|\b(afc|nfc)\s+(champion|winner)\b/i.test(n) && !/seed|#\d/i.test(n)) return "conference_winner";
   if (/champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup/i.test(n)) return "championship";
   return null;
 }
@@ -519,7 +519,7 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
 
     let groupKey: string;
     if (isProgression) {
-      groupKey = `progression:${item.category || "unknown"}:${detectedType}:team_${item.matched_team.id}`;
+      groupKey = `progression:${detectedType}:team_${item.matched_team.id}`;
     } else if (item.canonical_market_key) {
       const outcomeName = (item.outcome_name || "").toLowerCase().trim();
       groupKey = `${item.canonical_market_key}::${outcomeName}`;
@@ -539,12 +539,27 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
     }
 
     const entry = byKey.get(groupKey)!;
-    entry.sources.push({
-      source: item.source || "unknown",
-      probability: item.probability,
-      change: item.probability_change_24h,
-      market_id: item.market_id,
-    });
+    const srcName = item.source || "unknown";
+    const existingIdx = entry.sources.findIndex((s: MergedTeamFuture["sources"][0]) => s.source === srcName);
+    if (existingIdx >= 0) {
+      // Same source already present — keep the higher probability
+      const existing = entry.sources[existingIdx];
+      if (item.probability != null && (existing.probability == null || item.probability > existing.probability)) {
+        entry.sources[existingIdx] = {
+          source: srcName,
+          probability: item.probability,
+          change: item.probability_change_24h,
+          market_id: item.market_id,
+        };
+      }
+    } else {
+      entry.sources.push({
+        source: srcName,
+        probability: item.probability,
+        change: item.probability_change_24h,
+        market_id: item.market_id,
+      });
+    }
 
     // Use the item with the highest rank (best rank = lowest number) as primary
     if (

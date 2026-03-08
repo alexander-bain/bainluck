@@ -505,10 +505,10 @@ private func detectMarketTypeFromName(_ name: String) -> String? {
     if n.range(of: #"make.*playoffs|playoffs.*qualification|will make.*playoffs"#, options: .regularExpression) != nil {
         return "make_playoffs"
     }
-    if n.range(of: #"division\s*(winner|champion|title)"#, options: .regularExpression) != nil {
+    if n.range(of: #"division\s*(winner|champion|title)|\b(afc|nfc|al|nl)\s+(east|west|north|south|central)\b"#, options: .regularExpression) != nil {
         return "division_winner"
     }
-    if n.range(of: #"conference\s*(winner|champion|title|finals)"#, options: .regularExpression) != nil,
+    if n.range(of: #"conference\s*(winner|champion|title|finals)|\b(afc|nfc)\s+(champion|winner)\b"#, options: .regularExpression) != nil,
        n.range(of: #"seed|#\d"#, options: .regularExpression) == nil {
         return "conference_winner"
     }
@@ -538,7 +538,7 @@ private func mergeTeamFutures(_ items: [TeamFutureItem]) -> [MergedTeamFuture] {
 
         let groupKey: String
         if isProgression {
-            groupKey = "progression:\(item.category ?? "unknown"):\(detectedType!):team_\(item.matchedTeam.id)"
+            groupKey = "progression:\(detectedType!):team_\(item.matchedTeam.id)"
         } else if let ck = item.canonicalMarketKey {
             groupKey = "\(ck)::\(item.outcomeName.lowercased().trimmingCharacters(in: .whitespaces))"
         } else {
@@ -556,12 +556,27 @@ private func mergeTeamFutures(_ items: [TeamFutureItem]) -> [MergedTeamFuture] {
             keyOrder.append(groupKey)
         }
 
-        byKey[groupKey]!.sources.append((
-            source: item.source ?? "unknown",
-            probability: item.probability,
-            change: item.probabilityChange24h,
-            marketId: item.marketId
-        ))
+        let srcName = item.source ?? "unknown"
+        if let existingIdx = byKey[groupKey]!.sources.firstIndex(where: { $0.source == srcName }) {
+            // Same source already present — keep higher probability
+            if let newP = item.probability,
+               byKey[groupKey]!.sources[existingIdx].probability == nil
+                || newP > (byKey[groupKey]!.sources[existingIdx].probability ?? 0) {
+                byKey[groupKey]!.sources[existingIdx] = (
+                    source: srcName,
+                    probability: newP,
+                    change: item.probabilityChange24h,
+                    marketId: item.marketId
+                )
+            }
+        } else {
+            byKey[groupKey]!.sources.append((
+                source: srcName,
+                probability: item.probability,
+                change: item.probabilityChange24h,
+                marketId: item.marketId
+            ))
+        }
 
         // Use highest-ranked item as primary
         if let rank = item.rank,
