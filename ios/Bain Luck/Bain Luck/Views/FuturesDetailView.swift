@@ -68,6 +68,15 @@ struct FuturesDetailView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         headerSection(market)
+
+                        // Probability evolution chart
+                        if market.outcomes.count >= 2 {
+                            TournamentChartView(
+                                marketId: marketId,
+                                hours: 168
+                            )
+                        }
+
                         leaderSection(market)
                         outcomesSection(market)
                     }

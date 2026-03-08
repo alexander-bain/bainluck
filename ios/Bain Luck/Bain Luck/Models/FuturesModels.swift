@@ -115,3 +115,43 @@ nonisolated struct TeamFutureTeam: Decodable, Sendable {
     let logoSmall: String?
     let primaryColor: String?
 }
+
+// MARK: - Probability Timeline
+
+nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
+    let marketId: Int
+    let marketName: String
+    let sportCategory: String?
+    let source: String?
+    let hours: Int
+    let top: Int
+    let bucketSeconds: Int
+    let timeline: [TimelineEntry]
+    let outcomes: [TimelineOutcomeMeta]
+}
+
+nonisolated struct TimelineEntry: Decodable, Sendable {
+    let timestamp: String
+    let outcomes: [String: Double]
+}
+
+nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
+    let id: Int?
+    let name: String
+    let currentProbability: Double?
+    let rank: Int?
+    let probabilityChange24h: Double?
+    let openingProbability: Double?
+    // Team enrichment
+    let teamId: Int?
+    let logoSmall: String?
+    let logoLarge: String?
+    let primaryColor: String?
+    let secondaryColor: String?
+    let abbreviation: String?
+    let record: String?
+    let location: String?
+    let espnId: String?
+
+    // CodingKeys not needed — camelCase matches JSON snake_case via keyDecodingStrategy
+}

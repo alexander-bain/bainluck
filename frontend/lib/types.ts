@@ -1113,6 +1113,19 @@ export interface TimelineOutcomeMeta {
   id: number | null;
   name: string;
   current_probability: number | null;
+  rank?: number | null;
+  probability_change_24h?: number | null;
+  opening_probability?: number | null;
+  // Team enrichment
+  team_id?: number | null;
+  logo_small?: string | null;
+  logo_large?: string | null;
+  primary_color?: string | null;
+  secondary_color?: string | null;
+  abbreviation?: string | null;
+  record?: string | null;
+  location?: string | null;
+  espn_id?: string | null;
 }
 
 export interface TimelineEntry {
@@ -1123,6 +1136,8 @@ export interface TimelineEntry {
 export interface ProbabilityTimelineResponse {
   market_id: number;
   market_name: string;
+  sport_category?: string | null;
+  source?: string | null;
   hours: number;
   top: number;
   bucket_seconds: number;

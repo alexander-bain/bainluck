@@ -346,6 +346,13 @@ actor APIClient {
         return try await fetch("/api/futures/\(id)")
     }
 
+    func fetchProbabilityTimeline(marketId: Int, top: Int = 50, hours: Int = 168) async throws -> ProbabilityTimelineResponse {
+        return try await fetch("/api/futures/\(marketId)/probability-timeline", query: [
+            "top": "\(top)",
+            "hours": "\(hours)",
+        ])
+    }
+
     // MARK: - EI Rankings
 
     func fetchEIRankings(sport: String? = nil, limit: Int = 25) async throws -> EIRankingsResponse {

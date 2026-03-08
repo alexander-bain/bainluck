@@ -1254,10 +1254,13 @@ async def get_probability_timeline(
     Designed for multi-participant charts (golf tournaments, championship
     markets with many contestants).
     """
-    # Verify market exists and load outcomes
+    # Verify market exists and load outcomes + team enrichment
     result = await db.execute(
         select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes))
+        .options(
+            selectinload(FuturesMarket.outcomes)
+            .selectinload(FuturesOutcome.team)
+        )
         .where(FuturesMarket.id == market_id)
     )
     market = result.scalar_one_or_none()
@@ -1371,11 +1374,28 @@ async def get_probability_timeline(
     # Build outcome metadata list (ordered by current probability)
     outcomes_meta = []
     for o in sorted_outcomes[:top]:
-        outcomes_meta.append({
+        meta: dict = {
             "id": o.id,
             "name": o.name,
             "current_probability": float(o.current_probability) if o.current_probability else None,
-        })
+            "rank": o.rank,
+            "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
+        }
+        # Team enrichment (logos, colors, record)
+        if o.team:
+            meta["team_id"] = o.team.id
+            meta["logo_small"] = o.team.logo_url_small
+            meta["logo_large"] = o.team.logo_url_large
+            meta["primary_color"] = o.team.primary_color
+            meta["secondary_color"] = o.team.secondary_color
+            meta["abbreviation"] = o.team.abbreviation
+            meta["record"] = o.team.current_record
+            meta["location"] = o.team.location
+            meta["espn_id"] = o.team.espn_id
+        else:
+            meta["team_id"] = o.team_id  # FK may exist without loaded team
+        outcomes_meta.append(meta)
     if len(market.outcomes) > top:
         # Sum remaining probabilities for Field
         field_current = sum(
@@ -1391,6 +1411,8 @@ async def get_probability_timeline(
     return {
         "market_id": market_id,
         "market_name": market.name,
+        "sport_category": market.llm_sport_category,
+        "source": market.source,
         "hours": hours,
         "top": top,
         "bucket_seconds": bucket_seconds,
