@@ -1222,8 +1222,8 @@ _MARKET_TYPE_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
     # Market types
     (re.compile(r"\bwin\s+total|over.?under\s+wins\b", re.I), "win_totals"),
     (re.compile(r"\bmake\s+playoffs\b", re.I), "make_playoffs"),
-    (re.compile(r"\bdivision\s+winner\b", re.I), "division_winner"),
-    (re.compile(r"\bconference\s+winner\b", re.I), "conference_winner"),
+    (re.compile(r"\bdivision\s+(?:winner|champion)\b", re.I), "division_winner"),
+    (re.compile(r"\bconference\s+(?:winner|champion|finals)\b", re.I), "conference_winner"),
     # Championship (fallback for sports markets)
     (re.compile(
         r"\bchampion|finals?\s+winner|super\s+bowl|world\s+series|stanley\s+cup"
