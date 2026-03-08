@@ -1,22 +1,16 @@
 "use client";
 
 /**
- * Win Probability Charts Demo
+ * Win Probability Demo
  * 
- * Three chart variants using the existing OddsChart component:
- * 1. Two-Team (NBA, NFL, NHL, MLB) — multiple sources aggregated, period markers
- * 2. Multi-Participant (Golf, NASCAR) — evolution plot for 8+ competitors
- * 3. Tournament Bracket (March Madness, Playoffs) — progression through rounds
+ * Two views:
+ * 1. Two-Team (NBA/NFL/MLB) — OddsChart with period markers integrated
+ * 2. Tournament (DataGolf-inspired) — Evolution plot + sortable grid
  */
 
 import { useState } from "react";
 import OddsChart from "@/components/OddsChart";
-import type { 
-  OddsHistoryPoint, 
-  ESPNHistoryPoint, 
-  WinProbHistoryPoint,
-  WinProbSourceMeta,
-} from "@/lib/types";
+import type { OddsHistoryPoint, WinProbHistoryPoint, WinProbSourceMeta } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 import {
   ComposedChart,
@@ -26,48 +20,26 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
+  ReferenceArea,
 } from "recharts";
 
 // =============================================================================
-// MOCK DATA: Two-Team NBA Game (Celtics vs Heat comeback)
+// TWO-TEAM MOCK DATA (NBA)
 // =============================================================================
 
 const NBA_COMMENCE_TIME = "2024-03-15T19:30:00Z";
 
-// Generate minute-by-minute data for a 48-minute NBA game
 function generateNBAOddsHistory(): OddsHistoryPoint[] {
   const points: OddsHistoryPoint[] = [];
   const baseTime = new Date(NBA_COMMENCE_TIME);
   
-  // Probability curve: Home starts favored, loses lead, comes back to win
   const probCurve = [
-    // Pre-game
-    { minute: -60, prob: 0.58 },
-    { minute: -30, prob: 0.57 },
-    { minute: 0, prob: 0.56 },
-    // Q1: Home strong start
-    { minute: 3, prob: 0.62 },
-    { minute: 6, prob: 0.65 },
-    { minute: 9, prob: 0.63 },
-    { minute: 12, prob: 0.60 },
-    // Q2: Away comeback begins
-    { minute: 15, prob: 0.55 },
-    { minute: 18, prob: 0.48 },
-    { minute: 21, prob: 0.42 },
-    { minute: 24, prob: 0.38 },
-    // Q3: Away extends lead
-    { minute: 27, prob: 0.35 },
-    { minute: 30, prob: 0.32 },
-    { minute: 33, prob: 0.28 },
-    { minute: 36, prob: 0.25 },
-    // Q4: Home dramatic comeback
-    { minute: 39, prob: 0.30 },
-    { minute: 42, prob: 0.38 },
-    { minute: 44, prob: 0.45 },
-    { minute: 46, prob: 0.55 },
-    { minute: 47, prob: 0.65 },
-    { minute: 48, prob: 0.78 },
+    { minute: -60, prob: 0.58 }, { minute: -30, prob: 0.57 }, { minute: 0, prob: 0.56 },
+    { minute: 3, prob: 0.62 }, { minute: 6, prob: 0.65 }, { minute: 9, prob: 0.63 }, { minute: 12, prob: 0.60 },
+    { minute: 15, prob: 0.55 }, { minute: 18, prob: 0.48 }, { minute: 21, prob: 0.42 }, { minute: 24, prob: 0.38 },
+    { minute: 27, prob: 0.35 }, { minute: 30, prob: 0.32 }, { minute: 33, prob: 0.28 }, { minute: 36, prob: 0.25 },
+    { minute: 39, prob: 0.30 }, { minute: 42, prob: 0.38 }, { minute: 44, prob: 0.45 }, { minute: 46, prob: 0.55 },
+    { minute: 47, prob: 0.65 }, { minute: 48, prob: 0.78 },
   ];
   
   for (const { minute, prob } of probCurve) {
@@ -79,472 +51,423 @@ function generateNBAOddsHistory(): OddsHistoryPoint[] {
       valid_until: new Date(timestamp.getTime() + 3 * 60 * 1000).toISOString(),
     });
   }
-  
   return points;
 }
 
-// Generate multi-source win probability history
 function generateNBAWinProbHistory(): Record<string, WinProbHistoryPoint[]> {
   const baseTime = new Date(NBA_COMMENCE_TIME);
-  const sources: Record<string, WinProbHistoryPoint[]> = {
-    espn: [],
-    kalshi: [],
-    polymarket: [],
-  };
-  
-  // ESPN updates every ~2 minutes during game with slight variance from betting odds
-  const espnVariance = [0.02, -0.01, 0.03, -0.02, 0.01, -0.03, 0.02, -0.01, 0.03, -0.02, 0.01, 0.02, -0.01, 0.03, -0.02, 0.01, 0.02, -0.01];
-  const kalshiVariance = [-0.01, 0.02, -0.02, 0.03, -0.01, 0.02, -0.03, 0.01, -0.02, 0.03, -0.01, -0.02, 0.03, -0.01, 0.02, -0.03, 0.01, 0.02];
-  const polymarketVariance = [0.01, -0.02, 0.01, -0.01, 0.02, -0.01, 0.01, -0.02, 0.01, -0.01, 0.02, 0.01, -0.02, 0.01, -0.01, 0.02, -0.01, 0.01];
-  
+  const sources: Record<string, WinProbHistoryPoint[]> = { espn: [], kalshi: [], polymarket: [] };
   const baseProbCurve = [0.56, 0.62, 0.65, 0.63, 0.60, 0.55, 0.48, 0.42, 0.38, 0.35, 0.32, 0.28, 0.25, 0.30, 0.38, 0.45, 0.55, 0.65, 0.78];
-  const periods = ["1st Quarter", "1st Quarter", "1st Quarter", "1st Quarter", "1st Quarter", "2nd Quarter", "2nd Quarter", "2nd Quarter", "2nd Quarter", "3rd Quarter", "3rd Quarter", "3rd Quarter", "3rd Quarter", "4th Quarter", "4th Quarter", "4th Quarter", "4th Quarter", "4th Quarter", "Final"];
-  const clocks = ["12:00", "9:00", "6:00", "3:00", "0:00", "9:00", "6:00", "3:00", "0:00", "9:00", "6:00", "3:00", "0:00", "9:00", "6:00", "4:00", "2:00", "0:30", "0:00"];
-  const homeScores = [0, 8, 18, 24, 28, 34, 38, 42, 45, 52, 58, 62, 68, 72, 78, 85, 92, 98, 105];
-  const awayScores = [0, 5, 12, 20, 26, 32, 40, 48, 52, 60, 68, 76, 82, 86, 90, 94, 98, 100, 102];
+  const minutes = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 46, 47, 48];
   
-  for (let i = 0; i < baseProbCurve.length; i++) {
-    const minute = i * 2.5;
+  minutes.forEach((minute, i) => {
     const timestamp = new Date(baseTime.getTime() + minute * 60 * 1000).toISOString();
-    
-    sources.espn.push({
-      timestamp,
-      home_probability: Math.max(0.05, Math.min(0.95, baseProbCurve[i] + (espnVariance[i] || 0))),
-      game_state: {
-        period: periods[i],
-        clock: clocks[i],
-        home_score: homeScores[i],
-        away_score: awayScores[i],
-      },
-    });
-    
-    sources.kalshi.push({
-      timestamp,
-      home_probability: Math.max(0.05, Math.min(0.95, baseProbCurve[i] + (kalshiVariance[i] || 0))),
-    });
-    
-    sources.polymarket.push({
-      timestamp,
-      home_probability: Math.max(0.05, Math.min(0.95, baseProbCurve[i] + (polymarketVariance[i] || 0))),
-    });
-  }
-  
+    const baseProb = baseProbCurve[i];
+    sources.espn.push({ timestamp, home_probability: Math.min(1, Math.max(0, baseProb + (Math.random() - 0.5) * 0.04)) });
+    sources.kalshi.push({ timestamp, home_probability: Math.min(1, Math.max(0, baseProb + (Math.random() - 0.5) * 0.04)) });
+    sources.polymarket.push({ timestamp, home_probability: Math.min(1, Math.max(0, baseProb + (Math.random() - 0.5) * 0.04)) });
+  });
   return sources;
 }
 
-const NBA_WIN_PROB_SOURCES: Record<string, WinProbSourceMeta> = {
-  espn: { display_name: "ESPN", color: "#f97316", dash_pattern: "6 3", type: "model" },
-  kalshi: { display_name: "Kalshi", color: "#22c55e", dash_pattern: "8 4", type: "market" },
-  polymarket: { display_name: "Polymarket", color: "#3b82f6", dash_pattern: "8 4", type: "market" },
-};
+const NBA_WIN_PROB_SOURCES: WinProbSourceMeta[] = [
+  { key: "espn", label: "ESPN", color: "#f97316" },
+  { key: "kalshi", label: "Kalshi", color: "#22c55e" },
+  { key: "polymarket", label: "Polymarket", color: "#3b82f6" },
+];
 
 const NBA_PERIOD_BOUNDARIES: PeriodBoundary[] = [
-  { timestamp: NBA_COMMENCE_TIME, label: "Q1" },
-  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 12 * 60 * 1000).toISOString(), label: "Q2" },
-  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 24 * 60 * 1000).toISOString(), label: "HT" },
-  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 26 * 60 * 1000).toISOString(), label: "Q3" },
-  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 38 * 60 * 1000).toISOString(), label: "Q4" },
+  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 12 * 60 * 1000).toISOString(), label: "Q1" },
+  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 24 * 60 * 1000).toISOString(), label: "Q2" },
+  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 36 * 60 * 1000).toISOString(), label: "Q3" },
+  { timestamp: new Date(new Date(NBA_COMMENCE_TIME).getTime() + 48 * 60 * 1000).toISOString(), label: "Q4" },
 ];
 
 // =============================================================================
-// MOCK DATA: Multi-Participant Golf Tournament (Masters)
+// TOURNAMENT MOCK DATA (Golf - DataGolf inspired)
 // =============================================================================
 
-interface GolfPlayerData {
+interface Player {
+  id: string;
   name: string;
+  firstName: string;
+  lastName: string;
+  country: string;
   color: string;
-  probabilities: number[];
+  score: number;
+  thru: string;
+  today: number;
+  probabilities: { top20: number; top10: number; top5: number; win: number };
+  trend: number; // change in win% over last update
+  history: { time: string; prob: number }[];
 }
 
-const GOLF_PLAYERS: GolfPlayerData[] = [
-  { name: "Scheffler", color: "#22c55e", probabilities: [0.18, 0.22, 0.28, 0.35, 0.42] },
-  { name: "McIlroy", color: "#3b82f6", probabilities: [0.12, 0.15, 0.18, 0.14, 0.10] },
-  { name: "Rahm", color: "#eab308", probabilities: [0.14, 0.12, 0.10, 0.08, 0.06] },
-  { name: "Koepka", color: "#ef4444", probabilities: [0.08, 0.10, 0.12, 0.15, 0.18] },
-  { name: "Hovland", color: "#8b5cf6", probabilities: [0.06, 0.08, 0.06, 0.05, 0.04] },
-  { name: "Morikawa", color: "#06b6d4", probabilities: [0.05, 0.04, 0.03, 0.02, 0.02] },
-  { name: "Thomas", color: "#f97316", probabilities: [0.04, 0.03, 0.02, 0.01, 0.01] },
-  { name: "Field", color: "#6b7280", probabilities: [0.33, 0.26, 0.21, 0.20, 0.17] },
+const TOURNAMENT_PLAYERS: Player[] = [
+  {
+    id: "berger", name: "Daniel Berger", firstName: "Daniel", lastName: "BERGER", country: "USA", color: "#e74c3c",
+    score: -13, thru: "15", today: 0,
+    probabilities: { top20: 99.7, top10: 97.8, top5: 91.6, win: 50.5 },
+    trend: 2.5,
+    history: [
+      { time: "Thu-AM", prob: 3 }, { time: "Thu-PM", prob: 8 }, { time: "Fri-AM", prob: 12 }, { time: "Fri-PM", prob: 18 },
+      { time: "Sat-AM", prob: 28 }, { time: "Sat-PM", prob: 42 }, { time: "Sun-AM", prob: 48 }, { time: "Sun-Now", prob: 50.5 },
+    ],
+  },
+  {
+    id: "bhatia", name: "Akshay Bhatia", firstName: "Akshay", lastName: "BHATIA", country: "USA", color: "#3498db",
+    score: -11, thru: "16", today: -3,
+    probabilities: { top20: 98.5, top10: 90.4, top5: 72.0, win: 14.8 },
+    trend: 26.2,
+    history: [
+      { time: "Thu-AM", prob: 1 }, { time: "Thu-PM", prob: 2 }, { time: "Fri-AM", prob: 4 }, { time: "Fri-PM", prob: 6 },
+      { time: "Sat-AM", prob: 8 }, { time: "Sat-PM", prob: 10 }, { time: "Sun-AM", prob: 12 }, { time: "Sun-Now", prob: 14.8 },
+    ],
+  },
+  {
+    id: "young", name: "Cameron Young", firstName: "Cameron", lastName: "YOUNG", country: "USA", color: "#27ae60",
+    score: -9, thru: "F", today: -5,
+    probabilities: { top20: 97.8, top10: 87.1, top5: 63.6, win: 9.1 },
+    trend: 44.0,
+    history: [
+      { time: "Thu-AM", prob: 2 }, { time: "Thu-PM", prob: 3 }, { time: "Fri-AM", prob: 4 }, { time: "Fri-PM", prob: 5 },
+      { time: "Sat-AM", prob: 5 }, { time: "Sat-PM", prob: 6 }, { time: "Sun-AM", prob: 7 }, { time: "Sun-Now", prob: 9.1 },
+    ],
+  },
+  {
+    id: "morikawa", name: "Collin Morikawa", firstName: "Collin", lastName: "MORIKAWA", country: "USA", color: "#9b59b6",
+    score: -9, thru: "F", today: -2,
+    probabilities: { top20: 97.9, top10: 86.6, top5: 62.2, win: 8.1 },
+    trend: 15.9,
+    history: [
+      { time: "Thu-AM", prob: 5 }, { time: "Thu-PM", prob: 6 }, { time: "Fri-AM", prob: 6 }, { time: "Fri-PM", prob: 7 },
+      { time: "Sat-AM", prob: 7 }, { time: "Sat-PM", prob: 7 }, { time: "Sun-AM", prob: 8 }, { time: "Sun-Now", prob: 8.1 },
+    ],
+  },
+  {
+    id: "straka", name: "Sepp Straka", firstName: "Sepp", lastName: "STRAKA", country: "AUT", color: "#e67e22",
+    score: -9, thru: "F", today: -6,
+    probabilities: { top20: 97.0, top10: 83.0, top5: 55.9, win: 6.0 },
+    trend: 58.6,
+    history: [
+      { time: "Thu-AM", prob: 1 }, { time: "Thu-PM", prob: 2 }, { time: "Fri-AM", prob: 2 }, { time: "Fri-PM", prob: 3 },
+      { time: "Sat-AM", prob: 3 }, { time: "Sat-PM", prob: 4 }, { time: "Sun-AM", prob: 5 }, { time: "Sun-Now", prob: 6.0 },
+    ],
+  },
+  {
+    id: "lee", name: "Min Woo Lee", firstName: "Min Woo", lastName: "LEE", country: "AUS", color: "#1abc9c",
+    score: -8, thru: "F", today: -4,
+    probabilities: { top20: 95.9, top10: 78.9, top5: 49.4, win: 4.6 },
+    trend: 37.4,
+    history: [
+      { time: "Thu-AM", prob: 2 }, { time: "Thu-PM", prob: 3 }, { time: "Fri-AM", prob: 3 }, { time: "Fri-PM", prob: 4 },
+      { time: "Sat-AM", prob: 4 }, { time: "Sat-PM", prob: 4 }, { time: "Sun-AM", prob: 4 }, { time: "Sun-Now", prob: 4.6 },
+    ],
+  },
+  {
+    id: "gotterup", name: "Chris Gotterup", firstName: "Chris", lastName: "GOTTERUP", country: "USA", color: "#34495e",
+    score: -7, thru: "F", today: -3,
+    probabilities: { top20: 90.6, top10: 63.1, top5: 30.6, win: 1.7 },
+    trend: 27.7,
+    history: [
+      { time: "Thu-AM", prob: 0.5 }, { time: "Thu-PM", prob: 0.8 }, { time: "Fri-AM", prob: 1 }, { time: "Fri-PM", prob: 1.2 },
+      { time: "Sat-AM", prob: 1.3 }, { time: "Sat-PM", prob: 1.5 }, { time: "Sun-AM", prob: 1.6 }, { time: "Sun-Now", prob: 1.7 },
+    ],
+  },
+  {
+    id: "aberg", name: "Ludvig Aberg", firstName: "Ludvig", lastName: "ABERG", country: "SWE", color: "#f39c12",
+    score: -7, thru: "16", today: 0,
+    probabilities: { top20: 88.9, top10: 60.1, top5: 28.9, win: 1.8 },
+    trend: -7.5,
+    history: [
+      { time: "Thu-AM", prob: 4 }, { time: "Thu-PM", prob: 5 }, { time: "Fri-AM", prob: 4 }, { time: "Fri-PM", prob: 3 },
+      { time: "Sat-AM", prob: 3 }, { time: "Sat-PM", prob: 2.5 }, { time: "Sun-AM", prob: 2 }, { time: "Sun-Now", prob: 1.8 },
+    ],
+  },
+  {
+    id: "fowler", name: "Rickie Fowler", firstName: "Rickie", lastName: "FOWLER", country: "USA", color: "#e91e63",
+    score: -6, thru: "F", today: 0,
+    probabilities: { top20: 85.9, top10: 51.0, top5: 19.2, win: 0.7 },
+    trend: -8.3,
+    history: [
+      { time: "Thu-AM", prob: 3 }, { time: "Thu-PM", prob: 2.5 }, { time: "Fri-AM", prob: 2 }, { time: "Fri-PM", prob: 1.5 },
+      { time: "Sat-AM", prob: 1.2 }, { time: "Sat-PM", prob: 1 }, { time: "Sun-AM", prob: 0.8 }, { time: "Sun-Now", prob: 0.7 },
+    ],
+  },
+  {
+    id: "henley", name: "Russell Henley", firstName: "Russell", lastName: "HENLEY", country: "USA", color: "#607d8b",
+    score: -6, thru: "F", today: -1,
+    probabilities: { top20: 87.2, top10: 52.5, top5: 19.8, win: 0.6 },
+    trend: 3.5,
+    history: [
+      { time: "Thu-AM", prob: 0.4 }, { time: "Thu-PM", prob: 0.5 }, { time: "Fri-AM", prob: 0.5 }, { time: "Fri-PM", prob: 0.5 },
+      { time: "Sat-AM", prob: 0.5 }, { time: "Sat-PM", prob: 0.6 }, { time: "Sun-AM", prob: 0.6 }, { time: "Sun-Now", prob: 0.6 },
+    ],
+  },
 ];
 
-const GOLF_ROUNDS = ["Pre-Tournament", "After R1", "After R2", "After R3", "Final"];
-
-function generateGolfData() {
-  return GOLF_ROUNDS.map((round, i) => {
-    const dataPoint: Record<string, string | number> = { round };
-    for (const player of GOLF_PLAYERS) {
-      dataPoint[player.name] = Math.round(player.probabilities[i] * 100);
-    }
-    return dataPoint;
+// Transform player histories for chart
+function getChartData() {
+  const times = ["Thu-AM", "Thu-PM", "Fri-AM", "Fri-PM", "Sat-AM", "Sat-PM", "Sun-AM", "Sun-Now"];
+  return times.map((time) => {
+    const point: Record<string, string | number> = { time };
+    TOURNAMENT_PLAYERS.forEach((player) => {
+      const historyPoint = player.history.find((h) => h.time === time);
+      point[player.id] = historyPoint?.prob ?? 0;
+    });
+    return point;
   });
 }
 
-// =============================================================================
-// MOCK DATA: Tournament Bracket (March Madness)
-// =============================================================================
-
-interface BracketTeam {
-  name: string;
-  seed: number;
-  color: string;
-  probabilities: { round: string; prob: number }[];
-}
-
-const BRACKET_TEAMS: BracketTeam[] = [
-  { 
-    name: "UConn", 
-    seed: 1, 
-    color: "#0e1a36",
-    probabilities: [
-      { round: "R64", prob: 0.98 },
-      { round: "R32", prob: 0.88 },
-      { round: "S16", prob: 0.65 },
-      { round: "E8", prob: 0.45 },
-      { round: "F4", prob: 0.28 },
-      { round: "Final", prob: 0.18 },
-    ]
-  },
-  { 
-    name: "Houston", 
-    seed: 1, 
-    color: "#c8102e",
-    probabilities: [
-      { round: "R64", prob: 0.97 },
-      { round: "R32", prob: 0.85 },
-      { round: "S16", prob: 0.58 },
-      { round: "E8", prob: 0.38 },
-      { round: "F4", prob: 0.22 },
-      { round: "Final", prob: 0.14 },
-    ]
-  },
-  { 
-    name: "Purdue", 
-    seed: 1, 
-    color: "#ceb888",
-    probabilities: [
-      { round: "R64", prob: 0.96 },
-      { round: "R32", prob: 0.82 },
-      { round: "S16", prob: 0.52 },
-      { round: "E8", prob: 0.32 },
-      { round: "F4", prob: 0.18 },
-      { round: "Final", prob: 0.10 },
-    ]
-  },
-  { 
-    name: "Duke", 
-    seed: 4, 
-    color: "#003087",
-    probabilities: [
-      { round: "R64", prob: 0.78 },
-      { round: "R32", prob: 0.55 },
-      { round: "S16", prob: 0.32 },
-      { round: "E8", prob: 0.18 },
-      { round: "F4", prob: 0.08 },
-      { round: "Final", prob: 0.04 },
-    ]
-  },
-];
-
-const BRACKET_ROUNDS = ["R64", "R32", "S16", "E8", "F4", "Final"];
-
-function generateBracketData() {
-  return BRACKET_ROUNDS.map((round) => {
-    const dataPoint: Record<string, string | number> = { round };
-    for (const team of BRACKET_TEAMS) {
-      const roundData = team.probabilities.find(p => p.round === round);
-      dataPoint[team.name] = roundData ? Math.round(roundData.prob * 100) : 0;
-    }
-    return dataPoint;
-  });
-}
+const COUNTRY_FLAGS: Record<string, string> = {
+  USA: "🇺🇸", AUS: "🇦🇺", AUT: "🇦🇹", SWE: "🇸🇪", ENG: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", CAN: "🇨🇦", JPN: "🇯🇵", KOR: "🇰🇷",
+};
 
 // =============================================================================
-// DEMO PAGE COMPONENT
+// MAIN PAGE
 // =============================================================================
-
-type DemoView = "two-team" | "golf" | "bracket";
 
 export default function WinProbabilityDemo() {
-  const [activeView, setActiveView] = useState<DemoView>("two-team");
-  const [highlightedPlayer, setHighlightedPlayer] = useState<string | null>(null);
-  
+  const [activeView, setActiveView] = useState<"two-team" | "tournament">("two-team");
+
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-8">
-        {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold text-foreground mb-2">
-            Win Probability Charts
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Three chart variants for different competition types. Data aggregated from ESPN, Kalshi, Polymarket, and betting markets.
-          </p>
-        </div>
-        
-        {/* View Selector */}
-        <div className="flex gap-2 flex-wrap">
-          {[
-            { key: "two-team" as DemoView, label: "Two-Team (NBA)", desc: "Head-to-head with multi-source aggregation" },
-            { key: "golf" as DemoView, label: "Multi-Participant (Golf)", desc: "Tournament with 8+ competitors" },
-            { key: "bracket" as DemoView, label: "Tournament Bracket", desc: "March Madness / Playoffs progression" },
-          ].map(({ key, label, desc }) => (
-            <button
-              key={key}
-              onClick={() => setActiveView(key)}
-              className={`px-4 py-3 rounded-lg text-left transition-colors ${
-                activeView === key
-                  ? "bg-foreground text-background"
-                  : "bg-card hover:bg-muted text-foreground"
-              }`}
-            >
-              <div className="font-medium text-sm">{label}</div>
-              <div className={`text-xs mt-0.5 ${activeView === key ? "text-background/70" : "text-muted-foreground"}`}>
-                {desc}
-              </div>
-            </button>
-          ))}
-        </div>
-        
-        {/* Chart Area */}
-        <div className="bg-card rounded-xl border border-border overflow-hidden">
-          {activeView === "two-team" && (
-            <TwoTeamChart />
-          )}
-          {activeView === "golf" && (
-            <GolfChart 
-              highlightedPlayer={highlightedPlayer} 
-              setHighlightedPlayer={setHighlightedPlayer} 
-            />
-          )}
-          {activeView === "bracket" && (
-            <BracketChart />
-          )}
-        </div>
-        
-        {/* Legend / Source Attribution */}
-        <div className="text-xs text-muted-foreground">
-          Data sources: ESPN Win Probability, Kalshi, Polymarket, DraftKings, FanDuel, BetMGM. 
-          Aggregated "Bain Luck" line uses weighted median with staleness decay.
+    <main className="min-h-screen bg-background">
+      {/* Header */}
+      <div className="border-b border-border bg-card">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <h1 className="text-xl font-semibold text-foreground">Win Probability Charts</h1>
+          <p className="text-sm text-muted-foreground mt-1">Demo page with two-team and tournament views</p>
         </div>
       </div>
-    </div>
+
+      {/* View Toggle */}
+      <div className="border-b border-border bg-card">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex gap-1">
+            <button
+              onClick={() => setActiveView("two-team")}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeView === "two-team"
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Two-Team (NBA)
+            </button>
+            <button
+              onClick={() => setActiveView("tournament")}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeView === "tournament"
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Tournament (Golf)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        {activeView === "two-team" ? <TwoTeamView /> : <TournamentView />}
+      </div>
+    </main>
   );
 }
 
 // =============================================================================
-// TWO-TEAM CHART (uses existing OddsChart component)
+// TWO-TEAM VIEW
 // =============================================================================
 
-function TwoTeamChart() {
+function TwoTeamView() {
   const history = generateNBAOddsHistory();
   const winProbHistory = generateNBAWinProbHistory();
-  
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Game Header - MoneyPuck inspired */}
-      <div className="bg-[#1a1d24] px-5 py-4 border-b border-border/50">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            {/* Home Team */}
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[#007a33] flex items-center justify-center">
-                <span className="text-white text-sm font-bold">BOS</span>
-              </div>
-              <div>
-                <div className="font-semibold text-foreground">Boston Celtics</div>
-                <div className="text-2xl font-bold text-foreground">105</div>
-              </div>
+    <div className="bg-card rounded-lg border border-border overflow-hidden">
+      {/* Game Header */}
+      <div className="px-6 py-4 border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-8">
+          {/* Home Team */}
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-lg bg-[#007a33] flex items-center justify-center">
+              <span className="text-white text-sm font-bold">BOS</span>
             </div>
-            
-            {/* VS / Final */}
-            <div className="flex flex-col items-center">
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">Final</span>
-            </div>
-            
-            {/* Away Team */}
-            <div className="flex items-center gap-3">
-              <div>
-                <div className="font-semibold text-foreground text-right">Miami Heat</div>
-                <div className="text-2xl font-bold text-foreground text-right">102</div>
-              </div>
-              <div className="w-10 h-10 rounded-lg bg-[#98002e] flex items-center justify-center">
-                <span className="text-white text-sm font-bold">MIA</span>
-              </div>
+            <div>
+              <div className="text-sm text-muted-foreground">Boston</div>
+              <div className="text-2xl font-bold text-foreground">105</div>
             </div>
           </div>
           
-          <div className="text-right">
-            <div className="text-xs text-muted-foreground">March 15, 2024</div>
-            <div className="text-xs text-muted-foreground">TD Garden, Boston</div>
+          <div className="text-sm text-muted-foreground font-medium">FINAL</div>
+          
+          {/* Away Team */}
+          <div className="flex items-center gap-3">
+            <div>
+              <div className="text-sm text-muted-foreground text-right">Miami</div>
+              <div className="text-2xl font-bold text-foreground text-right">102</div>
+            </div>
+            <div className="w-12 h-12 rounded-lg bg-[#98002e] flex items-center justify-center">
+              <span className="text-white text-sm font-bold">MIA</span>
+            </div>
           </div>
         </div>
-      </div>
-      
-      {/* Period markers legend */}
-      <div className="px-5 py-2 bg-[#1a1d24]/50 border-b border-border/30 flex items-center gap-4 text-[10px] text-muted-foreground">
-        <span>Q1</span>
-        <div className="flex-1 h-px bg-border/30" />
-        <span>Q2</span>
-        <div className="flex-1 h-px bg-border/30" />
-        <span>Halftime</span>
-        <div className="flex-1 h-px bg-border/30" />
-        <span>Q3</span>
-        <div className="flex-1 h-px bg-border/30" />
-        <span>Q4</span>
-      </div>
-      
-      {/* Chart */}
-      <div className="flex-1 p-4">
-        <div className="h-72">
-          <OddsChart
-            history={history}
-            homeTeam="Boston Celtics"
-            awayTeam="Miami Heat"
-            commenceTime={NBA_COMMENCE_TIME}
-            isLive={false}
-            winProbHistory={winProbHistory}
-            winProbSources={NBA_WIN_PROB_SOURCES}
-            eventStatus="completed"
-            periodBoundaries={NBA_PERIOD_BOUNDARIES}
-            homeTeamColor="#007a33"
-            awayTeamColor="#98002e"
-            fillContainer
-          />
+        
+        <div className="text-right text-sm text-muted-foreground">
+          <div>March 15, 2024</div>
+          <div>TD Garden, Boston</div>
         </div>
       </div>
       
-      {/* Source legend */}
-      <div className="px-5 py-3 bg-[#1a1d24]/50 border-t border-border/30 flex items-center gap-4 text-[10px]">
+      {/* Source Legend */}
+      <div className="px-6 py-2 border-b border-border flex items-center gap-6 text-xs">
         <span className="text-muted-foreground">Sources:</span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-[#f97316]" style={{ opacity: 0.8 }} />
-          <span className="text-muted-foreground">ESPN</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-[#22c55e]" style={{ opacity: 0.8 }} />
-          <span className="text-muted-foreground">Kalshi</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-[#3b82f6]" style={{ opacity: 0.8 }} />
-          <span className="text-muted-foreground">Polymarket</span>
-        </span>
+        {NBA_WIN_PROB_SOURCES.map((source) => (
+          <span key={source.key} className="flex items-center gap-1.5">
+            <span className="w-3 h-0.5 rounded" style={{ backgroundColor: source.color }} />
+            <span className="text-muted-foreground">{source.label}</span>
+          </span>
+        ))}
         <span className="flex items-center gap-1.5 ml-2">
-          <span className="w-4 h-0.5 bg-white rounded-full" />
+          <span className="w-4 h-0.5 bg-foreground rounded-full" />
           <span className="text-foreground font-medium">Aggregate</span>
         </span>
       </div>
+      
+      {/* Chart */}
+      <div className="p-4 h-96">
+        <OddsChart
+          history={history}
+          homeTeam="Boston Celtics"
+          awayTeam="Miami Heat"
+          commenceTime={NBA_COMMENCE_TIME}
+          isLive={false}
+          winProbHistory={winProbHistory}
+          winProbSources={NBA_WIN_PROB_SOURCES}
+          eventStatus="completed"
+          periodBoundaries={NBA_PERIOD_BOUNDARIES}
+          homeTeamColor="#007a33"
+          awayTeamColor="#98002e"
+          fillContainer
+        />
+      </div>
     </div>
   );
 }
 
 // =============================================================================
-// GOLF CHART (DataGolf-Inspired Multi-Participant Evolution)
+// TOURNAMENT VIEW (DataGolf-inspired)
 // =============================================================================
 
-interface GolfChartProps {
-  highlightedPlayer: string | null;
-  setHighlightedPlayer: (player: string | null) => void;
-}
+function TournamentView() {
+  const [selectedPlayers, setSelectedPlayers] = useState<string[]>(["berger", "bhatia", "young"]);
+  const [timeRange, setTimeRange] = useState<"full" | "current">("full");
+  const [probColumn, setProbColumn] = useState<"win" | "top5" | "top10" | "top20">("win");
+  const chartData = getChartData();
 
-// More granular data: hole-by-hole for final round to show DataGolf-style detail
-const GOLF_DETAILED_DATA = [
-  // Pre-tournament through R3
-  { hole: "Pre", label: "Pre", Scheffler: 18, McIlroy: 12, Rahm: 14, Koepka: 8, Hovland: 6, Morikawa: 5, Thomas: 4, Field: 33 },
-  { hole: "R1", label: "R1", Scheffler: 22, McIlroy: 15, Rahm: 12, Koepka: 10, Hovland: 8, Morikawa: 4, Thomas: 3, Field: 26 },
-  { hole: "R2", label: "R2", Scheffler: 28, McIlroy: 18, Rahm: 10, Koepka: 12, Hovland: 6, Morikawa: 3, Thomas: 2, Field: 21 },
-  { hole: "R3", label: "R3", Scheffler: 35, McIlroy: 14, Rahm: 8, Koepka: 15, Hovland: 5, Morikawa: 2, Thomas: 1, Field: 20 },
-  // Final round - hole by hole (every 3 holes for clarity)
-  { hole: "F-3", label: "H3", Scheffler: 38, McIlroy: 12, Rahm: 7, Koepka: 18, Hovland: 4, Morikawa: 2, Thomas: 1, Field: 18 },
-  { hole: "F-6", label: "H6", Scheffler: 42, McIlroy: 10, Rahm: 6, Koepka: 20, Hovland: 3, Morikawa: 1, Thomas: 1, Field: 17 },
-  { hole: "F-9", label: "Turn", Scheffler: 45, McIlroy: 8, Rahm: 5, Koepka: 22, Hovland: 3, Morikawa: 1, Thomas: 1, Field: 15 },
-  { hole: "F-12", label: "H12", Scheffler: 52, McIlroy: 6, Rahm: 4, Koepka: 20, Hovland: 2, Morikawa: 1, Thomas: 1, Field: 14 },
-  { hole: "F-15", label: "H15", Scheffler: 58, McIlroy: 5, Rahm: 3, Koepka: 18, Hovland: 2, Morikawa: 1, Thomas: 0, Field: 13 },
-  { hole: "F-18", label: "Final", Scheffler: 100, McIlroy: 0, Rahm: 0, Koepka: 0, Hovland: 0, Morikawa: 0, Thomas: 0, Field: 0 },
-];
+  const togglePlayer = (playerId: string) => {
+    setSelectedPlayers((prev) =>
+      prev.includes(playerId) ? prev.filter((id) => id !== playerId) : [...prev, playerId]
+    );
+  };
 
-function GolfChart({ highlightedPlayer, setHighlightedPlayer }: GolfChartProps) {
-  // Current leaderboard (from final data point)
-  const leaderboard = GOLF_PLAYERS
-    .map(p => ({ name: p.name, color: p.color, prob: GOLF_DETAILED_DATA[GOLF_DETAILED_DATA.length - 2][p.name as keyof typeof GOLF_DETAILED_DATA[0]] as number }))
-    .sort((a, b) => b.prob - a.prob)
-    .slice(0, 6);
+  // Sort players by selected probability column
+  const sortedPlayers = [...TOURNAMENT_PLAYERS].sort(
+    (a, b) => b.probabilities[probColumn] - a.probabilities[probColumn]
+  );
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Tournament Header - DataGolf style with dark bg */}
-      <div className="bg-[#1a1d24] px-5 py-4 border-b border-border/50">
-        <div className="flex items-center justify-between">
+    <div className="bg-card rounded-lg border border-border overflow-hidden">
+      {/* Tournament Header */}
+      <div className="px-6 py-4 border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
           <div>
-            <div className="text-lg font-semibold text-foreground">The Masters 2024</div>
-            <div className="text-xs text-muted-foreground mt-0.5">Augusta National Golf Club - Final Round</div>
+            <div className="text-lg font-semibold text-foreground">Arnold Palmer Invitational</div>
+            <div className="text-sm text-muted-foreground">Bay Hill Club &amp; Lodge - Round 4</div>
           </div>
-          <div className="text-right">
-            <div className="text-xs text-muted-foreground">Live Model</div>
-            <div className="text-sm font-medium text-foreground">Win Probability</div>
-          </div>
+        </div>
+        <div className="text-right text-sm text-muted-foreground">
+          <div>Updated 2 hours ago</div>
         </div>
       </div>
 
-      <div className="flex flex-1 min-h-0">
-        {/* Main Chart Area */}
-        <div className="flex-1 p-4">
-          {/* Clickable Player Legend - horizontal above chart */}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3">
-            {GOLF_PLAYERS.slice(0, 6).map((player) => (
+      {/* Controls Row */}
+      <div className="px-6 py-3 border-b border-border flex items-center justify-between bg-muted/30">
+        {/* Time Range */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground uppercase tracking-wider mr-2">Time Range</span>
+          <div className="flex rounded-md overflow-hidden border border-border">
+            <button
+              onClick={() => setTimeRange("full")}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                timeRange === "full" ? "bg-foreground text-background" : "bg-card text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              Full Event
+            </button>
+            <button
+              onClick={() => setTimeRange("current")}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                timeRange === "current" ? "bg-foreground text-background" : "bg-card text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              Current Round
+            </button>
+          </div>
+        </div>
+
+        {/* Finish Position */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground uppercase tracking-wider mr-2">Finish Position</span>
+          <div className="flex rounded-md overflow-hidden border border-border">
+            {(["top20", "top10", "top5", "win"] as const).map((col) => (
               <button
-                key={player.name}
-                onClick={() => setHighlightedPlayer(
-                  highlightedPlayer === player.name ? null : player.name
-                )}
-                className={`flex items-center gap-1.5 text-xs transition-all ${
-                  highlightedPlayer && highlightedPlayer !== player.name
-                    ? "opacity-25"
-                    : "opacity-100"
+                key={col}
+                onClick={() => setProbColumn(col)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  probColumn === col ? "bg-foreground text-background" : "bg-card text-muted-foreground hover:bg-muted"
                 }`}
               >
-                <div
-                  className="w-3 h-0.5"
-                  style={{ backgroundColor: player.color }}
-                />
-                <span className="text-muted-foreground hover:text-foreground">{player.name}</span>
+                {col === "win" ? "Win" : col.toUpperCase().replace("TOP", "Top ")}
               </button>
             ))}
           </div>
+        </div>
+      </div>
 
+      {/* Evolution Plot */}
+      <div className="px-6 py-4 border-b border-border">
+        <div className="flex gap-6">
           {/* Chart */}
-          <div className="h-72">
+          <div className="flex-1 h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={GOLF_DETAILED_DATA} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
-                {/* Subtle grid */}
-                <CartesianGrid 
-                  strokeDasharray="1 4" 
-                  stroke="hsl(var(--border))" 
-                  opacity={0.3}
-                  horizontal={true}
-                  vertical={false}
-                />
-                
-                {/* Round separators as reference lines */}
-                <ReferenceLine x="R1" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} />
-                <ReferenceLine x="R2" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} />
-                <ReferenceLine x="R3" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} />
-                <ReferenceLine x="F-3" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} label={{ value: "Final Round", position: "top", fill: "hsl(var(--muted-foreground))", fontSize: 9 }} />
+              <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
+                {/* Day backgrounds */}
+                <ReferenceArea x1="Thu-AM" x2="Thu-PM" fill="hsl(var(--muted))" fillOpacity={0.15} />
+                <ReferenceArea x1="Fri-AM" x2="Fri-PM" fill="hsl(var(--muted))" fillOpacity={0.3} />
+                <ReferenceArea x1="Sat-AM" x2="Sat-PM" fill="hsl(var(--muted))" fillOpacity={0.15} />
+                <ReferenceArea x1="Sun-AM" x2="Sun-Now" fill="hsl(var(--muted))" fillOpacity={0.3} />
+
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} vertical={false} />
                 
                 <XAxis
-                  dataKey="label"
+                  dataKey="time"
                   tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                  axisLine={{ stroke: "hsl(var(--border))", opacity: 0.5 }}
+                  axisLine={{ stroke: "hsl(var(--border))" }}
                   tickLine={false}
-                  interval={0}
+                  tickFormatter={(value) => {
+                    if (value.includes("AM")) return value.replace("-AM", "");
+                    return "";
+                  }}
                 />
                 <YAxis
-                  domain={[0, 100]}
-                  ticks={[0, 25, 50, 75, 100]}
+                  domain={[0, "auto"]}
                   tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
                   axisLine={false}
                   tickLine={false}
                   tickFormatter={(value) => `${value}%`}
-                  width={35}
+                  width={40}
                 />
                 <Tooltip
                   contentStyle={{
@@ -552,317 +475,125 @@ function GolfChart({ highlightedPlayer, setHighlightedPlayer }: GolfChartProps) 
                     border: "1px solid hsl(var(--border))",
                     borderRadius: "6px",
                     fontSize: "11px",
-                    padding: "8px 12px",
                   }}
-                  labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600, marginBottom: 4 }}
+                  labelFormatter={(label) => {
+                    const day = label.split("-")[0];
+                    const half = label.includes("AM") ? "Morning" : label.includes("PM") ? "Afternoon" : "Now";
+                    return `${day} ${half}`;
+                  }}
                   formatter={(value: number, name: string) => {
-                    const player = GOLF_PLAYERS.find(p => p.name === name);
-                    return [
-                      <span key={name} style={{ color: player?.color }}>{value}%</span>,
-                      name
-                    ];
+                    const player = TOURNAMENT_PLAYERS.find((p) => p.id === name);
+                    return [`${value.toFixed(1)}%`, player?.name || name];
                   }}
                 />
-                
-                {/* Lines - DataGolf uses thinner lines with dots at data points */}
-                {GOLF_PLAYERS.map((player) => (
+
+                {TOURNAMENT_PLAYERS.map((player) => (
                   <Line
-                    key={player.name}
+                    key={player.id}
                     type="monotone"
-                    dataKey={player.name}
+                    dataKey={player.id}
                     stroke={player.color}
-                    strokeWidth={highlightedPlayer === player.name ? 2.5 : 1.5}
+                    strokeWidth={selectedPlayers.includes(player.id) ? 2.5 : 1}
                     dot={false}
-                    activeDot={{ 
-                      r: 4, 
-                      fill: player.color,
-                      stroke: "hsl(var(--background))",
-                      strokeWidth: 2
-                    }}
-                    opacity={
-                      highlightedPlayer && highlightedPlayer !== player.name
-                        ? 0.1
-                        : 1
-                    }
+                    opacity={selectedPlayers.length === 0 || selectedPlayers.includes(player.id) ? 1 : 0.15}
                   />
                 ))}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-        </div>
 
-        {/* Right Sidebar - Live Leaderboard (DataGolf style) */}
-        <div className="w-44 border-l border-border/50 bg-[#1a1d24] p-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 font-medium">
-            Win Probability
-          </div>
-          <div className="space-y-1.5">
-            {leaderboard.map((player, i) => (
-              <button
-                key={player.name}
-                onClick={() => setHighlightedPlayer(
-                  highlightedPlayer === player.name ? null : player.name
-                )}
-                className={`w-full flex items-center justify-between py-1.5 px-2 rounded transition-all ${
-                  highlightedPlayer === player.name ? "bg-white/5" : "hover:bg-white/5"
-                } ${highlightedPlayer && highlightedPlayer !== player.name ? "opacity-30" : ""}`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-muted-foreground w-3">{i + 1}</span>
+          {/* Add Players Panel */}
+          <div className="w-48 border-l border-border pl-4">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Add Players to Plot</div>
+            <div className="space-y-1 max-h-56 overflow-y-auto">
+              {TOURNAMENT_PLAYERS.slice(0, 8).map((player) => (
+                <button
+                  key={player.id}
+                  onClick={() => togglePlayer(player.id)}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-muted/50 transition-colors"
+                >
                   <div
-                    className="w-1 h-4 rounded-full"
+                    className={`w-2 h-2 rounded-full ${selectedPlayers.includes(player.id) ? "" : "opacity-30"}`}
                     style={{ backgroundColor: player.color }}
                   />
-                  <span className="text-xs text-foreground">{player.name}</span>
-                </div>
-                <span 
-                  className="text-sm font-mono font-medium"
-                  style={{ color: player.color }}
-                >
-                  {player.prob}%
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// =============================================================================
-// BRACKET CHART (Tournament Progression - Chart + Grid)
-// =============================================================================
-
-// More detailed bracket data with 8 teams
-const BRACKET_DETAILED_TEAMS: BracketTeam[] = [
-  { name: "UConn", seed: 1, color: "#0e1a36", probabilities: [
-    { round: "Pre", prob: 0.15 }, { round: "R64", prob: 0.98 }, { round: "R32", prob: 0.88 }, 
-    { round: "S16", prob: 0.65 }, { round: "E8", prob: 0.45 }, { round: "F4", prob: 0.28 }, { round: "Champ", prob: 0.18 }
-  ]},
-  { name: "Houston", seed: 1, color: "#c8102e", probabilities: [
-    { round: "Pre", prob: 0.12 }, { round: "R64", prob: 0.97 }, { round: "R32", prob: 0.85 }, 
-    { round: "S16", prob: 0.58 }, { round: "E8", prob: 0.38 }, { round: "F4", prob: 0.22 }, { round: "Champ", prob: 0.14 }
-  ]},
-  { name: "Purdue", seed: 1, color: "#ceb888", probabilities: [
-    { round: "Pre", prob: 0.11 }, { round: "R64", prob: 0.96 }, { round: "R32", prob: 0.82 }, 
-    { round: "S16", prob: 0.52 }, { round: "E8", prob: 0.32 }, { round: "F4", prob: 0.18 }, { round: "Champ", prob: 0.10 }
-  ]},
-  { name: "N. Carolina", seed: 1, color: "#7bafd4", probabilities: [
-    { round: "Pre", prob: 0.10 }, { round: "R64", prob: 0.95 }, { round: "R32", prob: 0.78 }, 
-    { round: "S16", prob: 0.48 }, { round: "E8", prob: 0.28 }, { round: "F4", prob: 0.15 }, { round: "Champ", prob: 0.08 }
-  ]},
-  { name: "Duke", seed: 4, color: "#003087", probabilities: [
-    { round: "Pre", prob: 0.06 }, { round: "R64", prob: 0.78 }, { round: "R32", prob: 0.55 }, 
-    { round: "S16", prob: 0.32 }, { round: "E8", prob: 0.18 }, { round: "F4", prob: 0.08 }, { round: "Champ", prob: 0.04 }
-  ]},
-  { name: "Tennessee", seed: 2, color: "#ff8200", probabilities: [
-    { round: "Pre", prob: 0.07 }, { round: "R64", prob: 0.92 }, { round: "R32", prob: 0.72 }, 
-    { round: "S16", prob: 0.42 }, { round: "E8", prob: 0.22 }, { round: "F4", prob: 0.10 }, { round: "Champ", prob: 0.05 }
-  ]},
-  { name: "Arizona", seed: 2, color: "#cc0033", probabilities: [
-    { round: "Pre", prob: 0.08 }, { round: "R64", prob: 0.93 }, { round: "R32", prob: 0.74 }, 
-    { round: "S16", prob: 0.44 }, { round: "E8", prob: 0.24 }, { round: "F4", prob: 0.12 }, { round: "Champ", prob: 0.06 }
-  ]},
-  { name: "Marquette", seed: 2, color: "#003366", probabilities: [
-    { round: "Pre", prob: 0.05 }, { round: "R64", prob: 0.90 }, { round: "R32", prob: 0.68 }, 
-    { round: "S16", prob: 0.38 }, { round: "E8", prob: 0.20 }, { round: "F4", prob: 0.09 }, { round: "Champ", prob: 0.04 }
-  ]},
-];
-
-const BRACKET_ROUND_LABELS: Record<string, string> = {
-  "Pre": "Pre-Tournament",
-  "R64": "Round of 64",
-  "R32": "Round of 32",
-  "S16": "Sweet 16",
-  "E8": "Elite 8",
-  "F4": "Final Four",
-  "Champ": "Champion",
-};
-
-function generateDetailedBracketData() {
-  const rounds = ["Pre", "R64", "R32", "S16", "E8", "F4", "Champ"];
-  return rounds.map((round) => {
-    const dataPoint: Record<string, string | number> = { round };
-    for (const team of BRACKET_DETAILED_TEAMS) {
-      const roundData = team.probabilities.find(p => p.round === round);
-      dataPoint[team.name] = roundData ? Math.round(roundData.prob * 100) : 0;
-    }
-    return dataPoint;
-  });
-}
-
-function BracketChart() {
-  const data = generateDetailedBracketData();
-  const [highlightedTeam, setHighlightedTeam] = useState<string | null>(null);
-  
-  // Get current probabilities (Sweet 16 stage for demo)
-  const currentRound = "S16";
-  const currentProbs = BRACKET_DETAILED_TEAMS
-    .map(team => ({
-      ...team,
-      currentProb: team.probabilities.find(p => p.round === currentRound)?.prob || 0
-    }))
-    .sort((a, b) => b.currentProb - a.currentProb);
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Tournament Header */}
-      <div className="bg-[#1a1d24] px-5 py-4 border-b border-border/50">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-lg font-semibold text-foreground">NCAA Tournament 2024</div>
-            <div className="text-xs text-muted-foreground mt-0.5">Championship Probability Evolution</div>
-          </div>
-          <div className="px-3 py-1 bg-amber-500/20 text-amber-400 text-xs font-medium rounded">
-            Sweet 16
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-1 min-h-0">
-        {/* Main Chart */}
-        <div className="flex-1 p-4">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
-                <CartesianGrid 
-                  strokeDasharray="1 4" 
-                  stroke="hsl(var(--border))" 
-                  opacity={0.3}
-                  horizontal={true}
-                  vertical={false}
-                />
-                
-                <XAxis
-                  dataKey="round"
-                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                  axisLine={{ stroke: "hsl(var(--border))", opacity: 0.5 }}
-                  tickLine={false}
-                  tickFormatter={(value) => BRACKET_ROUND_LABELS[value]?.split(" ")[0] || value}
-                />
-                <YAxis
-                  domain={[0, 100]}
-                  ticks={[0, 25, 50, 75, 100]}
-                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(value) => `${value}%`}
-                  width={35}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--popover))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "6px",
-                    fontSize: "11px",
-                    padding: "8px 12px",
-                  }}
-                  labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600, marginBottom: 4 }}
-                  labelFormatter={(label) => BRACKET_ROUND_LABELS[label] || label}
-                  formatter={(value: number, name: string) => {
-                    const team = BRACKET_DETAILED_TEAMS.find(t => t.name === name);
-                    return [
-                      <span key={name} style={{ color: team?.color }}>{value}%</span>,
-                      `(${team?.seed}) ${name}`
-                    ];
-                  }}
-                />
-                
-                {/* Current round indicator */}
-                <ReferenceLine 
-                  x={currentRound} 
-                  stroke="hsl(var(--muted-foreground))" 
-                  strokeDasharray="4 4" 
-                  opacity={0.5}
-                />
-                
-                {BRACKET_DETAILED_TEAMS.map((team) => (
-                  <Line
-                    key={team.name}
-                    type="monotone"
-                    dataKey={team.name}
-                    stroke={team.color}
-                    strokeWidth={highlightedTeam === team.name ? 2.5 : 1.5}
-                    dot={false}
-                    activeDot={{ 
-                      r: 4, 
-                      fill: team.color,
-                      stroke: "hsl(var(--background))",
-                      strokeWidth: 2
-                    }}
-                    opacity={
-                      highlightedTeam && highlightedTeam !== team.name
-                        ? 0.1
-                        : 1
-                    }
-                  />
-                ))}
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Right Sidebar - Championship Odds Grid */}
-        <div className="w-52 border-l border-border/50 bg-[#1a1d24] p-3 overflow-y-auto">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-3 font-medium">
-            Championship Odds
-          </div>
-          
-          {/* Grid header */}
-          <div className="grid grid-cols-[1fr_auto_auto] gap-1 text-[9px] text-muted-foreground mb-1 px-1">
-            <span>Team</span>
-            <span className="text-center w-10">Now</span>
-            <span className="text-center w-10">Pre</span>
-          </div>
-          
-          {/* Teams */}
-          <div className="space-y-0.5">
-            {currentProbs.map((team, i) => {
-              const preProb = team.probabilities.find(p => p.round === "Pre")?.prob || 0;
-              const change = team.currentProb - preProb;
-              
-              return (
-                <button
-                  key={team.name}
-                  onClick={() => setHighlightedTeam(
-                    highlightedTeam === team.name ? null : team.name
-                  )}
-                  className={`w-full grid grid-cols-[1fr_auto_auto] gap-1 items-center py-1.5 px-1 rounded transition-all text-left ${
-                    highlightedTeam === team.name ? "bg-white/10" : "hover:bg-white/5"
-                  } ${highlightedTeam && highlightedTeam !== team.name ? "opacity-30" : ""}`}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <div
-                      className="w-1 h-3 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: team.color }}
-                    />
-                    <span className="text-[10px] text-muted-foreground w-3 flex-shrink-0">{team.seed}</span>
-                    <span className="text-xs text-foreground truncate">{team.name}</span>
-                  </div>
-                  <span 
-                    className="text-xs font-mono font-medium text-center w-10"
-                    style={{ color: team.color }}
-                  >
-                    {Math.round(team.currentProb * 100)}%
-                  </span>
-                  <span className={`text-[10px] font-mono text-center w-10 ${
-                    change > 0 ? "text-green-400" : change < 0 ? "text-red-400" : "text-muted-foreground"
-                  }`}>
-                    {change > 0 ? "+" : ""}{Math.round(change * 100)}
+                  <span className={`text-xs ${selectedPlayers.includes(player.id) ? "text-foreground" : "text-muted-foreground"}`}>
+                    {player.lastName}, {player.firstName.charAt(0)}.
                   </span>
                 </button>
-              );
-            })}
-          </div>
-          
-          {/* Source attribution */}
-          <div className="mt-4 pt-3 border-t border-border/30">
-            <div className="text-[9px] text-muted-foreground">
-              Data: ESPN, Kalshi, FiveThirtyEight
+              ))}
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Grid */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30">
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider w-12">Pos</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Player</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider w-16">Score</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider w-14">Thru</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider w-14">Today</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider w-20">Top 20</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider w-20">Top 10</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider w-20">Top 5</th>
+              <th className={`px-4 py-3 text-center text-xs font-medium uppercase tracking-wider w-20 ${probColumn === "win" ? "bg-green-500/10 text-green-600" : "text-muted-foreground"}`}>Win</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider w-20">Trend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedPlayers.map((player, index) => {
+              const position = index + 1;
+              const isTied = index > 0 && sortedPlayers[index - 1].probabilities[probColumn] === player.probabilities[probColumn];
+              const posDisplay = isTied ? `T${position}` : position;
+
+              return (
+                <tr
+                  key={player.id}
+                  className="border-b border-border hover:bg-muted/30 transition-colors"
+                >
+                  <td className="px-4 py-3 text-muted-foreground">{posDisplay}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{COUNTRY_FLAGS[player.country] || "🏳️"}</span>
+                      <span className="font-medium text-foreground">{player.lastName}</span>
+                      <span className="text-muted-foreground">{player.firstName}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-semibold ${
+                      player.score < 0 ? "bg-red-500 text-white" : player.score === 0 ? "bg-gray-400 text-white" : "bg-blue-500 text-white"
+                    }`}>
+                      {player.score > 0 ? `+${player.score}` : player.score === 0 ? "E" : player.score}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center text-muted-foreground">{player.thru}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={player.today < 0 ? "text-red-500" : player.today > 0 ? "text-blue-500" : "text-muted-foreground"}>
+                      {player.today > 0 ? `+${player.today}` : player.today === 0 ? "E" : player.today}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center text-muted-foreground">{player.probabilities.top20.toFixed(1)}%</td>
+                  <td className="px-4 py-3 text-center text-muted-foreground">{player.probabilities.top10.toFixed(1)}%</td>
+                  <td className="px-4 py-3 text-center text-muted-foreground">{player.probabilities.top5.toFixed(1)}%</td>
+                  <td className={`px-4 py-3 text-center font-semibold ${probColumn === "win" ? "bg-green-500/10 text-green-600" : "text-foreground"}`}>
+                    {player.probabilities.win.toFixed(1)}%
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`flex items-center justify-center gap-0.5 text-xs font-medium ${
+                      player.trend > 0 ? "text-green-600" : player.trend < 0 ? "text-red-500" : "text-muted-foreground"
+                    }`}>
+                      {player.trend > 0 ? "▲" : player.trend < 0 ? "▼" : "—"}
+                      {player.trend !== 0 && `${Math.abs(player.trend).toFixed(1)}%`}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
