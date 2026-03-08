@@ -124,3 +124,64 @@ nonisolated struct PinRequest: Encodable, Sendable {
     let pinType: String
     let targetId: Int
 }
+
+// MARK: - Grouped Feed Response
+
+nonisolated struct GroupedFeedResponse: Decodable, Sendable {
+    let feed: [GroupedFeedItem]
+    let total: Int
+    let limit: Int
+    let offset: Int
+}
+
+// MARK: - Grouped Feed Item (Polymorphic)
+
+nonisolated struct GroupedFeedItem: Decodable, Identifiable, Sendable {
+    let type: String
+    let groupKey: String
+    
+    // Player stat props
+    let playerName: String?
+    let statCategory: String?
+    let lines: [StatPropLine]?
+    let marketCount: Int?
+    let espnPlayerId: String?
+    let sportKey: String?
+    let eventMatchup: String?
+    let eventTime: String?
+    
+    // Playoff progression
+    let entityName: String?
+    let stages: [ProgressionStage]?
+    let logoUrl: String?
+    let teamColors: TeamColors?
+    
+    var id: String { groupKey }
+}
+
+// MARK: - Stat Prop Line
+
+nonisolated struct StatPropLine: Decodable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let probability: Double
+    let thresholdValue: Int
+    let thresholdDirection: String
+    let source: String?
+}
+
+// MARK: - Progression Stage
+
+nonisolated struct ProgressionStage: Decodable, Identifiable, Sendable {
+    let id: Int
+    let label: String
+    let probability: Double?
+    let status: String?
+}
+
+// MARK: - Team Colors
+
+nonisolated struct TeamColors: Decodable, Sendable {
+    let primary: String?
+    let secondary: String?
+}

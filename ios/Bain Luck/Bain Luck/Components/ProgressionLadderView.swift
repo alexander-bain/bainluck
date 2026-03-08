@@ -1,38 +1,23 @@
 import SwiftUI
 
-/// Data for a single stage in a playoff progression.
-struct ProgressionStage: Identifiable {
-    let id: Int
-    let name: String
-    let stageName: String
-    let stageOrder: Int
-    let probability: Double?
-    let status: StageStatus?
-    let source: String?
-    
-    enum StageStatus: String {
-        case achieved, eliminated, pending
-    }
-}
-
 /// Compact grouped display for playoff progression markets — matches web ProgressionLadder.
 struct ProgressionLadderView: View {
     let entityName: String
     let stages: [ProgressionStage]
     var logoUrl: String? = nil
-    var teamColors: (primary: String, secondary: String)? = nil
+    var teamColors: TeamColors? = nil
     var onStageClick: ((ProgressionStage) -> Void)? = nil
     var horizontal: Bool = false
 
     private var sortedStages: [ProgressionStage] {
-        stages.sorted { $0.stageOrder < $1.stageOrder }.prefix(5).map { $0 }
+        stages.prefix(5).map { $0 }
     }
 
     private var primaryColor: Color {
         if let hex = teamColors?.primary {
             return Color(rgb: hex)
         }
-        return .blue
+        return .accentColor
     }
 
     var body: some View {
@@ -127,8 +112,8 @@ struct ProgressionLadderView: View {
 
     private func stageRow(_ stage: ProgressionStage) -> some View {
         let prob = stage.probability ?? 0
-        let achieved = stage.status == .achieved
-        let eliminated = stage.status == .eliminated
+        let achieved = stage.status == "achieved"
+        let eliminated = stage.status == "eliminated"
 
         return Button {
             onStageClick?(stage)
@@ -140,7 +125,7 @@ struct ProgressionLadderView: View {
                     .frame(width: 8, height: 8)
 
                 // Stage name (truncated)
-                Text(cleanStageName(stage.stageName))
+                Text(cleanStageName(stage.label))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -178,13 +163,13 @@ struct ProgressionLadderView: View {
 
     private func horizontalStageCell(_ stage: ProgressionStage) -> some View {
         let prob = stage.probability ?? 0
-        let achieved = stage.status == .achieved
+        let achieved = stage.status == "achieved"
 
         return Button {
             onStageClick?(stage)
         } label: {
             VStack(spacing: 2) {
-                Text(cleanStageName(stage.stageName))
+                Text(cleanStageName(stage.label))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
