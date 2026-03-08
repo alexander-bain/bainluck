@@ -18,44 +18,50 @@ struct EventCardView: View {
     private var homeColor: Color { Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280") }
 
     /// "Today 7:00 PM", "Tomorrow 3:30 PM", or "Mar 8 7:00 PM"
+    private var formattedDateTimeString: String? {
+        guard let dateStr = event.commenceTime, let date = dateStr.asDate else { return nil }
+        let calendar = Calendar.current
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "h:mm a"
+        let timeStr = timeFormatter.string(from: date)
+
+        if calendar.isDateInToday(date) {
+            return "Today \(timeStr)"
+        } else if calendar.isDateInTomorrow(date) {
+            return "Tomorrow \(timeStr)"
+        } else {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "MMM d"
+            return "\(dateFormatter.string(from: date)) \(timeStr)"
+        }
+    }
+
     @ViewBuilder
     private var formattedDateTime: some View {
-        if let dateStr = event.commenceTime, let date = dateStr.asDate {
-            let calendar = Calendar.current
-            let timeFormatter = DateFormatter()
-            timeFormatter.dateFormat = "h:mm a"
-            let timeStr = timeFormatter.string(from: date)
-
-            if calendar.isDateInToday(date) {
-                Text("Today \(timeStr)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else if calendar.isDateInTomorrow(date) {
-                Text("Tomorrow \(timeStr)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else {
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "MMM d"
-                Text("\(dateFormatter.string(from: date)) \(timeStr)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+        if let text = formattedDateTimeString {
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
     /// "Mar 5" for finished events
+    private var formattedDateString: String? {
+        guard let dateStr = event.commenceTime, let date = dateStr.asDate else { return nil }
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        if calendar.component(.year, from: date) != calendar.component(.year, from: Date()) {
+            formatter.dateFormat = "MMM d, yyyy"
+        } else {
+            formatter.dateFormat = "MMM d"
+        }
+        return formatter.string(from: date)
+    }
+
     @ViewBuilder
     private var formattedDate: some View {
-        if let dateStr = event.commenceTime, let date = dateStr.asDate {
-            let formatter = DateFormatter()
-            let calendar = Calendar.current
-            if calendar.component(.year, from: date) != calendar.component(.year, from: Date()) {
-                formatter.dateFormat = "MMM d, yyyy"
-            } else {
-                formatter.dateFormat = "MMM d"
-            }
-            Text(formatter.string(from: date))
+        if let text = formattedDateString {
+            Text(text)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -166,7 +172,8 @@ struct EventCardView: View {
                     url: event.awayTeamData?.logoSmall,
                     teamName: event.awayTeam,
                     color: awayColor,
-                    size: 24
+                    size: 24,
+                    sportKey: event.sport
                 )
                 Text(event.awayTeam)
                     .font(.subheadline)
@@ -201,7 +208,8 @@ struct EventCardView: View {
                     url: event.homeTeamData?.logoSmall,
                     teamName: event.homeTeam,
                     color: homeColor,
-                    size: 24
+                    size: 24,
+                    sportKey: event.sport
                 )
                 Text(event.homeTeam)
                     .font(.subheadline)

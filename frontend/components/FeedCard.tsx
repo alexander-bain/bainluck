@@ -125,6 +125,42 @@ function formatResolutionDate(dateStr: string | null): string | null {
 }
 
 // ============================================================================
+// Reason badge — styled pill with contextual icon (matches iOS EventCardView)
+// ============================================================================
+
+function reasonStyle(text: string): { icon: string | null; colorClass: string; bgClass: string } {
+  const lower = text.toLowerCase();
+  if (lower.includes("upset") || lower.includes("underdog")) {
+    return { icon: "⚠", colorClass: "text-orange-500", bgClass: "bg-orange-500/10" };
+  } else if (lower.includes("close") || lower.includes("tight") || lower.includes("even")) {
+    return { icon: "⚖", colorClass: "text-blue-500", bgClass: "bg-blue-500/10" };
+  } else if (lower.includes("line mov") || lower.includes("shifted") || lower.includes("odds")) {
+    return { icon: "↕", colorClass: "text-purple-500", bgClass: "bg-purple-500/10" };
+  } else if (lower.includes("starting soon")) {
+    return { icon: "🕐", colorClass: "text-green-500", bgClass: "bg-green-500/10" };
+  } else if (lower.includes("lead change") || lower.includes("wild") || lower.includes("exciting")) {
+    return { icon: "⚡", colorClass: "text-yellow-500", bgClass: "bg-yellow-500/10" };
+  }
+  return { icon: null, colorClass: "text-text-secondary", bgClass: "" };
+}
+
+function ReasonBadge({ text, truncate }: { text: string; truncate?: boolean }) {
+  const { icon, colorClass, bgClass } = reasonStyle(text);
+
+  if (!bgClass) {
+    // No special styling — render as plain text (backward compat)
+    return <p className={`text-xs text-text-secondary ${truncate ? "truncate" : ""}`}>{text}</p>;
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${colorClass} ${bgClass}`}>
+      {icon && <span className="text-[10px]">{icon}</span>}
+      <span className={truncate ? "truncate" : ""}>{text}</span>
+    </span>
+  );
+}
+
+// ============================================================================
 // Thumbs buttons — shared by both card types
 // ============================================================================
 
@@ -439,7 +475,7 @@ function EventFeedCard({
           <div className="flex items-center justify-between gap-2 mt-1.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               {item.reason && (
-                <p className={`text-xs text-text-secondary ${isFinished ? "" : "truncate"}`}>{item.reason}</p>
+                <ReasonBadge text={item.reason} truncate={!isFinished} />
               )}
               {openedContext && (
                 <span className="text-[10px] text-text-muted flex-shrink-0">{openedContext}</span>

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Async team logo image with cached loading, ESPN fallback, and colored-initial fallback.
+/// Async team logo image with cached loading, ESPN fallback, flag fallback, and colored-initial fallback.
 struct TeamLogoView: View {
     let url: String?
     let teamName: String
@@ -13,9 +13,16 @@ struct TeamLogoView: View {
     @State private var loadFailed = false
     @State private var triedEspnFallback = false
 
-    /// Resolve URL: primary url → ESPN fallback → nil
+    /// For international sports, try flag URL first
+    private var flagFallbackURL: String? {
+        guard isInternationalSport(sportKey) else { return nil }
+        return flagURL(for: teamName, width: 80)
+    }
+
+    /// Resolve URL: primary url → flag (international) → ESPN fallback → nil
     private var resolvedURL: String? {
         if let url, !url.isEmpty { return url }
+        if let flag = flagFallbackURL { return flag }
         return espnTeamLogoURL(for: teamName)
     }
 

@@ -104,6 +104,44 @@ func sportDisplayName(for key: String?) -> String {
     return map[key] ?? key.components(separatedBy: "_").last?.uppercased() ?? key
 }
 
+// MARK: - International Flags
+
+/// Whether a sport key represents an international competition (World Cup, Olympics, etc.).
+func isInternationalSport(_ sportKey: String?) -> Bool {
+    guard let key = sportKey?.lowercased() else { return false }
+    let patterns = ["world_cup", "olympics", "euros", "nations_league", "copa_america",
+                    "asian_cup", "africa_cup", "international"]
+    return patterns.contains(where: { key.contains($0) })
+}
+
+/// Country/region name → ISO 3166-1 alpha-2 code for flagcdn.com.
+private let countryCodes: [String: String] = [
+    "united states": "us", "usa": "us", "america": "us",
+    "canada": "ca", "mexico": "mx", "brazil": "br", "argentina": "ar",
+    "colombia": "co", "chile": "cl", "uruguay": "uy", "paraguay": "py",
+    "peru": "pe", "ecuador": "ec", "venezuela": "ve", "costa rica": "cr",
+    "jamaica": "jm", "panama": "pa", "honduras": "hn",
+    "england": "gb-eng", "united kingdom": "gb", "scotland": "gb-sct",
+    "wales": "gb-wls", "france": "fr", "germany": "de", "spain": "es",
+    "italy": "it", "netherlands": "nl", "holland": "nl", "belgium": "be",
+    "portugal": "pt", "switzerland": "ch", "austria": "at", "sweden": "se",
+    "norway": "no", "denmark": "dk", "finland": "fi", "poland": "pl",
+    "croatia": "hr", "serbia": "rs", "greece": "gr", "turkey": "tr",
+    "ukraine": "ua", "romania": "ro", "hungary": "hu", "ireland": "ie",
+    "japan": "jp", "south korea": "kr", "korea": "kr", "china": "cn",
+    "india": "in", "australia": "au", "new zealand": "nz",
+    "saudi arabia": "sa", "iran": "ir", "qatar": "qa",
+    "nigeria": "ng", "south africa": "za", "egypt": "eg", "ghana": "gh",
+    "senegal": "sn", "cameroon": "cm", "morocco": "ma", "tunisia": "tn",
+]
+
+/// Returns a flag image URL from flagcdn.com for a country/team name, or nil if not found.
+func flagURL(for name: String, width: Int = 80) -> String? {
+    let key = name.lowercased().trimmingCharacters(in: .whitespaces)
+    guard let code = countryCodes[key] else { return nil }
+    return "https://flagcdn.com/w\(width)/\(code).png"
+}
+
 // MARK: - Flow Layout (wrapping horizontal layout)
 
 /// A layout that arranges views horizontally, wrapping to the next line when needed.
