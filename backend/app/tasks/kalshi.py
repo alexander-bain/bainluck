@@ -276,6 +276,7 @@ async def _poll_kalshi_markets():
                     from app.utils.futures_categorization import (
                         detect_league, detect_season,
                         compute_canonical_market_key,
+                        detect_market_type,
                         extract_olympic_discipline,
                         generate_category_tags,
                         is_game_prop,
@@ -291,8 +292,10 @@ async def _poll_kalshi_markets():
                         market_name, league, expiration_time,
                     )
                     # For Olympics, use specific discipline as category
-                    # so curling matches curling, not all Olympics events
-                    canon_category = category
+                    # so curling matches curling, not all Olympics events.
+                    # For sports markets, use detect_market_type for specificity
+                    # (e.g., "al_cy_young" instead of generic "championship")
+                    canon_category = detect_market_type(market_name)
                     if sport_category == "olympics":
                         discipline = extract_olympic_discipline(market_name)
                         if discipline:

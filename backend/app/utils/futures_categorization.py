@@ -1188,6 +1188,69 @@ def detect_season(
 
 
 # =============================================================================
+# Market type detection (for canonical key specificity)
+# =============================================================================
+
+# Ordered by specificity — more specific patterns first
+_MARKET_TYPE_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
+    # League-specific awards
+    (re.compile(r"\b(?:al|american\s+league)\s+cy\s+young\b", re.I), "al_cy_young"),
+    (re.compile(r"\b(?:nl|national\s+league)\s+cy\s+young\b", re.I), "nl_cy_young"),
+    (re.compile(r"\bcy\s+young\b", re.I), "cy_young"),
+    (re.compile(r"\b(?:al|american\s+league)\s+mvp\b", re.I), "al_mvp"),
+    (re.compile(r"\b(?:nl|national\s+league)\s+mvp\b", re.I), "nl_mvp"),
+    (re.compile(r"\b(?:al|american\s+league)\s+rookie\b", re.I), "al_roy"),
+    (re.compile(r"\b(?:nl|national\s+league)\s+rookie\b", re.I), "nl_roy"),
+    # Sport-specific awards
+    (re.compile(r"\bheisman\b", re.I), "heisman"),
+    (re.compile(r"\bhart\s+trophy\b", re.I), "hart_trophy"),
+    (re.compile(r"\bnorris\s+trophy\b", re.I), "norris_trophy"),
+    (re.compile(r"\bvezina\b", re.I), "vezina"),
+    (re.compile(r"\bcalder\s+trophy\b", re.I), "calder_trophy"),
+    (re.compile(r"\bconn\s+smythe\b", re.I), "conn_smythe"),
+    (re.compile(r"\bballon\s+d.or\b", re.I), "ballon_dor"),
+    (re.compile(r"\bgolden\s+boot\b", re.I), "golden_boot"),
+    (re.compile(r"\bgolden\s+glove\b", re.I), "golden_glove"),
+    # Generic awards (must come after specific ones)
+    (re.compile(r"\bmvp\b", re.I), "mvp"),
+    (re.compile(r"\brookie\s+of\s+the\s+year\b", re.I), "roy"),
+    (re.compile(r"\bdefensive\s+player\b", re.I), "dpoy"),
+    (re.compile(r"\bsixth\s+man\b", re.I), "sixth_man"),
+    (re.compile(r"\bmost\s+improved\b", re.I), "mip"),
+    (re.compile(r"\bcoach\s+of\s+the\s+year\b", re.I), "coy"),
+    (re.compile(r"\bclutch\s+player\b", re.I), "clutch_player"),
+    # Market types
+    (re.compile(r"\bwin\s+total|over.?under\s+wins\b", re.I), "win_totals"),
+    (re.compile(r"\bmake\s+playoffs\b", re.I), "make_playoffs"),
+    (re.compile(r"\bdivision\s+winner\b", re.I), "division_winner"),
+    (re.compile(r"\bconference\s+winner\b", re.I), "conference_winner"),
+    # Championship (fallback for sports markets)
+    (re.compile(
+        r"\bchampion|finals?\s+winner|super\s+bowl|world\s+series|stanley\s+cup"
+        r"|pennant|nba\s+finals|nfc|afc\s+champion",
+        re.I,
+    ), "championship"),
+]
+
+
+def detect_market_type(name: str) -> str:
+    """
+    Detect a normalized market type from the market name.
+
+    Returns a specific type string for use in canonical market keys.
+    More specific than the generic "championship" that was previously used
+    for all sports markets.
+
+    Returns:
+        Normalized type string (e.g., "al_cy_young", "mvp", "championship")
+    """
+    for pattern, market_type in _MARKET_TYPE_PATTERNS:
+        if pattern.search(name):
+            return market_type
+    return "championship"
+
+
+# =============================================================================
 # Canonical market key computation
 # =============================================================================
 

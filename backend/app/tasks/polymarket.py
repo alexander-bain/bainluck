@@ -344,6 +344,7 @@ async def _process_event_batch(
         infer_sport_from_league as _infer,
         detect_league, detect_season,
         compute_canonical_market_key,
+        detect_market_type,
         extract_olympic_discipline,
         generate_category_tags,
     )
@@ -382,6 +383,21 @@ async def _process_event_batch(
                     if llm_sport_category and llm_sport_category not in _NON_SPORT_CATEGORIES:
                         category = "championship"
 
+                # Override non-sport tags when the title clearly contains a sport
+                # (e.g., "Pro Baseball: 2026 AL Cy Young Winner" tagged "awards" → "entertainment")
+                elif llm_sport_category in _NON_SPORT_CATEGORIES:
+                    rules_result = categorize_by_rules(event.title)
+                    if rules_result and rules_result not in _NON_SPORT_CATEGORIES:
+                        llm_sport_category = rules_result
+                        category = "championship"
+                    else:
+                        _league = _detect_league(event.title)
+                        if _league:
+                            _sport = _infer(_league)
+                            if _sport and _sport not in _NON_SPORT_CATEGORIES:
+                                llm_sport_category = _sport
+                                category = "championship"
+
                 # Compute market tier
                 market_tier = compute_market_tier(
                     event.title, category,
@@ -396,8 +412,10 @@ async def _process_event_batch(
                 league = detect_league(event.title)
                 season = detect_season(event.title, league, resolution_date)
 
-                # For Olympics, use specific discipline as category
-                canon_category = category
+                # For Olympics, use specific discipline as category.
+                # For sports markets, use detect_market_type for specificity
+                # (e.g., "al_cy_young" instead of generic "championship")
+                canon_category = detect_market_type(event.title)
                 if llm_sport_category == "olympics":
                     discipline = extract_olympic_discipline(event.title)
                     if discipline:
