@@ -507,27 +507,26 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
     const detectedType = extractMarketType(item.canonical_market_key)
       ?? detectMarketTypeFromName(item.market_name || "");
 
-    // Build grouping key:
-    // 1. If canonical_market_key exists, use it + outcome (cross-source merge)
-    // 2. If we detected a progression type, use type + category + outcome
-    //    so "NBA Championship Winner" from 3 sources merges for the same team
-    // 3. Fallback: unique per market (no merge)
-    let canonKey: string;
-    if (item.canonical_market_key) {
-      canonKey = item.canonical_market_key;
-    } else if (detectedType) {
-      canonKey = `synth:${item.category || "unknown"}:${detectedType}`;
-    } else {
-      canonKey = `market_${item.market_id}`;
-    }
-    // For progression stages, merge by team_id so "Boston Celtics", "Celtics",
-    // and "BOS" all group together for the same team across sources.
-    // For non-progression items, merge by outcome name as before.
+    // Build grouping key.
+    // For progression stages (championship, division, etc.), merge ALL markets
+    // of the same type for the same team into one row — regardless of source,
+    // canonical_market_key, or market name differences like "Super Bowl" vs
+    // "NFL Championship".  The key is purely: category + type + team_id.
+    //
+    // For non-progression items, use canonical_market_key (cross-source merge)
+    // or fall back to per-market grouping.
     const isProgression = detectedType != null && PROGRESSION_STAGES[detectedType] != null;
-    const groupSuffix = isProgression
-      ? `team_${item.matched_team.id}`
-      : (item.outcome_name || "").toLowerCase().trim();
-    const groupKey = `${canonKey}::${groupSuffix}`;
+
+    let groupKey: string;
+    if (isProgression) {
+      groupKey = `progression:${item.category || "unknown"}:${detectedType}:team_${item.matched_team.id}`;
+    } else if (item.canonical_market_key) {
+      const outcomeName = (item.outcome_name || "").toLowerCase().trim();
+      groupKey = `${item.canonical_market_key}::${outcomeName}`;
+    } else {
+      const outcomeName = (item.outcome_name || "").toLowerCase().trim();
+      groupKey = `market_${item.market_id}::${outcomeName}`;
+    }
 
     if (!byKey.has(groupKey)) {
       byKey.set(groupKey, {
