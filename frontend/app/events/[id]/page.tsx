@@ -1267,69 +1267,162 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {/* Trend Chart */}
-      <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
-        <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
-          Win Probability
-        </h3>
-        {historyLoading ? (
-          <div className="h-48 flex items-center justify-center">
-            <LoadingSpinner size="sm" />
+      {/* Win Probability Chart */}
+      <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
+        {/* Game Header Bar */}
+        <div className="px-4 sm:px-5 py-3 border-b border-border/50 flex items-center justify-between">
+          <div className="flex items-center gap-4 sm:gap-6">
+            {/* Away Team */}
+            <div className="flex items-center gap-2.5">
+              {event.away_team_data?.logo_small ? (
+                <img
+                  src={event.away_team_data.logo_small}
+                  alt=""
+                  width={28}
+                  height={28}
+                  className="w-7 h-7 object-contain"
+                />
+              ) : (
+                <div
+                  className="w-7 h-7 rounded flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white/90"
+                  style={{ backgroundColor: event.away_team_data?.primary_color || "#94A3B8" }}
+                >
+                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+                </div>
+              )}
+              <div>
+                <div className="text-xs text-text-secondary leading-tight">
+                  {event.away_team.split(" ").slice(0, -1).join(" ") || event.away_team}
+                </div>
+                {(isLive || isFinished || hasStarted) && event.away_score !== null ? (
+                  <div className="text-lg font-bold font-mono text-text-primary leading-tight">
+                    {event.away_score}
+                  </div>
+                ) : (
+                  <div className="text-sm font-semibold text-text-primary leading-tight">
+                    {event.away_team.split(" ").pop()}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Status */}
+            <div className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+              {effectivelyLive ? (
+                <span className="text-emerald-600 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Live
+                </span>
+              ) : isFinished ? (
+                "Final"
+              ) : (
+                formatStartTime(event.commence_time)
+              )}
+            </div>
+
+            {/* Home Team */}
+            <div className="flex items-center gap-2.5">
+              <div className="text-right">
+                <div className="text-xs text-text-secondary leading-tight">
+                  {event.home_team.split(" ").slice(0, -1).join(" ") || event.home_team}
+                </div>
+                {(isLive || isFinished || hasStarted) && event.home_score !== null ? (
+                  <div className="text-lg font-bold font-mono text-text-primary leading-tight">
+                    {event.home_score}
+                  </div>
+                ) : (
+                  <div className="text-sm font-semibold text-text-primary leading-tight">
+                    {event.home_team.split(" ").pop()}
+                  </div>
+                )}
+              </div>
+              {event.home_team_data?.logo_small ? (
+                <img
+                  src={event.home_team_data.logo_small}
+                  alt=""
+                  width={28}
+                  height={28}
+                  className="w-7 h-7 object-contain"
+                />
+              ) : (
+                <div
+                  className="w-7 h-7 rounded flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white/90"
+                  style={{ backgroundColor: event.home_team_data?.primary_color || "#94A3B8" }}
+                >
+                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+                </div>
+              )}
+            </div>
           </div>
-        ) : historyError ? (
-          <div className="h-48 flex flex-col items-center justify-center text-sm text-text-secondary gap-2">
-            <span>Unable to load history</span>
-            <span className="text-xs text-text-muted">
-              {historyError.message || 'Unknown error'}
-            </span>
-            <button
-              onClick={() => refreshHistory()}
-              className="text-xs text-blue-600 hover:underline mt-2"
-            >
-              Retry
-            </button>
+
+          {/* Date / Broadcast */}
+          <div className="text-right text-xs text-text-secondary hidden sm:block">
+            <div>{new Date(event.commence_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+            {event.espn?.broadcast && <div>{event.espn.broadcast}</div>}
           </div>
-        ) : historyData?.history?.length === 0 && !_hasAnyWinProbData(historyData) ? (
-          <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
-            Tracking will begin when odds are available
-          </div>
-        ) : (
-          <OddsChart
-            history={historyData?.history ?? []}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            commenceTime={event.commence_time}
-            isLive={effectivelyLive}
-            bookmakerHistory={historyData?.bookmaker_history}
-            espnHistory={historyData?.espn_history}
-            winProbHistory={historyData?.win_prob_history}
-            winProbSources={historyData?.win_prob_sources}
-            scoringPlays={historyData?.scoring_plays}
-            aggregateLine={historyData?.aggregate_line ?? undefined}
-            eventId={eventId}
-            eventStatus={event.status}
-            periodBoundaries={periodBoundaries}
-            homeTeamColor={event.home_team_data?.primary_color || undefined}
-            awayTeamColor={event.away_team_data?.primary_color || undefined}
-            homeTeamLogo={event.home_team_data?.logo_small || undefined}
-            awayTeamLogo={event.away_team_data?.logo_small || undefined}
-            onActivePointChange={setActiveChartPoint}
-            onRenderedDomain={handleRenderedDomain}
-          />
-        )}
-        {/* Game Play Card — shows score/period/play as user hovers the chart */}
-        {(effectivelyLive || isFinished || hasStarted) && historyData ? (
-          <GamePlayCard
-            activePoint={activeChartPoint}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            homeTeamColor={event.home_team_data?.primary_color || undefined}
-            awayTeamColor={event.away_team_data?.primary_color || undefined}
-            homeTeamLogo={event.home_team_data?.logo_small || undefined}
-            awayTeamLogo={event.away_team_data?.logo_small || undefined}
-            lastPoint={lastChartPoint}
-          />
-        ) : null}
+        </div>
+
+        {/* Chart Content */}
+        <div className="p-4 sm:p-5">
+          {historyLoading ? (
+            <div className="h-48 flex items-center justify-center">
+              <LoadingSpinner size="sm" />
+            </div>
+          ) : historyError ? (
+            <div className="h-48 flex flex-col items-center justify-center text-sm text-text-secondary gap-2">
+              <span>Unable to load history</span>
+              <span className="text-xs text-text-muted">
+                {historyError.message || 'Unknown error'}
+              </span>
+              <button
+                onClick={() => refreshHistory()}
+                className="text-xs text-blue-600 hover:underline mt-2"
+              >
+                Retry
+              </button>
+            </div>
+          ) : historyData?.history?.length === 0 && !_hasAnyWinProbData(historyData) ? (
+            <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
+              Tracking will begin when odds are available
+            </div>
+          ) : (
+            <OddsChart
+              history={historyData?.history ?? []}
+              homeTeam={event.home_team}
+              awayTeam={event.away_team}
+              commenceTime={event.commence_time}
+              isLive={effectivelyLive}
+              bookmakerHistory={historyData?.bookmaker_history}
+              espnHistory={historyData?.espn_history}
+              winProbHistory={historyData?.win_prob_history}
+              winProbSources={historyData?.win_prob_sources}
+              scoringPlays={historyData?.scoring_plays}
+              aggregateLine={historyData?.aggregate_line ?? undefined}
+              eventId={eventId}
+              eventStatus={event.status}
+              periodBoundaries={periodBoundaries}
+              homeTeamColor={event.home_team_data?.primary_color || undefined}
+              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamLogo={event.home_team_data?.logo_small || undefined}
+              awayTeamLogo={event.away_team_data?.logo_small || undefined}
+              onActivePointChange={setActiveChartPoint}
+              onRenderedDomain={handleRenderedDomain}
+            />
+          )}
+          {/* Game Play Card — shows score/period/play as user hovers the chart */}
+          {(effectivelyLive || isFinished || hasStarted) && historyData ? (
+            <GamePlayCard
+              activePoint={activeChartPoint}
+              homeTeam={event.home_team}
+              awayTeam={event.away_team}
+              homeTeamColor={event.home_team_data?.primary_color || undefined}
+              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamLogo={event.home_team_data?.logo_small || undefined}
+              awayTeamLogo={event.away_team_data?.logo_small || undefined}
+              lastPoint={lastChartPoint}
+            />
+          ) : null}
+        </div>
       </div>
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}

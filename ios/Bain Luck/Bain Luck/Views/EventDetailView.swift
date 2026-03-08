@@ -106,6 +106,7 @@ struct EventDetailView: View {
                     VStack(spacing: 16) {
                         heroSection(event)
                         VStack(spacing: 0) {
+                            chartHeaderBar(event)
                             OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                          commenceTime: event.commenceTime, status: event.status,
                                          selectedPlayPoint: $selectedPlayPoint,
@@ -123,6 +124,8 @@ struct EventDetailView: View {
                                 )
                             }
                         }
+                        .background(Color.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                         if let ei = event.ei ?? event.pulse { eiSection(ei) }
                         LineMovementView(eventId: event.id,
                                          homeTeam: event.homeTeam,
@@ -179,6 +182,124 @@ struct EventDetailView: View {
         let away = Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280")
         let home = Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280")
         return (away, home)
+    }
+
+    // MARK: - Chart Header Bar
+
+    private func chartHeaderBar(_ event: EventDetail) -> some View {
+        let colors = teamColors(event)
+        let hasScore = (isLive || isFinished) && event.homeScore != nil && event.awayScore != nil
+        let homeShort = event.homeTeam.split(separator: " ").last.map(String.init) ?? event.homeTeam
+        let awayShort = event.awayTeam.split(separator: " ").last.map(String.init) ?? event.awayTeam
+        let homeCity = event.homeTeam.split(separator: " ").dropLast().joined(separator: " ")
+        let awayCity = event.awayTeam.split(separator: " ").dropLast().joined(separator: " ")
+
+        return HStack {
+            HStack(spacing: 16) {
+                // Away team
+                HStack(spacing: 8) {
+                    TeamLogoView(
+                        url: event.awayTeamData?.logoSmall,
+                        teamName: event.awayTeam,
+                        color: colors.away,
+                        size: 28
+                    )
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(awayCity.isEmpty ? awayShort : awayCity)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if hasScore {
+                            Text("\(event.awayScore ?? 0)")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .monospacedDigit()
+                        } else {
+                            Text(awayShort)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                }
+
+                // Status
+                if isLive {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 5, height: 5)
+                        Text("LIVE")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.green)
+                    }
+                } else if isFinished {
+                    Text("FINAL")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(formatChartTime(event.commenceTime))
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                }
+
+                // Home team
+                HStack(spacing: 8) {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(homeCity.isEmpty ? homeShort : homeCity)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if hasScore {
+                            Text("\(event.homeScore ?? 0)")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .monospacedDigit()
+                        } else {
+                            Text(homeShort)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    TeamLogoView(
+                        url: event.homeTeamData?.logoSmall,
+                        teamName: event.homeTeam,
+                        color: colors.home,
+                        size: 28
+                    )
+                }
+            }
+
+            Spacer()
+
+            // Date + broadcast
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formatChartDate(event.commenceTime))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let broadcast = event.espn?.broadcast {
+                    Text(broadcast)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func formatChartTime(_ dateString: String) -> String {
+        guard let date = dateString.asDate else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
+    }
+
+    private func formatChartDate(_ dateString: String) -> String {
+        guard let date = dateString.asDate else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter.string(from: date)
     }
 
     // MARK: - Hero Section

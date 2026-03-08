@@ -124,13 +124,6 @@ struct OddsChartView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack {
-                Text("Odds Chart")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                Spacer()
-            }
-
             if showPicker {
                 timeRangePicker
             }
@@ -163,8 +156,6 @@ struct OddsChartView: View {
             }
         }
         .padding()
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
         .task {
             // Default to "Since Start" for started games with a known commence time
             if isGameStarted && gameStartDate != nil {
