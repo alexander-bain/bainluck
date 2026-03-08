@@ -27,8 +27,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
-  Legend,
-  Area,
 } from "recharts";
 
 // =============================================================================
@@ -342,58 +340,105 @@ function TwoTeamChart() {
   const winProbHistory = generateNBAWinProbHistory();
   
   return (
-    <div className="p-4">
-      {/* Game Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-[#007a33] flex items-center justify-center text-white text-xs font-bold">
-              BOS
+    <div className="flex flex-col h-full">
+      {/* Game Header - MoneyPuck inspired */}
+      <div className="bg-[#1a1d24] px-5 py-4 border-b border-border/50">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            {/* Home Team */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-[#007a33] flex items-center justify-center">
+                <span className="text-white text-sm font-bold">BOS</span>
+              </div>
+              <div>
+                <div className="font-semibold text-foreground">Boston Celtics</div>
+                <div className="text-2xl font-bold text-foreground">105</div>
+              </div>
             </div>
-            <div>
-              <div className="font-semibold text-foreground">Boston Celtics</div>
-              <div className="text-xs text-muted-foreground">105 - Final</div>
+            
+            {/* VS / Final */}
+            <div className="flex flex-col items-center">
+              <span className="text-xs text-muted-foreground uppercase tracking-wider">Final</span>
+            </div>
+            
+            {/* Away Team */}
+            <div className="flex items-center gap-3">
+              <div>
+                <div className="font-semibold text-foreground text-right">Miami Heat</div>
+                <div className="text-2xl font-bold text-foreground text-right">102</div>
+              </div>
+              <div className="w-10 h-10 rounded-lg bg-[#98002e] flex items-center justify-center">
+                <span className="text-white text-sm font-bold">MIA</span>
+              </div>
             </div>
           </div>
-          <div className="text-muted-foreground text-sm">vs</div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-[#98002e] flex items-center justify-center text-white text-xs font-bold">
-              MIA
-            </div>
-            <div>
-              <div className="font-semibold text-foreground">Miami Heat</div>
-              <div className="text-xs text-muted-foreground">102</div>
-            </div>
+          
+          <div className="text-right">
+            <div className="text-xs text-muted-foreground">March 15, 2024</div>
+            <div className="text-xs text-muted-foreground">TD Garden, Boston</div>
           </div>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          March 15, 2024
         </div>
       </div>
       
-      {/* Chart using existing OddsChart component */}
-      <div className="h-80">
-        <OddsChart
-          history={history}
-          homeTeam="Boston Celtics"
-          awayTeam="Miami Heat"
-          commenceTime={NBA_COMMENCE_TIME}
-          isLive={false}
-          winProbHistory={winProbHistory}
-          winProbSources={NBA_WIN_PROB_SOURCES}
-          eventStatus="completed"
-          periodBoundaries={NBA_PERIOD_BOUNDARIES}
-          homeTeamColor="#007a33"
-          awayTeamColor="#98002e"
-          fillContainer
-        />
+      {/* Period markers legend */}
+      <div className="px-5 py-2 bg-[#1a1d24]/50 border-b border-border/30 flex items-center gap-4 text-[10px] text-muted-foreground">
+        <span>Q1</span>
+        <div className="flex-1 h-px bg-border/30" />
+        <span>Q2</span>
+        <div className="flex-1 h-px bg-border/30" />
+        <span>Halftime</span>
+        <div className="flex-1 h-px bg-border/30" />
+        <span>Q3</span>
+        <div className="flex-1 h-px bg-border/30" />
+        <span>Q4</span>
+      </div>
+      
+      {/* Chart */}
+      <div className="flex-1 p-4">
+        <div className="h-72">
+          <OddsChart
+            history={history}
+            homeTeam="Boston Celtics"
+            awayTeam="Miami Heat"
+            commenceTime={NBA_COMMENCE_TIME}
+            isLive={false}
+            winProbHistory={winProbHistory}
+            winProbSources={NBA_WIN_PROB_SOURCES}
+            eventStatus="completed"
+            periodBoundaries={NBA_PERIOD_BOUNDARIES}
+            homeTeamColor="#007a33"
+            awayTeamColor="#98002e"
+            fillContainer
+          />
+        </div>
+      </div>
+      
+      {/* Source legend */}
+      <div className="px-5 py-3 bg-[#1a1d24]/50 border-t border-border/30 flex items-center gap-4 text-[10px]">
+        <span className="text-muted-foreground">Sources:</span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-0.5 bg-[#f97316]" style={{ opacity: 0.8 }} />
+          <span className="text-muted-foreground">ESPN</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-0.5 bg-[#22c55e]" style={{ opacity: 0.8 }} />
+          <span className="text-muted-foreground">Kalshi</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-0.5 bg-[#3b82f6]" style={{ opacity: 0.8 }} />
+          <span className="text-muted-foreground">Polymarket</span>
+        </span>
+        <span className="flex items-center gap-1.5 ml-2">
+          <span className="w-4 h-0.5 bg-white rounded-full" />
+          <span className="text-foreground font-medium">Aggregate</span>
+        </span>
       </div>
     </div>
   );
 }
 
 // =============================================================================
-// GOLF CHART (Multi-Participant Evolution)
+// GOLF CHART (DataGolf-Inspired Multi-Participant Evolution)
 // =============================================================================
 
 interface GolfChartProps {
@@ -401,197 +446,423 @@ interface GolfChartProps {
   setHighlightedPlayer: (player: string | null) => void;
 }
 
+// More granular data: hole-by-hole for final round to show DataGolf-style detail
+const GOLF_DETAILED_DATA = [
+  // Pre-tournament through R3
+  { hole: "Pre", label: "Pre", Scheffler: 18, McIlroy: 12, Rahm: 14, Koepka: 8, Hovland: 6, Morikawa: 5, Thomas: 4, Field: 33 },
+  { hole: "R1", label: "R1", Scheffler: 22, McIlroy: 15, Rahm: 12, Koepka: 10, Hovland: 8, Morikawa: 4, Thomas: 3, Field: 26 },
+  { hole: "R2", label: "R2", Scheffler: 28, McIlroy: 18, Rahm: 10, Koepka: 12, Hovland: 6, Morikawa: 3, Thomas: 2, Field: 21 },
+  { hole: "R3", label: "R3", Scheffler: 35, McIlroy: 14, Rahm: 8, Koepka: 15, Hovland: 5, Morikawa: 2, Thomas: 1, Field: 20 },
+  // Final round - hole by hole (every 3 holes for clarity)
+  { hole: "F-3", label: "H3", Scheffler: 38, McIlroy: 12, Rahm: 7, Koepka: 18, Hovland: 4, Morikawa: 2, Thomas: 1, Field: 18 },
+  { hole: "F-6", label: "H6", Scheffler: 42, McIlroy: 10, Rahm: 6, Koepka: 20, Hovland: 3, Morikawa: 1, Thomas: 1, Field: 17 },
+  { hole: "F-9", label: "Turn", Scheffler: 45, McIlroy: 8, Rahm: 5, Koepka: 22, Hovland: 3, Morikawa: 1, Thomas: 1, Field: 15 },
+  { hole: "F-12", label: "H12", Scheffler: 52, McIlroy: 6, Rahm: 4, Koepka: 20, Hovland: 2, Morikawa: 1, Thomas: 1, Field: 14 },
+  { hole: "F-15", label: "H15", Scheffler: 58, McIlroy: 5, Rahm: 3, Koepka: 18, Hovland: 2, Morikawa: 1, Thomas: 0, Field: 13 },
+  { hole: "F-18", label: "Final", Scheffler: 100, McIlroy: 0, Rahm: 0, Koepka: 0, Hovland: 0, Morikawa: 0, Thomas: 0, Field: 0 },
+];
+
 function GolfChart({ highlightedPlayer, setHighlightedPlayer }: GolfChartProps) {
-  const data = generateGolfData();
-  
+  // Current leaderboard (from final data point)
+  const leaderboard = GOLF_PLAYERS
+    .map(p => ({ name: p.name, color: p.color, prob: GOLF_DETAILED_DATA[GOLF_DETAILED_DATA.length - 2][p.name as keyof typeof GOLF_DETAILED_DATA[0]] as number }))
+    .sort((a, b) => b.prob - a.prob)
+    .slice(0, 6);
+
   return (
-    <div className="p-4">
-      {/* Tournament Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <div className="font-semibold text-foreground">The Masters 2024</div>
-          <div className="text-xs text-muted-foreground">Augusta National Golf Club</div>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          Win Probability Evolution
+    <div className="flex flex-col h-full">
+      {/* Tournament Header - DataGolf style with dark bg */}
+      <div className="bg-[#1a1d24] px-5 py-4 border-b border-border/50">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-lg font-semibold text-foreground">The Masters 2024</div>
+            <div className="text-xs text-muted-foreground mt-0.5">Augusta National Golf Club - Final Round</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-muted-foreground">Live Model</div>
+            <div className="text-sm font-medium text-foreground">Win Probability</div>
+          </div>
         </div>
       </div>
-      
-      {/* Player Legend (clickable) */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {GOLF_PLAYERS.map((player) => (
-          <button
-            key={player.name}
-            onClick={() => setHighlightedPlayer(
-              highlightedPlayer === player.name ? null : player.name
-            )}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-opacity ${
-              highlightedPlayer && highlightedPlayer !== player.name
-                ? "opacity-30"
-                : "opacity-100"
-            } ${highlightedPlayer === player.name ? "bg-muted" : ""}`}
-          >
-            <div
-              className="w-2.5 h-2.5 rounded-full"
-              style={{ backgroundColor: player.color }}
-            />
-            <span className="text-foreground">{player.name}</span>
-          </button>
-        ))}
-      </div>
-      
-      {/* Chart */}
-      <div className="h-80">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
-            <XAxis
-              dataKey="round"
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-              axisLine={{ stroke: "hsl(var(--border))" }}
-              tickLine={false}
-            />
-            <YAxis
-              domain={[0, 50]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-              axisLine={{ stroke: "hsl(var(--border))" }}
-              tickLine={false}
-              tickFormatter={(value) => `${value}%`}
-              label={{
-                value: "Win Probability",
-                angle: -90,
-                position: "insideLeft",
-                fill: "hsl(var(--muted-foreground))",
-                fontSize: 11,
-                offset: 10,
-              }}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "hsl(var(--card))",
-                border: "1px solid hsl(var(--border))",
-                borderRadius: "8px",
-                fontSize: "12px",
-              }}
-              labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
-              formatter={(value: number, name: string) => [`${value}%`, name]}
-            />
-            {GOLF_PLAYERS.map((player) => (
-              <Line
+
+      <div className="flex flex-1 min-h-0">
+        {/* Main Chart Area */}
+        <div className="flex-1 p-4">
+          {/* Clickable Player Legend - horizontal above chart */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3">
+            {GOLF_PLAYERS.slice(0, 6).map((player) => (
+              <button
                 key={player.name}
-                type="monotone"
-                dataKey={player.name}
-                stroke={player.color}
-                strokeWidth={highlightedPlayer === player.name ? 3 : 2}
-                dot={{ fill: player.color, r: highlightedPlayer === player.name ? 5 : 3 }}
-                opacity={
+                onClick={() => setHighlightedPlayer(
+                  highlightedPlayer === player.name ? null : player.name
+                )}
+                className={`flex items-center gap-1.5 text-xs transition-all ${
                   highlightedPlayer && highlightedPlayer !== player.name
-                    ? 0.15
-                    : 1
-                }
-              />
+                    ? "opacity-25"
+                    : "opacity-100"
+                }`}
+              >
+                <div
+                  className="w-3 h-0.5"
+                  style={{ backgroundColor: player.color }}
+                />
+                <span className="text-muted-foreground hover:text-foreground">{player.name}</span>
+              </button>
             ))}
-          </ComposedChart>
-        </ResponsiveContainer>
+          </div>
+
+          {/* Chart */}
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={GOLF_DETAILED_DATA} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
+                {/* Subtle grid */}
+                <CartesianGrid 
+                  strokeDasharray="1 4" 
+                  stroke="hsl(var(--border))" 
+                  opacity={0.3}
+                  horizontal={true}
+                  vertical={false}
+                />
+                
+                {/* Round separators as reference lines */}
+                <ReferenceLine x="R1" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} />
+                <ReferenceLine x="R2" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} />
+                <ReferenceLine x="R3" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} />
+                <ReferenceLine x="F-3" stroke="hsl(var(--border))" strokeDasharray="2 2" opacity={0.5} label={{ value: "Final Round", position: "top", fill: "hsl(var(--muted-foreground))", fontSize: 9 }} />
+                
+                <XAxis
+                  dataKey="label"
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                  axisLine={{ stroke: "hsl(var(--border))", opacity: 0.5 }}
+                  tickLine={false}
+                  interval={0}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  ticks={[0, 25, 50, 75, 100]}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(value) => `${value}%`}
+                  width={35}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--popover))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    padding: "8px 12px",
+                  }}
+                  labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600, marginBottom: 4 }}
+                  formatter={(value: number, name: string) => {
+                    const player = GOLF_PLAYERS.find(p => p.name === name);
+                    return [
+                      <span key={name} style={{ color: player?.color }}>{value}%</span>,
+                      name
+                    ];
+                  }}
+                />
+                
+                {/* Lines - DataGolf uses thinner lines with dots at data points */}
+                {GOLF_PLAYERS.map((player) => (
+                  <Line
+                    key={player.name}
+                    type="monotone"
+                    dataKey={player.name}
+                    stroke={player.color}
+                    strokeWidth={highlightedPlayer === player.name ? 2.5 : 1.5}
+                    dot={false}
+                    activeDot={{ 
+                      r: 4, 
+                      fill: player.color,
+                      stroke: "hsl(var(--background))",
+                      strokeWidth: 2
+                    }}
+                    opacity={
+                      highlightedPlayer && highlightedPlayer !== player.name
+                        ? 0.1
+                        : 1
+                    }
+                  />
+                ))}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Right Sidebar - Live Leaderboard (DataGolf style) */}
+        <div className="w-44 border-l border-border/50 bg-[#1a1d24] p-3">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 font-medium">
+            Win Probability
+          </div>
+          <div className="space-y-1.5">
+            {leaderboard.map((player, i) => (
+              <button
+                key={player.name}
+                onClick={() => setHighlightedPlayer(
+                  highlightedPlayer === player.name ? null : player.name
+                )}
+                className={`w-full flex items-center justify-between py-1.5 px-2 rounded transition-all ${
+                  highlightedPlayer === player.name ? "bg-white/5" : "hover:bg-white/5"
+                } ${highlightedPlayer && highlightedPlayer !== player.name ? "opacity-30" : ""}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground w-3">{i + 1}</span>
+                  <div
+                    className="w-1 h-4 rounded-full"
+                    style={{ backgroundColor: player.color }}
+                  />
+                  <span className="text-xs text-foreground">{player.name}</span>
+                </div>
+                <span 
+                  className="text-sm font-mono font-medium"
+                  style={{ color: player.color }}
+                >
+                  {player.prob}%
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
 // =============================================================================
-// BRACKET CHART (Tournament Progression)
+// BRACKET CHART (Tournament Progression - Chart + Grid)
 // =============================================================================
 
+// More detailed bracket data with 8 teams
+const BRACKET_DETAILED_TEAMS: BracketTeam[] = [
+  { name: "UConn", seed: 1, color: "#0e1a36", probabilities: [
+    { round: "Pre", prob: 0.15 }, { round: "R64", prob: 0.98 }, { round: "R32", prob: 0.88 }, 
+    { round: "S16", prob: 0.65 }, { round: "E8", prob: 0.45 }, { round: "F4", prob: 0.28 }, { round: "Champ", prob: 0.18 }
+  ]},
+  { name: "Houston", seed: 1, color: "#c8102e", probabilities: [
+    { round: "Pre", prob: 0.12 }, { round: "R64", prob: 0.97 }, { round: "R32", prob: 0.85 }, 
+    { round: "S16", prob: 0.58 }, { round: "E8", prob: 0.38 }, { round: "F4", prob: 0.22 }, { round: "Champ", prob: 0.14 }
+  ]},
+  { name: "Purdue", seed: 1, color: "#ceb888", probabilities: [
+    { round: "Pre", prob: 0.11 }, { round: "R64", prob: 0.96 }, { round: "R32", prob: 0.82 }, 
+    { round: "S16", prob: 0.52 }, { round: "E8", prob: 0.32 }, { round: "F4", prob: 0.18 }, { round: "Champ", prob: 0.10 }
+  ]},
+  { name: "N. Carolina", seed: 1, color: "#7bafd4", probabilities: [
+    { round: "Pre", prob: 0.10 }, { round: "R64", prob: 0.95 }, { round: "R32", prob: 0.78 }, 
+    { round: "S16", prob: 0.48 }, { round: "E8", prob: 0.28 }, { round: "F4", prob: 0.15 }, { round: "Champ", prob: 0.08 }
+  ]},
+  { name: "Duke", seed: 4, color: "#003087", probabilities: [
+    { round: "Pre", prob: 0.06 }, { round: "R64", prob: 0.78 }, { round: "R32", prob: 0.55 }, 
+    { round: "S16", prob: 0.32 }, { round: "E8", prob: 0.18 }, { round: "F4", prob: 0.08 }, { round: "Champ", prob: 0.04 }
+  ]},
+  { name: "Tennessee", seed: 2, color: "#ff8200", probabilities: [
+    { round: "Pre", prob: 0.07 }, { round: "R64", prob: 0.92 }, { round: "R32", prob: 0.72 }, 
+    { round: "S16", prob: 0.42 }, { round: "E8", prob: 0.22 }, { round: "F4", prob: 0.10 }, { round: "Champ", prob: 0.05 }
+  ]},
+  { name: "Arizona", seed: 2, color: "#cc0033", probabilities: [
+    { round: "Pre", prob: 0.08 }, { round: "R64", prob: 0.93 }, { round: "R32", prob: 0.74 }, 
+    { round: "S16", prob: 0.44 }, { round: "E8", prob: 0.24 }, { round: "F4", prob: 0.12 }, { round: "Champ", prob: 0.06 }
+  ]},
+  { name: "Marquette", seed: 2, color: "#003366", probabilities: [
+    { round: "Pre", prob: 0.05 }, { round: "R64", prob: 0.90 }, { round: "R32", prob: 0.68 }, 
+    { round: "S16", prob: 0.38 }, { round: "E8", prob: 0.20 }, { round: "F4", prob: 0.09 }, { round: "Champ", prob: 0.04 }
+  ]},
+];
+
+const BRACKET_ROUND_LABELS: Record<string, string> = {
+  "Pre": "Pre-Tournament",
+  "R64": "Round of 64",
+  "R32": "Round of 32",
+  "S16": "Sweet 16",
+  "E8": "Elite 8",
+  "F4": "Final Four",
+  "Champ": "Champion",
+};
+
+function generateDetailedBracketData() {
+  const rounds = ["Pre", "R64", "R32", "S16", "E8", "F4", "Champ"];
+  return rounds.map((round) => {
+    const dataPoint: Record<string, string | number> = { round };
+    for (const team of BRACKET_DETAILED_TEAMS) {
+      const roundData = team.probabilities.find(p => p.round === round);
+      dataPoint[team.name] = roundData ? Math.round(roundData.prob * 100) : 0;
+    }
+    return dataPoint;
+  });
+}
+
 function BracketChart() {
-  const data = generateBracketData();
+  const data = generateDetailedBracketData();
+  const [highlightedTeam, setHighlightedTeam] = useState<string | null>(null);
   
+  // Get current probabilities (Sweet 16 stage for demo)
+  const currentRound = "S16";
+  const currentProbs = BRACKET_DETAILED_TEAMS
+    .map(team => ({
+      ...team,
+      currentProb: team.probabilities.find(p => p.round === currentRound)?.prob || 0
+    }))
+    .sort((a, b) => b.currentProb - a.currentProb);
+
   return (
-    <div className="p-4">
+    <div className="flex flex-col h-full">
       {/* Tournament Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <div className="font-semibold text-foreground">NCAA Tournament 2024</div>
-          <div className="text-xs text-muted-foreground">Championship Probability by Round</div>
+      <div className="bg-[#1a1d24] px-5 py-4 border-b border-border/50">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-lg font-semibold text-foreground">NCAA Tournament 2024</div>
+            <div className="text-xs text-muted-foreground mt-0.5">Championship Probability Evolution</div>
+          </div>
+          <div className="px-3 py-1 bg-amber-500/20 text-amber-400 text-xs font-medium rounded">
+            Sweet 16
+          </div>
         </div>
       </div>
-      
-      {/* Team Legend */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        {BRACKET_TEAMS.map((team) => (
-          <div key={team.name} className="flex items-center gap-1.5">
-            <div
-              className="w-3 h-3 rounded"
-              style={{ backgroundColor: team.color }}
-            />
-            <span className="text-xs text-foreground">
-              ({team.seed}) {team.name}
-            </span>
+
+      <div className="flex flex-1 min-h-0">
+        {/* Main Chart */}
+        <div className="flex-1 p-4">
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
+                <CartesianGrid 
+                  strokeDasharray="1 4" 
+                  stroke="hsl(var(--border))" 
+                  opacity={0.3}
+                  horizontal={true}
+                  vertical={false}
+                />
+                
+                <XAxis
+                  dataKey="round"
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                  axisLine={{ stroke: "hsl(var(--border))", opacity: 0.5 }}
+                  tickLine={false}
+                  tickFormatter={(value) => BRACKET_ROUND_LABELS[value]?.split(" ")[0] || value}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  ticks={[0, 25, 50, 75, 100]}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(value) => `${value}%`}
+                  width={35}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--popover))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    padding: "8px 12px",
+                  }}
+                  labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600, marginBottom: 4 }}
+                  labelFormatter={(label) => BRACKET_ROUND_LABELS[label] || label}
+                  formatter={(value: number, name: string) => {
+                    const team = BRACKET_DETAILED_TEAMS.find(t => t.name === name);
+                    return [
+                      <span key={name} style={{ color: team?.color }}>{value}%</span>,
+                      `(${team?.seed}) ${name}`
+                    ];
+                  }}
+                />
+                
+                {/* Current round indicator */}
+                <ReferenceLine 
+                  x={currentRound} 
+                  stroke="hsl(var(--muted-foreground))" 
+                  strokeDasharray="4 4" 
+                  opacity={0.5}
+                />
+                
+                {BRACKET_DETAILED_TEAMS.map((team) => (
+                  <Line
+                    key={team.name}
+                    type="monotone"
+                    dataKey={team.name}
+                    stroke={team.color}
+                    strokeWidth={highlightedTeam === team.name ? 2.5 : 1.5}
+                    dot={false}
+                    activeDot={{ 
+                      r: 4, 
+                      fill: team.color,
+                      stroke: "hsl(var(--background))",
+                      strokeWidth: 2
+                    }}
+                    opacity={
+                      highlightedTeam && highlightedTeam !== team.name
+                        ? 0.1
+                        : 1
+                    }
+                  />
+                ))}
+              </ComposedChart>
+            </ResponsiveContainer>
           </div>
-        ))}
-      </div>
-      
-      {/* Chart */}
-      <div className="h-80">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
-            <XAxis
-              dataKey="round"
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-              axisLine={{ stroke: "hsl(var(--border))" }}
-              tickLine={false}
-            />
-            <YAxis
-              domain={[0, 100]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-              axisLine={{ stroke: "hsl(var(--border))" }}
-              tickLine={false}
-              tickFormatter={(value) => `${value}%`}
-              label={{
-                value: "Championship Probability",
-                angle: -90,
-                position: "insideLeft",
-                fill: "hsl(var(--muted-foreground))",
-                fontSize: 11,
-                offset: 10,
-              }}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "hsl(var(--card))",
-                border: "1px solid hsl(var(--border))",
-                borderRadius: "8px",
-                fontSize: "12px",
-              }}
-              labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
-              formatter={(value: number, name: string) => {
-                const team = BRACKET_TEAMS.find(t => t.name === name);
-                return [`${value}%`, team ? `(${team.seed}) ${name}` : name];
-              }}
-            />
-            {BRACKET_TEAMS.map((team) => (
-              <Area
-                key={team.name}
-                type="monotone"
-                dataKey={team.name}
-                stroke={team.color}
-                fill={team.color}
-                fillOpacity={0.1}
-                strokeWidth={2}
-              />
-            ))}
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-      
-      {/* Round Labels */}
-      <div className="flex justify-between mt-2 px-5 text-xs text-muted-foreground">
-        <span>Round of 64</span>
-        <span>Round of 32</span>
-        <span>Sweet 16</span>
-        <span>Elite 8</span>
-        <span>Final Four</span>
-        <span>Championship</span>
+        </div>
+
+        {/* Right Sidebar - Championship Odds Grid */}
+        <div className="w-52 border-l border-border/50 bg-[#1a1d24] p-3 overflow-y-auto">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-3 font-medium">
+            Championship Odds
+          </div>
+          
+          {/* Grid header */}
+          <div className="grid grid-cols-[1fr_auto_auto] gap-1 text-[9px] text-muted-foreground mb-1 px-1">
+            <span>Team</span>
+            <span className="text-center w-10">Now</span>
+            <span className="text-center w-10">Pre</span>
+          </div>
+          
+          {/* Teams */}
+          <div className="space-y-0.5">
+            {currentProbs.map((team, i) => {
+              const preProb = team.probabilities.find(p => p.round === "Pre")?.prob || 0;
+              const change = team.currentProb - preProb;
+              
+              return (
+                <button
+                  key={team.name}
+                  onClick={() => setHighlightedTeam(
+                    highlightedTeam === team.name ? null : team.name
+                  )}
+                  className={`w-full grid grid-cols-[1fr_auto_auto] gap-1 items-center py-1.5 px-1 rounded transition-all text-left ${
+                    highlightedTeam === team.name ? "bg-white/10" : "hover:bg-white/5"
+                  } ${highlightedTeam && highlightedTeam !== team.name ? "opacity-30" : ""}`}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div
+                      className="w-1 h-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: team.color }}
+                    />
+                    <span className="text-[10px] text-muted-foreground w-3 flex-shrink-0">{team.seed}</span>
+                    <span className="text-xs text-foreground truncate">{team.name}</span>
+                  </div>
+                  <span 
+                    className="text-xs font-mono font-medium text-center w-10"
+                    style={{ color: team.color }}
+                  >
+                    {Math.round(team.currentProb * 100)}%
+                  </span>
+                  <span className={`text-[10px] font-mono text-center w-10 ${
+                    change > 0 ? "text-green-400" : change < 0 ? "text-red-400" : "text-muted-foreground"
+                  }`}>
+                    {change > 0 ? "+" : ""}{Math.round(change * 100)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* Source attribution */}
+          <div className="mt-4 pt-3 border-t border-border/30">
+            <div className="text-[9px] text-muted-foreground">
+              Data: ESPN, Kalshi, FiveThirtyEight
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
