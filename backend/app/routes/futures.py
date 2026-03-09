@@ -1003,40 +1003,6 @@ async def get_playoff_grid(
         if not _NOT_PROGRESSION_RE.search(m.name)
     ]
 
-    # Market-level league validation: reject markets whose outcomes are clearly
-    # from a different league (e.g., NHL teams in an NBA-keyed market).
-    # Check that at least 30% of non-binary outcomes resolve to known teams.
-    if sport_team_lookup and league_upper:
-        validated_markets = []
-        for m in all_markets:
-            non_binary_outcomes = [
-                o for o in m.outcomes
-                if o.name and not re.match(r"^(yes|no)$", o.name.strip(), re.IGNORECASE)
-            ]
-            if not non_binary_outcomes:
-                validated_markets.append(m)
-                continue
-            matched = 0
-            for o in non_binary_outcomes:
-                name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", o.name, flags=re.IGNORECASE).strip()
-                name_lower = name.lower()
-                if name_lower in sport_team_lookup:
-                    matched += 1
-                    continue
-                # Try fragment matching (city name → full team)
-                found = False
-                for team_key in sport_team_lookup:
-                    if (team_key.endswith(name_lower) or team_key.startswith(name_lower)) and len(name) >= 4:
-                        found = True
-                        break
-                if found:
-                    matched += 1
-            match_rate = matched / len(non_binary_outcomes)
-            if match_rate >= 0.3:
-                validated_markets.append(m)
-            # else: skip this market entirely — outcomes don't match league teams
-        all_markets = validated_markets
-
     # --- Classify each market into a stage ---
     # Group by stage, allowing multiple markets per stage (from different sources)
     stage_market_groups: dict[str, list[FuturesMarket]] = defaultdict(list)
@@ -1145,6 +1111,41 @@ async def get_playoff_grid(
             # Index alternate names
             for alt in (t.alternate_names or []):
                 sport_team_lookup[alt.lower()] = t_dict
+
+    # Market-level league validation: reject markets whose outcomes are clearly
+    # from a different league (e.g., NHL teams in an NBA-keyed market).
+    # Check that at least 30% of non-binary outcomes resolve to known teams.
+    if sport_team_lookup and league_upper:
+        for stage_key in list(stage_market_groups.keys()):
+            validated = []
+            for m in stage_market_groups[stage_key]:
+                non_binary_outcomes = [
+                    o for o in m.outcomes
+                    if o.name and not re.match(r"^(yes|no)$", o.name.strip(), re.IGNORECASE)
+                ]
+                if not non_binary_outcomes:
+                    validated.append(m)
+                    continue
+                matched = 0
+                for o in non_binary_outcomes:
+                    name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", o.name, flags=re.IGNORECASE).strip()
+                    name_lower = name.lower()
+                    if name_lower in sport_team_lookup:
+                        matched += 1
+                        continue
+                    # Try fragment matching (city name → full team)
+                    found = False
+                    for team_key in sport_team_lookup:
+                        if (team_key.endswith(name_lower) or team_key.startswith(name_lower)) and len(name) >= 4:
+                            found = True
+                            break
+                    if found:
+                        matched += 1
+                match_rate = matched / len(non_binary_outcomes)
+                if match_rate >= 0.3:
+                    validated.append(m)
+                # else: skip — outcomes don't match league teams
+            stage_market_groups[stage_key] = validated
 
     # Build team_info from the sport-specific team lookup ONLY
     # Do NOT blindly load teams from outcome team_ids — those could point
