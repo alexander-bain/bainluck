@@ -913,14 +913,10 @@ async def get_playoff_grid(
             pattern = f"{ck_prefix}:{ck_type}:{season.strip()}"
         ck_conditions.append(FuturesMarket.canonical_market_key.ilike(pattern))
 
-    # Also match leagueless keys (e.g., "basketball::championship:2026")
-    # but only for valid stage types
-    if league_upper:
-        for ck_type in valid_ck_types:
-            pattern = f"{sport_lower}::{ck_type}:%"
-            if season:
-                pattern = f"{sport_lower}::{ck_type}:{season.strip()}"
-            ck_conditions.append(FuturesMarket.canonical_market_key.ilike(pattern))
+    # NOTE: We intentionally do NOT fall back to leagueless keys
+    # (e.g., "basketball::championship:2026") when a league is specified.
+    # Those keys are a dumping ground for misclassified markets
+    # (NASCAR drivers, hockey teams, misc props all under "basketball::").
 
     ck_markets: list = []
     if ck_conditions:
@@ -1041,8 +1037,12 @@ async def get_playoff_grid(
         ^(yes|no)$                |   # Binary market outcomes
         \bover\b.*\(              |   # "Team: Over (41.5)"
         \bunder\b.*\(             |   # "Team: Under (41.5)"
-        ^\d{1,2}\s+(wins?|losses?)|   # "50 wins"
-        ^(january|february|march|april|may|june|july|august|september|october|november|december)\b  # dates
+        ^\d{1,2}\+?\s*(wins?|losses?)|  # "50 wins", "10+ wins"
+        ^at\s+least\s+\d          |   # "At least 10% of total games"
+        ^(january|february|march|april|may|june|july|august|september|october|november|december)\b |  # month names
+        ^\d{1,2}\s*$              |   # bare numbers like "5"
+        ^(first|second|third)\s+half |  # "First Half"
+        \d+\.\d+\)$                  # trailing "41.5)" from over/under
         """,
         re.IGNORECASE | re.VERBOSE,
     )
