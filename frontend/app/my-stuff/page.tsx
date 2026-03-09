@@ -504,21 +504,27 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
   const byKey = new Map<string, MergedTeamFuture>();
 
   for (const item of items) {
-    // Name-based detection is more specific than canonical key extraction.
-    // Canonical keys can be wrong (e.g., conference markets tagged as "championship").
-    const detectedType = detectMarketTypeFromName(item.market_name || "")
-      ?? extractMarketType(item.canonical_market_key);
+    // Name-based detection is the primary and only signal for progression
+    // stage classification.  Canonical keys can be wrong — e.g., "Where will
+    // Joey Bosa play in 2026-27?" may carry a championship canonical key,
+    // which would misclassify a player-destination market as a championship
+    // progression stage, showing wrong probabilities and linking to the
+    // wrong futures page.
+    //
+    // Canonical key is still used as fallback for non-progression grouping
+    // (cross-source merging of "Other Markets").
+    const nameDetected = detectMarketTypeFromName(item.market_name || "");
+    const keyDetected = extractMarketType(item.canonical_market_key);
+    const detectedType = nameDetected ?? keyDetected;
+
+    // Only classify as progression if the NAME matches a progression pattern.
+    const isProgression = nameDetected != null && PROGRESSION_STAGES[nameDetected] != null;
 
     // Build grouping key.
-    // For progression stages (championship, division, etc.), merge ALL markets
-    // of the same type for the same team into one row — regardless of source,
-    // canonical_market_key, or market name differences like "Super Bowl" vs
-    // "NFL Championship".  The key is purely: category + type + team_id.
-    //
-    // For non-progression items, use canonical_market_key (cross-source merge)
-    // or fall back to per-market grouping.
-    const isProgression = detectedType != null && PROGRESSION_STAGES[detectedType] != null;
-
+    // For progression stages, merge ALL markets of the same type for the
+    // same team into one row — the key is purely: type + team_id.
+    // For non-progression items, use canonical_market_key (cross-source
+    // merge) or fall back to per-market grouping.
     let groupKey: string;
     if (isProgression) {
       groupKey = `progression:${detectedType}:team_${item.matched_team.id}`;
@@ -536,7 +542,10 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
         sources: [],
         avgProbability: null,
         bestChange: null,
-        marketType: detectedType,
+        // Guard: if canonical key gave a progression type but name detection
+        // didn't confirm it, null it out so detectPlayoffJourneys won't pick
+        // it up (e.g. "Where will Joey Bosa play?" with championship key).
+        marketType: (!isProgression && detectedType && PROGRESSION_STAGES[detectedType]) ? null : detectedType,
       });
     }
 
@@ -595,7 +604,6 @@ function mergeTeamFutures(items: TeamFutureItem[]): MergedTeamFuture[] {
 
 /**
  * Detect playoff journeys: teams with any progression stages.
- * Enforces monotonicity: P(championship) <= P(conference) <= P(playoffs).
  * Returns journeys and remaining items that aren't part of any journey.
  */
 function detectPlayoffJourneys(merged: MergedTeamFuture[]): {
@@ -636,17 +644,10 @@ function detectPlayoffJourneys(merged: MergedTeamFuture[]): {
     // Sort by progression order (make_playoffs first → championship last)
     data.stages.sort((a, b) => a.stageOrder - b.stageOrder);
 
-    // Enforce monotonicity: earlier stages can't be less likely than later stages.
-    // Walk backward from championship → playoffs, bumping earlier stages up.
-    // Order: 1=make_playoffs, 2=division_winner, 3=conference_winner, 4=championship
-    // Constraints: P(champ) <= P(conf) <= P(playoffs), P(div) <= P(playoffs)
-    for (let i = data.stages.length - 1; i > 0; i--) {
-      const laterProb = data.stages[i].merged.avgProbability ?? 0;
-      const earlierProb = data.stages[i - 1].merged.avgProbability ?? 0;
-      if (laterProb > earlierProb) {
-        data.stages[i - 1].merged.avgProbability = laterProb;
-      }
-    }
+    // NOTE: No monotonicity enforcement.  Division Winner is NOT a
+    // prerequisite for Conference or Championship (wild card teams exist).
+    // Showing the actual market probabilities is more accurate than
+    // artificially bumping earlier stages to match later ones.
 
     journeys.push({
       teamId,

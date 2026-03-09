@@ -531,12 +531,18 @@ private func mergeTeamFutures(_ items: [TeamFutureItem]) -> [MergedTeamFuture] {
     var keyOrder: [String] = []
 
     for item in items {
-        // Name-based detection is more specific than canonical key extraction.
-        // Canonical keys can be wrong (e.g., conference markets tagged as "championship").
-        let detectedType = detectMarketTypeFromName(item.marketName)
-            ?? extractMarketType(item.canonicalMarketKey)
+        // Name-based detection is the primary and only signal for progression
+        // stage classification.  Canonical keys can be wrong — e.g., "Where
+        // will Joey Bosa play in 2026-27?" may carry a championship canonical
+        // key, which would misclassify a player-destination market.
+        //
+        // Canonical key is still used for non-progression grouping.
+        let nameDetected = detectMarketTypeFromName(item.marketName)
+        let keyDetected = extractMarketType(item.canonicalMarketKey)
+        let detectedType = nameDetected ?? keyDetected
 
-        let isProgression = detectedType != nil && progressionStages[detectedType!] != nil
+        // Only classify as progression if the NAME matches.
+        let isProgression = nameDetected != nil && progressionStages[nameDetected!] != nil
 
         let groupKey: String
         if isProgression {
@@ -553,7 +559,11 @@ private func mergeTeamFutures(_ items: [TeamFutureItem]) -> [MergedTeamFuture] {
                 sources: [],
                 avgProbability: nil,
                 bestChange: nil,
-                marketType: detectedType
+                // Guard: if canonical key gave a progression type but name
+                // detection didn't confirm it, null it out so
+                // detectPlayoffJourneys won't pick it up (e.g. "Where will
+                // Joey Bosa play?" with championship canonical key).
+                marketType: (!isProgression && detectedType != nil && progressionStages[detectedType!] != nil) ? nil : detectedType
             )
             keyOrder.append(groupKey)
         }
@@ -616,7 +626,7 @@ private struct PlayoffJourney: Identifiable {
     var id: Int { teamId }
 }
 
-/// Detect playoff journeys from merged items. Enforces monotonicity.
+/// Detect playoff journeys from merged items.
 private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [PlayoffJourney], remaining: [MergedTeamFuture]) {
     var teamStages: [Int: (team: TeamFutureTeam, stages: [(merged: MergedTeamFuture, order: Int, label: String)])] = [:]
     var remaining: [MergedTeamFuture] = []
@@ -639,16 +649,10 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
         var sorted = data.stages
         sorted.sort { $0.order < $1.order }
 
-        // Enforce monotonicity: earlier stages can't be less likely than later stages.
-        // Walk backward from championship → playoffs, bumping earlier stages up.
-        // Constraints: P(champ) <= P(conf) <= P(playoffs), P(div) <= P(playoffs)
-        for i in stride(from: sorted.count - 1, through: 1, by: -1) {
-            let laterProb = sorted[i].merged.avgProbability ?? 0
-            let earlierProb = sorted[i - 1].merged.avgProbability ?? 0
-            if laterProb > earlierProb {
-                sorted[i - 1].merged.avgProbability = laterProb
-            }
-        }
+        // NOTE: No monotonicity enforcement.  Division Winner is NOT a
+        // prerequisite for Conference or Championship (wild card teams exist).
+        // Showing actual market probabilities is more accurate than
+        // artificially bumping earlier stages to match later ones.
 
         journeys.append(PlayoffJourney(
             teamId: teamId,
