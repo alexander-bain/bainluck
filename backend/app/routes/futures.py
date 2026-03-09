@@ -1042,8 +1042,10 @@ async def get_playoff_grid(
                 if o.team_id:
                     all_team_ids.add(o.team_id)
 
-    # Also load ALL teams for this sport for name resolution
+    # Also load teams for this league for name resolution
     # This lets us merge "Oklahoma City" (Kalshi) with "Oklahoma City Thunder" (Odds API)
+    # IMPORTANT: When a league is specified, ONLY load teams from that league
+    # to prevent college/MLS/other teams from being matched
     sport_team_lookup: dict[str, dict] = {}  # lowercase name/fragment → team info
     _SPORT_KEY_PREFIXES = {
         "basketball": "basketball_",
@@ -1052,23 +1054,34 @@ async def get_playoff_grid(
         "baseball": "baseball_",
         "soccer": "soccer_",
     }
+    # Map league to specific sport key for precise team filtering
+    _LEAGUE_TO_SPORT_KEY = {
+        "NBA": "basketball_nba",
+        "WNBA": "basketball_wnba",
+        "NCAAB": "basketball_ncaab",
+        "NFL": "americanfootball_nfl",
+        "NCAAF": "americanfootball_ncaaf",
+        "NHL": "icehockey_nhl",
+        "MLB": "baseball_mlb",
+        "MLS": "soccer_usa_mls",
+    }
     sport_prefix = _SPORT_KEY_PREFIXES.get(sport_lower)
     if sport_prefix or league_upper:
         team_query = select(Team)
-        if league_upper:
-            # Find teams by sport_id matching the league's sports
-            league_sport_q = select(Sport.id).where(
-                Sport.key.ilike(f"%{league_upper.lower()}%")
-            )
+        if league_upper and league_upper in _LEAGUE_TO_SPORT_KEY:
+            # League-specific: ONLY load teams from this exact league
+            # Prevents NCAAB teams from appearing in NBA grid, etc.
+            exact_sport_key = _LEAGUE_TO_SPORT_KEY[league_upper]
             team_query = team_query.where(
-                or_(
-                    Team.sport_id.in_(league_sport_q),
-                    # Also match by sport key prefix for broader coverage
-                    Team.sport_id.in_(
-                        select(Sport.id).where(
-                            Sport.key.ilike(f"{sport_prefix}%") if sport_prefix else Sport.key.ilike(f"%{sport_lower}%")
-                        )
-                    ),
+                Team.sport_id.in_(
+                    select(Sport.id).where(Sport.key == exact_sport_key)
+                )
+            )
+        elif league_upper:
+            # Unknown league — try ILIKE match
+            team_query = team_query.where(
+                Team.sport_id.in_(
+                    select(Sport.id).where(Sport.key.ilike(f"%{league_upper.lower()}%"))
                 )
             )
         elif sport_prefix:
@@ -1171,6 +1184,13 @@ async def get_playoff_grid(
         re.IGNORECASE | re.VERBOSE,
     )
 
+    # For team sports, require outcomes to resolve to a known team
+    # This filters out player names (Wembanyama, Edwards), wrong-league teams
+    # (NCAAB teams in NBA grid), and other non-team outcomes
+    require_team_resolution = bool(sport_team_lookup) and sport_lower in (
+        "basketball", "football", "hockey", "baseball",
+    )
+
     for stage_key, markets in stage_market_groups.items():
         for m in markets:
             source = m.source or "unknown"
@@ -1182,6 +1202,11 @@ async def get_playoff_grid(
                     continue
 
                 merge_key, resolved_team_id, resolved_info = _resolve_outcome_team(o)
+
+                # For team sports: skip outcomes that don't resolve to a known team
+                # This filters player names, wrong-league teams, etc.
+                if require_team_resolution and not resolved_team_id:
+                    continue
 
                 if merge_key not in participants:
                     t_info = resolved_info or (team_info.get(o.team_id) if o.team_id else None)
