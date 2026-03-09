@@ -1114,25 +1114,15 @@ async def get_playoff_grid(
             for alt in (t.alternate_names or []):
                 sport_team_lookup[alt.lower()] = t_dict
 
+    # Build team_info from the sport-specific team lookup ONLY
+    # Do NOT blindly load teams from outcome team_ids — those could point
+    # to NCAAB/MLS/other teams that shouldn't appear in the NBA grid
     team_info: dict[int, dict] = {}
-    if all_team_ids:
-        explicit_team_result = await db.execute(
-            select(Team).where(Team.id.in_(all_team_ids))
-        )
-        for t in explicit_team_result.scalars().all():
-            team_info[t.id] = {
-                "id": t.id,
-                "name": t.name,
-                "logo_url": t.logo_url_small or t.logo_url,
-                "primary_color": t.primary_color,
-                "secondary_color": t.secondary_color,
-                "record": t.current_record,
-                "conference": (t.standings_data or {}).get("conference"),
-                "division": (t.standings_data or {}).get("division"),
-            }
-    # Merge sport_team_lookup teams into team_info
+    # Build team_info from sport_team_lookup (league-specific teams only)
+    seen_team_ids: set[int] = set()
     for t_dict in sport_team_lookup.values():
-        if t_dict["id"] not in team_info:
+        if t_dict["id"] not in seen_team_ids:
+            seen_team_ids.add(t_dict["id"])
             team_info[t_dict["id"]] = t_dict
 
     def _resolve_outcome_team(outcome) -> tuple[str, int | None, dict | None]:
