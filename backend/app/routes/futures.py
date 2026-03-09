@@ -819,6 +819,318 @@ async def list_futures_markets(
     }
 
 
+# =============================================================================
+# Playoff / tournament progression grid (league-wide)
+# IMPORTANT: This route MUST appear before /{market_id} to avoid being
+# swallowed by the dynamic path parameter.
+# =============================================================================
+
+
+@router.get("/playoff-grid")
+async def get_playoff_grid(
+    sport: str = Query(..., description="Sport category (basketball, football, hockey, baseball, golf, soccer, tennis)"),
+    league: str = Query("", description="League filter (NBA, NFL, NHL, MLB, NCAAB, NCAAF, etc.). Optional."),
+    season: str = Query("", description="Season filter (2025-26, 2025). Auto-detected if omitted."),
+    top_n: int = Query(40, ge=1, le=64, description="Max teams/participants to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    League-wide playoff progression grid.
+
+    Returns all teams in a league with their probability of making each
+    playoff round, merged across sources (Kalshi, Polymarket, Odds API).
+
+    For NCAA basketball, returns March Madness rounds (Round of 32 through Champion).
+    For pro leagues, returns Make Playoffs through Championship.
+
+    Example: /api/futures/playoff-grid?sport=basketball&league=NBA
+    → columns: Make Playoffs, Conference, Championship
+    → rows: all 30 NBA teams with probabilities at each stage
+    """
+    sport_lower = sport.lower().strip()
+    league_upper = league.upper().strip() if league else None
+
+    stages = get_stages_for_sport(sport_lower, league_upper)
+    if not stages:
+        return {
+            "sport": sport_lower,
+            "league": league_upper,
+            "season": None,
+            "stages": [],
+            "teams": [],
+            "sources": [],
+        }
+
+    # --- Find progression markets ---
+    # Strategy 1: canonical_market_key pattern matching
+    # Keys look like "basketball:NBA:championship:2025-26"
+    # We want all keys matching "basketball:NBA:*:*" (or with season filter)
+
+    # Map canonical key market_type → stage key
+    # The canonical key "market_type" uses slightly different names than
+    # tournament_stages keys (e.g., "conference_winner" vs "conference")
+    _CANONICAL_TO_STAGE = {
+        "championship": "championship",
+        "conference_winner": "conference",
+        "division_winner": "division",
+        "make_playoffs": "make_playoffs",
+        "pennant": "pennant",
+        # Golf
+        "win": "win",
+        "top_5": "top_5",
+        "top_10": "top_10",
+        "top_20": "top_20",
+        "make_cut": "make_cut",
+        # Soccer / tennis
+        "group_stage": "group_stage",
+        "make_final": "make_final",
+        # March Madness / NCAA tournament
+        "round_of_32": "round_of_32",
+        "sweet_16": "sweet_16",
+        "elite_eight": "elite_eight",
+        "final_four": "final_four",
+        "title_game": "title_game",
+        # CFP
+        "quarterfinal": "quarterfinal",
+        "semifinal": "semifinal",
+    }
+
+    # Build canonical key prefix for ILIKE
+    ck_prefix = sport_lower
+    if league_upper:
+        ck_prefix += f":{league_upper}"
+    else:
+        ck_prefix += ":"
+
+    filters = [
+        FuturesMarket.canonical_market_key.ilike(f"{ck_prefix}%"),
+        FuturesMarket.status == "open",
+    ]
+    if season:
+        filters.append(FuturesMarket.canonical_market_key.ilike(f"%:{season.strip()}"))
+
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(*filters)
+    )
+    ck_markets = list(result.scalars().unique().all())
+
+    # Strategy 2: Also find markets by sport category + name-based stage detection
+    # (catches Odds API markets that may have no/wrong canonical key)
+    name_filters = [
+        FuturesMarket.llm_sport_category == sport_lower,
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.is_(None),  # Not game-level
+    ]
+    if league_upper:
+        name_filters.append(
+            or_(
+                FuturesMarket.canonical_market_key.ilike(f"%:{league_upper}:%"),
+                # Also check market name for league references
+                FuturesMarket.name.ilike(f"%{league_upper}%"),
+            )
+        )
+    result2 = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(*name_filters)
+        .limit(500)
+    )
+    name_markets = list(result2.scalars().unique().all())
+
+    # Merge and dedup
+    seen_ids: set[int] = set()
+    all_markets: list[FuturesMarket] = []
+    for m in ck_markets + name_markets:
+        if m.id not in seen_ids:
+            seen_ids.add(m.id)
+            all_markets.append(m)
+
+    # Filter out game-level markets
+    all_markets = [m for m in all_markets if not is_game_level_market(m.name)]
+
+    # --- Classify each market into a stage ---
+    # Group by stage, allowing multiple markets per stage (from different sources)
+    stage_market_groups: dict[str, list[FuturesMarket]] = defaultdict(list)
+    detected_season: str | None = season.strip() if season else None
+
+    for m in all_markets:
+        # Try canonical key first for stage classification
+        stage_key = None
+        if m.canonical_market_key:
+            parts = m.canonical_market_key.split(":")
+            if len(parts) >= 3:
+                ck_type = parts[2]  # e.g., "championship", "conference_winner"
+                stage_key = _CANONICAL_TO_STAGE.get(ck_type)
+                # Extract season from canonical key
+                if not detected_season and len(parts) >= 4 and parts[3]:
+                    detected_season = parts[3]
+
+        # Fall back to name-based classification
+        if not stage_key:
+            stage_key = classify_market_stage(
+                m.name, m.external_id, m.market_tier, stages
+            )
+
+        # Only include stages that are part of this sport's progression
+        if stage_key and any(s["key"] == stage_key for s in stages):
+            stage_market_groups[stage_key].append(m)
+
+    if not stage_market_groups:
+        return {
+            "sport": sport_lower,
+            "league": league_upper,
+            "season": detected_season,
+            "stages": [],
+            "teams": [],
+            "sources": [],
+        }
+
+    # --- Merge outcomes across sources within each stage ---
+    # participant merge_key → {name, team_id, probabilities by stage, sources by stage}
+    participants: dict[str, dict] = {}
+    all_sources: set[str] = set()
+
+    # Load team info
+    all_team_ids: set[int] = set()
+    for markets in stage_market_groups.values():
+        for m in markets:
+            for o in m.outcomes:
+                if o.team_id:
+                    all_team_ids.add(o.team_id)
+
+    team_info: dict[int, dict] = {}
+    if all_team_ids:
+        team_result = await db.execute(
+            select(Team).where(Team.id.in_(all_team_ids))
+        )
+        for t in team_result.scalars().all():
+            team_info[t.id] = {
+                "id": t.id,
+                "name": t.name,
+                "logo_url": t.logo_url_small or t.logo_url,
+                "primary_color": t.primary_color,
+                "secondary_color": t.secondary_color,
+                "record": t.current_record,
+                "conference": (t.standings_data or {}).get("conference"),
+                "division": (t.standings_data or {}).get("division"),
+            }
+
+    for stage_key, markets in stage_market_groups.items():
+        for m in markets:
+            source = m.source or "unknown"
+            all_sources.add(source)
+
+            for o in m.outcomes:
+                merge_key = _progression_merge_key(o)
+                if merge_key not in participants:
+                    t_info = team_info.get(o.team_id) if o.team_id else None
+                    participants[merge_key] = {
+                        "name": o.name,
+                        "team_id": o.team_id,
+                        "logo_url": t_info["logo_url"] if t_info else None,
+                        "primary_color": t_info["primary_color"] if t_info else None,
+                        "secondary_color": t_info["secondary_color"] if t_info else None,
+                        "conference": t_info["conference"] if t_info else None,
+                        "division": t_info["division"] if t_info else None,
+                        "record": t_info["record"] if t_info else None,
+                        "stages": {},
+                    }
+
+                p = participants[merge_key]
+                prob = float(o.current_probability) if o.current_probability else None
+
+                # Update team info if we found it in a later stage
+                if o.team_id and not p["team_id"]:
+                    p["team_id"] = o.team_id
+                    t_info = team_info.get(o.team_id)
+                    if t_info:
+                        p["logo_url"] = t_info["logo_url"]
+                        p["primary_color"] = t_info["primary_color"]
+                        p["secondary_color"] = t_info["secondary_color"]
+                        p["conference"] = t_info["conference"]
+                        p["division"] = t_info["division"]
+                        p["record"] = t_info["record"]
+
+                if stage_key not in p["stages"]:
+                    p["stages"][stage_key] = {
+                        "sources": [],
+                        "probability": None,
+                        "change_24h": None,
+                        "status": None,
+                        "market_id": None,
+                    }
+
+                stage_data = p["stages"][stage_key]
+                stage_data["sources"].append({
+                    "source": source,
+                    "probability": prob,
+                    "market_id": m.id,
+                    "change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+                })
+
+    # Average probabilities across sources per stage
+    for p in participants.values():
+        for stage_key, stage_data in p["stages"].items():
+            probs = [s["probability"] for s in stage_data["sources"] if s["probability"] is not None]
+            if probs:
+                avg_prob = sum(probs) / len(probs)
+                stage_data["probability"] = round(avg_prob, 4)
+                # Pick best market_id (prefer source with most outcomes for linking)
+                stage_data["market_id"] = stage_data["sources"][0]["market_id"]
+                # Average 24h changes
+                changes = [s["change_24h"] for s in stage_data["sources"] if s["change_24h"] is not None]
+                if changes:
+                    stage_data["change_24h"] = round(sum(changes) / len(changes), 4)
+                # Detect clinched / eliminated
+                if avg_prob >= 0.999:
+                    stage_data["status"] = "clinched"
+                elif avg_prob <= 0.001:
+                    stage_data["status"] = "eliminated"
+
+    # Sort by highest-stage probability (championship first, fallback to conference, etc.)
+    stage_order = sorted(
+        [s for s in stages if s["key"] in stage_market_groups],
+        key=lambda s: s["order"],
+        reverse=True,
+    )
+
+    def sort_key(p: dict) -> tuple:
+        for stage_def in stage_order:
+            sk = stage_def["key"]
+            stage_data = p["stages"].get(sk)
+            if stage_data and stage_data["probability"] is not None:
+                return (stage_def["order"], stage_data["probability"])
+        return (0, 0)
+
+    sorted_participants = sorted(participants.values(), key=sort_key, reverse=True)[:top_n]
+
+    # Build ordered stages response
+    stages_response = []
+    for stage_def in sorted(stages, key=lambda s: s["order"]):
+        if stage_def["key"] in stage_market_groups:
+            markets_in_stage = stage_market_groups[stage_def["key"]]
+            sources_in_stage = list({m.source or "unknown" for m in markets_in_stage})
+            stages_response.append({
+                "key": stage_def["key"],
+                "label": stage_def["label"],
+                "order": stage_def["order"],
+                "market_count": len(markets_in_stage),
+                "sources": sources_in_stage,
+                "market_ids": [m.id for m in markets_in_stage],
+            })
+
+    return {
+        "sport": sport_lower,
+        "league": league_upper,
+        "season": detected_season,
+        "stages": stages_response,
+        "teams": sorted_participants,
+        "sources": sorted(all_sources),
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market(
     market_id: int,

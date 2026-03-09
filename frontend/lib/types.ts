@@ -1109,6 +1109,52 @@ export interface ProgressionResponse {
   participants: ProgressionParticipant[];
 }
 
+/** Playoff grid types (league-wide cross-source progression) */
+export interface PlayoffGridStageSource {
+  source: string;
+  probability: number | null;
+  market_id: number;
+  change_24h: number | null;
+}
+
+export interface PlayoffGridStageData {
+  sources: PlayoffGridStageSource[];
+  probability: number | null;
+  change_24h: number | null;
+  status: "clinched" | "eliminated" | null;
+  market_id: number | null;
+}
+
+export interface PlayoffGridTeam {
+  name: string;
+  team_id: number | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  conference: string | null;
+  division: string | null;
+  record: string | null;
+  stages: Record<string, PlayoffGridStageData>;
+}
+
+export interface PlayoffGridStage {
+  key: string;
+  label: string;
+  order: number;
+  market_count: number;
+  sources: string[];
+  market_ids: number[];
+}
+
+export interface PlayoffGridResponse {
+  sport: string;
+  league: string | null;
+  season: string | null;
+  stages: PlayoffGridStage[];
+  teams: PlayoffGridTeam[];
+  sources: string[];
+}
+
 /** Probability timeline types (for TournamentChart) */
 export interface TimelineOutcomeMeta {
   id: number | null;

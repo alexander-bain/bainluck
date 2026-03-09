@@ -239,11 +239,121 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "patterns": [r"\bwinner\b", r"\bchampion\b"],
         },
     ],
+    # NCAA Tournament (March Madness) — 6 rounds
+    "ncaa_basketball": [
+        {
+            "key": "round_of_32",
+            "label": "Round of 32",
+            "order": 1,
+            "patterns": [
+                r"round.of.32",
+                r"second.round",
+                r"2nd.round",
+                r"make.round.of.32",
+                r"win.first.round",
+            ],
+        },
+        {
+            "key": "sweet_16",
+            "label": "Sweet 16",
+            "order": 2,
+            "patterns": [r"sweet.16", r"sweet.sixteen", r"make.sweet"],
+        },
+        {
+            "key": "elite_eight",
+            "label": "Elite Eight",
+            "order": 3,
+            "patterns": [r"elite.eight", r"elite.8", r"make.elite"],
+        },
+        {
+            "key": "final_four",
+            "label": "Final Four",
+            "order": 4,
+            "patterns": [r"final.four", r"make.final.four"],
+        },
+        {
+            "key": "title_game",
+            "label": "Title Game",
+            "order": 5,
+            "patterns": [
+                r"title.game",
+                r"championship.game",
+                r"make.championship",
+                r"make.the.final",
+                r"reach.the.final",
+            ],
+        },
+        {
+            "key": "championship",
+            "label": "Champion",
+            "order": 6,
+            "patterns": [
+                r"\bchampion\b",
+                r"\bchampionship\b",
+                r"win.ncaa",
+                r"ncaa.*winner",
+                r"march.madness.*winner",
+                r"\bwinner\b",
+            ],
+        },
+    ],
+    # College Football Playoff — 4 rounds (12-team format)
+    "ncaa_football": [
+        {
+            "key": "make_playoffs",
+            "label": "Make Playoff",
+            "order": 1,
+            "patterns": [r"make.playoff", r"playoff.berth", r"cfp.berth"],
+        },
+        {
+            "key": "quarterfinal",
+            "label": "Quarterfinal",
+            "order": 2,
+            "patterns": [r"quarter.?final", r"make.quarter"],
+        },
+        {
+            "key": "semifinal",
+            "label": "Semifinal",
+            "order": 3,
+            "patterns": [r"semi.?final", r"make.semi"],
+        },
+        {
+            "key": "championship",
+            "label": "Champion",
+            "order": 4,
+            "patterns": [
+                r"\bchampion\b",
+                r"\bchampionship\b",
+                r"national.champion",
+                r"cfp.champion",
+                r"\bwinner\b",
+            ],
+        },
+    ],
 }
 
 
-def get_stages_for_sport(llm_sport_category: str) -> list[dict] | None:
-    """Return ordered stage definitions for a sport, or None if not configured."""
+# League → sport stage override map
+# When a league is specified, prefer league-specific stages over sport-generic ones
+_LEAGUE_STAGE_OVERRIDES: dict[str, str] = {
+    "NCAAB": "ncaa_basketball",
+    "NCAAF": "ncaa_football",
+    "NCAA": "ncaa_basketball",
+}
+
+
+def get_stages_for_sport(
+    llm_sport_category: str, league: str | None = None
+) -> list[dict] | None:
+    """Return ordered stage definitions for a sport, or None if not configured.
+
+    If league is specified and has custom stages (e.g., NCAAB → March Madness rounds),
+    those take precedence over the generic sport stages.
+    """
+    if league:
+        override_key = _LEAGUE_STAGE_OVERRIDES.get(league.upper())
+        if override_key and override_key in SPORT_STAGES:
+            return SPORT_STAGES[override_key]
     return SPORT_STAGES.get(llm_sport_category)
 
 

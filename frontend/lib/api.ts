@@ -30,6 +30,7 @@ import type {
   GolfTournamentDetailResponse,
   ProgressionResponse,
   ProbabilityTimelineResponse,
+  PlayoffGridResponse,
   MarchMadnessResponse,
   FuturesGroupResponse,
   FuturesGroupsListResponse,
@@ -917,6 +918,26 @@ export async function fetchMyTeamFutures(
   const query = params.toString();
   return apiFetch<TeamFuturesResponse>(
     `/api/me/team-futures${query ? `?${query}` : ""}`
+  );
+}
+
+/**
+ * Fetch league-wide playoff progression grid.
+ * Cross-source merged probabilities for each team at each playoff round.
+ */
+export async function fetchPlayoffGrid(
+  sport: string,
+  league?: string,
+  season?: string,
+  topN?: number
+): Promise<PlayoffGridResponse> {
+  const params = new URLSearchParams();
+  params.set("sport", sport);
+  if (league) params.set("league", league);
+  if (season) params.set("season", season);
+  if (topN) params.set("top_n", String(topN));
+  return apiFetch<PlayoffGridResponse>(
+    `/api/futures/playoff-grid?${params.toString()}`
   );
 }
 
