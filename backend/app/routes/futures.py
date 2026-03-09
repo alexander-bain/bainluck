@@ -1112,9 +1112,28 @@ async def get_playoff_grid(
             for alt in (t.alternate_names or []):
                 sport_team_lookup[alt.lower()] = t_dict
 
-    # Market-level league validation: reject markets whose outcomes are clearly
-    # from a different league (e.g., NHL teams in an NBA-keyed market).
-    # Check that at least 30% of non-binary outcomes resolve to known teams.
+    # Market-level league validation: reject markets from wrong leagues
+    # that were miskeyed with a matching canonical key.
+    # Strategy: If the market name explicitly mentions a DIFFERENT league, reject it.
+    if league_upper:
+        _OTHER_LEAGUES = {
+            "NBA": [r"\bMLS\b", r"\bWNBA\b", r"\bNHL\b", r"\bNFL\b", r"\bMLB\b", r"\bNCAA\b", r"\bPGA\b"],
+            "NFL": [r"\bNBA\b", r"\bMLS\b", r"\bWNBA\b", r"\bNHL\b", r"\bMLB\b", r"\bNCAA\b"],
+            "NHL": [r"\bNBA\b", r"\bMLS\b", r"\bWNBA\b", r"\bNFL\b", r"\bMLB\b", r"\bNCAA\b"],
+            "MLB": [r"\bNBA\b", r"\bMLS\b", r"\bWNBA\b", r"\bNHL\b", r"\bNFL\b", r"\bNCAA\b"],
+            "MLS": [r"\bNBA\b", r"\bWNBA\b", r"\bNHL\b", r"\bNFL\b", r"\bMLB\b", r"\bNCAA\b"],
+        }
+        wrong_league_patterns = _OTHER_LEAGUES.get(league_upper, [])
+        if wrong_league_patterns:
+            wrong_league_re = re.compile("|".join(wrong_league_patterns), re.IGNORECASE)
+            for stage_key in list(stage_market_groups.keys()):
+                stage_market_groups[stage_key] = [
+                    m for m in stage_market_groups[stage_key]
+                    if not wrong_league_re.search(m.name)
+                ]
+
+    # Additionally validate markets with no league in their name by checking
+    # if their outcomes match known teams (catches NHL teams miskeyed as NBA, etc.)
     if sport_team_lookup and league_upper:
         for stage_key in list(stage_market_groups.keys()):
             validated = []
@@ -1131,15 +1150,6 @@ async def get_playoff_grid(
                     name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", o.name, flags=re.IGNORECASE).strip()
                     name_lower = name.lower()
                     if name_lower in sport_team_lookup:
-                        matched += 1
-                        continue
-                    # Try fragment matching (city name → full team)
-                    found = False
-                    for team_key in sport_team_lookup:
-                        if (team_key.endswith(name_lower) or team_key.startswith(name_lower)) and len(name) >= 4:
-                            found = True
-                            break
-                    if found:
                         matched += 1
                 match_rate = matched / len(non_binary_outcomes)
                 if match_rate >= 0.3:

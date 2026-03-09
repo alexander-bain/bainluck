@@ -453,7 +453,26 @@ def classify_market_stage(
         if suffix and ext_lower.endswith(suffix):
             return stage["key"]
 
-    # 2. Pattern match on market name (most specific first → highest order)
+    # 2. Pre-check for compound patterns that would be ambiguous
+    # "Eastern Conference Champion" should be "conference" not "championship"
+    # "AL East Division Champion" should be "division" not "championship"
+    # "American League Champion" should be "pennant" not "championship"
+    # When a name matches both a sub-stage and "champion/championship",
+    # the sub-stage takes priority.
+    stage_keys = {s["key"] for s in stages}
+    _champion_word = re.compile(r"\bchampion(?:ship)?\b", re.IGNORECASE)
+    if _champion_word.search(name_lower):
+        # Check sub-stages in order (lowest first) — first match wins
+        _SUB_STAGE_PATTERNS = [
+            ("conference", re.compile(r"\bconference\b|\bastern\b|\bestern\b|\bwestern\b", re.IGNORECASE)),
+            ("division", re.compile(r"\bdivision\b", re.IGNORECASE)),
+            ("pennant", re.compile(r"\bpennant\b|\bamerican\s+league\b|\bnational\s+league\b", re.IGNORECASE)),
+        ]
+        for sub_key, sub_re in _SUB_STAGE_PATTERNS:
+            if sub_key in stage_keys and sub_re.search(name_lower):
+                return sub_key
+
+    # 3. Pattern match on market name (most specific first → highest order)
     # Check from most specific (highest order) to least specific
     for stage in sorted(stages, key=lambda s: s["order"], reverse=True):
         for pattern in stage["patterns"]:
