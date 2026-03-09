@@ -3,8 +3,10 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { fetchPlayoffGrid } from "@/lib/api";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
+import TournamentChart from "@/components/TournamentChart";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import {
@@ -22,17 +24,25 @@ import type {
 /** League configs: slug → API params + display info */
 const LEAGUE_CONFIG: Record<
   string,
-  { sport: string; league: string; name: string; emoji: string; conferences?: string[] }
+  {
+    sport: string;
+    league: string;
+    name: string;
+    emoji: string;
+    conferences?: string[];
+    redirect?: string;
+  }
 > = {
   nba: { sport: "basketball", league: "NBA", name: "NBA Playoff Odds", emoji: "🏀", conferences: ["Eastern Conference", "Western Conference"] },
   nfl: { sport: "football", league: "NFL", name: "NFL Playoff Odds", emoji: "🏈", conferences: ["AFC", "NFC"] },
   nhl: { sport: "hockey", league: "NHL", name: "NHL Playoff Odds", emoji: "🏒", conferences: ["Eastern Conference", "Western Conference"] },
   mlb: { sport: "baseball", league: "MLB", name: "MLB Playoff Odds", emoji: "⚾", conferences: ["American League", "National League"] },
-  ncaab: { sport: "basketball", league: "NCAAB", name: "NCAA Basketball Playoff Odds", emoji: "🏀" },
+  ncaab: { sport: "basketball", league: "NCAAB", name: "March Madness Odds", emoji: "🏀", redirect: "/march-madness" },
   ncaaf: { sport: "football", league: "NCAAF", name: "College Football Playoff Odds", emoji: "🏈" },
-  soccer: { sport: "soccer", league: "", name: "Soccer Tournament Odds", emoji: "⚽" },
-  golf: { sport: "golf", league: "", name: "Golf Tournament Odds", emoji: "⛳" },
 };
+
+/** Leagues to show in the tab bar */
+const TAB_LEAGUES = ["nba", "nfl", "nhl", "mlb"];
 
 const SOURCE_LABELS: Record<string, string> = {
   odds_api: "Sportsbooks",
@@ -106,12 +116,17 @@ export default function PlayoffGridPage({
 
   const [conferenceFilter, setConferenceFilter] = useState<string | null>(null);
 
+  // Redirect NCAAB to March Madness page
+  if (config?.redirect) {
+    redirect(config.redirect);
+  }
+
   const {
     data: gridData,
     error: gridError,
     isLoading,
   } = useSWR(
-    config ? ["playoff-grid", config.sport, config.league] : null,
+    config && !config.redirect ? ["playoff-grid", config.sport, config.league] : null,
     () => fetchPlayoffGrid(config!.sport, config!.league || undefined, undefined, 64),
     { refreshInterval: 60000 }
   );
@@ -133,6 +148,13 @@ export default function PlayoffGridPage({
     };
   }, [progressionData, conferenceFilter]);
 
+  // Find the championship stage market ID for the chart
+  const championshipMarketId = useMemo(() => {
+    if (!gridData) return null;
+    const champStage = gridData.stages.find((s) => s.key === "championship");
+    return champStage?.market_ids?.[0] ?? null;
+  }, [gridData]);
+
   // No config for this slug
   if (!config) {
     return (
@@ -143,15 +165,18 @@ export default function PlayoffGridPage({
             No playoff grid available for &quot;{slug}&quot;.
           </p>
           <div className="flex flex-wrap gap-2">
-            {Object.entries(LEAGUE_CONFIG).map(([key, cfg]) => (
-              <Link
-                key={key}
-                href={`/playoffs/${key}`}
-                className="px-4 py-2 rounded-lg bg-surface-card border border-white/10 text-text-primary hover:border-white/30 transition-colors"
-              >
-                {cfg.emoji} {cfg.league || cfg.sport}
-              </Link>
-            ))}
+            {TAB_LEAGUES.map((key) => {
+              const cfg = LEAGUE_CONFIG[key];
+              return (
+                <Link
+                  key={key}
+                  href={`/playoffs/${key}`}
+                  className="px-4 py-2 rounded-lg bg-surface-card border border-white/10 text-text-primary hover:border-white/30 transition-colors"
+                >
+                  {cfg.emoji} {cfg.league}
+                </Link>
+              );
+            })}
           </div>
         </div>
       </main>
@@ -176,9 +201,9 @@ export default function PlayoffGridPage({
 
         {/* League tabs */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1 scrollbar-hide">
-          {Object.entries(LEAGUE_CONFIG)
-            .filter(([, cfg]) => ["basketball", "football", "hockey", "baseball"].includes(cfg.sport))
-            .map(([key, cfg]) => (
+          {TAB_LEAGUES.map((key) => {
+            const cfg = LEAGUE_CONFIG[key];
+            return (
               <Link
                 key={key}
                 href={`/playoffs/${key}`}
@@ -190,7 +215,8 @@ export default function PlayoffGridPage({
               >
                 {cfg.emoji} {cfg.league}
               </Link>
-            ))}
+            );
+          })}
         </div>
 
         {/* Source badges + conference filter */}
@@ -255,6 +281,19 @@ export default function PlayoffGridPage({
             <p className="text-text-secondary/60 text-sm">
               Odds will appear when sportsbooks and prediction markets publish {config.league || config.sport} playoff markets.
             </p>
+          </div>
+        )}
+
+        {/* Championship odds trend chart */}
+        {championshipMarketId && (
+          <div className="mb-6">
+            <h2 className="text-sm font-medium text-text-secondary mb-2">Championship Odds Trend</h2>
+            <TournamentChart
+              marketId={championshipMarketId}
+              hours={336}
+              height={280}
+              className="bg-surface-card rounded-xl border border-white/10 p-3"
+            />
           </div>
         )}
 

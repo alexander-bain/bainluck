@@ -99,7 +99,10 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "division",
             "label": "Win Division",
             "order": 2,
-            "patterns": [r"\bdivision\b"],
+            "patterns": [
+                r"\bdivision\b",
+                r"\b(?:afc|nfc)\s+(?:east|north|south|west)\b",
+            ],
         },
         {
             "key": "conference",
@@ -291,9 +294,8 @@ SPORT_STAGES: dict[str, list[dict]] = {
                 r"\bchampion\b",
                 r"\bchampionship\b",
                 r"win.ncaa",
-                r"ncaa.*winner",
+                r"ncaa\b.*winner",
                 r"march.madness.*winner",
-                r"\bwinner\b",
             ],
         },
     ],
@@ -326,7 +328,6 @@ SPORT_STAGES: dict[str, list[dict]] = {
                 r"\bchampionship\b",
                 r"national.champion",
                 r"cfp.champion",
-                r"\bwinner\b",
             ],
         },
     ],
@@ -462,10 +463,22 @@ def classify_market_stage(
     stage_keys = {s["key"] for s in stages}
     _champion_word = re.compile(r"\bchampion(?:ship)?\b", re.IGNORECASE)
     if _champion_word.search(name_lower):
-        # Check sub-stages in order (lowest first) — first match wins
+        # Check sub-stages in order — most specific first so division beats conference.
+        # "AFC East Champion" → division (not conference)
+        # "AFC Champion" → conference (not championship)
+        # "NFL Championship Winner" → no sub-stage match → falls through to main patterns
         _SUB_STAGE_PATTERNS = [
-            ("conference", re.compile(r"\bconference\b|\bastern\b|\bestern\b|\bwestern\b", re.IGNORECASE)),
-            ("division", re.compile(r"\bdivision\b", re.IGNORECASE)),
+            ("division", re.compile(
+                r"\bdivision\b"
+                r"|\b(?:afc|nfc)\s+(?:east|north|south|west)\b"  # NFL divisions
+                r"|\b(?:al|nl)\s+(?:east|central|west)\b",       # MLB divisions
+                re.IGNORECASE,
+            )),
+            ("conference", re.compile(
+                r"\bconference\b|\bastern\b|\bestern\b|\bwestern\b"
+                r"|\bafc\b|\bnfc\b",  # NFL conferences
+                re.IGNORECASE,
+            )),
             ("pennant", re.compile(r"\bpennant\b|\bamerican\s+league\b|\bnational\s+league\b", re.IGNORECASE)),
         ]
         for sub_key, sub_re in _SUB_STAGE_PATTERNS:
