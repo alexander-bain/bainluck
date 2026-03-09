@@ -1289,6 +1289,45 @@ async def get_playoff_grid(
                     "change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
                 })
 
+    # --- Infer conference from conference/pennant stage market names ---
+    # When standings_data doesn't have conference (e.g., NFL offseason), we can
+    # infer it from which conference-stage market a team appears in.
+    # E.g., a team in "NFL: 2027 AFC Champion" → conference = "AFC"
+    # A team in "NBA Eastern Conference Champion" → conference = "Eastern Conference"
+    _CONF_MARKET_PATTERNS: list[tuple[re.Pattern, str]] = [
+        # NFL: "AFC" / "NFC" (no "Conference" suffix in NFL naming)
+        (re.compile(r"\bAFC\b(?!\s+(?:East|North|South|West))", re.IGNORECASE), "AFC"),
+        (re.compile(r"\bNFC\b(?!\s+(?:East|North|South|West))", re.IGNORECASE), "NFC"),
+        # NBA / NHL: "Eastern Conference" / "Western Conference"
+        (re.compile(r"\bEastern\b", re.IGNORECASE), "Eastern Conference"),
+        (re.compile(r"\bWestern\b", re.IGNORECASE), "Western Conference"),
+        # MLB: "American League" / "National League"
+        (re.compile(r"\bAmerican\s+League\b", re.IGNORECASE), "American League"),
+        (re.compile(r"\bNational\s+League\b", re.IGNORECASE), "National League"),
+    ]
+    # Only check conference/pennant stage markets
+    conf_stage_keys = {"conference", "pennant"}
+    for stage_key in conf_stage_keys:
+        if stage_key not in stage_market_groups:
+            continue
+        for m in stage_market_groups[stage_key]:
+            # Detect conference from market name
+            detected_conf = None
+            for pat, conf_name in _CONF_MARKET_PATTERNS:
+                if pat.search(m.name):
+                    detected_conf = conf_name
+                    break
+            if not detected_conf:
+                continue
+
+            # Assign conference to all outcomes in this market
+            for o in m.outcomes:
+                if _SKIP_OUTCOME_RE.search(o.name):
+                    continue
+                merge_key, _, _ = _resolve_outcome_team(o)
+                if merge_key in participants and not participants[merge_key].get("conference"):
+                    participants[merge_key]["conference"] = detected_conf
+
     # Average probabilities across sources per stage
     for p in participants.values():
         for stage_key, stage_data in p["stages"].items():
