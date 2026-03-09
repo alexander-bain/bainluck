@@ -976,19 +976,25 @@ async def get_playoff_grid(
         \b(?:\#?\d+)\s*seed\b     |   # "Western Conference #1 Seed"
         \bseeding\b               |   # "NBA Seeding"
         \bwin\s+total\b           |   # "Win Total"
-        \bwins\s+total\b          |   # "Wins Total"
+        \bwins?\s+totals?\b       |   # "Wins Total" / "Win Totals"
         \bover.under\s+wins\b     |   # "Over/Under Wins"
         \bmvp\b                   |   # "NBA MVP"
         \bdpoy\b                  |   # "NBA DPOY"
         \broy\b                   |   # "NBA ROY"
-        \brookie\s+of\s+the\s+year\b |  # "Rookie of the Year"
-        \bdefensive\s+player\b    |   # "Defensive Player of the Year"
-        \bcoach\s+of\s+the\s+year\b |  # "Coach of the Year"
-        \bmost\s+improved\b       |   # "Most Improved Player"
-        \ball[- ]?star\b          |   # "All-Star"
-        \btotal\s+(?:points|rebounds|assists|wins)\b |  # "Total Points"
-        \b6th\s+man\b             |   # "6th Man of the Year"
-        \bexecutive\b                 # "Executive of the Year"
+        \brookie\s+of\s+the\s+year\b |
+        \bdefensive\s+player\b    |
+        \bcoach\s+of\s+the\s+year\b |
+        \bmost\s+improved\b       |
+        \ball[- ]?star\b          |
+        \btotal\s+(?:points|rebounds|assists|wins)\b |
+        \b6th\s+man\b             |
+        \bexecutive\b             |
+        \bretire\b                |   # "Will LeBron James retire before..."
+        \bcover\s+of\b            |   # "Who will be on the cover of NBA 2K27?"
+        \b2k\d+\b                 |   # "NBA 2K27"
+        \badd\s+a\s+new\s+team\b  |   # "Will the NBA add a new team before 2030?"
+        \bcba\b                   |   # "New WNBA CBA agreement by...?"
+        \bplay[- ]?in\b               # "play-in tournament" — not a standard stage
         """,
         re.IGNORECASE | re.VERBOSE,
     )
@@ -996,6 +1002,40 @@ async def get_playoff_grid(
         m for m in all_markets
         if not _NOT_PROGRESSION_RE.search(m.name)
     ]
+
+    # Market-level league validation: reject markets whose outcomes are clearly
+    # from a different league (e.g., NHL teams in an NBA-keyed market).
+    # Check that at least 30% of non-binary outcomes resolve to known teams.
+    if sport_team_lookup and league_upper:
+        validated_markets = []
+        for m in all_markets:
+            non_binary_outcomes = [
+                o for o in m.outcomes
+                if o.name and not re.match(r"^(yes|no)$", o.name.strip(), re.IGNORECASE)
+            ]
+            if not non_binary_outcomes:
+                validated_markets.append(m)
+                continue
+            matched = 0
+            for o in non_binary_outcomes:
+                name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", o.name, flags=re.IGNORECASE).strip()
+                name_lower = name.lower()
+                if name_lower in sport_team_lookup:
+                    matched += 1
+                    continue
+                # Try fragment matching (city name → full team)
+                found = False
+                for team_key in sport_team_lookup:
+                    if (team_key.endswith(name_lower) or team_key.startswith(name_lower)) and len(name) >= 4:
+                        found = True
+                        break
+                if found:
+                    matched += 1
+            match_rate = matched / len(non_binary_outcomes)
+            if match_rate >= 0.3:
+                validated_markets.append(m)
+            # else: skip this market entirely — outcomes don't match league teams
+        all_markets = validated_markets
 
     # --- Classify each market into a stage ---
     # Group by stage, allowing multiple markets per stage (from different sources)
@@ -1034,15 +1074,7 @@ async def get_playoff_grid(
     participants: dict[str, dict] = {}
     all_sources: set[str] = set()
 
-    # Load team info for outcomes that already have team_id
-    all_team_ids: set[int] = set()
-    for markets in stage_market_groups.values():
-        for m in markets:
-            for o in m.outcomes:
-                if o.team_id:
-                    all_team_ids.add(o.team_id)
-
-    # Also load teams for this league for name resolution
+    # Load teams for this league for name resolution
     # This lets us merge "Oklahoma City" (Kalshi) with "Oklahoma City Thunder" (Odds API)
     # IMPORTANT: When a league is specified, ONLY load teams from that league
     # to prevent college/MLS/other teams from being matched
