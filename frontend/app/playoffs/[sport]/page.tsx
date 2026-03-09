@@ -24,9 +24,9 @@ const LEAGUE_CONFIG: Record<
   string,
   { sport: string; league: string; name: string; emoji: string; conferences?: string[] }
 > = {
-  nba: { sport: "basketball", league: "NBA", name: "NBA Playoff Odds", emoji: "🏀", conferences: ["Eastern", "Western"] },
+  nba: { sport: "basketball", league: "NBA", name: "NBA Playoff Odds", emoji: "🏀", conferences: ["Eastern Conference", "Western Conference"] },
   nfl: { sport: "football", league: "NFL", name: "NFL Playoff Odds", emoji: "🏈", conferences: ["AFC", "NFC"] },
-  nhl: { sport: "hockey", league: "NHL", name: "NHL Playoff Odds", emoji: "🏒", conferences: ["Eastern", "Western"] },
+  nhl: { sport: "hockey", league: "NHL", name: "NHL Playoff Odds", emoji: "🏒", conferences: ["Eastern Conference", "Western Conference"] },
   mlb: { sport: "baseball", league: "MLB", name: "MLB Playoff Odds", emoji: "⚾", conferences: ["American League", "National League"] },
   ncaab: { sport: "basketball", league: "NCAAB", name: "NCAA Basketball Playoff Odds", emoji: "🏀" },
   ncaaf: { sport: "football", league: "NCAAF", name: "College Football Playoff Odds", emoji: "🏈" },
@@ -38,6 +38,14 @@ const SOURCE_LABELS: Record<string, string> = {
   odds_api: "Sportsbooks",
   kalshi: "Kalshi",
   polymarket: "Polymarket",
+};
+
+/** Short display labels for conference filter buttons */
+const CONF_SHORT: Record<string, string> = {
+  "Eastern Conference": "East",
+  "Western Conference": "West",
+  "American League": "AL",
+  "National League": "NL",
 };
 
 /** Transform PlayoffGridResponse into ProgressionResponse for TournamentProgressionTable */
@@ -224,7 +232,7 @@ export default function PlayoffGridPage({
                         : "bg-surface-card text-text-secondary border border-white/10 hover:border-white/20"
                     }`}
                   >
-                    {conf}
+                    {CONF_SHORT[conf] || conf}
                   </button>
                 ))}
               </div>
@@ -265,7 +273,7 @@ export default function PlayoffGridPage({
           <p className="text-xs text-text-secondary/50 mt-3 text-center">
             {gridData.teams.length} teams · {gridData.stages.length} stages ·{" "}
             {gridData.sources.length} source{gridData.sources.length !== 1 ? "s" : ""}
-            {conferenceFilter && ` · Showing ${conferenceFilter}`}
+            {conferenceFilter && ` · Showing ${CONF_SHORT[conferenceFilter] || conferenceFilter}`}
           </p>
         )}
       </div>
