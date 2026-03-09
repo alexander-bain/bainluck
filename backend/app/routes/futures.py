@@ -895,26 +895,44 @@ async def get_playoff_grid(
         "semifinal": "semifinal",
     }
 
-    # Build canonical key prefix for ILIKE
+    # Build canonical key patterns that ONLY match valid stage types.
+    # Without this filter, "basketball:NBA:%" would also match win_totals,
+    # mvp, dpoy, roy, game_prop, etc. — all of which are NOT playoff stages.
     ck_prefix = sport_lower
     if league_upper:
         ck_prefix += f":{league_upper}"
     else:
         ck_prefix += ":"
 
-    filters = [
-        FuturesMarket.canonical_market_key.ilike(f"{ck_prefix}%"),
-        FuturesMarket.status == "open",
-    ]
-    if season:
-        filters.append(FuturesMarket.canonical_market_key.ilike(f"%:{season.strip()}"))
+    # Build OR of specific canonical key patterns for each valid stage type
+    valid_ck_types = list(_CANONICAL_TO_STAGE.keys())
+    ck_conditions = []
+    for ck_type in valid_ck_types:
+        pattern = f"{ck_prefix}:{ck_type}:%"
+        if season:
+            pattern = f"{ck_prefix}:{ck_type}:{season.strip()}"
+        ck_conditions.append(FuturesMarket.canonical_market_key.ilike(pattern))
 
-    result = await db.execute(
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(*filters)
-    )
-    ck_markets = list(result.scalars().unique().all())
+    # Also match leagueless keys (e.g., "basketball::championship:2026")
+    # but only for valid stage types
+    if league_upper:
+        for ck_type in valid_ck_types:
+            pattern = f"{sport_lower}::{ck_type}:%"
+            if season:
+                pattern = f"{sport_lower}::{ck_type}:{season.strip()}"
+            ck_conditions.append(FuturesMarket.canonical_market_key.ilike(pattern))
+
+    ck_markets: list = []
+    if ck_conditions:
+        result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(
+                or_(*ck_conditions),
+                FuturesMarket.status == "open",
+            )
+        )
+        ck_markets = list(result.scalars().unique().all())
 
     # Strategy 2: Also find markets by sport category + name-based stage detection
     # (catches Odds API markets that may have no/wrong canonical key)
@@ -1017,12 +1035,27 @@ async def get_playoff_grid(
                 "division": (t.standings_data or {}).get("division"),
             }
 
+    # Outcomes to skip — binary outcomes, over/under, dates, generic names
+    _SKIP_OUTCOME_RE = re.compile(
+        r"""
+        ^(yes|no)$                |   # Binary market outcomes
+        \bover\b.*\(              |   # "Team: Over (41.5)"
+        \bunder\b.*\(             |   # "Team: Under (41.5)"
+        ^\d{1,2}\s+(wins?|losses?)|   # "50 wins"
+        ^(january|february|march|april|may|june|july|august|september|october|november|december)\b  # dates
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
     for stage_key, markets in stage_market_groups.items():
         for m in markets:
             source = m.source or "unknown"
             all_sources.add(source)
 
             for o in m.outcomes:
+                # Skip non-team outcomes (binary yes/no, over/under, dates)
+                if _SKIP_OUTCOME_RE.search(o.name):
+                    continue
                 merge_key = _progression_merge_key(o)
                 if merge_key not in participants:
                     t_info = team_info.get(o.team_id) if o.team_id else None
