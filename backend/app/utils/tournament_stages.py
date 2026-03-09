@@ -93,7 +93,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"playoff.appearance", r"playoff.berth"],
+            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth", r"playoff.appearance"],
         },
         {
             "key": "division",
@@ -119,7 +119,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"playoff.berth"],
+            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth"],
         },
         {
             "key": "conference",
@@ -150,7 +150,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"playoff.berth"],
+            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth"],
         },
         {
             "key": "division",
@@ -190,7 +190,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"playoff.berth"],
+            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth"],
         },
         {
             "key": "division",

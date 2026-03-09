@@ -964,28 +964,56 @@ async def get_playoff_grid(
     # Filter out game-level markets
     all_markets = [m for m in all_markets if not is_game_level_market(m.name)]
 
+    # Filter out markets that are NOT playoff progression (draft, awards, stat leaders, etc.)
+    _NOT_PROGRESSION_RE = re.compile(
+        r"""
+        \bdraft\b                 |   # "2026 NBA Draft: 1st Overall pick"
+        \b\d+(?:st|nd|rd|th)\s+overall\b |  # "1st Overall pick"
+        per\s+game\s+leader       |   # "NBA Assists Per Game Leader"
+        scoring\s+leader          |   # "NBA Scoring Leader"
+        \bbest\s+record\b         |   # "NBA Best Record"
+        \bworst\s+record\b        |   # "NBA Worst Record"
+        \b(?:\#?\d+)\s*seed\b     |   # "Western Conference #1 Seed"
+        \bseeding\b               |   # "NBA Seeding"
+        \bwin\s+total\b           |   # "Win Total"
+        \bwins\s+total\b          |   # "Wins Total"
+        \bover.under\s+wins\b     |   # "Over/Under Wins"
+        \bmvp\b                   |   # "NBA MVP"
+        \bdpoy\b                  |   # "NBA DPOY"
+        \broy\b                   |   # "NBA ROY"
+        \brookie\s+of\s+the\s+year\b |  # "Rookie of the Year"
+        \bdefensive\s+player\b    |   # "Defensive Player of the Year"
+        \bcoach\s+of\s+the\s+year\b |  # "Coach of the Year"
+        \bmost\s+improved\b       |   # "Most Improved Player"
+        \ball[- ]?star\b          |   # "All-Star"
+        \btotal\s+(?:points|rebounds|assists|wins)\b |  # "Total Points"
+        \b6th\s+man\b             |   # "6th Man of the Year"
+        \bexecutive\b                 # "Executive of the Year"
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    all_markets = [
+        m for m in all_markets
+        if not _NOT_PROGRESSION_RE.search(m.name)
+    ]
+
     # --- Classify each market into a stage ---
     # Group by stage, allowing multiple markets per stage (from different sources)
     stage_market_groups: dict[str, list[FuturesMarket]] = defaultdict(list)
     detected_season: str | None = season.strip() if season else None
 
     for m in all_markets:
-        # Try canonical key first for stage classification
-        stage_key = None
-        if m.canonical_market_key:
+        # Extract season from canonical key if available
+        if not detected_season and m.canonical_market_key:
             parts = m.canonical_market_key.split(":")
-            if len(parts) >= 3:
-                ck_type = parts[2]  # e.g., "championship", "conference_winner"
-                stage_key = _CANONICAL_TO_STAGE.get(ck_type)
-                # Extract season from canonical key
-                if not detected_season and len(parts) >= 4 and parts[3]:
-                    detected_season = parts[3]
+            if len(parts) >= 4 and parts[3]:
+                detected_season = parts[3]
 
-        # Fall back to name-based classification
-        if not stage_key:
-            stage_key = classify_market_stage(
-                m.name, m.external_id, m.market_tier, stages
-            )
+        # ALWAYS use name-based classification — canonical keys are unreliable
+        # (Polymarket assigns "championship" key to draft, awards, stat leaders, etc.)
+        stage_key = classify_market_stage(
+            m.name, m.external_id, m.market_tier, stages
+        )
 
         # Only include stages that are part of this sport's progression
         if stage_key and any(s["key"] == stage_key for s in stages):
@@ -1006,7 +1034,7 @@ async def get_playoff_grid(
     participants: dict[str, dict] = {}
     all_sources: set[str] = set()
 
-    # Load team info
+    # Load team info for outcomes that already have team_id
     all_team_ids: set[int] = set()
     for markets in stage_market_groups.values():
         for m in markets:
@@ -1014,12 +1042,71 @@ async def get_playoff_grid(
                 if o.team_id:
                     all_team_ids.add(o.team_id)
 
+    # Also load ALL teams for this sport for name resolution
+    # This lets us merge "Oklahoma City" (Kalshi) with "Oklahoma City Thunder" (Odds API)
+    sport_team_lookup: dict[str, dict] = {}  # lowercase name/fragment → team info
+    _SPORT_KEY_PREFIXES = {
+        "basketball": "basketball_",
+        "football": "americanfootball_",
+        "hockey": "icehockey_",
+        "baseball": "baseball_",
+        "soccer": "soccer_",
+    }
+    sport_prefix = _SPORT_KEY_PREFIXES.get(sport_lower)
+    if sport_prefix or league_upper:
+        team_query = select(Team)
+        if league_upper:
+            # Find teams by sport_id matching the league's sports
+            league_sport_q = select(Sport.id).where(
+                Sport.key.ilike(f"%{league_upper.lower()}%")
+            )
+            team_query = team_query.where(
+                or_(
+                    Team.sport_id.in_(league_sport_q),
+                    # Also match by sport key prefix for broader coverage
+                    Team.sport_id.in_(
+                        select(Sport.id).where(
+                            Sport.key.ilike(f"{sport_prefix}%") if sport_prefix else Sport.key.ilike(f"%{sport_lower}%")
+                        )
+                    ),
+                )
+            )
+        elif sport_prefix:
+            team_query = team_query.where(
+                Team.sport_id.in_(
+                    select(Sport.id).where(Sport.key.ilike(f"{sport_prefix}%"))
+                )
+            )
+        team_result = await db.execute(team_query)
+        for t in team_result.scalars().all():
+            t_dict = {
+                "id": t.id,
+                "name": t.name,
+                "logo_url": t.logo_url_small or t.logo_url,
+                "primary_color": t.primary_color,
+                "secondary_color": t.secondary_color,
+                "record": t.current_record,
+                "conference": (t.standings_data or {}).get("conference"),
+                "division": (t.standings_data or {}).get("division"),
+            }
+            # Index by full name, lowercase
+            sport_team_lookup[t.name.lower()] = t_dict
+            # Also index by short name fragments for partial matching
+            # "Oklahoma City Thunder" → also index "oklahoma city"
+            parts = t.name.rsplit(" ", 1)
+            if len(parts) == 2 and len(parts[0]) >= 3:
+                # "Oklahoma City" from "Oklahoma City Thunder"
+                sport_team_lookup[parts[0].lower()] = t_dict
+            # Index alternate names
+            for alt in (t.alternate_names or []):
+                sport_team_lookup[alt.lower()] = t_dict
+
     team_info: dict[int, dict] = {}
     if all_team_ids:
-        team_result = await db.execute(
+        explicit_team_result = await db.execute(
             select(Team).where(Team.id.in_(all_team_ids))
         )
-        for t in team_result.scalars().all():
+        for t in explicit_team_result.scalars().all():
             team_info[t.id] = {
                 "id": t.id,
                 "name": t.name,
@@ -1030,6 +1117,43 @@ async def get_playoff_grid(
                 "conference": (t.standings_data or {}).get("conference"),
                 "division": (t.standings_data or {}).get("division"),
             }
+    # Merge sport_team_lookup teams into team_info
+    for t_dict in sport_team_lookup.values():
+        if t_dict["id"] not in team_info:
+            team_info[t_dict["id"]] = t_dict
+
+    def _resolve_outcome_team(outcome) -> tuple[str, int | None, dict | None]:
+        """Resolve an outcome to a team, returning (merge_key, team_id, team_info).
+
+        Uses outcome.team_id if available, otherwise fuzzy-matches
+        the outcome name against the sport's team list.
+        """
+        if outcome.team_id and outcome.team_id in team_info:
+            return f"team:{outcome.team_id}", outcome.team_id, team_info[outcome.team_id]
+
+        # Try name-based resolution against sport teams
+        name = outcome.name or ""
+        # Strip "Yes: " / "No: " prefixes (Kalshi format)
+        clean_name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", name, flags=re.IGNORECASE).strip()
+
+        # Exact match on full cleaned name
+        t_info = sport_team_lookup.get(clean_name.lower())
+        if t_info:
+            return f"team:{t_info['id']}", t_info["id"], t_info
+
+        # Try without trailing "s" (e.g. "76er" → won't work, but catches edge cases)
+        # Try stripping common suffixes like "Celtics" → match "Boston Celtics"
+        # by checking if any team name ends with this word
+        for team_name_lower, t_info in sport_team_lookup.items():
+            # "Celtics" matches "Boston Celtics" (exact suffix)
+            if team_name_lower.endswith(clean_name.lower()) and len(clean_name) >= 4:
+                return f"team:{t_info['id']}", t_info["id"], t_info
+            # "Oklahoma City" matches "Oklahoma City Thunder" (exact prefix)
+            if team_name_lower.startswith(clean_name.lower()) and len(clean_name) >= 4:
+                return f"team:{t_info['id']}", t_info["id"], t_info
+
+        # No match — use name-based merge key
+        return _progression_merge_key(outcome), None, None
 
     # Outcomes to skip — binary outcomes, over/under, dates, generic names
     _SKIP_OUTCOME_RE = re.compile(
@@ -1056,12 +1180,14 @@ async def get_playoff_grid(
                 # Skip non-team outcomes (binary yes/no, over/under, dates)
                 if _SKIP_OUTCOME_RE.search(o.name):
                     continue
-                merge_key = _progression_merge_key(o)
+
+                merge_key, resolved_team_id, resolved_info = _resolve_outcome_team(o)
+
                 if merge_key not in participants:
-                    t_info = team_info.get(o.team_id) if o.team_id else None
+                    t_info = resolved_info or (team_info.get(o.team_id) if o.team_id else None)
                     participants[merge_key] = {
-                        "name": o.name,
-                        "team_id": o.team_id,
+                        "name": resolved_info["name"] if resolved_info else o.name,
+                        "team_id": resolved_team_id or o.team_id,
                         "logo_url": t_info["logo_url"] if t_info else None,
                         "primary_color": t_info["primary_color"] if t_info else None,
                         "secondary_color": t_info["secondary_color"] if t_info else None,
@@ -1074,11 +1200,13 @@ async def get_playoff_grid(
                 p = participants[merge_key]
                 prob = float(o.current_probability) if o.current_probability else None
 
-                # Update team info if we found it in a later stage
-                if o.team_id and not p["team_id"]:
-                    p["team_id"] = o.team_id
-                    t_info = team_info.get(o.team_id)
+                # Update team info if resolved in this iteration but not before
+                effective_team_id = resolved_team_id or o.team_id
+                if effective_team_id and not p["team_id"]:
+                    p["team_id"] = effective_team_id
+                    t_info = resolved_info or team_info.get(effective_team_id)
                     if t_info:
+                        p["name"] = t_info.get("name", p["name"])
                         p["logo_url"] = t_info["logo_url"]
                         p["primary_color"] = t_info["primary_color"]
                         p["secondary_color"] = t_info["secondary_color"]
