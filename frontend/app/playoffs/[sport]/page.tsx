@@ -42,7 +42,7 @@ const LEAGUE_CONFIG: Record<
 };
 
 /** Leagues to show in the tab bar */
-const TAB_LEAGUES = ["nba", "nfl", "nhl", "mlb"];
+const TAB_LEAGUES = ["nba", "nfl", "nhl", "mlb", "ncaaf"];
 
 const SOURCE_LABELS: Record<string, string> = {
   odds_api: "Sportsbooks",
@@ -292,6 +292,7 @@ export default function PlayoffGridPage({
               marketId={championshipMarketId}
               hours={336}
               height={280}
+              hideLeaderboard
               className="bg-surface-card rounded-xl border border-white/10 p-3"
             />
           </div>

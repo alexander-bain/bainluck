@@ -193,7 +193,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
             "key": "make_playoffs",
             "label": "Make Playoffs",
             "order": 1,
-            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth"],
+            "patterns": [r"make.playoffs", r"make\b.*\bplayoffs", r"playoff.berth", r"playoff.qualif"],
         },
         {
             "key": "division",
@@ -338,6 +338,7 @@ SPORT_STAGES: dict[str, list[dict]] = {
 # When a league is specified, prefer league-specific stages over sport-generic ones
 _LEAGUE_STAGE_OVERRIDES: dict[str, str] = {
     "NCAAB": "ncaa_basketball",
+    "WNCAAB": "ncaa_basketball",
     "NCAAF": "ncaa_football",
     "NCAA": "ncaa_basketball",
 }
@@ -454,13 +455,24 @@ def classify_market_stage(
         if suffix and ext_lower.endswith(suffix):
             return stage["key"]
 
-    # 2. Pre-check for compound patterns that would be ambiguous
+    # 2a. Pre-check: make_playoffs indicators override everything
+    # "Stanley Cup® Playoff Qualifiers" should be make_playoffs, not championship
+    # When a name has qualifying/berth keywords, it's always the lowest stage.
+    stage_keys = {s["key"] for s in stages}
+    if "make_playoffs" in stage_keys:
+        _MAKE_PLAYOFFS_RE = re.compile(
+            r"\bplayoff.qualif|\bqualif.*playoff|\bplayoff.berth",
+            re.IGNORECASE,
+        )
+        if _MAKE_PLAYOFFS_RE.search(name_lower):
+            return "make_playoffs"
+
+    # 2b. Pre-check for compound patterns that would be ambiguous
     # "Eastern Conference Champion" should be "conference" not "championship"
     # "AL East Division Champion" should be "division" not "championship"
     # "American League Champion" should be "pennant" not "championship"
     # When a name matches both a sub-stage and "champion/championship",
     # the sub-stage takes priority.
-    stage_keys = {s["key"] for s in stages}
     _champion_word = re.compile(r"\bchampion(?:ship)?\b", re.IGNORECASE)
     if _champion_word.search(name_lower):
         # Check sub-stages in order — most specific first so division beats conference.

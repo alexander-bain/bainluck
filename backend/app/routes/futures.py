@@ -994,7 +994,9 @@ async def get_playoff_grid(
         \b2k\d+\b                 |   # "NBA 2K27"
         \badd\s+a\s+new\s+team\b  |   # "Will the NBA add a new team before 2030?"
         \bcba\b                   |   # "New WNBA CBA agreement by...?"
-        \bplay[- ]?in\b               # "play-in tournament" — not a standard stage
+        \bplay[- ]?in\b           |   # "play-in tournament" — not a standard stage
+        \bbefore\s+the\s+\d{4}\b  |   # "Canadian team wins X before the 2031 season?"
+        \bcanadian\s+team\b           # "Canadian team wins the Stanley Cup"
         """,
         re.IGNORECASE | re.VERBOSE,
     )
@@ -1096,7 +1098,9 @@ async def get_playoff_grid(
                 "logo_url": t.logo_url_small or t.logo_url,
                 "primary_color": t.primary_color,
                 "secondary_color": t.secondary_color,
-                "record": t.current_record,
+                # Only include record when standings data has active season info
+                # (prevents showing stale past-season records during offseason)
+                "record": t.current_record if (t.standings_data or {}).get("wins") is not None else None,
                 "conference": (t.standings_data or {}).get("conference"),
                 "division": (t.standings_data or {}).get("division"),
             }
@@ -1346,6 +1350,22 @@ async def get_playoff_grid(
                     stage_data["status"] = "clinched"
                 elif avg_prob <= 0.001:
                     stage_data["status"] = "eliminated"
+
+    # Normalize probabilities per stage so they sum to ~100%
+    # Sportsbook/prediction market odds often have overround (sum > 100%)
+    for stage_key in stage_market_groups:
+        stage_total = sum(
+            p["stages"][stage_key]["probability"]
+            for p in participants.values()
+            if stage_key in p["stages"] and p["stages"][stage_key]["probability"] is not None
+        )
+        if stage_total > 0 and abs(stage_total - 1.0) > 0.05:  # Only normalize if >5% off
+            scale = 1.0 / stage_total
+            for p in participants.values():
+                if stage_key in p["stages"] and p["stages"][stage_key]["probability"] is not None:
+                    p["stages"][stage_key]["probability"] = round(
+                        p["stages"][stage_key]["probability"] * scale, 4
+                    )
 
     # Sort by highest-stage probability (championship first, fallback to conference, etc.)
     stage_order = sorted(

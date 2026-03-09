@@ -56,6 +56,8 @@ interface TournamentChartProps {
   className?: string;
   /** Anchor ID for deep-linking from category pages */
   id?: string;
+  /** Hide the leaderboard table below the chart (useful when a separate grid is shown) */
+  hideLeaderboard?: boolean;
 }
 
 /** Enriched participant for display */
@@ -147,6 +149,7 @@ export default function TournamentChart({
   height = 300,
   className,
   id,
+  hideLeaderboard = false,
 }: TournamentChartProps) {
   const [topFilter, setTopFilter] = useState<TopFilter>(10);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -498,7 +501,7 @@ export default function TournamentChart({
       </div>
 
       {/* Leaderboard Grid */}
-      <div className="overflow-x-auto">
+      {!hideLeaderboard && <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/30">
@@ -644,7 +647,7 @@ export default function TournamentChart({
             })}
           </tbody>
         </table>
-      </div>
+      </div>}
     </div>
   );
 }
