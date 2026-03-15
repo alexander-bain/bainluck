@@ -703,3 +703,83 @@ class TeamIdentityMapping(Base):
 
     # Relationships
     team: Mapped["Team"] = relationship()
+
+
+class OscarsPool(Base):
+    """A private Oscars prediction pool (e.g., family competition)."""
+
+    __tablename__ = "oscars_pools"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    code: Mapped[str] = mapped_column(String(8), unique=True, nullable=False, index=True)
+    ceremony_year: Mapped[int] = mapped_column(Integer, default=2026)
+    created_by_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    picks_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # JSON list of bonus market questions set by pool creator
+    bonus_markets: Mapped[Optional[dict]] = mapped_column(JSONB, default=list)
+    # JSON dict of category_key -> winner_name for scoring
+    results: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
+
+    # Relationships
+    members: Mapped[list["OscarsPoolMember"]] = relationship(
+        back_populates="pool", cascade="all, delete-orphan"
+    )
+
+
+class OscarsPoolMember(Base):
+    """A participant in an Oscars pool."""
+
+    __tablename__ = "oscars_pool_members"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pool_id: Mapped[int] = mapped_column(
+        ForeignKey("oscars_pools.id", ondelete="CASCADE"), index=True
+    )
+    display_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    avatar_emoji: Mapped[str] = mapped_column(String(10), default="🎬")
+    member_token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("pool_id", "display_name", name="uq_pool_member_name"),
+    )
+
+    # Relationships
+    pool: Mapped["OscarsPool"] = relationship(back_populates="members")
+    picks: Mapped[list["OscarsPoolPick"]] = relationship(
+        back_populates="member", cascade="all, delete-orphan"
+    )
+
+
+class OscarsPoolPick(Base):
+    """A single category pick by a pool member."""
+
+    __tablename__ = "oscars_pool_picks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    member_id: Mapped[int] = mapped_column(
+        ForeignKey("oscars_pool_members.id", ondelete="CASCADE"), index=True
+    )
+    category_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    nominee_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    probability_at_pick: Mapped[float] = mapped_column(Numeric(7, 6), nullable=False)
+    is_confidence_pick: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_correct: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    points_earned: Mapped[Optional[float]] = mapped_column(Numeric(8, 2), nullable=True)
+    picked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("member_id", "category_key", name="uq_member_category_pick"),
+    )
+
+    # Relationships
+    member: Mapped["OscarsPoolMember"] = relationship(back_populates="picks")

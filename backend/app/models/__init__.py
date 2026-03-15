@@ -19,6 +19,9 @@ from app.models.models import (
     FuturesOddsSnapshot,
     LineMovementAnalysis,
     TeamIdentityMapping,
+    OscarsPool,
+    OscarsPoolMember,
+    OscarsPoolPick,
 )
 
 __all__ = [
@@ -41,4 +44,7 @@ __all__ = [
     "FuturesOddsSnapshot",
     "LineMovementAnalysis",
     "TeamIdentityMapping",
+    "OscarsPool",
+    "OscarsPoolMember",
+    "OscarsPoolPick",
 ]
