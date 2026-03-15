@@ -22,6 +22,7 @@ import type {
   UserPreferencesResponse,
   OnboardingSubmission,
   OscarsResponse,
+  OscarsPoolResponse,
   FuturesBrowseResponse,
   FuturesCategoriesResponse,
   TeamFuturesResponse,
@@ -843,6 +844,113 @@ export async function updateSportAffinities(
  */
 export async function fetchOscarsData(): Promise<OscarsResponse> {
   return apiFetch<OscarsResponse>("/api/oscars");
+}
+
+// ============================================================================
+// Oscars Pool API
+// ============================================================================
+
+export async function createOscarsPool(poolName: string, creatorName: string, avatarEmoji: string = "🎬") {
+  return apiFetch<{
+    pool_code: string;
+    pool_name: string;
+    member_token: string;
+    member_id: number;
+    display_name: string;
+    avatar_emoji: string;
+    avatar_options: string[];
+  }>("/api/oscars/pool", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pool_name: poolName, creator_name: creatorName, avatar_emoji: avatarEmoji }),
+  });
+}
+
+export async function joinOscarsPool(code: string, displayName: string, avatarEmoji: string = "🎬") {
+  return apiFetch<{
+    pool_code: string;
+    pool_name: string;
+    member_token: string;
+    member_id: number;
+    display_name: string;
+    avatar_emoji: string;
+  }>(`/api/oscars/pool/${code}/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ display_name: displayName, avatar_emoji: avatarEmoji }),
+  });
+}
+
+export async function fetchOscarsPool(code: string, memberToken?: string) {
+  const headers: Record<string, string> = {};
+  if (memberToken) headers["X-Member-Token"] = memberToken;
+  return apiFetch<OscarsPoolResponse>(`/api/oscars/pool/${code}`, { headers });
+}
+
+export async function submitOscarsPoolPicks(
+  code: string,
+  memberToken: string,
+  picks: { category_key: string; nominee_name: string; probability_at_pick: number }[],
+  confidencePicks: string[] = [],
+) {
+  return apiFetch<{ status: string; picks_count: number }>(`/api/oscars/pool/${code}/picks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Member-Token": memberToken },
+    body: JSON.stringify({ picks, confidence_picks: confidencePicks }),
+  });
+}
+
+export async function submitOscarsPoolBonusPicks(
+  code: string,
+  memberToken: string,
+  picks: { bonus_key: string; selected_option: string }[],
+) {
+  return apiFetch<{ status: string; count: number }>(`/api/oscars/pool/${code}/bonus-picks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Member-Token": memberToken },
+    body: JSON.stringify({ picks }),
+  });
+}
+
+export async function lockOscarsPool(code: string, memberToken: string) {
+  return apiFetch<{ status: string }>(`/api/oscars/pool/${code}/lock`, {
+    method: "POST",
+    headers: { "X-Member-Token": memberToken },
+  });
+}
+
+export async function revealOscarsWinner(
+  code: string,
+  memberToken: string,
+  categoryKey: string,
+  winnerName: string,
+) {
+  return apiFetch<{
+    category_key: string;
+    winner: string;
+    scored_members: { display_name: string; avatar_emoji: string; picked: string; is_correct: boolean; points_earned: number }[];
+  }>(`/api/oscars/pool/${code}/reveal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Member-Token": memberToken },
+    body: JSON.stringify({ category_key: categoryKey, winner_name: winnerName }),
+  });
+}
+
+export async function revealOscarsBonus(
+  code: string,
+  memberToken: string,
+  bonusKey: string,
+  correctOption: string,
+) {
+  return apiFetch<{
+    bonus_key: string;
+    correct_option: string;
+    scored_members: { display_name: string; avatar_emoji: string; picked: string; is_correct: boolean; points_earned: number }[];
+  }>(`/api/oscars/pool/${code}/reveal-bonus`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Member-Token": memberToken },
+    body: JSON.stringify({ bonus_key: bonusKey, correct_option: correctOption }),
+  });
 }
 
 // ============================================================================

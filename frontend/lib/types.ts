@@ -751,6 +751,57 @@ export interface OscarsBiggestMover {
   probability: number;
 }
 
+// Oscars Pool types
+export interface OscarsPoolPick {
+  category_key: string;
+  nominee_name: string;
+  probability_at_pick: number;
+  is_confidence_pick: boolean;
+  is_correct: boolean | null;
+  points_earned: number | null;
+}
+
+export interface OscarsPoolMember {
+  id: number;
+  display_name: string;
+  avatar_emoji: string;
+  is_current_user: boolean;
+  picks: OscarsPoolPick[];
+  bonus_picks: OscarsPoolPick[];
+  total_points: number;
+  correct_count: number;
+  picks_submitted: number;
+  bonus_submitted: number;
+  boldness: number;
+  rank?: number;
+}
+
+export interface OscarsPoolBonusMarket {
+  key: string;
+  question: string;
+  options: string[];
+  points_value: number;
+  emoji: string;
+}
+
+export interface OscarsPoolResponse {
+  pool_name: string;
+  pool_code: string;
+  ceremony_year: number;
+  picks_locked: boolean;
+  created_by: string;
+  member_count: number;
+  current_member_id: number | null;
+  members: OscarsPoolMember[];
+  leaderboard: OscarsPoolMember[];
+  results: Record<string, string>;
+  categories_revealed: number;
+  bonus_revealed: number;
+  total_categories: number;
+  bonus_markets: OscarsPoolBonusMarket[];
+  avatar_options: string[];
+}
+
 // Unified Feed types
 export interface FeedEventData {
   id: number;

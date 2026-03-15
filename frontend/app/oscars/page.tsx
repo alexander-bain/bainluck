@@ -258,6 +258,14 @@ export default function OscarsPage() {
           <p className="text-xs text-text-muted mt-4">
             Odds from Polymarket &amp; Kalshi
           </p>
+
+          {/* Pool CTA */}
+          <Link
+            href="/oscars/pool"
+            className="inline-flex items-center gap-2 mt-4 px-5 py-2.5 rounded-lg bg-gradient-to-r from-[#D4AF37] to-[#F4D03F] text-black font-bold text-sm hover:from-[#F4D03F] hover:to-[#D4AF37] shadow-lg hover:shadow-xl transition-all"
+          >
+            Start a Prediction Pool
+          </Link>
         </div>
       </div>
 
