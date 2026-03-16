@@ -66,10 +66,57 @@ interface NomineeInfo {
   probability: number;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Pool sync helpers ──────────────────────────────────────────────────────
+
+function encodePool(pool: PoolData): string {
+  // Compact the pool data before encoding to keep URLs shorter
+  const compact = {
+    n: pool.poolName,
+    p: pool.players.map(p => ({
+      n: p.name,
+      a: p.avatar,
+      k: p.picks,
+      c: p.confidencePicks,
+      t: p.timestamp,
+    })),
+    r: pool.results,
+    t: pool.createdAt,
+  };
+  return btoa(unescape(encodeURIComponent(JSON.stringify(compact))));
+}
+
+function decodePool(encoded: string): PoolData | null {
+  try {
+    const json = decodeURIComponent(escape(atob(encoded)));
+    const c = JSON.parse(json);
+    return {
+      poolName: c.n || "Oscars Pool",
+      players: (c.p || []).map((p: any) => ({
+        name: p.n,
+        avatar: p.a,
+        picks: p.k || {},
+        confidencePicks: p.c || [],
+        timestamp: p.t || 0,
+      })),
+      results: c.r || {},
+      createdAt: c.t || 0,
+    };
+  } catch { return null; }
+}
 
 function loadPool(): PoolData | null {
   if (typeof window === "undefined") return null;
+  // Check URL hash first (shared link takes priority)
+  const hash = window.location.hash.slice(1);
+  if (hash.startsWith("pool=")) {
+    const decoded = decodePool(hash.slice(5));
+    if (decoded) {
+      // Save to localStorage and clear hash so it doesn't interfere
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(decoded));
+      window.history.replaceState(null, "", window.location.pathname);
+      return decoded;
+    }
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -78,6 +125,11 @@ function loadPool(): PoolData | null {
 
 function savePool(pool: PoolData) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(pool));
+}
+
+function getShareUrl(pool: PoolData): string {
+  const encoded = encodePool(pool);
+  return `${window.location.origin}/oscars/pool#pool=${encoded}`;
 }
 
 function computeBoldness(picks: Record<string, string>, oddsOverride: Record<string, NomineeInfo[]>): number {
@@ -169,6 +221,9 @@ export default function OscarsPoolPage() {
   // Reveal state
   const [revealCategory, setRevealCategory] = useState("");
   const [revealWinner, setRevealWinner] = useState("");
+
+  // Share state
+  const [copied, setCopied] = useState(false);
 
   // ─── Fetch real odds from API ─────────────────────────────────────────
 
@@ -322,6 +377,25 @@ export default function OscarsPoolPage() {
     setPool(updated);
     setRevealCategory("");
     setRevealWinner("");
+  };
+
+  const handleShare = async () => {
+    if (!pool) return;
+    const url = getShareUrl(pool);
+    try {
+      // Try native share first (works great on mobile)
+      if (navigator.share) {
+        await navigator.share({ title: "Oscars Pool", url });
+        return;
+      }
+      // Fall back to clipboard
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      // Last resort — prompt
+      prompt("Copy this link to open on another device:", url);
+    }
   };
 
   // ─── Computed ─────────────────────────────────────────────────────────
@@ -478,6 +552,11 @@ export default function OscarsPoolPage() {
               </div>
             ))}
           </div>
+          {/* Share button */}
+          <button onClick={handleShare}
+            className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors">
+            {copied ? "✓ Link copied!" : "📤 Share to other devices"}
+          </button>
         </div>
 
         {/* Tabs */}
