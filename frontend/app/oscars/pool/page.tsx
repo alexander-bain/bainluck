@@ -3,8 +3,10 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { fetchOscarsData } from "@/lib/api";
 import { CATEGORY_EMOJI, CEREMONY_ORDER, MAJOR_CATEGORIES, PERSON_CATEGORIES, NOMINEES_98TH } from "@/lib/oscarsData";
 import { searchMovie, searchPerson, posterUrl, headshotUrl } from "@/lib/tmdb";
+import type { OscarsCategory } from "@/lib/types";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -78,12 +80,11 @@ function savePool(pool: PoolData) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(pool));
 }
 
-function computeBoldness(picks: Record<string, string>): number {
+function computeBoldness(picks: Record<string, string>, oddsOverride: Record<string, NomineeInfo[]>): number {
   const probs: number[] = [];
   for (const [catKey, nomName] of Object.entries(picks)) {
-    const nominees = NOMINEES_98TH[catKey];
-    if (!nominees) continue;
-    const nom = nominees.find(n => n.name === nomName);
+    const catNoms = oddsOverride[catKey] || NOMINEES_98TH[catKey] || [];
+    const nom = catNoms.find(n => n.name === nomName);
     if (nom) probs.push(nom.probability);
   }
   if (probs.length === 0) return 0;
@@ -91,15 +92,15 @@ function computeBoldness(picks: Record<string, string>): number {
   return Math.round(avgUnderdog * 100);
 }
 
-function computePoints(picks: Record<string, string>, confidencePicks: string[], results: Record<string, string>): { total: number; correct: number } {
+function computePoints(picks: Record<string, string>, confidencePicks: string[], results: Record<string, string>, oddsOverride: Record<string, NomineeInfo[]>): { total: number; correct: number } {
   let total = 0;
   let correct = 0;
   for (const [catKey, winner] of Object.entries(results)) {
     const pick = picks[catKey];
     if (pick && pick.toLowerCase() === winner.toLowerCase()) {
       correct++;
-      const nominees = NOMINEES_98TH[catKey];
-      const nom = nominees?.find(n => n.name === pick);
+      const nominees = oddsOverride[catKey] || NOMINEES_98TH[catKey] || [];
+      const nom = nominees.find(n => n.name === pick);
       const prob = nom?.probability ?? 0.5;
       let pts = prob > 0 ? 1 / prob : 1;
       if (confidencePicks.includes(catKey)) pts *= 1.5;
@@ -162,9 +163,33 @@ export default function OscarsPoolPage() {
   // TMDB images
   const [nomineeImages, setNomineeImages] = useState<Record<string, string>>({});
 
+  // Real odds from API (overrides hardcoded probabilities)
+  const [realOdds, setRealOdds] = useState<Record<string, NomineeInfo[]>>({});
+
   // Reveal state
   const [revealCategory, setRevealCategory] = useState("");
   const [revealWinner, setRevealWinner] = useState("");
+
+  // ─── Fetch real odds from API ─────────────────────────────────────────
+
+  useEffect(() => {
+    fetchOscarsData()
+      .then((data) => {
+        if (data?.categories?.length > 0) {
+          const odds: Record<string, NomineeInfo[]> = {};
+          for (const cat of data.categories) {
+            if (cat.nominees?.length > 0) {
+              odds[cat.key] = cat.nominees.map((n) => ({
+                name: n.name,
+                probability: n.probability,
+              }));
+            }
+          }
+          if (Object.keys(odds).length > 0) setRealOdds(odds);
+        }
+      })
+      .catch(() => { /* fall back to hardcoded */ });
+  }, []);
 
   // ─── Init ───────────────────────────────────────────────────────────────
 
@@ -197,7 +222,8 @@ export default function OscarsPoolPage() {
 
     async function enrichImages() {
       const images: Record<string, string> = {};
-      for (const [catKey, nominees] of Object.entries(NOMINEES_98TH)) {
+      const nomineeSrc = Object.keys(realOdds).length > 0 ? realOdds : NOMINEES_98TH;
+      for (const [catKey, nominees] of Object.entries(nomineeSrc)) {
         const isPerson = PERSON_CATEGORIES.has(catKey);
         for (const nom of nominees.slice(0, 5)) {
           const imageKey = `${catKey}_${nom.name}`;
@@ -223,7 +249,7 @@ export default function OscarsPoolPage() {
 
     enrichImages();
     return () => { cancelled = true; };
-  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, realOdds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Actions ──────────────────────────────────────────────────────────
 
@@ -300,15 +326,18 @@ export default function OscarsPoolPage() {
 
   // ─── Computed ─────────────────────────────────────────────────────────
 
+  // Merge real odds over hardcoded — real odds win when available
+  const getNominees = (catKey: string): NomineeInfo[] => realOdds[catKey] || NOMINEES_98TH[catKey] || [];
+
   const categoriesByOrder = useMemo(() => {
-    return Object.entries(NOMINEES_98TH)
-      .map(([key, nominees]) => ({ key, nominees }))
+    return Object.keys(NOMINEES_98TH)
+      .map((key) => ({ key, nominees: realOdds[key] || NOMINEES_98TH[key] }))
       .sort((a, b) => {
         const oa = CEREMONY_ORDER.indexOf(a.key);
         const ob = CEREMONY_ORDER.indexOf(b.key);
         return (oa === -1 ? 99 : oa) - (ob === -1 ? 99 : ob);
       });
-  }, []);
+  }, [realOdds]);
 
   const totalCategories = categoriesByOrder.length;
   const picksCount = Object.keys(picks).length;
@@ -318,11 +347,11 @@ export default function OscarsPoolPage() {
     if (!pool) return [];
     return pool.players
       .map((p, idx) => {
-        const { total, correct } = computePoints(p.picks, p.confidencePicks, pool.results);
-        return { ...p, idx, total, correct, boldness: computeBoldness(p.picks), picksCount: Object.keys(p.picks).length };
+        const { total, correct } = computePoints(p.picks, p.confidencePicks, pool.results, realOdds);
+        return { ...p, idx, total, correct, boldness: computeBoldness(p.picks, realOdds), picksCount: Object.keys(p.picks).length };
       })
       .sort((a, b) => b.total - a.total || b.correct - a.correct);
-  }, [pool]);
+  }, [pool, realOdds]);
 
   // ─── Render: Loading ──────────────────────────────────────────────────
 
@@ -532,7 +561,7 @@ export default function OscarsPoolPage() {
               </div>
               {revealCategory && (
                 <div className="mt-2 space-y-1">
-                  {NOMINEES_98TH[revealCategory]?.map(nom => (
+                  {getNominees(revealCategory).map(nom => (
                     <button key={nom.name} onClick={() => setRevealWinner(nom.name)}
                       className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${
                         revealWinner === nom.name ? "bg-green-500/20 text-green-400 ring-1 ring-green-500/50" : "bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700/50"
