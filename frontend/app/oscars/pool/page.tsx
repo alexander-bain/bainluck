@@ -14,7 +14,7 @@ import {
   revealOscarsWinner,
   revealOscarsBonus,
 } from "@/lib/api";
-import { CATEGORY_EMOJI, CEREMONY_ORDER, MAJOR_CATEGORIES, PERSON_CATEGORIES } from "@/lib/oscarsData";
+import { CATEGORY_EMOJI, CEREMONY_ORDER, MAJOR_CATEGORIES, PERSON_CATEGORIES, NOMINEES_98TH } from "@/lib/oscarsData";
 import { searchMovie, searchPerson, posterUrl, headshotUrl } from "@/lib/tmdb";
 import type {
   OscarsResponse,
@@ -58,6 +58,39 @@ const CATEGORY_NAMES: Record<string, string> = {
   best_visual_effects: "Visual Effects",
   best_casting: "Casting",
 };
+
+/** Build fallback OscarsResponse from hardcoded nominees when API returns empty */
+function buildFallbackOscarsData(): OscarsResponse {
+  const categories = Object.entries(NOMINEES_98TH).map(([key, nominees]) => ({
+    key,
+    name: CATEGORY_NAMES[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    ceremony_order: CEREMONY_ORDER.indexOf(key) + 1 || 99,
+    is_major: MAJOR_CATEGORIES.has(key),
+    market_ids: [],
+    nominees: nominees.map((n, i) => ({
+      name: n.name,
+      probability: n.probability,
+      american_odds: null,
+      opening_probability: null,
+      movement_24h: null,
+      rank: i + 1,
+      sources: {},
+      is_winner: false,
+      last_updated: null,
+    })),
+  }));
+  categories.sort((a, b) => a.ceremony_order - b.ceremony_order);
+  return {
+    ceremony_date: "2026-03-15T00:00:00-07:00",
+    ceremony_status: "post",
+    categories,
+    trivia: [],
+    total_categories: categories.length,
+    biggest_movers: [],
+    film_nominations: [],
+    llm_previews: {},
+  };
+}
 
 // ─── Helper components ──────────────────────────────────────────────────────
 
@@ -195,11 +228,13 @@ export default function OscarsPoolPage() {
   const loadPoolData = useCallback(async () => {
     if (!poolCode || !memberToken) return;
     try {
-      const [pool, oscars] = await Promise.all([
+      const [pool, oscarsRaw] = await Promise.all([
         fetchOscarsPool(poolCode, memberToken),
-        fetchOscarsData(),
+        fetchOscarsData().catch(() => null),
       ]);
       setPoolData(pool);
+      // Use API data if it has categories, otherwise use hardcoded fallback
+      const oscars = (oscarsRaw && oscarsRaw.categories.length > 0) ? oscarsRaw : buildFallbackOscarsData();
       setOscarsData(oscars);
 
       // Initialize picks from saved data
@@ -221,6 +256,15 @@ export default function OscarsPoolPage() {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load pool";
+      // If pool not found (404), clear stale session and go back to lobby
+      if (msg === "Not Found" || msg.includes("404")) {
+        localStorage.removeItem(`${STORAGE_KEY_PREFIX}code`);
+        localStorage.removeItem(`${STORAGE_KEY_PREFIX}token`);
+        setPoolCode("");
+        setMemberToken("");
+        setPhase("lobby");
+        return;
+      }
       setError(msg);
     }
   }, [poolCode, memberToken]);
