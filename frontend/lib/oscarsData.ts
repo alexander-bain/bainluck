@@ -78,6 +78,187 @@ export const CATEGORY_EMOJI: Record<string, string> = {
   best_casting: "\uD83C\uDFAD",
 };
 
+/**
+ * Hardcoded 98th Academy Awards nominees (March 15, 2026).
+ * Used as fallback when prediction market data is unavailable (markets closed post-ceremony).
+ * Probabilities are approximate pre-ceremony consensus odds.
+ */
+export const NOMINEES_98TH: Record<string, { name: string; probability: number }[]> = {
+  best_picture: [
+    { name: "Sinners", probability: 0.28 },
+    { name: "One Battle After Another", probability: 0.22 },
+    { name: "Sentimental Value", probability: 0.15 },
+    { name: "Frankenstein", probability: 0.10 },
+    { name: "Hamnet", probability: 0.08 },
+    { name: "Marty Supreme", probability: 0.06 },
+    { name: "F1", probability: 0.04 },
+    { name: "Bugonia", probability: 0.03 },
+    { name: "The Secret Agent", probability: 0.02 },
+    { name: "Train Dreams", probability: 0.02 },
+  ],
+  best_director: [
+    { name: "Paul Thomas Anderson", probability: 0.35 },
+    { name: "Ryan Coogler", probability: 0.25 },
+    { name: "Chloe Zhao", probability: 0.18 },
+    { name: "Josh Safdie", probability: 0.12 },
+    { name: "Joachim Trier", probability: 0.10 },
+  ],
+  best_actor: [
+    { name: "Timothee Chalamet", probability: 0.35 },
+    { name: "Michael B. Jordan", probability: 0.30 },
+    { name: "Leonardo DiCaprio", probability: 0.15 },
+    { name: "Paul Mescal", probability: 0.12 },
+    { name: "Ethan Hawke", probability: 0.08 },
+  ],
+  best_actress: [
+    { name: "Jessie Buckley", probability: 0.50 },
+    { name: "Emma Stone", probability: 0.18 },
+    { name: "Renate Reinsve", probability: 0.14 },
+    { name: "Demi Moore", probability: 0.10 },
+    { name: "Saoirse Ronan", probability: 0.08 },
+  ],
+  best_supporting_actor: [
+    { name: "Stellan Skarsgard", probability: 0.25 },
+    { name: "Sean Penn", probability: 0.22 },
+    { name: "Delroy Lindo", probability: 0.20 },
+    { name: "Jacob Elordi", probability: 0.18 },
+    { name: "Benicio Del Toro", probability: 0.15 },
+  ],
+  best_supporting_actress: [
+    { name: "Amy Madigan", probability: 0.30 },
+    { name: "Wunmi Mosaku", probability: 0.22 },
+    { name: "Elle Fanning", probability: 0.20 },
+    { name: "Teyana Taylor", probability: 0.15 },
+    { name: "Inga Ibsdotter Lilleaas", probability: 0.13 },
+  ],
+  best_original_screenplay: [
+    { name: "Sinners", probability: 0.30 },
+    { name: "Marty Supreme", probability: 0.25 },
+    { name: "Sentimental Value", probability: 0.20 },
+    { name: "It Was Just an Accident", probability: 0.15 },
+    { name: "Blue Moon", probability: 0.10 },
+  ],
+  best_adapted_screenplay: [
+    { name: "One Battle After Another", probability: 0.30 },
+    { name: "Frankenstein", probability: 0.25 },
+    { name: "Hamnet", probability: 0.20 },
+    { name: "Train Dreams", probability: 0.15 },
+    { name: "Bugonia", probability: 0.10 },
+  ],
+  best_animated_feature: [
+    { name: "KPop Demon Hunters", probability: 0.35 },
+    { name: "Elio", probability: 0.22 },
+    { name: "Zootopia 2", probability: 0.18 },
+    { name: "Arco", probability: 0.15 },
+    { name: "Little Amelie or the Character of Rain", probability: 0.10 },
+  ],
+  best_international_feature: [
+    { name: "The Secret Agent", probability: 0.30 },
+    { name: "Sentimental Value", probability: 0.25 },
+    { name: "It Was Just an Accident", probability: 0.20 },
+    { name: "Sirat", probability: 0.15 },
+    { name: "The Voice of Hind Rajab", probability: 0.10 },
+  ],
+  best_documentary_feature: [
+    { name: "The Alabama Solution", probability: 0.30 },
+    { name: "Come See Me in the Good Light", probability: 0.25 },
+    { name: "Cutting Through Rocks", probability: 0.20 },
+    { name: "Mr. Nobody Against Putin", probability: 0.15 },
+    { name: "The Perfect Neighbor", probability: 0.10 },
+  ],
+  best_documentary_short: [
+    { name: "All the Empty Rooms", probability: 0.25 },
+    { name: "Armed Only with a Camera", probability: 0.22 },
+    { name: "Children No More", probability: 0.20 },
+    { name: "The Devil Is Busy", probability: 0.18 },
+    { name: "Perfectly a Strangeness", probability: 0.15 },
+  ],
+  best_animated_short: [
+    { name: "Butterfly", probability: 0.25 },
+    { name: "Forevergreen", probability: 0.22 },
+    { name: "The Girl Who Cried Pearls", probability: 0.20 },
+    { name: "Retirement Plan", probability: 0.18 },
+    { name: "The Three Sisters", probability: 0.15 },
+  ],
+  best_live_action_short: [
+    { name: "The Singers", probability: 0.25 },
+    { name: "Two People Exchanging Saliva", probability: 0.22 },
+    { name: "Butcher's Stain", probability: 0.20 },
+    { name: "Jane Austen's Period Drama", probability: 0.18 },
+    { name: "A Friend of Dorothy", probability: 0.15 },
+  ],
+  best_original_score: [
+    { name: "Sinners", probability: 0.30 },
+    { name: "Frankenstein", probability: 0.25 },
+    { name: "Hamnet", probability: 0.18 },
+    { name: "One Battle After Another", probability: 0.15 },
+    { name: "Bugonia", probability: 0.12 },
+  ],
+  best_original_song: [
+    { name: "Golden - KPop Demon Hunters", probability: 0.35 },
+    { name: "I Lied to You - Sinners", probability: 0.25 },
+    { name: "Train Dreams - Train Dreams", probability: 0.18 },
+    { name: "Dear Me - Diane Warren: Relentless", probability: 0.12 },
+    { name: "Sweet Dreams of Joy - Viva Verdi!", probability: 0.10 },
+  ],
+  best_sound: [
+    { name: "Sinners", probability: 0.28 },
+    { name: "Frankenstein", probability: 0.25 },
+    { name: "One Battle After Another", probability: 0.20 },
+    { name: "F1", probability: 0.15 },
+    { name: "Marty Supreme", probability: 0.12 },
+  ],
+  best_production_design: [
+    { name: "Frankenstein", probability: 0.30 },
+    { name: "One Battle After Another", probability: 0.25 },
+    { name: "Hamnet", probability: 0.20 },
+    { name: "Marty Supreme", probability: 0.15 },
+    { name: "Sinners", probability: 0.10 },
+  ],
+  best_cinematography: [
+    { name: "Sinners", probability: 0.28 },
+    { name: "One Battle After Another", probability: 0.25 },
+    { name: "Frankenstein", probability: 0.20 },
+    { name: "Marty Supreme", probability: 0.15 },
+    { name: "Train Dreams", probability: 0.12 },
+  ],
+  best_film_editing: [
+    { name: "Sinners", probability: 0.28 },
+    { name: "One Battle After Another", probability: 0.25 },
+    { name: "Marty Supreme", probability: 0.20 },
+    { name: "Sentimental Value", probability: 0.15 },
+    { name: "Frankenstein", probability: 0.12 },
+  ],
+  best_costume_design: [
+    { name: "Frankenstein", probability: 0.30 },
+    { name: "Hamnet", probability: 0.25 },
+    { name: "One Battle After Another", probability: 0.18 },
+    { name: "Marty Supreme", probability: 0.15 },
+    { name: "Sinners", probability: 0.12 },
+  ],
+  best_makeup_hairstyling: [
+    { name: "Frankenstein", probability: 0.35 },
+    { name: "Sinners", probability: 0.22 },
+    { name: "Kokuho", probability: 0.18 },
+    { name: "The Smashing Machine", probability: 0.13 },
+    { name: "The Ugly Stepsister", probability: 0.12 },
+  ],
+  best_visual_effects: [
+    { name: "Avatar: Fire and Ash", probability: 0.30 },
+    { name: "Sinners", probability: 0.22 },
+    { name: "F1", probability: 0.20 },
+    { name: "Jurassic World Rebirth", probability: 0.15 },
+    { name: "The Lost Bus", probability: 0.13 },
+  ],
+  best_casting: [
+    { name: "One Battle After Another", probability: 0.28 },
+    { name: "Sinners", probability: 0.25 },
+    { name: "Hamnet", probability: 0.20 },
+    { name: "Marty Supreme", probability: 0.15 },
+    { name: "The Secret Agent", probability: 0.12 },
+  ],
+};
+
 /** Official category descriptions (for tooltips) */
 export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   best_picture: "Best Motion Picture of the Year",

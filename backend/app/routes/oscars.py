@@ -245,12 +245,11 @@ async def get_oscars(
     Returns categories ordered by ceremony presentation, with nominees
     merged across Polymarket and Kalshi sources.
     """
-    # Query all Oscar-related futures markets
+    # Query all Oscar-related futures markets (include closed/resolved for post-ceremony)
     query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            FuturesMarket.status == "open",
             or_(
                 FuturesMarket.name.ilike("%oscar%"),
                 FuturesMarket.name.ilike("%academy award%"),
