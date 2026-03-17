@@ -65,7 +65,19 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bregular\s+season\b  |   # Regular season awards
     \bseries\s+price\b    |   # Series pricing markets
     \bexact\s+score\b     |   # Exact score props
-    \btotal\s+(?:goals|runs|points|games)\b  # Totals
+    \btotal\s+(?:goals|runs|points|games)\b |  # Totals
+    \bper\s+game\s+leader\b |  # Stat leaders: "Blocks Per Game Leader"
+    \bleader\b            |   # Stat leaders
+    \bexpansion\b         |   # Expansion draft/team markets
+    \bmost\s+valuable\b   |   # "Most Valuable Player"
+    \bplayer\s+of\b       |   # "Player of the Year"
+    \bgolden\s+glove\b    |   # Baseball awards
+    \bcy\s+young\b        |   # Baseball awards
+    \bheisman\b           |   # College football awards
+    \b(?:steals|blocks|assists|rebounds|scoring)\s+(?:leader|per\s+game)\b |  # Stat categories
+    \bwhich\s+teams\s+will\s+play\b |  # "Which teams will play in..." matchup markets
+    \bwhich\s+cities\b    |   # Expansion city markets
+    \b(?:and|&)\b(?=.*\b(?:cup|champion|final))
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -449,6 +461,13 @@ async def get_playoff_grid(
             # Skip generic yes/no, over/under outcomes
             if oname.lower().strip() in ("yes", "no", "over", "under"):
                 continue
+            # Skip matchup pair outcomes like "Tampa Bay and Colorado"
+            if re.search(r"\band\b", oname, re.IGNORECASE) and \
+               not re.search(r"\bTrail\s+Blazers\b", oname, re.IGNORECASE):
+                # Allow "Trail Blazers" which is a real team (Portland Trail Blazers)
+                # but block "Tampa Bay and Colorado" matchup pairs
+                if re.match(r"^[\w\s.]+ and [\w\s.]+$", oname.strip()):
+                    continue
 
             column_data[col_key].append((market, outcome))
 

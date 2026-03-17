@@ -388,6 +388,18 @@ class TestNonPlayoffMarketFilter:
         assert not _is_playoff_relevant_market("Tatum Points Over 25.5")
         assert not _is_playoff_relevant_market("Jokic Rebounds + Assists")
 
+    def test_stat_leaders_rejected(self):
+        assert not _is_playoff_relevant_market("Pro Basketball Blocks Per Game Leader")
+        assert not _is_playoff_relevant_market("Pro Basketball Assists Per Game Leader")
+        assert not _is_playoff_relevant_market("NHL Points Leader")
+
+    def test_expansion_rejected(self):
+        assert not _is_playoff_relevant_market("Which cities will receive Pro Basketball expansion teams")
+        assert not _is_playoff_relevant_market("NBA Expansion Draft")
+
+    def test_matchup_prediction_rejected(self):
+        assert not _is_playoff_relevant_market("Which teams will play in the 2026 Stanley Cup?")
+
     def test_championship_allowed(self):
         assert _is_playoff_relevant_market("NBA Championship Winner 2025-26")
         assert _is_playoff_relevant_market("Stanley Cup Winner")
