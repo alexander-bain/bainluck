@@ -565,6 +565,17 @@ async def get_playoff_grid(
             # Check if short_name is a prefix of long_name
             if long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-"):
                 merge_map[short_name] = long_name
+            # Check single-letter abbreviation suffix
+            # e.g., "los angeles l" → "los angeles lakers"
+            elif (
+                len(short_name) >= 3
+                and short_name[-2] == " "
+                and short_name[-1].isalpha()
+                and long_name.startswith(short_name[:-1])
+                and len(long_name) > len(short_name)
+                and long_name[len(short_name) - 1] == short_name[-1]
+            ):
+                merge_map[short_name] = long_name
             # Check if short_name words are a subset of long_name words
             # (e.g., "michigan state" vs "michigan st spartans")
             elif len(short_name.split()) >= 2:
