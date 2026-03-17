@@ -513,6 +513,32 @@ async def get_playoff_grid(
                 outcome_id_to_name[outcome.id] = team_name
 
     # -----------------------------------------------------------------------
+    # 3b. Merge duplicate teams (short name → full name dedup)
+    # -----------------------------------------------------------------------
+    # Kalshi uses "Oklahoma City", Odds API uses "Oklahoma City Thunder".
+    # Merge entries where one normalized name is a prefix of another.
+
+    norm_names = sorted(grid_raw.keys(), key=len, reverse=True)  # longest first
+    merge_map: dict[str, str] = {}  # short_name → long_name
+
+    for i, long_name in enumerate(norm_names):
+        for short_name in norm_names[i + 1:]:
+            if short_name in merge_map:
+                continue
+            # Check if short_name is a prefix of long_name
+            if long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-"):
+                merge_map[short_name] = long_name
+
+    # Apply merges
+    for short_name, long_name in merge_map.items():
+        if short_name in grid_raw and long_name in grid_raw:
+            for col_key, entries in grid_raw[short_name].items():
+                grid_raw[long_name][col_key].extend(entries)
+            del grid_raw[short_name]
+            # Transfer display name preference to longer name
+            logger.debug("Merged team '%s' into '%s'", short_name, long_name)
+
+    # -----------------------------------------------------------------------
     # 4. Build team rows with merged probabilities
     # -----------------------------------------------------------------------
 
