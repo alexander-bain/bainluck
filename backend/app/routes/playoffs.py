@@ -79,6 +79,7 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bwhich\s+cities\b    |   # Expansion city markets
     \bcover\s+of\b        |   # "Cover of NBA 2K27"
     \b2k\d+\b             |   # Video game markets (NBA 2K27, etc.)
+    \b\d+\+\s+(?:golf|major|championship)\b |  # "1+ golf major championship wins"
     \b(?:and|&)\b(?=.*\b(?:cup|champion|final))
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -474,6 +475,13 @@ async def get_playoff_grid(
                 # but block "Tampa Bay and Colorado" matchup pairs
                 if re.match(r"^[\w\s.]+ and [\w\s.]+$", oname.strip()):
                     continue
+            # Skip generic/seeded outcomes like "#1 seed", "1+ wins"
+            if re.match(r"^#?\d+", oname.strip()):
+                continue
+            # Filter Kalshi 0.5 noise — binary markets at exactly 50% are
+            # illiquid defaults, not real predictions
+            if market.source == "kalshi" and abs(prob - 0.5) < 0.01:
+                continue
 
             column_data[col_key].append((market, outcome))
 
