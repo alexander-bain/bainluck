@@ -248,7 +248,7 @@ async def _get_team_metadata(
         meta = {
             "team_id": team.id,
             "name": team.name,
-            "short_name": team.short_name,
+            "short_name": team.abbreviation or team.name.split()[-1] if team.name else None,
             "abbreviation": getattr(team, "abbreviation", None),
             "logo_url": team.logo_url_small or team.logo_url_large,
             "primary_color": team.primary_color,
