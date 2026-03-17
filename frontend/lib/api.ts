@@ -36,6 +36,7 @@ import type {
   FuturesGroupResponse,
   FuturesGroupsListResponse,
   GroupedFeedResponse,
+  ChampionshipGridResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -1046,6 +1047,22 @@ export async function fetchPlayoffGrid(
   if (topN) params.set("top_n", String(topN));
   return apiFetch<PlayoffGridResponse>(
     `/api/futures/playoff-grid?${params.toString()}`
+  );
+}
+
+/**
+ * Fetch championship progression grid for a league.
+ * New endpoint: GET /api/playoffs/{league_slug}
+ */
+export async function fetchChampionshipGrid(
+  leagueSlug: string,
+  top?: number
+): Promise<ChampionshipGridResponse> {
+  const params = new URLSearchParams();
+  if (top) params.set("top", String(top));
+  const query = params.toString();
+  return apiFetch<ChampionshipGridResponse>(
+    `/api/playoffs/${leagueSlug}${query ? `?${query}` : ""}`
   );
 }
 

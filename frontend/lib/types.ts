@@ -1206,6 +1206,91 @@ export interface PlayoffGridResponse {
   sources: string[];
 }
 
+/** Championship Grid types (new /api/playoffs/{league_slug} endpoint) */
+
+export interface ChampionshipGridColumn {
+  key: string;
+  label: string;
+  order: number;
+  sequential: boolean;
+}
+
+export interface ChampionshipGridCellSource {
+  source: string;
+  probability: number;
+}
+
+export interface ChampionshipGridCell {
+  merged_probability: number;
+  sources: ChampionshipGridCellSource[];
+  trend_24h: number | null;
+}
+
+export interface ChampionshipGridTeam {
+  name: string;
+  short_name: string;
+  team_id: number | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  record: string | null;
+  conference: string | null;
+  division: string | null;
+  seed: number | null;
+  cells: Record<string, ChampionshipGridCell>;
+}
+
+export interface ChampionshipGridMover {
+  name: string;
+  short_name: string;
+  team_id: number | null;
+  column: string;
+  change_24h: number;
+  direction: "up" | "down";
+  logo_url: string | null;
+  primary_color: string | null;
+}
+
+export interface ChampionshipGridTrendChart {
+  column: string;
+  top: number;
+  timeline: { timestamp: string; outcomes: Record<string, number> }[];
+  outcomes: {
+    name: string;
+    current_probability: number | null;
+    primary_color?: string | null;
+  }[];
+}
+
+export interface ChampionshipGridTournament {
+  name: string;
+  course: string;
+  start_date: string;
+  end_date: string;
+  location: string;
+  country: string;
+  status: string;
+  current_round: number | null;
+}
+
+export interface ChampionshipGridResponse {
+  league: string;
+  name: string;
+  season: string | null;
+  columns: ChampionshipGridColumn[];
+  teams: ChampionshipGridTeam[];
+  grouped_teams: Record<string, ChampionshipGridTeam[]> | null;
+  movers: ChampionshipGridMover[];
+  trend_chart: ChampionshipGridTrendChart;
+  team_count: number;
+  last_updated: string;
+  sources_available: string[];
+  /** Golf-specific fields */
+  tournament?: ChampionshipGridTournament | null;
+  field_count?: number;
+  source_of_truth?: string;
+}
+
 /** Probability timeline types (for TournamentChart) */
 export interface TimelineOutcomeMeta {
   id: number | null;
