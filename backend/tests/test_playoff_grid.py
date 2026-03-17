@@ -218,6 +218,22 @@ class TestMarketToColumnMatching:
         m = _make_market("March Madness Winner 2026")
         assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "championship"
 
+    # --- NCAA disambiguation (championship vs title_game) ---
+    def test_ncaa_championship_game_not_championship(self):
+        """'Championship Game' should match title_game, not championship."""
+        m = _make_market("NCAAB Championship Game")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "title_game"
+
+    def test_ncaa_make_championship_game_not_championship(self):
+        """'Make Championship Game' should match title_game."""
+        m = _make_market("NCAA Make Championship Game")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "title_game"
+
+    def test_ncaa_champion_matches_championship(self):
+        """'NCAA Champion' should still match championship."""
+        m = _make_market("NCAA Champion 2026")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "championship"
+
     # --- Golf ---
     def test_golf_winner(self):
         m = _make_market("Masters Tournament Winner 2026")

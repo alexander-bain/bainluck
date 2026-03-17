@@ -197,10 +197,12 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
             column="championship",
             tier=1,
             name_patterns=[
-                r"NCAAB\s+Championship",
+                r"NCAAB\s+Championship\s+Winner",
+                r"NCAAB\s+Championship(?!\s+Game)",  # "NCAAB Championship" but NOT "Championship Game"
                 r"NCAA\s+Tournament\s+Winner",
-                r"NCAA\s+Champion",
+                r"NCAA\s+Champion(?!\s*ship\s+Game)",  # "NCAA Champion" but NOT "Championship Game"
                 r"March\s+Madness.*Winner",
+                r"Win\s+(?:the\s+)?NCAA\s+Tournament",
             ],
             canonical_prefix="basketball_ncaab_championship",
         ),
@@ -209,7 +211,8 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
             name_patterns=[
                 r"National\s+Championship\s+Game",
                 r"Championship\s+Game",
-                r"Make.*Championship",
+                r"Make.*Championship\s+Game",
+                r"Make.*Championship(?!\s+Winner)",  # "Make Championship" but NOT "Make Championship Winner"
                 r"Title\s+Game",
             ],
         ),

@@ -80,7 +80,12 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bcover\s+of\b        |   # "Cover of NBA 2K27"
     \b2k\d+\b             |   # Video game markets (NBA 2K27, etc.)
     \b\d+\+\s+(?:golf|major|championship)\b |  # "1+ golf major championship wins"
-    \b(?:and|&)\b(?=.*\b(?:cup|champion|final))
+    \b(?:and|&)\b(?=.*\b(?:cup|champion|final))  |
+    \besports?\b          |   # Esports markets
+    \b(?:LOL|LoL)\b       |   # League of Legends
+    \bvalorant\b          |   # Valorant esports
+    \bcounter[- ]?strike\b |  # CS2/CSGO
+    \b(?:LCK|LPL|LEC|LCS|VCT|MSI)\b  # Esports league codes
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -111,6 +116,8 @@ def _normalize_team_name(name: str) -> str:
     n = _strip_diacritics(name).lower().strip()
     # Strip common suffixes
     n = re.sub(r"\s*\(.*\)$", "", n)
+    # Strip trailing periods (e.g. "Michigan St." → "Michigan St")
+    n = n.rstrip(".")
     return n
 
 
