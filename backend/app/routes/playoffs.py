@@ -466,6 +466,14 @@ async def get_playoff_grid(
         if league_patterns:
             name = market.name or ""
             if any(pat.search(name) for pat in league_patterns):
+                # For Champions League: reject "Champions League Qualification/Spot"
+                # markets from domestic leagues (they're about qualifying TO UCL,
+                # not performance IN the UCL).
+                if config.slug == "champions-league" and re.search(
+                    r"\b(?:qualif|spot|place|make.*champions|top\s*\d)\b",
+                    name, re.IGNORECASE,
+                ):
+                    continue
                 markets.append(market)
         # If no league_name_patterns configured, all category matches pass
         elif not league_patterns:
