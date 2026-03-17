@@ -1255,7 +1255,7 @@ export interface ChampionshipGridTrendChart {
   column: string;
   top: number;
   timeline: { timestamp: string; outcomes: Record<string, number> }[];
-  outcomes: {
+  outcomes?: {
     name: string;
     current_probability: number | null;
     primary_color?: string | null;

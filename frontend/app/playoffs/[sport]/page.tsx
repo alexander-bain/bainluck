@@ -159,7 +159,15 @@ function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] 
 // ---------------------------------------------------------------------------
 
 function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_chart"] }) {
-  if (!chart.timeline.length || !chart.outcomes.length) return null;
+  if (!chart.timeline?.length) return null;
+  const outcomes = chart.outcomes ?? [];
+
+  // If no outcomes metadata, derive names from timeline data
+  const derivedNames = outcomes.length
+    ? outcomes.map((o) => o.name)
+    : [...new Set(chart.timeline.flatMap((e) => Object.keys(e.outcomes)))];
+
+  if (!derivedNames.length) return null;
 
   const width = 800;
   const height = 200;
@@ -190,12 +198,13 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
     "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#a855f7",
   ];
   const colorMap: Record<string, string> = {};
-  chart.outcomes.forEach((o, i) => {
-    colorMap[o.name] = o.primary_color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
+  derivedNames.forEach((name, i) => {
+    const meta = outcomes.find((o) => o.name === name);
+    colorMap[name] = meta?.primary_color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
   });
 
   // Build polyline paths per outcome
-  const outcomeNames = chart.outcomes.map((o) => o.name);
+  const outcomeNames = derivedNames;
   const paths = outcomeNames.map((name) => {
     const points: string[] = [];
     for (let i = 0; i < chart.timeline.length; i++) {
@@ -263,20 +272,23 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
 
       {/* Legend */}
       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
-        {chart.outcomes.slice(0, 8).map((o) => (
-          <div key={o.name} className="flex items-center gap-1.5 text-xs text-text-secondary">
-            <span
-              className="w-2.5 h-2.5 rounded-full inline-block"
-              style={{ backgroundColor: colorMap[o.name] || "#666" }}
-            />
-            <span className="truncate max-w-[120px]">{o.name}</span>
-            {o.current_probability !== null && (
-              <span className="font-mono text-text-secondary/60">
-                {Math.round(o.current_probability * 100)}%
-              </span>
-            )}
-          </div>
-        ))}
+        {derivedNames.slice(0, 8).map((name) => {
+          const meta = outcomes.find((o) => o.name === name);
+          return (
+            <div key={name} className="flex items-center gap-1.5 text-xs text-text-secondary">
+              <span
+                className="w-2.5 h-2.5 rounded-full inline-block"
+                style={{ backgroundColor: colorMap[name] || "#666" }}
+              />
+              <span className="truncate max-w-[120px]">{name}</span>
+              {meta?.current_probability != null && (
+                <span className="font-mono text-text-secondary/60">
+                  {Math.round(meta.current_probability * 100)}%
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
