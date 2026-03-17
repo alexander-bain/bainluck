@@ -412,6 +412,66 @@ class TestNonPlayoffMarketFilter:
         assert _is_playoff_relevant_market("Masters Top 10 Finisher")
 
 
+class TestLeagueNamePatterns:
+    """Verify league_name_patterns separate leagues with shared sport_category."""
+
+    def test_all_configs_have_patterns(self):
+        for slug, config in LEAGUE_CONFIGS.items():
+            assert len(config.league_name_patterns) > 0, (
+                f"{slug} has no league_name_patterns"
+            )
+
+    def test_nba_patterns_match_nba(self):
+        for pat in NBA_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert compiled.search("NBA Championship Winner 2025-26") or \
+                   compiled.search("Pro Basketball Eastern Conference"), \
+                f"NBA pattern '{pat}' doesn't match any NBA market name"
+
+    def test_nba_patterns_dont_match_ncaa(self):
+        """NBA patterns should NOT match NCAA markets."""
+        for pat in NBA_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert not compiled.search("NCAAB Championship Winner 2026")
+            assert not compiled.search("NCAA Tournament Winner")
+            assert not compiled.search("March Madness Winner")
+
+    def test_ncaa_patterns_dont_match_nba(self):
+        """NCAA patterns should NOT match NBA markets."""
+        for pat in NCAA_BASKETBALL_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert not compiled.search("NBA Championship Winner 2025-26")
+            assert not compiled.search("NBA Eastern Conference Winner")
+
+    def test_nhl_patterns_match_nhl(self):
+        for pat in NHL_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            if compiled.search("Stanley Cup Winner 2025-26") or \
+               compiled.search("NHL Western Conference") or \
+               compiled.search("Pro Hockey Playoff Qualifiers"):
+                return  # At least one pattern matched
+        pytest.fail("No NHL pattern matched any NHL market name")
+
+    def test_golf_patterns_match_golf(self):
+        for pat in GOLF_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            if compiled.search("Masters Tournament Winner 2026") or \
+               compiled.search("PGA Championship") or \
+               compiled.search("Golf Winner"):
+                return
+        pytest.fail("No golf pattern matched any golf market name")
+
+    def test_all_patterns_compile(self):
+        for slug, config in LEAGUE_CONFIGS.items():
+            for pat in config.league_name_patterns:
+                try:
+                    re.compile(pat, re.IGNORECASE)
+                except re.error as e:
+                    pytest.fail(
+                        f"{slug} has invalid league_name_pattern '{pat}': {e}"
+                    )
+
+
 class TestMatchingRulePatterns:
     """Verify all name_patterns in matching rules are valid regex."""
 

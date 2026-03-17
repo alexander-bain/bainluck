@@ -45,6 +45,10 @@ class LeagueConfig:
     stage_key: str  # Key into SPORT_STAGES in tournament_stages.py
     columns: list[GridColumn]
     matching_rules: list[MarketMatchingRule] = field(default_factory=list)
+    # Regex patterns to identify this league's markets from non-sport-key sources
+    # (Kalshi/Polymarket). At least one pattern must match the market name for
+    # inclusion. Needed to separate NBA from NCAAB (both llm_sport_category="basketball").
+    league_name_patterns: list[str] = field(default_factory=list)
     team_sort: str = "championship_desc"  # "championship_desc" | "name_asc" | "seed_asc"
     conference_split: bool = False  # Show teams grouped by conference?
     conference_field: str = "conference"  # Field on standings_data for grouping
@@ -64,6 +68,10 @@ NBA_CONFIG = LeagueConfig(
     sport_category="basketball",
     sport_keys=["basketball_nba"],
     stage_key="basketball",
+    league_name_patterns=[
+        r"\bNBA\b",
+        r"\bPro\s+Basketball\b",
+    ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="conference", label="Conference", order=2),
@@ -111,6 +119,11 @@ NHL_CONFIG = LeagueConfig(
     sport_category="hockey",
     sport_keys=["icehockey_nhl"],
     stage_key="hockey",
+    league_name_patterns=[
+        r"\bNHL\b",
+        r"\bStanley\s+Cup\b",
+        r"\bPro\s+Hockey\b",
+    ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="division", label="Division", order=2),
@@ -165,6 +178,12 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
     sport_category="basketball",
     sport_keys=["basketball_ncaab"],
     stage_key="ncaa_basketball",
+    league_name_patterns=[
+        r"\bNCAA\b",
+        r"\bMarch\s+Madness\b",
+        r"\bCollege\s+Basketball\b",
+        r"\bNCAAB\b",
+    ],
     columns=[
         GridColumn(key="round_of_32", label="R32", order=1),
         GridColumn(key="sweet_16", label="Sweet 16", order=2),
@@ -240,6 +259,13 @@ GOLF_CONFIG = LeagueConfig(
     sport_category="golf",
     sport_keys=["golf_pga", "golf_masters", "golf_us_open", "golf_open", "golf_pga_championship"],
     stage_key="golf",
+    league_name_patterns=[
+        r"\bPGA\b",
+        r"\bMasters\b",
+        r"\bU\.?S\.?\s+Open\b",
+        r"\bOpen\s+Championship\b",
+        r"\bGolf\b",
+    ],
     columns=[
         GridColumn(key="make_cut", label="Make Cut", order=1, sequential=False),
         GridColumn(key="top_20", label="Top 20", order=2, sequential=False),

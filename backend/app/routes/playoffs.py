@@ -369,20 +369,20 @@ async def get_playoff_grid(
     # 1. Query futures markets that match this league
     # -----------------------------------------------------------------------
 
-    # Match markets by external_id sport key prefix ONLY.
-    # We do NOT use llm_sport_category here because market_tier values
-    # are not sport-specific (tier 1 = "championship" for ANY sport),
-    # which causes massive cross-sport pollution (NHL teams in NBA grid,
-    # NCAAB tournament rounds treated as NBA championship, etc.).
     from sqlalchemy import or_
+
+    # Path A: Match by external_id sport key prefix (Odds API markets)
     sport_conditions = []
     for sk in config.sport_keys:
         sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
 
-    if not sport_conditions:
-        raise HTTPException(status_code=500, detail="No sport keys configured")
+    # Path B: Match by llm_sport_category (Kalshi/Polymarket markets)
+    # These sources use non-sport-key external IDs (tickers, numeric IDs).
+    # We filter by category, then use league_name_patterns in Python to
+    # separate leagues that share a category (NBA vs NCAAB both = "basketball").
+    category_condition = FuturesMarket.llm_sport_category == config.sport_category
 
-    market_filter = or_(*sport_conditions)
+    market_filter = or_(*sport_conditions, category_condition)
 
     stmt = (
         select(FuturesMarket)
@@ -393,7 +393,28 @@ async def get_playoff_grid(
         .options(selectinload(FuturesMarket.outcomes))
     )
     result = await db.execute(stmt)
-    markets = result.scalars().unique().all()
+    all_markets = result.scalars().unique().all()
+
+    # Filter by league name patterns (Python-side) to separate e.g. NBA from NCAAB
+    league_patterns = [
+        re.compile(p, re.IGNORECASE) for p in config.league_name_patterns
+    ] if config.league_name_patterns else []
+
+    markets = []
+    for market in all_markets:
+        eid = market.external_id or ""
+        # Path A markets (sport key prefix) always pass
+        if any(eid.lower().startswith(sk.lower()) for sk in config.sport_keys):
+            markets.append(market)
+            continue
+        # Path B markets must match a league name pattern
+        if league_patterns:
+            name = market.name or ""
+            if any(pat.search(name) for pat in league_patterns):
+                markets.append(market)
+        # If no league_name_patterns configured, all category matches pass
+        elif not league_patterns:
+            markets.append(market)
 
     logger.info(
         "Playoff grid %s: found %d markets for sport_keys=%s, category=%s",
