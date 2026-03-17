@@ -369,27 +369,20 @@ async def get_playoff_grid(
     # 1. Query futures markets that match this league
     # -----------------------------------------------------------------------
 
-    # Build sport key prefix conditions
-    from sqlalchemy import or_, and_
+    # Match markets by external_id sport key prefix ONLY.
+    # We do NOT use llm_sport_category here because market_tier values
+    # are not sport-specific (tier 1 = "championship" for ANY sport),
+    # which causes massive cross-sport pollution (NHL teams in NBA grid,
+    # NCAAB tournament rounds treated as NBA championship, etc.).
+    from sqlalchemy import or_
     sport_conditions = []
     for sk in config.sport_keys:
         sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
 
-    # Also match by llm_sport_category, but only for championship/conference/division types
-    # This prevents win totals, props, and awards from leaking in
-    playoff_types = ("championship", "conference", "division")
-    category_condition = and_(
-        FuturesMarket.llm_sport_category == config.sport_category,
-        or_(
-            FuturesMarket.market_type.in_(playoff_types),
-            FuturesMarket.market_tier.in_([1, 2, 4]),  # championship, conference, division tiers
-        ),
-    )
+    if not sport_conditions:
+        raise HTTPException(status_code=500, detail="No sport keys configured")
 
-    market_filter = or_(
-        *sport_conditions,
-        category_condition,
-    )
+    market_filter = or_(*sport_conditions)
 
     stmt = (
         select(FuturesMarket)
