@@ -77,6 +77,8 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \b(?:steals|blocks|assists|rebounds|scoring)\s+(?:leader|per\s+game)\b |  # Stat categories
     \bwhich\s+teams\s+will\s+play\b |  # "Which teams will play in..." matchup markets
     \bwhich\s+cities\b    |   # Expansion city markets
+    \bcover\s+of\b        |   # "Cover of NBA 2K27"
+    \b2k\d+\b             |   # Video game markets (NBA 2K27, etc.)
     \b(?:and|&)\b(?=.*\b(?:cup|champion|final))
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -148,12 +150,16 @@ def _match_market_to_column(
                 return rule.column
 
     # 2. Fall back to tournament_stages.py classify_market_stage
+    # NOTE: Do NOT pass market_tier to the fallback — our config matching rules
+    # already handle tiers with name-pattern gating. The fallback's tier→stage
+    # mapping has no name validation, which causes false positives like
+    # "NBA 2K27 Cover" (tier=1) → championship.
     stages = get_stages_for_sport(config.sport_category, league=None)
     if stages:
         stage_key = classify_market_stage(
             market_name=name,
             external_id=market.external_id,
-            market_tier=market.market_tier,
+            market_tier=None,  # Intentionally None — see note above
             stages=stages,
         )
         if stage_key and any(c.key == stage_key for c in config.columns):
