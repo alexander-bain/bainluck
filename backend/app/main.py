@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import sentry_sdk
 
-from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness
+from app.routes import events, sports, health, futures, admin, auth, user, feed, market_moves, oscars, oscars_pool, golf, march_madness, playoffs
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -84,6 +84,7 @@ app.include_router(oscars.router, prefix="/api/oscars", tags=["Oscars"])
 app.include_router(oscars_pool.router, prefix="/api/oscars", tags=["Oscars Pool"])
 app.include_router(golf.router, prefix="/api/golf", tags=["Golf"])
 app.include_router(march_madness.router, prefix="/api/march-madness", tags=["March Madness"])
+app.include_router(playoffs.router, prefix="/api/playoffs", tags=["Playoffs"])
 
 
 @app.get("/")
