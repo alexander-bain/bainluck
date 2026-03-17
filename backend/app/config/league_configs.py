@@ -256,6 +256,488 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
     season_pattern="2026",
 )
 
+NFL_CONFIG = LeagueConfig(
+    slug="nfl",
+    name="NFL Playoffs 2025-26",
+    sport_category="football",
+    sport_keys=["americanfootball_nfl"],
+    stage_key="football",
+    league_name_patterns=[
+        r"\bNFL\b",
+        r"\bSuper\s+Bowl\b",
+        r"\bPro\s+Football\b",
+    ],
+    columns=[
+        GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
+        GridColumn(key="division", label="Division", order=2),
+        GridColumn(key="conference", label="Conference", order=3),
+        GridColumn(key="championship", label="Super Bowl", order=4),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"Super\s+Bowl",
+                r"NFL\s+Championship",
+                r"NFL\s+Champion",
+            ],
+            canonical_prefix="americanfootball_nfl_championship",
+        ),
+        MarketMatchingRule(
+            column="conference",
+            tier=2,
+            name_patterns=[
+                r"(?:AFC|NFC)\s+Champion",
+                r"(?:AFC|NFC)\s+Winner",
+                r"NFL.*Conference",
+            ],
+        ),
+        MarketMatchingRule(
+            column="division",
+            tier=4,
+            name_patterns=[
+                r"\bDivision\b",
+                r"(?:AFC|NFC)\s+(?:East|West|North|South)\b",
+            ],
+        ),
+        MarketMatchingRule(
+            column="make_playoffs",
+            name_patterns=[
+                r"Make\s+Playoffs",
+                r"Playoff\s+(?:Berth|Qualif)",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=True,
+    conference_field="conference",
+    trend_hours=168,
+    max_teams=32,
+)
+
+MLB_CONFIG = LeagueConfig(
+    slug="mlb",
+    name="MLB Playoffs 2026",
+    sport_category="baseball",
+    sport_keys=["baseball_mlb"],
+    stage_key="baseball",
+    league_name_patterns=[
+        r"\bMLB\b",
+        r"\bWorld\s+Series\b",
+        r"\bPro\s+Baseball\b",
+        r"\bMajor\s+League\s+Baseball\b",
+    ],
+    columns=[
+        GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
+        GridColumn(key="division", label="Division", order=2),
+        GridColumn(key="pennant", label="Pennant", order=3),
+        GridColumn(key="championship", label="World Series", order=4),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"World\s+Series",
+                r"MLB\s+Championship",
+                r"MLB\s+Champion",
+            ],
+            canonical_prefix="baseball_mlb_championship",
+        ),
+        MarketMatchingRule(
+            column="pennant",
+            tier=2,
+            name_patterns=[
+                r"(?:American|National)\s+League\s+(?:Pennant|Champion|Winner)",
+                r"(?:AL|NL)\s+(?:Pennant|Champion|Winner)",
+                r"MLB.*(?:AL|NL)\b",
+            ],
+        ),
+        MarketMatchingRule(
+            column="division",
+            tier=4,
+            name_patterns=[
+                r"\bDivision\b",
+                r"(?:AL|NL)\s+(?:East|West|Central)\b",
+            ],
+        ),
+        MarketMatchingRule(
+            column="make_playoffs",
+            name_patterns=[
+                r"Make\s+Playoffs",
+                r"Playoff\s+(?:Berth|Qualif)",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=True,
+    conference_field="conference",  # AL vs NL stored as "conference" in standings
+    trend_hours=168,
+    max_teams=30,
+    season_pattern="2026",
+)
+
+WNBA_CONFIG = LeagueConfig(
+    slug="wnba",
+    name="WNBA Playoffs 2026",
+    sport_category="basketball",
+    sport_keys=["basketball_wnba"],
+    stage_key="basketball",
+    league_name_patterns=[
+        r"\bWNBA\b",
+        r"\bWomen.?s\s+(?:NBA|Basketball)\b",
+    ],
+    columns=[
+        GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
+        GridColumn(key="conference", label="Conference", order=2),
+        GridColumn(key="championship", label="Champion", order=3),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"WNBA\s+Championship",
+                r"WNBA\s+Champion",
+                r"WNBA\s+Finals",
+            ],
+            canonical_prefix="basketball_wnba_championship",
+        ),
+        MarketMatchingRule(
+            column="conference",
+            tier=2,
+            name_patterns=[
+                r"WNBA.*Conference",
+                r"(?:Eastern|Western)\s+Conference.*WNBA",
+            ],
+        ),
+        MarketMatchingRule(
+            column="make_playoffs",
+            name_patterns=[
+                r"Make\s+Playoffs",
+                r"Playoff\s+(?:Berth|Qualif)",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=True,
+    conference_field="conference",
+    trend_hours=168,
+    max_teams=13,
+    season_pattern="2026",
+)
+
+MLS_CONFIG = LeagueConfig(
+    slug="mls",
+    name="MLS Cup 2026",
+    sport_category="soccer",
+    sport_keys=["soccer_usa_mls"],
+    stage_key="soccer",
+    league_name_patterns=[
+        r"\bMLS\b",
+        r"\bMajor\s+League\s+Soccer\b",
+    ],
+    columns=[
+        GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
+        GridColumn(key="conference", label="Conference", order=2),
+        GridColumn(key="championship", label="MLS Cup", order=3),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"MLS\s+Cup",
+                r"MLS\s+Championship",
+                r"MLS\s+Champion",
+            ],
+            canonical_prefix="soccer_usa_mls_championship",
+        ),
+        MarketMatchingRule(
+            column="conference",
+            tier=2,
+            name_patterns=[
+                r"(?:Eastern|Western)\s+Conference",
+                r"MLS.*Conference",
+            ],
+        ),
+        MarketMatchingRule(
+            column="make_playoffs",
+            name_patterns=[
+                r"Make\s+Playoffs",
+                r"Playoff\s+(?:Berth|Qualif)",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=True,
+    conference_field="conference",
+    trend_hours=168,
+    max_teams=29,
+    season_pattern="2026",
+)
+
+NCAA_FOOTBALL_CONFIG = LeagueConfig(
+    slug="ncaa-football",
+    name="College Football Playoff 2026-27",
+    sport_category="football",
+    sport_keys=["americanfootball_ncaaf"],
+    stage_key="football",
+    league_name_patterns=[
+        r"\bCFP\b",
+        r"\bCollege\s+Football\s+Playoff\b",
+        r"\bNCAAF\b",
+        r"\bCollege\s+Football\b",
+        r"\bFBS\b",
+    ],
+    columns=[
+        GridColumn(key="make_playoffs", label="Make Playoff", order=1),
+        GridColumn(key="semifinal", label="Semifinal", order=2),
+        GridColumn(key="championship", label="Champion", order=3),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"College\s+Football\s+Playoff.*(?:Winner|Champion)",
+                r"NCAAF\s+Championship",
+                r"NCAAF\s+Champion",
+                r"CFP\s+(?:Winner|Champion)",
+                r"National\s+Champion(?!\s*ship\s+Game).*(?:College|NCAAF|CFP)",
+            ],
+            canonical_prefix="americanfootball_ncaaf_championship",
+        ),
+        MarketMatchingRule(
+            column="semifinal",
+            name_patterns=[
+                r"Semifinal",
+                r"(?:Rose|Sugar|Orange|Cotton)\s+Bowl",
+                r"Make.*Semifinal",
+                r"Final\s+Four",  # CFP uses "Final Four" terminology too
+            ],
+        ),
+        MarketMatchingRule(
+            column="make_playoffs",
+            name_patterns=[
+                r"Make\s+(?:the\s+)?(?:College\s+Football\s+)?Playoff",
+                r"CFP\s+(?:Berth|Qualif|Field)",
+                r"Playoff\s+(?:Berth|Qualif)",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=True,
+    conference_field="conference",
+    trend_hours=168,
+    max_teams=40,
+    season_pattern="2026-27",
+)
+
+EPL_CONFIG = LeagueConfig(
+    slug="epl",
+    name="Premier League 2025-26",
+    sport_category="soccer",
+    sport_keys=["soccer_epl"],
+    stage_key="soccer",
+    league_name_patterns=[
+        r"\bPremier\s+League\b",
+        r"\bEPL\b",
+        r"\bEnglish\s+Premier\b",
+    ],
+    columns=[
+        GridColumn(key="relegation", label="Relegated", order=1, sequential=False),
+        GridColumn(key="top_4", label="Top 4", order=2, sequential=False),
+        GridColumn(key="championship", label="Champion", order=3, sequential=False),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"Premier\s+League.*(?:Winner|Champion)",
+                r"EPL.*(?:Winner|Champion)",
+                r"Win\s+(?:the\s+)?Premier\s+League",
+            ],
+            canonical_prefix="soccer_epl_championship",
+        ),
+        MarketMatchingRule(
+            column="top_4",
+            name_patterns=[
+                r"Top\s*4",
+                r"Champions\s+League\s+(?:Qualif|Spot|Place)",
+                r"Finish\s+(?:in\s+)?Top\s*4",
+            ],
+        ),
+        MarketMatchingRule(
+            column="relegation",
+            name_patterns=[
+                r"Relegat",
+                r"Bottom\s*3",
+                r"Go\s+Down",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=False,
+    trend_hours=168,
+    max_teams=20,
+)
+
+LA_LIGA_CONFIG = LeagueConfig(
+    slug="la-liga",
+    name="La Liga 2025-26",
+    sport_category="soccer",
+    sport_keys=["soccer_spain_la_liga"],
+    stage_key="soccer",
+    league_name_patterns=[
+        r"\bLa\s+Liga\b",
+        r"\bSpanish\s+(?:League|Football)\b",
+        r"\bLiga\s+(?:BBVA|Santander)\b",
+    ],
+    columns=[
+        GridColumn(key="relegation", label="Relegated", order=1, sequential=False),
+        GridColumn(key="top_4", label="Top 4", order=2, sequential=False),
+        GridColumn(key="championship", label="Champion", order=3, sequential=False),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"La\s+Liga.*(?:Winner|Champion)",
+                r"Win\s+(?:the\s+)?La\s+Liga",
+                r"Spanish\s+League.*(?:Winner|Champion)",
+            ],
+            canonical_prefix="soccer_spain_la_liga_championship",
+        ),
+        MarketMatchingRule(
+            column="top_4",
+            name_patterns=[
+                r"Top\s*4",
+                r"Champions\s+League\s+(?:Qualif|Spot|Place)",
+            ],
+        ),
+        MarketMatchingRule(
+            column="relegation",
+            name_patterns=[
+                r"Relegat",
+                r"Bottom\s*3",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=False,
+    trend_hours=168,
+    max_teams=20,
+)
+
+CHAMPIONS_LEAGUE_CONFIG = LeagueConfig(
+    slug="champions-league",
+    name="Champions League 2025-26",
+    sport_category="soccer",
+    sport_keys=["soccer_uefa_champs_league"],
+    stage_key="soccer",
+    league_name_patterns=[
+        r"\bChampions\s+League\b",
+        r"\bUCL\b",
+        r"\bUEFA\s+Champions\b",
+    ],
+    columns=[
+        GridColumn(key="quarterfinal", label="QF", order=1),
+        GridColumn(key="semifinal", label="SF", order=2),
+        GridColumn(key="final", label="Final", order=3),
+        GridColumn(key="championship", label="Champion", order=4),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"Champions\s+League.*(?:Winner|Champion)",
+                r"UCL.*(?:Winner|Champion)",
+                r"Win\s+(?:the\s+)?Champions\s+League",
+            ],
+            canonical_prefix="soccer_uefa_champs_league_championship",
+        ),
+        MarketMatchingRule(
+            column="final",
+            name_patterns=[
+                r"(?:Make|Reach)\s+(?:the\s+)?Final",
+                r"Finalist",
+            ],
+        ),
+        MarketMatchingRule(
+            column="semifinal",
+            name_patterns=[
+                r"(?:Make|Reach)\s+(?:the\s+)?Semi",
+                r"Semifinal",
+                r"Last\s*4",
+            ],
+        ),
+        MarketMatchingRule(
+            column="quarterfinal",
+            name_patterns=[
+                r"(?:Make|Reach)\s+(?:the\s+)?Quarter",
+                r"Quarterfinal",
+                r"Last\s*8",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=False,
+    trend_hours=168,
+    max_teams=36,
+)
+
+BUNDESLIGA_CONFIG = LeagueConfig(
+    slug="bundesliga",
+    name="Bundesliga 2025-26",
+    sport_category="soccer",
+    sport_keys=["soccer_germany_bundesliga"],
+    stage_key="soccer",
+    league_name_patterns=[
+        r"\bBundesliga\b",
+        r"\bGerman\s+(?:League|Football)\b",
+    ],
+    columns=[
+        GridColumn(key="relegation", label="Relegated", order=1, sequential=False),
+        GridColumn(key="top_4", label="Top 4", order=2, sequential=False),
+        GridColumn(key="championship", label="Champion", order=3, sequential=False),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"Bundesliga.*(?:Winner|Champion)",
+                r"Win\s+(?:the\s+)?Bundesliga",
+                r"German\s+League.*(?:Winner|Champion)",
+            ],
+            canonical_prefix="soccer_germany_bundesliga_championship",
+        ),
+        MarketMatchingRule(
+            column="top_4",
+            name_patterns=[
+                r"Top\s*4",
+                r"Champions\s+League\s+(?:Qualif|Spot|Place)",
+            ],
+        ),
+        MarketMatchingRule(
+            column="relegation",
+            name_patterns=[
+                r"Relegat",
+                r"Bottom\s*(?:2|3)",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=False,
+    trend_hours=168,
+    max_teams=18,
+)
+
 GOLF_CONFIG = LeagueConfig(
     slug="golf",
     name="PGA Tour",
@@ -316,7 +798,16 @@ LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
     for cfg in [
         NBA_CONFIG,
         NHL_CONFIG,
+        NFL_CONFIG,
+        MLB_CONFIG,
+        WNBA_CONFIG,
+        MLS_CONFIG,
         NCAA_BASKETBALL_CONFIG,
+        NCAA_FOOTBALL_CONFIG,
+        EPL_CONFIG,
+        LA_LIGA_CONFIG,
+        CHAMPIONS_LEAGUE_CONFIG,
+        BUNDESLIGA_CONFIG,
         GOLF_CONFIG,
     ]
 }

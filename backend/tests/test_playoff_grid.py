@@ -12,7 +12,16 @@ from app.config.league_configs import (
     get_all_league_slugs,
     NBA_CONFIG,
     NHL_CONFIG,
+    NFL_CONFIG,
+    MLB_CONFIG,
+    WNBA_CONFIG,
+    MLS_CONFIG,
     NCAA_BASKETBALL_CONFIG,
+    NCAA_FOOTBALL_CONFIG,
+    EPL_CONFIG,
+    LA_LIGA_CONFIG,
+    CHAMPIONS_LEAGUE_CONFIG,
+    BUNDESLIGA_CONFIG,
     GOLF_CONFIG,
     LEAGUE_CONFIGS,
 )
@@ -33,15 +42,27 @@ from app.routes.playoffs import (
 class TestLeagueConfigRegistry:
     def test_all_slugs_present(self):
         slugs = get_all_league_slugs()
-        assert "nba" in slugs
-        assert "nhl" in slugs
-        assert "ncaa-basketball" in slugs
-        assert "golf" in slugs
+        for expected in [
+            "nba", "nhl", "nfl", "mlb", "wnba", "mls",
+            "ncaa-basketball", "ncaa-football",
+            "epl", "la-liga", "champions-league", "bundesliga",
+            "golf",
+        ]:
+            assert expected in slugs, f"Missing slug: {expected}"
 
     def test_get_league_config(self):
         assert get_league_config("nba") is NBA_CONFIG
         assert get_league_config("nhl") is NHL_CONFIG
+        assert get_league_config("nfl") is NFL_CONFIG
+        assert get_league_config("mlb") is MLB_CONFIG
+        assert get_league_config("wnba") is WNBA_CONFIG
+        assert get_league_config("mls") is MLS_CONFIG
         assert get_league_config("ncaa-basketball") is NCAA_BASKETBALL_CONFIG
+        assert get_league_config("ncaa-football") is NCAA_FOOTBALL_CONFIG
+        assert get_league_config("epl") is EPL_CONFIG
+        assert get_league_config("la-liga") is LA_LIGA_CONFIG
+        assert get_league_config("champions-league") is CHAMPIONS_LEAGUE_CONFIG
+        assert get_league_config("bundesliga") is BUNDESLIGA_CONFIG
         assert get_league_config("golf") is GOLF_CONFIG
 
     def test_unknown_slug_returns_none(self):
@@ -114,6 +135,39 @@ class TestLeagueSpecificConfigs:
     def test_ncaa_uses_region_split(self):
         assert NCAA_BASKETBALL_CONFIG.region_split is True
         assert NCAA_BASKETBALL_CONFIG.conference_split is False
+
+    def test_nfl_columns(self):
+        keys = [c.key for c in NFL_CONFIG.columns]
+        assert keys == ["make_playoffs", "division", "conference", "championship"]
+
+    def test_nfl_has_conference_split(self):
+        assert NFL_CONFIG.conference_split is True
+
+    def test_mlb_columns(self):
+        keys = [c.key for c in MLB_CONFIG.columns]
+        assert keys == ["make_playoffs", "division", "pennant", "championship"]
+
+    def test_wnba_max_teams(self):
+        assert WNBA_CONFIG.max_teams == 13
+
+    def test_mls_columns(self):
+        keys = [c.key for c in MLS_CONFIG.columns]
+        assert keys == ["make_playoffs", "conference", "championship"]
+
+    def test_ncaa_football_columns(self):
+        keys = [c.key for c in NCAA_FOOTBALL_CONFIG.columns]
+        assert keys == ["make_playoffs", "semifinal", "championship"]
+
+    def test_epl_columns(self):
+        keys = [c.key for c in EPL_CONFIG.columns]
+        assert keys == ["relegation", "top_4", "championship"]
+
+    def test_champions_league_columns(self):
+        keys = [c.key for c in CHAMPIONS_LEAGUE_CONFIG.columns]
+        assert keys == ["quarterfinal", "semifinal", "final", "championship"]
+
+    def test_bundesliga_max_teams(self):
+        assert BUNDESLIGA_CONFIG.max_teams == 18
 
     def test_golf_not_sequential(self):
         """Golf columns are NOT sequential (finishing positions, not rounds)."""
@@ -217,6 +271,140 @@ class TestMarketToColumnMatching:
     def test_ncaa_march_madness_winner(self):
         m = _make_market("March Madness Winner 2026")
         assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "championship"
+
+    # --- NFL ---
+    def test_nfl_super_bowl(self):
+        m = _make_market("Super Bowl Winner 2025-26")
+        assert _match_market_to_column(m, NFL_CONFIG) == "championship"
+
+    def test_nfl_conference_afc(self):
+        m = _make_market("AFC Champion 2025-26")
+        assert _match_market_to_column(m, NFL_CONFIG) == "conference"
+
+    def test_nfl_conference_nfc(self):
+        m = _make_market("NFC Winner 2025-26")
+        assert _match_market_to_column(m, NFL_CONFIG) == "conference"
+
+    def test_nfl_division(self):
+        m = _make_market("NFL AFC East Division Winner")
+        assert _match_market_to_column(m, NFL_CONFIG) == "division"
+
+    def test_nfl_make_playoffs(self):
+        m = _make_market("Will the Bills Make Playoffs?")
+        assert _match_market_to_column(m, NFL_CONFIG) == "make_playoffs"
+
+    def test_nfl_mvp_rejected(self):
+        m = _make_market("NFL MVP Winner 2025-26")
+        assert _match_market_to_column(m, NFL_CONFIG) is None
+
+    # --- MLB ---
+    def test_mlb_world_series(self):
+        m = _make_market("World Series Winner 2026")
+        assert _match_market_to_column(m, MLB_CONFIG) == "championship"
+
+    def test_mlb_pennant_al(self):
+        m = _make_market("American League Pennant Winner 2026")
+        assert _match_market_to_column(m, MLB_CONFIG) == "pennant"
+
+    def test_mlb_pennant_nl(self):
+        m = _make_market("NL Champion 2026")
+        assert _match_market_to_column(m, MLB_CONFIG) == "pennant"
+
+    def test_mlb_division(self):
+        m = _make_market("AL East Division Winner 2026")
+        assert _match_market_to_column(m, MLB_CONFIG) == "division"
+
+    def test_mlb_make_playoffs(self):
+        m = _make_market("Will the Dodgers Make Playoffs?")
+        assert _match_market_to_column(m, MLB_CONFIG) == "make_playoffs"
+
+    # --- WNBA ---
+    def test_wnba_championship(self):
+        m = _make_market("WNBA Championship Winner 2026")
+        assert _match_market_to_column(m, WNBA_CONFIG) == "championship"
+
+    def test_wnba_finals(self):
+        m = _make_market("WNBA Finals Winner 2026")
+        assert _match_market_to_column(m, WNBA_CONFIG) == "championship"
+
+    # --- MLS ---
+    def test_mls_cup(self):
+        m = _make_market("MLS Cup Winner 2026")
+        assert _match_market_to_column(m, MLS_CONFIG) == "championship"
+
+    def test_mls_conference(self):
+        m = _make_market("MLS Eastern Conference Winner 2026")
+        assert _match_market_to_column(m, MLS_CONFIG) == "conference"
+
+    # --- NCAA Football ---
+    def test_ncaaf_championship(self):
+        m = _make_market("College Football Playoff Winner 2026-27")
+        assert _match_market_to_column(m, NCAA_FOOTBALL_CONFIG) == "championship"
+
+    def test_ncaaf_cfp_champion(self):
+        m = _make_market("CFP Champion 2026-27")
+        assert _match_market_to_column(m, NCAA_FOOTBALL_CONFIG) == "championship"
+
+    def test_ncaaf_semifinal(self):
+        m = _make_market("Rose Bowl Semifinal")
+        assert _match_market_to_column(m, NCAA_FOOTBALL_CONFIG) == "semifinal"
+
+    def test_ncaaf_make_playoff(self):
+        m = _make_market("Will Alabama Make the College Football Playoff?")
+        assert _match_market_to_column(m, NCAA_FOOTBALL_CONFIG) == "make_playoffs"
+
+    # --- EPL ---
+    def test_epl_champion(self):
+        m = _make_market("Premier League Winner 2025-26")
+        assert _match_market_to_column(m, EPL_CONFIG) == "championship"
+
+    def test_epl_top_4(self):
+        m = _make_market("Premier League Top 4 Finish")
+        assert _match_market_to_column(m, EPL_CONFIG) == "top_4"
+
+    def test_epl_relegation(self):
+        m = _make_market("Premier League Relegation 2025-26")
+        assert _match_market_to_column(m, EPL_CONFIG) == "relegation"
+
+    def test_epl_not_sequential(self):
+        """EPL columns are NOT sequential (standings positions, not knockout rounds)."""
+        for col in EPL_CONFIG.columns:
+            assert col.sequential is False
+
+    # --- La Liga ---
+    def test_la_liga_champion(self):
+        m = _make_market("La Liga Winner 2025-26")
+        assert _match_market_to_column(m, LA_LIGA_CONFIG) == "championship"
+
+    def test_la_liga_relegation(self):
+        m = _make_market("La Liga Relegation 2025-26")
+        assert _match_market_to_column(m, LA_LIGA_CONFIG) == "relegation"
+
+    # --- Champions League ---
+    def test_ucl_champion(self):
+        m = _make_market("Champions League Winner 2025-26")
+        assert _match_market_to_column(m, CHAMPIONS_LEAGUE_CONFIG) == "championship"
+
+    def test_ucl_semifinal(self):
+        m = _make_market("UCL: Team to Reach Semifinals")
+        assert _match_market_to_column(m, CHAMPIONS_LEAGUE_CONFIG) == "semifinal"
+
+    def test_ucl_quarterfinal(self):
+        m = _make_market("Champions League: Make Quarterfinals")
+        assert _match_market_to_column(m, CHAMPIONS_LEAGUE_CONFIG) == "quarterfinal"
+
+    def test_ucl_final(self):
+        m = _make_market("Champions League: Reach the Final")
+        assert _match_market_to_column(m, CHAMPIONS_LEAGUE_CONFIG) == "final"
+
+    # --- Bundesliga ---
+    def test_bundesliga_champion(self):
+        m = _make_market("Bundesliga Winner 2025-26")
+        assert _match_market_to_column(m, BUNDESLIGA_CONFIG) == "championship"
+
+    def test_bundesliga_relegation(self):
+        m = _make_market("Bundesliga Relegation 2025-26")
+        assert _match_market_to_column(m, BUNDESLIGA_CONFIG) == "relegation"
 
     # --- NCAA disambiguation (championship vs title_game) ---
     def test_ncaa_championship_game_not_championship(self):
@@ -488,6 +676,39 @@ class TestLeagueNamePatterns:
                compiled.search("Golf Winner"):
                 return
         pytest.fail("No golf pattern matched any golf market name")
+
+    def test_nfl_patterns_dont_match_ncaaf(self):
+        """NFL patterns should NOT match college football markets."""
+        for pat in NFL_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert not compiled.search("College Football Playoff Winner")
+            assert not compiled.search("NCAAF Championship")
+            assert not compiled.search("CFP Champion")
+
+    def test_ncaaf_patterns_dont_match_nfl(self):
+        """NCAA football patterns should NOT match NFL markets."""
+        for pat in NCAA_FOOTBALL_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert not compiled.search("Super Bowl Winner 2025-26")
+            assert not compiled.search("NFL Championship")
+
+    def test_wnba_patterns_dont_match_nba(self):
+        """WNBA patterns should NOT match NBA markets."""
+        for pat in WNBA_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert not compiled.search("NBA Championship Winner")
+
+    def test_epl_patterns_dont_match_la_liga(self):
+        """EPL patterns should NOT match La Liga markets."""
+        for pat in EPL_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert not compiled.search("La Liga Winner 2025-26")
+
+    def test_mls_patterns_dont_match_epl(self):
+        """MLS patterns should NOT match EPL markets."""
+        for pat in MLS_CONFIG.league_name_patterns:
+            compiled = re.compile(pat, re.IGNORECASE)
+            assert not compiled.search("Premier League Winner")
 
     def test_all_patterns_compile(self):
         for slug, config in LEAGUE_CONFIGS.items():
