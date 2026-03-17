@@ -28,6 +28,47 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Market filters — reject non-playoff markets
+# ---------------------------------------------------------------------------
+
+# Markets that should never appear in a playoff grid (win totals, props, etc.)
+_NON_PLAYOFF_MARKET_RE = re.compile(
+    r"""
+    \bover\s*\(           |   # Win totals: "Over (41.5)"
+    \bunder\s*\(          |   # "Under (41.5)"
+    \bover/under\b        |   # "Over/Under"
+    \b\d+\+\s*wins\b      |   # "15+ wins", "20+ wins"
+    \bwin\s+total\b       |   # "Win Total"
+    \bseason\s+wins\b     |   # "Season Wins"
+    \bbefore\s+\w+\s+\d   |   # "Before March 7th, 2026" (date markets)
+    \bexact\s+wins\b      |   # "Exact Wins"
+    \bpoints\b            |   # Player stat props
+    \brebounds\b          |   # Player stat props
+    \bassists\b           |   # Player stat props
+    \bmvp\b               |   # MVP markets
+    \brookie\b            |   # Rookie of the year
+    \bdefensive\b         |   # DPOY
+    \bmost\s+improved\b   |   # MIP
+    \bscoring\s+leader\b  |   # Scoring leader
+    \b6th\s+man\b         |   # 6th man
+    \bcoach\b             |   # Coach of the year
+    \bvs\.?\s              |   # Game-level "Team A vs Team B"
+    \bat\b.*:                  # "Team A at Team B: Points"
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _is_playoff_relevant_market(market_name: str) -> bool:
+    """Check if a market name is relevant to playoff progression grids.
+
+    Rejects win totals, player props, awards, game-level markets, and
+    date-based threshold markets.
+    """
+    return not _NON_PLAYOFF_MARKET_RE.search(market_name)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -57,6 +98,10 @@ def _match_market_to_column(
     """
     name = market.name or ""
     name_lower = name.lower()
+
+    # 0. Reject non-playoff markets (win totals, props, awards, etc.)
+    if not _is_playoff_relevant_market(name):
+        return None
 
     # 1. Try league config matching rules (most specific)
     for rule in config.matching_rules:
@@ -360,6 +405,13 @@ async def get_playoff_grid(
                 continue
             prob = float(outcome.current_probability)
             if prob <= 0:
+                continue
+            # Skip non-team outcome names (thresholds, dates, generic)
+            oname = outcome.name or ""
+            if _NON_PLAYOFF_MARKET_RE.search(oname):
+                continue
+            # Skip generic yes/no, over/under outcomes
+            if oname.lower().strip() in ("yes", "no", "over", "under"):
                 continue
 
             column_data[col_key].append((market, outcome))

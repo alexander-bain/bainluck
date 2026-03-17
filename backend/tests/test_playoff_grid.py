@@ -21,6 +21,7 @@ from app.routes.playoffs import (
     _merge_probabilities,
     _normalize_team_name,
     _strip_diacritics,
+    _is_playoff_relevant_market,
 )
 
 
@@ -354,6 +355,61 @@ class TestProbabilityConsistency:
 # ============================================================================
 # Matching rule pattern compilation
 # ============================================================================
+
+
+class TestNonPlayoffMarketFilter:
+    """Verify that non-playoff markets are rejected."""
+
+    def test_win_totals_rejected(self):
+        assert not _is_playoff_relevant_market("Celtics: Over (41.5)")
+        assert not _is_playoff_relevant_market("Lakers Win Total Over/Under")
+        assert not _is_playoff_relevant_market("Season Wins: Over (50.5)")
+
+    def test_win_count_thresholds_rejected(self):
+        assert not _is_playoff_relevant_market("15+ wins")
+        assert not _is_playoff_relevant_market("20+ wins this season")
+
+    def test_date_markets_rejected(self):
+        assert not _is_playoff_relevant_market("Before March 7th, 2026")
+        assert not _is_playoff_relevant_market("Before April 1st, 2026")
+
+    def test_awards_rejected(self):
+        assert not _is_playoff_relevant_market("NBA MVP Winner 2025-26")
+        assert not _is_playoff_relevant_market("Rookie of the Year")
+        assert not _is_playoff_relevant_market("Defensive Player of the Year")
+        assert not _is_playoff_relevant_market("Most Improved Player")
+        assert not _is_playoff_relevant_market("6th Man of the Year")
+
+    def test_game_markets_rejected(self):
+        assert not _is_playoff_relevant_market("Celtics vs. Lakers")
+        assert not _is_playoff_relevant_market("Celtics at Lakers: Points")
+
+    def test_player_props_rejected(self):
+        assert not _is_playoff_relevant_market("Tatum Points Over 25.5")
+        assert not _is_playoff_relevant_market("Jokic Rebounds + Assists")
+
+    def test_championship_allowed(self):
+        assert _is_playoff_relevant_market("NBA Championship Winner 2025-26")
+        assert _is_playoff_relevant_market("Stanley Cup Winner")
+        assert _is_playoff_relevant_market("NCAAB Championship Winner 2026")
+
+    def test_conference_allowed(self):
+        assert _is_playoff_relevant_market("NBA Eastern Conference Winner")
+        assert _is_playoff_relevant_market("NHL Western Conference")
+
+    def test_make_playoffs_allowed(self):
+        assert _is_playoff_relevant_market("Will Lakers Make Playoffs?")
+        assert _is_playoff_relevant_market("NHL Playoff Qualifiers")
+
+    def test_tournament_round_allowed(self):
+        assert _is_playoff_relevant_market("NCAA Tournament: Team to make Final Four")
+        assert _is_playoff_relevant_market("Sweet Sixteen")
+        assert _is_playoff_relevant_market("Elite Eight")
+
+    def test_golf_allowed(self):
+        assert _is_playoff_relevant_market("Masters Tournament Winner 2026")
+        assert _is_playoff_relevant_market("Masters: To Make the Cut")
+        assert _is_playoff_relevant_market("Masters Top 10 Finisher")
 
 
 class TestMatchingRulePatterns:
