@@ -269,9 +269,9 @@ async def _get_team_metadata(
         norm = _normalize_team_name(team.name)
         team_lookup[norm] = meta
 
-        # Also index by short_name if available
-        if team.short_name:
-            team_lookup[_normalize_team_name(team.short_name)] = meta
+        # Also index by abbreviation if available
+        if team.abbreviation:
+            team_lookup[_normalize_team_name(team.abbreviation)] = meta
 
         # And alternate names
         alt_names = team.alternate_names or []
