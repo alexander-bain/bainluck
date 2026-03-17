@@ -604,6 +604,22 @@ class TestNonPlayoffMarketFilter:
     def test_matchup_prediction_rejected(self):
         assert not _is_playoff_relevant_market("Which teams will play in the 2026 Stanley Cup?")
 
+    def test_halftime_show_rejected(self):
+        assert not _is_playoff_relevant_market("Super Bowl LXI Halftime Show Performer")
+        assert not _is_playoff_relevant_market("Halftime Show Artist 2026")
+
+    def test_darts_rejected(self):
+        assert not _is_playoff_relevant_market("Premier League Darts Champion 2026")
+
+    def test_coin_toss_rejected(self):
+        assert not _is_playoff_relevant_market("Super Bowl Coin Toss Winner")
+
+    def test_anthem_rejected(self):
+        assert not _is_playoff_relevant_market("National Anthem Length Over/Under")
+
+    def test_golden_boot_rejected(self):
+        assert not _is_playoff_relevant_market("Premier League Golden Boot Winner")
+
     def test_championship_allowed(self):
         assert _is_playoff_relevant_market("NBA Championship Winner 2025-26")
         assert _is_playoff_relevant_market("Stanley Cup Winner")

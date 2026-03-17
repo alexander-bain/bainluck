@@ -85,10 +85,39 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \b(?:LOL|LoL)\b       |   # League of Legends
     \bvalorant\b          |   # Valorant esports
     \bcounter[- ]?strike\b |  # CS2/CSGO
-    \b(?:LCK|LPL|LEC|LCS|VCT|MSI)\b  # Esports league codes
+    \b(?:LCK|LPL|LEC|LCS|VCT|MSI)\b |  # Esports league codes
+    \bhalftime\b          |   # Super Bowl Halftime Show
+    \banthem\b            |   # National anthem markets
+    \bcoin\s*toss\b       |   # Coin toss props
+    \bgatorade\b          |   # Gatorade color markets
+    \bdarts\b             |   # Premier League Darts (not football)
+    \bsnooker\b           |   # Snooker (not football)
+    \bcricket\b           |   # Cricket markets
+    \brunning\b.*\bback\b |   # "Running back to win MVP" player props
+    \bballon\s+d.or\b     |   # Ballon d'Or award
+    \bgolden\s+boot\b     |   # Golden Boot award
+    \bgolden\s+ball\b         # Golden Ball award
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+
+# Country names that should never appear as outcomes in club competitions
+# (EPL, La Liga, Champions League, Bundesliga, MLS)
+_COUNTRY_NAMES = {
+    "Argentina", "Australia", "Austria", "Belgium", "Brazil", "Cameroon",
+    "Canada", "Chile", "China", "Colombia", "Costa Rica", "Croatia",
+    "Czech Republic", "Denmark", "Ecuador", "Egypt", "England", "Finland",
+    "France", "Germany", "Ghana", "Greece", "Hungary", "Iceland", "India",
+    "Iran", "Iraq", "Ireland", "Israel", "Italy", "Ivory Coast", "Jamaica",
+    "Japan", "Mexico", "Morocco", "Netherlands", "New Zealand", "Nigeria",
+    "North Korea", "Norway", "Panama", "Paraguay", "Peru", "Poland",
+    "Portugal", "Qatar", "Romania", "Russia", "Saudi Arabia", "Scotland",
+    "Senegal", "Serbia", "Slovakia", "Slovenia", "South Africa",
+    "South Korea", "Spain", "Sweden", "Switzerland", "Tunisia", "Turkey",
+    "Ukraine", "United States", "Uruguay", "Venezuela", "Wales",
+    "USA", "US", "UK",
+}
 
 
 def _is_playoff_relevant_market(market_name: str) -> bool:
@@ -484,6 +513,10 @@ async def get_playoff_grid(
                     continue
             # Skip generic/seeded outcomes like "#1 seed", "1+ wins"
             if re.match(r"^#?\d+", oname.strip()):
+                continue
+            # Skip country/national team names in club competitions
+            # (catches World Cup outcomes leaking into Champions League, EPL, etc.)
+            if config.sport_category == "soccer" and oname.strip() in _COUNTRY_NAMES:
                 continue
             # Filter prediction market 0.5 noise — binary markets near 50%
             # are illiquid defaults, not real predictions.  Applies to both
