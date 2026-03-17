@@ -478,9 +478,10 @@ async def get_playoff_grid(
             # Skip generic/seeded outcomes like "#1 seed", "1+ wins"
             if re.match(r"^#?\d+", oname.strip()):
                 continue
-            # Filter Kalshi 0.5 noise — binary markets at exactly 50% are
-            # illiquid defaults, not real predictions
-            if market.source == "kalshi" and abs(prob - 0.5) < 0.01:
+            # Filter prediction market 0.5 noise — binary markets near 50%
+            # are illiquid defaults, not real predictions.  Applies to both
+            # Kalshi and Polymarket.
+            if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
                 continue
 
             column_data[col_key].append((market, outcome))
