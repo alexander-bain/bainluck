@@ -179,6 +179,55 @@ class Event(Base):
         back_populates="event",
         cascade="all, delete-orphan"
     )
+    scoring_plays: Mapped[list["ScoringPlay"]] = relationship(
+        back_populates="event",
+        cascade="all, delete-orphan"
+    )
+
+
+class ScoringPlay(Base):
+    """Individual scoring plays from StatPal/ESPN for live games.
+
+    Persistent, queryable play-by-play history. Used to correlate specific plays
+    with odds movements for line-movement explanations ("Tatum three-pointer
+    capped a 12-0 run — odds jumped 9%").
+
+    Replaces the ephemeral "last 10 plays" JSONB pattern with full game history.
+    """
+
+    __tablename__ = "scoring_plays"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
+    source: Mapped[str] = mapped_column(String(20))  # "statpal" or "espn"
+
+    # Game context
+    period: Mapped[Optional[str]] = mapped_column(String(30))  # "Q1", "1st Half", "Inning 5"
+    game_clock: Mapped[Optional[str]] = mapped_column(String(20))  # "4:32", "02:15"
+
+    # Play description
+    description: Mapped[str] = mapped_column(Text)
+    play_type: Mapped[Optional[str]] = mapped_column(String(50))  # "field_goal", "turnover"
+    team_name: Mapped[Optional[str]] = mapped_column(String(100))
+    player_name: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Score at time of play
+    home_score: Mapped[Optional[int]] = mapped_column(Integer)
+    away_score: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Timestamps
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    # Relationship
+    event: Mapped["Event"] = relationship(back_populates="scoring_plays")
 
 
 class OddsSnapshot(Base):

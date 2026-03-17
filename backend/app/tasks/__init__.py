@@ -85,6 +85,41 @@ if broker_use_ssl:
 
 celery_app.conf.update(**celery_config)
 
+# =============================================================================
+# Queue routing: realtime vs background workers
+#
+# realtime (Standard-2X, concurrency=4):
+#   High-frequency tasks driving user-visible live game data.
+#   Never blocked by batch jobs.
+#
+# background (Standard-1X, concurrency=3):
+#   Hourly/daily batch tasks — enrichment, audits, maintenance.
+#   Can tolerate delays without user impact.
+#
+# To move a task: just change its queue in task_routes below.
+# =============================================================================
+
+from kombu import Queue
+
+celery_app.conf.task_queues = [
+    Queue("realtime", routing_key="realtime"),
+    Queue("background", routing_key="background"),
+]
+
+celery_app.conf.task_default_queue = "background"
+
+celery_app.conf.task_routes = {
+    # --- Realtime: live game data (30s-120s cycle) ---
+    "app.tasks.poll_all_odds": {"queue": "realtime"},
+    "app.tasks.poll_sport_odds": {"queue": "realtime"},
+    "app.tasks.sync_espn_live_events": {"queue": "realtime"},
+    "app.tasks.poll_live_prediction_markets": {"queue": "realtime"},
+    "app.tasks.sync_mlb_win_probability": {"queue": "realtime"},
+    "app.tasks.sync_statpal_live_plays": {"queue": "realtime"},
+    "app.tasks.heartbeat": {"queue": "realtime"},
+    # --- Everything else routes to background (default queue) ---
+}
+
 # Initialize Sentry for Celery workers
 # Set SENTRY_DSN env var in Heroku to enable
 sentry_dsn = os.getenv("SENTRY_DSN")
@@ -613,7 +648,7 @@ celery_app.conf.beat_schedule = {
     },
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",
-        "schedule": crontab(minute="5,20,35,50"),  # Every 15 min: after Polymarket (:15) and Kalshi (:45)
+        "schedule": crontab(minute="5,35"),  # Every 30 min — markets exist days before games (was every 15 min)
         "kwargs": {"limit": 200},
     },
     "poll-live-prediction-markets": {
@@ -635,11 +670,11 @@ celery_app.conf.beat_schedule = {
     },
     "sync-statpal-schedules": {
         "task": "app.tasks.sync_statpal_schedules",
-        "schedule": crontab(minute="0,15,30,45"),  # Every 15 min — runs BEFORE event discovery (:05/:20/:35/:50)
+        "schedule": crontab(minute=0),  # Hourly at :00 — schedules rarely change (was every 15 min)
     },
     "sync-statpal-injuries": {
         "task": "app.tasks.sync_statpal_injuries",
-        "schedule": crontab(minute="10,25,40,55"),  # Every 15 min
+        "schedule": crontab(minute=20),  # Hourly at :20 — injuries cached with 2h TTL anyway (was every 15 min)
     },
     "sync-statpal-live-plays": {
         "task": "app.tasks.sync_statpal_live_plays",
@@ -681,9 +716,9 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=8),  # Daily at 8:00 AM UTC
         "kwargs": {"limit": 2000},
     },
-    "mark-resolved-futures-daily": {
+    "mark-resolved-futures": {
         "task": "app.tasks.mark_resolved_futures",
-        "schedule": crontab(minute=15, hour=8),  # Daily at 8:15 AM UTC
+        "schedule": crontab(minute=15, hour="2,8,14,20"),  # Every 6 hours — keeps resolved futures from cluttering feed (was daily)
     },
     "backfill-canonical-keys-daily": {
         "task": "app.tasks.backfill_canonical_keys",
@@ -706,10 +741,10 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 30},
     },
     # Note: update_event_tags, enrich_taxonomy_llm, and DataGolf polls are
-    # piggybacked on discover_events (hourly) and poll_all_odds (live) since
-    # the worker only has 2 concurrency slots which are permanently occupied
-    # by high-frequency tasks (poll_odds 30s, espn_sync 60s). Standalone
-    # beat entries would queue but never execute. DataGolf hourly poll is
+    # piggybacked on discover_events and poll_all_odds respectively.
+    # With dual workers (realtime + background), these could be split out
+    # into standalone tasks. Kept as piggybacked for now since the pattern
+    # works and reduces scheduling complexity. DataGolf hourly poll is
     # Redis-gated to 1h on discover_events; live poll is gated to 5min on
     # poll_all_odds. Admin endpoints run tasks inline (not via .delay()).
 }

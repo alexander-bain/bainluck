@@ -394,9 +394,12 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
 async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
     """Fetch play-by-play data for live games from StatPal.
 
-    Stores key scoring plays that explain probability movements. This data
-    feeds into the "Why Did the Line Move?" feature and provides game context
-    for Pulse calculations.
+    Writes ALL plays to the scoring_plays table (persistent, queryable).
+    This data feeds into "Why Did the Line Move?" by correlating specific
+    plays with odds movements (e.g., "Odds jumped 9% after a Tatum three
+    that capped a 12-0 run").
+
+    Also keeps last 10 plays in JSONB for backward compatibility.
 
     Args:
         sport_key: If provided, only sync this sport.
@@ -417,11 +420,13 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
     service = StatPalAPIService()
     total_plays = 0
     total_events = 0
+    total_rows_inserted = 0
     details = []
 
     try:
         async with get_task_session() as session:
             from app.models import Event, Sport
+            from app.models.models import ScoringPlay
 
             for our_key in sport_keys:
                 statpal_sport = STATPAL_SPORT_MAPPING[our_key]
@@ -446,6 +451,7 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
 
                 sport_plays = 0
                 sport_events = 0
+                sport_rows_inserted = 0
 
                 for event in live_events:
                     statpal_id = _get_statpal_id(event)
@@ -456,15 +462,56 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
                     if not plays:
                         continue
 
-                    # Store recent plays in win_probability_sources JSONB
-                    # Keep last 10 plays for context
+                    # --- Write ALL plays to scoring_plays table (persistent) ---
+                    # Dedup: check which (period, game_clock) combos already exist
+                    existing_result = await session.execute(
+                        select(
+                            ScoringPlay.period,
+                            ScoringPlay.game_clock,
+                            ScoringPlay.description,
+                        ).where(
+                            ScoringPlay.event_id == event.id,
+                            ScoringPlay.source == "statpal",
+                        )
+                    )
+                    existing_keys = {
+                        (r.period, r.game_clock, r.description)
+                        for r in existing_result.all()
+                    }
+
+                    new_plays = []
+                    for p in plays:
+                        dedup_key = (p.period, p.clock, (p.description or "")[:500])
+                        if dedup_key in existing_keys:
+                            continue
+                        existing_keys.add(dedup_key)  # Prevent dupes within this batch
+                        new_plays.append(
+                            ScoringPlay(
+                                event_id=event.id,
+                                source="statpal",
+                                period=p.period,
+                                game_clock=p.clock,
+                                description=(p.description or "")[:500],
+                                play_type=p.play_type,
+                                team_name=p.team,
+                                player_name=p.player,
+                                home_score=p.home_score,
+                                away_score=p.away_score,
+                            )
+                        )
+
+                    if new_plays:
+                        session.add_all(new_plays)
+                        sport_rows_inserted += len(new_plays)
+
+                    # --- Backward compat: last 10 plays in JSONB ---
                     recent_plays = plays[-10:]
                     sources = event.win_probability_sources or {}
                     sources["statpal_plays"] = [
                         {
                             "period": p.period,
                             "clock": p.clock,
-                            "description": p.description[:200],  # Truncate long descriptions
+                            "description": p.description[:200],
                             "type": p.play_type,
                             "team": p.team,
                             "player": p.player,
@@ -483,13 +530,19 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
                     # Rate limit between games
                     await asyncio.sleep(0.5)
 
+                # Flush after each sport to persist rows
+                if sport_rows_inserted > 0:
+                    await session.flush()
+
                 total_plays += sport_plays
                 total_events += sport_events
+                total_rows_inserted += sport_rows_inserted
                 if sport_events > 0:
                     details.append({
                         "sport": our_key,
                         "live_events_with_plays": sport_events,
                         "total_plays": sport_plays,
+                        "rows_inserted": sport_rows_inserted,
                     })
 
     finally:
@@ -498,6 +551,7 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
     return {
         "total_plays": total_plays,
         "live_events_with_plays": total_events,
+        "rows_inserted": total_rows_inserted,
         "sports": details,
     }
 

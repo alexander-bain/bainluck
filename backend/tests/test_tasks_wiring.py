@@ -183,7 +183,7 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-rosters-daily",
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
-        "mark-resolved-futures-daily",
+        "mark-resolved-futures",
         "sync-mm-bracket",
     }
 

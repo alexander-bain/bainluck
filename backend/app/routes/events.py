@@ -3084,10 +3084,38 @@ async def get_line_movement_analysis(
             injuries_data = [i for i in injuries_data if i.get("status") in ("Out", "Doubtful")]
         injuries_data = (injuries_data or [])[:5]
 
-        # Extract scoring plays from StatPal play-by-play data
-        scoring_plays_data = extract_scoring_plays(
-            (event.win_probability_sources or {}).get("statpal_plays", [])
-        )
+        # Extract scoring plays — prefer scoring_plays table (full history),
+        # fall back to JSONB (last 10 plays) for events without table data
+        try:
+            from app.models.models import ScoringPlay
+            sp_result = await db.execute(
+                select(ScoringPlay)
+                .where(ScoringPlay.event_id == event.id)
+                .order_by(ScoringPlay.captured_at.asc())
+            )
+            sp_rows = sp_result.scalars().all()
+            if sp_rows:
+                scoring_plays_data = [
+                    {
+                        "period": p.period,
+                        "clock": p.game_clock,
+                        "description": p.description,
+                        "type": p.play_type,
+                        "team": p.team_name,
+                        "player": p.player_name,
+                        "home_score": p.home_score,
+                        "away_score": p.away_score,
+                    }
+                    for p in sp_rows
+                ]
+        except Exception as e:
+            logger.warning(f"ScoringPlay query failed for event {event_id}: {e}")
+
+        # Fallback: JSONB blob (backward compat for events without table data)
+        if not scoring_plays_data:
+            scoring_plays_data = extract_scoring_plays(
+                (event.win_probability_sources or {}).get("statpal_plays", [])
+            )
 
         if event.status == "live":
             game_context = {

@@ -301,8 +301,9 @@ class TestBeatScheduleTiming:
     """Test that beat schedule ensures StatPal runs before event discovery."""
 
     def test_statpal_before_discovery(self):
-        """StatPal schedule sync should run at :00/:15/:30/:45,
-        event discovery at :05/:20/:35/:50."""
+        """StatPal schedule sync should run before event discovery.
+        StatPal: hourly at :00, Discovery: every 15 min at :05/:20/:35/:50.
+        StatPal always runs before the first discovery of each hour."""
         from celery.schedules import crontab
         from app.tasks import celery_app
 
@@ -315,8 +316,8 @@ class TestBeatScheduleTiming:
         assert isinstance(statpal_schedule, crontab)
         assert isinstance(discovery_schedule, crontab)
 
-        # Verify minute patterns
-        assert str(statpal_schedule) == str(crontab(minute="0,15,30,45"))
+        # StatPal runs hourly at :00, discovery at :05/:20/:35/:50
+        assert str(statpal_schedule) == str(crontab(minute=0))
         assert str(discovery_schedule) == str(crontab(minute="5,20,35,50"))
 
 
