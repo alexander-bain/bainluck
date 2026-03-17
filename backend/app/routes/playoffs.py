@@ -528,6 +528,27 @@ async def get_playoff_grid(
             if norm not in outcome_id_to_name:
                 outcome_id_to_name[outcome.id] = team_name
 
+    # Deduplicate within same source per team+column: when a source has
+    # multiple entries (e.g., both "NCAAB Championship" and "Make Championship
+    # Game" matched to the championship column), keep the LOWEST probability.
+    # The genuine championship market always has lower probability than
+    # round-advancement markets.
+    for norm_name in grid_raw:
+        for col_key in grid_raw[norm_name]:
+            entries = grid_raw[norm_name][col_key]
+            if len(entries) <= 1:
+                continue
+            # Group by source
+            by_source: dict[str, list[dict]] = defaultdict(list)
+            for e in entries:
+                by_source[e["source"]].append(e)
+            # Keep lowest prob per source
+            deduped = []
+            for source, source_entries in by_source.items():
+                best = min(source_entries, key=lambda e: e["probability"])
+                deduped.append(best)
+            grid_raw[norm_name][col_key] = deduped
+
     # -----------------------------------------------------------------------
     # 3b. Merge duplicate teams (short name → full name dedup)
     # -----------------------------------------------------------------------
@@ -544,6 +565,24 @@ async def get_playoff_grid(
             # Check if short_name is a prefix of long_name
             if long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-"):
                 merge_map[short_name] = long_name
+            # Check if short_name words are a subset of long_name words
+            # (e.g., "michigan state" vs "michigan st spartans")
+            elif len(short_name.split()) >= 2:
+                short_words = set(short_name.split())
+                long_words = set(long_name.split())
+                # Normalize common abbreviations for comparison
+                def _expand_abbrevs(words):
+                    expanded = set()
+                    for w in words:
+                        expanded.add(w)
+                        if w == "st":
+                            expanded.add("state")
+                        elif w == "state":
+                            expanded.add("st")
+                    return expanded
+                short_expanded = _expand_abbrevs(short_words)
+                if short_expanded.issubset(_expand_abbrevs(long_words)):
+                    merge_map[short_name] = long_name
 
     # Apply merges
     for short_name, long_name in merge_map.items():
@@ -551,7 +590,6 @@ async def get_playoff_grid(
             for col_key, entries in grid_raw[short_name].items():
                 grid_raw[long_name][col_key].extend(entries)
             del grid_raw[short_name]
-            # Transfer display name preference to longer name
             logger.debug("Merged team '%s' into '%s'", short_name, long_name)
 
     # -----------------------------------------------------------------------
@@ -571,6 +609,34 @@ async def get_playoff_grid(
             break
 
     team_meta = await _get_team_metadata(db, team_names_raw)
+
+    # Second merge pass: use team metadata to identify teams that share
+    # the same team_id but have different normalized names
+    # (e.g., "Connecticut" vs "UConn Huskies")
+    team_id_to_norm: dict[int, str] = {}
+    meta_merge_map: dict[str, str] = {}
+    for norm_name in list(grid_raw.keys()):
+        meta = team_meta.get(norm_name, {})
+        tid = meta.get("team_id")
+        if tid is None:
+            continue
+        if tid in team_id_to_norm:
+            # Same team_id, different norm name — merge shorter into longer
+            existing = team_id_to_norm[tid]
+            if len(norm_name) > len(existing):
+                meta_merge_map[existing] = norm_name
+                team_id_to_norm[tid] = norm_name
+            else:
+                meta_merge_map[norm_name] = existing
+        else:
+            team_id_to_norm[tid] = norm_name
+
+    for short_name, long_name in meta_merge_map.items():
+        if short_name in grid_raw and long_name in grid_raw:
+            for col_key, entries in grid_raw[short_name].items():
+                grid_raw[long_name][col_key].extend(entries)
+            del grid_raw[short_name]
+            logger.debug("Merged team '%s' into '%s' (same team_id)", short_name, long_name)
 
     # Compute 24h changes
     old_probs = await _compute_movers(db, all_outcome_ids, hours=24)
