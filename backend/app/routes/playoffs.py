@@ -6,6 +6,7 @@ with multi-source probability merging, 24h movers, and trend chart data.
 """
 
 import logging
+import os
 import re
 import statistics
 import unicodedata
@@ -13,7 +14,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func as sqlfunc
+from sqlalchemy import select, or_, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -346,7 +347,6 @@ async def _get_team_metadata(
 
     stmt = select(Team).where(*[] if not conditions else [conditions[0]])
     if len(conditions) > 1:
-        from sqlalchemy import or_
         stmt = select(Team).where(or_(*conditions))
     elif conditions:
         stmt = select(Team).where(conditions[0])
@@ -394,6 +394,378 @@ async def _get_team_metadata(
 
 
 # ---------------------------------------------------------------------------
+# DataGolf-first golf grid builder
+# ---------------------------------------------------------------------------
+
+
+async def _build_golf_grid_from_datagolf(
+    config: LeagueConfig,
+    db: AsyncSession,
+    trend_hours: int,
+    top: int,
+) -> dict | None:
+    """Build golf grid using DataGolf as the source of truth for the field.
+
+    DataGolf defines:
+    1. Which tournament is current (schedule)
+    2. Which golfers are in the field (field_updates / pre-tournament)
+    3. Model probabilities for each golfer (pre-tournament or in-play)
+
+    Kalshi, Polymarket, and Odds API odds are matched TO the DataGolf field.
+    Returns None if DataGolf API is unavailable (falls back to normal flow).
+    """
+    if not os.getenv("DATAGOLF_API_KEY"):
+        return None
+
+    from app.services.datagolf_api import DataGolfAPIService, normalize_player_name, strip_diacritics
+
+    service = DataGolfAPIService()
+    try:
+        # 1. Get schedule → find current tournament
+        schedule = await service.get_schedule(tour="pga")
+        if not schedule:
+            logger.info("Golf grid: no DataGolf schedule, falling back")
+            return None
+
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        current_event = None
+        for t in schedule:
+            if t.status and t.status != "completed":
+                current_event = t
+                break
+            if t.end_date and t.end_date >= now_str:
+                current_event = t
+                break
+
+        if not current_event:
+            logger.info("Golf grid: no current DataGolf event, falling back")
+            return None
+
+        logger.info(
+            "Golf grid: DataGolf source of truth — %s (id=%s, %s)",
+            current_event.event_name, current_event.event_id, current_event.start_date,
+        )
+
+        # 2. Get DataGolf model predictions → canonical field + probabilities
+        # Try in-play first (during tournament), fall back to pre-tournament
+        players = await service.get_in_play(tour="pga")
+        is_live = bool(players)
+        if not players:
+            players = await service.get_pre_tournament(tour="pga")
+
+        if not players:
+            logger.info("Golf grid: no DataGolf players, falling back")
+            return None
+
+        logger.info(
+            "Golf grid: DataGolf field has %d golfers (%s)",
+            len(players), "in-play" if is_live else "pre-tournament",
+        )
+
+        # Build canonical golfer lookup: normalized_name → DataGolfPlayer
+        dg_field: dict[str, object] = {}  # norm_name → player
+        dg_display_names: dict[str, str] = {}  # norm_name → display name
+        for player in players:
+            norm = _normalize_team_name(player.player_name)
+            dg_field[norm] = player
+            dg_display_names[norm] = player.player_name
+
+        # 3. Query DB for Kalshi/Polymarket/Odds API golf markets
+        sport_conditions = [
+            FuturesMarket.external_id.ilike(f"{sk}%")
+            for sk in config.sport_keys
+        ]
+        category_condition = FuturesMarket.llm_sport_category == "golf"
+        market_filter = or_(*sport_conditions, category_condition)
+
+        stmt = (
+            select(FuturesMarket)
+            .where(
+                market_filter,
+                FuturesMarket.status != "resolved",
+                # Exclude DataGolf's own markets — we use the API directly
+                FuturesMarket.source != "datagolf",
+            )
+            .options(selectinload(FuturesMarket.outcomes))
+        )
+        result = await db.execute(stmt)
+        db_markets = result.scalars().unique().all()
+
+        # 4. Match DB market outcomes to DataGolf golfers
+        # column_key → norm_name → list of {source, probability, ...}
+        grid_raw: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+        all_outcome_ids: list[int] = []
+        outcome_id_to_name: dict[int, str] = {}
+
+        for market in db_markets:
+            col_key = _match_market_to_column(market, config)
+            if not col_key:
+                continue
+
+            for outcome in market.outcomes:
+                if outcome.current_probability is None:
+                    continue
+                prob = float(outcome.current_probability)
+                if prob <= 0:
+                    continue
+
+                oname = outcome.name or ""
+                if _NON_PLAYOFF_MARKET_RE.search(oname):
+                    continue
+                if oname.lower().strip() in ("yes", "no", "over", "under"):
+                    continue
+                # Filter prediction market 0.5 noise
+                if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
+                    continue
+
+                # Match outcome name to DataGolf field
+                outcome_norm = _normalize_team_name(oname)
+                matched_norm = _match_golfer_to_field(outcome_norm, dg_field)
+                if not matched_norm:
+                    continue  # Not in the DataGolf field → skip
+
+                grid_raw[col_key][matched_norm].append({
+                    "source": market.source,
+                    "probability": prob,
+                    "market_id": market.id,
+                    "outcome_id": outcome.id,
+                })
+                all_outcome_ids.append(outcome.id)
+                outcome_id_to_name[outcome.id] = oname
+
+        # 5. Add DataGolf model probabilities
+        col_map = {"win": "win", "top_5": "top_5", "top_10": "top_10",
+                    "top_20": "top_20", "make_cut": "make_cut"}
+        for norm_name, player in dg_field.items():
+            for dg_key, col_key in col_map.items():
+                prob = getattr(player, dg_key, None)
+                if prob and prob > 0:
+                    grid_raw[col_key][norm_name].append({
+                        "source": "datagolf",
+                        "probability": prob,
+                        "market_id": None,
+                        "outcome_id": None,
+                    })
+
+        # Deduplicate within same source per golfer+column (keep lowest prob)
+        for col_key in grid_raw:
+            for norm_name in grid_raw[col_key]:
+                entries = grid_raw[col_key][norm_name]
+                if len(entries) <= 1:
+                    continue
+                by_source: dict[str, list[dict]] = defaultdict(list)
+                for e in entries:
+                    by_source[e["source"]].append(e)
+                deduped = []
+                for source, source_entries in by_source.items():
+                    best = min(source_entries, key=lambda e: e["probability"])
+                    deduped.append(best)
+                grid_raw[col_key][norm_name] = deduped
+
+        # 6. Build team rows — start from DataGolf field (canonical)
+        # Compute 24h movers
+        old_probs = await _compute_movers(db, all_outcome_ids, hours=24)
+
+        championship_col = "win"
+        teams = []
+
+        for norm_name in dg_field:
+            display_name = dg_display_names[norm_name]
+            player = dg_field[norm_name]
+
+            cells = {}
+            for col in config.columns:
+                entries = grid_raw.get(col.key, {}).get(norm_name, [])
+                if not entries:
+                    continue
+
+                probs = [e["probability"] for e in entries]
+                merged = _merge_probabilities(probs)
+
+                sources = []
+                for e in entries:
+                    sources.append({
+                        "source": e["source"],
+                        "probability": round(e["probability"], 4),
+                    })
+
+                # 24h trend
+                trend_24h = None
+                db_entries = [e for e in entries if e["outcome_id"]]
+                if db_entries:
+                    oid = db_entries[0]["outcome_id"]
+                    old_p = old_probs.get(oid)
+                    if old_p is not None:
+                        trend_24h = round(merged - old_p, 4)
+
+                cells[col.key] = {
+                    "merged_probability": round(merged, 4),
+                    "sources": sources,
+                    "trend_24h": trend_24h,
+                }
+
+            # Include golfer even if no cells (they're in the field)
+            # But skip if absolutely no data
+            if not cells:
+                continue
+
+            team_row = {
+                "name": display_name,
+                "short_name": display_name,
+                "team_id": None,
+                "logo_url": None,
+                "primary_color": None,
+                "secondary_color": None,
+                "record": None,
+                "conference": None,
+                "division": None,
+                "seed": None,
+                "cells": cells,
+            }
+
+            # Add leaderboard info if in-play
+            if is_live and player.position:
+                team_row["position"] = player.position
+                team_row["total_score"] = player.total_score
+                team_row["today_score"] = player.today_score
+                team_row["thru"] = player.thru
+                team_row["current_round"] = player.current_round
+
+            teams.append(team_row)
+
+        # Sort by win probability descending
+        teams.sort(key=lambda t: -(t["cells"].get("win", {}).get("merged_probability", 0)))
+
+        # Cap at max_teams
+        teams = teams[:config.max_teams]
+
+        # Movers
+        movers = []
+        for team_row in teams:
+            champ_cell = team_row["cells"].get(championship_col)
+            if champ_cell and champ_cell.get("trend_24h") is not None:
+                movers.append({
+                    "name": team_row["name"],
+                    "short_name": team_row["short_name"],
+                    "team_id": None,
+                    "column": championship_col,
+                    "change_24h": champ_cell["trend_24h"],
+                    "direction": "up" if champ_cell["trend_24h"] > 0 else "down",
+                    "logo_url": None,
+                    "primary_color": None,
+                })
+        movers.sort(key=lambda m: abs(m["change_24h"]), reverse=True)
+        movers = movers[:10]
+
+        # Trend chart for top N golfers
+        top_team_norms = [_normalize_team_name(t["name"]) for t in teams[:top]]
+        trend_outcome_ids = []
+        trend_outcome_names: dict[int, str] = {}
+        for norm_name in top_team_norms:
+            entries = grid_raw.get(championship_col, {}).get(norm_name, [])
+            for e in entries:
+                oid = e.get("outcome_id")
+                if oid:
+                    trend_outcome_ids.append(oid)
+                    trend_outcome_names[oid] = dg_display_names.get(norm_name, norm_name)
+                    break
+
+        trend_chart = await _build_trend_chart(
+            db, trend_outcome_ids, trend_outcome_names,
+            hours=trend_hours, top_n=top,
+        )
+        trend_chart["column"] = championship_col
+        trend_chart["top"] = top
+
+        # Sources
+        sources_seen = {"datagolf"}
+        for col_entries in grid_raw.values():
+            for entries in col_entries.values():
+                for e in entries:
+                    sources_seen.add(e["source"])
+
+        # Active columns
+        active_columns = []
+        for col in config.columns:
+            if col.key in grid_raw:
+                active_columns.append({
+                    "key": col.key,
+                    "label": col.label,
+                    "order": col.order,
+                    "sequential": col.sequential,
+                })
+
+        return {
+            "league": config.slug,
+            "name": config.name,
+            "season": config.season_pattern,
+            "tournament": {
+                "name": current_event.event_name,
+                "course": current_event.course,
+                "start_date": current_event.start_date,
+                "end_date": current_event.end_date,
+                "location": current_event.location,
+                "country": current_event.country,
+                "status": "live" if is_live else "upcoming",
+                "current_round": current_event.current_round,
+            },
+            "columns": active_columns,
+            "trend_chart": trend_chart,
+            "teams": teams,
+            "grouped_teams": None,
+            "movers": movers,
+            "team_count": len(teams),
+            "field_count": len(dg_field),
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "sources_available": sorted(sources_seen),
+            "source_of_truth": "datagolf",
+        }
+
+    except Exception as e:
+        logger.error("Golf grid DataGolf error, falling back: %s", e)
+        return None
+    finally:
+        await service.close()
+
+
+def _match_golfer_to_field(
+    outcome_norm: str,
+    dg_field: dict[str, object],
+) -> str | None:
+    """Match a market outcome name to a DataGolf golfer in the field.
+
+    Tries exact match first, then fuzzy matching (last name + first initial).
+    Returns the normalized DataGolf name or None.
+    """
+    # Exact match
+    if outcome_norm in dg_field:
+        return outcome_norm
+
+    # Try matching by last name + first name prefix
+    outcome_parts = outcome_norm.split()
+    if len(outcome_parts) < 2:
+        return None
+
+    for dg_norm in dg_field:
+        dg_parts = dg_norm.split()
+        if len(dg_parts) < 2:
+            continue
+
+        # Match: same last word and first word starts the same
+        if (outcome_parts[-1] == dg_parts[-1] and
+                outcome_parts[0][:3] == dg_parts[0][:3] and
+                len(outcome_parts[0]) >= 3):
+            return dg_norm
+
+        # Match: reversed order (some sources use "Last, First")
+        if (outcome_parts[0] == dg_parts[-1] and
+                outcome_parts[-1] == dg_parts[0]):
+            return dg_norm
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
@@ -421,10 +793,19 @@ async def get_playoff_grid(
     trend_hours = hours or config.trend_hours
 
     # -----------------------------------------------------------------------
+    # Golf: use DataGolf as the source of truth for the field
+    # -----------------------------------------------------------------------
+    if league_slug == "golf":
+        golf_result = await _build_golf_grid_from_datagolf(
+            config, db, trend_hours, top,
+        )
+        if golf_result is not None:
+            return golf_result
+        # Fall through to normal flow if DataGolf unavailable
+
+    # -----------------------------------------------------------------------
     # 1. Query futures markets that match this league
     # -----------------------------------------------------------------------
-
-    from sqlalchemy import or_
 
     # Path A: Match by external_id sport key prefix (Odds API markets)
     sport_conditions = []

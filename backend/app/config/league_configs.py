@@ -784,7 +784,7 @@ GOLF_CONFIG = LeagueConfig(
     team_sort="championship_desc",  # Sort golfers by win probability
     conference_split=False,
     trend_hours=168,
-    max_teams=50,  # Top 50 golfers per tournament
+    max_teams=156,  # Full PGA field (DataGolf defines the canonical field)
     season_pattern="2026",
 )
 

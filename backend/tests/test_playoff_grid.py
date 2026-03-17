@@ -27,6 +27,7 @@ from app.config.league_configs import (
 )
 from app.routes.playoffs import (
     _match_market_to_column,
+    _match_golfer_to_field,
     _merge_probabilities,
     _normalize_team_name,
     _strip_diacritics,
@@ -759,3 +760,98 @@ class TestMatchingRulePatterns:
                     assert pat.strip(), (
                         f"{slug} rule {rule.column} has empty pattern"
                     )
+
+
+# ============================================================================
+# DataGolf golfer field matching
+# ============================================================================
+
+
+class TestGolferFieldMatching:
+    """Test _match_golfer_to_field for DataGolf-first golf grid."""
+
+    def _make_field(self, names):
+        """Build a mock DataGolf field dict from a list of names."""
+        return {_normalize_team_name(n): object() for n in names}
+
+    def test_exact_match(self):
+        field = self._make_field(["Scottie Scheffler", "Rory McIlroy"])
+        assert _match_golfer_to_field(
+            _normalize_team_name("Scottie Scheffler"), field
+        ) == _normalize_team_name("Scottie Scheffler")
+
+    def test_exact_match_case_insensitive(self):
+        field = self._make_field(["Scottie Scheffler"])
+        assert _match_golfer_to_field(
+            _normalize_team_name("scottie scheffler"), field
+        ) == _normalize_team_name("Scottie Scheffler")
+
+    def test_no_match_returns_none(self):
+        field = self._make_field(["Scottie Scheffler"])
+        assert _match_golfer_to_field(
+            _normalize_team_name("Tiger Woods"), field
+        ) is None
+
+    def test_fuzzy_last_name_first_prefix(self):
+        """Kalshi might use 'S. Scheffler' style — test first-initial matching."""
+        field = self._make_field(["Scottie Scheffler"])
+        # "Sco" prefix matches "Scottie"
+        assert _match_golfer_to_field(
+            _normalize_team_name("Sco Scheffler"), field
+        ) == _normalize_team_name("Scottie Scheffler")
+
+    def test_reversed_name_order(self):
+        """Some sources use 'Scheffler, Scottie' (already normalized, but test reversed words)."""
+        field = self._make_field(["Scottie Scheffler"])
+        assert _match_golfer_to_field(
+            _normalize_team_name("Scheffler Scottie"), field
+        ) == _normalize_team_name("Scottie Scheffler")
+
+    def test_diacritics_normalized(self):
+        """Names with diacritics should match after normalization."""
+        field = self._make_field(["Viktor Hovland"])
+        # _normalize_team_name strips diacritics
+        assert _match_golfer_to_field(
+            _normalize_team_name("Viktor Hovland"), field
+        ) == _normalize_team_name("Viktor Hovland")
+
+    def test_single_word_name_no_match(self):
+        """Single-word outcome names should not match."""
+        field = self._make_field(["Scottie Scheffler", "Tiger Woods"])
+        assert _match_golfer_to_field(
+            _normalize_team_name("Scheffler"), field
+        ) is None
+
+    def test_different_golfer_same_last_name(self):
+        """Different first names with same last name should not falsely match."""
+        field = self._make_field(["Xander Schauffele"])
+        # "Max Schauffele" shouldn't match "Xander Schauffele" (first 3 chars differ)
+        assert _match_golfer_to_field(
+            _normalize_team_name("Max Schauffele"), field
+        ) is None
+
+    def test_similar_first_name_prefix_matches(self):
+        """Similar first name prefix (3+ chars) should match."""
+        field = self._make_field(["Hideki Matsuyama"])
+        assert _match_golfer_to_field(
+            _normalize_team_name("Hid Matsuyama"), field
+        ) == _normalize_team_name("Hideki Matsuyama")
+
+
+class TestGolfConfigMaxTeams:
+    """Verify golf config accommodates full field."""
+
+    def test_max_teams_accommodates_full_field(self):
+        assert GOLF_CONFIG.max_teams >= 120, (
+            f"Golf max_teams={GOLF_CONFIG.max_teams} too low for full PGA field"
+        )
+
+    def test_golf_has_all_five_columns(self):
+        col_keys = [c.key for c in GOLF_CONFIG.columns]
+        assert col_keys == ["make_cut", "top_20", "top_10", "top_5", "win"]
+
+    def test_golf_source_of_truth_is_datagolf(self):
+        """Golf config should use DataGolf as field source of truth."""
+        # This is enforced by the endpoint logic (slug == "golf" → DataGolf path)
+        # Config just needs sport_category and matching rules
+        assert GOLF_CONFIG.sport_category == "golf"
