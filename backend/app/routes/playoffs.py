@@ -53,7 +53,19 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \b6th\s+man\b         |   # 6th man
     \bcoach\b             |   # Coach of the year
     \bvs\.?\s              |   # Game-level "Team A vs Team B"
-    \bat\b.*:                  # "Team A at Team B: Points"
+    \bat\b.*:             |   # "Team A at Team B: Points"
+    \bdraft\b             |   # Draft markets
+    \bdrafted\b           |   # "freshmen drafted"
+    \bfreshmen\b          |   # Draft props
+    \bupset\b             |   # "1+ upsets" props
+    \bseed\s+margin\b     |   # "Biggest Upset Seed Margin"
+    \bpick\b              |   # Draft pick markets
+    \ball[- ]star\b       |   # All-Star markets
+    \bhome[- ]?court\b    |   # Home court advantage
+    \bregular\s+season\b  |   # Regular season awards
+    \bseries\s+price\b    |   # Series pricing markets
+    \bexact\s+score\b     |   # Exact score props
+    \btotal\s+(?:goals|runs|points|games)\b  # Totals
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -358,15 +370,25 @@ async def get_playoff_grid(
     # -----------------------------------------------------------------------
 
     # Build sport key prefix conditions
+    from sqlalchemy import or_, and_
     sport_conditions = []
     for sk in config.sport_keys:
         sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
 
-    # Also match by llm_sport_category
-    from sqlalchemy import or_
+    # Also match by llm_sport_category, but only for championship/conference/division types
+    # This prevents win totals, props, and awards from leaking in
+    playoff_types = ("championship", "conference", "division")
+    category_condition = and_(
+        FuturesMarket.llm_sport_category == config.sport_category,
+        or_(
+            FuturesMarket.market_type.in_(playoff_types),
+            FuturesMarket.market_tier.in_([1, 2, 4]),  # championship, conference, division tiers
+        ),
+    )
+
     market_filter = or_(
         *sport_conditions,
-        FuturesMarket.llm_sport_category == config.sport_category,
+        category_condition,
     )
 
     stmt = (
