@@ -1275,6 +1275,20 @@ export interface ChampionshipGridTournament {
   current_round: number | null;
 }
 
+/** A single golf tour event (returned in events array for multi-tour golf) */
+export interface ChampionshipGridEvent {
+  tour: string;
+  tour_name: string;
+  tournament: ChampionshipGridTournament;
+  columns: ChampionshipGridColumn[];
+  teams: ChampionshipGridTeam[];
+  movers: ChampionshipGridMover[];
+  trend_chart: ChampionshipGridTrendChart;
+  team_count: number;
+  field_count: number;
+  sources_available: string[];
+}
+
 export interface ChampionshipGridResponse {
   league: string;
   name: string;
@@ -1291,6 +1305,8 @@ export interface ChampionshipGridResponse {
   tournament?: ChampionshipGridTournament | null;
   field_count?: number;
   source_of_truth?: string;
+  /** Multi-tour golf events */
+  events?: ChampionshipGridEvent[];
 }
 
 /** Probability timeline types (for TournamentChart) */

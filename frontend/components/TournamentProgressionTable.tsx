@@ -169,7 +169,7 @@ export default function TournamentProgressionTable({
         for (const s of sources) srcSet.add(s.source);
       }
     }
-    return [...srcSet].sort();
+    return Array.from(srcSet).sort();
   }, [data.participants]);
 
   const hasSources = uniqueSources.length > 1;

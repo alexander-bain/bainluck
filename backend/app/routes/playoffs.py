@@ -588,33 +588,105 @@ def _filter_kalshi_placement_noise(cells: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Tour display names
+_TOUR_LABELS: dict[str, str] = {
+    "pga": "PGA Tour",
+    "euro": "DP World Tour",
+    "kft": "Korn Ferry Tour",
+    "liv": "LIV Golf",
+    "alt": "LIV Golf",
+    "opp": "PGA Tour (Opposite)",
+}
+
+
 async def _build_golf_grid_from_datagolf(
     config: LeagueConfig,
     db: AsyncSession,
     trend_hours: int,
     top: int,
 ) -> dict | None:
-    """Build golf grid using DataGolf as the source of truth for the field.
+    """Build multi-tour golf grids using DataGolf as the source of truth.
 
-    DataGolf defines:
-    1. Which tournament is current (schedule)
-    2. Which golfers are in the field (field_updates / pre-tournament)
-    3. Model probabilities for each golfer (pre-tournament or in-play)
+    Fetches schedule + predictions from all supported DataGolf tours
+    (PGA, European, Korn Ferry, LIV, Opposite events) and returns
+    a response with an `events` array containing one grid per active event.
 
-    Kalshi, Polymarket, and Odds API odds are matched TO the DataGolf field.
+    Kalshi, Polymarket, and Odds API odds are overlaid when available.
     Returns None if DataGolf API is unavailable (falls back to normal flow).
     """
     if not os.getenv("DATAGOLF_API_KEY"):
         return None
 
-    from app.services.datagolf_api import DataGolfAPIService, normalize_player_name, strip_diacritics
+    from app.services.datagolf_api import DataGolfAPIService
 
     service = DataGolfAPIService()
     try:
-        # 1. Get schedule → find current tournament
-        schedule = await service.get_schedule(tour="pga")
+        # Build grids for all tours in parallel-ish fashion
+        tours = ["pga", "euro", "kft", "opp", "alt"]
+        events = []
+
+        for tour in tours:
+            event_grid = await _build_golf_tour_grid(
+                service, tour, config, db, trend_hours, top,
+            )
+            if event_grid:
+                events.append(event_grid)
+
+        if not events:
+            logger.info("Golf grid: no events found across any tour, falling back")
+            return None
+
+        # Primary event is the first one (PGA gets priority)
+        primary = events[0]
+
+        return {
+            "league": config.slug,
+            "name": primary.get("tour_name", config.name),
+            "season": config.season_pattern,
+            "tournament": primary.get("tournament"),
+            "columns": primary.get("columns", []),
+            "trend_chart": primary.get("trend_chart", {"timeline": [], "outcomes": []}),
+            "teams": primary.get("teams", []),
+            "grouped_teams": None,
+            "movers": primary.get("movers", []),
+            "team_count": primary.get("team_count", 0),
+            "field_count": primary.get("field_count", 0),
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "sources_available": primary.get("sources_available", []),
+            "source_of_truth": "datagolf",
+            # Multi-tour data
+            "events": events,
+        }
+
+    except Exception as e:
+        logger.error("Golf grid DataGolf error, falling back: %s", e)
+        return None
+    finally:
+        await service.close()
+
+
+async def _build_golf_tour_grid(
+    service,
+    tour: str,
+    config: LeagueConfig,
+    db: AsyncSession,
+    trend_hours: int,
+    top: int,
+) -> dict | None:
+    """Build a single tour's event grid from DataGolf data.
+
+    Returns a dict with tournament info, teams, movers, trend chart, etc.
+    Returns None if no current event or no players for this tour.
+    """
+    from app.services.datagolf_api import normalize_player_name, strip_diacritics
+
+    tour_label = _TOUR_LABELS.get(tour, tour.upper())
+
+    try:
+        # 1. Get schedule → find current/upcoming tournament
+        schedule = await service.get_schedule(tour=tour)
         if not schedule:
-            logger.info("Golf grid: no DataGolf schedule, falling back")
+            logger.debug("Golf grid [%s]: no schedule", tour)
             return None
 
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -628,40 +700,38 @@ async def _build_golf_grid_from_datagolf(
                 break
 
         if not current_event:
-            logger.info("Golf grid: no current DataGolf event, falling back")
+            logger.debug("Golf grid [%s]: no current event", tour)
             return None
 
         logger.info(
-            "Golf grid: DataGolf source of truth — %s (id=%s, %s)",
-            current_event.event_name, current_event.event_id, current_event.start_date,
+            "Golf grid [%s]: %s (id=%s, %s)",
+            tour, current_event.event_name, current_event.event_id,
+            current_event.start_date,
         )
 
-        # 2. Get DataGolf model predictions → canonical field + probabilities
-        # Fetch in-play for leaderboard positions (position, score, thru)
-        # AND pre-tournament for real model probabilities (win, top_5, etc.)
-        in_play_players = await service.get_in_play(tour="pga")
+        # 2. Get DataGolf model predictions
+        in_play_players = await service.get_in_play(tour=tour)
         is_live = bool(in_play_players)
-        pre_tournament_players = await service.get_pre_tournament(tour="pga")
+        pre_tournament_players = await service.get_pre_tournament(tour=tour)
 
-        # Use in-play as canonical field if available, else pre-tournament
         players = in_play_players or pre_tournament_players
         if not players:
-            logger.info("Golf grid: no DataGolf players, falling back")
+            logger.debug("Golf grid [%s]: no players", tour)
             return None
 
         logger.info(
-            "Golf grid: DataGolf field has %d golfers (in-play=%d, pre-tournament=%d)",
-            len(players), len(in_play_players), len(pre_tournament_players),
+            "Golf grid [%s]: %d golfers (in-play=%d, pre-tournament=%d)",
+            tour, len(players), len(in_play_players), len(pre_tournament_players),
         )
 
-        # Build pre-tournament probability lookup: norm_name → DataGolfPlayer
+        # Build pre-tournament probability lookup
         pre_tourney_lookup: dict[str, object] = {}
         for p in pre_tournament_players:
             pre_tourney_lookup[_normalize_team_name(p.player_name)] = p
 
-        # Build canonical golfer lookup: normalized_name → DataGolfPlayer
-        dg_field: dict[str, object] = {}  # norm_name → player
-        dg_display_names: dict[str, str] = {}  # norm_name → display name
+        # Build canonical golfer lookup
+        dg_field: dict[str, object] = {}
+        dg_display_names: dict[str, str] = {}
         for player in players:
             norm = _normalize_team_name(player.player_name)
             dg_field[norm] = player
@@ -910,9 +980,8 @@ async def _build_golf_grid_from_datagolf(
                 })
 
         return {
-            "league": config.slug,
-            "name": config.name,
-            "season": config.season_pattern,
+            "tour": tour,
+            "tour_name": tour_label,
             "tournament": {
                 "name": current_event.event_name,
                 "course": current_event.course,
@@ -926,20 +995,15 @@ async def _build_golf_grid_from_datagolf(
             "columns": active_columns,
             "trend_chart": trend_chart,
             "teams": teams,
-            "grouped_teams": None,
             "movers": movers,
             "team_count": len(teams),
             "field_count": len(dg_field),
-            "last_updated": datetime.now(timezone.utc).isoformat(),
             "sources_available": sorted(sources_seen),
-            "source_of_truth": "datagolf",
         }
 
     except Exception as e:
-        logger.error("Golf grid DataGolf error, falling back: %s", e)
+        logger.warning("Golf grid [%s] error: %s", tour, e)
         return None
-    finally:
-        await service.close()
 
 
 def _match_golfer_to_field(

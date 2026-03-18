@@ -170,7 +170,7 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
   // If no outcomes metadata, derive names from timeline data
   const derivedNames = outcomes.length
     ? outcomes.map((o) => o.name)
-    : [...new Set(chart.timeline.flatMap((e) => Object.keys(e.outcomes)))];
+    : Array.from(new Set(chart.timeline.flatMap((e) => Object.keys(e.outcomes))));
 
   if (!derivedNames.length) return null;
 
@@ -348,16 +348,22 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
 function GolfTournamentHeader({
   tournament,
   fieldCount,
+  tourName,
 }: {
   tournament: NonNullable<ChampionshipGridResponse["tournament"]>;
   fieldCount?: number;
+  tourName?: string;
 }) {
   const statusLabel = tournament.status === "live" ? "In Progress" : "Upcoming";
-  const statusColor = tournament.status === "live" ? "text-emerald-400" : "text-amber-400";
 
   return (
     <div className="mb-4 p-4 bg-surface-card rounded-xl border border-white/10">
       <div className="flex items-center gap-2 mb-1">
+        {tourName && (
+          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">
+            {tourName}
+          </span>
+        )}
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
           tournament.status === "live"
             ? "bg-emerald-500/20 text-emerald-400"
@@ -546,54 +552,97 @@ export default function PlayoffGridPage({
           <ErrorMessage message="Failed to load championship grid. Please try again." />
         )}
 
-        {/* Golf tournament header */}
-        {gridData?.tournament && (
-          <GolfTournamentHeader
-            tournament={gridData.tournament}
-            fieldCount={gridData.field_count}
-          />
+        {/* Multi-event golf rendering */}
+        {gridData?.events && gridData.events.length > 0 ? (
+          <>
+            {gridData.events.map((event, eventIdx) => {
+              const eventProgression = teamsToProgression(
+                event.columns,
+                event.teams,
+                "golf",
+                `${event.tour_name}: ${event.tournament.name}`,
+              );
+
+              return (
+                <div key={event.tour + eventIdx} className={eventIdx > 0 ? "mt-8" : ""}>
+                  {/* Tour + Tournament header */}
+                  <GolfTournamentHeader
+                    tournament={event.tournament}
+                    fieldCount={event.field_count}
+                    tourName={event.tour_name}
+                  />
+
+                  {/* Trend chart — only for primary event */}
+                  {eventIdx === 0 && event.trend_chart?.timeline?.length > 0 && (
+                    <TrendMiniChart chart={event.trend_chart} />
+                  )}
+
+                  {/* Movers */}
+                  {event.movers.length > 0 && <MoversSection movers={event.movers} />}
+
+                  {/* Grid */}
+                  {eventProgression.participants.length > 0 && (
+                    <TournamentProgressionTable
+                      data={eventProgression}
+                      showLogos={false}
+                      pageType="playoff_grid"
+                      className="bg-surface-card rounded-xl border border-white/10 p-4"
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </>
+        ) : (
+          <>
+            {/* Single-event rendering (non-golf sports) */}
+            {gridData?.tournament && (
+              <GolfTournamentHeader
+                tournament={gridData.tournament}
+                fieldCount={gridData.field_count}
+              />
+            )}
+
+            {gridData?.trend_chart && (
+              <TrendMiniChart chart={gridData.trend_chart} />
+            )}
+
+            {gridData?.movers && <MoversSection movers={gridData.movers} />}
+
+            {/* Empty state */}
+            {!isLoading && !gridError && sections && sections.every((s) => s.data.participants.length === 0) && (
+              <div className="text-center py-12">
+                <p className="text-text-secondary text-lg mb-2">
+                  No championship odds available yet
+                </p>
+                <p className="text-text-secondary/60 text-sm">
+                  Odds will appear when sportsbooks and prediction markets publish{" "}
+                  {league.label} championship markets.
+                </p>
+              </div>
+            )}
+
+            {/* Grid sections */}
+            {sections &&
+              sections.map((section, idx) => (
+                <div key={section.label || idx} className="mb-6">
+                  {section.label && sections.length > 1 && (
+                    <h2 className="text-base font-semibold text-text-primary mb-2">
+                      {section.label}
+                    </h2>
+                  )}
+                  {section.data.participants.length > 0 && (
+                    <TournamentProgressionTable
+                      data={section.data}
+                      showLogos
+                      pageType="playoff_grid"
+                      className="bg-surface-card rounded-xl border border-white/10 p-4"
+                    />
+                  )}
+                </div>
+              ))}
+          </>
         )}
-
-        {/* Trend chart */}
-        {gridData?.trend_chart && (
-          <TrendMiniChart chart={gridData.trend_chart} />
-        )}
-
-        {/* Movers */}
-        {gridData?.movers && <MoversSection movers={gridData.movers} />}
-
-        {/* Empty state */}
-        {!isLoading && !gridError && sections && sections.every((s) => s.data.participants.length === 0) && (
-          <div className="text-center py-12">
-            <p className="text-text-secondary text-lg mb-2">
-              No championship odds available yet
-            </p>
-            <p className="text-text-secondary/60 text-sm">
-              Odds will appear when sportsbooks and prediction markets publish{" "}
-              {league.label} championship markets.
-            </p>
-          </div>
-        )}
-
-        {/* Grid sections */}
-        {sections &&
-          sections.map((section, idx) => (
-            <div key={section.label || idx} className="mb-6">
-              {section.label && sections.length > 1 && (
-                <h2 className="text-base font-semibold text-text-primary mb-2">
-                  {section.label}
-                </h2>
-              )}
-              {section.data.participants.length > 0 && (
-                <TournamentProgressionTable
-                  data={section.data}
-                  showLogos
-                  pageType="playoff_grid"
-                  className="bg-surface-card rounded-xl border border-white/10 p-4"
-                />
-              )}
-            </div>
-          ))}
 
         {/* Footer */}
         {gridData && gridData.team_count > 0 && (
