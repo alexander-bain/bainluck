@@ -301,9 +301,18 @@ class DataGolfAPIService:
     # -- Internal parser ---------------------------------------------------
 
     def _parse_players(self, data: dict, in_play: bool = False) -> list[DataGolfPlayer]:
-        """Parse player data from prediction endpoints."""
+        """Parse player data from prediction endpoints.
+
+        The in-play endpoint uses "data" as the key for player entries.
+        The pre-tournament endpoint uses "baseline" (or "baseline_history_fit").
+        We try all known keys to find the player list.
+        """
         players = []
-        raw_players = data.get("data", [])
+        raw_players = (
+            data.get("data", [])
+            or data.get("baseline_history_fit", [])
+            or data.get("baseline", [])
+        )
 
         # Some endpoints use top-level event info
         event_round = data.get("current_round")
