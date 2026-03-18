@@ -467,10 +467,21 @@ async def _build_trend_chart(
             entry["outcomes"][name] = statistics.median(probs)
         timeline.append(entry)
 
+    # Build outcomes metadata (current probability = latest timeline entry)
+    outcomes_meta = []
+    if timeline:
+        latest = timeline[-1]["outcomes"]
+        for name, prob in sorted(latest.items(), key=lambda x: x[1], reverse=True):
+            outcomes_meta.append({
+                "name": name,
+                "current_probability": prob,
+            })
+
     return {
         "hours": hours,
         "bucket_seconds": bucket_seconds,
         "timeline": timeline,
+        "outcomes": outcomes_meta,
     }
 
 

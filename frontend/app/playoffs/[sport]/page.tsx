@@ -345,6 +345,22 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
 // Golf Tournament Header
 // ---------------------------------------------------------------------------
 
+function formatGolfDates(start?: string | null, end?: string | null): string | null {
+  if (!start) return null;
+  try {
+    const s = new Date(start + "T00:00:00");
+    const sStr = s.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    if (!end) return sStr;
+    const e = new Date(end + "T00:00:00");
+    const eStr = s.getMonth() === e.getMonth()
+      ? e.toLocaleDateString("en-US", { day: "numeric" })
+      : e.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return `${sStr}\u2013${eStr}`;
+  } catch {
+    return null;
+  }
+}
+
 function GolfTournamentHeader({
   tournament,
   fieldCount,
@@ -355,6 +371,7 @@ function GolfTournamentHeader({
   tourName?: string;
 }) {
   const statusLabel = tournament.status === "live" ? "In Progress" : "Upcoming";
+  const dateStr = formatGolfDates(tournament.start_date, tournament.end_date);
 
   return (
     <div className="mb-4 p-4 bg-surface-card rounded-xl border border-white/10">
@@ -372,10 +389,15 @@ function GolfTournamentHeader({
           {statusLabel}
           {tournament.current_round && ` \u00B7 Round ${tournament.current_round}`}
         </span>
+        {dateStr && (
+          <span className="text-xs text-text-secondary/60">{dateStr}</span>
+        )}
       </div>
       <h2 className="text-lg font-semibold text-text-primary">{tournament.name}</h2>
       <p className="text-sm text-text-secondary">
-        {tournament.course} &middot; {tournament.location}
+        {[tournament.course, tournament.location, tournament.country]
+          .filter(Boolean)
+          .join(" \u00B7 ")}
       </p>
       {fieldCount && (
         <p className="text-xs text-text-secondary/60 mt-1">
@@ -572,8 +594,11 @@ export default function PlayoffGridPage({
                     tourName={event.tour_name}
                   />
 
-                  {/* Trend chart — only for primary event */}
-                  {eventIdx === 0 && event.trend_chart?.timeline?.length > 0 && (
+                  {/* Trend chart — only for primary event, needs 3+ outcomes and 3+ timeline entries */}
+                  {eventIdx === 0 &&
+                    event.trend_chart?.timeline?.length >= 3 &&
+                    (event.trend_chart.outcomes?.length >= 3 ||
+                      Object.keys(event.trend_chart.timeline[0]?.outcomes ?? {}).length >= 3) && (
                     <TrendMiniChart chart={event.trend_chart} />
                   )}
 
