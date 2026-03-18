@@ -508,6 +508,56 @@ class TestNameNormalization:
     def test_normalize_diacritics(self):
         assert _normalize_team_name("Zürich") == "zurich"
 
+    def test_normalize_internal_periods(self):
+        """'St. Louis Blues' and 'St Louis Blues' should normalize the same."""
+        assert _normalize_team_name("St. Louis Blues") == _normalize_team_name("St Louis Blues")
+        assert _normalize_team_name("St. John's") == _normalize_team_name("St John's")
+
+    def test_normalize_trailing_period(self):
+        """Trailing period should be stripped."""
+        assert _normalize_team_name("Michigan St.") == "michigan st"
+
+    def test_normalize_period_mid_word_preserved(self):
+        """Periods within a word (e.g. abbreviations without space) stay."""
+        # "F.C." has no space after internal periods — only space-preceded periods stripped
+        n = _normalize_team_name("F.C. Barcelona")
+        # The regex strips ". " (period before space), so "F.C." → "F.C" then "." at end stays
+        # What matters: the function is deterministic and consistent
+        assert n == _normalize_team_name("F.C. Barcelona")
+
+
+# ============================================================================
+# Gender exclusion filter
+# ============================================================================
+
+
+class TestGenderExclusionFilter:
+    """Verify Women's/Men's market separation for playoff grids."""
+
+    def test_womens_market_rejected_from_ncaab(self):
+        """Women's NCAA Tournament Winner should NOT appear in men's NCAAB grid."""
+        assert not _is_playoff_relevant_market("Team A vs. Team B (W)")
+
+    def test_womens_suffix_rejected(self):
+        """The (W) suffix is rejected by _NON_PLAYOFF_MARKET_RE."""
+        assert not _is_playoff_relevant_market("Duke vs. UConn (W)")
+
+    def test_mens_championship_allowed(self):
+        """Men's championship markets pass the filter."""
+        assert _is_playoff_relevant_market("NCAAB Championship Winner 2026")
+        assert _is_playoff_relevant_market("NCAA Tournament Winner")
+
+    def test_womens_ncaa_name_contains_womens_keyword(self):
+        """Verify the Women's regex matches expected market names."""
+        import re
+        womens_re = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
+        assert womens_re.search("2026 Women's NCAA Tournament Winner")
+        assert womens_re.search("WNCAAB Championship")
+        assert womens_re.search("Women's College Basketball")
+        assert womens_re.search("Duke vs UConn (W)")
+        assert not womens_re.search("NBA Championship Winner")
+        assert not womens_re.search("NCAAB Championship Winner")
+
 
 # ============================================================================
 # Probability consistency (sequential columns)

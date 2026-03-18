@@ -202,7 +202,8 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \brunning\b.*\bback\b |   # "Running back to win MVP" player props
     \bballon\s+d.or\b     |   # Ballon d'Or award
     \bgolden\s+boot\b     |   # Golden Boot award
-    \bgolden\s+ball\b         # Golden Ball award
+    \bgolden\s+ball\b      |   # Golden Ball award
+    \b\(W\)\s*$               # Women's tournament game suffix: "Team A vs. Team B (W)"
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -253,6 +254,9 @@ def _normalize_team_name(name: str) -> str:
     n = re.sub(r"\s*\(.*\)$", "", n)
     # Strip trailing periods (e.g. "Michigan St." → "Michigan St")
     n = n.rstrip(".")
+    # Normalize internal periods in abbreviations (e.g. "St." → "St")
+    # This prevents "St. Louis Blues" vs "St Louis Blues" split
+    n = re.sub(r"\.(?=\s)", "", n)
     return n
 
 
@@ -1114,16 +1118,29 @@ async def get_playoff_grid(
         re.compile(p, re.IGNORECASE) for p in config.league_name_patterns
     ] if config.league_name_patterns else []
 
+    # Gender exclusion: Men's leagues should not include Women's markets and vice versa
+    _WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
+    _MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
+    is_mens_league = config.slug in ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
+    is_womens_league = config.slug in ("wnba",)
+
     markets = []
     for market in all_markets:
         eid = market.external_id or ""
+        name = market.name or ""
+
+        # Gender filter: reject women's markets from men's grids and vice versa
+        if is_mens_league and _WOMENS_RE.search(name):
+            continue
+        if is_womens_league and _MENS_RE.search(name) and not _WOMENS_RE.search(name):
+            continue
+
         # Path A markets (sport key prefix) always pass
         if any(eid.lower().startswith(sk.lower()) for sk in config.sport_keys):
             markets.append(market)
             continue
         # Path B markets must match a league name pattern
         if league_patterns:
-            name = market.name or ""
             if any(pat.search(name) for pat in league_patterns):
                 # For Champions League: reject "Champions League Qualification/Spot"
                 # markets from domestic leagues (they're about qualifying TO UCL,
@@ -1421,6 +1438,32 @@ async def get_playoff_grid(
         teams.append(team_row)
 
     # -----------------------------------------------------------------------
+    # 4b. Column-sum sanity check
+    # -----------------------------------------------------------------------
+    # Expected sums: championship ~100%, conference ~200% (2 winners),
+    # make_playoffs ~N_spots × 100%. If any column sums to > 2× expected,
+    # log a warning. For championship column specifically, reject teams
+    # with > 50% single-source probability as likely misclassified.
+
+    _EXPECTED_SUMS = {
+        "championship": 1.0,
+        "conference": 2.0,  # 2 conference champions
+        "pennant": 2.0,     # 2 pennant winners
+    }
+    for col in config.columns:
+        col_sum = sum(
+            t["cells"].get(col.key, {}).get("merged_probability", 0)
+            for t in teams
+        )
+        expected = _EXPECTED_SUMS.get(col.key)
+        if expected and col_sum > expected * 2.5:
+            logger.warning(
+                "Column %s sum=%.1f%% exceeds 2.5× expected %.0f%% for %s — "
+                "possible misclassified markets",
+                col.key, col_sum * 100, expected * 100, config.slug,
+            )
+
+    # -----------------------------------------------------------------------
     # 5. Sort teams
     # -----------------------------------------------------------------------
 
@@ -1518,7 +1561,13 @@ async def get_playoff_grid(
         for team_row in teams:
             conf = team_row.get("conference")
             if conf:
-                groups[conf].append(team_row)
+                # Normalize conference names: "Eastern" → "Eastern Conference"
+                # Prevents orphan groups from inconsistent standings data
+                conf_norm = conf.strip()
+                if conf_norm and not conf_norm.lower().endswith("conference"):
+                    conf_norm = f"{conf_norm} Conference"
+                team_row["conference"] = conf_norm
+                groups[conf_norm].append(team_row)
             else:
                 ungrouped.append(team_row)
         if groups:

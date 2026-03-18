@@ -66,6 +66,7 @@ function ChangeIndicator({ change }: { change: number | null | undefined }) {
     >
       {isPositive ? "▲" : "▼"}
       {Math.abs(pct) >= 1 ? Math.round(Math.abs(pct)) : Math.abs(pct).toFixed(1)}
+      <span className="text-[8px] opacity-60 ml-px">24h</span>
     </span>
   );
 }
