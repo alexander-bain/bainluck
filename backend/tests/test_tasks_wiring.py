@@ -157,7 +157,7 @@ class TestBeatScheduleCompleteness:
         "discover-new-events",
         "compute-gei-batch",
         "compute-gei-percentiles-hourly",
-        "poll-futures-hourly",
+        "poll-futures-every-2h",
         "poll-kalshi-hourly",
         "poll-polymarket-hourly",
         "enrich-events-hourly",

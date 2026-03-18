@@ -617,9 +617,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.compute_gei_percentiles",
         "schedule": crontab(minute=5),
     },
-    "poll-futures-hourly": {
+    "poll-futures-every-2h": {
         "task": "app.tasks.poll_futures_odds",
-        "schedule": crontab(minute=30),
+        "schedule": crontab(minute=30, hour="*/2"),  # Every 2 hours — futures change slowly, saves ~50% quota
     },
     "poll-kalshi-hourly": {
         "task": "app.tasks.poll_kalshi_markets",

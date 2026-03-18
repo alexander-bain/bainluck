@@ -18,6 +18,10 @@ from app.tasks.config import (
     LIVE_POLL_INTERVAL,
     SOON_POLL_INTERVAL,
     LATER_POLL_INTERVAL,
+    MEDIUM_POLL_INTERVAL,
+    SLOW_POLL_INTERVAL,
+    MEDIUM_THRESHOLD,
+    SLOW_THRESHOLD,
     ODDS_STALE_MINUTES,
     MIN_HOURS_BEFORE_STALENESS_CHECK,
     SPORT_MAX_DURATIONS,
@@ -478,18 +482,33 @@ async def _poll_all_odds():
 
                 # Determine poll interval for this sport
                 if is_live or (soonest_game and soonest_game <= now):
-                    # Live game - poll every 60 seconds
+                    # Live game - poll every 32 seconds
                     poll_interval = LIVE_POLL_INTERVAL
                     tier = "live"
                     has_live_games = True
                 elif soonest_game and soonest_game <= now + timedelta(hours=2):
-                    # Starting soon (0-2 hours) - poll every 5 minutes
+                    # Starting soon (0-2 hours) - poll every 60 seconds
                     poll_interval = SOON_POLL_INTERVAL
                     tier = "soon"
                 else:
-                    # Starting later (2-6 hours) - poll every 15 minutes
+                    # Starting later (2-6 hours) - poll every 120 seconds
                     poll_interval = LATER_POLL_INTERVAL
                     tier = "later"
+
+                # Adaptive slowdown: when odds haven't changed for a sport,
+                # gradually increase the interval to conserve API quota.
+                # Only applies to non-live tiers (live games always poll fast).
+                if tier != "live" and r:
+                    try:
+                        unchanged_key = f"bainluck:unchanged_count:{sport_key}"
+                        unchanged_raw = r.get(unchanged_key)
+                        unchanged_count = int(unchanged_raw.decode()) if unchanged_raw else 0
+                        if unchanged_count >= SLOW_THRESHOLD:
+                            poll_interval = max(poll_interval, SLOW_POLL_INTERVAL)
+                        elif unchanged_count >= MEDIUM_THRESHOLD:
+                            poll_interval = max(poll_interval, MEDIUM_POLL_INTERVAL)
+                    except Exception:
+                        pass
 
                 # Check if enough time has elapsed since last poll for this sport
                 should_poll_sport = True
@@ -510,8 +529,26 @@ async def _poll_all_odds():
                 if not should_poll_sport:
                     continue
 
+                # Quota optimization: use lighter API params for non-live tiers.
+                # - "later" tier: h2h only (saves 2/3 of billed requests per event)
+                # - "soon"/"later" tiers: primary US bookmakers only (saves 1/2)
+                # - "live" tier: full params for maximum coverage
+                if tier == "live":
+                    api_markets = "h2h,spreads,totals"
+                    api_regions = "us,us2"
+                elif tier == "soon":
+                    api_markets = "h2h,spreads,totals"
+                    api_regions = "us"
+                else:  # "later"
+                    api_markets = "h2h"
+                    api_regions = "us"
+
                 try:
-                    events_data = await service.get_odds(sport_key)
+                    events_data = await service.get_odds(
+                        sport_key,
+                        regions=api_regions,
+                        markets=api_markets,
+                    )
                     all_events_data.extend(events_data)
                     sports_polled += 1
 
@@ -524,11 +561,29 @@ async def _poll_all_odds():
                             "poll_odds",
                         )
 
-                    # Update last poll time in Redis
+                    # Update last poll time and per-sport adaptive state in Redis
                     if r:
                         try:
                             last_poll_key = f"bainluck:last_poll:{sport_key}"
                             r.set(last_poll_key, str(now.timestamp()), ex=3600)
+
+                            # Per-sport adaptive slowdown: track unchanged polls.
+                            # Hash only the odds for this sport to detect per-sport changes.
+                            sport_hash = compute_odds_hash(events_data)
+                            prev_sport_hash_key = f"bainluck:odds_hash:{sport_key}"
+                            unchanged_key = f"bainluck:unchanged_count:{sport_key}"
+                            prev_sport_hash = r.get(prev_sport_hash_key)
+                            prev_sport_hash = prev_sport_hash.decode() if prev_sport_hash else None
+
+                            if prev_sport_hash and prev_sport_hash == sport_hash:
+                                # Odds unchanged — increment counter
+                                r.incr(unchanged_key)
+                            else:
+                                # Odds changed — reset counter
+                                r.set(unchanged_key, "0", ex=7200)
+
+                            r.set(prev_sport_hash_key, sport_hash, ex=7200)
+                            r.expire(unchanged_key, 7200)
                         except Exception:
                             pass
 
