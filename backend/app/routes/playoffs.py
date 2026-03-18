@@ -714,9 +714,28 @@ async def _build_golf_tour_grid(
         )
 
         # 2. Get DataGolf model predictions
-        in_play_players = await service.get_in_play(tour=tour)
-        is_live = bool(in_play_players)
+        in_play_players, in_play_info = await service.get_in_play_with_info(tour=tour)
         pre_tournament_players = await service.get_pre_tournament(tour=tour)
+
+        # Detect stale in-play data: if in-play returns a DIFFERENT event
+        # than the schedule says is current, discard it. This happens when
+        # last week's event just finished and in-play hasn't cleared yet.
+        if in_play_players and in_play_info:
+            in_play_event = in_play_info.get("event_name", "")
+            schedule_event = current_event.event_name
+            if in_play_event and schedule_event:
+                # Simple containment check (names may not match exactly)
+                ip_lower = in_play_event.lower().strip()
+                sched_lower = schedule_event.lower().strip()
+                if ip_lower not in sched_lower and sched_lower not in ip_lower:
+                    logger.warning(
+                        "Golf grid [%s]: in-play event '%s' differs from schedule "
+                        "event '%s' — discarding stale in-play data",
+                        tour, in_play_event, schedule_event,
+                    )
+                    in_play_players = []
+
+        is_live = bool(in_play_players)
 
         players = in_play_players or pre_tournament_players
         if not players:
@@ -839,33 +858,31 @@ async def _build_golf_tour_grid(
         col_map = {"win": "win", "top_5": "top_5", "top_10": "top_10",
                     "top_20": "top_20", "make_cut": "make_cut"}
 
-        # Log sample player data for diagnostics
-        if players:
-            sample = players[0]
-            logger.info(
-                "Golf grid [%s]: sample in-play player %s: win=%s top_5=%s "
-                "top_10=%s top_20=%s make_cut=%s",
-                tour, sample.player_name,
-                sample.win, sample.top_5, sample.top_10,
-                sample.top_20, sample.make_cut,
-            )
-
         for norm_name in dg_field:
-            # Use in-play probabilities directly — they're the live model predictions.
-            # Only fall back to pre-tournament if in-play player is missing.
             player = dg_field[norm_name]
             pre_player = pre_tourney_lookup.get(norm_name)
 
             for dg_key, col_key in col_map.items():
-                # Try in-play first (live model predictions)
+                # Try in-play first, fall back to pre-tournament
                 prob = getattr(player, dg_key, None)
-                # Fall back to pre-tournament if in-play value is None or binary
-                if prob is None or prob <= 0.0 or prob >= 1.0:
-                    if pre_player:
-                        prob = getattr(pre_player, dg_key, None)
-                # Final filter: skip if still None, zero, or binary 1.0
-                if prob is None or prob <= 0.0 or prob >= 1.0:
+                if prob is None and pre_player:
+                    prob = getattr(pre_player, dg_key, None)
+
+                if prob is None:
                     continue
+
+                # During live tournaments, 0.0 = eliminated, 1.0 = clinched
+                # These are meaningful. During pre-tournament, values should
+                # be real probabilities (0 < p < 1), so 0.0/1.0 are noise.
+                if is_live:
+                    # Include 0.0 (eliminated) but skip negative
+                    if prob < 0.0:
+                        continue
+                else:
+                    # Pre-tournament: skip non-meaningful values
+                    if prob <= 0.0 or prob >= 1.0:
+                        continue
+
                 grid_raw[col_key][norm_name].append({
                     "source": "datagolf",
                     "probability": prob,

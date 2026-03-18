@@ -171,6 +171,22 @@ class DataGolfAPIService:
 
         return self._parse_players(data, in_play=True)
 
+    async def get_in_play_with_info(self, tour: str = "pga") -> tuple[list["DataGolfPlayer"], dict]:
+        """Like get_in_play but also returns event info dict.
+
+        Returns (players, info_dict). info_dict has keys like
+        'event_name', 'current_round', 'last_update'.
+        """
+        try:
+            data = await self._get("preds/in-play", {"tour": tour})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return [], {}
+            raise
+
+        info = data.get("info", {})
+        return self._parse_players(data, in_play=True), info
+
     # -- Pre-tournament predictions ----------------------------------------
 
     async def get_pre_tournament(self, tour: str = "pga") -> list[DataGolfPlayer]:
