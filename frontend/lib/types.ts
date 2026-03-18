@@ -1309,6 +1309,32 @@ export interface ChampionshipGridResponse {
   events?: ChampionshipGridEvent[];
 }
 
+/** Golf schedule types */
+export interface GolfScheduleEvent {
+  event_id: string;
+  name: string;
+  course: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  location: string | null;
+  country: string | null;
+  status: "current" | "upcoming" | "completed" | string;
+  current_round: number | null;
+  is_current: boolean;
+}
+
+export interface GolfScheduleTour {
+  tour: string;
+  tour_name: string;
+  events: GolfScheduleEvent[];
+  current_event_id: string | null;
+}
+
+export interface GolfScheduleResponse {
+  tours: GolfScheduleTour[];
+  last_updated: string;
+}
+
 /** Probability timeline types (for TournamentChart) */
 export interface TimelineOutcomeMeta {
   id: number | null;

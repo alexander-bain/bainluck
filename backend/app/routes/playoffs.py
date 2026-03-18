@@ -1209,6 +1209,96 @@ def _match_golfer_to_field(
 
 
 # ---------------------------------------------------------------------------
+# Golf schedule endpoint (must be before /{league_slug} catch-all)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/golf/schedule")
+async def get_golf_schedule():
+    """Return golf season schedule from DataGolf across all tours.
+
+    Returns tournaments grouped by tour with status indicators
+    for current/upcoming/completed events.
+    """
+    if not os.getenv("DATAGOLF_API_KEY"):
+        raise HTTPException(status_code=503, detail="DataGolf API not configured")
+
+    from app.services.datagolf_api import DataGolfAPIService
+
+    service = DataGolfAPIService()
+    try:
+        tours = ["pga", "euro", "kft", "opp", "alt"]
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        tour_schedules = []
+        for tour in tours:
+            try:
+                schedule = await service.get_schedule(tour=tour)
+            except Exception as e:
+                logger.warning("Golf schedule [%s]: error: %s", tour, e)
+                continue
+
+            if not schedule:
+                continue
+
+            tour_label = _TOUR_LABELS.get(tour, tour.upper())
+
+            # Find current event for this tour
+            current_event_id = None
+            for t in schedule:
+                if t.status and t.status != "completed":
+                    current_event_id = t.event_id
+                    break
+                if t.end_date and t.end_date >= now_str:
+                    current_event_id = t.event_id
+                    break
+
+            events = []
+            for t in schedule:
+                is_current = t.event_id == current_event_id
+                # Determine display status
+                if t.status == "completed":
+                    display_status = "completed"
+                elif is_current:
+                    display_status = "current"
+                elif t.start_date and t.start_date > now_str:
+                    display_status = "upcoming"
+                else:
+                    display_status = t.status or "unknown"
+
+                events.append({
+                    "event_id": t.event_id,
+                    "name": t.event_name,
+                    "course": t.course,
+                    "start_date": t.start_date,
+                    "end_date": t.end_date,
+                    "location": t.location,
+                    "country": t.country,
+                    "status": display_status,
+                    "current_round": t.current_round,
+                    "is_current": is_current,
+                })
+
+            tour_schedules.append({
+                "tour": tour,
+                "tour_name": tour_label,
+                "events": events,
+                "current_event_id": current_event_id,
+            })
+
+        return {
+            "tours": tour_schedules,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+    except Exception as e:
+        logger.error("Golf schedule error: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch golf schedule")
+    finally:
+        await service.close()
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 

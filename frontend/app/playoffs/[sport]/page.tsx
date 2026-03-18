@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { fetchChampionshipGrid } from "@/lib/api";
+import { fetchChampionshipGrid, fetchGolfSchedule } from "@/lib/api";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -18,6 +18,8 @@ import type {
   ProgressionResponse,
   ProgressionStage,
   ProgressionParticipant,
+  GolfScheduleResponse,
+  GolfScheduleEvent,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -409,6 +411,135 @@ function GolfTournamentHeader({
 }
 
 // ---------------------------------------------------------------------------
+// Golf Schedule Section
+// ---------------------------------------------------------------------------
+
+function GolfScheduleSection({ schedule }: { schedule: GolfScheduleResponse }) {
+  const [selectedTour, setSelectedTour] = useState<string>("pga");
+
+  const tours = schedule.tours.filter((t) => t.events.length > 0);
+  const activeTour = tours.find((t) => t.tour === selectedTour) || tours[0];
+  if (!activeTour) return null;
+
+  // Split events into recent/current/upcoming
+  const currentEvent = activeTour.events.find((e) => e.is_current);
+  const upcomingEvents = activeTour.events.filter(
+    (e) => e.status === "upcoming" && !e.is_current
+  );
+  const completedEvents = activeTour.events
+    .filter((e) => e.status === "completed")
+    .reverse(); // Most recent first
+
+  return (
+    <div className="mb-6">
+      {/* Tour tabs */}
+      <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-hide">
+        {tours.map((t) => {
+          const hasCurrent = t.events.some((e) => e.is_current);
+          return (
+            <button
+              key={t.tour}
+              onClick={() => setSelectedTour(t.tour)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                t.tour === (activeTour?.tour || "pga")
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                  : "bg-surface-card text-text-secondary border border-white/10 hover:border-white/20"
+              }`}
+            >
+              {t.tour_name}
+              {hasCurrent && (
+                <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Current event highlight */}
+      {currentEvent && (
+        <div className="mb-3 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 uppercase tracking-wider">
+              This Week
+            </span>
+            {currentEvent.current_round && (
+              <span className="text-[10px] text-emerald-400/70">
+                Round {currentEvent.current_round}
+              </span>
+            )}
+          </div>
+          <div className="font-semibold text-text-primary">{currentEvent.name}</div>
+          <div className="text-xs text-text-secondary">
+            {[currentEvent.course, currentEvent.location]
+              .filter(Boolean)
+              .join(" · ")}
+            {currentEvent.start_date && (
+              <span className="ml-2 text-text-secondary/50">
+                {formatGolfDates(currentEvent.start_date, currentEvent.end_date)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Upcoming schedule — compact list */}
+      {upcomingEvents.length > 0 && (
+        <div className="mb-2">
+          <h3 className="text-[10px] font-medium text-text-secondary/50 uppercase tracking-wider mb-1.5">
+            Upcoming
+          </h3>
+          <div className="grid gap-1">
+            {upcomingEvents.slice(0, 6).map((event) => (
+              <div
+                key={event.event_id}
+                className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-surface-card/50 border border-white/5 text-sm"
+              >
+                <span className="text-text-primary truncate mr-2">{event.name}</span>
+                <span className="text-xs text-text-secondary/50 whitespace-nowrap font-mono">
+                  {event.start_date
+                    ? formatGolfDates(event.start_date, event.end_date)
+                    : "TBD"}
+                </span>
+              </div>
+            ))}
+            {upcomingEvents.length > 6 && (
+              <p className="text-[10px] text-text-secondary/40 text-center mt-1">
+                +{upcomingEvents.length - 6} more events
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Recent results — collapsible */}
+      {completedEvents.length > 0 && (
+        <details className="group">
+          <summary className="text-[10px] font-medium text-text-secondary/50 uppercase tracking-wider cursor-pointer hover:text-text-secondary/70 transition-colors list-none flex items-center gap-1">
+            <span className="text-text-secondary/30 group-open:rotate-90 transition-transform">▶</span>
+            Recent Results ({completedEvents.length})
+          </summary>
+          <div className="grid gap-1 mt-1.5">
+            {completedEvents.slice(0, 5).map((event) => (
+              <div
+                key={event.event_id}
+                className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-surface-card/30 border border-white/5 text-sm opacity-60"
+              >
+                <span className="text-text-secondary truncate mr-2">{event.name}</span>
+                <span className="text-xs text-text-secondary/40 whitespace-nowrap font-mono">
+                  {event.start_date
+                    ? formatGolfDates(event.start_date, event.end_date)
+                    : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page Component
 // ---------------------------------------------------------------------------
 
@@ -420,7 +551,9 @@ export default function PlayoffGridPage({
   const slug = params.sport.toLowerCase();
   const league = LEAGUE_MAP[slug];
   const displayName = league
-    ? `${league.label} Championship Grid`
+    ? slug === "golf"
+      ? "Golf Tournament Odds"
+      : `${league.label} Championship Grid`
     : `${slug} Championship Grid`;
 
   usePageTracking({ pageType: "playoff_grid", pageTitle: `${displayName} - Bain Luck` });
@@ -429,6 +562,7 @@ export default function PlayoffGridPage({
 
   const [conferenceFilter, setConferenceFilter] = useState<string | null>(null);
 
+  // Fetch grid data
   const {
     data: gridData,
     error: gridError,
@@ -437,6 +571,13 @@ export default function PlayoffGridPage({
     ["championship-grid", slug],
     () => fetchChampionshipGrid(slug),
     { refreshInterval: 60000 }
+  );
+
+  // Fetch golf schedule (only for golf)
+  const { data: golfSchedule } = useSWR(
+    slug === "golf" ? "golf-schedule" : null,
+    () => fetchGolfSchedule(),
+    { refreshInterval: 300000 } // 5 min
   );
 
   // Build progression tables — either grouped by conference or flat
@@ -519,6 +660,11 @@ export default function PlayoffGridPage({
         {/* League tabs */}
         <LeagueTabs currentSlug={slug} />
 
+        {/* Golf schedule section */}
+        {slug === "golf" && golfSchedule && (
+          <GolfScheduleSection schedule={golfSchedule} />
+        )}
+
         {/* Source badges + conference filter */}
         {gridData && (
           <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -597,7 +743,7 @@ export default function PlayoffGridPage({
                   {/* Trend chart — only for primary event, needs 3+ outcomes and 3+ timeline entries */}
                   {eventIdx === 0 &&
                     event.trend_chart?.timeline?.length >= 3 &&
-                    (event.trend_chart.outcomes?.length >= 3 ||
+                    ((event.trend_chart.outcomes?.length ?? 0) >= 3 ||
                       Object.keys(event.trend_chart.timeline[0]?.outcomes ?? {}).length >= 3) && (
                     <TrendMiniChart chart={event.trend_chart} />
                   )}

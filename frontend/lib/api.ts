@@ -37,6 +37,7 @@ import type {
   FuturesGroupsListResponse,
   GroupedFeedResponse,
   ChampionshipGridResponse,
+  GolfScheduleResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -1064,6 +1065,13 @@ export async function fetchChampionshipGrid(
   return apiFetch<ChampionshipGridResponse>(
     `/api/playoffs/${leagueSlug}${query ? `?${query}` : ""}`
   );
+}
+
+/**
+ * Fetch golf season schedule from DataGolf across all tours.
+ */
+export async function fetchGolfSchedule(): Promise<GolfScheduleResponse> {
+  return apiFetch<GolfScheduleResponse>("/api/playoffs/golf/schedule");
 }
 
 /**
