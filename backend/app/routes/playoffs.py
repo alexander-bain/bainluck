@@ -542,70 +542,45 @@ async def _get_team_metadata(
 
 
 # ---------------------------------------------------------------------------
-# Golf column consistency fix
+# Golf Kalshi noise filter
 # ---------------------------------------------------------------------------
 
-# Column ordering from most inclusive to least inclusive.
-# Each column's probability must be ≥ the next column's probability.
-_GOLF_COLUMN_ORDER = ["make_cut", "top_20", "top_10", "top_5", "win"]
+# Placement columns where Kalshi's binary market prices are often noise.
+_GOLF_PLACEMENT_COLS = {"make_cut", "top_20", "top_10", "top_5"}
 
 
-def _fix_golf_column_consistency(cells: dict, columns: list) -> None:
-    """Fix inverted Kalshi probabilities using cross-column logical consistency.
+def _filter_kalshi_placement_noise(cells: dict) -> None:
+    """Filter out Kalshi price floor/ceiling noise from golf placement columns.
 
-    For golf: P(make_cut) ≥ P(top_20) ≥ P(top_10) ≥ P(top_5) ≥ P(win).
-    When a Kalshi-sourced value violates this ordering, it's the "No" price
-    from a binary market. Invert it (1-p) and recompute the merged value.
+    Kalshi binary golf markets (e.g., "Will X finish Top 20?") are often
+    illiquid, with prices stuck at 0.005 (floor) or 0.995 (ceiling).
+    These aren't real probabilities — they're just the min/max prices
+    on an empty order book.
+
+    For placement columns: remove Kalshi values ≤ 0.02 or ≥ 0.98.
+    For the "win" column: keep all values (low win odds can be legitimate).
     """
-    col_keys = [c.key if hasattr(c, "key") else c for c in columns]
-    ordered = [k for k in _GOLF_COLUMN_ORDER if k in col_keys]
-    if len(ordered) < 2:
-        return
+    for col_key in _GOLF_PLACEMENT_COLS:
+        cell = cells.get(col_key)
+        if not cell:
+            continue
+        sources = cell.get("sources", [])
+        if len(sources) <= 1:
+            # Only one source — even if it's noise, it's all we have.
+            # But if it's a Kalshi floor/ceiling value alone, remove the cell entirely.
+            if (sources and sources[0]["source"] == "kalshi"
+                    and (sources[0]["probability"] <= 0.02 or sources[0]["probability"] >= 0.98)):
+                del cells[col_key]
+            continue
 
-    # Get the merged probability for each column that has data
-    merged_vals: dict[str, float] = {}
-    for key in ordered:
-        cell = cells.get(key)
-        if cell:
-            merged_vals[key] = cell["merged_probability"]
-
-    if len(merged_vals) < 2:
-        return
-
-    # Check each pair: more_inclusive should have ≥ probability than less_inclusive.
-    # When violation detected, try inverting Kalshi sources in the offending cell.
-    changed = True
-    passes = 0
-    while changed and passes < 3:
-        changed = False
-        passes += 1
-        for i in range(len(ordered) - 1):
-            more_inclusive = ordered[i]
-            less_inclusive = ordered[i + 1]
-            cell_more = cells.get(more_inclusive)
-            cell_less = cells.get(less_inclusive)
-            if not cell_more or not cell_less:
-                continue
-
-            p_more = cell_more["merged_probability"]
-            p_less = cell_less["merged_probability"]
-
-            if p_more < p_less:
-                # Violation! The more inclusive column is lower.
-                # Try inverting Kalshi sources in the lower cell.
-                fixed = False
-                for src in cell_more.get("sources", []):
-                    if src["source"] in ("kalshi", "polymarket") and src["probability"] < 0.1:
-                        # This low value in a more inclusive column is likely the "No" price
-                        inverted = round(1.0 - src["probability"], 4)
-                        src["probability"] = inverted
-                        fixed = True
-
-                if fixed:
-                    # Recompute merged
-                    probs = [s["probability"] for s in cell_more["sources"]]
-                    cell_more["merged_probability"] = round(statistics.median(probs), 4)
-                    changed = True
+        # Multiple sources: filter out Kalshi floor/ceiling values
+        filtered = [s for s in sources
+                    if s["source"] != "kalshi"
+                    or (0.02 < s["probability"] < 0.98)]
+        if filtered and len(filtered) < len(sources):
+            cell["sources"] = filtered
+            probs = [s["probability"] for s in filtered]
+            cell["merged_probability"] = round(statistics.median(probs), 4)
 
 
 # ---------------------------------------------------------------------------
@@ -749,18 +724,31 @@ async def _build_golf_grid_from_datagolf(
                 outcome_id_to_name[outcome.id] = oname
 
         # 5. Add DataGolf model probabilities
+        # IMPORTANT: DataGolf's in-play endpoint returns binary 0/1 values
+        # representing CURRENT standings status, not finish probabilities.
+        # A golfer at T22 gets top_20=0.0, make_cut=1.0 — these are facts
+        # about current position, not predictions. We only add values that
+        # are genuinely probabilistic (strictly between 0 and 1).
+        # Pre-tournament values ARE real probabilities (e.g., 0.35 win).
         col_map = {"win": "win", "top_5": "top_5", "top_10": "top_10",
                     "top_20": "top_20", "make_cut": "make_cut"}
         for norm_name, player in dg_field.items():
             for dg_key, col_key in col_map.items():
                 prob = getattr(player, dg_key, None)
-                if prob and prob > 0:
-                    grid_raw[col_key][norm_name].append({
-                        "source": "datagolf",
-                        "probability": prob,
-                        "market_id": None,
-                        "outcome_id": None,
-                    })
+                if prob is None:
+                    continue
+                # Skip binary 0/1 values from in-play data (current standings, not predictions)
+                if is_live and (prob <= 0.0 or prob >= 1.0):
+                    continue
+                # For pre-tournament, include all non-zero probabilities
+                if not is_live and prob <= 0.0:
+                    continue
+                grid_raw[col_key][norm_name].append({
+                    "source": "datagolf",
+                    "probability": prob,
+                    "market_id": None,
+                    "outcome_id": None,
+                })
 
         # Deduplicate within same source per golfer+column (keep lowest prob)
         for col_key in grid_raw:
@@ -819,11 +807,10 @@ async def _build_golf_grid_from_datagolf(
                     "trend_24h": trend_24h,
                 }
 
-            # Logical consistency pass for placement columns.
-            # P(win) ≤ P(top5) ≤ P(top10) ≤ P(top20) ≤ P(make_cut).
-            # When a Kalshi value violates this, it's likely the "No" price
-            # from a binary market. Invert it (1-p) or filter it out.
-            _fix_golf_column_consistency(cells, config.columns)
+            # Filter Kalshi price floor/ceiling noise for placement columns.
+            # Kalshi binary golf markets often have illiquid prices stuck at
+            # 0.005 (floor) or 0.995 (ceiling). These aren't real probabilities.
+            _filter_kalshi_placement_noise(cells)
 
             # Include golfer even if no cells (they're in the field)
             # But skip if absolutely no data
