@@ -1051,7 +1051,8 @@ async def _build_golf_tour_grid(
         movers.sort(key=lambda m: abs(m["change_24h"]), reverse=True)
         movers = movers[:10]
 
-        # Trend chart for top N golfers
+        # Trend chart for top N golfers — collect ALL outcome IDs per golfer
+        # (DataGolf + Kalshi + Polymarket) so we get the richest timeline
         top_team_norms = [_normalize_team_name(t["name"]) for t in teams[:top]]
         trend_outcome_ids = []
         trend_outcome_names: dict[int, str] = {}
@@ -1059,10 +1060,9 @@ async def _build_golf_tour_grid(
             entries = grid_raw.get(championship_col, {}).get(norm_name, [])
             for e in entries:
                 oid = e.get("outcome_id")
-                if oid:
+                if oid and oid not in trend_outcome_names:
                     trend_outcome_ids.append(oid)
                     trend_outcome_names[oid] = dg_display_names.get(norm_name, norm_name)
-                    break
 
         trend_chart = await _build_trend_chart(
             db, trend_outcome_ids, trend_outcome_names,
@@ -1078,10 +1078,19 @@ async def _build_golf_tour_grid(
                 for e in entries:
                     sources_seen.add(e["source"])
 
-        # Active columns
+        # Active columns — only include columns where ≥10% of shown golfers
+        # have data. Prevents showing "Make Cut" for LIV (alt tour) where
+        # only 1 stray Kalshi market exists.
         active_columns = []
+        min_fill = max(1, len(teams) // 10)  # At least 10% of golfers
         for col in config.columns:
-            if col.key in grid_raw:
+            if col.key not in grid_raw:
+                continue
+            filled = sum(
+                1 for t in teams
+                if t["cells"].get(col.key, {}).get("merged_probability") is not None
+            )
+            if filled >= min_fill:
                 active_columns.append({
                     "key": col.key,
                     "label": col.label,
