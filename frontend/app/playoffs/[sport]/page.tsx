@@ -79,11 +79,15 @@ function teamsToProgression(
     const probabilities: Record<string, number | null> = {};
     const changes_24h: Record<string, number | null> = {};
     const status: Record<string, "clinched" | "eliminated" | null> = {};
+    const sources_data: Record<string, { source: string; probability: number }[]> = {};
 
     for (const [colKey, cell] of Object.entries(t.cells)) {
       probabilities[colKey] = cell.merged_probability;
       changes_24h[colKey] = cell.trend_24h;
       status[colKey] = null;
+      if (cell.sources) {
+        sources_data[colKey] = cell.sources;
+      }
     }
 
     return {
@@ -96,6 +100,7 @@ function teamsToProgression(
       probabilities,
       changes_24h,
       status,
+      sources_data,
     };
   });
 
@@ -221,11 +226,30 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
   // Y-axis labels
   const yTicks = [0, maxP * 0.25, maxP * 0.5, maxP * 0.75, maxP];
 
+  // X-axis date labels — evenly spaced across the range
+  const xTickCount = 5;
+  const xTicks: { ts: number; label: string }[] = [];
+  for (let i = 0; i <= xTickCount; i++) {
+    const ts = minT + (rangeT * i) / xTickCount;
+    const d = new Date(ts);
+    const label = `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    xTicks.push({ ts, label });
+  }
+
+  // Compute trend period label
+  const trendDays = Math.round(rangeT / (1000 * 60 * 60 * 24));
+  const trendLabel = trendDays <= 1 ? "24h" : `${trendDays}d`;
+
   return (
     <div className="mb-5 bg-surface-card rounded-xl border border-white/10 p-4">
-      <h2 className="text-xs font-medium text-text-secondary mb-3 uppercase tracking-wide">
-        Championship Odds Trend
-      </h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+          Championship Odds Trend
+        </h2>
+        <span className="text-[10px] text-text-secondary/50 font-mono">
+          Past {trendLabel}
+        </span>
+      </div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="w-full"
@@ -267,6 +291,21 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
             strokeLinecap="round"
             opacity={0.85}
           />
+        ))}
+
+        {/* X-axis date labels */}
+        {xTicks.map((tick, i) => (
+          <text
+            key={i}
+            x={scaleX(tick.ts)}
+            y={height - 4}
+            textAnchor="middle"
+            fill="rgba(255,255,255,0.3)"
+            fontSize={10}
+            fontFamily="monospace"
+          >
+            {tick.label}
+          </text>
         ))}
       </svg>
 
@@ -369,8 +408,9 @@ export default function PlayoffGridPage({
     if (!gridData) return null;
 
     if (gridData.grouped_teams) {
-      // Conference/region split
+      // Conference/region split — hide "Other" as a named group
       return Object.entries(gridData.grouped_teams)
+        .filter(([conf]) => conf !== "Other")
         .filter(([conf]) => !conferenceFilter || conf === conferenceFilter)
         .map(([conf, teams]) => ({
           label: conf,
@@ -403,7 +443,7 @@ export default function PlayoffGridPage({
   const conferences = useMemo(() => {
     if (!gridData) return [];
     if (gridData.grouped_teams) {
-      return Object.keys(gridData.grouped_teams);
+      return Object.keys(gridData.grouped_teams).filter((c) => c !== "Other");
     }
     // Fallback: extract from league config
     return league?.conferences || [];

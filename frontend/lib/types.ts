@@ -1151,6 +1151,8 @@ export interface ProgressionParticipant {
   probabilities: Record<string, number | null>;
   changes_24h: Record<string, number | null>;
   status: Record<string, "clinched" | "eliminated" | null>;
+  /** Per-source probabilities for each stage (optional, from championship grid) */
+  sources_data?: Record<string, { source: string; probability: number }[]>;
 }
 
 export interface ProgressionResponse {

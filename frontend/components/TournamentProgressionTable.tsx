@@ -70,6 +70,34 @@ function ChangeIndicator({ change }: { change: number | null | undefined }) {
   );
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  odds_api: "Books",
+  kalshi: "Kalshi",
+  polymarket: "Poly",
+};
+
+function SourceBreakdown({ sources }: { sources: { source: string; probability: number }[] }) {
+  if (!sources || sources.length <= 1) return null;
+  return (
+    <div className="flex gap-1.5 justify-center mt-0.5">
+      {sources.map((s) => {
+        const pct = s.probability * 100;
+        const label = SOURCE_LABELS[s.source] || s.source;
+        const probStr = pct >= 10 ? `${Math.round(pct)}` : pct >= 1 ? pct.toFixed(1) : pct < 0.1 ? "<.1" : pct.toFixed(1);
+        return (
+          <span
+            key={s.source}
+            className="text-[9px] leading-none text-text-secondary/40 font-mono whitespace-nowrap"
+            title={`${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`}
+          >
+            <span className="text-text-secondary/25">{label[0]}</span>{probStr}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function TournamentProgressionTable({
   data,
   showLogos = true,
@@ -132,6 +160,19 @@ export default function TournamentProgressionTable({
     });
   }, [data.sport, pageType, track]);
 
+  // Find unique sources across all participants for column header labels
+  const uniqueSources = useMemo(() => {
+    const srcSet = new Set<string>();
+    for (const p of data.participants) {
+      for (const sources of Object.values(p.sources_data ?? {})) {
+        for (const s of sources) srcSet.add(s.source);
+      }
+    }
+    return [...srcSet].sort();
+  }, [data.participants]);
+
+  const hasSources = uniqueSources.length > 1;
+
   if (!data.stages.length || !data.participants.length) {
     return (
       <div className={`text-center text-text-secondary py-8 ${className || ""}`}>
@@ -150,6 +191,12 @@ export default function TournamentProgressionTable({
         <h3 className="text-base font-semibold text-text-primary mb-1">
           {data.tournament_name}
         </h3>
+      )}
+      {/* Source legend */}
+      {hasSources && uniqueSources.length > 1 && (
+        <p className="text-[10px] text-text-secondary/40 mb-1.5">
+          Sources: {uniqueSources.map((s) => `${(SOURCE_LABELS[s] || s)[0]}=${SOURCE_LABELS[s] || s}`).join(", ")}
+        </p>
       )}
       {/* Stage coverage indicator */}
       {sportStageCount > stagesAvailable && (
@@ -258,10 +305,20 @@ export default function TournamentProgressionTable({
                   const prob = participant.probabilities[stage.key] ?? null;
                   const change = participant.changes_24h[stage.key];
                   const status = participant.status[stage.key];
+                  const sources = participant.sources_data?.[stage.key];
+                  // Build tooltip with per-source values
+                  const tooltip = sources?.length
+                    ? sources.map((s) => {
+                        const label = SOURCE_LABELS[s.source] || s.source;
+                        const pct = s.probability * 100;
+                        return `${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`;
+                      }).join(" · ")
+                    : undefined;
                   return (
                     <td
                       key={stage.key}
                       className={`py-1.5 px-2 text-center ${cellBgClass(prob, status)} transition-colors`}
+                      title={tooltip}
                     >
                       <div className="flex flex-col items-center">
                         <span
@@ -277,6 +334,7 @@ export default function TournamentProgressionTable({
                         >
                           {status === "clinched" ? "✓" : formatProb(prob)}
                         </span>
+                        <SourceBreakdown sources={sources ?? []} />
                         <ChangeIndicator change={change} />
                       </div>
                     </td>
