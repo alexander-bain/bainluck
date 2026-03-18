@@ -744,24 +744,23 @@ async def _build_golf_tour_grid(
         # Log pre-tournament lookup coverage for diagnostics
         if dg_field and pre_tourney_lookup:
             matched = sum(1 for n in dg_field if n in pre_tourney_lookup)
-            logger.info(
-                "Golf grid [%s]: pre-tournament lookup covers %d/%d in-play golfers "
-                "(pre-tourney has %d total)",
-                tour, matched, len(dg_field), len(pre_tourney_lookup),
-            )
-            # Log sample mismatches for debugging
-            misses = [n for n in list(dg_field.keys())[:20] if n not in pre_tourney_lookup]
-            if misses:
-                # Find closest pre-tourney name for each miss
-                miss_details = []
-                for m in misses[:5]:
-                    # Check if any pre-tourney name contains the same last word
-                    last_word = m.split()[-1] if m.split() else ""
-                    close = [p for p in pre_tourney_lookup if last_word in p]
-                    miss_details.append(f"{m!r} (close: {close[:2]})")
+            overlap_pct = matched / len(dg_field) * 100 if dg_field else 0
+
+            # Low overlap means pre-tournament is likely for a DIFFERENT event
+            if overlap_pct < 50:
                 logger.warning(
-                    "Golf grid [%s]: pre-tournament mismatches: %s",
-                    tour, miss_details,
+                    "Golf grid [%s]: pre-tournament only covers %d/%d (%.0f%%) "
+                    "in-play golfers — likely a different event! "
+                    "Will use in-play values directly.",
+                    tour, matched, len(dg_field), overlap_pct,
+                )
+                # Clear the lookup — don't use mismatched pre-tournament data
+                pre_tourney_lookup.clear()
+            else:
+                logger.info(
+                    "Golf grid [%s]: pre-tournament lookup covers %d/%d (%.0f%%) "
+                    "in-play golfers",
+                    tour, matched, len(dg_field), overlap_pct,
                 )
         elif dg_field and not pre_tourney_lookup:
             logger.warning(
@@ -834,23 +833,38 @@ async def _build_golf_tour_grid(
                 outcome_id_to_name[outcome.id] = oname
 
         # 5. Add DataGolf model probabilities
-        # During live tournaments, use pre-tournament model probabilities
-        # (real predictions like 12% win, 45% top_20) instead of in-play
-        # binary 0/1 values (which just represent current standings).
-        # Pre-tournament predictions remain the best available DG model output
-        # during a tournament — they're the probabilities from before round 1.
+        # The in-play endpoint returns LIVE updated probabilities during
+        # tournaments (not binary 0/1). Pre-tournament is only useful
+        # before the event starts or as a fallback when in-play is unavailable.
         col_map = {"win": "win", "top_5": "top_5", "top_10": "top_10",
                     "top_20": "top_20", "make_cut": "make_cut"}
+
+        # Log sample player data for diagnostics
+        if players:
+            sample = players[0]
+            logger.info(
+                "Golf grid [%s]: sample in-play player %s: win=%s top_5=%s "
+                "top_10=%s top_20=%s make_cut=%s",
+                tour, sample.player_name,
+                sample.win, sample.top_5, sample.top_10,
+                sample.top_20, sample.make_cut,
+            )
+
         for norm_name in dg_field:
-            # Prefer pre-tournament probabilities (real model predictions)
-            # Fall back to in-play values only if pre-tournament unavailable
-            prob_player = pre_tourney_lookup.get(norm_name) or dg_field[norm_name]
+            # Use in-play probabilities directly — they're the live model predictions.
+            # Only fall back to pre-tournament if in-play player is missing.
+            player = dg_field[norm_name]
+            pre_player = pre_tourney_lookup.get(norm_name)
+
             for dg_key, col_key in col_map.items():
-                prob = getattr(prob_player, dg_key, None)
-                if prob is None or prob <= 0.0:
-                    continue
-                # Skip binary 1.0 values — these are standings status, not predictions
-                if prob >= 1.0:
+                # Try in-play first (live model predictions)
+                prob = getattr(player, dg_key, None)
+                # Fall back to pre-tournament if in-play value is None or binary
+                if prob is None or prob <= 0.0 or prob >= 1.0:
+                    if pre_player:
+                        prob = getattr(pre_player, dg_key, None)
+                # Final filter: skip if still None, zero, or binary 1.0
+                if prob is None or prob <= 0.0 or prob >= 1.0:
                     continue
                 grid_raw[col_key][norm_name].append({
                     "source": "datagolf",
