@@ -799,7 +799,35 @@ async def _build_golf_tour_grid(
                 tour, len(dg_field),
             )
 
-        # 3. Query DB for Kalshi/Polymarket/Odds API golf markets
+        # 3a. Look up DataGolf FuturesOutcome IDs for this event
+        # The DataGolf polling task creates FuturesMarket/Outcome/Snapshot
+        # records. We need the outcome IDs to enable trend charts and 24h movers.
+        dg_outcome_lookup: dict[str, dict[str, int]] = {}  # norm_name → {col_key → outcome_id}
+        dg_ext_prefix = f"datagolf:{tour}:{current_event.event_id}:"
+        dg_market_stmt = (
+            select(FuturesMarket)
+            .where(
+                FuturesMarket.source == "datagolf",
+                FuturesMarket.external_id.like(f"{dg_ext_prefix}%"),
+            )
+            .options(selectinload(FuturesMarket.outcomes))
+        )
+        dg_result = await db.execute(dg_market_stmt)
+        dg_markets = dg_result.scalars().unique().all()
+        for dg_market in dg_markets:
+            col_key = dg_market.external_id.rsplit(":", 1)[-1]  # "win", "top_5", etc.
+            for out in dg_market.outcomes:
+                norm = _normalize_team_name(out.name)
+                if norm not in dg_outcome_lookup:
+                    dg_outcome_lookup[norm] = {}
+                dg_outcome_lookup[norm][col_key] = out.id
+
+        logger.info(
+            "Golf grid [%s]: found %d DataGolf outcome IDs across %d markets",
+            tour, sum(len(v) for v in dg_outcome_lookup.values()), len(dg_markets),
+        )
+
+        # 3b. Query DB for Kalshi/Polymarket/Odds API golf markets
         sport_conditions = [
             FuturesMarket.external_id.ilike(f"{sk}%")
             for sk in config.sport_keys
@@ -894,11 +922,18 @@ async def _build_golf_tour_grid(
                     if prob <= 0.0 or prob >= 1.0:
                         continue
 
+                # Look up the DataGolf outcome ID from the polling task's
+                # FuturesOutcome records — this enables trend charts and 24h movers
+                dg_oid = dg_outcome_lookup.get(norm_name, {}).get(col_key)
+                if dg_oid:
+                    all_outcome_ids.append(dg_oid)
+                    outcome_id_to_name[dg_oid] = dg_display_names.get(norm_name, norm_name)
+
                 grid_raw[col_key][norm_name].append({
                     "source": "datagolf",
                     "probability": prob,
                     "market_id": None,
-                    "outcome_id": None,
+                    "outcome_id": dg_oid,
                 })
 
         # Deduplicate within same source per golfer+column (keep lowest prob)

@@ -36,8 +36,8 @@ MARKET_TYPES = [
 # Redis key prefix for live tournament detection
 LIVE_KEY_PREFIX = "bainluck:datagolf:live"
 
-# Tours to poll (PGA is primary; extend as needed)
-POLL_TOURS = ["pga"]
+# Tours to poll — all tours that DataGolf covers
+POLL_TOURS = ["pga", "euro", "kft", "opp", "alt"]
 
 
 def _external_id(tour: str, event_id: str, market_type: str) -> str:
