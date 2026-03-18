@@ -741,6 +741,21 @@ async def _build_golf_tour_grid(
             dg_field[norm] = player
             dg_display_names[norm] = player.player_name
 
+        # Log pre-tournament lookup coverage for diagnostics
+        if dg_field and pre_tourney_lookup:
+            matched = sum(1 for n in dg_field if n in pre_tourney_lookup)
+            logger.info(
+                "Golf grid [%s]: pre-tournament lookup covers %d/%d in-play golfers",
+                tour, matched, len(dg_field),
+            )
+            # Log sample mismatches for debugging
+            misses = [n for n in list(dg_field.keys())[:20] if n not in pre_tourney_lookup]
+            if misses:
+                logger.warning(
+                    "Golf grid [%s]: pre-tournament mismatches (sample): %s",
+                    tour, misses[:5],
+                )
+
         # 3. Query DB for Kalshi/Polymarket/Odds API golf markets
         sport_conditions = [
             FuturesMarket.external_id.ilike(f"{sk}%")
