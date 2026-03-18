@@ -163,7 +163,7 @@ async def _poll_datagolf_markets() -> dict:
                         now = datetime.now(timezone.utc)
                         for player in players:
                             prob = _get_prob(player, market_type)
-                            if prob is None or prob <= 0:
+                            if prob is None or prob <= 0 or prob >= 1.0:
                                 continue
 
                             outcome_ext_id = f"dg_{player.dg_id}"
@@ -374,7 +374,7 @@ async def _poll_datagolf_live() -> dict:
                         # Update outcomes + write snapshots
                         for player in players:
                             prob = _get_prob(player, market_type)
-                            if prob is None or prob <= 0:
+                            if prob is None or prob <= 0 or prob >= 1.0:
                                 continue
 
                             outcome_ext_id = f"dg_{player.dg_id}"

@@ -828,6 +828,10 @@ async def _build_golf_tour_grid(
         )
 
         # 3b. Query DB for Kalshi/Polymarket/Odds API golf markets
+        # IMPORTANT: Filter to only markets matching the CURRENT tournament.
+        # Without this, season-long major championship odds (Masters, PGA
+        # Championship, US Open, The Open) from Odds API contaminate every
+        # tournament grid — e.g., Bridgeman's 0.59% Open odds mix into Valspar.
         sport_conditions = [
             FuturesMarket.external_id.ilike(f"{sk}%")
             for sk in config.sport_keys
@@ -846,7 +850,49 @@ async def _build_golf_tour_grid(
             .options(selectinload(FuturesMarket.outcomes))
         )
         result = await db.execute(stmt)
-        db_markets = result.scalars().unique().all()
+        all_db_markets = result.scalars().unique().all()
+
+        # Filter to only markets whose name matches the current tournament
+        tournament_name = current_event.event_name or ""
+        # Extract meaningful words from tournament name for matching
+        # "Valspar Championship" → ["valspar"]
+        # "Arnold Palmer Invitational" → ["arnold", "palmer"]
+        _GOLF_STOPWORDS = {
+            "championship", "tournament", "invitational", "classic",
+            "presented", "by", "the", "at", "pga", "tour", "winner",
+            "top", "finish", "hosted", "sponsored", "powered",
+        }
+        tourney_tokens = [
+            w for w in tournament_name.lower().split()
+            if w not in _GOLF_STOPWORDS and len(w) >= 3
+        ]
+        # Handle ambiguous tournament names:
+        # "The Open" / "US Open" → use full name phrase to avoid cross-match
+        if not tourney_tokens and tournament_name:
+            tourney_tokens = [tournament_name.lower().strip()]
+        elif len(tourney_tokens) == 1 and tourney_tokens[0] == "open":
+            # "open" alone matches both "US Open" and "The Open" — use phrase
+            tourney_tokens = [tournament_name.lower().strip()]
+
+        def _market_matches_tournament(market_name: str) -> bool:
+            """Check if a market name references the current tournament."""
+            if not tourney_tokens:
+                return True  # Can't filter without tournament name
+            name_lower = market_name.lower() if market_name else ""
+            # At least one distinctive tournament token must appear
+            return any(tok in name_lower for tok in tourney_tokens)
+
+        db_markets = [
+            m for m in all_db_markets
+            if _market_matches_tournament(m.name)
+        ]
+
+        if len(db_markets) < len(all_db_markets):
+            logger.info(
+                "Golf grid [%s]: filtered %d → %d DB markets (tournament='%s', tokens=%s)",
+                tour, len(all_db_markets), len(db_markets),
+                tournament_name, tourney_tokens,
+            )
 
         # 4. Match DB market outcomes to DataGolf golfers
         # column_key → norm_name → list of {source, probability, ...}
