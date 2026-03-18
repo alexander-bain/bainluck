@@ -637,20 +637,27 @@ async def _build_golf_grid_from_datagolf(
         )
 
         # 2. Get DataGolf model predictions → canonical field + probabilities
-        # Try in-play first (during tournament), fall back to pre-tournament
-        players = await service.get_in_play(tour="pga")
-        is_live = bool(players)
-        if not players:
-            players = await service.get_pre_tournament(tour="pga")
+        # Fetch in-play for leaderboard positions (position, score, thru)
+        # AND pre-tournament for real model probabilities (win, top_5, etc.)
+        in_play_players = await service.get_in_play(tour="pga")
+        is_live = bool(in_play_players)
+        pre_tournament_players = await service.get_pre_tournament(tour="pga")
 
+        # Use in-play as canonical field if available, else pre-tournament
+        players = in_play_players or pre_tournament_players
         if not players:
             logger.info("Golf grid: no DataGolf players, falling back")
             return None
 
         logger.info(
-            "Golf grid: DataGolf field has %d golfers (%s)",
-            len(players), "in-play" if is_live else "pre-tournament",
+            "Golf grid: DataGolf field has %d golfers (in-play=%d, pre-tournament=%d)",
+            len(players), len(in_play_players), len(pre_tournament_players),
         )
+
+        # Build pre-tournament probability lookup: norm_name → DataGolfPlayer
+        pre_tourney_lookup: dict[str, object] = {}
+        for p in pre_tournament_players:
+            pre_tourney_lookup[_normalize_team_name(p.player_name)] = p
 
         # Build canonical golfer lookup: normalized_name → DataGolfPlayer
         dg_field: dict[str, object] = {}  # norm_name → player
@@ -724,24 +731,23 @@ async def _build_golf_grid_from_datagolf(
                 outcome_id_to_name[outcome.id] = oname
 
         # 5. Add DataGolf model probabilities
-        # IMPORTANT: DataGolf's in-play endpoint returns binary 0/1 values
-        # representing CURRENT standings status, not finish probabilities.
-        # A golfer at T22 gets top_20=0.0, make_cut=1.0 — these are facts
-        # about current position, not predictions. We only add values that
-        # are genuinely probabilistic (strictly between 0 and 1).
-        # Pre-tournament values ARE real probabilities (e.g., 0.35 win).
+        # During live tournaments, use pre-tournament model probabilities
+        # (real predictions like 12% win, 45% top_20) instead of in-play
+        # binary 0/1 values (which just represent current standings).
+        # Pre-tournament predictions remain the best available DG model output
+        # during a tournament — they're the probabilities from before round 1.
         col_map = {"win": "win", "top_5": "top_5", "top_10": "top_10",
                     "top_20": "top_20", "make_cut": "make_cut"}
-        for norm_name, player in dg_field.items():
+        for norm_name in dg_field:
+            # Prefer pre-tournament probabilities (real model predictions)
+            # Fall back to in-play values only if pre-tournament unavailable
+            prob_player = pre_tourney_lookup.get(norm_name) or dg_field[norm_name]
             for dg_key, col_key in col_map.items():
-                prob = getattr(player, dg_key, None)
-                if prob is None:
+                prob = getattr(prob_player, dg_key, None)
+                if prob is None or prob <= 0.0:
                     continue
-                # Skip binary 0/1 values from in-play data (current standings, not predictions)
-                if is_live and (prob <= 0.0 or prob >= 1.0):
-                    continue
-                # For pre-tournament, include all non-zero probabilities
-                if not is_live and prob <= 0.0:
+                # Skip binary 1.0 values — these are standings status, not predictions
+                if prob >= 1.0:
                     continue
                 grid_raw[col_key][norm_name].append({
                     "source": "datagolf",

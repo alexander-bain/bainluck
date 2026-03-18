@@ -74,6 +74,7 @@ const SOURCE_LABELS: Record<string, string> = {
   odds_api: "Books",
   kalshi: "Kalshi",
   polymarket: "Poly",
+  datagolf: "DG",
 };
 
 function SourceBreakdown({ sources }: { sources: { source: string; probability: number }[] }) {
