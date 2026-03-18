@@ -542,6 +542,73 @@ async def _get_team_metadata(
 
 
 # ---------------------------------------------------------------------------
+# Golf column consistency fix
+# ---------------------------------------------------------------------------
+
+# Column ordering from most inclusive to least inclusive.
+# Each column's probability must be ≥ the next column's probability.
+_GOLF_COLUMN_ORDER = ["make_cut", "top_20", "top_10", "top_5", "win"]
+
+
+def _fix_golf_column_consistency(cells: dict, columns: list) -> None:
+    """Fix inverted Kalshi probabilities using cross-column logical consistency.
+
+    For golf: P(make_cut) ≥ P(top_20) ≥ P(top_10) ≥ P(top_5) ≥ P(win).
+    When a Kalshi-sourced value violates this ordering, it's the "No" price
+    from a binary market. Invert it (1-p) and recompute the merged value.
+    """
+    col_keys = [c.key if hasattr(c, "key") else c for c in columns]
+    ordered = [k for k in _GOLF_COLUMN_ORDER if k in col_keys]
+    if len(ordered) < 2:
+        return
+
+    # Get the merged probability for each column that has data
+    merged_vals: dict[str, float] = {}
+    for key in ordered:
+        cell = cells.get(key)
+        if cell:
+            merged_vals[key] = cell["merged_probability"]
+
+    if len(merged_vals) < 2:
+        return
+
+    # Check each pair: more_inclusive should have ≥ probability than less_inclusive.
+    # When violation detected, try inverting Kalshi sources in the offending cell.
+    changed = True
+    passes = 0
+    while changed and passes < 3:
+        changed = False
+        passes += 1
+        for i in range(len(ordered) - 1):
+            more_inclusive = ordered[i]
+            less_inclusive = ordered[i + 1]
+            cell_more = cells.get(more_inclusive)
+            cell_less = cells.get(less_inclusive)
+            if not cell_more or not cell_less:
+                continue
+
+            p_more = cell_more["merged_probability"]
+            p_less = cell_less["merged_probability"]
+
+            if p_more < p_less:
+                # Violation! The more inclusive column is lower.
+                # Try inverting Kalshi sources in the lower cell.
+                fixed = False
+                for src in cell_more.get("sources", []):
+                    if src["source"] in ("kalshi", "polymarket") and src["probability"] < 0.1:
+                        # This low value in a more inclusive column is likely the "No" price
+                        inverted = round(1.0 - src["probability"], 4)
+                        src["probability"] = inverted
+                        fixed = True
+
+                if fixed:
+                    # Recompute merged
+                    probs = [s["probability"] for s in cell_more["sources"]]
+                    cell_more["merged_probability"] = round(statistics.median(probs), 4)
+                    changed = True
+
+
+# ---------------------------------------------------------------------------
 # DataGolf-first golf grid builder
 # ---------------------------------------------------------------------------
 
@@ -751,6 +818,12 @@ async def _build_golf_grid_from_datagolf(
                     "sources": sources,
                     "trend_24h": trend_24h,
                 }
+
+            # Logical consistency pass for placement columns.
+            # P(win) ≤ P(top5) ≤ P(top10) ≤ P(top20) ≤ P(make_cut).
+            # When a Kalshi value violates this, it's likely the "No" price
+            # from a binary market. Invert it (1-p) or filter it out.
+            _fix_golf_column_consistency(cells, config.columns)
 
             # Include golfer even if no cells (they're in the field)
             # But skip if absolutely no data

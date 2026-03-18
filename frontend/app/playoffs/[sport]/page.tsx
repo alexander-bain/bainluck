@@ -226,14 +226,22 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
   // Y-axis labels
   const yTicks = [0, maxP * 0.25, maxP * 0.5, maxP * 0.75, maxP];
 
-  // X-axis date labels — evenly spaced across the range
-  const xTickCount = 5;
+  // X-axis date labels — one tick per calendar day at midnight
   const xTicks: { ts: number; label: string }[] = [];
-  for (let i = 0; i <= xTickCount; i++) {
-    const ts = minT + (rangeT * i) / xTickCount;
-    const d = new Date(ts);
-    const label = `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-    xTicks.push({ ts, label });
+  {
+    const startDate = new Date(minT);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(maxT);
+    endDate.setHours(23, 59, 59, 999);
+    const cursor = new Date(startDate);
+    cursor.setDate(cursor.getDate() + 1); // start from second day (first is often partial)
+    while (cursor.getTime() <= endDate.getTime()) {
+      xTicks.push({
+        ts: cursor.getTime(),
+        label: cursor.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
   }
 
   // Compute trend period label
