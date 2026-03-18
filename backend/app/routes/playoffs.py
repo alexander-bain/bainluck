@@ -745,16 +745,30 @@ async def _build_golf_tour_grid(
         if dg_field and pre_tourney_lookup:
             matched = sum(1 for n in dg_field if n in pre_tourney_lookup)
             logger.info(
-                "Golf grid [%s]: pre-tournament lookup covers %d/%d in-play golfers",
-                tour, matched, len(dg_field),
+                "Golf grid [%s]: pre-tournament lookup covers %d/%d in-play golfers "
+                "(pre-tourney has %d total)",
+                tour, matched, len(dg_field), len(pre_tourney_lookup),
             )
             # Log sample mismatches for debugging
             misses = [n for n in list(dg_field.keys())[:20] if n not in pre_tourney_lookup]
             if misses:
+                # Find closest pre-tourney name for each miss
+                miss_details = []
+                for m in misses[:5]:
+                    # Check if any pre-tourney name contains the same last word
+                    last_word = m.split()[-1] if m.split() else ""
+                    close = [p for p in pre_tourney_lookup if last_word in p]
+                    miss_details.append(f"{m!r} (close: {close[:2]})")
                 logger.warning(
-                    "Golf grid [%s]: pre-tournament mismatches (sample): %s",
-                    tour, misses[:5],
+                    "Golf grid [%s]: pre-tournament mismatches: %s",
+                    tour, miss_details,
                 )
+        elif dg_field and not pre_tourney_lookup:
+            logger.warning(
+                "Golf grid [%s]: pre-tournament endpoint returned 0 players — "
+                "all %d golfers will use in-play data only",
+                tour, len(dg_field),
+            )
 
         # 3. Query DB for Kalshi/Polymarket/Odds API golf markets
         sport_conditions = [
