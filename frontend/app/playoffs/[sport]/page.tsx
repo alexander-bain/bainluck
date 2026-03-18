@@ -629,7 +629,7 @@ export default function PlayoffGridPage({
   // No config for this slug — show league picker
   if (!league) {
     return (
-      <main className="min-h-screen bg-background">
+      <main className="min-h-screen">
         <div className="max-w-6xl mx-auto px-4 py-8">
           <h1 className="text-2xl font-bold text-text-primary mb-4">
             League Not Found
@@ -644,7 +644,7 @@ export default function PlayoffGridPage({
   }
 
   return (
-    <main className="min-h-screen bg-background">
+    <main className="min-h-screen">
       <div className="max-w-6xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="mb-4">

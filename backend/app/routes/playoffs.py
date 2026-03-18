@@ -351,11 +351,31 @@ def _correct_inverted_probs(probs: list[float]) -> list[float]:
 def _merge_probabilities(probs: list[float]) -> float:
     """Merge probabilities from multiple sources using median.
 
-    Applies inversion correction before merging.
+    Applies inversion correction and outlier filtering before merging.
+    With only 2 sources, median=mean so a single outlier has 50% weight.
+    We detect extreme divergence (>10x ratio) and trust the lower value
+    (in golf/futures, outlier prediction market prices are almost always
+    too high due to illiquidity).
     """
     if not probs:
         return 0.0
     corrected = _correct_inverted_probs(probs)
+    # With 2 sources: if one is >10x the other, drop the outlier
+    if len(corrected) == 2:
+        lo, hi = sorted(corrected)
+        if lo > 0 and hi / lo > 10:
+            return lo
+    # With 3+ sources: drop values >10x the median of the rest
+    if len(corrected) >= 3:
+        filtered = []
+        for i, p in enumerate(corrected):
+            others = corrected[:i] + corrected[i + 1:]
+            med_others = statistics.median(others)
+            if med_others > 0 and p / med_others > 10:
+                continue  # skip extreme outlier
+            filtered.append(p)
+        if filtered:
+            return statistics.median(filtered)
     return statistics.median(corrected)
 
 
@@ -455,16 +475,20 @@ async def _build_trend_chart(
         if row.probability is not None:
             buckets[bucket_ts][row.outcome_id].append(float(row.probability))
 
-    # Build timeline
+    # Build timeline — aggregate across outcome IDs sharing the same name
     timeline = []
     for bucket_ts in sorted(buckets.keys()):
         entry = {
             "timestamp": datetime.fromtimestamp(bucket_ts, tz=timezone.utc).isoformat(),
             "outcomes": {},
         }
+        # Group all probs by golfer name (multiple outcome IDs may share a name)
+        by_name: dict[str, list[float]] = defaultdict(list)
         for oid, probs in buckets[bucket_ts].items():
             name = outcome_names.get(oid, str(oid))
-            entry["outcomes"][name] = statistics.median(probs)
+            by_name[name].extend(probs)
+        for name, all_probs in by_name.items():
+            entry["outcomes"][name] = _merge_probabilities(all_probs)
         timeline.append(entry)
 
     # Build outcomes metadata (current probability = latest timeline entry)

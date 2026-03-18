@@ -304,7 +304,7 @@ export default function TournamentProgressionTable({
                         style={{ backgroundColor: participant.primary_color }}
                       />
                     )}
-                    <span className="text-text-primary font-medium truncate max-w-[160px]">
+                    <span className="text-text-primary font-medium truncate max-w-[240px] sm:max-w-[300px]">
                       {participant.name}
                     </span>
                     {participant.record && (
