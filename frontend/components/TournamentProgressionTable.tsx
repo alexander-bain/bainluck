@@ -192,12 +192,24 @@ export default function TournamentProgressionTable({
           {data.tournament_name}
         </h3>
       )}
-      {/* Source legend */}
-      {hasSources && uniqueSources.length > 1 && (
-        <p className="text-[10px] text-text-secondary/40 mb-1.5">
-          Sources: {uniqueSources.map((s) => `${(SOURCE_LABELS[s] || s)[0]}=${SOURCE_LABELS[s] || s}`).join(", ")}
-        </p>
-      )}
+      {/* Legends row: color + source */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1.5">
+        {/* Color legend */}
+        <div className="flex items-center gap-1.5 text-[10px] text-text-secondary/50">
+          <span className="inline-block w-3 h-2.5 rounded-sm bg-emerald-500/25" />
+          <span>High</span>
+          <span className="inline-block w-3 h-2.5 rounded-sm bg-yellow-500/15" />
+          <span>Mid</span>
+          <span className="inline-block w-3 h-2.5 rounded-sm bg-red-500/8" />
+          <span>Low</span>
+        </div>
+        {/* Source legend */}
+        {hasSources && uniqueSources.length > 1 && (
+          <p className="text-[10px] text-text-secondary/40">
+            Sources: {uniqueSources.map((s) => `${(SOURCE_LABELS[s] || s)[0]}=${SOURCE_LABELS[s] || s}`).join(", ")}
+          </p>
+        )}
+      </div>
       {/* Stage coverage indicator */}
       {sportStageCount > stagesAvailable && (
         <p className="text-xs text-text-secondary mb-2">

@@ -27,6 +27,111 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ---------------------------------------------------------------------------
+# Static conference/division fallback maps
+# Used when a team's standings_data doesn't have conference info.
+# ---------------------------------------------------------------------------
+
+NBA_CONFERENCES: dict[str, str] = {
+    # Eastern Conference
+    "Atlanta Hawks": "Eastern", "Boston Celtics": "Eastern", "Brooklyn Nets": "Eastern",
+    "Charlotte Hornets": "Eastern", "Chicago Bulls": "Eastern", "Cleveland Cavaliers": "Eastern",
+    "Detroit Pistons": "Eastern", "Indiana Pacers": "Eastern", "Miami Heat": "Eastern",
+    "Milwaukee Bucks": "Eastern", "New York Knicks": "Eastern", "Orlando Magic": "Eastern",
+    "Philadelphia 76ers": "Eastern", "Toronto Raptors": "Eastern", "Washington Wizards": "Eastern",
+    # Western Conference
+    "Dallas Mavericks": "Western", "Denver Nuggets": "Western", "Golden State Warriors": "Western",
+    "Houston Rockets": "Western", "Los Angeles Clippers": "Western", "Los Angeles Lakers": "Western",
+    "Memphis Grizzlies": "Western", "Minnesota Timberwolves": "Western",
+    "New Orleans Pelicans": "Western", "Oklahoma City Thunder": "Western",
+    "Phoenix Suns": "Western", "Portland Trail Blazers": "Western",
+    "Sacramento Kings": "Western", "San Antonio Spurs": "Western", "Utah Jazz": "Western",
+}
+
+NFL_CONFERENCES: dict[str, str] = {
+    # AFC
+    "Baltimore Ravens": "AFC", "Buffalo Bills": "AFC", "Cincinnati Bengals": "AFC",
+    "Cleveland Browns": "AFC", "Denver Broncos": "AFC", "Houston Texans": "AFC",
+    "Indianapolis Colts": "AFC", "Jacksonville Jaguars": "AFC", "Kansas City Chiefs": "AFC",
+    "Las Vegas Raiders": "AFC", "Los Angeles Chargers": "AFC", "Miami Dolphins": "AFC",
+    "New England Patriots": "AFC", "New York Jets": "AFC", "Pittsburgh Steelers": "AFC",
+    "Tennessee Titans": "AFC",
+    # NFC
+    "Arizona Cardinals": "NFC", "Atlanta Falcons": "NFC", "Carolina Panthers": "NFC",
+    "Chicago Bears": "NFC", "Dallas Cowboys": "NFC", "Detroit Lions": "NFC",
+    "Green Bay Packers": "NFC", "Los Angeles Rams": "NFC", "Minnesota Vikings": "NFC",
+    "New Orleans Saints": "NFC", "New York Giants": "NFC", "Philadelphia Eagles": "NFC",
+    "San Francisco 49ers": "NFC", "Seattle Seahawks": "NFC", "Tampa Bay Buccaneers": "NFC",
+    "Washington Commanders": "NFC",
+}
+
+MLB_CONFERENCES: dict[str, str] = {
+    # American League
+    "Baltimore Orioles": "American League", "Boston Red Sox": "American League",
+    "Chicago White Sox": "American League", "Cleveland Guardians": "American League",
+    "Detroit Tigers": "American League", "Houston Astros": "American League",
+    "Kansas City Royals": "American League", "Los Angeles Angels": "American League",
+    "Minnesota Twins": "American League", "New York Yankees": "American League",
+    "Oakland Athletics": "American League", "Seattle Mariners": "American League",
+    "Tampa Bay Rays": "American League", "Texas Rangers": "American League",
+    "Toronto Blue Jays": "American League",
+    # National League
+    "Arizona Diamondbacks": "National League", "Atlanta Braves": "National League",
+    "Chicago Cubs": "National League", "Cincinnati Reds": "National League",
+    "Colorado Rockies": "National League", "Los Angeles Dodgers": "National League",
+    "Miami Marlins": "National League", "Milwaukee Brewers": "National League",
+    "New York Mets": "National League", "Philadelphia Phillies": "National League",
+    "Pittsburgh Pirates": "National League", "San Diego Padres": "National League",
+    "San Francisco Giants": "National League", "St. Louis Cardinals": "National League",
+    "Washington Nationals": "National League",
+}
+
+NHL_CONFERENCES: dict[str, str] = {
+    # Eastern Conference
+    "Boston Bruins": "Eastern", "Buffalo Sabres": "Eastern", "Carolina Hurricanes": "Eastern",
+    "Columbus Blue Jackets": "Eastern", "Detroit Red Wings": "Eastern",
+    "Florida Panthers": "Eastern", "Montreal Canadiens": "Eastern",
+    "New Jersey Devils": "Eastern", "New York Islanders": "Eastern",
+    "New York Rangers": "Eastern", "Ottawa Senators": "Eastern",
+    "Philadelphia Flyers": "Eastern", "Pittsburgh Penguins": "Eastern",
+    "Tampa Bay Lightning": "Eastern", "Toronto Maple Leafs": "Eastern",
+    "Washington Capitals": "Eastern",
+    # Western Conference
+    "Anaheim Ducks": "Western", "Calgary Flames": "Western", "Chicago Blackhawks": "Western",
+    "Colorado Avalanche": "Western", "Dallas Stars": "Western", "Edmonton Oilers": "Western",
+    "Los Angeles Kings": "Western", "Minnesota Wild": "Western", "Nashville Predators": "Western",
+    "San Jose Sharks": "Western", "Seattle Kraken": "Western", "St. Louis Blues": "Western",
+    "Utah Hockey Club": "Western", "Vancouver Canucks": "Western",
+    "Vegas Golden Knights": "Western", "Winnipeg Jets": "Western",
+}
+
+_CONFERENCE_FALLBACKS: dict[str, dict[str, str]] = {
+    "nba": NBA_CONFERENCES,
+    "nfl": NFL_CONFERENCES,
+    "mlb": MLB_CONFERENCES,
+    "nhl": NHL_CONFERENCES,
+}
+
+
+def _lookup_conference_fallback(league_slug: str, team_name: str) -> str | None:
+    """Look up a team's conference from the static fallback map.
+
+    Tries exact match first, then substring containment (handles names like
+    "Brooklyn" matching "Brooklyn Nets").
+    """
+    fallback = _CONFERENCE_FALLBACKS.get(league_slug)
+    if not fallback:
+        return None
+    # Exact match
+    if team_name in fallback:
+        return fallback[team_name]
+    # Substring match — team_name might be "Nets" or "Brooklyn"
+    name_lower = team_name.lower()
+    for full_name, conf in fallback.items():
+        if name_lower in full_name.lower() or full_name.lower() in name_lower:
+            return conf
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Market filters — reject non-playoff markets
@@ -206,11 +311,48 @@ def _match_market_to_column(
     return None
 
 
+def _correct_inverted_probs(probs: list[float]) -> list[float]:
+    """Detect and correct probability inversions.
+
+    When a source shows the "No" side probability (1 - p) instead of "Yes",
+    the values from two sources will sum to ~1.0. Detect this and invert
+    the outlier.
+
+    Returns the corrected list (same length, same order).
+    """
+    if len(probs) < 2:
+        return probs
+    if len(probs) == 2:
+        a, b = probs
+        # If they sum to ~1.0, one is inverted
+        if abs(a + b - 1.0) < 0.05:
+            # Invert the higher one (the one showing "No" probability)
+            if a > b:
+                return [1.0 - a, b]
+            else:
+                return [a, 1.0 - b]
+        return probs
+    # 3+ sources: detect outlier inversion
+    med = statistics.median(probs)
+    corrected = []
+    for p in probs:
+        inverted = 1.0 - p
+        if abs(p - med) > 0.3 and abs(inverted - med) < abs(p - med):
+            corrected.append(inverted)
+        else:
+            corrected.append(p)
+    return corrected
+
+
 def _merge_probabilities(probs: list[float]) -> float:
-    """Merge probabilities from multiple sources using median."""
+    """Merge probabilities from multiple sources using median.
+
+    Applies inversion correction before merging.
+    """
     if not probs:
         return 0.0
-    return statistics.median(probs)
+    corrected = _correct_inverted_probs(probs)
+    return statistics.median(corrected)
 
 
 async def _compute_movers(
@@ -331,10 +473,12 @@ async def _build_trend_chart(
 async def _get_team_metadata(
     session: AsyncSession,
     team_names: set[str],
+    league_slug: str = "",
 ) -> dict[str, dict]:
     """Look up team metadata (logo, colors, record, conference) by name.
 
     Returns {normalized_name: metadata_dict}.
+    Falls back to static conference maps when standings_data is missing.
     """
     if not team_names:
         return {}
@@ -377,6 +521,10 @@ async def _get_team_metadata(
             meta["conference"] = standings.get("conference")
             meta["division"] = standings.get("division")
             meta["seed"] = standings.get("position") or standings.get("seed")
+
+        # Fallback to static conference map if standings didn't provide one
+        if not meta["conference"] and league_slug and team.name:
+            meta["conference"] = _lookup_conference_fallback(league_slug, team.name)
 
         norm = _normalize_team_name(team.name)
         team_lookup[norm] = meta
@@ -1041,7 +1189,7 @@ async def get_playoff_grid(
                     break
             break
 
-    team_meta = await _get_team_metadata(db, team_names_raw)
+    team_meta = await _get_team_metadata(db, team_names_raw, league_slug=config.slug)
 
     # Second merge pass: use team metadata to identify teams that share
     # the same team_id but have different normalized names
@@ -1098,13 +1246,14 @@ async def get_playoff_grid(
                 continue
 
             probs = [e["probability"] for e in entries]
-            merged = _merge_probabilities(probs)
+            corrected = _correct_inverted_probs(probs)
+            merged = statistics.median(corrected)
 
             sources = []
-            for e in entries:
+            for e, corrected_p in zip(entries, corrected):
                 src = {
                     "source": e["source"],
-                    "probability": round(e["probability"], 4),
+                    "probability": round(corrected_p, 4),
                 }
                 sources.append(src)
 

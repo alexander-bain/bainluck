@@ -408,9 +408,8 @@ export default function PlayoffGridPage({
     if (!gridData) return null;
 
     if (gridData.grouped_teams) {
-      // Conference/region split — hide "Other" as a named group
+      // Conference/region split
       return Object.entries(gridData.grouped_teams)
-        .filter(([conf]) => conf !== "Other")
         .filter(([conf]) => !conferenceFilter || conf === conferenceFilter)
         .map(([conf, teams]) => ({
           label: conf,
@@ -443,6 +442,7 @@ export default function PlayoffGridPage({
   const conferences = useMemo(() => {
     if (!gridData) return [];
     if (gridData.grouped_teams) {
+      // Don't show "Other" as a conference filter button — it's a fallback, not a real conference
       return Object.keys(gridData.grouped_teams).filter((c) => c !== "Other");
     }
     // Fallback: extract from league config
