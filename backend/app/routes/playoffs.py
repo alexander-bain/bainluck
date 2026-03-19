@@ -203,6 +203,11 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bballon\s+d.or\b     |   # Ballon d'Or award
     \bgolden\s+boot\b     |   # Golden Boot award
     \bgolden\s+ball\b      |   # Golden Ball award
+    \bsum\s+of\s+seeds\b  |   # "Sum of seeds in the Championship Game" props
+    \bbiggest\s+upset\b   |   # "Biggest upset in..." props
+    \bmost\s+outstanding\b |  # "Tournament Most Outstanding Player"
+    \bannouncer\b         |   # "Announcers at..." props
+    \bplayer\s+points\b   |   # "Player Points" props
     \b\(W\)\s*$               # Women's tournament game suffix: "Team A vs. Team B (W)"
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -1460,7 +1465,7 @@ async def get_playoff_grid(
             if outcome.current_probability is None:
                 continue
             prob = float(outcome.current_probability)
-            if prob <= 0:
+            if prob <= 0 or prob >= 1.0:
                 continue
             # Skip non-team outcome names (thresholds, dates, generic)
             oname = outcome.name or ""
