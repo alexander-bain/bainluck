@@ -5,28 +5,27 @@ import { useParams, notFound } from "next/navigation";
 import useSWR from "swr";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { fetchPlayoffGrid, fetchMarchMadness } from "@/lib/api";
+import { fetchChampionshipGrid, fetchMarchMadness } from "@/lib/api";
 import { TOURNAMENT_TYPE_CONFIG } from "@/lib/marchMadnessData";
-import TournamentChart from "@/components/TournamentChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import SeedHistory from "@/components/MarchMadness/SeedHistory";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import type {
-  PlayoffGridResponse,
+  ChampionshipGridResponse,
   ProgressionResponse,
   ProgressionStage,
   ProgressionParticipant,
 } from "@/lib/types";
 import "../march-madness.css";
 
-/** Transform PlayoffGridResponse into ProgressionResponse for TournamentProgressionTable */
-function toProgressionResponse(data: PlayoffGridResponse): ProgressionResponse {
-  const stages: ProgressionStage[] = data.stages.map((s) => ({
-    key: s.key,
-    label: s.label,
-    order: s.order,
-    market_id: s.market_ids.length > 0 ? s.market_ids[0] : null,
+/** Transform ChampionshipGridResponse into ProgressionResponse for TournamentProgressionTable */
+function toProgressionResponse(data: ChampionshipGridResponse): ProgressionResponse {
+  const stages: ProgressionStage[] = data.columns.map((c) => ({
+    key: c.key,
+    label: c.label,
+    order: c.order,
+    market_id: null,
     market_name: null,
   }));
 
@@ -35,10 +34,10 @@ function toProgressionResponse(data: PlayoffGridResponse): ProgressionResponse {
     const changes_24h: Record<string, number | null> = {};
     const status: Record<string, "clinched" | "eliminated" | null> = {};
 
-    for (const [stageKey, stageData] of Object.entries(t.stages)) {
-      probabilities[stageKey] = stageData.probability;
-      changes_24h[stageKey] = stageData.change_24h;
-      status[stageKey] = stageData.status;
+    for (const [cellKey, cellData] of Object.entries(t.cells)) {
+      probabilities[cellKey] = cellData?.merged_probability ?? null;
+      changes_24h[cellKey] = cellData?.trend_24h ?? null;
+      status[cellKey] = null;
     }
 
     return {
@@ -55,8 +54,8 @@ function toProgressionResponse(data: PlayoffGridResponse): ProgressionResponse {
   });
 
   return {
-    sport: data.sport,
-    tournament_name: `NCAA ${data.season || ""} Tournament`.trim(),
+    sport: "basketball",
+    tournament_name: data.name || "NCAA Tournament 2026",
     stages,
     participants,
   };
@@ -76,15 +75,16 @@ export default function MarchMadnessPage() {
     notFound();
   }
 
-  // Fetch playoff grid for odds data
-  const league = type === "womens" ? "WNCAAB" : "NCAAB";
+  // Use the championship grid endpoint — better data quality with
+  // matching_rules and league_name_patterns filtering
+  const leagueSlug = type === "womens" ? "wnba" : "ncaa-basketball";
   const {
     data: gridData,
     error: gridError,
     isLoading: gridLoading,
   } = useSWR(
-    ["playoff-grid", "basketball", league],
-    () => fetchPlayoffGrid("basketball", league, undefined, 64),
+    ["championship-grid", leagueSlug],
+    () => fetchChampionshipGrid(leagueSlug),
     { refreshInterval: 60000 }
   );
 
@@ -100,13 +100,6 @@ export default function MarchMadnessPage() {
   const progressionData = useMemo(() => {
     if (!gridData) return null;
     return toProgressionResponse(gridData);
-  }, [gridData]);
-
-  // Find the championship stage market ID for the chart
-  const championshipMarketId = useMemo(() => {
-    if (!gridData) return null;
-    const champStage = gridData.stages.find((s) => s.key === "championship");
-    return champStage?.market_ids?.[0] ?? null;
   }, [gridData]);
 
   return (
@@ -128,7 +121,7 @@ export default function MarchMadnessPage() {
                   : "bg-white/5 text-white/50 border border-white/10 hover:border-white/20"
               }`}
             >
-              🏀 Men&apos;s
+              Men&apos;s
             </Link>
             <Link
               href="/march-madness/womens"
@@ -138,7 +131,7 @@ export default function MarchMadnessPage() {
                   : "bg-white/5 text-white/50 border border-white/10 hover:border-white/20"
               }`}
             >
-              🏀 Women&apos;s
+              Women&apos;s
             </Link>
           </div>
         </div>
@@ -151,19 +144,15 @@ export default function MarchMadnessPage() {
           <ErrorMessage message="Failed to load tournament odds. Please try again." />
         )}
 
-        {/* Championship odds trend chart */}
-        {championshipMarketId && (
+        {/* Championship odds trend chart (inline from grid response) */}
+        {gridData?.trend_chart?.timeline && gridData.trend_chart.timeline.length > 0 && (
           <div className="mm-section">
             <div className="mm-section-header">
               <h2 className="mm-section-title">Championship Odds Trend</h2>
             </div>
-            <TournamentChart
-              marketId={championshipMarketId}
-              hours={336}
-              height={280}
-              hideLeaderboard
-              className="bg-white/[0.03] rounded-xl border border-white/10 p-3"
-            />
+            <div className="bg-white/[0.03] rounded-xl border border-white/10 p-3">
+              <TrendChartInline trendChart={gridData.trend_chart} />
+            </div>
           </div>
         )}
 
@@ -210,7 +199,7 @@ export default function MarchMadnessPage() {
         )}
 
         {/* Sources footer */}
-        {gridData && gridData.sources.length > 0 && (
+        {gridData && gridData.sources_available.length > 0 && (
           <p style={{
             textAlign: "center",
             fontSize: "0.75rem",
@@ -218,12 +207,106 @@ export default function MarchMadnessPage() {
             opacity: 0.5,
             marginTop: 16,
           }}>
-            {gridData.teams.length} teams · {gridData.stages.length} stage{gridData.stages.length !== 1 ? "s" : ""} ·{" "}
-            Sources: {gridData.sources.map(s =>
+            {gridData.teams.length} teams · {gridData.columns.length} stage{gridData.columns.length !== 1 ? "s" : ""} ·{" "}
+            Sources: {gridData.sources_available.map(s =>
               s === "odds_api" ? "Sportsbooks" : s === "kalshi" ? "Kalshi" : s === "polymarket" ? "Polymarket" : s
             ).join(", ")}
           </p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Inline SVG trend chart from championship grid trend_chart data */
+function TrendChartInline({ trendChart }: { trendChart: ChampionshipGridResponse["trend_chart"] }) {
+  const { timeline, outcomes } = trendChart;
+  if (!timeline || timeline.length < 2) return null;
+
+  const W = 800;
+  const H = 220;
+  const PAD = { top: 20, right: 16, bottom: 30, left: 48 };
+
+  // Get top 8 outcomes by current probability
+  const topOutcomes = (outcomes || [])
+    .sort((a, b) => (b.current_probability ?? 0) - (a.current_probability ?? 0))
+    .slice(0, 8);
+  const names = topOutcomes.map((o) => o.name);
+
+  const COLORS = [
+    "#f59e0b", "#3b82f6", "#ef4444", "#22c55e", "#a855f7",
+    "#06b6d4", "#f97316", "#ec4899",
+  ];
+
+  // Build series data
+  const xMin = new Date(timeline[0].timestamp).getTime();
+  const xMax = new Date(timeline[timeline.length - 1].timestamp).getTime();
+
+  let yMax = 0;
+  for (const entry of timeline) {
+    for (const name of names) {
+      const v = entry.outcomes[name];
+      if (v != null && v > yMax) yMax = v;
+    }
+  }
+  yMax = Math.max(yMax * 1.15, 0.05);
+
+  const xScale = (t: number) => PAD.left + ((t - xMin) / (xMax - xMin)) * (W - PAD.left - PAD.right);
+  const yScale = (v: number) => PAD.top + (1 - v / yMax) * (H - PAD.top - PAD.bottom);
+
+  const paths = names.map((name, i) => {
+    const points: string[] = [];
+    for (const entry of timeline) {
+      const v = entry.outcomes[name];
+      if (v == null) continue;
+      const t = new Date(entry.timestamp).getTime();
+      points.push(`${xScale(t).toFixed(1)},${yScale(v).toFixed(1)}`);
+    }
+    if (points.length < 2) return null;
+    return (
+      <polyline
+        key={name}
+        points={points.join(" ")}
+        fill="none"
+        stroke={COLORS[i % COLORS.length]}
+        strokeWidth={i === 0 ? 2.5 : 1.5}
+        strokeLinejoin="round"
+        opacity={i < 3 ? 1 : 0.7}
+      />
+    );
+  });
+
+  // Y-axis labels
+  const yTicks = [0, yMax * 0.25, yMax * 0.5, yMax * 0.75, yMax];
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 280 }}>
+        {/* Y gridlines and labels */}
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line
+              x1={PAD.left} y1={yScale(v)} x2={W - PAD.right} y2={yScale(v)}
+              stroke="rgba(255,255,255,0.06)" strokeWidth={1}
+            />
+            <text
+              x={PAD.left - 6} y={yScale(v) + 4}
+              fill="rgba(255,255,255,0.3)" fontSize={10} textAnchor="end"
+            >
+              {(v * 100).toFixed(0)}%
+            </text>
+          </g>
+        ))}
+        {paths}
+      </svg>
+      {/* Legend */}
+      <div className="flex flex-wrap gap-3 mt-2 px-2 justify-center">
+        {names.map((name, i) => (
+          <div key={name} className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>
+            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+            <span>{name.replace(/ (Blue Devils|Wildcats|Wolverines|Gators|Cougars|Bulldogs|Tigers|Bears|Huskies|Cardinals|Seminoles|Volunteers|Longhorns|Boilermakers|Tar Heels|Jayhawks|Hurricanes|Yellow Jackets|Crimson Tide|Hawkeyes|Spartans|Sun Devils)$/, "")}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
