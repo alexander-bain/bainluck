@@ -1414,7 +1414,12 @@ async def get_playoff_grid(
         if any(eid.lower().startswith(sk.lower()) for sk in config.sport_keys):
             markets.append(market)
             continue
-        # Path B markets must match a league name pattern
+        # Path B.1: Check external_id prefix (e.g., Kalshi tickers like KXMARMADROUND)
+        if config.external_id_prefixes and eid:
+            if any(eid.startswith(pfx) for pfx in config.external_id_prefixes):
+                markets.append(market)
+                continue
+        # Path B.2: Match by league name pattern in market name
         if league_patterns:
             if any(pat.search(name) for pat in league_patterns):
                 # For Champions League: reject "Champions League Qualification/Spot"

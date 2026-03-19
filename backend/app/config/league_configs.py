@@ -49,6 +49,10 @@ class LeagueConfig:
     # (Kalshi/Polymarket). At least one pattern must match the market name for
     # inclusion. Needed to separate NBA from NCAAB (both llm_sport_category="basketball").
     league_name_patterns: list[str] = field(default_factory=list)
+    # Kalshi ticker prefixes that belong to this league. Markets whose
+    # external_id starts with any of these prefixes pass the league filter
+    # even if their name doesn't match league_name_patterns.
+    external_id_prefixes: list[str] = field(default_factory=list)
     team_sort: str = "championship_desc"  # "championship_desc" | "name_asc" | "seed_asc"
     conference_split: bool = False  # Show teams grouped by conference?
     conference_field: str = "conference"  # Field on standings_data for grouping
@@ -184,6 +188,9 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
         r"\bCollege\s+Basketball\b",
         r"\bNCAAB\b",
     ],
+    # Kalshi ticker prefixes that belong to this league — used when market names
+    # don't contain league keywords (e.g., "Men's Semifinals Qualifiers").
+    external_id_prefixes=["KXMARMADROUND"],
     columns=[
         GridColumn(key="round_of_32", label="R32", order=1),
         GridColumn(key="sweet_16", label="Sweet 16", order=2),
@@ -230,6 +237,7 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
                 r"Elite\s+Eight",
                 r"Elite\s+8",
                 r"Make.*Elite",
+                r"Quarter.?Finals?",
             ],
         ),
         MarketMatchingRule(

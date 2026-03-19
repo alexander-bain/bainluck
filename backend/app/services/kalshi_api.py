@@ -504,20 +504,32 @@ class KalshiAPIService:
                 return val / 100.0
 
             def parse_dollar_str(val) -> Optional[float]:
-                """Parse a dollar string ('0.0100') to decimal probability."""
-                if val is None or val == "" or val == "0.0000":
+                """Parse a dollar string ('0.0100') to decimal probability.
+
+                Returns 0.0 for '0.0000' — a $0.00 bid is a valid data point
+                (no one is bidding), not missing data. Consumers (grids, display)
+                handle noise filtering at their level.
+                """
+                if val is None or val == "":
                     return None
                 try:
                     return float(val)
                 except (ValueError, TypeError):
                     return None
 
-            # Prefer new *_dollars fields, fall back to old cent-based fields
-            yes_bid = parse_dollar_str(market_data.get("yes_bid_dollars")) or to_decimal(market_data.get("yes_bid"))
-            yes_ask = parse_dollar_str(market_data.get("yes_ask_dollars")) or to_decimal(market_data.get("yes_ask"))
-            no_bid = parse_dollar_str(market_data.get("no_bid_dollars")) or to_decimal(market_data.get("no_bid"))
-            no_ask = parse_dollar_str(market_data.get("no_ask_dollars")) or to_decimal(market_data.get("no_ask"))
-            last_price = parse_dollar_str(market_data.get("last_price_dollars")) or to_decimal(market_data.get("last_price"))
+            # Prefer new *_dollars fields, fall back to old cent-based fields.
+            # Use explicit None checks — 0.0 is a valid value (no bid placed).
+            def _prefer_dollars(dollars_key: str, cents_key: str) -> Optional[float]:
+                v = parse_dollar_str(market_data.get(dollars_key))
+                if v is not None:
+                    return v
+                return to_decimal(market_data.get(cents_key))
+
+            yes_bid = _prefer_dollars("yes_bid_dollars", "yes_bid")
+            yes_ask = _prefer_dollars("yes_ask_dollars", "yes_ask")
+            no_bid = _prefer_dollars("no_bid_dollars", "no_bid")
+            no_ask = _prefer_dollars("no_ask_dollars", "no_ask")
+            last_price = _prefer_dollars("last_price_dollars", "last_price")
 
             # Volume/open_interest also have new *_fp string fields
             def parse_int_str(val) -> Optional[int]:

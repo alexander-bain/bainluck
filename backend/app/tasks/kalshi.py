@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, delete as sa_delete, select
 
 from app.tasks.base import get_task_session, run_async
 
@@ -388,13 +388,21 @@ async def _poll_kalshi_markets():
                     # First pass: compute probabilities and names for all outcomes
                     outcome_data = []
                     for market in event.markets:
-                        # Calculate probability from bid/ask midpoint or last price
-                        if market.yes_bid is not None and market.yes_ask is not None:
+                        # Calculate probability from bid/ask midpoint or last price.
+                        # When yes_bid is 0 (no one bidding), prefer last_price
+                        # over the midpoint — last_price better reflects actual
+                        # market consensus for illiquid outcomes.
+                        if (market.yes_bid is not None and market.yes_bid > 0
+                                and market.yes_ask is not None and market.yes_ask > 0):
                             prob = (market.yes_bid + market.yes_ask) / 2
-                        elif market.last_price is not None:
+                        elif market.last_price is not None and market.last_price > 0:
                             prob = market.last_price
+                        elif (market.yes_bid is not None and market.yes_ask is not None
+                              and market.yes_ask > 0):
+                            # Bid is 0 but ask exists — use ask as upper bound
+                            prob = market.yes_ask
                         else:
-                            continue  # Skip markets without pricing
+                            continue  # Skip markets without any pricing
 
                         american = probability_to_american(prob) if prob and prob > 0 else None
 
@@ -424,6 +432,32 @@ async def _poll_kalshi_markets():
 
                     # Sort by probability descending to compute ranks (1 = highest)
                     outcome_data.sort(key=lambda x: x["prob"], reverse=True)
+
+                    # Clean up stuck outcomes with NULL external_id — these were
+                    # created by an older code path and can never be matched by the
+                    # upsert ON CONFLICT (market_id, external_id) since NULL != NULL.
+                    # Delete related snapshots first (no CASCADE on FK).
+                    orphan_ids = (await session.execute(
+                        select(FuturesOutcome.id).where(
+                            FuturesOutcome.market_id == futures_market_id,
+                            FuturesOutcome.external_id.is_(None),
+                        )
+                    )).scalars().all()
+                    if orphan_ids:
+                        logger.info(
+                            "Cleaning up %d orphan outcomes with NULL external_id for market %s",
+                            len(orphan_ids), event.event_ticker,
+                        )
+                        await session.execute(
+                            sa_delete(FuturesOddsSnapshot).where(
+                                FuturesOddsSnapshot.outcome_id.in_(orphan_ids)
+                            )
+                        )
+                        await session.execute(
+                            sa_delete(FuturesOutcome).where(
+                                FuturesOutcome.id.in_(orphan_ids)
+                            )
+                        )
 
                     # Second pass: upsert outcomes with correct probability-based ranks
                     for rank, od in enumerate(outcome_data, 1):
