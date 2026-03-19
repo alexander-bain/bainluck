@@ -1332,6 +1332,7 @@ async def get_playoff_grid(
     league_slug: str,
     hours: int = Query(default=None, description="Trend chart window in hours"),
     top: int = Query(default=10, ge=1, le=50, description="Top N teams for trend chart"),
+    debug: bool = Query(default=False, description="Include column→market debug info"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return championship progression grid for a league.
@@ -1490,10 +1491,19 @@ async def get_playoff_grid(
 
             column_data[col_key].append((market, outcome))
 
-    # Log column coverage
+    # Log column coverage + per-market breakdown for debugging
     for col in config.columns:
-        count = len(column_data.get(col.key, []))
+        entries = column_data.get(col.key, [])
+        count = len(entries)
         logger.info("  Column %s (%s): %d outcome entries", col.key, col.label, count)
+        # Log distinct markets feeding this column
+        market_names: dict[int, str] = {}
+        for market, outcome in entries:
+            if market.id not in market_names:
+                market_names[market.id] = f"{market.source}:{market.name}"
+        if market_names:
+            for mid, mname in list(market_names.items())[:10]:
+                logger.info("    → market %d: %s", mid, mname)
 
     # -----------------------------------------------------------------------
     # 3. Aggregate by team × column with cross-source merging
@@ -1872,7 +1882,7 @@ async def get_playoff_grid(
             if ungrouped:
                 grouped_teams["Other"] = ungrouped
 
-    return {
+    resp = {
         "league": config.slug,
         "name": config.name,
         "season": config.season_pattern,
@@ -1885,6 +1895,32 @@ async def get_playoff_grid(
         "last_updated": datetime.now(timezone.utc).isoformat(),
         "sources_available": sorted(sources_seen),
     }
+
+    # Debug mode: include which markets feed each column
+    if debug:
+        debug_columns: dict[str, list[dict]] = {}
+        for col_key, entries in column_data.items():
+            seen_markets: dict[int, dict] = {}
+            for market, outcome in entries:
+                if market.id not in seen_markets:
+                    seen_markets[market.id] = {
+                        "market_id": market.id,
+                        "source": market.source,
+                        "name": market.name,
+                        "external_id": market.external_id[:50] if market.external_id else None,
+                        "outcome_count": 0,
+                        "sample_outcomes": [],
+                    }
+                seen_markets[market.id]["outcome_count"] += 1
+                if len(seen_markets[market.id]["sample_outcomes"]) < 3:
+                    seen_markets[market.id]["sample_outcomes"].append({
+                        "name": outcome.name,
+                        "prob": float(outcome.current_probability) if outcome.current_probability else None,
+                    })
+            debug_columns[col_key] = list(seen_markets.values())
+        resp["_debug_column_markets"] = debug_columns
+
+    return resp
 
 
 @router.get("/")
