@@ -273,6 +273,37 @@ class TestMarketToColumnMatching:
         m = _make_market("March Madness Winner 2026")
         assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "championship"
 
+    # --- NCAA Kalshi round terminology ---
+    def test_ncaa_kalshi_round_of_16_qualifiers(self):
+        """Kalshi: 'Round of 16 Qualifiers' = qualify for Sweet 16 = win Round of 32."""
+        m = _make_market("Men's Round of 16 Qualifiers")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "sweet_16"
+
+    def test_ncaa_kalshi_round_of_8_qualifiers(self):
+        """Kalshi: 'Round of 8 Qualifiers' = qualify for Elite 8 = win Sweet 16."""
+        m = _make_market("Men's Round of 8 Qualifiers")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "elite_eight"
+
+    def test_ncaa_kalshi_round_of_32_qualifiers(self):
+        """Kalshi: 'Round of 32 Qualifiers' = win first round."""
+        m = _make_market("Men's Round of 32 Qualifiers")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "round_of_32"
+
+    def test_ncaa_kalshi_semifinals_qualifiers(self):
+        """Kalshi: 'Semifinals Qualifiers' = qualify for Final Four."""
+        m = _make_market("Men's Semifinals Qualifiers")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "final_four"
+
+    def test_ncaa_kalshi_championship_game_qualifiers(self):
+        """Kalshi: 'Championship Game Qualifiers' = qualify for title game."""
+        m = _make_market("Men's Championship Game Qualifiers")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "title_game"
+
+    def test_ncaa_kalshi_champion(self):
+        """Kalshi: 'College Basketball Champion' = championship winner."""
+        m = _make_market("Men's College Basketball Champion")
+        assert _match_market_to_column(m, NCAA_BASKETBALL_CONFIG) == "championship"
+
     # --- NFL ---
     def test_nfl_super_bowl(self):
         m = _make_market("Super Bowl Winner 2025-26")

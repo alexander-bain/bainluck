@@ -210,6 +210,7 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
                 r"NCAA\s+Champion(?!\s*ship\s+Game)",  # "NCAA Champion" but NOT "Championship Game"
                 r"March\s+Madness.*Winner",
                 r"Win\s+(?:the\s+)?NCAA\s+Tournament",
+                r"College\s+Basketball\s+Champion\b",  # Kalshi: "Men's College Basketball Champion"
             ],
             canonical_prefix="basketball_ncaab_championship",
         ),
@@ -238,6 +239,7 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
                 r"Elite\s+8",
                 r"Make.*Elite",
                 r"Quarter.?Finals?",
+                r"Round\s+of\s+8\s+Qualif",   # Kalshi: "Men's Round of 8 Qualifiers"
             ],
         ),
         MarketMatchingRule(
@@ -245,6 +247,7 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
             name_patterns=[
                 r"Sweet\s+(?:16|Sixteen)",
                 r"Make.*Sweet",
+                r"Round\s+of\s+16\s+Qualif",  # Kalshi: "Men's Round of 16 Qualifiers"
             ],
         ),
         MarketMatchingRule(
