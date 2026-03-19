@@ -208,6 +208,8 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bmost\s+outstanding\b |  # "Tournament Most Outstanding Player"
     \bannouncer\b         |   # "Announcers at..." props
     \bplayer\s+points\b   |   # "Player Points" props
+    \bNIT\b               |   # NIT Tournament (not NCAA Tournament)
+    \bseed\s+to\s+win\b   |   # "Seed to win the Championship" props
     \b\(W\)\s*$               # Women's tournament game suffix: "Team A vs. Team B (W)"
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -1574,8 +1576,12 @@ async def get_playoff_grid(
         for short_name in norm_names[i + 1:]:
             if short_name in merge_map:
                 continue
-            # Check if short_name is a prefix of long_name
-            if long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-"):
+            # Check if short_name is a prefix of long_name.
+            # Require 2+ words to prevent false merges like "Iowa" → "Iowa State".
+            if (
+                len(short_name.split()) >= 2
+                and (long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-"))
+            ):
                 merge_map[short_name] = long_name
             # Check single-letter abbreviation suffix
             # e.g., "los angeles l" → "los angeles lakers"
