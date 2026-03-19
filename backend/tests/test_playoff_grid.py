@@ -32,6 +32,8 @@ from app.routes.playoffs import (
     _normalize_team_name,
     _strip_diacritics,
     _is_playoff_relevant_market,
+    _should_prefix_merge,
+    _alias_matches,
 )
 
 
@@ -936,3 +938,101 @@ class TestGolfConfigMaxTeams:
         # This is enforced by the endpoint logic (slug == "golf" → DataGolf path)
         # Config just needs sport_category and matching rules
         assert GOLF_CONFIG.sport_category == "golf"
+
+
+# ============================================================================
+# Team name merge logic
+# ============================================================================
+
+
+class TestShouldPrefixMerge:
+    """Test _should_prefix_merge for single-word and multi-word names."""
+
+    # Multi-word prefix merges (should always work)
+    def test_multi_word_prefix_merge(self):
+        assert _should_prefix_merge("oklahoma city", "oklahoma city thunder")
+
+    def test_multi_word_prefix_merge_hyphen(self):
+        assert _should_prefix_merge("new york", "new york-knicks")
+
+    # Single-word merges that SHOULD succeed (mascot follows)
+    def test_single_word_boston_celtics(self):
+        assert _should_prefix_merge("boston", "boston celtics")
+
+    def test_single_word_kansas_jayhawks(self):
+        assert _should_prefix_merge("kansas", "kansas jayhawks")
+
+    def test_single_word_tennessee_volunteers(self):
+        assert _should_prefix_merge("tennessee", "tennessee volunteers")
+
+    def test_single_word_vanderbilt_commodores(self):
+        assert _should_prefix_merge("vanderbilt", "vanderbilt commodores")
+
+    def test_single_word_cleveland_cavaliers(self):
+        assert _should_prefix_merge("cleveland", "cleveland cavaliers")
+
+    def test_single_word_detroit_pistons(self):
+        assert _should_prefix_merge("detroit", "detroit pistons")
+
+    def test_single_word_houston_rockets(self):
+        assert _should_prefix_merge("houston", "houston rockets")
+
+    def test_single_word_miami_heat(self):
+        assert _should_prefix_merge("miami", "miami heat")
+
+    def test_single_word_minnesota_timberwolves(self):
+        assert _should_prefix_merge("minnesota", "minnesota timberwolves")
+
+    # Single-word merges that SHOULD FAIL (location modifier follows)
+    def test_iowa_vs_iowa_state_rejected(self):
+        assert not _should_prefix_merge("iowa", "iowa state cyclones")
+
+    def test_tennessee_vs_tennessee_state_rejected(self):
+        assert not _should_prefix_merge("tennessee", "tennessee state")
+
+    def test_tennessee_vs_tennessee_tech_rejected(self):
+        assert not _should_prefix_merge("tennessee", "tennessee tech")
+
+    def test_kansas_vs_kansas_city_rejected(self):
+        assert not _should_prefix_merge("kansas", "kansas city chiefs")
+
+    def test_georgia_vs_georgia_southern_rejected(self):
+        assert not _should_prefix_merge("georgia", "georgia southern")
+
+    def test_michigan_vs_michigan_state_rejected(self):
+        assert not _should_prefix_merge("michigan", "michigan state spartans")
+
+    # Not a prefix at all
+    def test_not_prefix(self):
+        assert not _should_prefix_merge("duke", "florida gators")
+
+    def test_partial_word_not_prefix(self):
+        assert not _should_prefix_merge("iowa", "iowan something")
+
+
+class TestAliasMatches:
+    """Test _alias_matches for non-prefix team name aliases."""
+
+    def test_connecticut_uconn(self):
+        assert _alias_matches("connecticut", "uconn huskies")
+
+    def test_connecticut_uconn_reverse(self):
+        assert _alias_matches("uconn huskies", "connecticut")
+
+    def test_connecticut_exact_uconn(self):
+        assert _alias_matches("connecticut", "uconn")
+
+    def test_cal_baptist_california_baptist(self):
+        assert _alias_matches("cal baptist", "california baptist lancers")
+
+    def test_ca_baptist_california_baptist(self):
+        assert _alias_matches("ca baptist", "california baptist lancers")
+
+    def test_pitt_pittsburgh(self):
+        assert _alias_matches("pitt", "pittsburgh panthers")
+
+    def test_no_alias(self):
+        assert not _alias_matches("duke", "florida")
+
+    def test_no_alias_similar(self):
+        assert not _alias_matches("virginia", "virginia tech")

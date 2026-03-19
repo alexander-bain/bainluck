@@ -247,6 +247,31 @@ def _is_playoff_relevant_market(market_name: str) -> bool:
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Words that indicate a different school/team when they follow a location name.
+# Prevents false merges like "Iowa" → "Iowa State" or "Tennessee" → "Tennessee Tech".
+_LOCATION_MODIFIERS = frozenset({
+    "state", "st", "tech", "city", "a&m", "southern", "northern",
+    "central", "eastern", "western", "international",
+})
+
+# Non-prefix aliases: teams whose short/alternate names are completely different
+# from their full names.  Maps normalized alias → normalized canonical name.
+# Both directions are checked during merge.
+_TEAM_NAME_ALIASES: dict[str, str] = {
+    "connecticut": "uconn",
+    "conn": "uconn",
+    "pitt": "pittsburgh",
+    "ole miss": "mississippi",
+    "umass": "massachusetts",
+    "cal baptist": "california baptist",
+    "ca baptist": "california baptist",
+    "smu": "southern methodist",
+    "lsu": "louisiana state",
+    "ucf": "central florida",
+    "vcu": "virginia commonwealth",
+    "byu": "brigham young",
+}
+
 
 def _strip_diacritics(s: str) -> str:
     """Remove diacritics for cross-source name dedup."""
@@ -265,6 +290,42 @@ def _normalize_team_name(name: str) -> str:
     # This prevents "St. Louis Blues" vs "St Louis Blues" split
     n = re.sub(r"\.(?=\s)", "", n)
     return n
+
+
+def _should_prefix_merge(short_name: str, long_name: str) -> bool:
+    """Check if short_name should merge into long_name as a prefix.
+
+    For multi-word short names: always merge if it's a prefix.
+    For single-word short names: merge only if the next word in long_name
+    is NOT a location modifier (prevents Iowa→Iowa State, Tennessee→Tennessee Tech).
+    """
+    if not (long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-")):
+        return False
+    short_words = short_name.split()
+    if len(short_words) >= 2:
+        return True
+    # Single-word: check what follows
+    rest = long_name[len(short_name):].strip().lstrip("-").split()
+    if rest and rest[0].lower() in _LOCATION_MODIFIERS:
+        return False
+    return True
+
+
+def _alias_matches(name_a: str, name_b: str) -> bool:
+    """Check if two normalized names refer to the same team via aliases.
+
+    Returns True if name_a is an alias/canonical form that matches name_b.
+    E.g., "connecticut" and "uconn huskies" → True (connecticut→uconn, prefix of uconn huskies).
+    """
+    for alias, canonical in _TEAM_NAME_ALIASES.items():
+        # Check if one name starts with the alias and the other starts with canonical
+        a_is_alias = name_a == alias or name_a.startswith(alias + " ")
+        a_is_canonical = name_a == canonical or name_a.startswith(canonical + " ")
+        b_is_alias = name_b == alias or name_b.startswith(alias + " ")
+        b_is_canonical = name_b == canonical or name_b.startswith(canonical + " ")
+        if (a_is_alias and b_is_canonical) or (a_is_canonical and b_is_alias):
+            return True
+    return False
 
 
 def _match_market_to_column(
@@ -1572,18 +1633,24 @@ async def get_playoff_grid(
     norm_names = sorted(grid_raw.keys(), key=len, reverse=True)  # longest first
     merge_map: dict[str, str] = {}  # short_name → long_name
 
+    def _expand_abbrevs(words):
+        expanded = set()
+        for w in words:
+            expanded.add(w)
+            if w == "st":
+                expanded.add("state")
+            elif w == "state":
+                expanded.add("st")
+        return expanded
+
     for i, long_name in enumerate(norm_names):
         for short_name in norm_names[i + 1:]:
             if short_name in merge_map:
                 continue
-            # Check if short_name is a prefix of long_name.
-            # Require 2+ words to prevent false merges like "Iowa" → "Iowa State".
-            if (
-                len(short_name.split()) >= 2
-                and (long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-"))
-            ):
+            # 1. Prefix merge (single-word safe via location modifier check)
+            if _should_prefix_merge(short_name, long_name):
                 merge_map[short_name] = long_name
-            # Check single-letter abbreviation suffix
+            # 2. Single-letter abbreviation suffix
             # e.g., "los angeles l" → "los angeles lakers"
             elif (
                 len(short_name) >= 3
@@ -1594,24 +1661,16 @@ async def get_playoff_grid(
                 and long_name[len(short_name) - 1] == short_name[-1]
             ):
                 merge_map[short_name] = long_name
-            # Check if short_name words are a subset of long_name words
-            # (e.g., "michigan state" vs "michigan st spartans")
+            # 3. Word subset merge (e.g., "michigan state" vs "michigan st spartans")
             elif len(short_name.split()) >= 2:
                 short_words = set(short_name.split())
                 long_words = set(long_name.split())
-                # Normalize common abbreviations for comparison
-                def _expand_abbrevs(words):
-                    expanded = set()
-                    for w in words:
-                        expanded.add(w)
-                        if w == "st":
-                            expanded.add("state")
-                        elif w == "state":
-                            expanded.add("st")
-                    return expanded
                 short_expanded = _expand_abbrevs(short_words)
                 if short_expanded.issubset(_expand_abbrevs(long_words)):
                     merge_map[short_name] = long_name
+            # 4. Alias-based merge (e.g., "connecticut" ↔ "uconn huskies")
+            if short_name not in merge_map and _alias_matches(short_name, long_name):
+                merge_map[short_name] = long_name
 
     # Apply merges
     for short_name, long_name in merge_map.items():
@@ -1625,17 +1684,16 @@ async def get_playoff_grid(
     # 4. Build team rows with merged probabilities
     # -----------------------------------------------------------------------
 
-    # Get team metadata
+    # Get team metadata — collect ALL unique display names + norm names
+    # for the broadest possible Team table lookup
     team_names_raw = set()
     for norm_name in grid_raw:
-        # Find any display name for lookup
+        team_names_raw.add(norm_name)  # Include normalized name itself
         for col_entries in grid_raw[norm_name].values():
             for entry in col_entries:
                 oid = entry["outcome_id"]
                 if oid in outcome_id_to_name:
                     team_names_raw.add(outcome_id_to_name[oid])
-                    break
-            break
 
     team_meta = await _get_team_metadata(db, team_names_raw, league_slug=config.slug)
 
