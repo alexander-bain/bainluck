@@ -490,15 +490,47 @@ class KalshiAPIService:
             close_time = self._parse_timestamp(market_data.get("close_time"))
             expiration_time = self._parse_timestamp(market_data.get("expiration_time"))
 
-            # Kalshi prices are in cents (0-100), convert to decimal (0-1)
+            # Kalshi API v2 returns prices in two possible formats:
+            # - Old format: yes_bid, yes_ask, last_price as integers in cents (0-100)
+            # - New format: yes_bid_dollars, yes_ask_dollars, last_price_dollars as
+            #   string dollar amounts ("0.0100" = 1 cent = 1% probability)
+            # We try the new dollar fields first, falling back to old cent fields.
             def to_decimal(val):
+                """Convert a cents-based integer (0-100) to decimal (0-1)."""
                 if val is None:
                     return None
-                # If it's already a decimal < 1, return as-is
                 if isinstance(val, float) and val <= 1:
                     return val
-                # Otherwise assume it's cents (0-100)
                 return val / 100.0
+
+            def parse_dollar_str(val) -> Optional[float]:
+                """Parse a dollar string ('0.0100') to decimal probability."""
+                if val is None or val == "" or val == "0.0000":
+                    return None
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return None
+
+            # Prefer new *_dollars fields, fall back to old cent-based fields
+            yes_bid = parse_dollar_str(market_data.get("yes_bid_dollars")) or to_decimal(market_data.get("yes_bid"))
+            yes_ask = parse_dollar_str(market_data.get("yes_ask_dollars")) or to_decimal(market_data.get("yes_ask"))
+            no_bid = parse_dollar_str(market_data.get("no_bid_dollars")) or to_decimal(market_data.get("no_bid"))
+            no_ask = parse_dollar_str(market_data.get("no_ask_dollars")) or to_decimal(market_data.get("no_ask"))
+            last_price = parse_dollar_str(market_data.get("last_price_dollars")) or to_decimal(market_data.get("last_price"))
+
+            # Volume/open_interest also have new *_fp string fields
+            def parse_int_str(val) -> Optional[int]:
+                if val is None or val == "":
+                    return None
+                try:
+                    return int(float(val))
+                except (ValueError, TypeError):
+                    return None
+
+            volume = parse_int_str(market_data.get("volume_fp")) or market_data.get("volume")
+            volume_24h = parse_int_str(market_data.get("volume_24h_fp")) or market_data.get("volume_24h")
+            open_interest = parse_int_str(market_data.get("open_interest_fp")) or market_data.get("open_interest")
 
             return KalshiMarket(
                 ticker=market_data.get("ticker", ""),
@@ -511,14 +543,14 @@ class KalshiAPIService:
                 open_time=open_time,
                 close_time=close_time,
                 expiration_time=expiration_time,
-                yes_bid=to_decimal(market_data.get("yes_bid")),
-                yes_ask=to_decimal(market_data.get("yes_ask")),
-                no_bid=to_decimal(market_data.get("no_bid")),
-                no_ask=to_decimal(market_data.get("no_ask")),
-                last_price=to_decimal(market_data.get("last_price")),
-                volume=market_data.get("volume"),
-                volume_24h=market_data.get("volume_24h"),
-                open_interest=market_data.get("open_interest"),
+                yes_bid=yes_bid,
+                yes_ask=yes_ask,
+                no_bid=no_bid,
+                no_ask=no_ask,
+                last_price=last_price,
+                volume=volume,
+                volume_24h=volume_24h,
+                open_interest=open_interest,
                 result=market_data.get("result"),
             )
         except Exception as e:
