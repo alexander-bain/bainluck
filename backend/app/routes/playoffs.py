@@ -1695,7 +1695,7 @@ async def get_playoff_grid(
 
             probs = [e["probability"] for e in entries]
             corrected = _correct_inverted_probs(probs)
-            merged = statistics.median(corrected)
+            merged = _merge_probabilities(probs)
 
             sources = []
             for e, corrected_p in zip(entries, corrected):
