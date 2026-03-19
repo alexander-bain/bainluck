@@ -227,6 +227,37 @@ async def _poll_kalshi_markets():
         async with get_task_session() as session:
             now = datetime.now(timezone.utc)
 
+            # One-time bulk cleanup: delete ALL orphan outcomes with NULL
+            # external_id across all Kalshi markets.  These were created by
+            # an older code path and can never match the upsert ON CONFLICT
+            # (market_id, external_id) since NULL != NULL in SQL.
+            orphan_sub = select(FuturesOutcome.id).where(
+                FuturesOutcome.external_id.is_(None),
+                FuturesOutcome.market_id.in_(
+                    select(FuturesMarket.id).where(
+                        FuturesMarket.source == "kalshi"
+                    )
+                ),
+            )
+            orphan_ids = (await session.execute(orphan_sub)).scalars().all()
+            if orphan_ids:
+                logger.info(
+                    "Bulk cleanup: deleting %d orphan outcomes with NULL external_id",
+                    len(orphan_ids),
+                )
+                await session.execute(
+                    sa_delete(FuturesOddsSnapshot).where(
+                        FuturesOddsSnapshot.outcome_id.in_(orphan_ids)
+                    )
+                )
+                await session.execute(
+                    sa_delete(FuturesOutcome).where(
+                        FuturesOutcome.id.in_(orphan_ids)
+                    )
+                )
+                await session.commit()
+                logger.info("Bulk orphan cleanup complete")
+
             for event in events:
                 try:
                     # Each Kalshi event can have multiple markets
@@ -432,32 +463,6 @@ async def _poll_kalshi_markets():
 
                     # Sort by probability descending to compute ranks (1 = highest)
                     outcome_data.sort(key=lambda x: x["prob"], reverse=True)
-
-                    # Clean up stuck outcomes with NULL external_id — these were
-                    # created by an older code path and can never be matched by the
-                    # upsert ON CONFLICT (market_id, external_id) since NULL != NULL.
-                    # Delete related snapshots first (no CASCADE on FK).
-                    orphan_ids = (await session.execute(
-                        select(FuturesOutcome.id).where(
-                            FuturesOutcome.market_id == futures_market_id,
-                            FuturesOutcome.external_id.is_(None),
-                        )
-                    )).scalars().all()
-                    if orphan_ids:
-                        logger.info(
-                            "Cleaning up %d orphan outcomes with NULL external_id for market %s",
-                            len(orphan_ids), event.event_ticker,
-                        )
-                        await session.execute(
-                            sa_delete(FuturesOddsSnapshot).where(
-                                FuturesOddsSnapshot.outcome_id.in_(orphan_ids)
-                            )
-                        )
-                        await session.execute(
-                            sa_delete(FuturesOutcome).where(
-                                FuturesOutcome.id.in_(orphan_ids)
-                            )
-                        )
 
                     # Second pass: upsert outcomes with correct probability-based ranks
                     for rank, od in enumerate(outcome_data, 1):
