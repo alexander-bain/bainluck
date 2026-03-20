@@ -1,97 +1,46 @@
 "use client";
 
 /**
- * ChampionshipGrid — Unified scrollable championship probability table.
+ * ChampionshipGrid — Mobile-first championship probability display.
  *
- * One layout for all screen sizes: a horizontally-scrollable table with a
- * sticky team column. Tapping a row expands an inline source-breakdown row
- * showing per-source probabilities for every stage side-by-side.
+ * Fits ALL stages on mobile without horizontal scroll by using:
+ * - Compact 2-3 letter column headers (R1, R2, CF, FIN, WIN)
+ * - Mini probability bars with intensity-encoded color instead of numbers
+ * - Tap to expand any row for source-level detail
  *
- * No tab-switching required — all columns visible at once.
+ * The design prioritizes visual scanning over precise reading —
+ * users can spot contenders at a glance by bar length/color.
  */
 
 import { useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { ChampionshipGridData, PlayoffTeam, LeagueTab, StageSource } from "@/lib/playoff-types";
+import type { ChampionshipGridData, PlayoffTeam, LeagueTab, PlayoffStage } from "@/lib/playoff-types";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function fmt(p: number): string {
-  return `${Math.round(p * 100)}%`;
+  const pct = Math.round(p * 100);
+  return pct < 1 && p > 0 ? "<1" : `${pct}`;
 }
 
-function hexToRgb(hex: string): string {
+function hexToRgba(hex: string, alpha: number): string {
   const h = (hex || "#888888").replace("#", "");
   const r = parseInt(h.substring(0, 2), 16) || 128;
   const g = parseInt(h.substring(2, 4), 16) || 128;
   const b = parseInt(h.substring(4, 6), 16) || 128;
-  return `${r}, ${g}, ${b}`;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function probColor(p: number): string {
-  if (p >= 0.55) return "#22C55E";
-  if (p >= 0.25) return "var(--text-primary)";
-  if (p <= 0.08) return "#EF4444";
-  return "var(--text-secondary)";
-}
-
-/** All unique source names across the entire dataset */
-function allSourceNames(teams: PlayoffTeam[]): string[] {
-  const set = new Set<string>();
-  teams.forEach((t) => t.stages.forEach((s) => s.sources.forEach((src) => set.add(src.source))));
-  return Array.from(set);
+/** Encode probability as opacity — higher = more visible */
+function probAlpha(p: number): number {
+  // Range from 0.15 (near-zero) to 1.0 (100%)
+  return 0.15 + p * 0.85;
 }
 
 // ---------------------------------------------------------------------------
-// Movers Strip
-// ---------------------------------------------------------------------------
-
-function computeMovers(teams: PlayoffTeam[], stageKey: string) {
-  return teams
-    .map((t) => {
-      const s = t.stages.find((s) => s.key === stageKey);
-      return { short: t.short, color: t.color, change: s?.change24h ?? 0 };
-    })
-    .filter((m) => Math.abs(m.change) >= 0.005)
-    .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
-    .slice(0, 6);
-}
-
-function MoversStrip({ teams, stageKey }: { teams: PlayoffTeam[]; stageKey: string }) {
-  const movers = computeMovers(teams, stageKey);
-  if (!movers.length) return null;
-  return (
-    <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-      {movers.map((m) => {
-        const isUp = m.change > 0;
-        const pct = Math.abs(m.change * 100);
-        const str = pct >= 1 ? Math.round(pct) : pct.toFixed(1);
-        return (
-          <div
-            key={m.short}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0"
-            style={{
-              backgroundColor: isUp ? "rgba(34,197,94,0.10)" : "rgba(239,68,68,0.10)",
-              borderColor: isUp ? "rgba(34,197,94,0.25)" : "rgba(239,68,68,0.25)",
-              color: isUp ? "#22C55E" : "#EF4444",
-            }}
-          >
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: m.color }} />
-            <span>{m.short}</span>
-            <span className="font-mono text-[10px]">
-              {isUp ? "+" : "-"}{str}%
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// League Tabs
+// LeagueTabs
 // ---------------------------------------------------------------------------
 
 function LeagueTabs({
@@ -104,14 +53,14 @@ function LeagueTabs({
   onSelect: (slug: string) => void;
 }) {
   return (
-    <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+    <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
       {tabs.map((tab) => {
         const active = tab.slug === activeSlug;
         return (
           <button
             key={tab.slug}
             onClick={() => onSelect(tab.slug)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap flex-shrink-0 transition-all duration-150"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap flex-shrink-0 transition-all duration-150"
             style={{
               backgroundColor: active ? "var(--surface-elevated)" : "transparent",
               color: active ? "var(--text-primary)" : "var(--text-muted)",
@@ -128,156 +77,227 @@ function LeagueTabs({
 }
 
 // ---------------------------------------------------------------------------
-// Source dots — compact visual showing per-source spread for one stage cell
+// Expanded source row
 // ---------------------------------------------------------------------------
 
-function SourceDots({
-  sources,
-  stageKey,
-  teamColor,
-}: {
-  sources: StageSource[];
-  stageKey: string;
-  teamColor: string;
-}) {
-  if (!sources.length) {
+function SourceBreakdown({ team, stageKeys, stageLabels }: { team: PlayoffTeam; stageKeys: string[]; stageLabels: string[] }) {
+  // Collect all unique sources across this team's stages
+  const allSources = useMemo(() => {
+    const set = new Set<string>();
+    team.stages.forEach((s) => s.sources.forEach((src) => set.add(src.source)));
+    return Array.from(set);
+  }, [team]);
+
+  if (!allSources.length) {
     return (
-      <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>
-        —
-      </span>
+      <div className="px-3 py-2 text-[10px]" style={{ color: "var(--text-muted)" }}>
+        No source data available
+      </div>
     );
   }
 
-  const min = Math.min(...sources.map((s) => s.probability));
-  const max = Math.max(...sources.map((s) => s.probability));
-  const rgb = hexToRgb(teamColor);
-
   return (
-    <div className="flex flex-col gap-0.5 w-full">
-      {sources.map((src) => (
-        <div key={src.source} className="flex items-center gap-1.5 w-full">
-          <span
-            className="text-[9px] font-mono whitespace-nowrap flex-shrink-0 w-14 text-right"
-            style={{ color: "var(--text-muted)" }}
-          >
-            {src.source.length > 8 ? src.source.slice(0, 8) : src.source}
-          </span>
-          {/* Mini bar */}
-          <div
-            className="flex-1 h-1 rounded-full overflow-hidden"
-            style={{ backgroundColor: `rgba(${rgb}, 0.12)` }}
-          >
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${Math.round(src.probability * 100)}%`,
-                backgroundColor: `rgba(${rgb}, 0.7)`,
-              }}
-            />
-          </div>
-          <span
-            className="text-[9px] font-mono flex-shrink-0"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            {fmt(src.probability)}
-          </span>
-        </div>
-      ))}
-      {/* Range label if spread > 2pp */}
-      {max - min >= 0.02 && (
-        <div className="flex justify-between mt-0.5">
-          <span className="text-[8px] font-mono" style={{ color: "var(--text-muted)" }}>
-            {fmt(min)}
-          </span>
-          <span className="text-[8px] font-mono" style={{ color: "var(--text-muted)" }}>
-            {fmt(max)}
-          </span>
-        </div>
-      )}
+    <div className="px-3 py-2">
+      <table className="w-full text-[10px]">
+        <thead>
+          <tr>
+            <th className="text-left font-medium pb-1" style={{ color: "var(--text-muted)", width: "30%" }}>
+              Source
+            </th>
+            {stageLabels.map((label, i) => (
+              <th
+                key={stageKeys[i]}
+                className="text-center font-medium pb-1"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {allSources.map((sourceName) => (
+            <tr key={sourceName}>
+              <td className="py-0.5 font-medium" style={{ color: "var(--text-secondary)" }}>
+                {sourceName}
+              </td>
+              {stageKeys.map((key) => {
+                const stage = team.stages.find((s) => s.key === key);
+                const srcData = stage?.sources.find((s) => s.source === sourceName);
+                return (
+                  <td key={key} className="text-center py-0.5 font-mono" style={{ color: "var(--text-secondary)" }}>
+                    {srcData ? `${fmt(srcData.probability)}%` : "—"}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Table cell — one stage for one team
+// Single team row with mini-bars
 // ---------------------------------------------------------------------------
 
-interface StageCellProps {
+interface TeamRowProps {
   team: PlayoffTeam;
-  stageKey: string;
+  rank: number;
+  stageKeys: string[];
+  stageLabels: string[];
   sortKey: string;
-  showSources: boolean;
+  expanded: boolean;
+  onToggle: () => void;
 }
 
-function StageCell({ team, stageKey, sortKey, showSources }: StageCellProps) {
-  const stage = team.stages.find((s) => s.key === stageKey);
-  const prob = stage?.probability ?? 0;
-  const change = stage?.change24h ?? 0;
-  const isSort = stageKey === sortKey;
-
-  const pct = Math.abs(change * 100);
-  const changeFmt = pct >= 0.1 ? (pct >= 1 ? Math.round(pct) : pct.toFixed(1)) : null;
+function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onToggle }: TeamRowProps) {
+  const teamColor = team.color || "#888888";
 
   return (
-    <td
-      className="px-2.5 py-2.5 text-right align-top"
-      style={{
-        minWidth: showSources ? 110 : 68,
-        backgroundColor: isSort ? "rgba(255,255,255,0.025)" : undefined,
-      }}
-    >
-      {showSources ? (
-        <div className="flex flex-col items-end gap-1.5">
-          {/* Consensus number */}
-          <div className="flex items-baseline gap-1 justify-end">
+    <>
+      {/* Main row */}
+      <tr
+        onClick={onToggle}
+        className="cursor-pointer transition-colors duration-100"
+        style={{
+          backgroundColor: expanded ? hexToRgba(teamColor, 0.06) : undefined,
+        }}
+      >
+        {/* Rank + Team */}
+        <td className="py-2 pl-2 pr-1">
+          <div className="flex items-center gap-1.5">
             <span
-              className="font-mono font-bold text-sm"
-              style={{ color: isSort ? probColor(prob) : "var(--text-secondary)" }}
+              className="text-[10px] font-mono w-4 text-right flex-shrink-0"
+              style={{ color: "var(--text-muted)" }}
             >
-              {fmt(prob)}
+              {rank}
             </span>
-            {changeFmt && (
-              <span
-                className="font-mono text-[9px]"
-                style={{ color: change > 0 ? "#22C55E" : "#EF4444" }}
-              >
-                {change > 0 ? "▲" : "▼"}{changeFmt}%
-              </span>
-            )}
-          </div>
-          {/* Per-source breakdown */}
-          <div className="w-full">
-            <SourceDots
-              sources={stage?.sources ?? []}
-              stageKey={stageKey}
-              teamColor={team.color}
+            <div
+              className="w-0.5 h-6 rounded-full flex-shrink-0"
+              style={{ backgroundColor: teamColor }}
             />
+            <img
+              src={team.logo}
+              alt=""
+              width={18}
+              height={18}
+              className="w-[18px] h-[18px] object-contain flex-shrink-0"
+            />
+            <div className="min-w-0">
+              <div
+                className="font-semibold text-[12px] leading-tight truncate"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {team.short}
+              </div>
+              <div
+                className="text-[9px] font-mono leading-tight"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {team.record}
+              </div>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex flex-col items-end gap-0.5">
-          <span
-            className="font-mono font-bold text-sm"
-            style={{ color: isSort ? probColor(prob) : "var(--text-secondary)" }}
-          >
-            {fmt(prob)}
-          </span>
-          {changeFmt && (
-            <span
-              className="font-mono text-[9px]"
-              style={{ color: change > 0 ? "#22C55E" : "#EF4444" }}
+        </td>
+
+        {/* Stage probability mini-bars */}
+        {stageKeys.map((key) => {
+          const stage = team.stages.find((s) => s.key === key);
+          const prob = stage?.probability ?? 0;
+          const change = stage?.change24h ?? 0;
+          const isSort = key === sortKey;
+
+          // Compute bar width and alpha
+          const barWidth = Math.max(prob * 100, prob > 0 ? 4 : 0); // min 4% if non-zero
+          const alpha = probAlpha(prob);
+
+          return (
+            <td
+              key={key}
+              className="py-2 px-0.5 text-center align-middle"
+              style={{
+                backgroundColor: isSort ? "rgba(16,185,129,0.04)" : undefined,
+              }}
             >
-              {change > 0 ? "▲" : "▼"}{changeFmt}%
-            </span>
-          )}
-        </div>
-      )}
-    </td>
+              <div className="flex flex-col items-center gap-0.5">
+                {/* Mini bar */}
+                <div
+                  className="h-2.5 rounded-sm mx-auto"
+                  style={{
+                    width: `${barWidth}%`,
+                    minWidth: prob > 0 ? 3 : 0,
+                    maxWidth: "100%",
+                    backgroundColor: hexToRgba(teamColor, alpha),
+                  }}
+                />
+                {/* Number underneath */}
+                <span
+                  className="text-[9px] font-mono leading-none"
+                  style={{
+                    color: isSort ? "var(--text-primary)" : "var(--text-muted)",
+                    fontWeight: isSort ? 600 : 400,
+                  }}
+                >
+                  {prob >= 0.995 ? "99+" : fmt(prob)}
+                </span>
+                {/* Trend indicator (only if significant) */}
+                {Math.abs(change) >= 0.005 && (
+                  <span
+                    className="text-[7px] font-mono leading-none"
+                    style={{ color: change > 0 ? "#22C55E" : "#EF4444" }}
+                  >
+                    {change > 0 ? "+" : ""}{Math.round(change * 100)}
+                  </span>
+                )}
+              </div>
+            </td>
+          );
+        })}
+
+        {/* Expand indicator */}
+        <td className="py-2 pr-2 pl-0.5 text-right">
+          <span
+            className="text-[10px] transition-transform duration-150 inline-block"
+            style={{
+              color: "var(--text-muted)",
+              transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+            }}
+          >
+            ▼
+          </span>
+        </td>
+      </tr>
+
+      {/* Expanded source breakdown */}
+      <AnimatePresence>
+        {expanded && (
+          <motion.tr
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.15 }}
+          >
+            <td
+              colSpan={stageKeys.length + 2}
+              className="border-t border-b"
+              style={{
+                backgroundColor: hexToRgba(teamColor, 0.03),
+                borderColor: "var(--border-color)",
+              }}
+            >
+              <SourceBreakdown team={team} stageKeys={stageKeys} stageLabels={stageLabels} />
+            </td>
+          </motion.tr>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Main table
+// Grid
 // ---------------------------------------------------------------------------
 
 interface GridTableProps {
@@ -286,28 +306,41 @@ interface GridTableProps {
   stageLabels: string[];
   sortKey: string;
   onSortKey: (k: string) => void;
-  showSources: boolean;
+  expandedTeam: string | null;
+  onExpandTeam: (short: string | null) => void;
 }
 
-function GridTable({ teams, stageKeys, stageLabels, sortKey, onSortKey, showSources }: GridTableProps) {
+function GridTable({
+  teams,
+  stageKeys,
+  stageLabels,
+  sortKey,
+  onSortKey,
+  expandedTeam,
+  onExpandTeam,
+}: GridTableProps) {
   return (
     <div
-      className="overflow-x-auto rounded-xl border"
-      style={{ borderColor: "var(--border-color)" }}
+      className="rounded-xl border overflow-hidden"
+      style={{ borderColor: "var(--border-color)", backgroundColor: "var(--surface-card)" }}
     >
-      <table className="w-full text-sm border-collapse">
-        {/* Header */}
+      <table className="w-full text-sm border-collapse table-fixed">
+        <colgroup>
+          {/* Team column — ~32% */}
+          <col style={{ width: "32%" }} />
+          {/* Stage columns — divide remaining ~60% equally */}
+          {stageKeys.map((k) => (
+            <col key={k} style={{ width: `${60 / stageKeys.length}%` }} />
+          ))}
+          {/* Expand indicator — ~8% */}
+          <col style={{ width: "8%" }} />
+        </colgroup>
+
         <thead>
           <tr style={{ backgroundColor: "var(--surface-elevated)" }}>
-            {/* Sticky team col */}
             <th
-              className="sticky left-0 z-20 px-3 py-2.5 text-left font-medium text-[10px] uppercase tracking-wider whitespace-nowrap border-b border-r"
-              style={{
-                backgroundColor: "var(--surface-elevated)",
-                color: "var(--text-muted)",
-                borderColor: "var(--border-color)",
-                minWidth: 160,
-              }}
+              className="py-2 pl-2 pr-1 text-left text-[9px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--text-muted)" }}
             >
               Team
             </th>
@@ -318,92 +351,33 @@ function GridTable({ teams, stageKeys, stageLabels, sortKey, onSortKey, showSour
                 <th
                   key={key}
                   onClick={() => onSortKey(key)}
-                  className="px-2.5 py-2.5 text-right font-medium text-[10px] uppercase tracking-wider whitespace-nowrap border-b cursor-pointer select-none transition-colors duration-100 hover:bg-white/5"
+                  className="py-2 px-0.5 text-center text-[9px] font-semibold uppercase tracking-wider cursor-pointer select-none transition-colors duration-100"
                   style={{
                     color: isSort ? "#10B981" : "var(--text-muted)",
-                    borderColor: "var(--border-color)",
                     backgroundColor: isSort ? "rgba(16,185,129,0.06)" : undefined,
                   }}
                 >
-                  <span className="flex items-center justify-end gap-1">
-                    {label}
-                    <span className="text-[8px]" style={{ opacity: isSort ? 1 : 0.3 }}>▼</span>
-                  </span>
+                  {label}
                 </th>
               );
             })}
+            <th className="py-2 pr-2 pl-0.5" />
           </tr>
         </thead>
 
-        {/* Body */}
         <tbody>
-          {teams.map((team, idx) => {
-            const rgb = hexToRgb(team.color);
-            return (
-              <tr
-                key={team.short}
-                className="group transition-colors duration-100 hover:bg-white/3"
-                style={{
-                  borderTop: idx > 0 ? "1px solid var(--border-color)" : undefined,
-                  background: `linear-gradient(to right, rgba(${rgb}, 0.04) 0%, transparent 28%)`,
-                }}
-              >
-                {/* Sticky team cell */}
-                <td
-                  className="sticky left-0 z-10 px-3 py-2.5 whitespace-nowrap border-r align-top"
-                  style={{
-                    backgroundColor: "var(--surface-card)",
-                    borderColor: "var(--border-color)",
-                  }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="text-[10px] font-mono w-4 text-right flex-shrink-0"
-                      style={{ color: "var(--text-muted)" }}
-                    >
-                      {idx + 1}
-                    </span>
-                    <div
-                      className="w-0.5 h-7 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: team.color }}
-                    />
-                    <img
-                      src={team.logo}
-                      alt=""
-                      width={20}
-                      height={20}
-                      className="w-5 h-5 object-contain flex-shrink-0"
-                    />
-                    <div>
-                      <div
-                        className="font-semibold text-[13px] leading-tight"
-                        style={{ color: "var(--text-primary)" }}
-                      >
-                        {team.short}
-                      </div>
-                      <div
-                        className="text-[9px] font-mono leading-tight"
-                        style={{ color: "var(--text-muted)" }}
-                      >
-                        {team.record}
-                      </div>
-                    </div>
-                  </div>
-                </td>
-
-                {/* Stage cells */}
-                {stageKeys.map((key) => (
-                  <StageCell
-                    key={key}
-                    team={team}
-                    stageKey={key}
-                    sortKey={sortKey}
-                    showSources={showSources}
-                  />
-                ))}
-              </tr>
-            );
-          })}
+          {teams.map((team, idx) => (
+            <TeamRow
+              key={team.short}
+              team={team}
+              rank={idx + 1}
+              stageKeys={stageKeys}
+              stageLabels={stageLabels}
+              sortKey={sortKey}
+              expanded={expandedTeam === team.short}
+              onToggle={() => onExpandTeam(expandedTeam === team.short ? null : team.short)}
+            />
+          ))}
         </tbody>
       </table>
     </div>
@@ -429,8 +403,8 @@ export default function ChampionshipGrid({
   onLeagueChange,
 }: ChampionshipGridProps) {
   const [sortKey, setSortKey] = useState(data.stageKeys[data.stageKeys.length - 1]);
-  const [showSources, setShowSources] = useState(false);
   const [conferenceFilter, setConferenceFilter] = useState("All");
+  const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
 
   const conferences = useMemo(() => {
     const c = Array.from(new Set(data.teams.map((t) => t.conference).filter(Boolean))).sort();
@@ -449,21 +423,44 @@ export default function ChampionshipGrid({
     });
   }, [data.teams, sortKey, conferenceFilter]);
 
-  const sourceNames = useMemo(() => allSourceNames(data.teams), [data.teams]);
+  // Use compact labels for mobile
+  const compactLabels = useMemo(() => {
+    return data.stageLabels.map((label) => {
+      // Shorten common stage names
+      const map: Record<string, string> = {
+        "Make Playoffs": "R1",
+        "Playoffs": "R1",
+        "Round 1": "R1",
+        "Conf Semis": "R2",
+        "Conference Semis": "R2",
+        "Round 2": "R2",
+        "Conf Finals": "CF",
+        "Conference Finals": "CF",
+        "Finals": "FIN",
+        "NBA Finals": "FIN",
+        "Championship": "WIN",
+        "Win Championship": "WIN",
+        "Super Bowl": "WIN",
+        "World Series": "WIN",
+        "Stanley Cup": "WIN",
+      };
+      return map[label] || label.slice(0, 3).toUpperCase();
+    });
+  }, [data.stageLabels]);
 
   return (
     <div style={{ color: "var(--text-primary)" }}>
       {/* Header */}
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-3">
         <span className="text-lg">{data.emoji}</span>
         <h2
-          className="text-base font-bold tracking-tight text-balance"
+          className="text-sm font-bold tracking-tight"
           style={{ color: "var(--text-primary)" }}
         >
           {data.league}
         </h2>
         <span
-          className="text-xs font-mono ml-auto flex-shrink-0"
+          className="text-[10px] font-mono ml-auto"
           style={{ color: "var(--text-muted)" }}
         >
           {data.season}
@@ -471,90 +468,56 @@ export default function ChampionshipGrid({
       </div>
 
       {/* League Tabs */}
-      <div className="mb-4">
+      <div className="mb-3">
         <LeagueTabs tabs={leagueTabs} activeSlug={activeLeagueSlug} onSelect={onLeagueChange} />
       </div>
 
-      {/* Movers strip */}
-      <div className="mb-4">
-        <p className="text-[10px] font-medium uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
-          Biggest movers (24h)
-        </p>
-        <MoversStrip teams={data.teams} stageKey={sortKey} />
-      </div>
-
-      {/* Controls row */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        {/* Conference filter */}
-        <div className="flex gap-1 flex-wrap">
+      {/* Conference filter + sort hint */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <div className="flex gap-1">
           {["All", ...conferences].map((opt) => {
             const active = opt === conferenceFilter;
             return (
               <button
                 key={opt}
                 onClick={() => setConferenceFilter(opt)}
-                className="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all duration-150"
+                className="px-2 py-0.5 rounded-full text-[10px] font-medium transition-all duration-150"
                 style={{
                   backgroundColor: active ? "rgba(16,185,129,0.15)" : "transparent",
                   color: active ? "#10B981" : "var(--text-muted)",
-                  border: active ? "1px solid rgba(16,185,129,0.30)" : "1px solid transparent",
                 }}
               >
-                {opt}
+                {opt === "All" ? "All" : opt.slice(0, 4)}
               </button>
             );
           })}
         </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Sources toggle */}
-        {sourceNames.length > 0 && (
-          <button
-            onClick={() => setShowSources((v) => !v)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium transition-all duration-150"
-            style={{
-              backgroundColor: showSources ? "rgba(16,185,129,0.15)" : "var(--surface-elevated)",
-              color: showSources ? "#10B981" : "var(--text-secondary)",
-              border: showSources ? "1px solid rgba(16,185,129,0.30)" : "1px solid var(--border-color)",
-            }}
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ flexShrink: 0 }}>
-              <circle cx="2" cy="5" r="1.5" fill="currentColor" opacity="0.5" />
-              <circle cx="5" cy="5" r="1.5" fill="currentColor" opacity="0.75" />
-              <circle cx="8" cy="5" r="1.5" fill="currentColor" />
-            </svg>
-            {showSources ? "Hide sources" : `Show sources (${sourceNames.length})`}
-          </button>
-        )}
+        <span className="text-[9px] ml-auto" style={{ color: "var(--text-muted)" }}>
+          Tap header to sort · Tap row for sources
+        </span>
       </div>
 
-      {/* Sort hint */}
-      <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
-        Tap a column header to sort. Sorted by{" "}
-        <span style={{ color: "#10B981" }}>
-          {data.stageLabels[data.stageKeys.indexOf(sortKey)]}
-        </span>.
-      </p>
-
-      {/* The table — one layout, all sizes */}
+      {/* Grid */}
       <GridTable
         teams={sortedTeams}
         stageKeys={data.stageKeys}
-        stageLabels={data.stageLabels}
+        stageLabels={compactLabels}
         sortKey={sortKey}
         onSortKey={setSortKey}
-        showSources={showSources}
+        expandedTeam={expandedTeam}
+        onExpandTeam={setExpandedTeam}
       />
 
-      {/* Footer */}
+      {/* Legend */}
       <div
-        className="mt-3 text-[10px] font-mono text-center"
+        className="mt-2 flex items-center justify-center gap-3 text-[9px]"
         style={{ color: "var(--text-muted)" }}
       >
-        {data.teams.length} teams · {data.stageKeys.length} stages
-        {sourceNames.length > 0 && ` · ${sourceNames.join(", ")}`}
+        <span>R1 = Round 1</span>
+        <span>R2 = Conf Semis</span>
+        <span>CF = Conf Finals</span>
+        <span>FIN = Finals</span>
+        <span>WIN = Champ</span>
       </div>
     </div>
   );
