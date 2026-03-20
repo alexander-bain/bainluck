@@ -2078,3 +2078,348 @@ async def list_leagues():
                 "column_count": len(config.columns),
             })
     return {"leagues": leagues}
+
+
+# ---------------------------------------------------------------------------
+# Sport key → league config mapping (for event detail integration)
+# ---------------------------------------------------------------------------
+
+_SPORT_KEY_TO_LEAGUE_SLUG: dict[str, str] = {
+    "basketball_nba": "nba",
+    "basketball_ncaab": "ncaa-basketball",
+    "basketball_wnba": "wnba",
+    "americanfootball_nfl": "nfl",
+    "americanfootball_ncaaf": "ncaa-football",
+    "icehockey_nhl": "nhl",
+    "baseball_mlb": "mlb",
+    "soccer_usa_mls": "mls",
+    "soccer_epl": "epl",
+    "soccer_spain_la_liga": "la-liga",
+    "soccer_uefa_champs_league": "champions-league",
+    "soccer_germany_bundesliga": "bundesliga",
+}
+
+
+def get_league_config_for_sport_key(sport_key: str) -> LeagueConfig | None:
+    """Map an Odds API sport key to a league config."""
+    slug = _SPORT_KEY_TO_LEAGUE_SLUG.get(sport_key)
+    if slug:
+        return get_league_config(slug)
+    return None
+
+
+async def get_team_progression_for_event(
+    db: AsyncSession,
+    event_id: int,
+    home_team_name: str,
+    away_team_name: str,
+    sport_key: str,
+) -> dict | None:
+    """Build team progression data for an event's two teams.
+
+    Returns a compact response with each team's championship grid row,
+    or None if no league config exists for this sport.
+    """
+    config = get_league_config_for_sport_key(sport_key)
+    if not config:
+        return None
+
+    # Golf doesn't have team progression in the same way
+    if config.slug == "golf":
+        return None
+
+    # Query markets using the same strategy as get_playoff_grid
+    sport_conditions = []
+    for sk in config.sport_keys:
+        sport_conditions.append(FuturesMarket.external_id.ilike(f"{sk}%"))
+
+    category_condition = FuturesMarket.llm_sport_category == config.sport_category
+
+    market_filter = or_(*sport_conditions, category_condition)
+
+    stmt = (
+        select(FuturesMarket)
+        .where(
+            market_filter,
+            FuturesMarket.status != "resolved",
+        )
+        .options(selectinload(FuturesMarket.outcomes))
+    )
+    result = await db.execute(stmt)
+    all_markets = result.scalars().unique().all()
+
+    # Filter by league name patterns
+    league_patterns = [
+        re.compile(p, re.IGNORECASE) for p in config.league_name_patterns
+    ] if config.league_name_patterns else []
+
+    _WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
+    _MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
+    is_mens_league = config.slug in ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
+    is_womens_league = config.slug in ("wnba",)
+
+    markets = []
+    for market in all_markets:
+        eid = market.external_id or ""
+        name = market.name or ""
+
+        if is_mens_league and _WOMENS_RE.search(name):
+            continue
+        if is_womens_league and _MENS_RE.search(name) and not _WOMENS_RE.search(name):
+            continue
+
+        if any(eid.lower().startswith(sk.lower()) for sk in config.sport_keys):
+            markets.append(market)
+            continue
+        if config.external_id_prefixes and eid:
+            if any(eid.startswith(pfx) for pfx in config.external_id_prefixes):
+                markets.append(market)
+                continue
+        if league_patterns:
+            if any(pat.search(name) for pat in league_patterns):
+                if config.slug == "champions-league" and re.search(
+                    r"\b(?:qualif|spot|place|make.*champions|top\s*\d)\b",
+                    name, re.IGNORECASE,
+                ):
+                    continue
+                markets.append(market)
+        elif not league_patterns:
+            markets.append(market)
+
+    # Match markets to columns and extract outcomes
+    column_data: dict[str, list[tuple]] = defaultdict(list)
+
+    for market in markets:
+        col_key = _match_market_to_column(market, config)
+        if not col_key:
+            continue
+
+        for outcome in market.outcomes:
+            if outcome.current_probability is not None:
+                prob = float(outcome.current_probability)
+            elif (outcome.current_yes_bid is not None
+                  and outcome.current_yes_ask is not None
+                  and float(outcome.current_yes_ask) > 0):
+                prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
+            else:
+                continue
+            if prob <= 0 or prob >= 1.0:
+                continue
+            oname = outcome.name or ""
+            if _NON_PLAYOFF_MARKET_RE.search(oname):
+                continue
+            if oname.lower().strip() in ("yes", "no", "over", "under"):
+                continue
+            if re.search(r"\band\b", oname, re.IGNORECASE) and \
+               not re.search(r"\bTrail\s+Blazers\b", oname, re.IGNORECASE):
+                if re.match(r"^[\w\s.]+ and [\w\s.]+$", oname.strip()):
+                    continue
+            if re.match(r"^#?\d+", oname.strip()):
+                continue
+            if config.sport_category == "soccer" and oname.strip() in _COUNTRY_NAMES:
+                continue
+            if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
+                has_real_activity = (
+                    outcome.current_yes_bid is not None
+                    and float(outcome.current_yes_bid) > 0
+                )
+                if not has_real_activity:
+                    continue
+
+            column_data[col_key].append((market, outcome))
+
+    # Build raw grid (same merging as full grid builder)
+    grid_raw: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    all_outcome_ids: list[int] = []
+
+    for col_key, entries in column_data.items():
+        for market, outcome in entries:
+            norm = _normalize_team_name(outcome.name)
+            source_entry = {
+                "source": market.source,
+                "probability": float(outcome.current_probability)
+                    if outcome.current_probability is not None
+                    else (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2,
+                "market_id": market.id,
+                "outcome_id": outcome.id,
+            }
+            grid_raw[norm][col_key].append(source_entry)
+            all_outcome_ids.append(outcome.id)
+
+    # Deduplicate within same source per team+column (keep lowest prob)
+    for norm_name in grid_raw:
+        for col_key in grid_raw[norm_name]:
+            entries = grid_raw[norm_name][col_key]
+            if len(entries) <= 1:
+                continue
+            by_source: dict[str, list[dict]] = defaultdict(list)
+            for e in entries:
+                by_source[e["source"]].append(e)
+            deduped = []
+            for source, source_entries in by_source.items():
+                best = min(source_entries, key=lambda e: e["probability"])
+                deduped.append(best)
+            grid_raw[norm_name][col_key] = deduped
+
+    # Merge duplicate team names (prefix, word subset, alias)
+    norm_names = sorted(grid_raw.keys(), key=len, reverse=True)
+    merge_map: dict[str, str] = {}
+
+    def _expand_abbrevs_local(words):
+        expanded = set()
+        for w in words:
+            expanded.add(w)
+            if w == "st":
+                expanded.add("state")
+            elif w == "state":
+                expanded.add("st")
+        return expanded
+
+    for i, long_name in enumerate(norm_names):
+        for short_name in norm_names[i + 1:]:
+            if short_name in merge_map:
+                continue
+            if _should_prefix_merge(short_name, long_name):
+                merge_map[short_name] = long_name
+            elif len(short_name.split()) >= 2:
+                short_words = set(short_name.split())
+                long_words = set(long_name.split())
+                if _expand_abbrevs_local(short_words).issubset(_expand_abbrevs_local(long_words)):
+                    merge_map[short_name] = long_name
+            if short_name not in merge_map and _alias_matches(short_name, long_name):
+                merge_map[short_name] = long_name
+
+    for short_name, long_name in merge_map.items():
+        if short_name in grid_raw and long_name in grid_raw:
+            for col_key, entries in grid_raw[short_name].items():
+                grid_raw[long_name][col_key].extend(entries)
+            del grid_raw[short_name]
+
+    # Find the two teams from the event in the grid
+    home_norm = _normalize_team_name(home_team_name)
+    away_norm = _normalize_team_name(away_team_name)
+
+    def _find_team_in_grid(team_name: str) -> str | None:
+        """Find a team's normalized name in the grid, with fuzzy matching."""
+        norm = _normalize_team_name(team_name)
+        # Exact match
+        if norm in grid_raw:
+            return norm
+        # Prefix/substring match
+        for grid_name in grid_raw:
+            if _should_prefix_merge(norm, grid_name) or _should_prefix_merge(grid_name, norm):
+                return grid_name
+            # Word subset match
+            if len(norm.split()) >= 2:
+                norm_words = set(norm.split())
+                grid_words = set(grid_name.split())
+                if _expand_abbrevs_local(norm_words).issubset(_expand_abbrevs_local(grid_words)):
+                    return grid_name
+                if _expand_abbrevs_local(grid_words).issubset(_expand_abbrevs_local(norm_words)):
+                    return grid_name
+            # Alias match
+            if _alias_matches(norm, grid_name):
+                return grid_name
+        return None
+
+    home_grid_name = _find_team_in_grid(home_team_name)
+    away_grid_name = _find_team_in_grid(away_team_name)
+
+    if not home_grid_name and not away_grid_name:
+        return None  # Neither team found in any championship grid
+
+    # Get team metadata
+    team_names_raw = set()
+    for name in [home_team_name, away_team_name]:
+        team_names_raw.add(name)
+        team_names_raw.add(_normalize_team_name(name))
+    if home_grid_name:
+        team_names_raw.add(home_grid_name)
+    if away_grid_name:
+        team_names_raw.add(away_grid_name)
+    team_meta = await _get_team_metadata(db, team_names_raw, league_slug=config.slug)
+
+    # Compute 24h changes
+    relevant_outcome_ids = []
+    if home_grid_name:
+        for col_entries in grid_raw.get(home_grid_name, {}).values():
+            for e in col_entries:
+                relevant_outcome_ids.append(e["outcome_id"])
+    if away_grid_name:
+        for col_entries in grid_raw.get(away_grid_name, {}).values():
+            for e in col_entries:
+                relevant_outcome_ids.append(e["outcome_id"])
+    old_probs = await _compute_movers(db, relevant_outcome_ids, hours=24)
+
+    def _build_team_row(grid_name: str | None, display_name: str) -> dict | None:
+        if not grid_name or grid_name not in grid_raw:
+            return None
+
+        col_map = grid_raw[grid_name]
+        meta = team_meta.get(grid_name, {}) or team_meta.get(_normalize_team_name(display_name), {})
+
+        stages = []
+        for col in config.columns:
+            entries = col_map.get(col.key, [])
+            if not entries:
+                stages.append({
+                    "key": col.key,
+                    "label": col.label,
+                    "probability": None,
+                    "trend_24h": None,
+                    "sources": [],
+                })
+                continue
+
+            probs = [e["probability"] for e in entries]
+            corrected = _correct_inverted_probs(probs)
+            merged = _merge_probabilities(probs)
+
+            sources = []
+            for e, corrected_p in zip(entries, corrected):
+                sources.append({
+                    "source": e["source"],
+                    "probability": round(corrected_p, 4),
+                })
+
+            trend_24h = None
+            oid = entries[0]["outcome_id"]
+            old_p = old_probs.get(oid)
+            if old_p is not None:
+                trend_24h = round(merged - old_p, 4)
+
+            stages.append({
+                "key": col.key,
+                "label": col.label,
+                "probability": round(merged, 4),
+                "trend_24h": trend_24h,
+                "sources": sources,
+            })
+
+        return {
+            "name": display_name,
+            "short_name": meta.get("short_name") or display_name.split()[-1],
+            "team_id": meta.get("team_id"),
+            "logo_url": meta.get("logo_url"),
+            "primary_color": meta.get("primary_color"),
+            "secondary_color": meta.get("secondary_color"),
+            "record": meta.get("record"),
+            "conference": meta.get("conference"),
+            "stages": stages,
+        }
+
+    home_row = _build_team_row(home_grid_name, home_team_name)
+    away_row = _build_team_row(away_grid_name, away_team_name)
+
+    return {
+        "event_id": event_id,
+        "league": config.slug,
+        "league_name": config.name,
+        "grid_url": f"/playoffs/{config.slug}",
+        "columns": [
+            {"key": c.key, "label": c.label, "order": c.order}
+            for c in config.columns
+        ],
+        "home_team": home_row,
+        "away_team": away_row,
+    }
