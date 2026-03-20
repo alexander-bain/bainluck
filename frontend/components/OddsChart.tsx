@@ -711,18 +711,18 @@ export default function OddsChart({
 
     const dataMin = Math.min(...allDeltas);
     const dataMax = Math.max(...allDeltas);
-    // Add 5-point padding, round to nearest 5, ensure 0 is included
-    let lo = Math.floor((dataMin - 5) / 5) * 5;
-    let hi = Math.ceil((dataMax + 5) / 5) * 5;
+    // Add padding, round to nearest 5, ensure 0 is included
+    // Use generous padding (10pts) to prevent line strokes from being clipped at boundary
+    let lo = Math.floor((dataMin - 10) / 5) * 5;
+    let hi = Math.ceil((dataMax + 10) / 5) * 5;
     // Ensure 0 is always in range
     if (lo > 0) lo = 0;
     if (hi < 0) hi = 0;
-    // Clamp to [-50, 50]
-    lo = Math.max(-50, lo);
-    hi = Math.min(50, hi);
-    // Generate ticks at 10-point intervals
+    // Generate ticks at 10-point intervals, capped to ±50 (100% probability)
     const ticks: number[] = [];
-    for (let t = lo; t <= hi; t += 10) {
+    const tickLo = Math.max(lo, -50);
+    const tickHi = Math.min(hi, 50);
+    for (let t = tickLo; t <= tickHi; t += 10) {
       ticks.push(t);
     }
     // Ensure 0 is always a tick
@@ -843,9 +843,9 @@ export default function OddsChart({
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
-  // Custom Y-axis tick formatter: shows probability for each team
+  // Custom Y-axis tick formatter: shows probability for each team, capped at 100%
   const formatYTick = (value: number): string => {
-    const prob = 50 + Math.abs(value);
+    const prob = Math.min(100, 50 + Math.abs(value));
     return `${prob}%`;
   };
 
