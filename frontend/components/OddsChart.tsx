@@ -4,7 +4,6 @@ import { useState, useMemo, useEffect } from "react";
 import {
   ComposedChart,
   Line,
-  Area,
   Scatter,
   XAxis,
   YAxis,
@@ -1242,19 +1241,7 @@ export default function OddsChart({
               />
             )}
 
-            {/* Area fill — tracks the primary line (Bain Luck in multi-source, betting in sportsbooks-only) */}
-            <Area
-              type="linear"
-              dataKey={primaryDeltaKey}
-              stroke="none"
-              fill={`url(#probFillGradient-${eventId ?? 0})`}
-              connectNulls
-              legendType="none"
-              dot={false}
-              activeDot={false}
-              isAnimationActive={false}
-              strokeWidth={0}
-            />
+            {/* Area fill removed — was causing green semi-circle artifacts */}
 
             {/* ── MODE A: Multi-source — aggregated Bain Luck line (prominent, on top) ── */}
             {isMultiSource && (
