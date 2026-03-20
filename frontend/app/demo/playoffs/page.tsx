@@ -8,10 +8,36 @@
  *  2. Full ChampionshipGrid with all mock NBA teams
  */
 
-import { useState } from "react";
+import { useState, Component } from "react";
+import type { ReactNode } from "react";
 import TeamPlayoffCard from "@/components/TeamPlayoffCard";
 import ChampionshipGrid from "@/components/ChampionshipGrid";
 import { MOCK_TEAMS, NBA_GRID, LEAGUE_TABS } from "@/lib/playoff-mock-data";
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-4 rounded-lg m-4" style={{ backgroundColor: "#1C0A0A", border: "1px solid #EF4444" }}>
+          <p className="text-sm font-semibold" style={{ color: "#EF4444" }}>Render error</p>
+          <pre className="text-xs mt-2 whitespace-pre-wrap" style={{ color: "#94A3B8" }}>
+            {this.state.error.message}
+            {"\n"}
+            {this.state.error.stack?.split("\n").slice(0, 5).join("\n")}
+          </pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function PlayoffsDemoPage() {
   const [activeLeague, setActiveLeague] = useState("nba");
@@ -21,6 +47,7 @@ export default function PlayoffsDemoPage() {
   const teamB = MOCK_TEAMS.find((t) => t.short === "CLE")!;
 
   return (
+    <ErrorBoundary>
     <div className="max-w-2xl mx-auto py-6 px-4 space-y-10">
       {/* ── Section 1: Event Detail Card Pair ── */}
       <section>
@@ -116,5 +143,6 @@ export default function PlayoffsDemoPage() {
         />
       </section>
     </div>
+    </ErrorBoundary>
   );
 }

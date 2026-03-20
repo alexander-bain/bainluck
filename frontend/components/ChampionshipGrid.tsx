@@ -13,7 +13,7 @@
  */
 
 import { useState, useMemo } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import type { ChampionshipGridData, PlayoffTeam, LeagueTab, PlayoffStage } from "@/lib/playoff-types";
 
 // ---------------------------------------------------------------------------
@@ -271,27 +271,27 @@ function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onTogg
       </tr>
 
       {/* Expanded source breakdown */}
-      <AnimatePresence>
-        {expanded && (
-          <motion.tr
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.15 }}
+      {expanded && (
+        <tr>
+          <td
+            colSpan={stageKeys.length + 2}
+            className="border-t border-b"
+            style={{
+              backgroundColor: hexToRgba(teamColor, 0.03),
+              borderColor: "var(--surface-border)",
+            }}
           >
-            <td
-              colSpan={stageKeys.length + 2}
-              className="border-t border-b"
-              style={{
-                backgroundColor: hexToRgba(teamColor, 0.03),
-                borderColor: "var(--surface-border)",
-              }}
+            <motion.div
+              initial={{ opacity: 0, height: 0, overflow: "hidden" }}
+              animate={{ opacity: 1, height: "auto", overflow: "visible" }}
+              exit={{ opacity: 0, height: 0, overflow: "hidden" }}
+              transition={{ duration: 0.15 }}
             >
               <SourceBreakdown team={team} stageKeys={stageKeys} stageLabels={stageLabels} />
-            </td>
-          </motion.tr>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          </td>
+        </tr>
+      )}
     </>
   );
 }
