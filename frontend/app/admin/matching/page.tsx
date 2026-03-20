@@ -20,11 +20,18 @@ interface SourceProbs {
   [source: string]: number;
 }
 
+interface SourceDetail {
+  probability: number;
+  market_name: string;
+  market_id: number | null;
+}
+
 interface Divergence {
   team: string;
   column: string;
   spread: number;
   sources: SourceProbs;
+  source_details?: { [source: string]: SourceDetail };
   status: string;
 }
 
@@ -73,16 +80,20 @@ async function postOverride(
     source_name: string;
     target_name?: string;
     decision?: string;
-    context?: Record<string, unknown>;
+    reason?: string;
   }
 ) {
+  const params = new URLSearchParams({
+    secret: "any",
+    override_type: body.override_type,
+    source_name: body.source_name,
+  });
+  if (body.target_name) params.set("target_name", body.target_name);
+  if (body.decision) params.set("decision", body.decision);
+  if (body.reason) params.set("reason", body.reason);
   const res = await fetch(
-    `${API_URL}/api/admin/matching-review/${league}/override?secret=any`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
+    `${API_URL}/api/admin/matching-review/${league}/override?${params}`,
+    { method: "POST" }
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -166,7 +177,21 @@ function DivergenceCard({
       await postOverride(league, {
         override_type: "team_exclude",
         source_name: d.team,
-        context: { reason: "cross_source_divergence", column: d.column, spread: d.spread },
+        reason: `cross_source_divergence: ${d.column} spread=${(d.spread * 100).toFixed(1)}%`,
+      });
+      onAction();
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const handleDismiss = async () => {
+    setActing(true);
+    try {
+      await postOverride(league, {
+        override_type: "dismiss",
+        source_name: `${d.team}:${d.column}`,
+        reason: `Reviewed divergence: ${(d.spread * 100).toFixed(1)}% spread acceptable`,
       });
       onAction();
     } finally {
@@ -176,7 +201,6 @@ function DivergenceCard({
 
   const sourceEntries = Object.entries(d.sources);
   const maxSource = sourceEntries.reduce((a, b) => (a[1] > b[1] ? a : b));
-  const minSource = sourceEntries.reduce((a, b) => (a[1] < b[1] ? a : b));
 
   return (
     <div
@@ -218,42 +242,67 @@ function DivergenceCard({
       </div>
 
       <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
-        {sourceEntries.map(([source, prob]) => (
-          <div key={source} style={{ flex: 1 }}>
-            <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize", marginBottom: 2 }}>
-              {source}
+        {sourceEntries.map(([source, prob]) => {
+          const detail = d.source_details?.[source];
+          return (
+            <div key={source} style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize", marginBottom: 2 }}>
+                {source}
+              </div>
+              <div style={{ position: "relative", height: 24, background: "#0f0f23", borderRadius: 6, overflow: "hidden" }}>
+                <div
+                  style={{
+                    width: `${Math.min(prob * 100, 100)}%`,
+                    height: "100%",
+                    background:
+                      source === maxSource[0]
+                        ? "linear-gradient(90deg, #3b82f6, #60a5fa)"
+                        : "linear-gradient(90deg, #475569, #64748b)",
+                    borderRadius: 6,
+                    transition: "width 0.3s",
+                  }}
+                />
+                <span
+                  style={{
+                    position: "absolute",
+                    right: 6,
+                    top: 3,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#e2e8f0",
+                  }}
+                >
+                  {(prob * 100).toFixed(1)}%
+                </span>
+              </div>
+              {detail?.market_name && (
+                <div style={{ fontSize: 10, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {detail.market_name}
+                </div>
+              )}
             </div>
-            <div style={{ position: "relative", height: 24, background: "#0f0f23", borderRadius: 6, overflow: "hidden" }}>
-              <div
-                style={{
-                  width: `${Math.min(prob * 100, 100)}%`,
-                  height: "100%",
-                  background:
-                    source === maxSource[0]
-                      ? "linear-gradient(90deg, #3b82f6, #60a5fa)"
-                      : "linear-gradient(90deg, #475569, #64748b)",
-                  borderRadius: 6,
-                  transition: "width 0.3s",
-                }}
-              />
-              <span
-                style={{
-                  position: "absolute",
-                  right: 6,
-                  top: 3,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "#e2e8f0",
-                }}
-              >
-                {(prob * 100).toFixed(1)}%
-              </span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button
+          onClick={handleDismiss}
+          disabled={acting}
+          style={{
+            padding: "5px 14px",
+            borderRadius: 6,
+            border: "1px solid #64748b",
+            background: "transparent",
+            color: "#94a3b8",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: acting ? "wait" : "pointer",
+            opacity: acting ? 0.5 : 1,
+          }}
+        >
+          Dismiss
+        </button>
         <button
           onClick={handleExclude}
           disabled={acting}
@@ -293,7 +342,7 @@ function SparseTeamRow({
       await postOverride(league, {
         override_type: "team_exclude",
         source_name: s.team,
-        context: { reason: "sparse_data", filled: s.filled_columns, total: s.total_columns },
+        reason: `sparse_data: ${s.filled_columns}/${s.total_columns} columns filled`,
       });
       onAction();
     } finally {
@@ -371,6 +420,9 @@ function OverrideRow({
     team_alias: "#22c55e",
     team_exclude: "#ef4444",
     team_include: "#3b82f6",
+    dismiss: "#64748b",
+    market_column: "#f59e0b",
+    source_trust: "#8b5cf6",
   };
 
   return (
@@ -457,7 +509,7 @@ function AddOverrideForm({
       await postOverride(league, {
         override_type: type,
         source_name: sourceName.trim(),
-        target_name: type === "team_alias" ? targetName.trim() || undefined : undefined,
+        target_name: (type === "team_alias" || type === "market_column") ? targetName.trim() || undefined : undefined,
       });
       setSourceName("");
       setTargetName("");
@@ -484,6 +536,8 @@ function AddOverrideForm({
         <option value="team_alias">Alias (merge names)</option>
         <option value="team_exclude">Exclude team</option>
         <option value="team_include">Include team</option>
+        <option value="market_column">Reassign market column</option>
+        <option value="dismiss">Dismiss (mark reviewed)</option>
       </select>
       <input
         value={sourceName}
@@ -499,7 +553,7 @@ function AddOverrideForm({
           width: 180,
         }}
       />
-      {type === "team_alias" && (
+      {(type === "team_alias" || type === "market_column") && (
         <>
           <span style={{ color: "#64748b" }}>&rarr;</span>
           <input

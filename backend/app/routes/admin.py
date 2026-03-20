@@ -5569,11 +5569,24 @@ async def get_matching_review(
     result = await db.execute(stmt)
     markets = result.scalars().all()
 
-    # Build grid_raw to detect issues
+    # Build grid_raw to detect issues — apply same filters as the grid builder
     grid_raw = defaultdict(lambda: defaultdict(list))
-    from app.routes.playoffs import _match_market_to_column, _is_playoff_relevant_market
+    from app.routes.playoffs import (
+        _match_market_to_column,
+        _NON_PLAYOFF_MARKET_RE,
+    )
 
+    # Apply league_name_patterns filter in Python (same as grid builder step 1)
+    league_patterns = config.league_name_patterns or []
+    filtered_markets = []
     for market in markets:
+        if league_patterns:
+            name_lower = (market.name or "").lower()
+            if not any(re.search(pat, name_lower) for pat in league_patterns):
+                continue
+        filtered_markets.append(market)
+
+    for market in filtered_markets:
         col_key = _match_market_to_column(market, config)
         if not col_key:
             continue
@@ -5581,13 +5594,38 @@ async def get_matching_review(
             prob = outcome.current_probability
             if prob is None or prob <= 0 or prob >= 1.0:
                 continue
-            norm = _normalize_team_name(outcome.name)
+            oname = outcome.name or ""
+            # Skip non-team outcomes (same filters as grid builder)
+            if _NON_PLAYOFF_MARKET_RE.search(oname):
+                continue
+            if oname.lower().strip() in ("yes", "no", "over", "under"):
+                continue
+            # Skip prediction market 0.5 noise
+            if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
+                continue
+            norm = _normalize_team_name(oname)
             grid_raw[norm][col_key].append({
                 "source": market.source,
-                "probability": prob,
+                "probability": float(prob),
                 "market_name": market.name,
-                "outcome_name": outcome.name,
+                "market_id": market.id,
+                "outcome_name": oname,
             })
+
+    # Dedup within same source per team+column (keep lowest prob — same as grid builder)
+    for norm_name in grid_raw:
+        for col_key in grid_raw[norm_name]:
+            entries = grid_raw[norm_name][col_key]
+            if len(entries) <= 1:
+                continue
+            by_source: dict[str, list] = defaultdict(list)
+            for e in entries:
+                by_source[e["source"]].append(e)
+            deduped = []
+            for source, source_entries in by_source.items():
+                best = min(source_entries, key=lambda e: e["probability"])
+                deduped.append(best)
+            grid_raw[norm_name][col_key] = deduped
 
     # 3. Find cross-source divergences
     divergences = []
@@ -5600,18 +5638,27 @@ async def get_matching_review(
             # Group by source
             by_source = defaultdict(list)
             for e in entries:
-                by_source[e["source"]].append(e["probability"])
+                by_source[e["source"]].append(e)
             if len(by_source) < 2:
                 continue
-            source_medians = {s: statistics.median(ps) for s, ps in by_source.items()}
-            vals = list(source_medians.values())
+            source_probs = {s: es[0]["probability"] for s, es in by_source.items()}
+            vals = list(source_probs.values())
             spread = max(vals) - min(vals)
             if spread > 0.15:
+                # Include market details so the admin can see exactly which markets diverge
+                source_details = {}
+                for s, es in by_source.items():
+                    source_details[s] = {
+                        "probability": round(es[0]["probability"], 4),
+                        "market_name": es[0]["market_name"],
+                        "market_id": es[0].get("market_id"),
+                    }
                 divergences.append({
                     "team": norm_name,
                     "column": col_key,
                     "spread": round(spread, 3),
-                    "sources": {s: round(v, 4) for s, v in source_medians.items()},
+                    "sources": {s: round(source_probs[s], 4) for s in source_probs},
+                    "source_details": source_details,
                     "status": "needs_review",
                 })
 
@@ -5652,15 +5699,15 @@ async def get_matching_review(
 @router.post("/matching-review/{league_slug}/override")
 async def add_matching_override(
     league_slug: str,
-    override_type: str = Query(..., description="team_alias, team_exclude, team_include, market_column, source_trust"),
+    override_type: str = Query(..., description="team_alias, team_exclude, team_include, market_column, source_trust, dismiss"),
     source_name: str = Query(..., description="The name/id to override"),
-    target_name: str = Query(default=None, description="Target for aliases/columns"),
+    target_name: Optional[str] = Query(default=None, description="Target for aliases/columns"),
     decision: str = Query(default="approved", description="approved or rejected"),
-    reason: str = Query(default=None, description="Why this decision was made"),
+    reason: Optional[str] = Query(default=None, description="Why this decision was made"),
     secret: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add or update a matching override.
+    """Add or update a matching override. Accepts JSON body or query params.
 
     Override types:
     - team_alias: source_name is an alias for target_name (merge them)
@@ -5668,17 +5715,18 @@ async def add_matching_override(
     - team_include: source_name must appear in the grid
     - market_column: source_name is a market name/id, target_name is column key
     - source_trust: source_name is "source:column", marks trust level
+    - dismiss: mark a divergence as reviewed/acceptable (no grid effect)
     """
     from app.config.league_configs import get_league_config
     config = get_league_config(league_slug)
     if not config:
         raise HTTPException(404, f"Unknown league: {league_slug}")
 
-    valid_types = {"team_alias", "team_exclude", "team_include", "market_column", "source_trust"}
+    valid_types = {"team_alias", "team_exclude", "team_include", "market_column", "source_trust", "dismiss"}
     if override_type not in valid_types:
         raise HTTPException(400, f"Invalid override_type. Must be one of: {valid_types}")
 
-    context = {}
+    context: dict = {}
     if reason:
         context["reason"] = reason
     context["decided_at"] = datetime.now(timezone.utc).isoformat()
