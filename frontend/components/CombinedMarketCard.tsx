@@ -148,7 +148,7 @@ export default function CombinedMarketCard({
         {displayed.map((item) => (
           <div
             key={item.name}
-            className="px-4 py-2.5 flex items-center gap-3 hover:bg-[var(--surface-elevated)]/50 transition-colors duration-[var(--duration-fast)]"
+            className="px-4 py-2.5 flex items-center gap-3 hover:bg-[var(--surface-elevated)]/50 transition-colors duration-150"
           >
             {/* Outcome name */}
             <div className="flex-1 text-sm text-[var(--text-primary)] truncate">

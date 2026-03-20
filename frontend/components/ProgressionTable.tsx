@@ -101,7 +101,7 @@ export default function ProgressionTable({
                 grid grid-cols-[1fr_auto_auto] gap-3 px-4 py-3
                 ${idx < markets.length - 1 ? "border-b border-[var(--surface-border)]/50" : ""}
                 hover:bg-[var(--surface-elevated)]/50
-                transition-colors duration-[var(--duration-fast)]
+                transition-colors duration-150
               `}
             >
               {/* Market name */}

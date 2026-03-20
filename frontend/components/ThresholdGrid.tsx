@@ -83,7 +83,7 @@ export default function ThresholdGrid({ outcomes, title, highlightedValue }: Thr
               className={`
                 rounded-lg border p-3
                 hover:border-[var(--accent-brand)]/30
-                transition-colors duration-[var(--duration-fast)]
+                transition-colors duration-150
                 ${isHighlighted
                   ? "border-[var(--accent-brand)] ring-1 ring-[var(--accent-brand)]/30 bg-[var(--accent-brand)]/5"
                   : "border-[var(--surface-border)] bg-[var(--surface-card)]"
@@ -106,7 +106,7 @@ export default function ThresholdGrid({ outcomes, title, highlightedValue }: Thr
               {/* Mini bar */}
               <div className="mt-1.5 h-1 rounded-full bg-[var(--surface-elevated)] overflow-hidden">
                 <div
-                  className={`h-full rounded-full ${probabilityBg(prob)} transition-all duration-[var(--duration-probability)]`}
+                  className={`h-full rounded-full ${probabilityBg(prob)} transition-all duration-300`}
                   style={{ width: `${Math.max(2, prob * 100)}%` }}
                 />
               </div>

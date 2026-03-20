@@ -142,7 +142,7 @@ export default function ThresholdSparkline({
             <motion.button
               className={`
                 rounded-full cursor-pointer
-                transition-shadow duration-[var(--duration-fast)]
+                transition-shadow duration-150
                 ${isHighlighted ? "ring-2 ring-[var(--accent-brand)] ring-offset-2 ring-offset-[var(--surface-base)]" : ""}
                 ${probabilityToBgClass(prob)}
               `}
