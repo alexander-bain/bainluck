@@ -5563,7 +5563,7 @@ async def get_matching_review(
 
     stmt = (
         select(FuturesMarket)
-        .where(market_filter, FuturesMarket.is_resolved == False)
+        .where(market_filter, FuturesMarket.status != "resolved")
         .options(selectinload(FuturesMarket.outcomes))
     )
     result = await db.execute(stmt)
