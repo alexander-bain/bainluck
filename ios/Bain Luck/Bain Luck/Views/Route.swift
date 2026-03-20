@@ -7,4 +7,5 @@ enum Route: Hashable {
     case eiRankings
     case preferences
     case sportCategory(key: String, name: String)
+    case leagueGrid(slug: String)
 }

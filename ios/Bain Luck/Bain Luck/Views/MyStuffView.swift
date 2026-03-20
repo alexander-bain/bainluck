@@ -135,6 +135,8 @@ struct MyStuffView: View {
                         .environmentObject(authManager)
                 case .sportCategory(let key, let name):
                     SportCategoryView(categoryKey: key, categoryName: name)
+                case .leagueGrid(let slug):
+                    LeagueGridView(slug: slug)
                 }
             }
         }

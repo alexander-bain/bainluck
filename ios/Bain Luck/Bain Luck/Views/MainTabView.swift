@@ -24,6 +24,12 @@ struct MainTabView: View {
                 .tag(AppTab.feed)
                 .badge(navCoordinator.liveGameCount > 0 ? "\(navCoordinator.liveGameCount) live" : nil)
 
+            LeaguesView()
+                .tabItem {
+                    Label("Leagues", systemImage: "trophy.fill")
+                }
+                .tag(AppTab.leagues)
+
             ExploreView()
                 .tabItem {
                     Label("Explore", systemImage: "binoculars.fill")
@@ -74,6 +80,9 @@ struct MainTabView: View {
                     }
                     .tag(AppTab.feed)
 
+                    Label("Leagues", systemImage: "trophy.fill")
+                        .tag(AppTab.leagues)
+
                     Label("Explore", systemImage: "binoculars.fill")
                         .tag(AppTab.explore)
 
@@ -106,12 +115,16 @@ struct MainTabView: View {
                     PreferencesView()
                 case .sportCategory(let key, let name):
                     SportCategoryView(categoryKey: key, categoryName: name)
+                case .leagueGrid(let slug):
+                    LeagueGridView(slug: slug)
                 }
             }
         } detail: {
             switch navCoordinator.selectedTab {
             case .feed:
                 FeedView()
+            case .leagues:
+                LeaguesView()
             case .explore:
                 ExploreView()
             case .search:

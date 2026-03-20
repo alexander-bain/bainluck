@@ -190,6 +190,8 @@ struct ExploreView: View {
                     PreferencesView()
                 case .sportCategory(let key, let name):
                     SportCategoryView(categoryKey: key, categoryName: name)
+                case .leagueGrid(let slug):
+                    LeagueGridView(slug: slug)
                 }
             }
             .task {

@@ -453,6 +453,12 @@ actor APIClient {
         return try await fetch("/api/me/team-futures", query: ["limit": "\(limit)"], cacheTTL: 300)
     }
 
+    // MARK: - Championship Grids
+
+    func fetchChampionshipGrid(slug: String) async throws -> ChampionshipGridResponse {
+        return try await fetch("/api/playoffs/\(slug)", cacheTTL: 300)
+    }
+
     func addPin(type: String, id: Int) async throws -> StatusResponse {
         return try await postEncodable("/api/me/pins", body: PinRequest(pinType: type, targetId: id))
     }
