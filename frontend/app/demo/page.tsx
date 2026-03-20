@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import type { Event, FuturesMarket } from "@/lib/types";
 import EventCard from "@/components/EventCard";
@@ -10,6 +11,8 @@ import SkeletonCard from "@/components/SkeletonCard";
 import FeedFilterChips from "@/components/FeedFilterChips";
 import PlayerStatCard from "@/components/PlayerStatCard";
 import ProgressionLadder from "@/components/ProgressionLadder";
+import TeamPlayoffCard from "@/components/TeamPlayoffCard";
+import { MOCK_TEAMS } from "@/lib/playoff-mock-data";
 import { staggerContainer, staggerItem } from "@/lib/animations";
 
 // =============================================================================
@@ -686,6 +689,35 @@ export default function DemoPage() {
                 { id: 31, name: "Jokic 10+ Assists", probability: 0.42, threshold_value: 10, threshold_direction: "above", source: "odds_api" },
                 { id: 32, name: "Jokic 12+ Assists", probability: 0.18, threshold_value: 12, threshold_direction: "above", source: "odds_api" },
               ]}
+            />
+          </div>
+        </section>
+
+        {/* Playoff Components */}
+        <section className="border-t border-surface-border pt-10">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <SectionHeader
+                title="Championship Probability"
+                subtitle="TeamPlayoffCard — horizontal probability funnel per team"
+              />
+            </div>
+            <Link
+              href="/demo/playoffs"
+              className="text-xs px-3 py-1.5 rounded-full border transition-colors text-text-secondary hover:text-text-primary"
+              style={{ borderColor: "var(--surface-border)" }}
+            >
+              Full grid demo →
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">
+            <TeamPlayoffCard
+              team={MOCK_TEAMS.find((t) => t.short === "OKC")!}
+              gridHref="/demo/playoffs"
+            />
+            <TeamPlayoffCard
+              team={MOCK_TEAMS.find((t) => t.short === "BOS")!}
+              gridHref="/demo/playoffs"
             />
           </div>
         </section>
