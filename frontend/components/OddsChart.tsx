@@ -1244,13 +1244,13 @@ export default function OddsChart({
 
             {/* Area fill — tracks the primary line (Bain Luck in multi-source, betting in sportsbooks-only) */}
             <Area
-              type="monotone"
+              type="linear"
               dataKey={primaryDeltaKey}
               stroke="none"
               fill={`url(#probFillGradient-${eventId ?? 0})`}
               connectNulls
               legendType="none"
-              dot={() => <g />}
+              dot={false}
               activeDot={false}
               isAnimationActive={false}
               strokeWidth={0}
