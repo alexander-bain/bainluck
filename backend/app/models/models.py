@@ -832,3 +832,46 @@ class OscarsPoolPick(Base):
 
     # Relationships
     member: Mapped["OscarsPoolMember"] = relationship(back_populates="picks")
+
+
+class MatchingOverride(Base):
+    """Admin-curated matching overrides for championship grids.
+
+    Stores human decisions about team name merges, team inclusions/exclusions,
+    and market-to-column assignments. Applied during grid building to ensure
+    matching accuracy across all playoff grids.
+
+    Inspired by Google Photos face-matching: the system surfaces uncertain
+    matches, the admin approves/rejects, and decisions persist.
+    """
+
+    __tablename__ = "matching_overrides"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_slug: Mapped[str] = mapped_column(String(50), index=True)
+    override_type: Mapped[str] = mapped_column(String(50))
+    # Types:
+    #   "team_alias"   — source_name is an alias for target_name (merge them)
+    #   "team_exclude" — source_name should be excluded from the grid
+    #   "team_include" — source_name must appear in the grid
+    #   "market_column"— source_name is a market ID, target_name is the column key
+    #   "source_trust" — source_name is "source:column", trust_level in context
+
+    source_name: Mapped[str] = mapped_column(String(300))
+    target_name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    decision: Mapped[str] = mapped_column(String(20), default="approved")
+    # "approved" or "rejected"
+
+    context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Freeform metadata: reason, who decided, confidence, etc.
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("league_slug", "override_type", "source_name", name="uq_override_key"),
+    )

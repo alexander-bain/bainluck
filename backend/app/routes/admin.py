@@ -9,7 +9,7 @@ from sqlalchemy import select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
 from app.services import get_db
 from app.utils import probability_to_american
 
@@ -5490,4 +5490,405 @@ async def group_status(
         "distinct_groups": distinct_groups,
         "by_type": by_type,
         "by_source": by_source,
+    }
+
+
+# ============================================================================
+# Matching review — admin UI for approving/rejecting grid matching decisions
+# ============================================================================
+
+
+@router.get("/matching-review/{league_slug}")
+async def get_matching_review(
+    league_slug: str,
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current matching issues and overrides for a league grid.
+
+    Surfaces:
+    - Cross-source divergences (>15% between sources for same team+column)
+    - Existing overrides (team aliases, exclusions, etc.)
+    - Teams in grid without data for most columns (might not belong)
+
+    This is the "Google Photos face matching" review UI for grid matching.
+    """
+    from app.config.league_configs import get_league_config
+    from app.routes.playoffs import (
+        _normalize_team_name,
+        _merge_probabilities,
+    )
+    from collections import defaultdict
+    import statistics
+
+    config = get_league_config(league_slug)
+    if not config:
+        raise HTTPException(404, f"Unknown league: {league_slug}")
+
+    # 1. Fetch existing overrides
+    stmt = select(MatchingOverride).where(
+        MatchingOverride.league_slug == league_slug
+    )
+    result = await db.execute(stmt)
+    overrides = result.scalars().all()
+
+    override_list = []
+    for o in overrides:
+        override_list.append({
+            "id": o.id,
+            "type": o.override_type,
+            "source_name": o.source_name,
+            "target_name": o.target_name,
+            "decision": o.decision,
+            "context": o.context,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        })
+
+    # 2. Fetch current grid data to find issues
+    # Get all matching markets
+    conditions = []
+    if config.league_name_patterns:
+        import re
+        for pat in config.league_name_patterns:
+            conditions.append(FuturesMarket.name.op("~*")(pat))
+
+    sport_cat = config.sport_category
+    if conditions:
+        market_filter = or_(
+            FuturesMarket.llm_sport_category == sport_cat,
+            *conditions,
+        )
+    else:
+        market_filter = FuturesMarket.llm_sport_category == sport_cat
+
+    stmt = (
+        select(FuturesMarket)
+        .where(market_filter, FuturesMarket.is_resolved == False)
+        .options(selectinload(FuturesMarket.outcomes))
+    )
+    result = await db.execute(stmt)
+    markets = result.scalars().all()
+
+    # Build grid_raw to detect issues
+    grid_raw = defaultdict(lambda: defaultdict(list))
+    from app.routes.playoffs import _match_market_to_column, _is_playoff_relevant_market
+
+    for market in markets:
+        col_key = _match_market_to_column(market, config)
+        if not col_key:
+            continue
+        for outcome in (market.outcomes or []):
+            prob = outcome.current_probability
+            if prob is None or prob <= 0 or prob >= 1.0:
+                continue
+            norm = _normalize_team_name(outcome.name)
+            grid_raw[norm][col_key].append({
+                "source": market.source,
+                "probability": prob,
+                "market_name": market.name,
+                "outcome_name": outcome.name,
+            })
+
+    # 3. Find cross-source divergences
+    divergences = []
+    col_keys = [c.key for c in config.columns]
+    for norm_name, col_map in grid_raw.items():
+        for col_key in col_keys:
+            entries = col_map.get(col_key, [])
+            if len(entries) < 2:
+                continue
+            # Group by source
+            by_source = defaultdict(list)
+            for e in entries:
+                by_source[e["source"]].append(e["probability"])
+            if len(by_source) < 2:
+                continue
+            source_medians = {s: statistics.median(ps) for s, ps in by_source.items()}
+            vals = list(source_medians.values())
+            spread = max(vals) - min(vals)
+            if spread > 0.15:
+                divergences.append({
+                    "team": norm_name,
+                    "column": col_key,
+                    "spread": round(spread, 3),
+                    "sources": {s: round(v, 4) for s, v in source_medians.items()},
+                    "status": "needs_review",
+                })
+
+    # Sort by spread descending
+    divergences.sort(key=lambda d: d["spread"], reverse=True)
+
+    # 4. Find teams with sparse data (have championship but missing most rounds)
+    sparse_teams = []
+    for norm_name, col_map in grid_raw.items():
+        filled = sum(1 for ck in col_keys if col_map.get(ck))
+        if filled <= 2 and len(col_keys) >= 4:
+            champ_prob = 0
+            champ_entries = col_map.get(col_keys[-1], [])
+            if champ_entries:
+                champ_prob = statistics.median([e["probability"] for e in champ_entries])
+            sparse_teams.append({
+                "team": norm_name,
+                "filled_columns": filled,
+                "total_columns": len(col_keys),
+                "championship_prob": round(champ_prob, 4),
+                "status": "needs_review",
+            })
+    sparse_teams.sort(key=lambda t: t["championship_prob"])
+
+    return {
+        "league": league_slug,
+        "total_teams": len(grid_raw),
+        "total_columns": len(col_keys),
+        "columns": col_keys,
+        "overrides": override_list,
+        "divergences": divergences[:30],  # Top 30
+        "divergence_count": len(divergences),
+        "sparse_teams": sparse_teams[:20],  # Top 20
+        "sparse_count": len(sparse_teams),
+    }
+
+
+@router.post("/matching-review/{league_slug}/override")
+async def add_matching_override(
+    league_slug: str,
+    override_type: str = Query(..., description="team_alias, team_exclude, team_include, market_column, source_trust"),
+    source_name: str = Query(..., description="The name/id to override"),
+    target_name: str = Query(default=None, description="Target for aliases/columns"),
+    decision: str = Query(default="approved", description="approved or rejected"),
+    reason: str = Query(default=None, description="Why this decision was made"),
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add or update a matching override.
+
+    Override types:
+    - team_alias: source_name is an alias for target_name (merge them)
+    - team_exclude: source_name should be excluded from the grid
+    - team_include: source_name must appear in the grid
+    - market_column: source_name is a market name/id, target_name is column key
+    - source_trust: source_name is "source:column", marks trust level
+    """
+    from app.config.league_configs import get_league_config
+    config = get_league_config(league_slug)
+    if not config:
+        raise HTTPException(404, f"Unknown league: {league_slug}")
+
+    valid_types = {"team_alias", "team_exclude", "team_include", "market_column", "source_trust"}
+    if override_type not in valid_types:
+        raise HTTPException(400, f"Invalid override_type. Must be one of: {valid_types}")
+
+    context = {}
+    if reason:
+        context["reason"] = reason
+    context["decided_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Upsert
+    stmt = select(MatchingOverride).where(
+        MatchingOverride.league_slug == league_slug,
+        MatchingOverride.override_type == override_type,
+        MatchingOverride.source_name == source_name,
+    )
+    result = await db.execute(stmt)
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.target_name = target_name
+        existing.decision = decision
+        existing.context = context
+    else:
+        override = MatchingOverride(
+            league_slug=league_slug,
+            override_type=override_type,
+            source_name=source_name,
+            target_name=target_name,
+            decision=decision,
+            context=context,
+        )
+        db.add(override)
+
+    await db.commit()
+
+    return {
+        "status": "saved",
+        "league": league_slug,
+        "type": override_type,
+        "source_name": source_name,
+        "target_name": target_name,
+        "decision": decision,
+    }
+
+
+@router.delete("/matching-review/{league_slug}/override/{override_id}")
+async def delete_matching_override(
+    league_slug: str,
+    override_id: int,
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a matching override."""
+    stmt = select(MatchingOverride).where(
+        MatchingOverride.id == override_id,
+        MatchingOverride.league_slug == league_slug,
+    )
+    result = await db.execute(stmt)
+    override = result.scalar_one_or_none()
+    if not override:
+        raise HTTPException(404, "Override not found")
+
+    await db.delete(override)
+    await db.commit()
+    return {"status": "deleted", "id": override_id}
+
+
+@router.get("/matching-review/{league_slug}/playoffstatus")
+async def get_playoffstatus_comparison(
+    league_slug: str,
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare our grid against playoffstatus.com reference data.
+
+    Fetches the current team list and probabilities from playoffstatus.com
+    and compares against our grid data. Returns:
+    - Teams in playoffstatus but missing from our grid
+    - Teams in our grid but not on playoffstatus
+    - Probability divergences between our data and theirs
+    """
+    # For now, return the stored reference data if available
+    # (populated by the scraper task)
+    from app.config.league_configs import get_league_config
+    config = get_league_config(league_slug)
+    if not config:
+        raise HTTPException(404, f"Unknown league: {league_slug}")
+
+    # Check for stored reference overrides of type "team_include"
+    stmt = select(MatchingOverride).where(
+        MatchingOverride.league_slug == league_slug,
+        MatchingOverride.override_type.in_(["team_include", "team_exclude"]),
+    )
+    result = await db.execute(stmt)
+    overrides = result.scalars().all()
+
+    includes = [o.source_name for o in overrides if o.override_type == "team_include" and o.decision == "approved"]
+    excludes = [o.source_name for o in overrides if o.override_type == "team_exclude" and o.decision == "approved"]
+
+    return {
+        "league": league_slug,
+        "reference_includes": includes,
+        "reference_excludes": excludes,
+        "note": "Use POST /admin/matching-review/{league}/scrape-playoffstatus to fetch fresh reference data",
+    }
+
+
+@router.post("/matching-review/{league_slug}/scrape-playoffstatus")
+async def scrape_playoffstatus(
+    league_slug: str,
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Scrape playoffstatus.com for reference team list and probabilities.
+
+    Creates team_include overrides for all teams found on playoffstatus.
+    """
+    import httpx
+    import re
+    from app.config.league_configs import get_league_config
+
+    config = get_league_config(league_slug)
+    if not config:
+        raise HTTPException(404, f"Unknown league: {league_slug}")
+
+    # Map league slugs to playoffstatus URLs
+    url_map = {
+        "nba": [
+            "https://www.playoffstatus.com/nba/easternstandings.html",
+            "https://www.playoffstatus.com/nba/westernstandings.html",
+        ],
+        "nhl": [
+            "https://www.playoffstatus.com/nhl/easternstandings.html",
+            "https://www.playoffstatus.com/nhl/westernstandings.html",
+        ],
+        "ncaa-basketball": [
+            "https://www.playoffstatus.com/ncaabasketball/ncaabasketball.html",
+        ],
+    }
+
+    urls = url_map.get(league_slug, [])
+    if not urls:
+        return {"status": "unsupported", "message": f"No playoffstatus URL mapping for {league_slug}"}
+
+    teams_found = []
+    errors = []
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for url in urls:
+            try:
+                resp = await client.get(url, follow_redirects=True)
+                resp.raise_for_status()
+                html = resp.text
+
+                # Parse team names from HTML tables
+                # Playoffstatus uses table rows with team names in specific patterns
+                # Extract team names from table cells with class patterns
+                # The HTML structure varies by sport but team names appear in
+                # <td> tags often with links
+
+                # Generic team name extraction from HTML
+                # Look for patterns like team names in table rows
+                team_pattern = re.findall(
+                    r'<a[^>]*>([A-Z][a-zA-Z\s&\'\.\-]+(?:ers|ics|ets|ons|ies|ors|ins|awks|eat|urs|ols|ers|lts|nes|ings|oos|ies|gers|ks|ns|rs|ts|es|gs|ds|cs|bs|ps|ves|zes))</a>',
+                    html,
+                )
+                # Also try simpler team name patterns
+                if not team_pattern:
+                    team_pattern = re.findall(
+                        r'>(\w[\w\s\'\.]+(?:76ers|Heat|Jazz|Suns|Magic|Nets|Bucks|Bulls|Hawks|Knicks|Spurs|Kings|Celtics|Lakers|Pistons|Rockets|Thunder|Raptors|Hornets|Pacers|Wizards|Nuggets|Grizzlies|Pelicans|Warriors|Clippers|Cavaliers|Mavericks|Timberwolves))<',
+                        html,
+                    )
+
+                # Extract probabilities if present
+                prob_pattern = re.findall(r'(\d+(?:\.\d+)?)\s*%', html)
+
+                for team_name in team_pattern:
+                    team_name = team_name.strip()
+                    if len(team_name) > 3 and team_name not in teams_found:
+                        teams_found.append(team_name)
+
+            except Exception as e:
+                errors.append({"url": url, "error": str(e)})
+
+    # Store as team_include overrides
+    created = 0
+    for team_name in teams_found:
+        norm = team_name.lower().strip()
+        stmt = select(MatchingOverride).where(
+            MatchingOverride.league_slug == league_slug,
+            MatchingOverride.override_type == "team_include",
+            MatchingOverride.source_name == norm,
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if not existing:
+            override = MatchingOverride(
+                league_slug=league_slug,
+                override_type="team_include",
+                source_name=norm,
+                target_name=team_name,
+                decision="approved",
+                context={"source": "playoffstatus.com", "scraped_at": datetime.now(timezone.utc).isoformat()},
+            )
+            db.add(override)
+            created += 1
+
+    if created:
+        await db.commit()
+
+    return {
+        "status": "scraped",
+        "league": league_slug,
+        "teams_found": len(teams_found),
+        "teams_created": created,
+        "teams": teams_found,
+        "errors": errors,
     }

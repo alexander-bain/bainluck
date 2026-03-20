@@ -22,6 +22,7 @@ from app.models.models import (
     OscarsPool,
     OscarsPoolMember,
     OscarsPoolPick,
+    MatchingOverride,
 )
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "OscarsPool",
     "OscarsPoolMember",
     "OscarsPoolPick",
+    "MatchingOverride",
 ]

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config.league_configs import LeagueConfig, get_league_config, get_all_league_slugs
-from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Team
+from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride, Team
 from app.services import get_db
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 
@@ -1419,6 +1419,28 @@ async def get_playoff_grid(
     trend_hours = hours or config.trend_hours
 
     # -----------------------------------------------------------------------
+    # 0. Load admin matching overrides for this league
+    # -----------------------------------------------------------------------
+    override_result = await db.execute(
+        select(MatchingOverride).where(MatchingOverride.league_slug == league_slug)
+    )
+    overrides = override_result.scalars().all()
+
+    # Build lookup structures from overrides
+    alias_overrides: dict[str, str] = {}  # source_name → target_name
+    exclude_teams: set[str] = set()
+    for ov in overrides:
+        if ov.override_type == "team_alias" and ov.decision == "approved" and ov.target_name:
+            alias_overrides[_normalize_team_name(ov.source_name)] = _normalize_team_name(ov.target_name)
+        elif ov.override_type == "team_exclude" and ov.decision == "approved":
+            exclude_teams.add(_normalize_team_name(ov.source_name))
+
+    if alias_overrides:
+        logger.info("Loaded %d alias overrides for %s", len(alias_overrides), league_slug)
+    if exclude_teams:
+        logger.info("Loaded %d exclude overrides for %s", len(exclude_teams), league_slug)
+
+    # -----------------------------------------------------------------------
     # Golf: use DataGolf as the source of truth for the field
     # -----------------------------------------------------------------------
     if league_slug == "golf":
@@ -1630,6 +1652,18 @@ async def get_playoff_grid(
     # Kalshi uses "Oklahoma City", Odds API uses "Oklahoma City Thunder".
     # Merge entries where one normalized name is a prefix of another.
 
+    # First, apply admin alias overrides (highest priority — manual decisions)
+    for alias_src, alias_tgt in alias_overrides.items():
+        if alias_src in grid_raw and alias_tgt in grid_raw:
+            for col_key, entries in grid_raw[alias_src].items():
+                grid_raw[alias_tgt][col_key].extend(entries)
+            del grid_raw[alias_src]
+            logger.info("Applied admin alias override: '%s' → '%s'", alias_src, alias_tgt)
+        elif alias_src in grid_raw and alias_tgt not in grid_raw:
+            # Rename: source exists but target doesn't — just rename
+            grid_raw[alias_tgt] = grid_raw.pop(alias_src)
+            logger.info("Applied admin alias rename: '%s' → '%s'", alias_src, alias_tgt)
+
     norm_names = sorted(grid_raw.keys(), key=len, reverse=True)  # longest first
     merge_map: dict[str, str] = {}  # short_name → long_name
 
@@ -1821,6 +1855,19 @@ async def get_playoff_grid(
                 "possible misclassified markets",
                 col.key, col_sum * 100, expected * 100, config.slug,
             )
+
+    # -----------------------------------------------------------------------
+    # 4c. Apply admin exclude overrides
+    # -----------------------------------------------------------------------
+    if exclude_teams:
+        before_count = len(teams)
+        teams = [
+            t for t in teams
+            if _normalize_team_name(t["name"]) not in exclude_teams
+        ]
+        excluded_count = before_count - len(teams)
+        if excluded_count:
+            logger.info("Excluded %d teams via admin overrides for %s", excluded_count, league_slug)
 
     # -----------------------------------------------------------------------
     # 5. Sort teams
