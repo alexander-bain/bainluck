@@ -2568,6 +2568,50 @@ async def get_related_futures(
     }
 
 
+@router.get("/{event_id}/team-progression")
+async def get_team_progression(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get championship grid progression for both teams in an event.
+
+    Returns each team's probability of reaching each playoff stage
+    (e.g., make playoffs → conference → championship), sourced from
+    Odds API, Kalshi, and Polymarket.
+
+    Used by the TeamPlayoffCard component on event detail pages.
+    """
+    from app.routes.playoffs import get_team_progression_for_event
+
+    # Load event with sport
+    result = await db.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.id == event_id)
+    )
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    sport_key = event.sport.key if event.sport else None
+    if not sport_key:
+        return {"event_id": event_id, "league": None, "home_team": None, "away_team": None}
+
+    progression = await get_team_progression_for_event(
+        db=db,
+        event_id=event_id,
+        home_team_name=event.home_team_name,
+        away_team_name=event.away_team_name,
+        sport_key=sport_key,
+    )
+
+    if progression is None:
+        return {"event_id": event_id, "league": None, "home_team": None, "away_team": None}
+
+    return progression
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history(
     event_id: int,

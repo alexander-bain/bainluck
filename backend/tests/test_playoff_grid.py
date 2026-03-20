@@ -1036,3 +1036,75 @@ class TestAliasMatches:
 
     def test_no_alias_similar(self):
         assert not _alias_matches("virginia", "virginia tech")
+
+
+# ============================================================================
+# Sport key → league config mapping (for event detail integration)
+# ============================================================================
+
+
+class TestSportKeyToLeagueMapping:
+    def test_nba_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("basketball_nba")
+        assert config is not None
+        assert config.slug == "nba"
+
+    def test_nfl_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("americanfootball_nfl")
+        assert config is not None
+        assert config.slug == "nfl"
+
+    def test_nhl_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("icehockey_nhl")
+        assert config is not None
+        assert config.slug == "nhl"
+
+    def test_mlb_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("baseball_mlb")
+        assert config is not None
+        assert config.slug == "mlb"
+
+    def test_ncaab_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("basketball_ncaab")
+        assert config is not None
+        assert config.slug == "ncaa-basketball"
+
+    def test_ncaaf_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("americanfootball_ncaaf")
+        assert config is not None
+        assert config.slug == "ncaa-football"
+
+    def test_epl_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("soccer_epl")
+        assert config is not None
+        assert config.slug == "epl"
+
+    def test_mls_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("soccer_usa_mls")
+        assert config is not None
+        assert config.slug == "mls"
+
+    def test_wnba_mapping(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        config = get_league_config_for_sport_key("basketball_wnba")
+        assert config is not None
+        assert config.slug == "wnba"
+
+    def test_unknown_sport_returns_none(self):
+        from app.routes.playoffs import get_league_config_for_sport_key
+        assert get_league_config_for_sport_key("cricket_ipl") is None
+        assert get_league_config_for_sport_key("mma_ufc") is None
+
+    def test_all_mapped_configs_valid(self):
+        from app.routes.playoffs import _SPORT_KEY_TO_LEAGUE_SLUG
+        for sport_key, slug in _SPORT_KEY_TO_LEAGUE_SLUG.items():
+            config = get_league_config(slug)
+            assert config is not None, f"Slug '{slug}' for sport_key '{sport_key}' not in registry"

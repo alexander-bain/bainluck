@@ -38,6 +38,7 @@ import type {
   GroupedFeedResponse,
   ChampionshipGridResponse,
   GolfScheduleResponse,
+  TeamProgressionResponse,
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -550,6 +551,15 @@ export async function fetchRelatedEvents(
 ): Promise<RelatedEventsResponse> {
   return apiFetch<RelatedEventsResponse>(
     `/api/futures/${marketId}/related-events`
+  );
+}
+
+/**
+ * Fetch team championship progression for an event's teams
+ */
+export async function fetchTeamProgression(eventId: number): Promise<TeamProgressionResponse> {
+  return apiFetch<TeamProgressionResponse>(
+    `/api/events/${eventId}/team-progression`
   );
 }
 

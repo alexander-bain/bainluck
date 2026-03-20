@@ -1309,6 +1309,37 @@ export interface ChampionshipGridResponse {
   events?: ChampionshipGridEvent[];
 }
 
+/** Team Progression types (event detail → championship grid row) */
+export interface TeamProgressionStage {
+  key: string;
+  label: string;
+  probability: number | null;
+  trend_24h: number | null;
+  sources: ChampionshipGridCellSource[];
+}
+
+export interface TeamProgressionRow {
+  name: string;
+  short_name: string;
+  team_id: number | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  record: string | null;
+  conference: string | null;
+  stages: TeamProgressionStage[];
+}
+
+export interface TeamProgressionResponse {
+  event_id: number;
+  league: string | null;
+  league_name?: string;
+  grid_url?: string;
+  columns?: { key: string; label: string; order: number }[];
+  home_team: TeamProgressionRow | null;
+  away_team: TeamProgressionRow | null;
+}
+
 /** Golf schedule types */
 export interface GolfScheduleEvent {
   event_id: string;
