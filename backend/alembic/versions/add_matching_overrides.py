@@ -6,7 +6,7 @@ Create Date: 2026-03-19
 """
 
 revision = "add_matching_overrides"
-down_revision = "rename_gei_to_ei"
+down_revision = "add_scoring_plays"
 
 from alembic import op
 import sqlalchemy as sa
