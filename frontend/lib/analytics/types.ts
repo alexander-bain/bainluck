@@ -48,7 +48,7 @@ export interface PageViewParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore'
+    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'admin_matching' | 'explore'
     | 'march_madness' | 'march_madness_picks' | 'playoff_grid' | 'oscars_pool';
   page_path: string;
   page_title: string;
@@ -224,7 +224,7 @@ export interface ScrollDepthParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore'
+    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'admin_matching' | 'explore'
     | 'march_madness' | 'march_madness_picks' | 'playoff_grid' | 'oscars_pool';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
@@ -238,7 +238,7 @@ export interface TimeOnPageParams {
     | 'pulse' | 'pulse_hof' | 'about' | 'models'
     | 'futures' | 'futures_detail' | 'market_moves' | 'oscars'
     | 'search' | 'my_stuff' | 'preferences' | 'onboarding'
-    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'explore'
+    | 'share' | 'golf' | 'golf_tournament' | 'category' | 'category_index' | 'admin_taxonomy' | 'admin_matching' | 'explore'
     | 'march_madness' | 'march_madness_picks' | 'playoff_grid' | 'oscars_pool';
   seconds: number;
   page_path: string;
