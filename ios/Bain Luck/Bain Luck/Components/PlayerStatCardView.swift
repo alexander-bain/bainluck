@@ -119,7 +119,7 @@ struct PlayerStatCardView: View {
 
                             // Mini probability bar
                             GeometryReader { geo in
-                                let prob = line.probability ?? 0
+                                let prob = line.probability
                                 Capsule()
                                     .fill(Color.secondary.opacity(0.2))
                                     .frame(height: 4)
@@ -132,9 +132,9 @@ struct PlayerStatCardView: View {
                             .frame(width: 48, height: 4)
 
                             // Probability text
-                            Text(formatProbability(line.probability ?? 0))
+                            Text(formatProbability(line.probability))
                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundStyle(probColor(line.probability ?? 0))
+                                .foregroundStyle(probColor(line.probability))
                                 .frame(minWidth: 32, alignment: .trailing)
                         }
                         .padding(.horizontal, 4)

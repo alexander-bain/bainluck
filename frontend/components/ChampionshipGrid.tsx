@@ -408,16 +408,8 @@ export default function ChampionshipGrid({
   const [conferenceFilter, setConferenceFilter] = useState("All");
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
 
-  console.log("[v0] ChampionshipGrid: data received", data ? "yes" : "no");
-  console.log("[v0] ChampionshipGrid: stageKeys", data?.stageKeys);
-  
-  // Defensive check for data (after hooks)
-  if (!data || !data.stageKeys || data.stageKeys.length === 0) {
-    console.log("[v0] ChampionshipGrid: missing data, returning fallback");
-    return <div style={{ color: "var(--text-muted)", padding: "1rem" }}>No data available</div>;
-  }
-
   const conferences = useMemo(() => {
+    if (!data?.teams) return [];
     const seen: Record<string, boolean> = {};
     const result: string[] = [];
     for (const t of data.teams) {
@@ -427,9 +419,10 @@ export default function ChampionshipGrid({
       }
     }
     return result.sort();
-  }, [data.teams]);
+  }, [data?.teams]);
 
   const sortedTeams = useMemo(() => {
+    if (!data?.teams) return [];
     let teams = data.teams;
     if (conferenceFilter !== "All") {
       teams = teams.filter((t) => t.conference === conferenceFilter);
@@ -439,13 +432,12 @@ export default function ChampionshipGrid({
       const bp = b.stages.find((s) => s.key === sortKey)?.probability ?? 0;
       return bp - ap;
     });
-  }, [data.teams, sortKey, conferenceFilter]);
+  }, [data?.teams, sortKey, conferenceFilter]);
 
   // Use compact labels for mobile
   const compactLabels = useMemo(() => {
-    if (!data.stageLabels) return data.stageKeys.map((k) => k.slice(0, 3).toUpperCase());
+    if (!data?.stageLabels) return (data?.stageKeys ?? []).map((k) => k.slice(0, 3).toUpperCase());
     return data.stageLabels.map((label) => {
-      // Shorten common stage names
       const map: Record<string, string> = {
         "Make Playoffs": "R1",
         "Playoffs": "R1",
@@ -465,7 +457,12 @@ export default function ChampionshipGrid({
       };
       return map[label] || label.slice(0, 3).toUpperCase();
     });
-  }, [data.stageLabels]);
+  }, [data?.stageLabels, data?.stageKeys]);
+
+  // Defensive check for data (after hooks)
+  if (!data || !data.stageKeys || data.stageKeys.length === 0) {
+    return <div style={{ color: "var(--text-muted)", padding: "1rem" }}>No data available</div>;
+  }
 
   return (
     <div style={{ color: "var(--text-primary)" }}>
