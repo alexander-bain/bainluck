@@ -497,7 +497,7 @@ export default function EventPage({ params }: EventPageProps) {
     const lastEspn = espn?.length ? espn[espn.length - 1] : null;
     // Use the last win prob history point for probability — win_prob_history is Record<string, WinProbHistoryPoint[]>
     const wpHistory = historyData.win_prob_history;
-    let lastWp: { home_probability: number; timestamp: string } | null = null;
+    let lastWp: { home_probability: number | null; timestamp: string } | null = null;
     if (wpHistory) {
       for (const pts of Object.values(wpHistory)) {
         if (pts.length) {

@@ -34,7 +34,7 @@ export default function UpsetTracker({ upsets }: UpsetTrackerProps) {
     [upsets]
   );
 
-  if (upsets.length === 0) {
+  if (upsets.length === 0 || !biggestUpset) {
     return null;
   }
 

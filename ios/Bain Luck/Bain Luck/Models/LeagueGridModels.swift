@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Championship Grid Response
 
-struct ChampionshipGridResponse: Codable, Sendable {
+nonisolated struct ChampionshipGridResponse: Decodable, Sendable {
     let league: String
     let name: String
     let season: String?
@@ -15,14 +15,14 @@ struct ChampionshipGridResponse: Codable, Sendable {
     let sourcesAvailable: [String]
 }
 
-struct GridColumn: Codable, Sendable {
+nonisolated struct GridColumn: Decodable, Sendable {
     let key: String
     let label: String
     let order: Int
     let sequential: Bool?
 }
 
-struct GridTeam: Codable, Sendable, Identifiable {
+nonisolated struct GridTeam: Decodable, Sendable, Identifiable {
     var id: String { name }
 
     let name: String
@@ -38,18 +38,18 @@ struct GridTeam: Codable, Sendable, Identifiable {
     let cells: [String: GridCell]
 }
 
-struct GridCell: Codable, Sendable {
+nonisolated struct GridCell: Decodable, Sendable {
     let mergedProbability: Double?
     let sources: [GridCellSource]?
     let trend24H: Double?
 }
 
-struct GridCellSource: Codable, Sendable {
+nonisolated struct GridCellSource: Decodable, Sendable {
     let source: String
     let probability: Double
 }
 
-struct GridMover: Codable, Sendable, Identifiable {
+nonisolated struct GridMover: Decodable, Sendable, Identifiable {
     var id: String { "\(name)-\(column)" }
 
     let name: String

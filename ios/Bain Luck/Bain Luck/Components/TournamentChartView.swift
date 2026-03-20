@@ -43,7 +43,7 @@ struct TournamentChartView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(height: height)
-            } else if let data, chartEntries.count >= 2 {
+            } else if let _ = data, chartEntries.count >= 2 {
                 VStack(spacing: 0) {
                     controlBar
                     chartSection

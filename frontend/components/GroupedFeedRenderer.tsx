@@ -124,18 +124,35 @@ function UngroupedMarketItem({
       market={{
         id: market.id,
         name: market.name,
+        description: null,
         source: market.source,
-        category: market.category || undefined,
-        sport: market.sport || undefined,
-        status: "active",
+        category: market.category || null,
+        sport: market.sport || null,
+        sport_name: null,
+        llm_sport_category: null,
+        external_id: null,
+        mutually_exclusive: true,
+        commence_time: null,
+        resolution_date: null,
+        outcome_count: market.outcomes.length,
+        created_at: null,
+        updated_at: null,
+        status: "open",
         outcomes: market.outcomes.map((o) => ({
           id: o.id,
           name: o.name,
           probability: o.probability,
           american_odds: o.american_odds || null,
+          rank: null,
+          rank_change_24h: null,
+          probability_change_24h: null,
+          movement: null,
+          opening_probability: null,
+          opening_american_odds: null,
+          is_winner: null,
+          last_updated: null,
         })),
       }}
-      onClick={() => onClick?.()}
     />
   );
 }

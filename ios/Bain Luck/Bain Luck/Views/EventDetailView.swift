@@ -238,7 +238,7 @@ struct EventDetailView: View {
                         .fontWeight(.medium)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text(formatChartTime(event.commenceTime))
+                    Text(formatChartTime(event.commenceTime ?? ""))
                         .font(.caption2)
                         .fontWeight(.medium)
                         .foregroundStyle(.secondary)
@@ -274,7 +274,7 @@ struct EventDetailView: View {
 
             // Date + broadcast
             VStack(alignment: .trailing, spacing: 2) {
-                Text(formatChartDate(event.commenceTime))
+                Text(formatChartDate(event.commenceTime ?? ""))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if let broadcast = event.espn?.broadcast {

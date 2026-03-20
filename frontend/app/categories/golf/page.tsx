@@ -324,11 +324,11 @@ export default function GolfPage() {
             )}
 
             {/* Evolution Chart for current tournament */}
-            {data.current_event?.market_ids?.length > 0 && (
+            {(data.current_event?.market_ids?.length ?? 0) > 0 && (
               <section>
                 <EvolutionViewWithFallback
-                  marketIds={data.current_event.market_ids}
-                  marketName={`${data.current_event.name} — Win Probability`}
+                  marketIds={data.current_event!.market_ids!}
+                  marketName={`${data.current_event!.name} — Win Probability`}
                   defaultTopN={8}
                   hours={168}
                 />

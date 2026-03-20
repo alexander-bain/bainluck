@@ -484,7 +484,7 @@ private let sourceLabels: [String: String] = [
 
 /// Merged view of the same outcome across sources.
 private struct MergedTeamFuture: Identifiable {
-    let primary: TeamFutureItem
+    var primary: TeamFutureItem
     var sources: [(source: String, probability: Double?, change: Double?, marketId: Int)]
     var avgProbability: Double?
     var bestChange: Double?
@@ -679,9 +679,9 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
     return (journeys, remaining)
 }
 
-// MARK: - ProgressionLadderView (native SwiftUI)
+// MARK: - PlayoffJourneyCard (native SwiftUI)
 
-private struct ProgressionLadderView: View {
+private struct PlayoffJourneyCard: View {
     let journey: PlayoffJourney
     let onStageTap: (Int) -> Void
 
@@ -830,7 +830,7 @@ private struct TeamFuturesSection: View {
             // Progression ladder cards
             if !data.journeys.isEmpty {
                 ForEach(data.journeys) { journey in
-                    ProgressionLadderView(journey: journey) { marketId in
+                    PlayoffJourneyCard(journey: journey) { marketId in
                         path.append(Route.futuresDetail(id: marketId))
                     }
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))

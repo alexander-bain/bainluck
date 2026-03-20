@@ -82,7 +82,7 @@ export default function HomePage() {
     error: groupedError,
     isLoading: groupedLoading,
   } = useSWR<GroupedFeedResponse>(
-    authLoading ? null : ["grouped-feed", ...(activeTags ?? [])],
+    authLoading ? null : "grouped-feed",
     () => fetchGroupedFeed({ limit: 20 }),
     { refreshInterval: 60000 }
   );

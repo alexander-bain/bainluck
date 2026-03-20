@@ -59,7 +59,7 @@ function PlayerAvatar({
   size?: number;
 }) {
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(
-    headshotUrl || (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKeyToEspnHeadshotSport(sportKey)) : null)
+    headshotUrl || (espnPlayerId ? espnHeadshotUrl(espnPlayerId, sportKeyToEspnHeadshotSport(sportKey ?? null)) : null)
   );
   const [failed, setFailed] = useState(false);
 

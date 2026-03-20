@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import os
 
 private let logger = Logger(subsystem: "com.bainluck", category: "leagueGrid")
@@ -12,7 +13,6 @@ private let sourceLabels: [String: String] = [
 
 // MARK: - ViewModel
 
-@MainActor
 final class LeagueGridViewModel: ObservableObject {
     let slug: String
     @Published var grid: ChampionshipGridResponse?
@@ -50,6 +50,7 @@ final class LeagueGridViewModel: ObservableObject {
         return grid.teams
     }
 
+    @MainActor
     func load() async {
         loading = true
         do {
@@ -272,7 +273,7 @@ struct LeagueGridView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(isActive ? Color.accentColor.opacity(0.2) : Color(.secondarySystemGroupedBackground))
-                .foregroundStyle(isActive ? .accentColor : .secondary)
+                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
