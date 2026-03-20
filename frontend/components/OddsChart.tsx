@@ -1250,9 +1250,10 @@ export default function OddsChart({
               fill={`url(#probFillGradient-${eventId ?? 0})`}
               connectNulls
               legendType="none"
-              dot={false}
+              dot={() => <g />}
               activeDot={false}
               isAnimationActive={false}
+              strokeWidth={0}
             />
 
             {/* ── MODE A: Multi-source — aggregated Bain Luck line (prominent, on top) ── */}
