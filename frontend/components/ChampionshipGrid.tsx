@@ -402,13 +402,31 @@ export default function ChampionshipGrid({
   activeLeagueSlug,
   onLeagueChange,
 }: ChampionshipGridProps) {
-  const [sortKey, setSortKey] = useState(data.stageKeys[data.stageKeys.length - 1]);
+  // Default sortKey to last stage key, or empty string if no data
+  const defaultSortKey = data?.stageKeys?.[data.stageKeys.length - 1] ?? "";
+  const [sortKey, setSortKey] = useState(defaultSortKey);
   const [conferenceFilter, setConferenceFilter] = useState("All");
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
 
+  console.log("[v0] ChampionshipGrid: data received", data ? "yes" : "no");
+  console.log("[v0] ChampionshipGrid: stageKeys", data?.stageKeys);
+  
+  // Defensive check for data (after hooks)
+  if (!data || !data.stageKeys || data.stageKeys.length === 0) {
+    console.log("[v0] ChampionshipGrid: missing data, returning fallback");
+    return <div style={{ color: "var(--text-muted)", padding: "1rem" }}>No data available</div>;
+  }
+
   const conferences = useMemo(() => {
-    const c = Array.from(new Set(data.teams.map((t) => t.conference).filter(Boolean))).sort();
-    return c;
+    const seen: Record<string, boolean> = {};
+    const result: string[] = [];
+    for (const t of data.teams) {
+      if (t.conference && !seen[t.conference]) {
+        seen[t.conference] = true;
+        result.push(t.conference);
+      }
+    }
+    return result.sort();
   }, [data.teams]);
 
   const sortedTeams = useMemo(() => {
@@ -425,6 +443,7 @@ export default function ChampionshipGrid({
 
   // Use compact labels for mobile
   const compactLabels = useMemo(() => {
+    if (!data.stageLabels) return data.stageKeys.map((k) => k.slice(0, 3).toUpperCase());
     return data.stageLabels.map((label) => {
       // Shorten common stage names
       const map: Record<string, string> = {
