@@ -92,89 +92,92 @@ struct EventDetailView: View {
     private var contentMaxWidth: CGFloat { isIPad ? 900 : 700 }
 
     var body: some View {
-        Group {
-            if vm.loading {
-                ProgressView()
-            } else if let error = vm.error, vm.event == nil {
-                ContentUnavailableView(
-                    "Error",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(error)
-                )
-            } else if let event = vm.event {
-                ScrollView {
-                    VStack(spacing: 16) {
-                        heroSection(event)
-                        VStack(spacing: 0) {
-                            chartHeaderBar(event)
-                            OddsChartView(eventId: event.id, teamColors: teamColors(event),
-                                         commenceTime: event.commenceTime, status: event.status,
-                                         homeTeamName: event.homeTeam.name,
-                                         awayTeamName: event.awayTeam.name,
-                                         selectedPlayPoint: $selectedPlayPoint,
-                                         preloadedHistory: vm.history)
-                            if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {
-                                GamePlayCardView(
-                                    selectedPoint: selectedPlayPoint,
-                                    homeTeam: event.homeTeam,
-                                    awayTeam: event.awayTeam,
-                                    homeTeamColor: teamColors(event).home,
-                                    awayTeamColor: teamColors(event).away,
-                                    homeTeamLogo: event.homeTeamData?.logoSmall,
-                                    awayTeamLogo: event.awayTeamData?.logoSmall,
-                                    lastPoint: lastPlayPoint(event: event)
-                                )
-                            }
-                        }
-                        .background(Color.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        if let ei = event.ei ?? event.pulse { eiSection(ei) }
-                        LineMovementView(eventId: event.id,
-                                         homeTeam: event.homeTeam,
-                                         awayTeam: event.awayTeam,
-                                         eventStatus: event.status,
-                                         preloadedData: vm.lineMovement)
-                        if let context = event.standingsContext { standingsSection(context) }
-                        eventTagsSection(event)
-                        RelatedFuturesView(
-                            eventId: event.id,
-                            awayTeamColor: teamColors(event).away,
-                            homeTeamColor: teamColors(event).home,
-                            awayTeam: event.awayTeam,
-                            homeTeam: event.homeTeam,
-                            sportKey: event.sport,
-                            preloadedData: vm.relatedFutures
-                        )
-                        espnSection(event)
-                        bookmakerSection(event)
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom)
-                    .frame(maxWidth: contentMaxWidth)
-                    .frame(maxWidth: .infinity)
+        contentView
+            .navigationTitle("Game Details")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    PinButton(type: "event", id: eventId)
                 }
             }
-        }
-        .navigationTitle("Game Details")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                PinButton(type: "event", id: eventId)
+            .task {
+                await vm.load()
+                AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
+                startCountdownTimer()
             }
-        }
-        .task {
-            await vm.load()
-            AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
-            startCountdownTimer()
-        }
-        .refreshable {
-            await vm.load()
-        }
-        .onDisappear {
-            vm.stopRefresh()
-            countdownTimer?.invalidate()
+            .refreshable {
+                await vm.load()
+            }
+            .onDisappear {
+                vm.stopRefresh()
+                countdownTimer?.invalidate()
+            }
+    }
+
+    @ViewBuilder
+    private var contentView: some View {
+        if vm.loading {
+            ProgressView()
+        } else if let error = vm.error, vm.event == nil {
+            ContentUnavailableView(
+                "Error",
+                systemImage: "exclamationmark.triangle",
+                description: Text(error)
+            )
+        } else if let event = vm.event {
+            ScrollView {
+                VStack(spacing: 16) {
+                    heroSection(event)
+                    VStack(spacing: 0) {
+                        chartHeaderBar(event)
+                        OddsChartView(eventId: event.id, teamColors: teamColors(event),
+                                     commenceTime: event.commenceTime, status: event.status,
+                                     homeTeamName: event.homeTeam,
+                                     awayTeamName: event.awayTeam,
+                                     selectedPlayPoint: $selectedPlayPoint,
+                                     preloadedHistory: vm.history)
+                        if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {
+                            GamePlayCardView(
+                                selectedPoint: selectedPlayPoint,
+                                homeTeam: event.homeTeam,
+                                awayTeam: event.awayTeam,
+                                homeTeamColor: teamColors(event).home,
+                                awayTeamColor: teamColors(event).away,
+                                homeTeamLogo: event.homeTeamData?.logoSmall,
+                                awayTeamLogo: event.awayTeamData?.logoSmall,
+                                lastPoint: lastPlayPoint(event: event)
+                            )
+                        }
+                    }
+                    .background(Color.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    if let ei = event.ei ?? event.pulse { eiSection(ei) }
+                    LineMovementView(eventId: event.id,
+                                     homeTeam: event.homeTeam,
+                                     awayTeam: event.awayTeam,
+                                     eventStatus: event.status,
+                                     preloadedData: vm.lineMovement)
+                    if let context = event.standingsContext { standingsSection(context) }
+                    eventTagsSection(event)
+                    RelatedFuturesView(
+                        eventId: event.id,
+                        awayTeamColor: teamColors(event).away,
+                        homeTeamColor: teamColors(event).home,
+                        awayTeam: event.awayTeam,
+                        homeTeam: event.homeTeam,
+                        sportKey: event.sport,
+                        preloadedData: vm.relatedFutures
+                    )
+                    espnSection(event)
+                    bookmakerSection(event)
+                }
+                .padding(.horizontal)
+                .padding(.bottom)
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
+            }
         }
     }
 

@@ -1250,6 +1250,8 @@ export default function OddsChart({
               fill={`url(#probFillGradient-${eventId ?? 0})`}
               connectNulls
               legendType="none"
+              dot={false}
+              activeDot={false}
               isAnimationActive={false}
             />
 
