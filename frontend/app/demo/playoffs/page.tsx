@@ -42,107 +42,118 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 export default function PlayoffsDemoPage() {
   const [activeLeague, setActiveLeague] = useState("nba");
 
+  console.log("[v0] PlayoffsDemoPage: rendering");
+  console.log("[v0] MOCK_TEAMS count:", MOCK_TEAMS?.length);
+  console.log("[v0] NBA_GRID:", NBA_GRID);
+  console.log("[v0] LEAGUE_TABS:", LEAGUE_TABS);
+
   // Pick two teams for the event-detail pair (OKC + CLE)
   const teamA = MOCK_TEAMS.find((t) => t.short === "OKC")!;
   const teamB = MOCK_TEAMS.find((t) => t.short === "CLE")!;
 
+  console.log("[v0] teamA:", teamA?.name, "stages:", teamA?.stages?.length);
+  console.log("[v0] teamB:", teamB?.name, "stages:", teamB?.stages?.length);
+
   return (
     <ErrorBoundary>
-    <div className="max-w-2xl mx-auto py-6 px-4 space-y-10">
-      {/* ── Section 1: Event Detail Card Pair ── */}
-      <section>
-        <div className="mb-3">
-          <h2
-            className="text-[11px] font-semibold uppercase tracking-widest"
-            style={{ color: "var(--text-muted)" }}
-          >
-            Event Detail
-          </h2>
-          <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
-            Championship probability funnel for both teams in a matchup.
-          </p>
-        </div>
+      <div className="max-w-2xl mx-auto py-6 px-4 space-y-10">
+        {/* ── Section 1: Event Detail Card Pair ── */}
+        <section>
+          <div className="mb-3">
+            <h2
+              className="text-[11px] font-semibold uppercase tracking-widest"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Event Detail
+            </h2>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
+              Championship probability funnel for both teams in a matchup.
+            </p>
+          </div>
 
-        {/* Match header */}
-        <div
-          className="rounded-xl border px-4 py-3 mb-3 flex items-center gap-2"
-          style={{
-            backgroundColor: "var(--surface-elevated)",
-            borderColor: "var(--surface-border)",
-          }}
-        >
-          <span className="text-base">🏀</span>
-          <span
-            className="text-sm font-semibold"
-            style={{ color: "var(--text-primary)" }}
-          >
-            {teamA.name}
-          </span>
-          <span
-            className="text-xs font-mono px-2"
-            style={{ color: "var(--text-muted)" }}
-          >
-            vs
-          </span>
-          <span
-            className="text-sm font-semibold"
-            style={{ color: "var(--text-primary)" }}
-          >
-            {teamB.name}
-          </span>
-          <span
-            className="ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full"
+          {/* Match header */}
+          <div
+            className="rounded-xl border px-4 py-3 mb-3 flex items-center gap-2"
             style={{
-              backgroundColor: "rgba(34,197,94,0.12)",
-              color: "#22C55E",
+              backgroundColor: "var(--surface-elevated)",
+              borderColor: "var(--surface-border)",
             }}
           >
-            LIVE · Q3 4:32
-          </span>
-        </div>
+            <span className="text-base">🏀</span>
+            <span
+              className="text-sm font-semibold"
+              style={{ color: "var(--text-primary)" }}
+            >
+              {teamA.name}
+            </span>
+            <span
+              className="text-xs font-mono px-2"
+              style={{ color: "var(--text-muted)" }}
+            >
+              vs
+            </span>
+            <span
+              className="text-sm font-semibold"
+              style={{ color: "var(--text-primary)" }}
+            >
+              {teamB.name}
+            </span>
+            <span
+              className="ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full"
+              style={{
+                backgroundColor: "rgba(34,197,94,0.12)",
+                color: "#22C55E",
+              }}
+            >
+              LIVE · Q3 4:32
+            </span>
+          </div>
 
-        {/* Two TeamPlayoffCards stacked */}
-        <div className="space-y-2">
-          <TeamPlayoffCard team={teamA} gridHref="/playoffs/nba" />
-          <TeamPlayoffCard team={teamB} gridHref="/playoffs/nba" />
-        </div>
+          {/* Two TeamPlayoffCards stacked */}
+          <div className="space-y-2">
+            {console.log("[v0] About to render TeamPlayoffCard A"), null}
+            <TeamPlayoffCard team={teamA} gridHref="/playoffs/nba" />
+            {console.log("[v0] About to render TeamPlayoffCard B"), null}
+            <TeamPlayoffCard team={teamB} gridHref="/playoffs/nba" />
+          </div>
 
-        {/* Explanation note */}
-        <p
-          className="text-[10px] mt-2 text-center"
-          style={{ color: "var(--text-muted)" }}
-        >
-          Tap a card to navigate to the full championship grid.
-        </p>
-      </section>
-
-      {/* Divider */}
-      <div style={{ borderTop: "1px solid var(--surface-border)" }} />
-
-      {/* ── Section 2: Championship Grid ── */}
-      <section>
-        <div className="mb-3">
-          <h2
-            className="text-[11px] font-semibold uppercase tracking-widest"
+          {/* Explanation note */}
+          <p
+            className="text-[10px] mt-2 text-center"
             style={{ color: "var(--text-muted)" }}
           >
-            Championship Grid
-          </h2>
-          <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
-            Mobile-first leaderboard. Select a stage to re-rank all teams.
-            Tap a team row to expand its full funnel.
+            Tap a card to navigate to the full championship grid.
           </p>
-        </div>
+        </section>
 
-        <ChampionshipGrid
-          data={NBA_GRID}
-          leagueTabs={LEAGUE_TABS}
-          activeLeagueSlug={activeLeague}
-          onLeagueChange={setActiveLeague}
-          gridHref="/playoffs/nba"
-        />
-      </section>
-    </div>
+        {/* Divider */}
+        <div style={{ borderTop: "1px solid var(--surface-border)" }} />
+
+        {/* ── Section 2: Championship Grid ── */}
+        <section>
+          <div className="mb-3">
+            <h2
+              className="text-[11px] font-semibold uppercase tracking-widest"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Championship Grid
+            </h2>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
+              Mobile-first leaderboard. Select a stage to re-rank all teams.
+              Tap a team row to expand its full funnel.
+            </p>
+          </div>
+
+          {console.log("[v0] About to render ChampionshipGrid"), null}
+          <ChampionshipGrid
+            data={NBA_GRID}
+            leagueTabs={LEAGUE_TABS}
+            activeLeagueSlug={activeLeague}
+            onLeagueChange={setActiveLeague}
+            gridHref="/playoffs/nba"
+          />
+        </section>
+      </div>
     </ErrorBoundary>
   );
 }
