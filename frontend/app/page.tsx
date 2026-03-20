@@ -11,7 +11,7 @@ import GroupedFeedRenderer from "@/components/GroupedFeedRenderer";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import FeedCard from "@/components/FeedCard";
-import FeedFilterChips from "@/components/FeedFilterChips";
+import LeagueChips from "@/components/LeagueChips";
 import OnboardingBanner from "@/components/OnboardingBanner";
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -41,8 +41,6 @@ export default function HomePage() {
   // Auth state — used to key SWR so the feed re-fetches when auth loads
   const { user, isLoading: authLoading } = useAuthContext();
 
-  // Feed filter chips
-  const [activeTags, setActiveTags] = useState<string[] | null>(null);
   const { track } = useAnalytics();
 
   // Pinned events
@@ -69,13 +67,12 @@ export default function HomePage() {
     // Don't fetch until auth state is resolved — avoids caching the anonymous
     // feed when the user is actually signed in (race condition).
     // Key includes user UID so SWR re-fetches when auth state changes.
-    // Key includes activeTags so SWR re-fetches on filter change.
     authLoading
       ? null
       : user
-        ? ["feed", user.uid, ...(activeTags ?? [])]
-        : ["feed-anon", ...(activeTags ?? [])],
-    () => fetchFeed({ limit: 200, tags: activeTags ?? undefined }),
+        ? ["feed", user.uid]
+        : ["feed-anon"],
+    () => fetchFeed({ limit: 200 }),
     { refreshInterval: 30000 }
   );
 
@@ -254,18 +251,8 @@ export default function HomePage() {
         />
       )}
 
-      {/* Filter Chips */}
-      <FeedFilterChips
-        activeTags={activeTags}
-        onTagChange={setActiveTags}
-        onTrack={(chip, action) =>
-          track("feed_filter_chip", {
-            chip_label: chip.label,
-            chip_tags: chip.tags,
-            action,
-          })
-        }
-      />
+      {/* League Navigation */}
+      <LeagueChips />
 
       {/* Loading State */}
       {feedLoading && !feedData && <SkeletonGrid count={6} />}
