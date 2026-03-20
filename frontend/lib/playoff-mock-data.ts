@@ -16,7 +16,11 @@ const RAW_TEAMS = [
     record: "50-14", conference: "Western",
     probs: { make_playoffs: 0.99, conf_semis: 0.88, conf_finals: 0.62, finals: 0.38, championship: 0.22 },
     trends: { championship: 0.015, conf_finals: 0.02 },
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.22 }, { source: "Kalshi", probability: 0.20 }, { source: "Polymarket", probability: 0.24 }] },
+    sources: {
+      conf_finals: [{ source: "Sportsbooks", probability: 0.63 }, { source: "Kalshi", probability: 0.60 }],
+      finals: [{ source: "Sportsbooks", probability: 0.38 }, { source: "Kalshi", probability: 0.36 }, { source: "Polymarket", probability: 0.40 }],
+      championship: [{ source: "Sportsbooks", probability: 0.22 }, { source: "Kalshi", probability: 0.20 }, { source: "Polymarket", probability: 0.24 }],
+    },
   },
   {
     name: "Cleveland Cavaliers", short: "CLE",
@@ -24,7 +28,10 @@ const RAW_TEAMS = [
     record: "49-15", conference: "Eastern",
     probs: { make_playoffs: 0.99, conf_semis: 0.85, conf_finals: 0.55, finals: 0.32, championship: 0.18 },
     trends: { championship: -0.02 },
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.18 }, { source: "Polymarket", probability: 0.17 }] },
+    sources: {
+      finals: [{ source: "Sportsbooks", probability: 0.33 }, { source: "Polymarket", probability: 0.31 }],
+      championship: [{ source: "Sportsbooks", probability: 0.18 }, { source: "Polymarket", probability: 0.17 }],
+    },
   },
   {
     name: "Boston Celtics", short: "BOS",
@@ -32,7 +39,11 @@ const RAW_TEAMS = [
     record: "46-18", conference: "Eastern",
     probs: { make_playoffs: 0.98, conf_semis: 0.82, conf_finals: 0.50, finals: 0.28, championship: 0.16 },
     trends: { championship: 0.008 },
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.15 }, { source: "Kalshi", probability: 0.16 }, { source: "Polymarket", probability: 0.17 }] },
+    sources: {
+      conf_finals: [{ source: "Sportsbooks", probability: 0.49 }, { source: "Kalshi", probability: 0.51 }, { source: "Polymarket", probability: 0.50 }],
+      finals: [{ source: "Sportsbooks", probability: 0.27 }, { source: "Kalshi", probability: 0.28 }, { source: "Polymarket", probability: 0.29 }],
+      championship: [{ source: "Sportsbooks", probability: 0.15 }, { source: "Kalshi", probability: 0.16 }, { source: "Polymarket", probability: 0.17 }],
+    },
   },
   {
     name: "Denver Nuggets", short: "DEN",
@@ -40,7 +51,10 @@ const RAW_TEAMS = [
     record: "44-20", conference: "Western",
     probs: { make_playoffs: 0.97, conf_semis: 0.75, conf_finals: 0.42, finals: 0.22, championship: 0.12 },
     trends: { championship: -0.005 },
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.12 }] },
+    sources: {
+      finals: [{ source: "Sportsbooks", probability: 0.22 }, { source: "Kalshi", probability: 0.21 }],
+      championship: [{ source: "Sportsbooks", probability: 0.12 }, { source: "Kalshi", probability: 0.11 }],
+    },
   },
   {
     name: "New York Knicks", short: "NYK",
@@ -48,7 +62,9 @@ const RAW_TEAMS = [
     record: "43-21", conference: "Eastern",
     probs: { make_playoffs: 0.96, conf_semis: 0.70, conf_finals: 0.35, finals: 0.18, championship: 0.09 },
     trends: { championship: 0.012 },
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.09 }, { source: "Polymarket", probability: 0.10 }] },
+    sources: {
+      championship: [{ source: "Sportsbooks", probability: 0.09 }, { source: "Polymarket", probability: 0.10 }],
+    },
   },
   {
     name: "Dallas Mavericks", short: "DAL",
@@ -56,7 +72,9 @@ const RAW_TEAMS = [
     record: "40-24", conference: "Western",
     probs: { make_playoffs: 0.93, conf_semis: 0.60, conf_finals: 0.30, finals: 0.15, championship: 0.07 },
     trends: { championship: -0.008 },
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.07 }, { source: "Kalshi", probability: 0.06 }] },
+    sources: {
+      championship: [{ source: "Sportsbooks", probability: 0.07 }, { source: "Kalshi", probability: 0.06 }],
+    },
   },
   {
     name: "Milwaukee Bucks", short: "MIL",
@@ -64,7 +82,9 @@ const RAW_TEAMS = [
     record: "39-25", conference: "Eastern",
     probs: { make_playoffs: 0.90, conf_semis: 0.55, conf_finals: 0.28, finals: 0.14, championship: 0.06 },
     trends: {},
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.06 }] },
+    sources: {
+      championship: [{ source: "Sportsbooks", probability: 0.06 }],
+    },
   },
   {
     name: "Minnesota Timberwolves", short: "MIN",
@@ -72,7 +92,9 @@ const RAW_TEAMS = [
     record: "38-26", conference: "Western",
     probs: { make_playoffs: 0.88, conf_semis: 0.50, conf_finals: 0.22, finals: 0.10, championship: 0.04 },
     trends: { championship: -0.01 },
-    sources: { championship: [{ source: "Sportsbooks", probability: 0.04 }] },
+    sources: {
+      championship: [{ source: "Sportsbooks", probability: 0.04 }],
+    },
   },
 ];
 
