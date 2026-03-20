@@ -5592,7 +5592,16 @@ async def get_matching_review(
             continue
         for outcome in (market.outcomes or []):
             prob = outcome.current_probability
-            if prob is None or prob <= 0 or prob >= 1.0:
+            if prob is None:
+                # Fallback: compute from bid/ask when current_probability
+                # wasn't written (e.g. during API format migrations).
+                if (outcome.current_yes_bid is not None
+                        and outcome.current_yes_ask is not None
+                        and float(outcome.current_yes_ask) > 0):
+                    prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
+                else:
+                    continue
+            if prob <= 0 or prob >= 1.0:
                 continue
             oname = outcome.name or ""
             # Skip non-team outcomes (same filters as grid builder)
@@ -5600,9 +5609,15 @@ async def get_matching_review(
                 continue
             if oname.lower().strip() in ("yes", "no", "over", "under"):
                 continue
-            # Skip prediction market 0.5 noise
+            # Skip prediction market 0.5 noise, but allow outcomes
+            # with real trading activity (bid > 0).
             if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
-                continue
+                has_real_activity = (
+                    outcome.current_yes_bid is not None
+                    and float(outcome.current_yes_bid) > 0
+                )
+                if not has_real_activity:
+                    continue
             norm = _normalize_team_name(oname)
             grid_raw[norm][col_key].append({
                 "source": market.source,

@@ -998,9 +998,14 @@ async def _build_golf_tour_grid(
                 continue
 
             for outcome in market.outcomes:
-                if outcome.current_probability is None:
+                if outcome.current_probability is not None:
+                    prob = float(outcome.current_probability)
+                elif (outcome.current_yes_bid is not None
+                      and outcome.current_yes_ask is not None
+                      and float(outcome.current_yes_ask) > 0):
+                    prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
+                else:
                     continue
-                prob = float(outcome.current_probability)
                 if prob <= 0:
                     continue
 
@@ -1009,9 +1014,15 @@ async def _build_golf_tour_grid(
                     continue
                 if oname.lower().strip() in ("yes", "no", "over", "under"):
                     continue
-                # Filter prediction market 0.5 noise
+                # Filter prediction market 0.5 noise, but allow outcomes
+                # with real trading activity (bid > 0).
                 if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
-                    continue
+                    has_real_activity = (
+                        outcome.current_yes_bid is not None
+                        and float(outcome.current_yes_bid) > 0
+                    )
+                    if not has_real_activity:
+                        continue
 
                 # Match outcome name to DataGolf field
                 outcome_norm = _normalize_team_name(oname)
@@ -1547,9 +1558,16 @@ async def get_playoff_grid(
             continue
 
         for outcome in market.outcomes:
-            if outcome.current_probability is None:
+            if outcome.current_probability is not None:
+                prob = float(outcome.current_probability)
+            elif (outcome.current_yes_bid is not None
+                  and outcome.current_yes_ask is not None
+                  and float(outcome.current_yes_ask) > 0):
+                # Fallback: compute from bid/ask when current_probability
+                # wasn't written (e.g. during API format migrations).
+                prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
+            else:
                 continue
-            prob = float(outcome.current_probability)
             if prob <= 0 or prob >= 1.0:
                 continue
             # Skip non-team outcome names (thresholds, dates, generic)
@@ -1575,9 +1593,16 @@ async def get_playoff_grid(
                 continue
             # Filter prediction market 0.5 noise — binary markets near 50%
             # are illiquid defaults, not real predictions.  Applies to both
-            # Kalshi and Polymarket.
+            # Kalshi and Polymarket.  But skip this filter when bid/ask data
+            # shows real trading activity (bid > 0 means someone placed a
+            # real order, not just a default).
             if market.source in ("kalshi", "polymarket") and abs(prob - 0.5) < 0.02:
-                continue
+                has_real_activity = (
+                    outcome.current_yes_bid is not None
+                    and float(outcome.current_yes_bid) > 0
+                )
+                if not has_real_activity:
+                    continue
 
             column_data[col_key].append((market, outcome))
 
