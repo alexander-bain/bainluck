@@ -41,7 +41,7 @@ nonisolated struct GridTeam: Decodable, Sendable, Identifiable {
 nonisolated struct GridCell: Decodable, Sendable {
     let mergedProbability: Double?
     let sources: [GridCellSource]?
-    let trend24H: Double?
+    let trend24h: Double?
 }
 
 nonisolated struct GridCellSource: Decodable, Sendable {
@@ -56,7 +56,7 @@ nonisolated struct GridMover: Decodable, Sendable, Identifiable {
     let shortName: String?
     let teamId: Int?
     let column: String
-    let change24H: Double
+    let change24h: Double
     let direction: String
     let logoUrl: String?
     let primaryColor: String?

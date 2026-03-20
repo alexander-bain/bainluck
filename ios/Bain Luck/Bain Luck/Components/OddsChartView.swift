@@ -12,6 +12,8 @@ private struct ChartDataPoint: Identifiable {
     let date: Date
     let probability: Double
     let source: String
+    /// Delta from 50% for mirrored Y-axis (home positive, away negative)
+    var delta: Double { probability - 0.5 }
     // Game state carried through for play-by-play card
     var homeScore: Int?
     var awayScore: Int?
@@ -324,18 +326,16 @@ struct OddsChartView: View {
             visibleMarkers = periodMarkers
         }
 
-        // Auto-zoom Y-axis to data range with 5% padding (matches web behavior)
-        let probs = dataPoints.map(\.probability)
-        let dataMin = probs.min() ?? 0
-        let dataMax = probs.max() ?? 1
-        let dataRange = max(dataMax - dataMin, 0.05) // Minimum 5% range
-        let padding = dataRange * 0.05
-        let yMin = max(0, dataMin - padding)
-        let yMax = min(1, dataMax + padding)
+        // Mirrored Y-axis: compute delta range with symmetric padding
+        let deltas = dataPoints.map(\.delta)
+        let absMax = max(abs(deltas.min() ?? 0), abs(deltas.max() ?? 0), 0.05)
+        let yPad = absMax * 0.1
+        let yMin = -(absMax + yPad)
+        let yMax = absMax + yPad
 
         return Chart {
-            // 50% reference line
-            RuleMark(y: .value("Even", 0.5))
+            // 50% reference line (at delta = 0)
+            RuleMark(y: .value("Even", 0.0))
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
@@ -369,7 +369,7 @@ struct OddsChartView: View {
                 ForEach(points) { point in
                     LineMark(
                         x: .value("Time", point.date),
-                        y: .value("Probability", point.probability),
+                        y: .value("Delta", point.delta),
                         series: .value("Source", source)
                     )
                     .foregroundStyle(colorForSource(source, sources: sources))
@@ -385,7 +385,9 @@ struct OddsChartView: View {
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text("\(Int(v * 100))%")
+                        // Mirrored: show 50 + abs(delta) so both sides read as win %
+                        let pct = Int(50 + abs(v * 100))
+                        Text("\(pct)%")
                             .font(.caption2)
                     }
                 }

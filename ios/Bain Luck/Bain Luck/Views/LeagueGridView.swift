@@ -245,7 +245,7 @@ struct LeagueGridView: View {
                 VStack(spacing: 1) {
                     Text(formatProb(prob))
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    if let trend = cell?.trend24H, abs(trend) >= 0.005 {
+                    if let trend = cell?.trend24h, abs(trend) >= 0.005 {
                         HStack(spacing: 1) {
                             Image(systemName: trend > 0 ? "arrow.up" : "arrow.down")
                                 .font(.system(size: 6))
@@ -281,7 +281,7 @@ struct LeagueGridView: View {
 
     private func moverChip(_ mover: GridMover) -> some View {
         let isUp = mover.direction == "up"
-        let pct = abs(mover.change24H * 100)
+        let pct = abs(mover.change24h * 100)
 
         return HStack(spacing: 4) {
             if let logoUrl = mover.logoUrl, let url = URL(string: logoUrl) {
