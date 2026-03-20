@@ -109,6 +109,8 @@ struct EventDetailView: View {
                             chartHeaderBar(event)
                             OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                          commenceTime: event.commenceTime, status: event.status,
+                                         homeTeamName: event.homeTeam.name,
+                                         awayTeamName: event.awayTeam.name,
                                          selectedPlayPoint: $selectedPlayPoint,
                                          preloadedHistory: vm.history)
                             if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {

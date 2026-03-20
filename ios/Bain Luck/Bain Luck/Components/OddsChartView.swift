@@ -86,6 +86,8 @@ struct OddsChartView: View {
     var teamColors: (away: Color, home: Color)?
     var commenceTime: String?
     var status: String?
+    var homeTeamName: String?
+    var awayTeamName: String?
     /// Binding to expose the selected game play point (for GamePlayCardView)
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
@@ -110,22 +112,41 @@ struct OddsChartView: View {
         isGameStarted && gameStartDate != nil
     }
 
+    /// Short team name (last word, e.g. "Celtics" from "Boston Celtics")
+    private var homeShort: String {
+        homeTeamName?.split(separator: " ").last.map(String.init) ?? "Home"
+    }
+    private var awayShort: String {
+        awayTeamName?.split(separator: " ").last.map(String.init) ?? "Away"
+    }
+
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
          commenceTime: String? = nil, status: String? = nil,
+         homeTeamName: String? = nil, awayTeamName: String? = nil,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
         self.status = status
+        self.homeTeamName = homeTeamName
+        self.awayTeamName = awayTeamName
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            if showPicker {
-                timeRangePicker
+        VStack(spacing: 8) {
+            // Chart title + time range picker
+            HStack {
+                Text("Win Probability")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                Spacer()
+                if showPicker {
+                    timeRangePicker
+                }
             }
 
             if vm.loading {
@@ -147,10 +168,28 @@ struct OddsChartView: View {
                         .foregroundStyle(.secondary)
                         .frame(height: chartHeight)
                 } else {
-                    chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
-                        .onChange(of: selectedDate) { _, newDate in
-                            updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
+                    // Chart with team name labels on sides
+                    HStack(spacing: 4) {
+                        // Team labels on left edge
+                        VStack {
+                            Text(homeShort)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(teamColors?.home ?? .blue)
+                            Spacer()
+                            Text(awayShort)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(teamColors?.away ?? .red)
                         }
+                        .frame(width: 40)
+                        .padding(.vertical, 8)
+
+                        chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
+                            .onChange(of: selectedDate) { _, newDate in
+                                updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
+                            }
+                    }
+                    .frame(height: chartHeight)
+
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                 }
             }
@@ -361,7 +400,6 @@ struct OddsChartView: View {
             }
         }
         .chartXSelection(value: $selectedDate)
-        .frame(height: chartHeight)
     }
 
     // MARK: - Legend
@@ -376,44 +414,24 @@ struct OddsChartView: View {
             if b == "consensus" { return false }
             return a < b
         }
-        let needsScroll = ordered.count > 3
 
-        return ZStack(alignment: .trailing) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(ordered, id: \.self) { source in
-                        let isPrimary = source == "aggregate" || (source == "consensus" && !ordered.contains("aggregate"))
-                        HStack(spacing: 4) {
-                            if isPrimary {
-                                RoundedRectangle(cornerRadius: 1)
-                                    .fill(colorForSource(source, sources: sources))
-                                    .frame(width: 14, height: 3)
-                            } else {
-                                Circle()
-                                    .fill(colorForSource(source, sources: sources))
-                                    .frame(width: 6, height: 6)
-                            }
-                            Text(displayNameForSource(source, sources: sources))
-                                .font(.caption2)
-                                .foregroundStyle(isPrimary ? .primary : .secondary)
-                        }
+        return FlowLayout(spacing: 8) {
+            ForEach(ordered, id: \.self) { source in
+                let isPrimary = source == "aggregate" || (source == "consensus" && !ordered.contains("aggregate"))
+                HStack(spacing: 4) {
+                    if isPrimary {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(colorForSource(source, sources: sources))
+                            .frame(width: 14, height: 3)
+                    } else {
+                        Circle()
+                            .fill(colorForSource(source, sources: sources))
+                            .frame(width: 6, height: 6)
                     }
-                    // Trailing spacer to prevent fade from covering last item
-                    if needsScroll {
-                        Spacer().frame(width: 24)
-                    }
+                    Text(displayNameForSource(source, sources: sources))
+                        .font(.caption2)
+                        .foregroundStyle(isPrimary ? .primary : .secondary)
                 }
-            }
-
-            // Trailing fade gradient to hint at scrollability
-            if needsScroll {
-                LinearGradient(
-                    colors: [Color.cardBackground.opacity(0), Color.cardBackground],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 32)
-                .allowsHitTesting(false)
             }
         }
     }
@@ -595,7 +613,7 @@ struct OddsChartView: View {
                 case "bainluck_model": baseColor = .purple
                 case "kalshi": baseColor = Color(hex: "#22c55e")
                 case "polymarket": baseColor = Color(hex: "#3b82f6")
-                case "fangraphs": baseColor = Color(hex: "#0d9488")
+                case "mlb": baseColor = Color(hex: "#0d9488")
                 default: baseColor = .gray
                 }
             }
@@ -657,7 +675,7 @@ struct OddsChartView: View {
         case "stat_model", "bainluck_model": return "Bain Luck Model"
         case "kalshi": return "Kalshi"
         case "polymarket": return "Polymarket"
-        case "fangraphs": return "MLB Model"
+        case "mlb": return "MLB Model"
         default: return source.capitalized
         }
     }
@@ -665,7 +683,7 @@ struct OddsChartView: View {
     /// Fallback source types matching web's FALLBACK_SOURCE_CONFIG
     private func fallbackType(_ source: String) -> String {
         switch source {
-        case "espn", "stat_model", "bainluck_model", "fangraphs":
+        case "espn", "stat_model", "bainluck_model", "mlb":
             return "model"
         case "kalshi", "polymarket":
             return "market"
