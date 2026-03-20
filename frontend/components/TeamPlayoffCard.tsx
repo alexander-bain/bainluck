@@ -166,7 +166,7 @@ export default function TeamPlayoffCard({
         className="relative rounded-xl overflow-hidden border transition-all duration-200 group-hover:border-white/20"
         style={{
           backgroundColor: "var(--surface-card)",
-          borderColor: "var(--border-color)",
+          borderColor: "var(--surface-border)",
           borderLeftWidth: 3,
           borderLeftColor: team.color,
         }}

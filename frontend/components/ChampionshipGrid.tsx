@@ -64,7 +64,7 @@ function LeagueTabs({
             style={{
               backgroundColor: active ? "var(--surface-elevated)" : "transparent",
               color: active ? "var(--text-primary)" : "var(--text-muted)",
-              border: active ? "1px solid var(--border-color)" : "1px solid transparent",
+              border: active ? "1px solid var(--surface-border)" : "1px solid transparent",
             }}
           >
             <span>{tab.emoji}</span>
@@ -284,7 +284,7 @@ function TeamRow({ team, rank, stageKeys, stageLabels, sortKey, expanded, onTogg
               className="border-t border-b"
               style={{
                 backgroundColor: hexToRgba(teamColor, 0.03),
-                borderColor: "var(--border-color)",
+                borderColor: "var(--surface-border)",
               }}
             >
               <SourceBreakdown team={team} stageKeys={stageKeys} stageLabels={stageLabels} />
@@ -322,7 +322,7 @@ function GridTable({
   return (
     <div
       className="rounded-xl border overflow-hidden"
-      style={{ borderColor: "var(--border-color)", backgroundColor: "var(--surface-card)" }}
+      style={{ borderColor: "var(--surface-border)", backgroundColor: "var(--surface-card)" }}
     >
       <table className="w-full text-sm border-collapse table-fixed">
         <colgroup>

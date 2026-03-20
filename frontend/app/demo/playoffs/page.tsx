@@ -41,7 +41,7 @@ export default function PlayoffsDemoPage() {
           className="rounded-xl border px-4 py-3 mb-3 flex items-center gap-2"
           style={{
             backgroundColor: "var(--surface-elevated)",
-            borderColor: "var(--border-color)",
+            borderColor: "var(--surface-border)",
           }}
         >
           <span className="text-base">🏀</span>
@@ -90,7 +90,7 @@ export default function PlayoffsDemoPage() {
       </section>
 
       {/* Divider */}
-      <div style={{ borderTop: "1px solid var(--border-color)" }} />
+      <div style={{ borderTop: "1px solid var(--surface-border)" }} />
 
       {/* ── Section 2: Championship Grid ── */}
       <section>
