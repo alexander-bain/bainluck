@@ -1300,7 +1300,8 @@ export default function OddsChart({
               <Scatter
                 dataKey="leadChangeDelta"
                 fill="none"
-                shape={(props: { cx?: number; cy?: number }) => {
+                shape={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
+                  if (props.payload?.leadChangeDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
                   return (
                     <g>
@@ -1326,7 +1327,8 @@ export default function OddsChart({
               <Scatter
                 dataKey="calloutDelta"
                 fill="none"
-                shape={(props: { cx?: number; cy?: number }) => {
+                shape={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
+                  if (props.payload?.calloutDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
                   const fillColor = isMultiSource
                     ? BAIN_LUCK_CONFIG.color
