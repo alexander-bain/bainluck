@@ -1,5 +1,5 @@
 release: alembic upgrade head
 web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 worker-realtime: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 --queues=realtime --max-memory-per-child=350000
-worker-background: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=3 --queues=background --max-memory-per-child=250000
+worker-background: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --queues=background --max-memory-per-child=200000
 scheduler: celery -A app.tasks.celery_app beat --loglevel=info

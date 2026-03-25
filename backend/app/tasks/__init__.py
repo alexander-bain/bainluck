@@ -92,9 +92,10 @@ celery_app.conf.update(**celery_config)
 #   High-frequency tasks driving user-visible live game data.
 #   Never blocked by batch jobs.
 #
-# background (Standard-1X, concurrency=3):
+# background (Standard-1X, concurrency=2):
 #   Hourly/daily batch tasks — enrichment, audits, maintenance.
 #   Can tolerate delays without user impact.
+#   Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB (fits 512MB dyno).
 #
 # To move a task: just change its queue in task_routes below.
 # =============================================================================
@@ -621,9 +622,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.poll_futures_odds",
         "schedule": crontab(minute=30, hour="*/2"),  # Every 2 hours — futures change slowly, saves ~50% quota
     },
-    "poll-kalshi-hourly": {
+    "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
-        "schedule": crontab(minute=45),
+        "schedule": crontab(minute=45, hour="*/4"),  # Every 4 hours — futures markets update daily, not hourly
     },
     "poll-polymarket-hourly": {
         "task": "app.tasks.poll_polymarket_markets",
@@ -648,7 +649,7 @@ celery_app.conf.beat_schedule = {
     },
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",
-        "schedule": crontab(minute="5,35"),  # Every 30 min — markets exist days before games (was every 15 min)
+        "schedule": crontab(minute=5, hour="*/4"),  # Every 4 hours — markets link once and stay linked
         "kwargs": {"limit": 200},
     },
     "poll-live-prediction-markets": {
@@ -661,7 +662,7 @@ celery_app.conf.beat_schedule = {
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",
-        "schedule": crontab(minute=50),  # Hourly at :50, after futures (:30) and Kalshi (:45)
+        "schedule": crontab(minute=50, hour="*/6"),  # Every 6 hours — team links rarely change
         "kwargs": {"limit": 200, "use_llm": True},
     },
     "sync-rosters-daily": {
