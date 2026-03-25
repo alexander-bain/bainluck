@@ -669,9 +669,27 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_rosters",
         "schedule": crontab(minute=0, hour=7),  # Daily at 7:00 AM UTC
     },
-    "sync-statpal-schedules": {
+    # StatPal schedule sync — one per major sport to avoid timeout
+    # (soccer returns thousands of global fixtures and overwhelms a single run)
+    "sync-statpal-schedules-nba": {
         "task": "app.tasks.sync_statpal_schedules",
-        "schedule": crontab(minute=0),  # Hourly at :00 — schedules rarely change (was every 15 min)
+        "schedule": crontab(minute=0),
+        "kwargs": {"sport_key": "basketball_nba"},
+    },
+    "sync-statpal-schedules-nhl": {
+        "task": "app.tasks.sync_statpal_schedules",
+        "schedule": crontab(minute=1),
+        "kwargs": {"sport_key": "icehockey_nhl"},
+    },
+    "sync-statpal-schedules-mlb": {
+        "task": "app.tasks.sync_statpal_schedules",
+        "schedule": crontab(minute=2),
+        "kwargs": {"sport_key": "baseball_mlb"},
+    },
+    "sync-statpal-schedules-nfl": {
+        "task": "app.tasks.sync_statpal_schedules",
+        "schedule": crontab(minute=3),
+        "kwargs": {"sport_key": "americanfootball_nfl"},
     },
     "sync-statpal-injuries": {
         "task": "app.tasks.sync_statpal_injuries",
