@@ -412,10 +412,21 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
     if not is_available():
         return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
 
+    from app.tasks.config import STATPAL_PBP_SPORTS
+
+    # Only attempt PBP for sports that actually support it (NFL only).
+    # Other sports return 404, wasting API calls.
     if sport_key:
-        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+        statpal_sport_id = STATPAL_SPORT_MAPPING.get(sport_key)
+        sport_keys = [sport_key] if statpal_sport_id and statpal_sport_id in STATPAL_PBP_SPORTS else []
     else:
-        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+        sport_keys = [
+            k for k, v in STATPAL_SPORT_MAPPING.items()
+            if v in STATPAL_PBP_SPORTS
+        ]
+
+    if not sport_keys:
+        return {"skipped": True, "reason": "no PBP-capable sports to sync"}
 
     service = StatPalAPIService()
     total_plays = 0
@@ -581,6 +592,161 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
         "total_plays": total_plays,
         "live_events_with_plays": total_events,
         "rows_inserted": total_rows_inserted,
+        "sports": details,
+    }
+
+
+async def _sync_statpal_livescores() -> dict:
+    """Poll StatPal livescores for real-time game state updates.
+
+    StatPal updates livescores every 15 seconds across all 13 sports.
+    This task runs every 30 seconds and updates:
+    - Current score (home_score, away_score)
+    - Game period/status via ScoreSnapshot enrichment
+    - Event status transitions (live → completed)
+
+    Unlike the hourly schedule sync, this is a lightweight call that only
+    hits the livescores endpoint (not the full season schedule).
+    """
+    from app.services.statpal_api import StatPalAPIService, is_available
+
+    if not is_available():
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+
+    service = StatPalAPIService()
+    total_updated = 0
+    total_score_snaps = 0
+    details = []
+
+    # Only poll sports that are likely to have live games right now.
+    # We check which sports have live events in our DB first, then
+    # only call StatPal livescores for those sports.
+    try:
+        async with get_task_session() as session:
+            from app.models import Event, Sport
+            from app.models.models import ScoreSnapshot
+
+            # Find which StatPal sports have live events
+            live_sport_result = await session.execute(
+                select(Sport.key, Sport.id).join(
+                    Event, Event.sport_id == Sport.id
+                ).where(
+                    Event.status == "live"
+                ).distinct()
+            )
+            live_sports = {
+                row.key: row.id
+                for row in live_sport_result.all()
+                if row.key in STATPAL_SPORT_MAPPING
+            }
+
+            if not live_sports:
+                return {"skipped": True, "reason": "no live events for StatPal sports"}
+
+            # Deduplicate StatPal sport identifiers (multiple leagues → same sport)
+            seen_statpal_sports: set[str] = set()
+
+            for our_key, sport_id in live_sports.items():
+                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+
+                # Skip if we already polled this StatPal sport (e.g., multiple soccer leagues)
+                if statpal_sport in seen_statpal_sports:
+                    continue
+                seen_statpal_sports.add(statpal_sport)
+
+                live_fixtures = await service.get_live_scores(statpal_sport)
+                if not live_fixtures:
+                    continue
+
+                # Build lookup by team names
+                fixture_by_teams: dict[str, object] = {}
+                for f in live_fixtures:
+                    key = _fixture_match_key(f.home_team, f.away_team)
+                    fixture_by_teams[key] = f
+
+                # Find our live events for ALL sport keys that map to this StatPal sport
+                matching_sport_keys = [
+                    k for k, v in STATPAL_SPORT_MAPPING.items()
+                    if v == statpal_sport and k in live_sports
+                ]
+                sport_ids = [live_sports[k] for k in matching_sport_keys]
+
+                events_result = await session.execute(
+                    select(Event).where(
+                        Event.sport_id.in_(sport_ids),
+                        Event.status == "live",
+                    )
+                )
+                live_events = events_result.scalars().all()
+
+                sport_updated = 0
+                sport_snaps = 0
+
+                for event in live_events:
+                    match_key = _fixture_match_key(
+                        event.home_team_name or "",
+                        event.away_team_name or "",
+                    )
+                    fixture = fixture_by_teams.get(match_key)
+                    if not fixture:
+                        continue
+
+                    updated = False
+
+                    # Update scores
+                    if fixture.home_score is not None and fixture.home_score != event.home_score:
+                        event.home_score = fixture.home_score
+                        updated = True
+                    if fixture.away_score is not None and fixture.away_score != event.away_score:
+                        event.away_score = fixture.away_score
+                        updated = True
+
+                    # Write ScoreSnapshot for score enrichment (feeds Score Differential chart)
+                    if updated and fixture.home_score is not None and fixture.away_score is not None:
+                        # Check if this score is different from the last snapshot
+                        last_snap_result = await session.execute(
+                            select(ScoreSnapshot.home_score, ScoreSnapshot.away_score)
+                            .where(ScoreSnapshot.event_id == event.id)
+                            .order_by(ScoreSnapshot.captured_at.desc())
+                            .limit(1)
+                        )
+                        last_snap = last_snap_result.first()
+                        if (
+                            not last_snap
+                            or last_snap.home_score != fixture.home_score
+                            or last_snap.away_score != fixture.away_score
+                        ):
+                            session.add(ScoreSnapshot(
+                                event_id=event.id,
+                                home_score=fixture.home_score,
+                                away_score=fixture.away_score,
+                            ))
+                            sport_snaps += 1
+
+                    # Link StatPal fixture ID if not already linked
+                    if fixture.fixture_id and not _get_statpal_id(event):
+                        _set_statpal_id(event, fixture.fixture_id)
+                        updated = True
+
+                    if updated:
+                        sport_updated += 1
+
+                total_updated += sport_updated
+                total_score_snaps += sport_snaps
+                details.append({
+                    "sport": statpal_sport,
+                    "live_fixtures": len(live_fixtures),
+                    "events_updated": sport_updated,
+                    "score_snapshots": sport_snaps,
+                })
+
+    finally:
+        await service.close()
+
+    return {
+        "events_updated": total_updated,
+        "score_snapshots_created": total_score_snaps,
+        "sports_polled": len(details),
         "sports": details,
     }
 

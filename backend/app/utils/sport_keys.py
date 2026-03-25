@@ -105,7 +105,14 @@ STATPAL_SPORT_MAPPING: dict[str, str] = {
     "soccer_italy_serie_a": "soccer",
     "soccer_france_ligue_one": "soccer",
     "soccer_uefa_champs_league": "soccer",
+    # Tennis (ATP + WTA both use StatPal sport="tennis")
+    "tennis_atp": "tennis",
+    "tennis_wta": "tennis",
 }
+
+# Sports where StatPal actually provides play-by-play data.
+# Other sports return 404 for the PBP endpoint — skip them to save API calls.
+STATPAL_PBP_SPORTS: set[str] = {"nfl"}
 
 
 # =============================================================================

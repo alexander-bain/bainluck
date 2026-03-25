@@ -117,6 +117,7 @@ celery_app.conf.task_routes = {
     "app.tasks.poll_live_prediction_markets": {"queue": "realtime"},
     "app.tasks.sync_mlb_win_probability": {"queue": "realtime"},
     "app.tasks.sync_statpal_live_plays": {"queue": "realtime"},
+    "app.tasks.sync_statpal_livescores": {"queue": "realtime"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     # --- Everything else routes to background (default queue) ---
 }
@@ -456,6 +457,13 @@ def sync_statpal_live_plays(self, sport_key: str = None):
     return _tracked_run("statpal_plays", _sync_statpal_live_plays(sport_key))
 
 
+@celery_app.task(bind=True, name="app.tasks.sync_statpal_livescores")
+def sync_statpal_livescores(self):
+    """Poll StatPal livescores for real-time game state (every 30s)."""
+    from app.tasks.statpal_sync import _sync_statpal_livescores
+    return _tracked_run("statpal_livescores", _sync_statpal_livescores())
+
+
 @celery_app.task(bind=True, name="app.tasks.sync_statpal_rosters")
 def sync_statpal_rosters(self, sport_key: str = None):
     """Sync team rosters from StatPal (supplements ESPN roster data)."""
@@ -697,7 +705,11 @@ celery_app.conf.beat_schedule = {
     },
     "sync-statpal-live-plays": {
         "task": "app.tasks.sync_statpal_live_plays",
-        "schedule": 60.0,  # Every 60 seconds — play-by-play for live games only
+        "schedule": 60.0,  # Every 60 seconds — play-by-play for live NFL games only
+    },
+    "sync-statpal-livescores": {
+        "task": "app.tasks.sync_statpal_livescores",
+        "schedule": 30.0,  # Every 30 seconds — real-time scores for all live games
     },
     "sync-statpal-rosters-daily": {
         "task": "app.tasks.sync_statpal_rosters",

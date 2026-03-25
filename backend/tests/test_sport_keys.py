@@ -48,7 +48,7 @@ class TestDictContents:
         assert ESPN_SPORT_MAPPING["americanfootball_nfl"] == "football/nfl"
 
     def test_statpal_sport_mapping_size(self):
-        assert len(STATPAL_SPORT_MAPPING) == 12
+        assert len(STATPAL_SPORT_MAPPING) == 14
 
     def test_statpal_sport_mapping_sample(self):
         assert STATPAL_SPORT_MAPPING["americanfootball_nfl"] == "nfl"

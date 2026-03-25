@@ -309,14 +309,15 @@ class TestBeatScheduleTiming:
 
         beat = celery_app.conf.beat_schedule
 
-        statpal_schedule = beat["sync-statpal-schedules"]["schedule"]
+        # StatPal schedules are now per-sport (e.g., sync-statpal-schedules-nba)
+        statpal_schedule = beat["sync-statpal-schedules-nba"]["schedule"]
         discovery_schedule = beat["discover-new-events"]["schedule"]
 
         # Both should be crontab instances
         assert isinstance(statpal_schedule, crontab)
         assert isinstance(discovery_schedule, crontab)
 
-        # StatPal runs hourly at :00, discovery at :05/:20/:35/:50
+        # StatPal runs hourly at :00 (NBA), discovery at :05/:20/:35/:50
         assert str(statpal_schedule) == str(crontab(minute=0))
         assert str(discovery_schedule) == str(crontab(minute="5,20,35,50"))
 

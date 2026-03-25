@@ -1645,6 +1645,9 @@ These ideas need design questions answered before planning. See `docs/planning-q
 ### Bespoke Category Landing Pages
 ~~Beautiful, over-invested landing pages for each major sport~~ **Golf page shipped** at `/categories/golf` (Mar 2026): cross-source tournament odds aggregation, current event detection, 24h movers, sparkline charts, LPGA/TGL separation. Generic `/categories/[slug]` infrastructure also built. Remaining: basketball, football, soccer, politics, entertainment, and other categories. The Oscars page was the prototype for this pattern.
 
+### Golf Live Scores Integration
+StatPal provides live scores for golf tournaments (leaderboard updates every 15s). Need to figure out how to USE this data on the golf category page and tournament detail pages — e.g., live leaderboard position overlaid on odds, real-time scoring updates during tournament rounds. The golf grid currently only shows pre-tournament odds; live scores could make it dynamic during events.
+
 ### "What Are the Odds?" Game
 Probability guessing game: show users events/futures from the DB, they guess the probability, we score accuracy. Designed as a retention driver and viral acquisition vehicle. Many game mechanics to work out (scoring formula, difficulty modes, multiplayer, social sharing).
 

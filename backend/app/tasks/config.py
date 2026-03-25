@@ -2,7 +2,7 @@
 Shared constants and configuration for Celery tasks.
 """
 
-from app.utils.sport_keys import ESPN_SPORT_MAPPING, STATPAL_SPORT_MAPPING  # noqa: F401 — re-exported
+from app.utils.sport_keys import ESPN_SPORT_MAPPING, STATPAL_SPORT_MAPPING, STATPAL_PBP_SPORTS  # noqa: F401 — re-exported
 
 # Adaptive polling state keys in Redis
 POLL_STATE_KEY = "bainluck:poll_state"
