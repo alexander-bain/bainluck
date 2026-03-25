@@ -482,8 +482,9 @@ export default function EventPage({ params }: EventPageProps) {
       historyData?.win_prob_history,
       historyData?.scoring_plays,
       event?.commence_time,
+      historyData?.period_markers,
     );
-  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, event?.commence_time]);
+  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, event?.commence_time, historyData?.period_markers]);
 
   // OddsChart reports its actual rendered time domain via onRenderedDomain callback,
   // stored in oddsChartDomain state. Passed directly to ScoreDifferentialChart as

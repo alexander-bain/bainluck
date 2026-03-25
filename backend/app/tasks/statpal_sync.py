@@ -426,7 +426,7 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
     try:
         async with get_task_session() as session:
             from app.models import Event, Sport
-            from app.models.models import ScoringPlay
+            from app.models.models import ScoringPlay, ScoreSnapshot
 
             for our_key in sport_keys:
                 statpal_sport = STATPAL_SPORT_MAPPING[our_key]
@@ -503,6 +503,35 @@ async def _sync_statpal_live_plays(sport_key: Optional[str] = None) -> dict:
                     if new_plays:
                         session.add_all(new_plays)
                         sport_rows_inserted += len(new_plays)
+
+                        # --- Enrich score history from play-by-play ---
+                        # Write ScoreSnapshot for each score transition in new plays.
+                        # This fills gaps in the sparse score data from odds polling,
+                        # giving the Score Differential chart a continuous line.
+                        last_score_result = await session.execute(
+                            select(ScoreSnapshot.home_score, ScoreSnapshot.away_score)
+                            .where(ScoreSnapshot.event_id == event.id)
+                            .order_by(ScoreSnapshot.captured_at.desc())
+                            .limit(1)
+                        )
+                        last_score = last_score_result.first()
+                        prev_h = last_score.home_score if last_score else None
+                        prev_a = last_score.away_score if last_score else None
+
+                        score_snaps = []
+                        for sp in new_plays:
+                            if sp.home_score is not None and sp.away_score is not None:
+                                if sp.home_score != prev_h or sp.away_score != prev_a:
+                                    score_snaps.append(ScoreSnapshot(
+                                        event_id=event.id,
+                                        home_score=sp.home_score,
+                                        away_score=sp.away_score,
+                                    ))
+                                    prev_h = sp.home_score
+                                    prev_a = sp.away_score
+
+                        if score_snaps:
+                            session.add_all(score_snaps)
 
                     # --- Backward compat: last 10 plays in JSONB ---
                     recent_plays = plays[-10:]

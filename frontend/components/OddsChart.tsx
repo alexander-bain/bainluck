@@ -637,44 +637,7 @@ export default function OddsChart({
     onRenderedDomain(first, last);
   }, [chartData, onRenderedDomain]);
 
-  // Build scoring play annotations that map to chart data points
-  const scoringPlayAnnotations = useMemo(() => {
-    if (!scoringPlays || scoringPlays.length === 0 || chartData.length === 0) return [];
 
-    // In multi-source mode, use the Bain Luck aggregated delta; otherwise use homeDelta
-    const primaryDeltaKey = isMultiSource ? "bainLuckDelta" : "homeDelta";
-
-    return scoringPlays
-      .filter((play) => play.timestamp)
-      .map((play) => {
-        const playTime = parseISO(play.timestamp).getTime();
-        let closestIdx = 0;
-        let closestDist = Infinity;
-        for (let i = 0; i < chartData.length; i++) {
-          const dist = Math.abs(parseISO(chartData[i].timestamp).getTime() - playTime);
-          if (dist < closestDist) {
-            closestDist = dist;
-            closestIdx = i;
-          }
-        }
-        const closestPoint = chartData[closestIdx];
-        const yValue = closestPoint[primaryDeltaKey] as number | null;
-        if (yValue === null) return null;
-
-        return {
-          time: closestPoint.time,
-          scoringPlayDelta: yValue,
-          description: play.description,
-          team: play.team,
-          type: play.type,
-          home_score: play.home_score,
-          away_score: play.away_score,
-          period: play.period,
-          clock: play.clock,
-        };
-      })
-      .filter((p): p is NonNullable<typeof p> => p !== null);
-  }, [scoringPlays, chartData, isMultiSource]);
 
   // Filter period boundaries to match chart time range and map to chart time format
   const filteredPeriodBoundaries = useMemo(() => {
@@ -929,23 +892,15 @@ export default function OddsChart({
           ) : (
             <p className="text-xs text-text-muted mb-2">{label}</p>
           )}
-          {/* Scoring play annotation */}
-          {scoringPlayAnnotations.length > 0 && (() => {
-            const match = scoringPlayAnnotations.find((p) => p.time === label);
-            if (!match) return null;
+          {/* Scoring play annotation (tooltip only — no dots on chart) */}
+          {matchingPoint?._scoringPlay && (() => {
+            const play = matchingPoint._scoringPlay as ScoringPlay;
             return (
               <div className="mb-2 pb-2 border-b border-white/10">
-                <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
-                  <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
-                  {match.description || match.type}
+                <p className="text-xs font-semibold text-amber-400 flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+                  {play.description || play.type}
                 </p>
-                {match.home_score != null && match.away_score != null && (
-                  <p className="text-xs text-text-muted mt-0.5">
-                    {match.period && `${match.period} `}
-                    {match.clock && `${match.clock} — `}
-                    Score: {match.home_score}-{match.away_score}
-                  </p>
-                )}
               </div>
             );
           })()}
@@ -1271,29 +1226,7 @@ export default function OddsChart({
               />
             )}
 
-            {/* Scoring play annotations — dots at key moments */}
-            {scoringPlayAnnotations.length > 0 && (
-              <Scatter
-                data={scoringPlayAnnotations}
-                dataKey="scoringPlayDelta"
-                fill="#ef4444"
-                shape={(props: { cx?: number; cy?: number; payload?: typeof scoringPlayAnnotations[number] }) => {
-                  const { cx = 0, cy = 0 } = props;
-                  return (
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={4}
-                      fill="#ef4444"
-                      stroke="#ffffff"
-                      strokeWidth={1.5}
-                      style={{ cursor: "pointer" }}
-                    />
-                  );
-                }}
-                legendType="none"
-              />
-            )}
+
 
             {/* Lead change markers — diamonds at 50% crossings */}
             {leadChangeCount > 0 && (
@@ -1430,17 +1363,7 @@ export default function OddsChart({
           </div>
         )}
 
-        {/* Scoring plays legend */}
-        {scoringPlayAnnotations.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <svg width="10" height="10" className="shrink-0">
-              <circle cx="5" cy="5" r="4" fill="#ef4444" stroke="#fff" strokeWidth="1" />
-            </svg>
-            <span className="text-xs text-text-muted">
-              Scoring plays
-            </span>
-          </div>
-        )}
+
 
         {/* Lead changes legend */}
         {leadChangeCount > 0 && (

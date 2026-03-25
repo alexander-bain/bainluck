@@ -2880,6 +2880,33 @@ async def get_event_odds_history(
             (event.win_probability_sources or {}).get("statpal_plays", [])
         )
 
+    # ── Period markers from scoring_plays table ──
+    # Query distinct periods with their earliest timestamp.
+    # This provides reliable period boundaries even when ESPN history is empty
+    # and win_prob_history lacks period data (e.g., stat_model-only games).
+    period_markers = []
+    try:
+        from app.models.models import ScoringPlay
+        pm_result = await db.execute(
+            select(
+                ScoringPlay.period,
+                func.min(ScoringPlay.captured_at).label("first_seen"),
+            )
+            .where(
+                ScoringPlay.event_id == event_id,
+                ScoringPlay.period.isnot(None),
+                ScoringPlay.period != "",
+            )
+            .group_by(ScoringPlay.period)
+            .order_by(func.min(ScoringPlay.captured_at))
+        )
+        period_markers = [
+            {"timestamp": row.first_seen.isoformat(), "period": row.period}
+            for row in pm_result.all()
+        ]
+    except Exception:
+        pass
+
     # ── Compute backend aggregate line using the aggregation engine ──
     # Combines sportsbook consensus + all win prob sources into a single
     # weighted-median time series with staleness decay and smoothing.
@@ -2937,6 +2964,7 @@ async def get_event_odds_history(
         "win_prob_history": win_prob_history,
         "win_prob_sources": win_prob_sources_meta,
         "scoring_plays": scoring_plays,
+        "period_markers": period_markers,
         "aggregate_line": aggregate_line if aggregate_line else None,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),

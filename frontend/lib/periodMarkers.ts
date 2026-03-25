@@ -96,7 +96,19 @@ export function derivePeriodBoundaries(
   winProbHistory?: Record<string, WinProbHistoryPoint[]>,
   scoringPlays?: ScoringPlay[],
   commenceTime?: string,
+  periodMarkers?: Array<{ timestamp: string; period: string }>,
 ): PeriodBoundary[] {
+  // Top priority: backend-computed period markers from scoring_plays table.
+  // These come from StatPal play-by-play and have period info on every play,
+  // covering games where ESPN and win_prob_history have no period data.
+  if (periodMarkers && periodMarkers.length > 0) {
+    const boundaries = periodMarkers.map((m) => ({
+      timestamp: m.timestamp,
+      label: normalizePeriodLabel(m.period),
+    })).filter((b) => b.label);
+    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
+  }
+
   // Prefer win prob history — its timestamps are always present in chartData
   // (added via ensurePoint), so ReferenceLine x values will match chart categories.
   // ESPN history timestamps come from a separate table (ESPNSnapshot) and may not
