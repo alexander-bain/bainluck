@@ -371,12 +371,10 @@ struct OddsChartView: View {
             visibleMarkers = periodMarkers
         }
 
-        // Mirrored Y-axis: compute delta range with symmetric padding
-        let deltas = dataPoints.map(\.delta)
-        let absMax = max(abs(deltas.min() ?? 0), abs(deltas.max() ?? 0), 0.05)
-        let yPad = absMax * 0.1
-        let yMin = -(absMax + yPad)
-        let yMax = absMax + yPad
+        // Fixed 100-50-100 mirrored Y-axis (matches web)
+        let yMin = -0.55
+        let yMax = 0.55
+        let yTicks: [Double] = [-0.50, -0.40, -0.30, -0.20, -0.10, 0, 0.10, 0.20, 0.30, 0.40, 0.50]
 
         return Chart {
             // 50% reference line (at delta = 0)
@@ -424,13 +422,13 @@ struct OddsChartView: View {
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: xAxisDomain(for: dataPoints))
         .chartYAxis {
-            AxisMarks(values: .automatic(desiredCount: 5)) { value in
+            AxisMarks(position: .leading, values: yTicks) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
                         let pct = Int(50 + abs(v * 100))
                         Text("\(pct)%")
-                            .font(.caption2)
+                            .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
                 }
