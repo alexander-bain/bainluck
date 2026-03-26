@@ -2094,6 +2094,11 @@ async def get_playoff_grid(
                 region = bracket_info["region"]
                 seed = seed or bracket_info["seed"]
 
+        # Fallback conference lookup for teams without a Team model match
+        conference = meta.get("conference")
+        if not conference and league_slug:
+            conference = _lookup_conference_fallback(league_slug, display_name)
+
         team_row = {
             "name": display_name,
             "short_name": meta.get("short_name") or display_name,
@@ -2102,7 +2107,7 @@ async def get_playoff_grid(
             "primary_color": meta.get("primary_color"),
             "secondary_color": meta.get("secondary_color"),
             "record": meta.get("record"),
-            "conference": meta.get("conference"),
+            "conference": conference,
             "division": meta.get("division"),
             "region": region,
             "seed": seed,
