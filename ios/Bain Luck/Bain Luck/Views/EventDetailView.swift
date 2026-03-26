@@ -302,21 +302,6 @@ struct EventDetailView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.white.opacity(0.4))
                         }
-                    } else if isLive, let resolved = resolvedLiveProbability(event) {
-                        HStack(spacing: 8) {
-                            Text(formatProbability(resolved.away))
-                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
-                                .foregroundStyle(colors.away)
-                            Text("\u{2013}")
-                                .font(.title3)
-                                .foregroundStyle(.white.opacity(0.3))
-                            Text(formatProbability(resolved.home))
-                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
-                                .foregroundStyle(colors.home)
-                        }
-                        Text(resolved.label)
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.4))
                     } else if let odds = event.currentOdds,
                               let away = odds.awayProbability,
                               let home = odds.homeProbability {
