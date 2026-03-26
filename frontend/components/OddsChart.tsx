@@ -639,6 +639,20 @@ export default function OddsChart({
 
 
 
+  // Compute "Game Start" reference line time (formatted to match chart categories)
+  const gameStartTime = useMemo(() => {
+    if (!commenceTime || chartData.length === 0) return null;
+    const startMs = parseISO(commenceTime).getTime();
+    const chartStartMs = parseISO(chartData[0].timestamp).getTime();
+    const chartEndMs = parseISO(chartData[chartData.length - 1].timestamp).getTime();
+    // Only show if the start time falls within the chart's visible range
+    if (startMs < chartStartMs || startMs > chartEndMs) return null;
+    // Round to minute for categorical match
+    const d = parseISO(commenceTime);
+    d.setSeconds(0, 0);
+    return format(d, "h:mm a");
+  }, [commenceTime, chartData]);
+
   // Filter period boundaries to match chart time range and map to chart time format
   const filteredPeriodBoundaries = useMemo(() => {
     if (!periodBoundaries || periodBoundaries.length === 0 || chartData.length === 0) return [];
@@ -656,43 +670,9 @@ export default function OddsChart({
       }));
   }, [periodBoundaries, chartData]);
 
-  // Auto-zoom: compute dynamic Y-axis domain based on actual data range
-  const { yDomain, yTicks } = useMemo(() => {
-    const allDeltas = chartData
-      .flatMap((d) => {
-        const vals: number[] = [];
-        // Collect all delta values from all sources
-        for (const key of Object.keys(d)) {
-          if (key.endsWith("Delta") || key.endsWith("_delta")) {
-            const v = d[key];
-            if (typeof v === "number") vals.push(v);
-          }
-        }
-        return vals;
-      });
-    if (allDeltas.length === 0) return { yDomain: [-50, 50] as [number, number], yTicks: [-50, -25, 0, 25, 50] };
-
-    const dataMin = Math.min(...allDeltas);
-    const dataMax = Math.max(...allDeltas);
-    // Add padding, round to nearest 5, ensure 0 is included
-    // Use generous padding (10pts) to prevent line strokes from being clipped at boundary
-    let lo = Math.floor((dataMin - 10) / 5) * 5;
-    let hi = Math.ceil((dataMax + 10) / 5) * 5;
-    // Ensure 0 is always in range
-    if (lo > 0) lo = 0;
-    if (hi < 0) hi = 0;
-    // Generate ticks at 10-point intervals, capped to ±50 (100% probability)
-    const ticks: number[] = [];
-    const tickLo = Math.max(lo, -50);
-    const tickHi = Math.min(hi, 50);
-    for (let t = tickLo; t <= tickHi; t += 10) {
-      ticks.push(t);
-    }
-    // Ensure 0 is always a tick
-    if (!ticks.includes(0)) ticks.push(0);
-    ticks.sort((a, b) => a - b);
-    return { yDomain: [lo, hi] as [number, number], yTicks: ticks };
-  }, [chartData]);
+  // Fixed 100-50-100 Y-axis: always show full probability range
+  const yDomain: [number, number] = [-50, 50];
+  const yTicks = [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50];
 
   // ── Compute lead change points (50% crossings) ──
   // Instead of creating a separate data array (which breaks Recharts categorical
@@ -806,9 +786,11 @@ export default function OddsChart({
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
-  // Custom Y-axis tick formatter: shows probability for each team, capped at 100%
+  // Custom Y-axis tick formatter: shows probability + team name at extremes
   const formatYTick = (value: number): string => {
     const prob = Math.min(100, 50 + Math.abs(value));
+    if (value === 50) return `100% ${homeShort}`;
+    if (value === -50) return `100% ${awayShort}`;
     return `${prob}%`;
   };
 
@@ -1043,7 +1025,7 @@ export default function OddsChart({
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
-            margin={{ top: 5, right: 10, left: fillContainer ? 5 : 0, bottom: 5 }}
+            margin={{ top: 5, right: 10, left: fillContainer ? 5 : 10, bottom: 5 }}
             onMouseMove={(state: { activeTooltipIndex?: number }) => {
               if (!onActivePointChange) return;
               const idx = state?.activeTooltipIndex;
@@ -1098,6 +1080,7 @@ export default function OddsChart({
             <YAxis
               domain={yDomain}
               ticks={yTicks}
+              width={75}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
@@ -1115,6 +1098,20 @@ export default function OddsChart({
                 style: { fontSize: 10, fill: "rgba(0,0,0,0.4)", fontWeight: 600 },
               }}
             />
+            {/* Game Start marker — solid line at commence_time */}
+            {gameStartTime && filteredPeriodBoundaries.length === 0 && (
+              <ReferenceLine
+                x={gameStartTime}
+                stroke="rgba(0,0,0,0.25)"
+                strokeWidth={1.5}
+                isFront
+                label={{
+                  value: "Start",
+                  position: "insideTopLeft",
+                  style: { fontSize: 11, fill: "rgba(0,0,0,0.6)", fontWeight: 700 },
+                }}
+              />
+            )}
             {/* Period boundary markers — rendered in front of data area */}
             {filteredPeriodBoundaries.map((b) => (
               <ReferenceLine

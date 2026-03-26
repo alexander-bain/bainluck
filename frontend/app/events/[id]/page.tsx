@@ -329,6 +329,7 @@ export default function EventPage({ params }: EventPageProps) {
   const [activeChartPoint, setActiveChartPoint] = useState<ActiveChartPoint | null>(null);
   const [oddsChartDomain, setOddsChartDomain] = useState<{ start: string; end: string } | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [chartFullscreen, setChartFullscreen] = useState(false);
   const handleRenderedDomain = useCallback((start: string, end: string) => {
     setOddsChartDomain((prev) => {
       if (prev && prev.start === start && prev.end === end) return prev;
@@ -475,16 +476,45 @@ export default function EventPage({ params }: EventPageProps) {
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
+  // Compute real game start time: use earliest ESPN/win_prob data point when it's
+  // notably later than the Odds API commence_time (which can be off by minutes).
+  const realStartTime = useMemo(() => {
+    const nominal = event?.commence_time;
+    if (!nominal) return undefined;
+    const nominalMs = new Date(nominal).getTime();
+
+    // Find earliest livescores data point
+    let earliestLive = Infinity;
+    if (historyData?.espn_history?.length) {
+      const first = new Date(historyData.espn_history[0].timestamp).getTime();
+      if (first < earliestLive) earliestLive = first;
+    }
+    if (historyData?.win_prob_history) {
+      for (const points of Object.values(historyData.win_prob_history)) {
+        if (points.length > 0) {
+          const first = new Date(points[0].timestamp).getTime();
+          if (first < earliestLive) earliestLive = first;
+        }
+      }
+    }
+
+    // If livescores start is >3min later than nominal, use livescores start
+    if (earliestLive !== Infinity && earliestLive > nominalMs + 3 * 60 * 1000) {
+      return new Date(earliestLive).toISOString();
+    }
+    return nominal;
+  }, [event?.commence_time, historyData?.espn_history, historyData?.win_prob_history]);
+
   // Derive period boundaries from history data for chart annotations
   const periodBoundaries = useMemo(() => {
     return derivePeriodBoundaries(
       historyData?.espn_history,
       historyData?.win_prob_history,
       historyData?.scoring_plays,
-      event?.commence_time,
+      realStartTime,
       historyData?.period_markers,
     );
-  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, event?.commence_time, historyData?.period_markers]);
+  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, realStartTime, historyData?.period_markers]);
 
   // OddsChart reports its actual rendered time domain via onRenderedDomain callback,
   // stored in oddsChartDomain state. Passed directly to ScoreDifferentialChart as
@@ -1124,6 +1154,18 @@ export default function EventPage({ params }: EventPageProps) {
               </div>
             )}
           </div>
+          <button
+            onClick={() => setChartFullscreen(true)}
+            className="p-1.5 rounded-md hover:bg-surface-elevated text-text-muted hover:text-text-primary transition-colors"
+            title="Fullscreen"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="10 2 14 2 14 6" />
+              <polyline points="6 14 2 14 2 10" />
+              <line x1="14" y1="2" x2="9.5" y2="6.5" />
+              <line x1="2" y1="14" x2="6.5" y2="9.5" />
+            </svg>
+          </button>
         </div>
 
         {/* Chart Content */}
@@ -1347,6 +1389,47 @@ export default function EventPage({ params }: EventPageProps) {
           />
         ) : null;
       })()}
+
+      {/* Fullscreen Chart Modal */}
+      {chartFullscreen && (
+        <div className="fixed inset-0 z-50 bg-white flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
+            <h2 className="text-sm font-semibold text-text-primary">Win Probability</h2>
+            <button
+              onClick={() => setChartFullscreen(false)}
+              className="p-2 rounded-md hover:bg-surface-elevated text-text-muted hover:text-text-primary transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="4" x2="4" y2="12" />
+                <line x1="4" y1="4" x2="12" y2="12" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex-1 p-4 min-h-0">
+            <OddsChart
+              history={historyData?.history ?? []}
+              homeTeam={event.home_team}
+              awayTeam={event.away_team}
+              commenceTime={event.commence_time}
+              isLive={effectivelyLive}
+              bookmakerHistory={historyData?.bookmaker_history}
+              espnHistory={historyData?.espn_history}
+              winProbHistory={historyData?.win_prob_history}
+              winProbSources={historyData?.win_prob_sources}
+              scoringPlays={historyData?.scoring_plays}
+              aggregateLine={historyData?.aggregate_line ?? undefined}
+              eventId={eventId}
+              eventStatus={event.status}
+              fillContainer
+              periodBoundaries={periodBoundaries}
+              homeTeamColor={event.home_team_data?.primary_color || undefined}
+              awayTeamColor={event.away_team_data?.primary_color || undefined}
+              homeTeamLogo={event.home_team_data?.logo_small || undefined}
+              awayTeamLogo={event.away_team_data?.logo_small || undefined}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
