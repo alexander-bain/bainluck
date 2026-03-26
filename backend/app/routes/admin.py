@@ -2868,6 +2868,168 @@ async def prediction_market_status(
     }
 
 
+@router.get("/prediction-markets/game-diagnostics")
+async def prediction_market_game_diagnostics(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Diagnose game-level prediction market matching for major sports.
+
+    Shows counts of game-level markets by ticker prefix, their link status,
+    and sample unlinked markets to identify matching failures.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import func, case
+    from app.models.models import FuturesMarket
+    from app.utils.sport_keys import KALSHI_GAME_TICKER_PREFIXES
+
+    results = {}
+
+    # Check each game ticker prefix
+    for prefix in KALSHI_GAME_TICKER_PREFIXES:
+        pattern = f"{prefix}%"
+        stats_result = await db.execute(
+            select(
+                func.count().label("total"),
+                func.count(FuturesMarket.event_id).label("linked"),
+                func.count(case((FuturesMarket.status == "open", 1))).label("open"),
+            )
+            .where(
+                FuturesMarket.source == "kalshi",
+                func.lower(FuturesMarket.external_id).like(pattern),
+            )
+        )
+        row = stats_result.one()
+        if row.total > 0:
+            # Get sample unlinked open markets
+            sample_result = await db.execute(
+                select(
+                    FuturesMarket.id,
+                    FuturesMarket.external_id,
+                    FuturesMarket.name,
+                    FuturesMarket.event_id,
+                    FuturesMarket.status,
+                    FuturesMarket.commence_time,
+                )
+                .where(
+                    FuturesMarket.source == "kalshi",
+                    func.lower(FuturesMarket.external_id).like(pattern),
+                    FuturesMarket.event_id.is_(None),
+                    FuturesMarket.status == "open",
+                )
+                .order_by(FuturesMarket.commence_time.desc())
+                .limit(5)
+            )
+            samples = [
+                {
+                    "id": r.id, "external_id": r.external_id, "name": r.name,
+                    "event_id": r.event_id, "status": r.status,
+                    "commence_time": r.commence_time.isoformat() if r.commence_time else None,
+                }
+                for r in sample_result.all()
+            ]
+            results[prefix] = {
+                "total": row.total, "linked": row.linked,
+                "unlinked": row.total - row.linked, "open": row.open,
+                "sample_unlinked": samples,
+            }
+
+    # Also check Polymarket game markets (name contains "vs.")
+    for sport_label, name_pattern in [
+        ("polymarket_vs", "% vs.%"), ("polymarket_vs_space", "% vs %"),
+    ]:
+        pm_result = await db.execute(
+            select(
+                func.count().label("total"),
+                func.count(FuturesMarket.event_id).label("linked"),
+                func.count(case((FuturesMarket.status == "open", 1))).label("open"),
+            )
+            .where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.name.ilike(name_pattern),
+            )
+        )
+        pm_row = pm_result.one()
+        # Sample unlinked
+        pm_sample = await db.execute(
+            select(
+                FuturesMarket.id, FuturesMarket.external_id,
+                FuturesMarket.name, FuturesMarket.event_id,
+                FuturesMarket.status, FuturesMarket.commence_time,
+                FuturesMarket.llm_sport_category,
+            )
+            .where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.name.ilike(name_pattern),
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.status == "open",
+            )
+            .order_by(FuturesMarket.updated_at.desc())
+            .limit(10)
+        )
+        results[sport_label] = {
+            "total": pm_row.total, "linked": pm_row.linked,
+            "unlinked": pm_row.total - pm_row.linked, "open": pm_row.open,
+            "sample_unlinked": [
+                {
+                    "id": r.id, "name": r.name, "event_id": r.event_id,
+                    "status": r.status, "sport": r.llm_sport_category,
+                    "commence_time": r.commence_time.isoformat() if r.commence_time else None,
+                }
+                for r in pm_sample.all()
+            ],
+        }
+
+    # Check NBA events without prediction market links
+    # Link is via FuturesMarket.event_id → Event.id
+    from app.models.models import Event, Sport
+    from sqlalchemy.orm import aliased
+
+    # Get NBA event IDs that DO have linked prediction markets
+    linked_event_ids_subq = (
+        select(FuturesMarket.event_id)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+        )
+        .distinct()
+        .scalar_subquery()
+    )
+
+    nba_no_links = await db.execute(
+        select(
+            Event.id, Event.home_team_name, Event.away_team_name,
+            Event.commence_time, Event.status,
+        )
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            Sport.key == "basketball_nba",
+            Event.status.in_(["scheduled", "live"]),
+            ~Event.id.in_(linked_event_ids_subq),
+        )
+        .order_by(Event.commence_time)
+        .limit(10)
+    )
+    nba_missing = [
+        {
+            "event_id": r.id,
+            "matchup": f"{r.home_team_name} vs {r.away_team_name}",
+            "commence_time": r.commence_time.isoformat() if r.commence_time else None,
+            "status": r.status,
+        }
+        for r in nba_no_links.all()
+    ]
+
+    return {
+        "kalshi_game_ticker_stats": {k: v for k, v in results.items() if not k.startswith("polymarket")},
+        "polymarket_game_stats": {k: v for k, v in results.items() if k.startswith("polymarket")},
+        "nba_events_missing_prediction_markets": nba_missing,
+    }
+
+
 @router.get("/prediction-markets/debug")
 async def prediction_market_debug(
     secret: str = Query(..., description="Admin secret for authorization"),
