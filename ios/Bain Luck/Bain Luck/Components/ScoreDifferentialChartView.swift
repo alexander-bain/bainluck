@@ -53,7 +53,7 @@ struct ScoreDifferentialChartView: View {
                     if hasActual {
                         HStack(spacing: 4) {
                             RoundedRectangle(cornerRadius: 1)
-                                .fill(homeTeamColor ?? .blue)
+                                .fill(Color(hex: "#0d9488"))
                                 .frame(width: 14, height: 3)
                             Text("Actual Score Diff")
                                 .font(.caption2)
@@ -156,7 +156,7 @@ struct ScoreDifferentialChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
-            // Projected spread
+            // Projected spread (orange dashed — contrasts with teal actual)
             ForEach(dataPoints.filter { $0.projectedDiff != nil }) { point in
                 LineMark(
                     x: .value("Time", point.date),
@@ -168,14 +168,14 @@ struct ScoreDifferentialChartView: View {
                 .interpolationMethod(.monotone)
             }
 
-            // Actual score differential
+            // Actual score differential (teal — high contrast against orange)
             ForEach(dataPoints.filter { $0.actualDiff != nil }) { point in
                 LineMark(
                     x: .value("Time", point.date),
                     y: .value("Diff", point.actualDiff!),
                     series: .value("Series", "actual")
                 )
-                .foregroundStyle(homeTeamColor ?? .blue)
+                .foregroundStyle(Color(hex: "#0d9488"))
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
                 .interpolationMethod(.stepCenter)
             }

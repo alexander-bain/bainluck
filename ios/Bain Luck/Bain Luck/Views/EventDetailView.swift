@@ -76,6 +76,9 @@ struct EventDetailView: View {
     @State private var countdownTimer: Timer?
     @State private var selectedPlayPoint: GamePlayPoint?
     @State private var showSources = false
+    @State private var refreshCountdown: Int = 0
+    @State private var refreshCountdownTimer: Timer?
+    @State private var lastRefreshDate: Date = Date()
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     init(eventId: Int) {
@@ -105,15 +108,19 @@ struct EventDetailView: View {
             }
             .task {
                 await vm.load()
+                lastRefreshDate = Date()
                 AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
                 startCountdownTimer()
+                startRefreshCountdown()
             }
             .refreshable {
                 await vm.load()
+                lastRefreshDate = Date()
             }
             .onDisappear {
                 vm.stopRefresh()
                 countdownTimer?.invalidate()
+                refreshCountdownTimer?.invalidate()
             }
     }
 
@@ -248,9 +255,12 @@ struct EventDetailView: View {
         let hasScore = (isLive || isFinished) && event.homeScore != nil && event.awayScore != nil
 
         return VStack(spacing: 12) {
-            // Top meta row: status badge + broadcast + date
+            // Top meta row: status badge + countdown + broadcast + date
             HStack(spacing: 8) {
                 heroStatusBadge(event)
+                if !isFinished {
+                    refreshCountdownView()
+                }
                 Spacer()
                 if let broadcast = event.espn?.broadcast {
                     HStack(spacing: 3) {
@@ -824,5 +834,52 @@ struct EventDetailView: View {
             return
         }
         countdownText = formatCountdown(from: date)
+    }
+
+    // MARK: - Refresh Countdown
+
+    /// Refresh interval in seconds (matches ViewModel's 30s for live, 120s for scheduled)
+    private var refreshInterval: Int {
+        isLive ? 30 : 120
+    }
+
+    private func startRefreshCountdown() {
+        refreshCountdownTimer?.invalidate()
+        refreshCountdownTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            let elapsed = Date().timeIntervalSince(lastRefreshDate)
+            let remaining = max(0, Double(refreshInterval) - elapsed)
+            refreshCountdown = Int(ceil(remaining))
+            // Reset when auto-refresh fires
+            if remaining <= 0 {
+                lastRefreshDate = Date()
+            }
+        }
+    }
+
+    /// Circular countdown indicator matching web's SVG ring
+    private func refreshCountdownView() -> some View {
+        let progress = Double(refreshInterval - refreshCountdown) / Double(refreshInterval)
+        let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
+
+        return HStack(spacing: 6) {
+            if !isFinished {
+                Text("Next update:")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            ZStack {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.15), lineWidth: 2.5)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(ringColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.linear(duration: 0.5), value: progress)
+                Text("\(refreshCountdown)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 28, height: 28)
+        }
     }
 }

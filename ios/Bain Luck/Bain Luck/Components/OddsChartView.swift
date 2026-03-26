@@ -465,24 +465,6 @@ struct OddsChartView: View {
                     .foregroundStyle(.primary.opacity(0.4))
             }
 
-            // Period marker lines (one per period: Q1, Q2, Q3, Q4 etc.)
-            ForEach(visibleMarkers) { marker in
-                RuleMark(x: .value("Period", marker.date))
-                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
-                    .foregroundStyle(.secondary.opacity(0.4))
-                    .annotation(position: .overlay, alignment: .topLeading, spacing: 0) {
-                        Text(marker.label)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Color.cardBackground.opacity(0.85))
-                            .clipShape(RoundedRectangle(cornerRadius: 2))
-                            .padding(.top, 2)
-                            .padding(.leading, 2)
-                    }
-            }
-
             // Data lines
             ForEach(uniqueSources, id: \.self) { source in
                 let points = dataPoints.filter { $0.source == source }
@@ -496,6 +478,22 @@ struct OddsChartView: View {
                     .lineStyle(strokeStyleForSource(source, sources: sources))
                     .interpolationMethod(.monotone)
                 }
+            }
+
+            // Period marker lines drawn AFTER data so labels render on top
+            ForEach(visibleMarkers) { marker in
+                RuleMark(x: .value("Period", marker.date))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
+                    .foregroundStyle(.secondary.opacity(0.5))
+                    .annotation(position: .top, alignment: .leading, spacing: 0) {
+                        Text(marker.label)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.primary.opacity(0.7))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color.cardBackground.opacity(0.9))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
             }
         }
         .chartYScale(domain: yMin...yMax)
