@@ -616,3 +616,160 @@ async def _get_audit_patterns_impl(days: int = 30) -> dict:
             "unique_patterns": len(patterns),
             "patterns": patterns[:50],
         }
+
+
+# =========================================================================
+# Matching Eval Metrics (Coverage + Accuracy tracked over time)
+# =========================================================================
+
+MATCHING_METRICS_PREFIX = "bainluck:matching_metrics"
+
+# Major sports that should ALWAYS have good coverage
+_MAJOR_SPORTS = {
+    "americanfootball_nfl", "basketball_nba", "baseball_mlb", "icehockey_nhl",
+    "basketball_ncaab", "soccer_epl", "soccer_usa_mls",
+}
+
+
+async def _compute_matching_metrics_impl() -> dict:
+    """Compute coverage and accuracy metrics for prediction market matching.
+
+    Metrics:
+    - coverage_pct: % of active events with at least one prediction market match
+    - major_coverage_pct: coverage for major sports only (should be near 100%)
+    - kalshi_coverage: % with Kalshi match
+    - polymarket_coverage: % with Polymarket match
+    - by_sport: per-sport coverage breakdown
+    - total_events: total active events
+    - matched_events: events with prediction market match
+    """
+    from sqlalchemy import text
+
+    async with get_task_session() as session:
+        # All active events (scheduled or live, with commence_time in the future or recent)
+        result = await session.execute(text("""
+            SELECT
+                e.sport_key,
+                COUNT(*) AS total,
+                COUNT(CASE WHEN e.kalshi_event_id IS NOT NULL
+                            OR e.polymarket_event_id IS NOT NULL THEN 1 END) AS matched,
+                COUNT(CASE WHEN e.kalshi_event_id IS NOT NULL THEN 1 END) AS kalshi_matched,
+                COUNT(CASE WHEN e.polymarket_event_id IS NOT NULL THEN 1 END) AS poly_matched
+            FROM events e
+            WHERE e.status IN ('scheduled', 'live')
+              AND e.commence_time >= NOW() - INTERVAL '6 hours'
+            GROUP BY e.sport_key
+            ORDER BY COUNT(*) DESC
+        """))
+        rows = result.fetchall()
+
+        total = sum(r.total for r in rows)
+        matched = sum(r.matched for r in rows)
+        kalshi = sum(r.kalshi_matched for r in rows)
+        poly = sum(r.poly_matched for r in rows)
+
+        # Major sports breakdown
+        major_total = sum(r.total for r in rows if r.sport_key in _MAJOR_SPORTS)
+        major_matched = sum(r.matched for r in rows if r.sport_key in _MAJOR_SPORTS)
+
+        by_sport = []
+        for r in rows:
+            by_sport.append({
+                "sport": r.sport_key,
+                "total": r.total,
+                "matched": r.matched,
+                "coverage_pct": round(r.matched / max(r.total, 1) * 100, 1),
+                "kalshi": r.kalshi_matched,
+                "polymarket": r.poly_matched,
+                "is_major": r.sport_key in _MAJOR_SPORTS,
+            })
+
+        # Unmatched major sport events (the ones we should NEVER miss)
+        unmatched_major = await session.execute(text("""
+            SELECT e.id, e.sport_key, e.home_team, e.away_team,
+                   e.commence_time, e.status
+            FROM events e
+            WHERE e.status IN ('scheduled', 'live')
+              AND e.commence_time >= NOW() - INTERVAL '6 hours'
+              AND e.commence_time <= NOW() + INTERVAL '24 hours'
+              AND e.kalshi_event_id IS NULL
+              AND e.polymarket_event_id IS NULL
+              AND e.sport_key = ANY(:sports)
+            ORDER BY e.commence_time
+            LIMIT 20
+        """), {"sports": list(_MAJOR_SPORTS)})
+        gaps = [
+            {
+                "id": r.id,
+                "sport": r.sport_key,
+                "matchup": f"{r.away_team} @ {r.home_team}",
+                "time": r.commence_time.isoformat() if r.commence_time else None,
+                "status": r.status,
+            }
+            for r in unmatched_major.fetchall()
+        ]
+
+        metrics = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "coverage_pct": round(matched / max(total, 1) * 100, 1),
+            "major_coverage_pct": round(major_matched / max(major_total, 1) * 100, 1),
+            "kalshi_coverage_pct": round(kalshi / max(total, 1) * 100, 1),
+            "polymarket_coverage_pct": round(poly / max(total, 1) * 100, 1),
+            "total_events": total,
+            "matched_events": matched,
+            "major_total": major_total,
+            "major_matched": major_matched,
+            "by_sport": by_sport,
+            "unmatched_major_gaps": gaps,
+        }
+
+        # Store in Redis for trending
+        _store_matching_metrics(metrics)
+
+        return metrics
+
+
+def _store_matching_metrics(metrics: dict):
+    """Store daily matching metrics snapshot in Redis."""
+    from app.tasks.redis_state import get_redis_client
+
+    r = get_redis_client()
+    if not r:
+        return
+    try:
+        day_key = metrics["timestamp"][:10]
+        redis_key = f"{MATCHING_METRICS_PREFIX}:{day_key}"
+        r.set(redis_key, json.dumps({
+            "date": day_key,
+            "coverage_pct": metrics["coverage_pct"],
+            "major_coverage_pct": metrics["major_coverage_pct"],
+            "kalshi_coverage_pct": metrics["kalshi_coverage_pct"],
+            "polymarket_coverage_pct": metrics["polymarket_coverage_pct"],
+            "total_events": metrics["total_events"],
+            "matched_events": metrics["matched_events"],
+            "major_total": metrics["major_total"],
+            "major_matched": metrics["major_matched"],
+        }), ex=86400 * 90)
+    except Exception:
+        pass
+
+
+def get_matching_metrics_history(days: int = 90) -> list:
+    """Get daily matching metrics for trending."""
+    from app.tasks.redis_state import get_redis_client
+
+    r = get_redis_client()
+    if not r:
+        return []
+    try:
+        results = []
+        now = datetime.now(timezone.utc)
+        for i in range(days):
+            day = (now - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+            key = f"{MATCHING_METRICS_PREFIX}:{day}"
+            val = r.get(key)
+            if val:
+                results.append(json.loads(val))
+        return results
+    except Exception:
+        return []

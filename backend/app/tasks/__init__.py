@@ -517,6 +517,15 @@ def audit_related_futures(self, limit: int = 30):
     return run_async(_audit_related_futures_impl(limit))
 
 
+# --- Matching Eval Metrics ---
+
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.compute_matching_metrics")
+def compute_matching_metrics(self):
+    """Compute prediction market matching coverage and accuracy metrics."""
+    from app.tasks.matching_audit import _compute_matching_metrics_impl
+    return run_async(_compute_matching_metrics_impl())
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -750,6 +759,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.collapse_snapshots",
         "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
         "kwargs": {"table": "futures", "limit": 500},
+    },
+    "matching-metrics-daily": {
+        "task": "app.tasks.compute_matching_metrics",
+        "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC
     },
     "recategorize-other-daily": {
         "task": "app.tasks.recategorize_other",

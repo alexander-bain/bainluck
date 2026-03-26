@@ -4133,6 +4133,39 @@ async def get_audit_patterns(
     }
 
 
+@router.get("/matching/metrics")
+async def get_matching_metrics(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Get current matching coverage metrics and history for trending."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.matching_audit import _compute_matching_metrics_impl, get_matching_metrics_history
+    from app.tasks.base import run_async as _run_async
+
+    metrics = await _compute_matching_metrics_impl()
+    history = get_matching_metrics_history(days=90)
+
+    return {
+        "current": metrics,
+        "history": history,
+    }
+
+
+@router.post("/matching/metrics/compute")
+async def trigger_matching_metrics(
+    secret: str = Query(..., description="Admin secret for authorization"),
+):
+    """Trigger matching metrics computation as a Celery task."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import compute_matching_metrics
+    result = compute_matching_metrics.delay()
+    return {"status": "dispatched", "task_id": result.id}
+
+
 # =============================================================================
 # StatPal Integration
 # =============================================================================
@@ -6530,6 +6563,13 @@ async def operations_dashboard(
     except Exception as e:
         db_section = {"error": str(e)}
 
+    # --- 6. Matching Metrics ---
+    try:
+        from app.tasks.matching_audit import get_matching_metrics_history
+        matching_history = get_matching_metrics_history(days=90)
+    except Exception:
+        matching_history = []
+
     return {
         "generated_at": now.isoformat(),
         "quota": quota_section,
@@ -6538,6 +6578,7 @@ async def operations_dashboard(
         "futures_coverage": futures_coverage,
         "worker": worker_section,
         "database": db_section,
+        "matching_metrics": matching_history,
     }
 
 

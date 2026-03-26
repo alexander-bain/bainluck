@@ -150,6 +150,16 @@ interface DatabaseHealth {
   size_trend?: DbSizeTrendEntry[];
 }
 
+interface MatchingMetricsEntry {
+  date: string;
+  coverage_pct: number;
+  major_coverage_pct: number;
+  kalshi_coverage_pct: number;
+  polymarket_coverage_pct: number;
+  total_events: number;
+  matched_events: number;
+}
+
 interface DashboardData {
   generated_at: string;
   quota: {
@@ -170,6 +180,7 @@ interface DashboardData {
     tasks: TaskMetric[];
   };
   database: DatabaseHealth;
+  matching_metrics?: MatchingMetricsEntry[];
 }
 
 // --- Helpers ---
@@ -476,6 +487,51 @@ function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byT
             <Bar dataKey="poll_futures" stackId="a" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
             <ReferenceLine y={dailyBudget} stroke="#ef4444" strokeDasharray="6 3" label={{ value: "Budget", fill: "#ef4444", fontSize: 10, position: "right" }} />
           </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function MatchingCoverageChart({ data }: { data: MatchingMetricsEntry[] }) {
+  if (!data.length) return null;
+
+  return (
+    <div className="bg-surface-card rounded-xl border border-surface-border p-4">
+      <h3 className="text-sm font-semibold text-text-primary mb-1">Prediction Market Coverage</h3>
+      <p className="text-xs text-text-muted mb-3">% of active events matched to Kalshi/Polymarket</p>
+      <div className="h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data.map((d) => ({ ...d, date: d.date.slice(5) }))} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#888" }} interval={Math.max(1, Math.floor(data.length / 8))} />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#888" }} tickFormatter={(v: number) => v + "%"} />
+            <Tooltip
+              contentStyle={{ background: "#1a1a2e", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
+              formatter={(val: number, name: string) => {
+                const labels: Record<string, string> = {
+                  major_coverage_pct: "Major Sports",
+                  coverage_pct: "All Sports",
+                  kalshi_coverage_pct: "Kalshi",
+                  polymarket_coverage_pct: "Polymarket",
+                };
+                return [val + "%", labels[name] || name];
+              }}
+            />
+            <Legend
+              formatter={(value: string) => {
+                const labels: Record<string, string> = {
+                  major_coverage_pct: "Major Sports",
+                  coverage_pct: "All Sports",
+                };
+                return labels[value] || value;
+              }}
+              wrapperStyle={{ fontSize: 11 }}
+            />
+            <ReferenceLine y={100} stroke="#22c55e" strokeDasharray="4 2" label="" />
+            <Line type="monotone" dataKey="major_coverage_pct" stroke="#f59e0b" strokeWidth={2} dot={false} name="major_coverage_pct" />
+            <Line type="monotone" dataKey="coverage_pct" stroke="#3b82f6" strokeWidth={1.5} dot={false} name="coverage_pct" />
+          </LineChart>
         </ResponsiveContainer>
       </div>
     </div>
@@ -1006,6 +1062,9 @@ export default function AdminDashboard() {
 
           {/* Database + coverage side by side */}
           <div className="grid md:grid-cols-2 gap-4">
+            {data.matching_metrics && data.matching_metrics.length > 0 && (
+              <MatchingCoverageChart data={data.matching_metrics} />
+            )}
             <DatabaseCard db={data.database} />
             <div className="space-y-4">
               <StatCard
