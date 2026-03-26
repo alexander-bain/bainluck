@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_, func, case, cast
+from sqlalchemy import select, and_, or_, func, case, cast, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import JSONB
@@ -380,34 +380,27 @@ async def get_ei_rankings(
     # Load EI percentiles for formatting
     ei_percentiles = await _load_ei_percentiles(db)
 
-    # Subquery: count distinct time buckets (minutes) per event.
-    # Raw odds_snapshots contain multiple bookmakers per polling cycle,
-    # so counting raw rows inflates the count (10 rows from 2 polls with
-    # 5 bookmakers each is only 2 actual data points). Counting distinct
-    # minute-level buckets matches Pulse's 60-second aggregation and gives
-    # an accurate measure of how much real data we have for the game.
-    snapshot_count = (
-        select(
-            OddsSnapshot.event_id,
-            func.count(
-                func.distinct(func.date_trunc('minute', OddsSnapshot.captured_at))
-            ).label("snap_count"),
-        )
-        .group_by(OddsSnapshot.event_id)
-        .subquery()
-    )
-
+    # Use snapshot_count from ei_metadata JSON instead of scanning
+    # the (very large) odds_snapshots table. The EI calculation already
+    # stores snapshot_count in ei_metadata when it computes the score.
     MIN_SNAPSHOTS_FOR_RANKING = 20
+
+    # Extract snapshot_count from the ei_metadata JSON text column.
+    # Cast Text -> JSONB, extract key as text, then cast to Integer.
+    snap_count_expr = cast(
+        cast(Event.ei_metadata, JSONB)["snapshot_count"].as_string(),
+        Integer,
+    )
 
     # Base query for completed events with EI and enough data
     base_query = (
         select(Event)
         .options(selectinload(Event.sport))
-        .join(snapshot_count, Event.id == snapshot_count.c.event_id)
         .where(
             Event.status.in_(["completed", "closed"]),
             Event.raw_ei.isnot(None),
-            snapshot_count.c.snap_count >= MIN_SNAPSHOTS_FOR_RANKING,
+            Event.ei_metadata.isnot(None),
+            snap_count_expr >= MIN_SNAPSHOTS_FOR_RANKING,
         )
     )
 

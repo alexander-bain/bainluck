@@ -1149,6 +1149,8 @@ export interface ProgressionParticipant {
   logo_url: string | null;
   primary_color: string | null;
   conference: string | null;
+  region: string | null;
+  seed: number | null;
   record: string | null;
   probabilities: Record<string, number | null>;
   changes_24h: Record<string, number | null>;
@@ -1240,6 +1242,7 @@ export interface ChampionshipGridTeam {
   record: string | null;
   conference: string | null;
   division: string | null;
+  region: string | null;
   seed: number | null;
   cells: Record<string, ChampionshipGridCell>;
 }

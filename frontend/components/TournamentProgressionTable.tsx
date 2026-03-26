@@ -304,6 +304,11 @@ export default function TournamentProgressionTable({
                         style={{ backgroundColor: participant.primary_color }}
                       />
                     )}
+                    {participant.seed != null && (
+                      <span className="text-[10px] font-mono text-text-secondary/60 flex-shrink-0">
+                        {participant.seed}
+                      </span>
+                    )}
                     <span className="text-text-primary font-medium truncate max-w-[240px] sm:max-w-[300px]">
                       {participant.name}
                     </span>

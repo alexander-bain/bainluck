@@ -102,14 +102,7 @@ export default function RootLayout({
                       <span>⚡</span>
                       <span>Excitement Index</span>
                     </Link>
-                    <span className="text-surface-border">·</span>
-                    <Link
-                      href="/market-moves"
-                      className="flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors text-sm"
-                    >
-                      <span>📊</span>
-                      <span>Market Moves</span>
-                    </Link>
+
                     <span className="text-surface-border">·</span>
                     <Link
                       href="/about"

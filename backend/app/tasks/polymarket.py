@@ -367,6 +367,11 @@ async def _process_event_batch(
                 # Determine category from tags
                 category, llm_sport_category = _tags_to_category(event.tags)
 
+                # Skip crypto markets entirely — they consume DB space
+                # without providing value to users
+                if llm_sport_category == "crypto" or category == "crypto":
+                    continue
+
                 # Fall back to pattern matching + league inference if tags didn't help
                 if not llm_sport_category or llm_sport_category == "other":
                     rules_result = categorize_by_rules(event.title)

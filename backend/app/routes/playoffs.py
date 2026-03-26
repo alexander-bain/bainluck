@@ -112,6 +112,101 @@ _CONFERENCE_FALLBACKS: dict[str, dict[str, str]] = {
     "nhl": NHL_CONFERENCES,
 }
 
+# ---------------------------------------------------------------------------
+# NCAA Tournament 2026 bracket — regions and seeds
+# Source: ESPN API (Selection Sunday 2026)
+# ---------------------------------------------------------------------------
+
+NCAA_2026_BRACKET: dict[str, dict] = {
+    # East Region
+    "Duke Blue Devils": {"region": "East", "seed": 1},
+    "UConn Huskies": {"region": "East", "seed": 2},
+    "Michigan State Spartans": {"region": "East", "seed": 3},
+    "Kansas Jayhawks": {"region": "East", "seed": 4},
+    "St. John's Red Storm": {"region": "East", "seed": 5},
+    "Louisville Cardinals": {"region": "East", "seed": 6},
+    "UCLA Bruins": {"region": "East", "seed": 7},
+    "Ohio State Buckeyes": {"region": "East", "seed": 8},
+    "TCU Horned Frogs": {"region": "East", "seed": 9},
+    "UCF Knights": {"region": "East", "seed": 10},
+    "South Florida Bulls": {"region": "East", "seed": 11},
+    "Northern Iowa Panthers": {"region": "East", "seed": 12},
+    "California Baptist Lancers": {"region": "East", "seed": 13},
+    "North Dakota State Bison": {"region": "East", "seed": 14},
+    "Furman Paladins": {"region": "East", "seed": 15},
+    "Siena Saints": {"region": "East", "seed": 16},
+    # West Region
+    "Arizona Wildcats": {"region": "West", "seed": 1},
+    "Purdue Boilermakers": {"region": "West", "seed": 2},
+    "Gonzaga Bulldogs": {"region": "West", "seed": 3},
+    "Arkansas Razorbacks": {"region": "West", "seed": 4},
+    "Wisconsin Badgers": {"region": "West", "seed": 5},
+    "BYU Cougars": {"region": "West", "seed": 6},
+    "Miami Hurricanes": {"region": "West", "seed": 7},
+    "Villanova Wildcats": {"region": "West", "seed": 8},
+    "Utah State Aggies": {"region": "West", "seed": 9},
+    "Missouri Tigers": {"region": "West", "seed": 10},
+    "NC State Wolfpack": {"region": "West", "seed": 11},
+    "Texas Longhorns": {"region": "West", "seed": 11},
+    "High Point Panthers": {"region": "West", "seed": 12},
+    "Hawai'i Rainbow Warriors": {"region": "West", "seed": 13},
+    "Kennesaw State Owls": {"region": "West", "seed": 14},
+    "Queens University Royals": {"region": "West", "seed": 15},
+    "Long Island University Sharks": {"region": "West", "seed": 16},
+    # South Region
+    "Florida Gators": {"region": "South", "seed": 1},
+    "Houston Cougars": {"region": "South", "seed": 2},
+    "Illinois Fighting Illini": {"region": "South", "seed": 3},
+    "Nebraska Cornhuskers": {"region": "South", "seed": 4},
+    "Vanderbilt Commodores": {"region": "South", "seed": 5},
+    "North Carolina Tar Heels": {"region": "South", "seed": 6},
+    "Saint Mary's Gaels": {"region": "South", "seed": 7},
+    "Clemson Tigers": {"region": "South", "seed": 8},
+    "Iowa Hawkeyes": {"region": "South", "seed": 9},
+    "Texas A&M Aggies": {"region": "South", "seed": 10},
+    "VCU Rams": {"region": "South", "seed": 11},
+    "McNeese Cowboys": {"region": "South", "seed": 12},
+    "Troy Trojans": {"region": "South", "seed": 13},
+    "Pennsylvania Quakers": {"region": "South", "seed": 14},
+    "Idaho Vandals": {"region": "South", "seed": 15},
+    "Lehigh Mountain Hawks": {"region": "South", "seed": 16},
+    "Prairie View A&M Panthers": {"region": "South", "seed": 16},
+    # Midwest Region
+    "Michigan Wolverines": {"region": "Midwest", "seed": 1},
+    "Iowa State Cyclones": {"region": "Midwest", "seed": 2},
+    "Virginia Cavaliers": {"region": "Midwest", "seed": 3},
+    "Alabama Crimson Tide": {"region": "Midwest", "seed": 4},
+    "Texas Tech Red Raiders": {"region": "Midwest", "seed": 5},
+    "Tennessee Volunteers": {"region": "Midwest", "seed": 6},
+    "Kentucky Wildcats": {"region": "Midwest", "seed": 7},
+    "Georgia Bulldogs": {"region": "Midwest", "seed": 8},
+    "Saint Louis Billikens": {"region": "Midwest", "seed": 9},
+    "Santa Clara Broncos": {"region": "Midwest", "seed": 10},
+    "SMU Mustangs": {"region": "Midwest", "seed": 11},
+    "Miami (OH) RedHawks": {"region": "Midwest", "seed": 11},
+    "Akron Zips": {"region": "Midwest", "seed": 12},
+    "Hofstra Pride": {"region": "Midwest", "seed": 13},
+    "Wright State Raiders": {"region": "Midwest", "seed": 14},
+    "Tennessee State Tigers": {"region": "Midwest", "seed": 15},
+    "Howard Bison": {"region": "Midwest", "seed": 16},
+    "UMBC Retrievers": {"region": "Midwest", "seed": 16},
+}
+
+
+def _lookup_ncaa_bracket(team_name: str) -> dict | None:
+    """Look up NCAA tournament region/seed for a team.
+
+    Tries exact match first, then substring containment.
+    """
+    if team_name in NCAA_2026_BRACKET:
+        return NCAA_2026_BRACKET[team_name]
+    # Substring match
+    name_lower = team_name.lower()
+    for bracket_name, info in NCAA_2026_BRACKET.items():
+        if bracket_name.lower() in name_lower or name_lower in bracket_name.lower():
+            return info
+    return None
+
 
 def _lookup_conference_fallback(league_slug: str, team_name: str) -> str | None:
     """Look up a team's conference from the static fallback map.
@@ -632,6 +727,14 @@ async def _get_team_metadata(
         # Fallback to static conference map if standings didn't provide one
         if not meta["conference"] and league_slug and team.name:
             meta["conference"] = _lookup_conference_fallback(league_slug, team.name)
+
+        # NCAA Tournament: look up region and seed from bracket data
+        if league_slug == "ncaa-basketball" and team.name:
+            bracket_info = _lookup_ncaa_bracket(team.name)
+            if bracket_info:
+                meta["region"] = bracket_info["region"]
+                if not meta["seed"]:
+                    meta["seed"] = bracket_info["seed"]
 
         norm = _normalize_team_name(team.name)
         team_lookup[norm] = meta
@@ -1810,12 +1913,32 @@ async def get_playoff_grid(
             if not entries:
                 continue
 
-            probs = [e["probability"] for e in entries]
+            # Deduplicate entries from same source — if two markets from
+            # the same source (e.g., two Kalshi markets) map to the same
+            # column for the same team, average them into one entry.
+            deduped_entries: list[dict] = []
+            source_groups: dict[str, list[dict]] = defaultdict(list)
+            for e in entries:
+                source_groups[e["source"]].append(e)
+            for source, group in source_groups.items():
+                if len(group) == 1:
+                    deduped_entries.append(group[0])
+                else:
+                    # Average probabilities from same source
+                    avg_prob = sum(g["probability"] for g in group) / len(group)
+                    # Keep the entry with the highest probability as the "primary"
+                    best = max(group, key=lambda g: g["probability"])
+                    deduped_entries.append({
+                        **best,
+                        "probability": avg_prob,
+                    })
+
+            probs = [e["probability"] for e in deduped_entries]
             corrected = _correct_inverted_probs(probs)
             merged = _merge_probabilities(probs)
 
             sources = []
-            for e, corrected_p in zip(entries, corrected):
+            for e, corrected_p in zip(deduped_entries, corrected):
                 src = {
                     "source": e["source"],
                     "probability": round(corrected_p, 4),
@@ -1850,6 +1973,7 @@ async def get_playoff_grid(
             "record": meta.get("record"),
             "conference": meta.get("conference"),
             "division": meta.get("division"),
+            "region": meta.get("region"),
             "seed": meta.get("seed"),
             "cells": cells,
         }
@@ -1893,6 +2017,39 @@ async def get_playoff_grid(
         excluded_count = before_count - len(teams)
         if excluded_count:
             logger.info("Excluded %d teams via admin overrides for %s", excluded_count, league_slug)
+
+    # -----------------------------------------------------------------------
+    # 4d. NCAA Tournament: filter to bracket teams only
+    # -----------------------------------------------------------------------
+    # For tournament grids, only show teams actually in the bracket.
+    # Non-bracket teams appear because championship markets (Odds API)
+    # include the full league, not just tournament qualifiers.
+    if league_slug == "ncaa-basketball" and NCAA_2026_BRACKET:
+        before_count = len(teams)
+        bracket_norms = {_normalize_team_name(t) for t in NCAA_2026_BRACKET}
+
+        def _in_bracket(team_row: dict) -> bool:
+            norm = _normalize_team_name(team_row["name"])
+            if norm in bracket_norms:
+                return True
+            # Fuzzy: check if any bracket name contains or is contained by this name
+            for bn in bracket_norms:
+                if bn in norm or norm in bn:
+                    return True
+                # Word overlap: at least 2 common words
+                tw = set(norm.split())
+                bw = set(bn.split())
+                if len(tw & bw) >= 2:
+                    return True
+            return False
+
+        teams = [t for t in teams if _in_bracket(t)]
+        filtered_count = before_count - len(teams)
+        if filtered_count:
+            logger.info(
+                "Filtered %d non-bracket teams for %s (kept %d)",
+                filtered_count, league_slug, len(teams),
+            )
 
     # -----------------------------------------------------------------------
     # 5. Sort teams

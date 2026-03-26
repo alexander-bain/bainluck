@@ -28,7 +28,7 @@ export default function EIHallOfFamePage() {
     async function load() {
       try {
         setLoading(true);
-        const data = await fetchEIRankings({ limit: 25 });
+        const data = await fetchEIRankings({ limit: 10 });
         setHighest(data.highest);
         setLowest(data.lowest);
       } catch (err) {

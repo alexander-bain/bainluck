@@ -98,6 +98,8 @@ function teamsToProgression(
       logo_url: t.logo_url,
       primary_color: t.primary_color,
       conference: t.conference,
+      region: t.region ?? null,
+      seed: t.seed ?? null,
       record: t.record,
       probabilities,
       changes_24h,

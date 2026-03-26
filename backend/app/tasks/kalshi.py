@@ -271,6 +271,11 @@ async def _poll_kalshi_markets():
                     category = _kalshi_category_to_internal(event.category)
                     sport_category = _categorize_kalshi_market(event.title, event.category)
 
+                    # Skip crypto markets entirely — they consume DB space
+                    # without providing value to users
+                    if sport_category == "crypto" or category == "crypto":
+                        continue
+
                     # For events with multiple markets (multivariate), create one FuturesMarket
                     # For single-market events, use the market directly
                     game_sport = _is_kalshi_game_ticker(event.event_ticker)
