@@ -72,7 +72,8 @@ MLB_CONFERENCES: dict[str, str] = {
     "Detroit Tigers": "American League", "Houston Astros": "American League",
     "Kansas City Royals": "American League", "Los Angeles Angels": "American League",
     "Minnesota Twins": "American League", "New York Yankees": "American League",
-    "Oakland Athletics": "American League", "Seattle Mariners": "American League",
+    "Oakland Athletics": "American League", "A's": "American League",
+    "Athletics": "American League", "Seattle Mariners": "American League",
     "Tampa Bay Rays": "American League", "Texas Rangers": "American League",
     "Toronto Blue Jays": "American League",
     # National League
@@ -186,6 +187,27 @@ NCAAF_CONFERENCES: dict[str, str] = {
     "Virginia Tech Hokies": "ACC", "Wake Forest Demon Deacons": "ACC",
     # Independent
     "Notre Dame Fighting Irish": "Independent",
+    # Group of 5 / FCS (common futures market appearances)
+    "Boise State Broncos": "Mountain West", "San Diego State Aztecs": "Mountain West",
+    "UNLV Rebels": "Mountain West", "Fresno State Bulldogs": "Mountain West",
+    "Colorado State Rams": "Mountain West", "Air Force Falcons": "Mountain West",
+    "Hawai'i Rainbow Warriors": "Mountain West", "Hawai'i": "Mountain West",
+    "Hawaii Rainbow Warriors": "Mountain West", "Hawaii": "Mountain West",
+    "San Jose State Spartans": "Mountain West", "Nevada Wolf Pack": "Mountain West",
+    "Wyoming Cowboys": "Mountain West", "Utah State Aggies": "Mountain West",
+    "Memphis Tigers": "AAC", "Tulane Green Wave": "AAC", "UTSA Roadrunners": "AAC",
+    "SMU Mustangs": "ACC", "East Carolina Pirates": "AAC",
+    "Jacksonville State Gamecocks": "CUSA", "Liberty Flames": "CUSA",
+    "Sam Houston Bearkats": "CUSA", "Louisiana Tech Bulldogs": "CUSA",
+    "Western Kentucky Hilltoppers": "CUSA", "Middle Tennessee Blue Raiders": "CUSA",
+    "Southern Miss Golden Eagles": "Sun Belt", "Southern Miss": "Sun Belt",
+    "Louisiana-Monroe": "Sun Belt", "ULM Warhawks": "Sun Belt",
+    "Appalachian State Mountaineers": "Sun Belt", "James Madison Dukes": "Sun Belt",
+    "Marshall Thundering Herd": "Sun Belt", "Georgia Southern Eagles": "Sun Belt",
+    "Troy Trojans": "Sun Belt", "Arkansas State Red Wolves": "Sun Belt",
+    "Sacramento St.": "Big Sky", "Sacramento State Hornets": "Big Sky",
+    "North Dakota St.": "MVFC", "North Dakota State Bison": "MVFC",
+    "Montana State Bobcats": "Big Sky", "South Dakota State Jackrabbits": "MVFC",
 }
 
 _CONFERENCE_FALLBACKS: dict[str, dict[str, str]] = {
@@ -2286,9 +2308,15 @@ async def get_playoff_grid(
             conf = team_row.get("conference")
             if conf:
                 # Normalize conference names: "Eastern" → "Eastern Conference"
-                # Prevents orphan groups from inconsistent standings data
+                # Only add "Conference" suffix for directional names (Eastern/Western)
+                # and league names (American/National). Don't suffix named conferences
+                # like "SEC", "Big Ten", "ACC", etc.
                 conf_norm = conf.strip()
-                if conf_norm and not conf_norm.lower().endswith("conference"):
+                _CONF_SUFFIX_NAMES = {"eastern", "western", "american", "national"}
+                if (conf_norm
+                    and not conf_norm.lower().endswith("conference")
+                    and not conf_norm.lower().endswith("league")
+                    and conf_norm.lower() in _CONF_SUFFIX_NAMES):
                     conf_norm = f"{conf_norm} Conference"
                 team_row["conference"] = conf_norm
                 groups[conf_norm].append(team_row)
