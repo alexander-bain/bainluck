@@ -92,6 +92,8 @@ struct OddsChartView: View {
     var awayTeamName: String?
     var homeTeamLogo: String?
     var awayTeamLogo: String?
+    var homeTeamAbbrev: String?
+    var awayTeamAbbrev: String?
     /// Binding to expose the selected game play point (for GamePlayCardView)
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
@@ -116,18 +118,19 @@ struct OddsChartView: View {
         isGameStarted && gameStartDate != nil
     }
 
-    /// Short team name (last word, e.g. "Celtics" from "Boston Celtics")
+    /// Short team name: prefer ESPN abbreviation (e.g. "BOS"), fall back to last word
     private var homeShort: String {
-        homeTeamName?.split(separator: " ").last.map(String.init) ?? "Home"
+        homeTeamAbbrev ?? homeTeamName?.split(separator: " ").last.map(String.init) ?? "Home"
     }
     private var awayShort: String {
-        awayTeamName?.split(separator: " ").last.map(String.init) ?? "Away"
+        awayTeamAbbrev ?? awayTeamName?.split(separator: " ").last.map(String.init) ?? "Away"
     }
 
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
          commenceTime: String? = nil, status: String? = nil,
          homeTeamName: String? = nil, awayTeamName: String? = nil,
          homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
+         homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil) {
         self.eventId = eventId
@@ -138,6 +141,8 @@ struct OddsChartView: View {
         self.awayTeamName = awayTeamName
         self.homeTeamLogo = homeTeamLogo
         self.awayTeamLogo = awayTeamLogo
+        self.homeTeamAbbrev = homeTeamAbbrev
+        self.awayTeamAbbrev = awayTeamAbbrev
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }

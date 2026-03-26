@@ -9,6 +9,7 @@ nonisolated struct TeamData: Decodable, Sendable {
     let logoLarge: String?
     let record: String?
     let standings: StandingsData?
+    let abbreviation: String?
 }
 
 nonisolated struct StandingsData: Decodable, Sendable {

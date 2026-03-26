@@ -110,6 +110,7 @@ export interface TeamData {
     games_behind?: number;
   } | null;
   season_stats?: Record<string, number | string> | null;
+  abbreviation?: string | null;
 }
 
 export interface Event {

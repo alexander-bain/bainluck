@@ -3572,6 +3572,8 @@ def _format_team_data(team: Team) -> dict:
         "logo_large": team.logo_url_large,
         "record": team.current_record,
     }
+    if team.abbreviation:
+        data["abbreviation"] = team.abbreviation
     # Include standings if available
     if getattr(team, "standings_data", None):
         data["standings"] = team.standings_data

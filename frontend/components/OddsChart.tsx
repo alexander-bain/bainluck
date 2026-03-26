@@ -76,6 +76,10 @@ interface OddsChartProps {
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
   awayTeamLogo?: string;
+  /** Home team abbreviation (e.g. "BOS") from ESPN */
+  homeTeamAbbrev?: string;
+  /** Away team abbreviation (e.g. "OKC") from ESPN */
+  awayTeamAbbrev?: string;
   /** Callback when user hovers/scrubs chart — null when mouse leaves */
   onActivePointChange?: (point: ActiveChartPoint | null) => void;
   /** Callback reporting the chart's actual rendered time domain (first & last timestamps).
@@ -152,6 +156,8 @@ export default function OddsChart({
   awayTeamColor,
   homeTeamLogo,
   awayTeamLogo,
+  homeTeamAbbrev,
+  awayTeamAbbrev,
   onActivePointChange,
   onRenderedDomain,
 }: OddsChartProps) {
@@ -783,8 +789,8 @@ export default function OddsChart({
   })();
 
   // Short team names
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
+  const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
 
   // Custom Y-axis tick formatter: shows probability percentages only
   // Team names are shown separately above the chart as "X favored ↑ / ↓"
