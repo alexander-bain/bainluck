@@ -43,9 +43,19 @@ final class AuthManager: ObservableObject {
             self.user = profile
             AnalyticsService.setUserId(String(profile.id))
             logger.info("Session restored for user \(profile.id)")
+        } catch let apiError as APIError {
+            switch apiError {
+            case .httpError(let statusCode, _) where statusCode == 401 || statusCode == 403:
+                // Token is invalid/expired — clear and require re-auth
+                logger.warning("Session token rejected (\(statusCode)). Clearing stored token.")
+                clearStoredAuth()
+            default:
+                // Network error, timeout, decoding — keep token and stay signed out temporarily
+                logger.warning("Session restore failed (transient): \(apiError). Keeping stored token.")
+            }
         } catch {
-            logger.warning("Session restore failed: \(error). Clearing stored token.")
-            clearStoredAuth()
+            // Non-API errors — keep token for retry on next launch
+            logger.warning("Session restore failed (unknown): \(error). Keeping stored token.")
         }
         isLoading = false
     }
@@ -87,6 +97,18 @@ final class AuthManager: ObservableObject {
         AnalyticsService.trackLogout()
         AnalyticsService.setUserId(nil)
         logger.info("User signed out")
+    }
+
+    // MARK: - Foreground Retry
+
+    /// Call when app returns to foreground. If a stored token exists but user is nil
+    /// (e.g., network failed on initial launch), retry session restore.
+    func retrySessionIfNeeded() {
+        guard !isAuthenticated,
+              KeychainHelper.load(key: keychainTokenKey) != nil else { return }
+        Task {
+            await restoreSession()
+        }
     }
 
     // MARK: - Refresh Profile

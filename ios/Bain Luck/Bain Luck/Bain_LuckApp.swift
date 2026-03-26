@@ -40,6 +40,7 @@ struct Bain_LuckApp: App {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
                     authManager.checkCredentialState()
+                    authManager.retrySessionIfNeeded()
                 }
                 .onOpenURL { url in
                     // Google Sign-In uses the reversed client ID scheme

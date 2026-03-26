@@ -6,9 +6,8 @@ import SwiftUI
 enum AppTab: Int, Hashable {
     case feed = 0
     case leagues = 1
-    case explore = 2
-    case search = 3
-    case myStuff = 4
+    case search = 2
+    case myStuff = 3
 }
 
 /// Coordinates deep link and universal link URL handling with tab navigation.
@@ -75,10 +74,6 @@ final class NavigationCoordinator: ObservableObject {
             } else {
                 selectedTab = .leagues
             }
-            return true
-
-        case "explore":
-            selectedTab = .explore
             return true
 
         case "my-stuff":

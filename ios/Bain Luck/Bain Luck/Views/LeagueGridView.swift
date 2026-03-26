@@ -50,14 +50,31 @@ final class LeagueGridViewModel: ObservableObject {
         return grid.teams
     }
 
+    /// In-memory cache shared across instances
+    private static var cache: [String: (grid: ChampionshipGridResponse, date: Date)] = [:]
+
     @MainActor
     func load() async {
+        // Show cached data immediately while refreshing in background
+        if grid == nil, let cached = Self.cache[slug] {
+            grid = cached.grid
+            // If cache is fresh enough (<60s), skip network
+            if Date().timeIntervalSince(cached.date) < 60 {
+                return
+            }
+        }
+
         loading = true
         do {
-            grid = try await APIClient.shared.fetchChampionshipGrid(slug: slug)
+            let freshGrid = try await APIClient.shared.fetchChampionshipGrid(slug: slug)
+            grid = freshGrid
+            Self.cache[slug] = (freshGrid, Date())
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            // Only show error if we have no cached data
+            if grid == nil {
+                self.error = error.localizedDescription
+            }
             logger.error("Grid load failed for \(self.slug): \(error)")
         }
         loading = false
@@ -78,7 +95,7 @@ struct LeagueGridView: View {
     var body: some View {
         Group {
             if vm.loading && vm.grid == nil {
-                ProgressView("Loading grid...")
+                gridSkeleton
             } else if let error = vm.error, vm.grid == nil {
                 ContentUnavailableView(
                     "Error",
@@ -102,6 +119,39 @@ struct LeagueGridView: View {
         .onAppear {
             AnalyticsService.trackScreen(name: "league_grid_\(slug)", type: "playoff_grid")
         }
+    }
+
+    // MARK: - Skeleton Loading
+
+    private var gridSkeleton: some View {
+        List {
+            Section {
+                ForEach(0..<8, id: \.self) { _ in
+                    HStack {
+                        Circle()
+                            .fill(Color.secondary.opacity(0.15))
+                            .frame(width: 20, height: 20)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.secondary.opacity(0.15))
+                            .frame(width: 80, height: 14)
+                        Spacer()
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.secondary.opacity(0.1))
+                            .frame(width: 40, height: 14)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.secondary.opacity(0.1))
+                            .frame(width: 40, height: 14)
+                    }
+                    .padding(.vertical, 2)
+                }
+            } header: {
+                Text("Championship Odds")
+            }
+        }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        #endif
+        .redacted(reason: .placeholder)
     }
 
     // MARK: - Grid Content

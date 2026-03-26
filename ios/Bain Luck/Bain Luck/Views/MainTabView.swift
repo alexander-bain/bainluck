@@ -30,12 +30,6 @@ struct MainTabView: View {
                 }
                 .tag(AppTab.leagues)
 
-            ExploreView()
-                .tabItem {
-                    Label("Explore", systemImage: "binoculars.fill")
-                }
-                .tag(AppTab.explore)
-
             SearchView()
                 .tabItem {
                     Label("Search", systemImage: "magnifyingglass")
@@ -83,9 +77,6 @@ struct MainTabView: View {
                     Label("Leagues", systemImage: "trophy.fill")
                         .tag(AppTab.leagues)
 
-                    Label("Explore", systemImage: "binoculars.fill")
-                        .tag(AppTab.explore)
-
                     Label("Search", systemImage: "magnifyingglass")
                         .tag(AppTab.search)
 
@@ -93,7 +84,7 @@ struct MainTabView: View {
                         .tag(AppTab.myStuff)
                 }
 
-                Section("Explore") {
+                Section("Quick Links") {
                     NavigationLink(value: Route.eiRankings) {
                         Label("EI Rankings", systemImage: "trophy.fill")
                     }
@@ -125,8 +116,6 @@ struct MainTabView: View {
                 FeedView()
             case .leagues:
                 LeaguesView()
-            case .explore:
-                ExploreView()
             case .search:
                 SearchView()
             case .myStuff:
