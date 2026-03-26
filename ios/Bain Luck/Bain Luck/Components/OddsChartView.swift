@@ -205,15 +205,15 @@ struct OddsChartView: View {
                         // Vertical team labels on left
                         VStack {
                             // Home team (top)
-                            HStack(spacing: 2) {
+                            HStack(spacing: 3) {
                                 if let logo = homeTeamLogo, let url = URL(string: logo) {
                                     AsyncImage(url: url) { img in
                                         img.resizable().scaledToFit()
                                     } placeholder: { EmptyView() }
-                                    .frame(width: 10, height: 10)
+                                    .frame(width: 14, height: 14)
                                 }
                                 Text(homeShort.uppercased())
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: 11, weight: .bold))
                                     .foregroundStyle(teamColors?.home ?? .blue)
                                     .lineLimit(1)
                             }
@@ -221,22 +221,22 @@ struct OddsChartView: View {
                             .rotationEffect(.degrees(-90))
                             Spacer()
                             // Away team (bottom)
-                            HStack(spacing: 2) {
+                            HStack(spacing: 3) {
                                 if let logo = awayTeamLogo, let url = URL(string: logo) {
                                     AsyncImage(url: url) { img in
                                         img.resizable().scaledToFit()
                                     } placeholder: { EmptyView() }
-                                    .frame(width: 10, height: 10)
+                                    .frame(width: 14, height: 14)
                                 }
                                 Text(awayShort.uppercased())
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: 11, weight: .bold))
                                     .foregroundStyle(teamColors?.away ?? .red)
                                     .lineLimit(1)
                             }
                             .fixedSize()
                             .rotationEffect(.degrees(-90))
                         }
-                        .frame(width: 20)
+                        .frame(width: 24)
                         .padding(.vertical, 8)
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
@@ -472,11 +472,14 @@ struct OddsChartView: View {
                     .foregroundStyle(.secondary.opacity(0.4))
                     .annotation(position: .overlay, alignment: .topLeading, spacing: 0) {
                         Text(marker.label)
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
+                            .background(Color.cardBackground.opacity(0.85))
+                            .clipShape(RoundedRectangle(cornerRadius: 2))
                             .padding(.top, 2)
+                            .padding(.leading, 2)
                     }
             }
 

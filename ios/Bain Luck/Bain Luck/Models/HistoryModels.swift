@@ -27,6 +27,8 @@ nonisolated struct HistoryPoint: Decodable, Sendable {
     let homeProbability: Double?
     let awayProbability: Double?
     let bookmakerCount: Int?
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
 }
 
 nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
@@ -35,6 +37,8 @@ nonisolated struct BookmakerHistoryPoint: Decodable, Sendable {
     let awayProbability: Double?
     let homeMoneyline: Int?
     let awayMoneyline: Int?
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
 }
 
 nonisolated struct ScoreHistoryPoint: Decodable, Sendable {

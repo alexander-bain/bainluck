@@ -24,7 +24,9 @@ struct ScoreDifferentialChartView: View {
 
     var body: some View {
         let dataPoints = buildDataPoints()
-        if dataPoints.isEmpty {
+        let hasActual = dataPoints.contains { $0.actualDiff != nil }
+        let hasProjected = dataPoints.contains { $0.projectedDiff != nil }
+        if !hasActual && !hasProjected {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -38,21 +40,25 @@ struct ScoreDifferentialChartView: View {
 
                 // Legend
                 HStack(spacing: 12) {
-                    HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color.orange)
-                            .frame(width: 14, height: 3)
-                        Text("Projected Spread")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    if hasProjected {
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(Color.orange)
+                                .frame(width: 14, height: 3)
+                            Text("Projected Spread")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(homeTeamColor ?? .blue)
-                            .frame(width: 14, height: 3)
-                        Text("Actual Score Diff")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    if hasActual {
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(homeTeamColor ?? .blue)
+                                .frame(width: 14, height: 3)
+                            Text("Actual Score Diff")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -72,57 +78,76 @@ struct ScoreDifferentialChartView: View {
     }
 
     private func buildDataPoints() -> [DiffPoint] {
-        var points: [DiffPoint] = []
         let startDate = isGameStarted ? gameStartDate : nil
 
-        // Projected spread from odds history
+        // Projected spread from odds history (projected home score - projected away score)
+        var projectedByMinute: [Int: DiffPoint] = [:]
         for h in history.history {
-            guard let date = h.timestamp.asDate else { continue }
+            guard let date = h.timestamp.asDate,
+                  let projHome = h.projectedHomeScore,
+                  let projAway = h.projectedAwayScore else { continue }
             if let start = startDate, date < start { continue }
-
-            // The history points have projected scores via over/under + spread
-            // We use the probability differential as a proxy for spread direction
-            // But actual projected scores come from the bookmaker data
-            points.append(DiffPoint(date: date, projectedDiff: nil, actualDiff: nil))
+            let bucket = Int(date.timeIntervalSince1970 / 60)
+            projectedByMinute[bucket] = DiffPoint(date: date, projectedDiff: projHome - projAway, actualDiff: nil)
         }
 
-        // Build from ESPN history (has both scores and can derive projected)
-        var espnPoints: [DiffPoint] = []
+        // Also check bookmaker history for projected scores
+        for (_, bmPoints) in history.bookmakerHistory ?? [:] {
+            for bm in bmPoints {
+                guard let date = bm.timestamp.asDate,
+                      let projHome = bm.projectedHomeScore,
+                      let projAway = bm.projectedAwayScore else { continue }
+                if let start = startDate, date < start { continue }
+                let bucket = Int(date.timeIntervalSince1970 / 60)
+                if projectedByMinute[bucket] == nil {
+                    projectedByMinute[bucket] = DiffPoint(date: date, projectedDiff: projHome - projAway, actualDiff: nil)
+                }
+            }
+        }
+
+        // Actual scores from ESPN history
+        var actualByMinute: [Int: (date: Date, diff: Double)] = [:]
         for ep in history.espnHistory ?? [] {
             guard let date = ep.timestamp.asDate,
                   let hs = ep.homeScore, let as_ = ep.awayScore else { continue }
             if let start = startDate, date < start { continue }
-            espnPoints.append(DiffPoint(date: date, projectedDiff: nil, actualDiff: Double(hs - as_)))
+            let bucket = Int(date.timeIntervalSince1970 / 60)
+            actualByMinute[bucket] = (date, Double(hs - as_))
         }
 
-        // Build from score history (authoritative)
-        var scorePoints: [DiffPoint] = []
+        // Score history overrides ESPN
         for sp in history.scoreHistory ?? [] {
             guard let date = sp.timestamp.asDate else { continue }
             if let start = startDate, date < start { continue }
-            scorePoints.append(DiffPoint(date: date, projectedDiff: nil, actualDiff: Double(sp.homeScore - sp.awayScore)))
+            let bucket = Int(date.timeIntervalSince1970 / 60)
+            actualByMinute[bucket] = (date, Double(sp.homeScore - sp.awayScore))
         }
 
-        // Merge: prefer scoreHistory, supplement with ESPN
-        var byMinute: [Int: DiffPoint] = [:]
-        for p in espnPoints {
-            let bucket = Int(p.date.timeIntervalSince1970 / 60)
-            byMinute[bucket] = p
-        }
-        for p in scorePoints {
-            let bucket = Int(p.date.timeIntervalSince1970 / 60)
-            byMinute[bucket] = p // scoreHistory overrides ESPN
+        // Merge projected and actual into unified points
+        let allBuckets = Set(projectedByMinute.keys).union(actualByMinute.keys)
+        var merged: [DiffPoint] = []
+        for bucket in allBuckets {
+            let proj = projectedByMinute[bucket]
+            let actual = actualByMinute[bucket]
+            let date = actual?.date ?? proj?.date ?? Date()
+            merged.append(DiffPoint(
+                date: date,
+                projectedDiff: proj?.projectedDiff,
+                actualDiff: actual?.diff
+            ))
         }
 
-        let merged = byMinute.values.sorted { $0.date < $1.date }
-        return merged.isEmpty ? [] : merged
+        merged.sort { $0.date < $1.date }
+        return merged
     }
 
     // MARK: - Chart
 
     private func chartView(dataPoints: [DiffPoint]) -> some View {
-        let diffs = dataPoints.compactMap(\.actualDiff)
-        let absMax = max(diffs.map { abs($0) }.max() ?? 5, 5)
+        let actualDiffs = dataPoints.compactMap(\.actualDiff)
+        let projDiffs = dataPoints.compactMap(\.projectedDiff)
+        let allDiffs = actualDiffs + projDiffs
+        let absMax = max(allDiffs.map { abs($0) }.max() ?? 5, 5)
         let yRange = -(absMax + 2)...(absMax + 2)
 
         return Chart {
@@ -131,11 +156,24 @@ struct ScoreDifferentialChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                 .foregroundStyle(.gray.opacity(0.4))
 
+            // Projected spread
+            ForEach(dataPoints.filter { $0.projectedDiff != nil }) { point in
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("Diff", point.projectedDiff!),
+                    series: .value("Series", "projected")
+                )
+                .foregroundStyle(Color.orange)
+                .lineStyle(StrokeStyle(lineWidth: 2.0, dash: [6, 3]))
+                .interpolationMethod(.monotone)
+            }
+
             // Actual score differential
             ForEach(dataPoints.filter { $0.actualDiff != nil }) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Diff", point.actualDiff!)
+                    y: .value("Diff", point.actualDiff!),
+                    series: .value("Series", "actual")
                 )
                 .foregroundStyle(homeTeamColor ?? .blue)
                 .lineStyle(StrokeStyle(lineWidth: 2.5))

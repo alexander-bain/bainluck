@@ -415,7 +415,7 @@ struct EventDetailView: View {
     private func heroStatusBadge(_ event: EventDetail) -> some View {
         switch event.status {
         case "live":
-            StatusBadge(status: "live")
+            StatusBadge(status: "live", gameClock: event.espn?.gameClock, period: event.espn?.period)
         case "completed", "closed":
             StatusBadge(status: event.status)
         default:
