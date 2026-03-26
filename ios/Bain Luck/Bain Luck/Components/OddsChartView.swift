@@ -139,12 +139,23 @@ struct OddsChartView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // Chart title + time range picker
+            // Chart title + status + time range picker
             HStack {
                 Text("Win Probability")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.primary)
+                if status == "live" {
+                    HStack(spacing: 4) {
+                        Circle().fill(.green).frame(width: 6, height: 6)
+                        Text("Live").font(.caption2).fontWeight(.medium).foregroundStyle(.green)
+                    }
+                } else if status == "completed" || status == "closed" {
+                    HStack(spacing: 4) {
+                        Circle().fill(.secondary).frame(width: 6, height: 6)
+                        Text("Final").font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
                 if showPicker {
                     timeRangePicker
@@ -170,27 +181,22 @@ struct OddsChartView: View {
                         .foregroundStyle(.secondary)
                         .frame(height: chartHeight)
                 } else {
-                    // Chart with team name labels on sides
-                    HStack(spacing: 4) {
-                        // Team labels on left edge
-                        VStack {
-                            Text(homeShort)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(teamColors?.home ?? .blue)
-                            Spacer()
-                            Text(awayShort)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(teamColors?.away ?? .red)
-                        }
-                        .frame(width: 40)
-                        .padding(.vertical, 8)
-
-                        chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
-                            .onChange(of: selectedDate) { _, newDate in
-                                updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
-                            }
+                    // Team favored labels above chart (matches web layout)
+                    HStack {
+                        Text("\(homeShort) favored ↑")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(teamColors?.home ?? .blue)
+                        Spacer()
+                        Text("\(awayShort) favored ↓")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(teamColors?.away ?? .red)
                     }
-                    .frame(height: chartHeight)
+
+                    chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
+                        .onChange(of: selectedDate) { _, newDate in
+                            updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
+                        }
+                        .frame(height: chartHeight)
 
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                 }
@@ -381,14 +387,14 @@ struct OddsChartView: View {
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: xAxisDomain(for: dataPoints))
         .chartYAxis {
-            AxisMarks(values: .automatic(desiredCount: 5)) { value in
+            AxisMarks(position: .trailing, values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        // Mirrored: show 50 + abs(delta) so both sides read as win %
                         let pct = Int(50 + abs(v * 100))
                         Text("\(pct)%")
                             .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

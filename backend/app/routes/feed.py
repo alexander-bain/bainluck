@@ -502,6 +502,13 @@ async def _score_events(
             current_home_prob = snapshot_fallbacks[event.id]
         current_away_prob = round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
 
+        # Skip scheduled events without any probability data.
+        # These are typically StatPal-created events that haven't been matched
+        # to Odds API yet (The Odds API only has games ~2-3 days out).
+        # Showing them without probability confuses users.
+        if current_home_prob is None and event.status == "scheduled":
+            continue
+
         # Track whether we have sportsbook-specific data or only aggregate
         has_sportsbook_odds = opening_home_prob is not None
         prob_source = None if has_sportsbook_odds else ("aggregate" if current_home_prob is not None else None)

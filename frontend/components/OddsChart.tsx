@@ -671,7 +671,7 @@ export default function OddsChart({
   }, [periodBoundaries, chartData]);
 
   // Fixed 100-50-100 Y-axis: always show full probability range
-  const yDomain: [number, number] = [-50, 50];
+  const yDomain: [number, number] = [-55, 55];
   const yTicks = [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50];
 
   // ── Compute lead change points (50% crossings) ──
@@ -1024,7 +1024,7 @@ export default function OddsChart({
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
-            margin={{ top: 5, right: 10, left: fillContainer ? 5 : 10, bottom: 5 }}
+            margin={{ top: 15, right: 10, left: 0, bottom: 5 }}
             onMouseMove={(state: { activeTooltipIndex?: number }) => {
               if (!onActivePointChange) return;
               const idx = state?.activeTooltipIndex;
@@ -1079,7 +1079,7 @@ export default function OddsChart({
             <YAxis
               domain={yDomain}
               ticks={yTicks}
-              width={45}
+              width={38}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
