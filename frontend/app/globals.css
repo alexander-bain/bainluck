@@ -10,16 +10,16 @@
   /* === Scoreboard Dark Design System === */
 
   /* Surfaces */
-  --surface-deep: #0C0F14;
-  --surface-card: #141820;
-  --surface-elevated: #1C2028;
-  --surface-border: #242830;
+  --surface-deep: #F5F5F7;
+  --surface-card: #FFFFFF;
+  --surface-elevated: #F0F0F2;
+  --surface-border: #E5E7EB;
 
   /* Text */
-  --text-primary: #F8FAFC;
-  --text-secondary: #94A3B8;
-  --text-muted: #475569;
-  --text-inverse: #0C0F14;
+  --text-primary: #111827;
+  --text-secondary: #6B7280;
+  --text-muted: #9CA3AF;
+  --text-inverse: #F8FAFC;
 
   /* Accents */
   --accent-live: #22C55E;
@@ -29,15 +29,15 @@
   --accent-danger: #EF4444;
 
   /* Legacy color aliases (keep old code working) */
-  --color-snow: #0C0F14;
-  --color-white: #141820;
-  --color-graphite: #F8FAFC;
-  --color-slate: #94A3B8;
-  --color-silver: #475569;
-  --color-mist: #242830;
-  --color-ink: #F8FAFC;
-  --color-charcoal: #94A3B8;
-  --color-fog: #1C2028;
+  --color-snow: #F5F5F7;
+  --color-white: #FFFFFF;
+  --color-graphite: #111827;
+  --color-slate: #6B7280;
+  --color-silver: #9CA3AF;
+  --color-mist: #E5E7EB;
+  --color-ink: #111827;
+  --color-charcoal: #6B7280;
+  --color-fog: #F0F0F2;
   --color-forest: #22C55E;
   --color-rust: #EF4444;
   --color-emerald: #10B981;

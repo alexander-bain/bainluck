@@ -11,16 +11,16 @@ const config: Config = {
   	extend: {
   		colors: {
   			surface: {
-  				deep: '#0C0F14',
-  				card: '#141820',
-  				elevated: '#1C2028',
-  				border: '#242830'
+  				deep: '#F5F5F7',
+  				card: '#FFFFFF',
+  				elevated: '#F0F0F2',
+  				border: '#E5E7EB'
   			},
   			text: {
-  				primary: '#F8FAFC',
-  				secondary: '#94A3B8',
-  				muted: '#475569',
-  				inverse: '#0C0F14'
+  				primary: '#111827',
+  				secondary: '#6B7280',
+  				muted: '#9CA3AF',
+  				inverse: '#F8FAFC'
   			},
   			accent: {
   				live: '#22C55E',
@@ -31,14 +31,14 @@ const config: Config = {
   				DEFAULT: 'hsl(var(--accent))',
   				foreground: 'hsl(var(--accent-foreground))'
   			},
-  			snow: '#0C0F14',
-  			graphite: '#F8FAFC',
-  			slate: '#94A3B8',
-  			silver: '#475569',
-  			mist: '#242830',
-  			ink: '#F8FAFC',
-  			charcoal: '#94A3B8',
-  			fog: '#1C2028',
+  			snow: '#F5F5F7',
+  			graphite: '#111827',
+  			slate: '#6B7280',
+  			silver: '#9CA3AF',
+  			mist: '#E5E7EB',
+  			ink: '#111827',
+  			charcoal: '#6B7280',
+  			fog: '#F0F0F2',
   			forest: '#22C55E',
   			rust: '#EF4444',
   			emerald: '#10B981',

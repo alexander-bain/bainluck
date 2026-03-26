@@ -321,7 +321,7 @@ export function FuturesChart({
                   cy={yScale(v.prob)}
                   r={4}
                   fill={v.color}
-                  stroke={greenTheme ? "#0a2e1f" : goldTheme ? "#1a1408" : "#0C0F14"}
+                  stroke={greenTheme ? "#e6f7ef" : goldTheme ? "#fef9e7" : "#FFFFFF"}
                   strokeWidth={2}
                 />
               ))}

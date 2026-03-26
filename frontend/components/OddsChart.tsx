@@ -1271,7 +1271,7 @@ export default function OddsChart({
                       {/* Outer glow */}
                       <circle cx={cx} cy={cy} r={8} fill={fillColor} fillOpacity={0.2} />
                       {/* Inner dot */}
-                      <circle cx={cx} cy={cy} r={5} fill={fillColor} stroke="#0C0F14" strokeWidth={2} />
+                      <circle cx={cx} cy={cy} r={5} fill={fillColor} stroke="#FFFFFF" strokeWidth={2} />
                       {/* Probability label */}
                       <text
                         x={cx + 12}

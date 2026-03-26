@@ -627,7 +627,7 @@ export default function EventPage({ params }: EventPageProps) {
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Navigation */}
       <div className="flex items-center justify-between">
         <Link
@@ -656,7 +656,7 @@ export default function EventPage({ params }: EventPageProps) {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {effectivelyLive && (
-                <span className="flex items-center gap-1.5 bg-emerald-500/15 text-emerald-400 px-2 py-1 rounded-full text-xs font-semibold">
+                <span className="flex items-center gap-1.5 bg-emerald-500/15 text-emerald-600 px-2 py-1 rounded-full text-xs font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   LIVE
                 </span>
@@ -720,7 +720,7 @@ export default function EventPage({ params }: EventPageProps) {
 
             {/* Phase badge */}
             {effectivelyLive ? (
-              <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 {event.espn?.period && event.espn?.game_clock
                   ? `${event.espn.period} · ${event.espn.game_clock}`
@@ -823,15 +823,15 @@ export default function EventPage({ params }: EventPageProps) {
           };
 
           const tagColors: Record<string, string> = {
-            importance: "bg-purple-500/15 text-purple-400",
-            signal: "bg-orange-500/15 text-orange-400",
-            timing: "bg-yellow-500/15 text-yellow-400",
-            tier: "bg-blue-500/15 text-blue-400",
-            ei: "bg-emerald-500/15 text-emerald-400",
-            stakes: "bg-red-500/15 text-red-400",
-            narrative: "bg-amber-500/15 text-amber-400",
-            audience: "bg-cyan-500/15 text-cyan-400",
-            competitive_structure: "bg-indigo-500/15 text-indigo-400",
+            importance: "bg-purple-50 text-purple-600",
+            signal: "bg-orange-50 text-orange-600",
+            timing: "bg-yellow-50 text-yellow-700",
+            tier: "bg-blue-50 text-blue-600",
+            ei: "bg-emerald-50 text-emerald-600",
+            stakes: "bg-red-50 text-red-600",
+            narrative: "bg-amber-50 text-amber-600",
+            audience: "bg-cyan-50 text-cyan-600",
+            competitive_structure: "bg-indigo-50 text-indigo-600",
           };
 
           return (
@@ -900,13 +900,13 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="flex items-baseline">
                 <span
                   className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
-                  style={{ color: event.home_team_data?.primary_color || "#F8FAFC" }}
+                  style={{ color: event.home_team_data?.primary_color || "#111827" }}
                 >
                   {homeProb !== null ? Math.round(homeProb * 100) : "—"}
                 </span>
                 <span
                   className="text-lg font-bold leading-none ml-0.5"
-                  style={{ color: event.home_team_data?.primary_color || "#F8FAFC" }}
+                  style={{ color: event.home_team_data?.primary_color || "#111827" }}
                 >
                   %
                 </span>
@@ -1072,7 +1072,7 @@ export default function EventPage({ params }: EventPageProps) {
         {(sourceAnalysis.divergenceWarning || predictionDivergence) && (
           <div className="mx-4 sm:mx-5 mb-4 space-y-1.5">
             {sourceAnalysis.divergenceWarning && (
-              <div className="flex items-center gap-2 text-[10px] text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded">
+              <div className="flex items-center gap-2 text-[10px] text-amber-600 bg-amber-50 px-3 py-1.5 rounded">
                 <span>⚠️</span>
                 <span>{sourceAnalysis.divergenceWarning}</span>
               </div>
@@ -1080,8 +1080,8 @@ export default function EventPage({ params }: EventPageProps) {
             {predictionDivergence && (
               <div className={`flex items-center gap-2 text-[10px] px-3 py-1.5 rounded ${
                 predictionDivergence.delta >= 0.10
-                  ? "text-purple-400 bg-purple-500/10 border border-purple-500/20"
-                  : "text-blue-400 bg-blue-500/10"
+                  ? "text-purple-600 bg-purple-50 border border-purple-200"
+                  : "text-blue-600 bg-blue-50"
               }`}>
                 <span>{predictionDivergence.delta >= 0.10 ? "📊" : "🔀"}</span>
                 <span>
@@ -1108,7 +1108,7 @@ export default function EventPage({ params }: EventPageProps) {
               <div className="flex items-center gap-1.5">
                 <div className="relative w-[18px] h-[18px]">
                   <svg className="w-[18px] h-[18px] transform -rotate-90" viewBox="0 0 18 18">
-                    <circle cx="9" cy="9" r="7" fill="none" stroke="#242830" strokeWidth="2" />
+                    <circle cx="9" cy="9" r="7" fill="none" stroke="#E5E7EB" strokeWidth="2" />
                     <circle cx="9" cy="9" r="7" fill="none" stroke="#10B981" strokeWidth="2"
                       strokeDasharray="44" strokeDashoffset={44 - (countdownProgress / 100) * 44}
                       strokeLinecap="round" className="transition-all duration-100" />
