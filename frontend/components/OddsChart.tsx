@@ -1003,24 +1003,30 @@ export default function OddsChart({
         })}
       </div>
 
-      {/* Team labels flanking the chart */}
-      <div className="flex items-center justify-between text-sm font-semibold px-8 shrink-0">
-        <span className="flex items-center gap-1" style={{ color: homeTeamColor || "#16a34a" }}>
-          {homeTeamLogo && (
-            <img src={homeTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
-          )}
-          {homeShort} favored ↑
-        </span>
-        <span className="flex items-center gap-1" style={{ color: awayTeamColor || "#2563eb" }}>
-          {awayTeamLogo && (
-            <img src={awayTeamLogo} alt="" width={16} height={16} className="w-4 h-4 object-contain" />
-          )}
-          {awayShort} favored ↓
-        </span>
-      </div>
+      {/* Probability Chart with vertical team labels */}
+      <div className={`flex ${fillContainer ? "flex-1 min-h-0" : "h-80"}`}>
+        {/* Vertical team labels on left side of chart */}
+        <div className="flex flex-col items-center justify-between py-4 shrink-0" style={{ width: 28 }}>
+          <div className="flex flex-col items-center gap-0.5" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+            {homeTeamLogo && (
+              <img src={homeTeamLogo} alt="" width={14} height={14} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+            )}
+            <span className="text-[10px] font-semibold tracking-wide" style={{ color: homeTeamColor || "#16a34a" }}>
+              {homeShort}
+            </span>
+          </div>
+          <div className="flex flex-col items-center gap-0.5" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+            {awayTeamLogo && (
+              <img src={awayTeamLogo} alt="" width={14} height={14} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+            )}
+            <span className="text-[10px] font-semibold tracking-wide" style={{ color: awayTeamColor || "#2563eb" }}>
+              {awayShort}
+            </span>
+          </div>
+        </div>
 
-      {/* Probability Chart */}
-      <div className={fillContainer ? "w-full flex-1 min-h-0" : "w-full h-80"}>
+        {/* Chart area */}
+        <div className="flex-1 min-w-0">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
@@ -1289,6 +1295,7 @@ export default function OddsChart({
             )}
           </ComposedChart>
         </ResponsiveContainer>
+        </div>
       </div>
 
       {/* Source legend */}
