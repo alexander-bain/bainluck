@@ -6142,6 +6142,7 @@ async def operations_dashboard(
     from sqlalchemy import text, func as sa_func, distinct, case, literal_column
     from app.tasks.redis_state import (
         get_odds_api_quota, get_odds_api_quota_history,
+        get_odds_api_task_breakdown,
         get_all_task_metrics, get_redis_client,
     )
     import calendar as cal_mod
@@ -6151,6 +6152,7 @@ async def operations_dashboard(
     # --- 1. Odds API Quota ---
     quota = get_odds_api_quota()
     history = get_odds_api_quota_history(hours=720)  # 30 days
+    task_breakdown = get_odds_api_task_breakdown(hours=720)  # 30 days
 
     # Compute daily usage deltas
     daily_map: dict[str, dict] = {}
@@ -6185,6 +6187,7 @@ async def operations_dashboard(
     quota_section = {
         "current": quota,
         "daily_usage": daily_usage,
+        "daily_by_task": task_breakdown,
         "hourly_history": history[-168:],  # last 7 days
         "budget": {
             "total": total_budget,
@@ -6341,15 +6344,56 @@ async def operations_dashboard(
                  WHERE captured_at >= NOW() - INTERVAL '1 hour') AS snapshots_last_hour,
                 (SELECT COUNT(*) FROM win_prob_snapshots
                  WHERE captured_at >= NOW() - INTERVAL '1 hour') AS winprob_last_hour,
-                (SELECT pg_database_size(current_database())) AS db_size_bytes
+                (SELECT pg_database_size(current_database())) AS db_size_bytes,
+                (SELECT MIN(captured_at) FROM odds_snapshots
+                 WHERE captured_at >= NOW() - INTERVAL '7 days') AS oldest_snapshot_7d
         """))
         db_row = db_q.one()
+
+        db_size_mb = db_row.db_size_bytes / 1024 / 1024
+        db_size_gb = db_row.db_size_bytes / (1024 ** 3)
+
+        # Compute growth rate from snapshot row counts
+        # Each odds_snapshot row ≈ 0.5KB, each winprob row ≈ 0.3KB
+        # Use rows written per day as proxy for daily growth
+        growth_rate_mb_per_day = None
+        days_until_full = None
+        try:
+            growth_q = await db.execute(text("""
+                SELECT
+                    COALESCE((SELECT COUNT(*) FROM odds_snapshots
+                     WHERE captured_at >= NOW() - INTERVAL '24 hours'), 0) AS odds_rows_24h,
+                    COALESCE((SELECT COUNT(*) FROM win_prob_snapshots
+                     WHERE captured_at >= NOW() - INTERVAL '24 hours'), 0) AS wp_rows_24h,
+                    COALESCE((SELECT COUNT(*) FROM futures_odds_snapshots
+                     WHERE captured_at >= NOW() - INTERVAL '24 hours'), 0) AS futures_rows_24h
+            """))
+            g = growth_q.one()
+            # Rough estimate: odds ~500B/row, winprob ~300B/row, futures ~400B/row
+            daily_bytes = (g.odds_rows_24h * 500) + (g.wp_rows_24h * 300) + (g.futures_rows_24h * 400)
+            growth_rate_mb_per_day = round(daily_bytes / 1024 / 1024, 1)
+            storage_limit_gb = 10
+            remaining_gb = storage_limit_gb - db_size_gb
+            if growth_rate_mb_per_day > 0:
+                days_until_full = round((remaining_gb * 1024) / growth_rate_mb_per_day)
+        except Exception:
+            pass
+
         db_section = {
             "active_events": db_row.active_events,
             "live_events": db_row.live_events,
             "snapshots_last_hour": db_row.snapshots_last_hour,
             "winprob_last_hour": db_row.winprob_last_hour,
-            "db_size_mb": round(db_row.db_size_bytes / 1024 / 1024, 1),
+            "db_size_mb": round(db_size_mb, 1),
+            "growth_rate_mb_per_day": growth_rate_mb_per_day,
+            "days_until_full": days_until_full,
+            "plan": {
+                "name": "essential-1",
+                "storage_limit_gb": 10,
+                "storage_used_gb": round(db_size_gb, 2),
+                "storage_pct": round(db_size_gb / 10 * 100, 1),
+                "connections_limit": 20,
+            },
         }
     except Exception as e:
         db_section = {"error": str(e)}

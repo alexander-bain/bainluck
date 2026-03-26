@@ -18,9 +18,12 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   CartesianGrid,
+  Legend,
 } from "recharts";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// --- Types ---
 
 interface QuotaBudget {
   total: number;
@@ -46,6 +49,14 @@ interface DailyUsage {
   date: string;
   daily_requests: number;
   cumulative: number;
+}
+
+interface DailyByTask {
+  date: string;
+  poll_odds?: number;
+  discover_events?: number;
+  poll_futures?: number;
+  [key: string]: string | number | undefined;
 }
 
 interface SourceCoverage {
@@ -77,11 +88,18 @@ interface TaskMetric {
   successes_24h: number;
   failures_24h: number;
   last_success_at?: string;
-  last_failure_at?: string;
   last_duration_ms?: string;
   consecutive_failures?: string;
   last_error?: string;
   last_result_summary?: Record<string, unknown>;
+}
+
+interface DatabasePlan {
+  name: string;
+  storage_limit_gb: number;
+  storage_used_gb: number;
+  storage_pct: number;
+  connections_limit: number;
 }
 
 interface DatabaseHealth {
@@ -90,6 +108,9 @@ interface DatabaseHealth {
   snapshots_last_hour: number;
   winprob_last_hour: number;
   db_size_mb: number;
+  growth_rate_mb_per_day: number | null;
+  days_until_full: number | null;
+  plan: DatabasePlan;
 }
 
 interface DashboardData {
@@ -97,6 +118,7 @@ interface DashboardData {
   quota: {
     current: QuotaCurrent;
     daily_usage: DailyUsage[];
+    daily_by_task: DailyByTask[];
     budget: QuotaBudget;
   };
   source_coverage: SourceCoverage[];
@@ -112,13 +134,13 @@ interface DashboardData {
   database: DatabaseHealth;
 }
 
+// --- Helpers ---
+
 function healthColor(health: string): string {
   switch (health) {
     case "healthy": return "text-green-500";
-    case "degraded": return "text-yellow-500";
-    case "critical":
-    case "worker_down":
-    case "unhealthy": return "text-red-500";
+    case "degraded": case "warning": return "text-yellow-500";
+    case "critical": case "worker_down": case "unhealthy": return "text-red-500";
     default: return "text-text-muted";
   }
 }
@@ -126,10 +148,8 @@ function healthColor(health: string): string {
 function healthBg(health: string): string {
   switch (health) {
     case "healthy": return "bg-green-500/10 border-green-500/20";
-    case "degraded": return "bg-yellow-500/10 border-yellow-500/20";
-    case "critical":
-    case "worker_down":
-    case "unhealthy": return "bg-red-500/10 border-red-500/20";
+    case "degraded": case "warning": return "bg-yellow-500/10 border-yellow-500/20";
+    case "critical": case "worker_down": case "unhealthy": return "bg-red-500/10 border-red-500/20";
     default: return "bg-surface-elevated border-surface-border";
   }
 }
@@ -162,16 +182,20 @@ function CoverageCell({ val, total }: { val: number; total: number }) {
   );
 }
 
+// --- Components ---
+
 function StatCard({
   label,
   value,
   sub,
   health,
+  detail,
 }: {
   label: string;
   value: string;
   sub?: string;
   health?: string;
+  detail?: string;
 }) {
   return (
     <div className={"rounded-xl border p-4 " + (health ? healthBg(health) : "bg-surface-card border-surface-border")}>
@@ -180,6 +204,102 @@ function StatCard({
         {value}
       </div>
       {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
+      {detail && <div className="text-micro text-text-muted mt-1 leading-relaxed">{detail}</div>}
+    </div>
+  );
+}
+
+function KeyTakeaways({ data }: { data: DashboardData }) {
+  const items: { icon: string; text: string; severity: "ok" | "warn" | "crit" }[] = [];
+
+  // Quota
+  const surplus = data.quota.budget.projected_surplus;
+  if (surplus < 0) {
+    items.push({
+      icon: "!",
+      text: "Odds API projected to exceed 5M budget by " + formatNum(Math.abs(surplus)) + " at current 48h pace (" + formatNum(data.quota.budget.pace_48h_daily) + "/day). Budget allows " + formatNum(data.quota.budget.linear_daily_budget) + "/day.",
+      severity: "crit",
+    });
+  } else if (data.quota.current.pct_used > 85) {
+    items.push({
+      icon: "!",
+      text: "Odds API at " + data.quota.current.pct_used + "% but pace is sustainable. Projected to finish " + formatNum(surplus) + " under budget.",
+      severity: "warn",
+    });
+  } else {
+    items.push({ icon: "✓", text: "Odds API quota on track. " + formatNum(surplus) + " under budget at current pace.", severity: "ok" });
+  }
+
+  // Database
+  if (data.database.plan) {
+    const pct = data.database.plan.storage_pct;
+    const daysLeft = data.database.days_until_full;
+    if (pct >= 85) {
+      items.push({
+        icon: "!",
+        text: "Database at " + pct + "% capacity (" + data.database.plan.storage_used_gb + " / " + data.database.plan.storage_limit_gb + " GB). " +
+          (daysLeft ? "~" + daysLeft + " days until full at current write rate." : "Growth rate unknown.") +
+          " Consider running snapshot collapse or upgrading plan.",
+        severity: pct >= 95 ? "crit" : "warn",
+      });
+    }
+  }
+
+  // Worker
+  if (data.worker.critical_tasks.length > 0) {
+    items.push({
+      icon: "!",
+      text: "Critical task failures: " + data.worker.critical_tasks.join(", ") + ". These have failed 5+ times consecutively.",
+      severity: "crit",
+    });
+  }
+  if (data.worker.worker_status !== "healthy") {
+    items.push({ icon: "!", text: "Worker is " + data.worker.worker_status + ". Tasks may not be running.", severity: "crit" });
+  }
+
+  // Source coverage gaps for major sports
+  const majorSports = ["basketball_nba", "americanfootball_nfl", "icehockey_nhl", "baseball_mlb", "basketball_ncaab"];
+  for (const row of data.source_coverage) {
+    if (majorSports.includes(row.sport)) {
+      const kalshiPct = row.total > 0 ? Math.round((row.kalshi / row.total) * 100) : 0;
+      const polyPct = row.total > 0 ? Math.round((row.polymarket / row.total) * 100) : 0;
+      if (kalshiPct < 20 && polyPct < 20) {
+        const shortSport = row.sport.split("_").pop();
+        items.push({
+          icon: "~",
+          text: shortSport!.toUpperCase() + " has low prediction market coverage (Kalshi " + kalshiPct + "%, Polymarket " + polyPct + "%).",
+          severity: "warn",
+        });
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    items.push({ icon: "✓", text: "All systems healthy. No issues detected.", severity: "ok" });
+  }
+
+  const severityColors = {
+    ok: "text-green-400",
+    warn: "text-yellow-400",
+    crit: "text-red-400",
+  };
+  const severityBg = {
+    ok: "bg-green-500/5",
+    warn: "bg-yellow-500/5",
+    crit: "bg-red-500/5",
+  };
+
+  return (
+    <div className="bg-surface-card rounded-xl border border-surface-border p-4">
+      <h3 className="text-sm font-semibold text-text-primary mb-2">Key Takeaways</h3>
+      <div className="space-y-2">
+        {items.map((item, i) => (
+          <div key={i} className={"flex gap-2 text-xs p-2 rounded-lg " + severityBg[item.severity]}>
+            <span className={"font-bold shrink-0 " + severityColors[item.severity]}>{item.icon}</span>
+            <span className="text-text-secondary">{item.text}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -187,43 +307,67 @@ function StatCard({
 function QuotaChart({ data, budget }: { data: DailyUsage[]; budget: QuotaBudget }) {
   const chartData = useMemo(() => {
     if (!data.length) return [];
-    const points = data.map((d) => {
-      const dayNum = parseInt(d.date.split("-")[2]);
-      const linearBudget = Math.round(budget.total / budget.days_in_month * dayNum);
-      return {
-        date: d.date.slice(5),
-        used: d.cumulative,
-        budget: linearBudget,
+
+    // Build budget line: straight from day 1 to last day of month
+    const budgetPerDay = budget.total / budget.days_in_month;
+    const points: Record<string, { date: string; budget: number; used?: number; projected?: number }> = {};
+
+    // Generate budget for every day of the month
+    const monthPrefix = data[0]?.date.slice(0, 8) || "2026-03-";
+    for (let d = 1; d <= budget.days_in_month; d++) {
+      const dateStr = monthPrefix + String(d).padStart(2, "0");
+      const label = dateStr.slice(5); // MM-DD
+      points[label] = {
+        date: label,
+        budget: Math.round(budgetPerDay * d),
       };
-    });
-    points.push({
-      date: String(budget.days_in_month).padStart(2, "0") + " (proj)",
-      used: undefined as unknown as number,
-      budget: budget.total,
-    });
-    return points;
+    }
+
+    // Overlay actuals
+    for (const d of data) {
+      const label = d.date.slice(5);
+      if (points[label]) {
+        points[label].used = d.cumulative;
+      }
+    }
+
+    // Add projection: dotted from last actual to EOM
+    const lastActual = data[data.length - 1];
+    if (lastActual) {
+      const lastLabel = lastActual.date.slice(5);
+      const eomLabel = monthPrefix.slice(5) + String(budget.days_in_month).padStart(2, "0");
+      if (points[lastLabel]) {
+        points[lastLabel].projected = lastActual.cumulative;
+      }
+      if (points[eomLabel]) {
+        points[eomLabel].projected = budget.projected_eom;
+      }
+    }
+
+    return Object.values(points).sort((a, b) => a.date.localeCompare(b.date));
   }, [data, budget]);
 
   return (
     <div className="bg-surface-card rounded-xl border border-surface-border p-4">
       <h3 className="text-sm font-semibold text-text-primary mb-1">Odds API Quota</h3>
       <p className="text-xs text-text-muted mb-3">
-        Cumulative usage vs. linear budget ({formatNum(budget.total)} monthly)
+        Cumulative usage vs. {formatNum(budget.total)} monthly budget
       </p>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#888" }} interval="preserveStartEnd" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#888" }} interval={Math.max(1, Math.floor(chartData.length / 8))} />
             <YAxis tickFormatter={formatNum} tick={{ fontSize: 10, fill: "#888" }} />
             <Tooltip
               contentStyle={{ background: "#1a1a2e", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
               labelStyle={{ color: "#aaa" }}
-              formatter={(val: number) => [formatNum(val), ""]}
+              formatter={(val: number, name: string) => [formatNum(val), name === "budget" ? "Budget" : name === "used" ? "Actual" : "Projected"]}
             />
-            <Line type="monotone" dataKey="budget" stroke="#555" strokeDasharray="6 3" dot={false} name="Linear Budget" />
-            <Line type="monotone" dataKey="used" stroke="#22c55e" strokeWidth={2} dot={false} name="Actual Usage" />
-            <ReferenceLine y={budget.total} stroke="#ef4444" strokeDasharray="2 2" />
+            <Line type="linear" dataKey="budget" stroke="#555" strokeDasharray="6 3" dot={false} name="budget" connectNulls />
+            <Line type="monotone" dataKey="used" stroke="#22c55e" strokeWidth={2} dot={false} name="used" connectNulls={false} />
+            <Line type="linear" dataKey="projected" stroke="#ef4444" strokeDasharray="4 2" strokeWidth={2} dot={false} name="projected" connectNulls />
+            <ReferenceLine y={budget.total} stroke="#ef4444" strokeDasharray="2 2" label="" />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -231,25 +375,133 @@ function QuotaChart({ data, budget }: { data: DailyUsage[]; budget: QuotaBudget 
   );
 }
 
-function DailyBurnChart({ data }: { data: DailyUsage[] }) {
-  const recent = data.slice(-14);
+function DailyBurnChart({ data, byTask }: { data: DailyUsage[]; byTask: DailyByTask[] }) {
+  // Merge daily usage with per-task breakdown for last 14 days
+  const chartData = useMemo(() => {
+    const recent = data.slice(-14);
+    const taskMap = new Map(byTask.map((d) => [d.date, d]));
+
+    return recent.map((d) => {
+      const task = taskMap.get(d.date);
+      // If we have task breakdown, use it; otherwise show total as "other"
+      if (task && ((task.poll_odds || 0) + (task.discover_events || 0) + (task.poll_futures || 0)) > 0) {
+        return {
+          date: d.date,
+          poll_odds: task.poll_odds || 0,
+          discover_events: task.discover_events || 0,
+          poll_futures: task.poll_futures || 0,
+        };
+      }
+      return {
+        date: d.date,
+        poll_odds: d.daily_requests,
+        discover_events: 0,
+        poll_futures: 0,
+      };
+    });
+  }, [data, byTask]);
+
   return (
     <div className="bg-surface-card rounded-xl border border-surface-border p-4">
-      <h3 className="text-sm font-semibold text-text-primary mb-1">Daily API Burn</h3>
-      <p className="text-xs text-text-muted mb-3">Requests per day (last 14 days)</p>
+      <h3 className="text-sm font-semibold text-text-primary mb-1">Daily API Burn by Task</h3>
+      <p className="text-xs text-text-muted mb-3">Breakdown: live polling, discovery, and futures (last 14 days)</p>
       <div className="h-48">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={recent} margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
+          <BarChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="date" tickFormatter={(v: string) => v.slice(5)} tick={{ fontSize: 10, fill: "#888" }} />
             <YAxis tickFormatter={formatNum} tick={{ fontSize: 10, fill: "#888" }} />
             <Tooltip
               contentStyle={{ background: "#1a1a2e", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
-              formatter={(val: number) => [formatNum(val), "Requests"]}
+              formatter={(val: number, name: string) => {
+                const labels: Record<string, string> = {
+                  poll_odds: "Live Polling",
+                  discover_events: "Discovery",
+                  poll_futures: "Futures",
+                };
+                return [formatNum(val), labels[name] || name];
+              }}
             />
-            <Bar dataKey="daily_requests" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+            <Legend
+              formatter={(value: string) => {
+                const labels: Record<string, string> = {
+                  poll_odds: "Live Polling",
+                  discover_events: "Discovery",
+                  poll_futures: "Futures",
+                };
+                return labels[value] || value;
+              }}
+              wrapperStyle={{ fontSize: 11 }}
+            />
+            <Bar dataKey="poll_odds" stackId="a" fill="#3b82f6" radius={[0, 0, 0, 0]} />
+            <Bar dataKey="discover_events" stackId="a" fill="#f59e0b" radius={[0, 0, 0, 0]} />
+            <Bar dataKey="poll_futures" stackId="a" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function DatabaseCard({ db }: { db: DatabaseHealth }) {
+  const pct = db.plan?.storage_pct || 0;
+  const health = pct >= 95 ? "critical" : pct >= 80 ? "warning" : "healthy";
+
+  return (
+    <div className={"rounded-xl border p-4 " + healthBg(health)}>
+      <h3 className="text-sm font-semibold text-text-primary mb-2">Database Storage</h3>
+      <div className="flex items-end gap-2 mb-2">
+        <span className={"text-3xl font-bold " + healthColor(health)}>
+          {db.plan?.storage_used_gb || (db.db_size_mb / 1024).toFixed(1)} GB
+        </span>
+        <span className="text-sm text-text-muted mb-1">/ {db.plan?.storage_limit_gb || 10} GB</span>
+      </div>
+      {/* Progress bar */}
+      <div className="h-3 bg-surface-border rounded-full overflow-hidden mb-3">
+        <div
+          className={"h-full rounded-full transition-all " + (pct >= 95 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-green-500")}
+          style={{ width: Math.min(pct, 100) + "%" }}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <span className="text-text-muted">Plan: </span>
+          <span className="text-text-secondary font-medium">{db.plan?.name || "unknown"}</span>
+        </div>
+        <div>
+          <span className="text-text-muted">Growth: </span>
+          <span className="text-text-secondary font-medium">
+            {db.growth_rate_mb_per_day ? db.growth_rate_mb_per_day + " MB/day" : "calculating..."}
+          </span>
+        </div>
+        <div>
+          <span className="text-text-muted">Days until full: </span>
+          <span className={"font-medium " + (db.days_until_full && db.days_until_full < 14 ? "text-red-400" : db.days_until_full && db.days_until_full < 30 ? "text-yellow-400" : "text-text-secondary")}>
+            {db.days_until_full ? "~" + db.days_until_full : "unknown"}
+          </span>
+        </div>
+        <div>
+          <span className="text-text-muted">Connections: </span>
+          <span className="text-text-secondary font-medium">{db.plan?.connections_limit || 20} max</span>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs border-t border-surface-border/50 pt-2">
+        <div>
+          <span className="text-text-muted">Odds snapshots/hr: </span>
+          <span className="text-text-secondary font-medium">{db.snapshots_last_hour.toLocaleString()}</span>
+        </div>
+        <div>
+          <span className="text-text-muted">WinProb snapshots/hr: </span>
+          <span className="text-text-secondary font-medium">{db.winprob_last_hour.toLocaleString()}</span>
+        </div>
+        <div>
+          <span className="text-text-muted">Live events: </span>
+          <span className="text-green-400 font-medium">{db.live_events}</span>
+        </div>
+        <div>
+          <span className="text-text-muted">Active events: </span>
+          <span className="text-text-secondary font-medium">{db.active_events.toLocaleString()}</span>
+        </div>
       </div>
     </div>
   );
@@ -418,6 +670,8 @@ function TasksTable({ tasks }: { tasks: TaskMetric[] }) {
   );
 }
 
+// --- Main ---
+
 export default function AdminDashboard() {
   usePageTracking({ pageType: "admin_dashboard", pageTitle: "Operations Dashboard" });
   useScrollDepth({ pageType: "admin_dashboard" });
@@ -473,7 +727,7 @@ export default function AdminDashboard() {
         <h1 className="text-lg font-bold text-text-primary">Operations Dashboard</h1>
         {data && (
           <span className="text-micro text-text-muted">
-            Updated {new Date(data.generated_at).toLocaleTimeString()}
+            Auto-refreshes every 60s &middot; Updated {new Date(data.generated_at).toLocaleTimeString()}
           </span>
         )}
       </div>
@@ -485,6 +739,9 @@ export default function AdminDashboard() {
 
       {data && (
         <>
+          {/* Key takeaways */}
+          <KeyTakeaways data={data} />
+
           {/* Top stat cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatCard
@@ -504,6 +761,13 @@ export default function AdminDashboard() {
               health={data.quota.budget.projected_surplus >= 0 ? "healthy" : "critical"}
             />
             <StatCard
+              label="48h Burn Rate"
+              value={formatNum(data.quota.budget.pace_48h_daily) + "/day"}
+              sub={"Budget: " + formatNum(data.quota.budget.linear_daily_budget) + "/day"}
+              health={data.quota.budget.pace_48h_daily > data.quota.budget.linear_daily_budget * 1.1 ? "warning" : "healthy"}
+              detail="Average daily API calls over the last 48 hours. Should stay below the daily budget line."
+            />
+            <StatCard
               label="Worker"
               value={data.worker.overall_health.replace("_", " ")}
               sub={
@@ -512,34 +776,41 @@ export default function AdminDashboard() {
                   : "No heartbeat"
               }
               health={data.worker.overall_health}
-            />
-            <StatCard
-              label="Database"
-              value={data.database.db_size_mb + " MB"}
-              sub={data.database.live_events + " live, " + data.database.active_events + " active"}
+              detail={data.worker.tasks.length + " tasks tracked. " + data.worker.tasks.filter((t) => t.successes_24h > 0).length + " ran in last 24h."}
             />
           </div>
 
-          {/* Quota charts */}
+          {/* Quota + burn charts */}
           <div className="grid md:grid-cols-2 gap-4">
             <QuotaChart data={data.quota.daily_usage} budget={data.quota.budget} />
-            <DailyBurnChart data={data.quota.daily_usage} />
+            <DailyBurnChart data={data.quota.daily_usage} byTask={data.quota.daily_by_task || []} />
           </div>
 
-          {/* Source coverage: events + futures */}
+          {/* Database + coverage side by side */}
+          <div className="grid md:grid-cols-2 gap-4">
+            <DatabaseCard db={data.database} />
+            <div className="space-y-4">
+              <StatCard
+                label="Snapshots/hr"
+                value={data.database.snapshots_last_hour.toLocaleString()}
+                sub="Odds readings written to DB per hour"
+                detail={"At ~500 bytes/row, this adds roughly " + Math.round(data.database.snapshots_last_hour * 500 / 1024 / 1024 * 24) + " MB/day to the database."}
+              />
+              <StatCard
+                label="WinProb/hr"
+                value={data.database.winprob_last_hour.toLocaleString()}
+                sub="Win probability snapshots per hour"
+                detail="From ESPN, stat model, Kalshi, Polymarket, and MLB sources during live games."
+              />
+            </div>
+          </div>
+
+          {/* Source coverage */}
           <SourceCoverageTable data={data.source_coverage} />
           <FuturesCoverageTable data={data.futures_coverage} />
 
           {/* Worker tasks */}
           <TasksTable tasks={data.worker.tasks} />
-
-          {/* Bottom stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard label="Snapshots/hr" value={data.database.snapshots_last_hour.toLocaleString()} />
-            <StatCard label="WinProb/hr" value={data.database.winprob_last_hour.toLocaleString()} />
-            <StatCard label="48h Pace" value={formatNum(data.quota.budget.pace_48h_daily) + "/day"} />
-            <StatCard label="Daily Budget" value={formatNum(data.quota.budget.linear_daily_budget) + "/day"} />
-          </div>
         </>
       )}
     </div>

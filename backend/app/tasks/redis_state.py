@@ -282,6 +282,7 @@ def _utc_now_iso() -> str:
 
 QUOTA_KEY = "bainluck:odds_api_quota"
 QUOTA_HISTORY_PREFIX = "bainluck:odds_api_quota:hourly"
+QUOTA_TASK_HOURLY_PREFIX = "bainluck:odds_api_quota:task_hourly"
 QUOTA_ALERT_THRESHOLD = 500_000
 QUOTA_WARNING_THRESHOLD = 1_000_000
 
@@ -300,6 +301,10 @@ def record_odds_api_quota(remaining: int, used: int, source_task: str):
         now = datetime.now(timezone.utc)
         hour_key = now.strftime("%Y-%m-%dT%H")
 
+        # Get previous used value to compute delta
+        prev_data = r.hgetall(QUOTA_KEY)
+        prev_used = int(prev_data.get(b"used", b"0")) if prev_data else 0
+
         pipe = r.pipeline()
         # Current snapshot (always up to date)
         pipe.hset(QUOTA_KEY, mapping={
@@ -317,6 +322,14 @@ def record_odds_api_quota(remaining: int, used: int, source_task: str):
             "used": str(used),
         })
         pipe.expire(history_key, 86400 * 35)  # 35 day TTL (covers full billing cycle)
+
+        # Per-task quota delta tracking
+        delta = used - prev_used
+        if delta > 0:  # Skip negative deltas (month rollover)
+            task_hourly_key = f"{QUOTA_TASK_HOURLY_PREFIX}:{source_task}:{hour_key}"
+            pipe.incrby(task_hourly_key, delta)
+            pipe.expire(task_hourly_key, 86400 * 35)  # 35 day TTL
+
         pipe.execute()
 
         # Log warnings at threshold crossings
@@ -388,5 +401,53 @@ def get_odds_api_quota_history(hours: int = 168) -> list:
                     "used": int(data.get(b"used", b"0")),
                 })
         return list(reversed(results))
+    except Exception:
+        return []
+
+
+def get_odds_api_task_breakdown(hours: int = 168) -> list:
+    """Get daily quota usage breakdown by task type.
+
+    Args:
+        hours: Number of hours to look back (default: 168 = 7 days)
+
+    Returns:
+        List of daily totals per task, e.g.:
+        [{"date": "2026-03-26", "poll_odds": 50000, "discover_events": 10000, "poll_futures": 5000}]
+    """
+    from datetime import datetime, timezone, timedelta
+    from collections import defaultdict
+
+    r = get_redis_client()
+    if not r:
+        return []
+    try:
+        # Scan for all task_hourly keys
+        pattern = f"{QUOTA_TASK_HOURLY_PREFIX}:*"
+        keys = r.keys(pattern)
+
+        # Group by date and task
+        daily_data: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+        for key in keys:
+            key_str = key.decode() if isinstance(key, bytes) else key
+            # Format: bainluck:odds_api_quota:task_hourly:{task_name}:{YYYY-MM-DDTHH}
+            parts = key_str.split(":")
+            if len(parts) >= 5:
+                task_name = parts[3]
+                hour_str = parts[4]
+                date_str = hour_str[:10]  # Extract YYYY-MM-DD
+
+                delta = int(r.get(key) or 0)
+                daily_data[date_str][task_name] += delta
+
+        # Convert to list format, sorted by date
+        results = []
+        for date in sorted(daily_data.keys()):
+            entry = {"date": date}
+            entry.update(daily_data[date])
+            results.append(entry)
+
+        return results
     except Exception:
         return []
