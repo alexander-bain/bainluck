@@ -502,11 +502,16 @@ async def _score_events(
             current_home_prob = snapshot_fallbacks[event.id]
         current_away_prob = round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
 
-        # Skip scheduled events without any probability data.
-        # These are typically StatPal-created events that haven't been matched
-        # to Odds API yet (The Odds API only has games ~2-3 days out).
-        # Showing them without probability confuses users.
+        # Skip events without any probability data:
+        # - Scheduled: StatPal-created events not yet matched to Odds API
+        # - Completed/closed with no scores: no odds movement, no final score
+        #   = terrible UX (empty chart, no data). These are typically niche
+        #   sports where only StatPal has schedules but no odds coverage.
         if current_home_prob is None and event.status == "scheduled":
+            continue
+        if (current_home_prob is None
+                and event.status in ("completed", "closed")
+                and not event.home_score and not event.away_score):
             continue
 
         # Track whether we have sportsbook-specific data or only aggregate

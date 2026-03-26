@@ -2147,20 +2147,56 @@ async def get_related_futures(
     sport_prefix = event_sport_key.split("_")[0]  # e.g., "basketball", "americanfootball"
     llm_category = _SPORT_PREFIX_TO_LLM_CATEGORY.get(sport_prefix, sport_prefix)
 
-    # Find compatible sport IDs (for markets that have sport_id populated)
-    prefix_result = await db.execute(
-        select(Sport.id).where(Sport.key.like(f"{sport_prefix}%"))
+    # Gender-aware filtering: don't show men's futures for women's events
+    # or women's futures for men's events. Detect via sport key suffixes.
+    is_womens = event_sport_key in (
+        "basketball_wnba", "basketball_wncaab",
+    ) or "_women" in event_sport_key
+    is_mens_specific = event_sport_key in (
+        "basketball_nba", "basketball_ncaab",
+        "americanfootball_nfl", "americanfootball_ncaaf",
     )
+
+    # Build sport key pattern for external_id matching
+    if is_womens:
+        # Only match women's sport keys
+        ext_id_patterns = [event_sport_key + "%"]
+    elif is_mens_specific:
+        # Only match this specific men's league (not women's variant)
+        ext_id_patterns = [event_sport_key + "%"]
+    else:
+        # Generic: match all sports with this prefix
+        ext_id_patterns = [sport_prefix + "%"]
+
+    # Find compatible sport IDs (for markets that have sport_id populated)
+    if is_womens or is_mens_specific:
+        # Narrow to exact sport key
+        prefix_result = await db.execute(
+            select(Sport.id).where(Sport.key == event_sport_key)
+        )
+    else:
+        prefix_result = await db.execute(
+            select(Sport.id).where(Sport.key.like(f"{sport_prefix}%"))
+        )
     compatible_sport_ids = [row.id for row in prefix_result.all()]
+
+    # Gender-aware llm_sport_category: women's basketball → only "women's basketball"
+    # markets, not "basketball" generically
+    gender_market_name_filter = None
+    if is_womens:
+        gender_market_name_filter = "women"
+    elif is_mens_specific:
+        # For men's leagues, exclude markets with "women" or "WNBA" in name
+        gender_market_name_filter = "exclude_women"
 
     # 3. Find sport-matching open markets using multiple strategies (OR)
     #    This is the key improvement: instead of requiring sport_id (often NULL),
     #    we also match on external_id prefix (OddsAPI sport key) and
     #    llm_sport_category (works for Kalshi and LLM-categorized markets).
-    sport_filters = [
-        FuturesMarket.external_id.like(f"{sport_prefix}%"),
-        FuturesMarket.llm_sport_category == llm_category,
-    ]
+    sport_filters = []
+    for pat in ext_id_patterns:
+        sport_filters.append(FuturesMarket.external_id.like(pat))
+    sport_filters.append(FuturesMarket.llm_sport_category == llm_category)
     if compatible_sport_ids:
         sport_filters.append(FuturesMarket.sport_id.in_(compatible_sport_ids))
 
@@ -2173,6 +2209,42 @@ async def get_related_futures(
     sport_market_ids = [row.id for row in market_result.all()]
     if not sport_market_ids:
         return empty
+
+    # Apply gender name filter to exclude cross-gender markets
+    if gender_market_name_filter and sport_market_ids:
+        if gender_market_name_filter == "women":
+            # Women's event: only keep markets with women-related keywords
+            gender_q = await db.execute(
+                select(FuturesMarket.id).where(
+                    FuturesMarket.id.in_(sport_market_ids),
+                    or_(
+                        FuturesMarket.name.ilike("%women%"),
+                        FuturesMarket.name.ilike("%WNBA%"),
+                        FuturesMarket.name.ilike("%WNCAA%"),
+                        FuturesMarket.external_id.like("basketball_wnba%"),
+                        FuturesMarket.external_id.like("basketball_wncaab%"),
+                    ),
+                )
+            )
+            women_ids = {r.id for r in gender_q.all()}
+            if women_ids:
+                sport_market_ids = list(women_ids)
+            # If no women-specific markets found, keep all (better than empty)
+        elif gender_market_name_filter == "exclude_women":
+            # Men's event: exclude markets with women-related keywords
+            gender_q = await db.execute(
+                select(FuturesMarket.id).where(
+                    FuturesMarket.id.in_(sport_market_ids),
+                    ~FuturesMarket.name.ilike("%women%"),
+                    ~FuturesMarket.name.ilike("%WNBA%"),
+                    ~FuturesMarket.name.ilike("%WNCAA%"),
+                    ~FuturesMarket.external_id.like("basketball_wnba%"),
+                    ~FuturesMarket.external_id.like("basketball_wncaab%"),
+                )
+            )
+            mens_ids = [r.id for r in gender_q.all()]
+            if mens_ids:
+                sport_market_ids = mens_ids
 
     # 4. Build name patterns for both teams
     home_patterns = _team_name_patterns(event.home_team_name)
