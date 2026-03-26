@@ -6274,7 +6274,8 @@ async def operations_dashboard(
                 COUNT(DISTINCT CASE WHEN fm.source = 'datagolf' THEN fm.id END) AS datagolf
             FROM futures_markets fm
             LEFT JOIN sports s ON fm.sport_id = s.id
-            WHERE fm.market_type != 'game'
+            WHERE (fm.market_type IS NULL OR fm.market_type != 'game')
+              AND fm.event_id IS NULL
             GROUP BY COALESCE(s.key, fm.llm_sport_category, 'unknown')
             ORDER BY COUNT(DISTINCT fm.id) DESC
         """))
