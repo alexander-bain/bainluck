@@ -515,12 +515,12 @@ export default function ScoreDifferentialChart({
             data={chartData}
             margin={{ top: 5, right: 10, left: fillContainer ? 5 : 0, bottom: 5 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
             <XAxis
               dataKey="time"
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
+              axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
               interval="preserveStartEnd"
               minTickGap={50}
             />
@@ -537,7 +537,7 @@ export default function ScoreDifferentialChart({
               })()}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
+              axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
               tickFormatter={(value: number) => {
                 if (value === 0) return "0";
                 return value > 0 ? `+${value}` : `${value}`;
@@ -545,12 +545,12 @@ export default function ScoreDifferentialChart({
             />
             <ReferenceLine
               y={0}
-              stroke="rgba(255,255,255,0.25)"
+              stroke="rgba(0,0,0,0.2)"
               strokeWidth={2}
               label={{
                 value: "0",
                 position: "right",
-                style: { fontSize: 10, fill: "rgba(255,255,255,0.4)" },
+                style: { fontSize: 10, fill: "rgba(0,0,0,0.4)" },
               }}
             />
             {/* Period boundary markers — rendered in front of data area */}
@@ -558,14 +558,14 @@ export default function ScoreDifferentialChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="rgba(255,255,255,0.3)"
+                stroke="rgba(0,0,0,0.15)"
                 strokeWidth={1.5}
                 strokeDasharray="6 4"
                 isFront
                 label={{
                   value: b.label,
                   position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "rgba(255,255,255,0.6)", fontWeight: 700 },
+                  style: { fontSize: 11, fill: "rgba(0,0,0,0.5)", fontWeight: 700 },
                 }}
               />
             ))}
@@ -601,10 +601,10 @@ export default function ScoreDifferentialChart({
                 key={`${bookmaker}_diff`}
                 type="monotone"
                 dataKey={`${bookmaker}_diff`}
-                stroke="rgba(255,255,255,0.2)"
+                stroke="rgba(0,0,0,0.15)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={{ r: 3, fill: "rgba(255,255,255,0.5)" }}
+                activeDot={{ r: 3, fill: "rgba(0,0,0,0.3)" }}
                 connectNulls
                 legendType="none"
               />

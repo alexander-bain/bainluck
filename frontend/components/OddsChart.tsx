@@ -1084,12 +1084,12 @@ export default function OddsChart({
                 />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
             <XAxis
               dataKey="time"
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
+              axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
               interval={
                 chartData.length <= 10 ? 0 : "preserveStartEnd"
               }
@@ -1100,19 +1100,19 @@ export default function OddsChart({
               ticks={yTicks}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
-              axisLine={{ stroke: "rgba(255,255,255,0.12)" }}
+              axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
               tickFormatter={formatYTick}
             />
             {/* 50% reference line */}
             <ReferenceLine
               y={0}
-              stroke="rgba(255,255,255,0.25)"
+              stroke="rgba(0,0,0,0.2)"
               strokeWidth={1.5}
               strokeDasharray="4 4"
               label={{
                 value: "50%",
                 position: "right",
-                style: { fontSize: 10, fill: "rgba(255,255,255,0.4)" },
+                style: { fontSize: 10, fill: "rgba(0,0,0,0.4)", fontWeight: 600 },
               }}
             />
             {/* Period boundary markers — rendered in front of data area */}
@@ -1120,14 +1120,14 @@ export default function OddsChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="rgba(255,255,255,0.3)"
+                stroke="rgba(0,0,0,0.15)"
                 strokeWidth={1.5}
                 strokeDasharray="6 4"
                 isFront
                 label={{
                   value: b.label,
                   position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "rgba(255,255,255,0.6)", fontWeight: 700 },
+                  style: { fontSize: 11, fill: "rgba(0,0,0,0.5)", fontWeight: 700 },
                 }}
               />
             ))}
@@ -1139,10 +1139,10 @@ export default function OddsChart({
                 key={`${bookmaker}_delta`}
                 type="monotone"
                 dataKey={`${bookmaker}_delta`}
-                stroke="rgba(255,255,255,0.2)"
+                stroke="rgba(0,0,0,0.15)"
                 strokeWidth={1}
                 dot={false}
-                activeDot={{ r: 3, fill: "rgba(255,255,255,0.5)" }}
+                activeDot={{ r: 3, fill: "rgba(0,0,0,0.3)" }}
                 connectNulls
                 legendType="none"
               />
@@ -1240,8 +1240,8 @@ export default function OddsChart({
                     <g>
                       <polygon
                         points={`${cx},${cy - 6} ${cx + 5},${cy} ${cx},${cy + 6} ${cx - 5},${cy}`}
-                        fill="rgba(255,255,255,0.9)"
-                        stroke="rgba(255,255,255,0.5)"
+                        fill="rgba(0,0,0,0.7)"
+                        stroke="rgba(0,0,0,0.3)"
                         strokeWidth={1}
                       />
                       <polygon
@@ -1353,7 +1353,7 @@ export default function OddsChart({
             <svg width="20" height="4" className="shrink-0">
               <line
                 x1="0" y1="2" x2="20" y2="2"
-                stroke="rgba(255,255,255,0.2)"
+                stroke="rgba(0,0,0,0.15)"
                 strokeWidth="1"
               />
             </svg>

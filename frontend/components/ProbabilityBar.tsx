@@ -87,7 +87,7 @@ export default function ProbabilityBar({
   // Build inner glow shadow — subtle highlight on the favorite segment
   const glowFor = (color: string, isFavSide: boolean) => {
     if (!isFavSide) return undefined;
-    return `inset 0 1px 2px rgba(255,255,255,0.15)`;
+    return `inset 0 1px 2px rgba(0,0,0,0.1)`;
   };
 
   return (

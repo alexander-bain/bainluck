@@ -239,7 +239,7 @@ export function EvolutionChart({
         >
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="rgba(255,255,255,0.06)"
+            stroke="rgba(0,0,0,0.06)"
           />
           <XAxis
             dataKey="timestamp"
@@ -306,7 +306,7 @@ export function EvolutionChart({
             <ReferenceLine
               key={rb.timestamp}
               x={rb.timestamp}
-              stroke="rgba(255,255,255,0.2)"
+              stroke="rgba(0,0,0,0.15)"
               strokeDasharray="4 4"
               label={{
                 value: rb.label,

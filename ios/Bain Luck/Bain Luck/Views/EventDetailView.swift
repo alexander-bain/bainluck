@@ -430,7 +430,7 @@ struct EventDetailView: View {
         if let sources = event.winProbabilitySources,
            let consensus = event.currentOdds?.homeProbability {
             let marketSources = sources.filter { $0.key == "kalshi" || $0.key == "polymarket" }
-            if let (_, source) = marketSources.first, let marketProb = source.value {
+            if let (_, source) = marketSources.first, let marketProb = source.value?.doubleValue {
                 let gap = abs(marketProb - consensus)
                 if gap > 0.05 {
                     let isPurple = gap > 0.10

@@ -98,10 +98,38 @@ nonisolated struct ESPNData: Decodable, Sendable {
 // MARK: - Win Probability Sources
 
 nonisolated struct WinProbSource: Decodable, Sendable {
-    let value: Double?
+    let value: WinProbValue?
     let displayName: String?
     let type: String?
     let color: String?
+}
+
+/// Flexible value that handles both numeric (0.65) and string ("987726") from API.
+nonisolated enum WinProbValue: Decodable, Sendable {
+    case number(Double)
+    case string(String)
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let d = try? container.decode(Double.self) {
+            self = .number(d)
+            return
+        }
+        if let s = try? container.decode(String.self) {
+            self = .string(s)
+            return
+        }
+        throw DecodingError.typeMismatch(WinProbValue.self,
+            DecodingError.Context(codingPath: decoder.codingPath,
+                                  debugDescription: "Expected Double or String"))
+    }
+
+    var doubleValue: Double? {
+        switch self {
+        case .number(let d): return d
+        case .string(let s): return Double(s)
+        }
+    }
 }
 
 // MARK: - Bookmaker Odds
