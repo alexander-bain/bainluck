@@ -187,6 +187,7 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
         r"\bMarch\s+Madness\b",
         r"\bCollege\s+Basketball\b",
         r"\bNCAAB\b",
+        r"\bMen.s\s+College\s+Basketball\b",
     ],
     # Kalshi ticker prefixes that belong to this league — used when market names
     # don't contain league keywords (e.g., "Men's Semifinals Qualifiers").
@@ -263,6 +264,68 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
     conference_split=False,
     region_split=False,  # Flat list — easier to compare across regions
     trend_hours=72,  # Tournament is ~3 weeks, show recent window
+    max_teams=68,
+    season_pattern="2026",
+)
+
+WNCAA_BASKETBALL_CONFIG = LeagueConfig(
+    slug="ncaa-women-basketball",
+    name="Women's NCAA Tournament 2026",
+    sport_category="basketball",
+    sport_keys=["basketball_wncaab"],
+    stage_key="ncaa_women_basketball",
+    league_name_patterns=[
+        r"\bWomen.s\s+College\s+Basketball\b",
+        r"\bWomen.s\s+NCAA\b",
+        r"\bWomen.s\s+March\s+Madness\b",
+        r"\bWNCAA\b",
+        r"\bWomen.s\s+(?:Championship|Semifinals|Round\s+of\s+8)\b",
+    ],
+    external_id_prefixes=["KXWMARMAD"],
+    columns=[
+        GridColumn(key="elite_eight", label="Elite 8", order=1),
+        GridColumn(key="final_four", label="Final Four", order=2),
+        GridColumn(key="title_game", label="Title Game", order=3),
+        GridColumn(key="championship", label="Champion", order=4),
+    ],
+    matching_rules=[
+        MarketMatchingRule(
+            column="championship",
+            tier=1,
+            name_patterns=[
+                r"Women.s\s+College\s+Basketball\s+Champion\b",
+                r"Women.s\s+NCAA\s+(?:Tournament\s+)?(?:Winner|Champion)",
+                r"Women.s\s+March\s+Madness.*(?:Winner|Champion)",
+                r"WNCAAB\s+Championship",
+            ],
+            canonical_prefix="basketball_wncaab_championship",
+        ),
+        MarketMatchingRule(
+            column="title_game",
+            name_patterns=[
+                r"Women.s\s+Championship\s+Game",
+                r"Women.s\s+(?:National\s+)?Championship\s+Game\s+Qualif",
+            ],
+        ),
+        MarketMatchingRule(
+            column="final_four",
+            name_patterns=[
+                r"Women.s\s+(?:Final\s+Four|Semifinals)",
+                r"Women.s\s+Semifinals\s+Qualif",
+            ],
+        ),
+        MarketMatchingRule(
+            column="elite_eight",
+            name_patterns=[
+                r"Women.s\s+(?:Elite\s+(?:Eight|8)|Quarter.?Finals?)",
+                r"Women.s\s+Round\s+of\s+8\s+Qualif",
+            ],
+        ),
+    ],
+    team_sort="championship_desc",
+    conference_split=False,
+    region_split=False,
+    trend_hours=72,
     max_teams=68,
     season_pattern="2026",
 )
@@ -814,6 +877,7 @@ LEAGUE_CONFIGS: dict[str, LeagueConfig] = {
         WNBA_CONFIG,
         MLS_CONFIG,
         NCAA_BASKETBALL_CONFIG,
+        WNCAA_BASKETBALL_CONFIG,
         NCAA_FOOTBALL_CONFIG,
         EPL_CONFIG,
         LA_LIGA_CONFIG,

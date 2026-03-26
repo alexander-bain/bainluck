@@ -459,6 +459,40 @@ class KalshiAPIService:
             len(all_events), page_count, dict(sorted(categories_seen.items())),
         )
 
+        # Backfill: for events with 0 nested markets (Kalshi sometimes omits
+        # them from the listing for large multivariate events), fetch markets
+        # separately via the /markets endpoint.
+        import asyncio
+        empty_events = [
+            e for e in all_events.values()
+            if not e.markets and e.category and "sport" in (e.category or "").lower()
+        ]
+        if empty_events:
+            logger.info(
+                "Backfilling markets for %d sports events with 0 nested markets",
+                len(empty_events),
+            )
+            backfilled = 0
+            for event in empty_events:
+                try:
+                    await asyncio.sleep(0.3)
+                    raw_markets, _ = await self.get_markets(
+                        status="open",
+                        event_ticker=event.event_ticker,
+                        limit=200,
+                    )
+                    if raw_markets:
+                        parsed = [self._parse_market(m) for m in raw_markets]
+                        event.markets = [m for m in parsed if m is not None]
+                        if event.markets:
+                            backfilled += 1
+                except Exception as e:
+                    logger.warning(
+                        "Failed to backfill markets for %s: %s",
+                        event.event_ticker, e,
+                    )
+            logger.info("Backfilled markets for %d events", backfilled)
+
         return list(all_events.values())
 
     def _parse_event(self, event_data: dict) -> Optional[KalshiEvent]:

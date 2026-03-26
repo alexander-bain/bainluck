@@ -318,6 +318,119 @@ NCAA_2026_BRACKET: dict[str, dict] = {
 }
 
 
+WNCAA_2026_BRACKET: dict[str, dict] = {
+    # Region 1
+    "UConn Huskies": {"region": "Region 1", "seed": 1},
+    "Vanderbilt Commodores": {"region": "Region 1", "seed": 2},
+    "Ohio State Buckeyes": {"region": "Region 1", "seed": 3},
+    "North Carolina Tar Heels": {"region": "Region 1", "seed": 4},
+    "Maryland Terrapins": {"region": "Region 1", "seed": 5},
+    "Notre Dame Fighting Irish": {"region": "Region 1", "seed": 6},
+    "Illinois Fighting Illini": {"region": "Region 1", "seed": 7},
+    "Iowa State Cyclones": {"region": "Region 1", "seed": 8},
+    "Syracuse Orange": {"region": "Region 1", "seed": 9},
+    "Colorado Buffaloes": {"region": "Region 1", "seed": 10},
+    "Fairfield Stags": {"region": "Region 1", "seed": 11},
+    "Murray State Racers": {"region": "Region 1", "seed": 12},
+    "Western Illinois Leathernecks": {"region": "Region 1", "seed": 13},
+    "Howard Bison": {"region": "Region 1", "seed": 14},
+    "High Point Panthers": {"region": "Region 1", "seed": 15},
+    "UTSA Roadrunners": {"region": "Region 1", "seed": 16},
+    # Region 2
+    "UCLA Bruins": {"region": "Region 2", "seed": 1},
+    "LSU Tigers": {"region": "Region 2", "seed": 2},
+    "Duke Blue Devils": {"region": "Region 2", "seed": 3},
+    "Minnesota Golden Gophers": {"region": "Region 2", "seed": 4},
+    "Ole Miss Rebels": {"region": "Region 2", "seed": 5},
+    "Baylor Bears": {"region": "Region 2", "seed": 6},
+    "Texas Tech Lady Raiders": {"region": "Region 2", "seed": 7},
+    "Oklahoma State Cowgirls": {"region": "Region 2", "seed": 8},
+    "Princeton Tigers": {"region": "Region 2", "seed": 9},
+    "Villanova Wildcats": {"region": "Region 2", "seed": 10},
+    "Nebraska Cornhuskers": {"region": "Region 2", "seed": 11},
+    "Gonzaga Bulldogs": {"region": "Region 2", "seed": 12},
+    "Green Bay Phoenix": {"region": "Region 2", "seed": 13},
+    "Charleston Cougars": {"region": "Region 2", "seed": 14},
+    "Jacksonville Dolphins": {"region": "Region 2", "seed": 15},
+    "California Baptist Lancers": {"region": "Region 2", "seed": 16},
+    # Region 3
+    "Texas Longhorns": {"region": "Region 3", "seed": 1},
+    "Michigan Wolverines": {"region": "Region 3", "seed": 2},
+    "Louisville Cardinals": {"region": "Region 3", "seed": 3},
+    "West Virginia Mountaineers": {"region": "Region 3", "seed": 4},
+    "Kentucky Wildcats": {"region": "Region 3", "seed": 5},
+    "Alabama Crimson Tide": {"region": "Region 3", "seed": 6},
+    "NC State Wolfpack": {"region": "Region 3", "seed": 7},
+    "Oregon Ducks": {"region": "Region 3", "seed": 8},
+    "Virginia Tech Hokies": {"region": "Region 3", "seed": 9},
+    "Tennessee Lady Volunteers": {"region": "Region 3", "seed": 10},
+    "Rhode Island Rams": {"region": "Region 3", "seed": 11},
+    "James Madison Dukes": {"region": "Region 3", "seed": 12},
+    "Miami (OH) RedHawks": {"region": "Region 3", "seed": 13},
+    "Vermont Catamounts": {"region": "Region 3", "seed": 14},
+    "Holy Cross Crusaders": {"region": "Region 3", "seed": 15},
+    "Missouri State Lady Bears": {"region": "Region 3", "seed": 16},
+    # Region 4
+    "South Carolina Gamecocks": {"region": "Region 4", "seed": 1},
+    "Iowa Hawkeyes": {"region": "Region 4", "seed": 2},
+    "TCU Horned Frogs": {"region": "Region 4", "seed": 3},
+    "Oklahoma Sooners": {"region": "Region 4", "seed": 4},
+    "Michigan State Spartans": {"region": "Region 4", "seed": 5},
+    "Washington Huskies": {"region": "Region 4", "seed": 6},
+    "Georgia Lady Bulldogs": {"region": "Region 4", "seed": 7},
+    "Clemson Tigers": {"region": "Region 4", "seed": 8},
+    "USC Trojans": {"region": "Region 4", "seed": 9},
+    "Virginia Cavaliers": {"region": "Region 4", "seed": 10},
+    "South Dakota State Jackrabbits": {"region": "Region 4", "seed": 11},
+    "Colorado State Rams": {"region": "Region 4", "seed": 12},
+    "Idaho Vandals": {"region": "Region 4", "seed": 13},
+    "UC San Diego Tritons": {"region": "Region 4", "seed": 14},
+    "Fairleigh Dickinson Knights": {"region": "Region 4", "seed": 15},
+    "Southern Jaguars": {"region": "Region 4", "seed": 16},
+    # Common name aliases for matching
+    "Oklahoma St.": {"region": "Region 2", "seed": 8},
+    "Oklahoma State": {"region": "Region 2", "seed": 8},
+    "Michigan St.": {"region": "Region 4", "seed": 5},
+    "Michigan State": {"region": "Region 4", "seed": 5},
+    "NC State": {"region": "Region 3", "seed": 7},
+    "Virginia Tech": {"region": "Region 3", "seed": 9},
+    "Iowa St.": {"region": "Region 1", "seed": 8},
+    "Iowa State": {"region": "Region 1", "seed": 8},
+    "Colorado St.": {"region": "Region 4", "seed": 12},
+    "Murray St.": {"region": "Region 1", "seed": 12},
+    "Tennessee": {"region": "Region 3", "seed": 10},
+    "South Carolina": {"region": "Region 4", "seed": 1},
+    "Cal Baptist": {"region": "Region 2", "seed": 16},
+    "Green Bay": {"region": "Region 2", "seed": 13},
+}
+
+
+def _lookup_wncaa_bracket(team_name: str) -> dict | None:
+    """Look up Women's NCAA tournament region/seed for a team."""
+    if team_name in WNCAA_2026_BRACKET:
+        return WNCAA_2026_BRACKET[team_name]
+
+    def _expand(n: str) -> str:
+        n = re.sub(r"\bSt\.?\b", "State", n)
+        n = re.sub(r"\bCal\b", "California", n)
+        return n.strip()
+
+    expanded = _expand(team_name)
+    if expanded != team_name and expanded in WNCAA_2026_BRACKET:
+        return WNCAA_2026_BRACKET[expanded]
+
+    name_lower = _expand(team_name).lower()
+    for bracket_name, info in WNCAA_2026_BRACKET.items():
+        bn = bracket_name.lower()
+        if bn in name_lower or name_lower in bn:
+            return info
+        a_words = set(name_lower.split())
+        b_words = set(bn.split())
+        if len(a_words & b_words) >= 2:
+            return info
+    return None
+
+
 def _lookup_ncaa_bracket(team_name: str) -> dict | None:
     """Look up NCAA tournament region/seed for a team.
 
@@ -875,6 +988,12 @@ async def _get_team_metadata(
         # NCAA Tournament: look up region and seed from bracket data
         if league_slug == "ncaa-basketball" and team.name:
             bracket_info = _lookup_ncaa_bracket(team.name)
+            if bracket_info:
+                meta["region"] = bracket_info["region"]
+                if not meta["seed"]:
+                    meta["seed"] = bracket_info["seed"]
+        elif league_slug == "ncaa-women-basketball" and team.name:
+            bracket_info = _lookup_wncaa_bracket(team.name)
             if bracket_info:
                 meta["region"] = bracket_info["region"]
                 if not meta["seed"]:
@@ -1746,7 +1865,7 @@ async def get_playoff_grid(
     _WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
     _MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
     is_mens_league = config.slug in ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
-    is_womens_league = config.slug in ("wnba",)
+    is_womens_league = config.slug in ("wnba", "ncaa-women-basketball")
 
     markets = []
     for market in all_markets:
@@ -2115,6 +2234,11 @@ async def get_playoff_grid(
             if bracket_info:
                 region = bracket_info["region"]
                 seed = seed or bracket_info["seed"]
+        elif league_slug == "ncaa-women-basketball" and not region:
+            bracket_info = _lookup_wncaa_bracket(display_name)
+            if bracket_info:
+                region = bracket_info["region"]
+                seed = seed or bracket_info["seed"]
 
         # Fallback conference lookup for teams without a Team model match
         conference = meta.get("conference")
@@ -2202,6 +2326,31 @@ async def get_playoff_grid(
             return False
 
         teams = [t for t in teams if _in_bracket(t)]
+        filtered_count = before_count - len(teams)
+        if filtered_count:
+            logger.info(
+                "Filtered %d non-bracket teams for %s (kept %d)",
+                filtered_count, league_slug, len(teams),
+            )
+
+    if league_slug == "ncaa-women-basketball" and WNCAA_2026_BRACKET:
+        before_count = len(teams)
+        bracket_norms = {_normalize_team_name(t) for t in WNCAA_2026_BRACKET}
+
+        def _in_wbracket(team_row: dict) -> bool:
+            norm = _normalize_team_name(team_row["name"])
+            if norm in bracket_norms:
+                return True
+            for bn in bracket_norms:
+                if bn in norm or norm in bn:
+                    return True
+                tw = set(norm.split())
+                bw = set(bn.split())
+                if len(tw & bw) >= 2:
+                    return True
+            return False
+
+        teams = [t for t in teams if _in_wbracket(t)]
         filtered_count = before_count - len(teams)
         if filtered_count:
             logger.info(
@@ -2477,7 +2626,7 @@ async def get_team_progression_for_event(
     _WOMENS_RE = re.compile(r"\bWomen.?s\b|\bWNCAA\b|\bWNCAAB\b|\(W\)", re.IGNORECASE)
     _MENS_RE = re.compile(r"\bMen.?s\b", re.IGNORECASE)
     is_mens_league = config.slug in ("ncaa-basketball", "ncaa-football", "nba", "nhl", "nfl", "mlb")
-    is_womens_league = config.slug in ("wnba",)
+    is_womens_league = config.slug in ("wnba", "ncaa-women-basketball")
 
     markets = []
     for market in all_markets:

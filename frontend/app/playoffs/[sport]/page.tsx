@@ -41,6 +41,7 @@ const LEAGUES: LeagueInfo[] = [
   { slug: "nhl", label: "NHL", emoji: "\u{1F3D2}", group: "us", conferences: ["Eastern", "Western"] },
   { slug: "wnba", label: "WNBA", emoji: "\u{1F3C0}", group: "us" },
   { slug: "ncaa-basketball", label: "NCAAB", emoji: "\u{1F3C0}", group: "college" },
+  { slug: "ncaa-women-basketball", label: "WNCAAB", emoji: "\u{1F3C0}", group: "college" },
   { slug: "ncaa-football", label: "NCAAF", emoji: "\u{1F3C8}", group: "college" },
   { slug: "epl", label: "EPL", emoji: "\u26BD", group: "soccer" },
   { slug: "la-liga", label: "La Liga", emoji: "\u26BD", group: "soccer" },
