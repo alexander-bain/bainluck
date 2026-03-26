@@ -462,3 +462,44 @@ def get_odds_api_task_breakdown(hours: int = 168) -> list:
         return results
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Database size history (for trended storage view)
+# ---------------------------------------------------------------------------
+
+DB_SIZE_HISTORY_PREFIX = "bainluck:db_size_history"
+
+
+def record_db_size(size_mb: float):
+    """Store a DB size reading keyed by date (one per day)."""
+    from datetime import datetime, timezone
+    r = get_redis_client()
+    if not r:
+        return
+    try:
+        day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        history_key = f"{DB_SIZE_HISTORY_PREFIX}:{day_key}"
+        r.set(history_key, str(round(size_mb, 1)), ex=86400 * 90)  # 90 day TTL
+    except Exception:
+        pass
+
+
+def get_db_size_history(days: int = 90) -> list:
+    """Get daily DB size readings for trending."""
+    from datetime import datetime, timezone, timedelta
+    r = get_redis_client()
+    if not r:
+        return []
+    try:
+        results = []
+        now = datetime.now(timezone.utc)
+        for i in range(days):
+            day = (now - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+            key = f"{DB_SIZE_HISTORY_PREFIX}:{day}"
+            val = r.get(key)
+            if val:
+                results.append({"date": day, "size_mb": float(val)})
+        return results
+    except Exception:
+        return []

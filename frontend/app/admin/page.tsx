@@ -131,6 +131,11 @@ interface CryptoInfo {
   pct_of_outcomes: number;
 }
 
+interface DbSizeTrendEntry {
+  date: string;
+  size_mb: number;
+}
+
 interface DatabaseHealth {
   active_events: number;
   live_events: number;
@@ -142,6 +147,7 @@ interface DatabaseHealth {
   plan: DatabasePlan;
   table_sizes?: TableSize[];
   crypto?: CryptoInfo;
+  size_trend?: DbSizeTrendEntry[];
 }
 
 interface DashboardData {
@@ -553,6 +559,33 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+      {/* Storage trend chart */}
+      {db.size_trend && db.size_trend.length > 1 && (
+        <div className="mt-3 border-t border-surface-border/50 pt-2">
+          <div className="text-micro text-text-muted uppercase tracking-wider mb-2">Storage Trend</div>
+          <div className="h-36">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={db.size_trend.map((d) => ({
+                  date: d.date.slice(5),
+                  size_gb: +(d.size_mb / 1024).toFixed(2),
+                }))}
+                margin={{ top: 5, right: 10, bottom: 5, left: 10 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#888" }} interval={Math.max(1, Math.floor(db.size_trend.length / 6))} />
+                <YAxis tick={{ fontSize: 9, fill: "#888" }} domain={[0, db.plan.storage_limit_gb]} tickFormatter={(v: number) => v + " GB"} />
+                <Tooltip
+                  contentStyle={{ background: "#1a1a2e", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
+                  formatter={(val: number) => [val.toFixed(2) + " GB", "Used"]}
+                />
+                <ReferenceLine y={db.plan.storage_limit_gb} stroke="#ef4444" strokeDasharray="4 2" label={{ value: "Limit", fill: "#ef4444", fontSize: 9, position: "right" }} />
+                <Line type="monotone" dataKey="size_gb" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         </div>
       )}

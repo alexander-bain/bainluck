@@ -6503,6 +6503,11 @@ async def operations_dashboard(
             "pct_of_outcomes": round(cr.crypto_outcomes / max(cr.total_outcomes, 1) * 100, 1),
         }
 
+        # Record DB size for trending and fetch history
+        from app.tasks.redis_state import record_db_size, get_db_size_history
+        record_db_size(db_size_mb)
+        db_size_trend = get_db_size_history(days=90)
+
         db_section = {
             "active_events": db_row.active_events,
             "live_events": db_row.live_events,
@@ -6513,6 +6518,7 @@ async def operations_dashboard(
             "days_until_full": days_until_full,
             "table_sizes": table_sizes,
             "crypto": crypto_info,
+            "size_trend": db_size_trend,
             "plan": {
                 "name": "essential-1",
                 "storage_limit_gb": 10,
