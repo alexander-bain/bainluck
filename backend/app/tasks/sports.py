@@ -294,7 +294,15 @@ async def _discover_events():
 
                 try:
                     # Fetch odds for this sport
-                    events_data = await service.get_odds(sport_key)
+                    # QUOTA OPTIMIZATION: Discovery only needs h2h from primary US
+                    # books to detect new events. Full market/region coverage
+                    # happens in poll_all_odds when games are imminent.
+                    # This saves 5/6 of quota vs default (3 markets × 2 regions).
+                    events_data = await service.get_odds(
+                        sport_key,
+                        regions="us",
+                        markets="h2h",
+                    )
                     sports_polled += 1
 
                     # Record successful discovery timestamp in Redis

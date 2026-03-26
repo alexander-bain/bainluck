@@ -11,8 +11,8 @@ LAST_ODDS_HASH_KEY = "bainluck:last_odds_hash"
 # Polling intervals (in seconds)
 # Tiered approach based on game proximity (optimized for 5M calls/month)
 LIVE_POLL_INTERVAL = 32       # 32 seconds for live games (the main use case!)
-SOON_POLL_INTERVAL = 60       # 1 minute for games starting in 0-2 hours
-LATER_POLL_INTERVAL = 120     # 2 minutes for games starting in 2-6 hours
+SOON_POLL_INTERVAL = 120      # 2 minutes for games starting in 0-2 hours (was 60s)
+LATER_POLL_INTERVAL = 300     # 5 minutes for games starting in 2-6 hours (was 120s)
 
 # Adaptive polling thresholds (for when odds aren't changing)
 # When odds stay the same, gradually slow down to conserve API calls
@@ -50,10 +50,10 @@ MIN_HOURS_BEFORE_STALENESS_CHECK = 1.5  # Don't check staleness until match has 
 # Tier 1 (NBA, NFL, etc.) gets polled most frequently; tier 4 (minor leagues) least.
 # The beat schedule fires discover_events every 15 min, but per-sport Redis gating
 # inside the task skips sports that were polled too recently for their tier.
-DISCOVER_TIER1_INTERVAL = 900    # 15 min — highest user value, no change
-DISCOVER_TIER2_INTERVAL = 1800   # 30 min — still important, slight delay
-DISCOVER_TIER3_INTERVAL = 7200   # 2 hours — rarely surfaces in feed (-5 pts)
-DISCOVER_TIER4_INTERVAL = 14400  # 4 hours — almost never shown (-45 pts)
+DISCOVER_TIER1_INTERVAL = 1800   # 30 min — doubled from 15min to save quota
+DISCOVER_TIER2_INTERVAL = 3600   # 1 hour — doubled from 30min
+DISCOVER_TIER3_INTERVAL = 14400  # 4 hours — doubled from 2h
+DISCOVER_TIER4_INTERVAL = 28800  # 8 hours — doubled from 4h
 
 # Futures poll less frequently since they change slowly
 FUTURES_POLL_INTERVAL = 3600  # 1 hour default

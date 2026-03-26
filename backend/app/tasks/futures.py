@@ -165,7 +165,12 @@ async def _poll_futures_odds():
 
             for sport_key in sport_keys:
                 try:
-                    api_response = await service.get_futures_odds(sport_key)
+                    # QUOTA OPTIMIZATION: Use primary US books only for futures
+                    # (saves half the quota vs us,us2). Most futures data is
+                    # the same across US books.
+                    api_response = await service.get_futures_odds(
+                        sport_key, regions="us",
+                    )
                     markets_data = service._parse_futures(api_response, sport_key)
 
                     # Record quota from response headers
