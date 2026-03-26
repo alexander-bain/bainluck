@@ -6266,6 +6266,94 @@ async def operations_dashboard(
             for r in coverage_q.all()
         ]
 
+        # 2a-ii. Per-sport snapshot counts (proxy for API activity)
+        sport_activity_q = await db.execute(text("""
+            SELECT s.key AS sport_key,
+                   COUNT(*) AS snapshots_24h
+            FROM odds_snapshots os
+            JOIN events e ON os.event_id = e.id
+            JOIN sports s ON e.sport_id = s.id
+            WHERE os.captured_at >= NOW() - INTERVAL '24 hours'
+            GROUP BY s.key
+            ORDER BY COUNT(*) DESC
+        """))
+        sport_activity = {r.sport_key: r.snapshots_24h for r in sport_activity_q.all()}
+        # Attach to coverage rows
+        for row in source_coverage:
+            row["snapshots_24h"] = sport_activity.get(row["sport"], 0)
+
+        # 2a-iii. Trended coverage for top-tier sports (daily %)
+        # Look back 14 days + forward to all scheduled events
+        tier1_sports = [
+            'basketball_nba', 'americanfootball_nfl', 'icehockey_nhl',
+            'baseball_mlb', 'basketball_ncaab',
+        ]
+        trend_q = await db.execute(text("""
+            WITH daily_events AS (
+                SELECT
+                    DATE(e.commence_time) AS event_date,
+                    s.key AS sport_key,
+                    COUNT(*) AS total,
+                    COUNT(e.external_id) AS has_odds_api,
+                    COUNT(e.espn_id) AS has_espn,
+                    COUNT(e.statpal_fixture_id) AS has_statpal
+                FROM events e
+                JOIN sports s ON e.sport_id = s.id
+                WHERE s.key = ANY(:sports)
+                  AND e.commence_time >= NOW() - INTERVAL '14 days'
+                  AND e.commence_time <= NOW() + INTERVAL '30 days'
+                GROUP BY DATE(e.commence_time), s.key
+                HAVING COUNT(*) >= 1
+            )
+            SELECT * FROM daily_events
+            ORDER BY sport_key, event_date
+        """), {"sports": tier1_sports})
+        coverage_trend_raw = trend_q.all()
+
+        # Also get win_prob source coverage per day for past events
+        wp_trend_q = await db.execute(text("""
+            SELECT
+                DATE(e.commence_time) AS event_date,
+                s.key AS sport_key,
+                COUNT(DISTINCT e.id) AS total,
+                COUNT(DISTINCT CASE WHEN wp.source = 'espn' THEN e.id END) AS espn_wp,
+                COUNT(DISTINCT CASE WHEN wp.source = 'stat_model' THEN e.id END) AS model,
+                COUNT(DISTINCT CASE WHEN wp.source = 'kalshi' THEN e.id END) AS kalshi,
+                COUNT(DISTINCT CASE WHEN wp.source = 'polymarket' THEN e.id END) AS polymarket
+            FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            LEFT JOIN win_prob_snapshots wp ON wp.event_id = e.id
+            WHERE s.key = ANY(:sports)
+              AND e.commence_time >= NOW() - INTERVAL '14 days'
+              AND e.commence_time <= NOW()
+            GROUP BY DATE(e.commence_time), s.key
+        """), {"sports": tier1_sports})
+        wp_trend_raw = {
+            (r.event_date.isoformat(), r.sport_key): r
+            for r in wp_trend_q.all()
+        }
+
+        coverage_trend: list[dict] = []
+        for r in coverage_trend_raw:
+            entry: dict = {
+                "date": r.event_date.isoformat(),
+                "sport": r.sport_key,
+                "total": r.total,
+                "odds_api_pct": round(r.has_odds_api / r.total * 100) if r.total else 0,
+                "espn_pct": round(r.has_espn / r.total * 100) if r.total else 0,
+                "statpal_pct": round(r.has_statpal / r.total * 100) if r.total else 0,
+                "is_future": r.event_date > now.date(),
+            }
+            # Add win prob sources for past dates
+            wp_key = (r.event_date.isoformat(), r.sport_key)
+            if wp_key in wp_trend_raw:
+                wp = wp_trend_raw[wp_key]
+                entry["espn_wp_pct"] = round(wp.espn_wp / wp.total * 100) if wp.total else 0
+                entry["model_pct"] = round(wp.model / wp.total * 100) if wp.total else 0
+                entry["kalshi_pct"] = round(wp.kalshi / wp.total * 100) if wp.total else 0
+                entry["polymarket_pct"] = round(wp.polymarket / wp.total * 100) if wp.total else 0
+            coverage_trend.append(entry)
+
         # 2b. Futures-level source coverage (by sport category)
         futures_q = await db.execute(text("""
             SELECT
@@ -6295,6 +6383,7 @@ async def operations_dashboard(
         ]
     except Exception as e:
         source_coverage = [{"error": str(e)}]
+        coverage_trend = []
         futures_coverage = [{"error": str(e)}]
 
     # --- 3. Worker Task Metrics ---
@@ -6402,6 +6491,7 @@ async def operations_dashboard(
         "generated_at": now.isoformat(),
         "quota": quota_section,
         "source_coverage": source_coverage,
+        "coverage_trend": coverage_trend,
         "futures_coverage": futures_coverage,
         "worker": worker_section,
         "database": db_section,

@@ -71,6 +71,21 @@ interface SourceCoverage {
   mlb: number;
   kalshi: number;
   polymarket: number;
+  snapshots_24h: number;
+}
+
+interface CoverageTrendEntry {
+  date: string;
+  sport: string;
+  total: number;
+  odds_api_pct: number;
+  espn_pct: number;
+  statpal_pct: number;
+  espn_wp_pct?: number;
+  model_pct?: number;
+  kalshi_pct?: number;
+  polymarket_pct?: number;
+  is_future: boolean;
 }
 
 interface FuturesCoverage {
@@ -122,6 +137,7 @@ interface DashboardData {
     budget: QuotaBudget;
   };
   source_coverage: SourceCoverage[];
+  coverage_trend: CoverageTrendEntry[];
   futures_coverage: FuturesCoverage[];
   worker: {
     worker_status: string;
@@ -507,6 +523,123 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
   );
 }
 
+function CoverageTrendChart({ data }: { data: CoverageTrendEntry[] }) {
+  const [selectedSport, setSelectedSport] = useState<string | null>(null);
+
+  // Group by sport, pick sports with most data
+  const sportGroups = useMemo(() => {
+    const groups: Record<string, CoverageTrendEntry[]> = {};
+    for (const entry of data) {
+      if (!groups[entry.sport]) groups[entry.sport] = [];
+      groups[entry.sport].push(entry);
+    }
+    return groups;
+  }, [data]);
+
+  const sportNames = Object.keys(sportGroups).sort((a, b) =>
+    (sportGroups[b]?.length || 0) - (sportGroups[a]?.length || 0)
+  );
+
+  const activeSport = selectedSport || sportNames[0] || "";
+  const sportData = sportGroups[activeSport] || [];
+
+  const chartData = useMemo(() => {
+    return sportData.map((d) => ({
+      date: d.date.slice(5), // MM-DD
+      "Odds API": d.odds_api_pct,
+      ESPN: d.espn_pct,
+      StatPal: d.statpal_pct,
+      "ESPN WP": d.espn_wp_pct ?? null,
+      Model: d.model_pct ?? null,
+      Kalshi: d.kalshi_pct ?? null,
+      Polymarket: d.polymarket_pct ?? null,
+      isFuture: d.is_future,
+      events: d.total,
+    }));
+  }, [sportData]);
+
+  if (!data.length) return null;
+
+  const sportLabel = (s: string) => {
+    const parts = s.split("_");
+    return parts[parts.length - 1]?.toUpperCase() || s;
+  };
+
+  const sourceColors: Record<string, string> = {
+    "Odds API": "#3b82f6",
+    ESPN: "#f59e0b",
+    StatPal: "#8b5cf6",
+    "ESPN WP": "#22c55e",
+    Model: "#06b6d4",
+    Kalshi: "#ef4444",
+    Polymarket: "#ec4899",
+  };
+
+  // Find the index where future starts for reference line
+  const futureIdx = chartData.findIndex((d) => d.isFuture);
+
+  return (
+    <div className="bg-surface-card rounded-xl border border-surface-border p-4">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-sm font-semibold text-text-primary">Source Coverage Trend</h3>
+        <div className="flex gap-1 flex-wrap">
+          {sportNames.map((s) => (
+            <span
+              key={s}
+              onClick={() => setSelectedSport(s)}
+              className={
+                "text-micro px-2 py-0.5 rounded-full cursor-pointer select-none border " +
+                (s === activeSport
+                  ? "bg-accent-futures/20 border-accent-futures text-accent-futures"
+                  : "bg-surface-elevated border-surface-border text-text-muted hover:text-text-secondary")
+              }
+            >
+              {sportLabel(s)}
+            </span>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-text-muted mb-3">
+        % of {sportLabel(activeSport)} events covered by each source (past 14d + future scheduled).
+        Dashed region = future events (no win-prob data yet).
+      </p>
+      <div className="h-56">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#888" }} interval={Math.max(1, Math.floor(chartData.length / 10))} />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#888" }} tickFormatter={(v: number) => v + "%"} />
+            <Tooltip
+              contentStyle={{ background: "#1a1a2e", border: "1px solid #333", borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: "#aaa" }}
+              formatter={(val: any, name: string) => [val != null ? val + "%" : "n/a", name]}
+              labelFormatter={(label: string, payload: any[]) => {
+                const p = payload?.[0]?.payload;
+                return label + (p ? " (" + p.events + " events" + (p.isFuture ? ", future" : "") + ")" : "");
+              }}
+            />
+            {futureIdx > 0 && (
+              <ReferenceLine x={chartData[futureIdx]?.date} stroke="#666" strokeDasharray="4 2" label="" />
+            )}
+            {Object.entries(sourceColors).map(([name, color]) => (
+              <Line
+                key={name}
+                type="monotone"
+                dataKey={name}
+                stroke={color}
+                strokeWidth={1.5}
+                dot={false}
+                connectNulls={false}
+              />
+            ))}
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 function SourceCoverageTable({ data }: { data: SourceCoverage[] }) {
   const sources = [
     { key: "odds_api", label: "Odds API" },
@@ -530,6 +663,7 @@ function SourceCoverageTable({ data }: { data: SourceCoverage[] }) {
               <th className="text-left py-2 px-1 text-text-muted font-medium">Sport</th>
               <th className="text-right py-2 px-1 text-text-muted font-medium">Events</th>
               <th className="text-right py-2 px-1 text-text-muted font-medium">Live</th>
+              <th className="text-right py-2 px-1 text-text-muted font-medium" title="Odds snapshots written in last 24h">Snaps/24h</th>
               {sources.map((s) => (
                 <th key={s.key} className="text-right py-2 px-1 text-text-muted font-medium">{s.label}</th>
               ))}
@@ -542,6 +676,9 @@ function SourceCoverageTable({ data }: { data: SourceCoverage[] }) {
                 <td className="text-right py-1.5 px-1 text-text-primary font-medium">{row.total}</td>
                 <td className="text-right py-1.5 px-1">
                   {row.live > 0 && <span className="text-green-400 font-medium">{row.live}</span>}
+                </td>
+                <td className="text-right py-1.5 px-1 text-text-muted">
+                  {row.snapshots_24h > 0 ? formatNum(row.snapshots_24h) : "-"}
                 </td>
                 {sources.map((s) => (
                   <CoverageCell key={s.key} val={row[s.key]} total={row.total} />
@@ -804,6 +941,9 @@ export default function AdminDashboard() {
               />
             </div>
           </div>
+
+          {/* Source coverage trend */}
+          <CoverageTrendChart data={data.coverage_trend || []} />
 
           {/* Source coverage */}
           <SourceCoverageTable data={data.source_coverage} />
