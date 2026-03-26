@@ -6468,6 +6468,41 @@ async def operations_dashboard(
         except Exception:
             pass
 
+        # Table sizes
+        table_q = await db.execute(text("""
+            SELECT
+                tablename,
+                pg_total_relation_size('public.' || tablename) AS size_bytes
+            FROM pg_tables
+            WHERE schemaname = 'public'
+            ORDER BY pg_total_relation_size('public.' || tablename) DESC
+        """))
+        table_sizes = [
+            {"table": r.tablename, "size_mb": round(r.size_bytes / 1024 / 1024, 1)}
+            for r in table_q.all()
+        ]
+
+        # Crypto footprint
+        crypto_q = await db.execute(text("""
+            SELECT
+                (SELECT COUNT(*) FROM futures_markets
+                 WHERE llm_sport_category = 'crypto') AS crypto_markets,
+                (SELECT COUNT(*) FROM futures_odds_snapshots fos
+                 JOIN futures_markets fm ON fos.futures_market_id = fm.id
+                 WHERE fm.llm_sport_category = 'crypto') AS crypto_snapshots,
+                (SELECT COUNT(*) FROM futures_markets) AS total_markets,
+                (SELECT COUNT(*) FROM futures_odds_snapshots) AS total_snapshots
+        """))
+        cr = crypto_q.one()
+        crypto_info = {
+            "markets": cr.crypto_markets,
+            "snapshots": cr.crypto_snapshots,
+            "total_markets": cr.total_markets,
+            "total_snapshots": cr.total_snapshots,
+            "pct_of_markets": round(cr.crypto_markets / max(cr.total_markets, 1) * 100, 1),
+            "pct_of_snapshots": round(cr.crypto_snapshots / max(cr.total_snapshots, 1) * 100, 1),
+        }
+
         db_section = {
             "active_events": db_row.active_events,
             "live_events": db_row.live_events,
@@ -6476,6 +6511,8 @@ async def operations_dashboard(
             "db_size_mb": round(db_size_mb, 1),
             "growth_rate_mb_per_day": growth_rate_mb_per_day,
             "days_until_full": days_until_full,
+            "table_sizes": table_sizes,
+            "crypto": crypto_info,
             "plan": {
                 "name": "essential-1",
                 "storage_limit_gb": 10,

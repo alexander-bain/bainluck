@@ -117,6 +117,20 @@ interface DatabasePlan {
   connections_limit: number;
 }
 
+interface TableSize {
+  table: string;
+  size_mb: number;
+}
+
+interface CryptoInfo {
+  markets: number;
+  snapshots: number;
+  total_markets: number;
+  total_snapshots: number;
+  pct_of_markets: number;
+  pct_of_snapshots: number;
+}
+
 interface DatabaseHealth {
   active_events: number;
   live_events: number;
@@ -126,6 +140,8 @@ interface DatabaseHealth {
   growth_rate_mb_per_day: number | null;
   days_until_full: number | null;
   plan: DatabasePlan;
+  table_sizes?: TableSize[];
+  crypto?: CryptoInfo;
 }
 
 interface DashboardData {
@@ -391,7 +407,7 @@ function QuotaChart({ data, budget }: { data: DailyUsage[]; budget: QuotaBudget 
   );
 }
 
-function DailyBurnChart({ data, byTask }: { data: DailyUsage[]; byTask: DailyByTask[] }) {
+function DailyBurnChart({ data, byTask, dailyBudget }: { data: DailyUsage[]; byTask: DailyByTask[]; dailyBudget: number }) {
   // Merge daily usage with per-task breakdown for last 14 days
   const chartData = useMemo(() => {
     const recent = data.slice(-14);
@@ -452,6 +468,7 @@ function DailyBurnChart({ data, byTask }: { data: DailyUsage[]; byTask: DailyByT
             <Bar dataKey="poll_odds" stackId="a" fill="#3b82f6" radius={[0, 0, 0, 0]} />
             <Bar dataKey="discover_events" stackId="a" fill="#f59e0b" radius={[0, 0, 0, 0]} />
             <Bar dataKey="poll_futures" stackId="a" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
+            <ReferenceLine y={dailyBudget} stroke="#ef4444" strokeDasharray="6 3" label={{ value: "Budget", fill: "#ef4444", fontSize: 10, position: "right" }} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -519,6 +536,37 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
           <span className="text-text-secondary font-medium">{db.active_events.toLocaleString()}</span>
         </div>
       </div>
+      {/* Table sizes breakdown */}
+      {db.table_sizes && db.table_sizes.length > 0 && (
+        <div className="mt-3 border-t border-surface-border/50 pt-2">
+          <div className="text-micro text-text-muted uppercase tracking-wider mb-2">Storage by Table</div>
+          <div className="space-y-1">
+            {db.table_sizes.filter((t: TableSize) => t.size_mb > 10).map((t: TableSize) => {
+              const pctOfTotal = Math.round(t.size_mb / db.db_size_mb * 100);
+              return (
+                <div key={t.table} className="flex items-center gap-2 text-xs">
+                  <span className="font-mono text-text-secondary w-40 truncate">{t.table}</span>
+                  <div className="flex-1 h-2 bg-surface-border rounded-full overflow-hidden">
+                    <div className="h-full bg-accent-futures/60 rounded-full" style={{ width: pctOfTotal + "%" }} />
+                  </div>
+                  <span className="text-text-muted w-20 text-right">{t.size_mb >= 1024 ? (t.size_mb / 1024).toFixed(1) + " GB" : Math.round(t.size_mb) + " MB"} ({pctOfTotal}%)</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {/* Crypto footprint */}
+      {db.crypto && db.crypto.markets > 0 && (
+        <div className="mt-3 border-t border-surface-border/50 pt-2">
+          <div className="text-micro text-text-muted uppercase tracking-wider mb-1">Crypto Footprint</div>
+          <div className="text-xs text-text-secondary">
+            <span className="font-medium text-yellow-400">{db.crypto.pct_of_markets}%</span> of futures markets ({db.crypto.markets.toLocaleString()} / {db.crypto.total_markets.toLocaleString()})
+            {" · "}
+            <span className="font-medium text-yellow-400">{db.crypto.pct_of_snapshots}%</span> of futures snapshots ({db.crypto.snapshots.toLocaleString()} / {db.crypto.total_snapshots.toLocaleString()})
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -920,7 +968,7 @@ export default function AdminDashboard() {
           {/* Quota + burn charts */}
           <div className="grid md:grid-cols-2 gap-4">
             <QuotaChart data={data.quota.daily_usage} budget={data.quota.budget} />
-            <DailyBurnChart data={data.quota.daily_usage} byTask={data.quota.daily_by_task || []} />
+            <DailyBurnChart data={data.quota.daily_usage} byTask={data.quota.daily_by_task || []} dailyBudget={data.quota.budget.linear_daily_budget} />
           </div>
 
           {/* Database + coverage side by side */}

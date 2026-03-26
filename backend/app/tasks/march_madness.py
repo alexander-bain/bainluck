@@ -137,7 +137,7 @@ async def _sync_march_madness_bracket() -> dict:
     4. Update tournament fields
     5. Cache bracket in Redis
     """
-    from app.models.models import Event
+    from app.models.models import Event, Sport
 
     stats = {
         "mens": {"fetched": 0, "matched": 0, "updated": 0},
@@ -178,10 +178,12 @@ async def _sync_march_madness_bracket() -> dict:
 
             # Load our events for the tournament period
             result = await session.execute(
-                select(Event).where(
+                select(Event)
+                .join(Sport, Event.sport_id == Sport.id)
+                .where(
                     and_(
-                        Event.sport_key.like(f"%ncaa%")
-                        | Event.sport_key.like(f"%{sport_key}%"),
+                        Sport.key.like(f"%ncaa%")
+                        | Sport.key.like(f"%{sport_key}%"),
                         Event.commence_time
                         >= _TOURNAMENT_START - timedelta(days=1),
                         Event.commence_time <= _TOURNAMENT_END + timedelta(days=1),
