@@ -6488,7 +6488,8 @@ async def operations_dashboard(
                 (SELECT COUNT(*) FROM futures_markets
                  WHERE llm_sport_category = 'crypto') AS crypto_markets,
                 (SELECT COUNT(*) FROM futures_odds_snapshots fos
-                 JOIN futures_markets fm ON fos.futures_market_id = fm.id
+                 JOIN futures_outcomes fo ON fos.outcome_id = fo.id
+                 JOIN futures_markets fm ON fo.market_id = fm.id
                  WHERE fm.llm_sport_category = 'crypto') AS crypto_snapshots,
                 (SELECT COUNT(*) FROM futures_markets) AS total_markets,
                 (SELECT COUNT(*) FROM futures_odds_snapshots) AS total_snapshots
