@@ -147,6 +147,8 @@ struct EventDetailView: View {
                                      awayTeamLogo: event.awayTeamData?.logoSmall,
                                      homeTeamAbbrev: event.homeTeamData?.abbreviation,
                                      awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                                     refreshCountdown: refreshCountdown,
+                                     refreshInterval: refreshInterval,
                                      selectedPlayPoint: $selectedPlayPoint,
                                      preloadedHistory: vm.history)
                         if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {
@@ -175,7 +177,9 @@ struct EventDetailView: View {
                             commenceTime: event.commenceTime,
                             eventStatus: event.status,
                             homeTeamColor: teamColors(event).home,
-                            awayTeamColor: teamColors(event).away
+                            awayTeamColor: teamColors(event).away,
+                            homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                            awayTeamAbbrev: event.awayTeamData?.abbreviation
                         )
                     }
                     LineMovementView(eventId: event.id,

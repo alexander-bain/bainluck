@@ -13,6 +13,15 @@ struct ScoreDifferentialChartView: View {
     var eventStatus: String?
     var homeTeamColor: Color?
     var awayTeamColor: Color?
+    var homeTeamAbbrev: String?
+    var awayTeamAbbrev: String?
+
+    private var homeShort: String {
+        homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
+    }
+    private var awayShort: String {
+        awayTeamAbbrev ?? awayTeam.split(separator: " ").last.map(String.init) ?? "Away"
+    }
 
     private var isGameStarted: Bool {
         eventStatus == "live" || eventStatus == "completed" || eventStatus == "closed"
@@ -35,8 +44,29 @@ struct ScoreDifferentialChartView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.primary)
 
-                chartView(dataPoints: dataPoints)
-                    .frame(height: 160)
+                HStack(spacing: 0) {
+                    // Vertical team labels: home on top (positive), away on bottom (negative)
+                    VStack {
+                        Text(homeShort.uppercased())
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(homeTeamColor ?? .blue)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .rotationEffect(.degrees(-90))
+                        Spacer()
+                        Text(awayShort.uppercased())
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(awayTeamColor ?? .red)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 22)
+                    .padding(.vertical, 8)
+
+                    chartView(dataPoints: dataPoints)
+                }
+                .frame(height: 160)
 
                 // Legend
                 HStack(spacing: 12) {

@@ -94,6 +94,10 @@ struct OddsChartView: View {
     var awayTeamLogo: String?
     var homeTeamAbbrev: String?
     var awayTeamAbbrev: String?
+    /// Countdown seconds until next data refresh (0 = just refreshed)
+    var refreshCountdown: Int = 0
+    /// Total refresh interval in seconds
+    var refreshInterval: Int = 30
     /// Binding to expose the selected game play point (for GamePlayCardView)
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
@@ -132,6 +136,7 @@ struct OddsChartView: View {
          homeTeamName: String? = nil, awayTeamName: String? = nil,
          homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
+         refreshCountdown: Int = 0, refreshInterval: Int = 30,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil) {
         self.eventId = eventId
@@ -144,6 +149,8 @@ struct OddsChartView: View {
         self.awayTeamLogo = awayTeamLogo
         self.homeTeamAbbrev = homeTeamAbbrev
         self.awayTeamAbbrev = awayTeamAbbrev
+        self.refreshCountdown = refreshCountdown
+        self.refreshInterval = refreshInterval
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
@@ -170,6 +177,10 @@ struct OddsChartView: View {
                 Spacer()
                 if showPicker {
                     timeRangePicker
+                }
+                // Refresh countdown ring
+                if status == "live" || status == "scheduled" {
+                    refreshCountdownRing
                 }
                 Button {
                     isFullscreen = true
@@ -316,6 +327,11 @@ struct OddsChartView: View {
             .navigationTitle("Win Probability")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if status == "live" || status == "scheduled" {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        refreshCountdownRing
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { isFullscreen = false } label: {
                         Image(systemName: "xmark")
@@ -348,6 +364,27 @@ struct OddsChartView: View {
         }
         .clipShape(Capsule())
         .overlay(Capsule().stroke(Color.secondary.opacity(0.2)))
+    }
+
+    // MARK: - Refresh Countdown Ring
+
+    private var refreshCountdownRing: some View {
+        let total = max(refreshInterval, 1)
+        let progress = Double(total - refreshCountdown) / Double(total)
+        let ringColor: Color = status == "live" ? Color(hex: "#10B981") : .secondary
+
+        return ZStack {
+            Circle()
+                .stroke(Color.secondary.opacity(0.15), lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text("\(refreshCountdown)")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 22, height: 22)
     }
 
     // MARK: - Data Filtering
@@ -480,12 +517,20 @@ struct OddsChartView: View {
                 }
             }
 
-            // Period marker lines drawn AFTER data so labels render on top
+            // Period marker vertical lines (labels rendered via chartOverlay below)
             ForEach(visibleMarkers) { marker in
                 RuleMark(x: .value("Period", marker.date))
                     .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
                     .foregroundStyle(.secondary.opacity(0.5))
-                    .annotation(position: .top, alignment: .leading, spacing: 0) {
+            }
+        }
+        .chartYScale(domain: yMin...yMax)
+        .chartXScale(domain: xAxisDomain(for: dataPoints))
+        // Period marker labels positioned inside chart via overlay
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                ForEach(visibleMarkers) { marker in
+                    if let xPos = proxy.position(forX: marker.date) {
                         Text(marker.label)
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(.primary.opacity(0.7))
@@ -493,11 +538,11 @@ struct OddsChartView: View {
                             .padding(.vertical, 2)
                             .background(Color.cardBackground.opacity(0.9))
                             .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .position(x: xPos + 16, y: 12)
                     }
+                }
             }
         }
-        .chartYScale(domain: yMin...yMax)
-        .chartXScale(domain: xAxisDomain(for: dataPoints))
         .chartYAxis {
             AxisMarks(position: .leading, values: yTicks) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
