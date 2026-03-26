@@ -190,20 +190,56 @@ NCAA_2026_BRACKET: dict[str, dict] = {
     "Tennessee State Tigers": {"region": "Midwest", "seed": 15},
     "Howard Bison": {"region": "Midwest", "seed": 16},
     "UMBC Retrievers": {"region": "Midwest", "seed": 16},
+    # Aliases for common name variations in market data
+    "Michigan St Spartans": {"region": "East", "seed": 3},
+    "North Carolina St.": {"region": "West", "seed": 11},
+    "NC State": {"region": "West", "seed": 11},
+    "Kennesaw St Owls": {"region": "West", "seed": 14},
+    "Kennesaw State": {"region": "West", "seed": 14},
+    "Wright St Raiders": {"region": "Midwest", "seed": 14},
+    "North Dakota St Bison": {"region": "East", "seed": 14},
+    "Cal Baptist Lancers": {"region": "East", "seed": 13},
+    "Tennessee St Tigers": {"region": "Midwest", "seed": 15},
+    "Prairie View Panthers": {"region": "South", "seed": 16},
+    "LIU Sharks": {"region": "West", "seed": 16},
+    "Michigan St": {"region": "East", "seed": 3},
+    "St Johns Red Storm": {"region": "East", "seed": 5},
+    "St. Johns Red Storm": {"region": "East", "seed": 5},
+    "Saint Marys Gaels": {"region": "South", "seed": 7},
+    "Hawaii Rainbow Warriors": {"region": "West", "seed": 13},
 }
 
 
 def _lookup_ncaa_bracket(team_name: str) -> dict | None:
     """Look up NCAA tournament region/seed for a team.
 
-    Tries exact match first, then substring containment.
+    Tries exact match first, then normalized matching with common abbreviation
+    expansion (St → State, Cal → California).
     """
     if team_name in NCAA_2026_BRACKET:
         return NCAA_2026_BRACKET[team_name]
+
+    # Normalize: expand abbreviations for matching
+    def _expand(n: str) -> str:
+        n = re.sub(r"\bSt\.?\b", "State", n)
+        n = re.sub(r"\bCal\b", "California", n)
+        n = re.sub(r"\bN\.?\s*C\.?\s+State\b", "NC State", n, flags=re.I)
+        return n.strip()
+
+    expanded = _expand(team_name)
+    if expanded != team_name and expanded in NCAA_2026_BRACKET:
+        return NCAA_2026_BRACKET[expanded]
+
     # Substring match
-    name_lower = team_name.lower()
+    name_lower = _expand(team_name).lower()
     for bracket_name, info in NCAA_2026_BRACKET.items():
-        if bracket_name.lower() in name_lower or name_lower in bracket_name.lower():
+        bn = bracket_name.lower()
+        if bn in name_lower or name_lower in bn:
+            return info
+        # Word overlap: 2+ shared words
+        a_words = set(name_lower.split())
+        b_words = set(bn.split())
+        if len(a_words & b_words) >= 2:
             return info
     return None
 
@@ -1963,6 +1999,15 @@ async def get_playoff_grid(
         if not cells:
             continue
 
+        # Fallback: try bracket lookup on display_name if meta didn't have region
+        region = meta.get("region")
+        seed = meta.get("seed")
+        if league_slug == "ncaa-basketball" and not region:
+            bracket_info = _lookup_ncaa_bracket(display_name)
+            if bracket_info:
+                region = bracket_info["region"]
+                seed = seed or bracket_info["seed"]
+
         team_row = {
             "name": display_name,
             "short_name": meta.get("short_name") or display_name,
@@ -1973,8 +2018,8 @@ async def get_playoff_grid(
             "record": meta.get("record"),
             "conference": meta.get("conference"),
             "division": meta.get("division"),
-            "region": meta.get("region"),
-            "seed": meta.get("seed"),
+            "region": region,
+            "seed": seed,
             "cells": cells,
         }
         teams.append(team_row)
