@@ -124,11 +124,11 @@ interface TableSize {
 
 interface CryptoInfo {
   markets: number;
-  snapshots: number;
+  outcomes: number;
   total_markets: number;
-  total_snapshots: number;
+  total_outcomes: number;
   pct_of_markets: number;
-  pct_of_snapshots: number;
+  pct_of_outcomes: number;
 }
 
 interface DatabaseHealth {
@@ -563,7 +563,7 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
           <div className="text-xs text-text-secondary">
             <span className="font-medium text-yellow-400">{db.crypto.pct_of_markets}%</span> of futures markets ({db.crypto.markets.toLocaleString()} / {db.crypto.total_markets.toLocaleString()})
             {" · "}
-            <span className="font-medium text-yellow-400">{db.crypto.pct_of_snapshots}%</span> of futures snapshots ({db.crypto.snapshots.toLocaleString()} / {db.crypto.total_snapshots.toLocaleString()})
+            <span className="font-medium text-yellow-400">{db.crypto.pct_of_outcomes}%</span> of futures outcomes ({db.crypto.outcomes.toLocaleString()} / {db.crypto.total_outcomes.toLocaleString()})
           </div>
         </div>
       )}

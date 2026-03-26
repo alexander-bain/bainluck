@@ -6482,26 +6482,25 @@ async def operations_dashboard(
             for r in table_q.all()
         ]
 
-        # Crypto footprint
+        # Crypto footprint (markets + outcomes only, skip snapshot join which is too slow)
         crypto_q = await db.execute(text("""
             SELECT
                 (SELECT COUNT(*) FROM futures_markets
                  WHERE llm_sport_category = 'crypto') AS crypto_markets,
-                (SELECT COUNT(*) FROM futures_odds_snapshots fos
-                 JOIN futures_outcomes fo ON fos.outcome_id = fo.id
+                (SELECT COUNT(*) FROM futures_outcomes fo
                  JOIN futures_markets fm ON fo.market_id = fm.id
-                 WHERE fm.llm_sport_category = 'crypto') AS crypto_snapshots,
+                 WHERE fm.llm_sport_category = 'crypto') AS crypto_outcomes,
                 (SELECT COUNT(*) FROM futures_markets) AS total_markets,
-                (SELECT COUNT(*) FROM futures_odds_snapshots) AS total_snapshots
+                (SELECT COUNT(*) FROM futures_outcomes) AS total_outcomes
         """))
         cr = crypto_q.one()
         crypto_info = {
             "markets": cr.crypto_markets,
-            "snapshots": cr.crypto_snapshots,
+            "outcomes": cr.crypto_outcomes,
             "total_markets": cr.total_markets,
-            "total_snapshots": cr.total_snapshots,
+            "total_outcomes": cr.total_outcomes,
             "pct_of_markets": round(cr.crypto_markets / max(cr.total_markets, 1) * 100, 1),
-            "pct_of_snapshots": round(cr.crypto_snapshots / max(cr.total_snapshots, 1) * 100, 1),
+            "pct_of_outcomes": round(cr.crypto_outcomes / max(cr.total_outcomes, 1) * 100, 1),
         }
 
         db_section = {
