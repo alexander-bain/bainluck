@@ -546,11 +546,24 @@ async def _match_prediction_markets(limit: int = 500):
                 teams_match = a_matches and b_matches
                 is_finished = linked_event.status in ("completed", "closed")
 
-                # Skip if teams match AND event is still active — correctly linked
-                if teams_match and not is_finished:
+                # Check if linked to an auto-created prediction market event
+                # (external_id starts with "pm_"). These should be re-linked to
+                # real Odds API events when available.
+                is_auto_created = (
+                    linked_event.external_id
+                    and str(linked_event.external_id).startswith("pm_")
+                )
+
+                # Skip if teams match AND event is still active AND not auto-created
+                if teams_match and not is_finished and not is_auto_created:
                     continue
 
-                # Need to re-link: either teams don't match or event is finished
+                # Need to re-link: teams don't match, event finished, or auto-created
+                reason = (
+                    "auto_created" if is_auto_created
+                    else "mislinked" if not teams_match
+                    else "completed"
+                )
                 ticker_game_date = extract_game_date_from_ticker(market.external_id) if market.source == "kalshi" else None
 
                 better_match = await _find_matching_event(
@@ -561,14 +574,13 @@ async def _match_prediction_markets(limit: int = 500):
                 if better_match and better_match["event_id"] != linked_event.id:
                     logger.info(
                         "Re-linking %s '%s' from %s event %d (%s vs %s) → event %d (%s vs %s)",
-                        market.source, market.name,
-                        "mislinked" if not teams_match else "completed",
+                        market.source, market.name, reason,
                         linked_event.id, linked_event.home_team_name, linked_event.away_team_name,
                         better_match["event_id"],
                         better_match["home_team"], better_match["away_team"],
                     )
-                    # Delete orphaned snapshots from the old (wrong) event
-                    if not teams_match:
+                    # Move snapshots from auto-created event to real event
+                    if is_auto_created or not teams_match:
                         del_result = await session.execute(
                             delete(WinProbSnapshot).where(
                                 WinProbSnapshot.event_id == linked_event.id,
@@ -577,10 +589,16 @@ async def _match_prediction_markets(limit: int = 500):
                         )
                         stats["orphaned_snapshots_deleted"] += del_result.rowcount
                     market.event_id = better_match["event_id"]
-                    if not teams_match:
+                    if is_auto_created:
+                        stats["funnel"].setdefault("auto_created_relinked", 0)
+                        stats["funnel"]["auto_created_relinked"] += 1
+                    elif not teams_match:
                         stats["funnel"]["mislink_fixed"] += 1
                     else:
                         stats["funnel"]["stale_relinked"] += 1
+                elif is_auto_created:
+                    # Auto-created but no better match — keep as-is for now
+                    pass
                 elif not teams_match:
                     # Teams don't match and no better event found — unlink to prevent wrong data
                     logger.info(
@@ -1093,6 +1111,23 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         logger.debug(
             "Cannot auto-create event for '%s' — no sport key determinable",
             market.name,
+        )
+        return None
+
+    # NEVER auto-create events for major sports covered by The Odds API.
+    # These sports always have events from the Odds API; auto-creating from
+    # prediction markets causes duplicates with wrong commence_times
+    # (Kalshi uses market resolution date, not game date).
+    _ODDS_API_COVERED_PREFIXES = (
+        "basketball_nba", "basketball_ncaab", "basketball_wnba",
+        "americanfootball_nfl", "americanfootball_ncaaf",
+        "baseball_mlb", "icehockey_nhl",
+        "soccer_usa_mls",
+    )
+    if any(sport_key.startswith(prefix) for prefix in _ODDS_API_COVERED_PREFIXES):
+        logger.debug(
+            "Skipping auto-create for '%s' — sport %s is covered by The Odds API",
+            market.name, sport_key,
         )
         return None
 

@@ -11,8 +11,8 @@ LAST_ODDS_HASH_KEY = "bainluck:last_odds_hash"
 # Polling intervals (in seconds)
 # Tiered approach based on game proximity (optimized for 5M calls/month)
 LIVE_POLL_INTERVAL = 32       # 32 seconds for live games (the main use case!)
-SOON_POLL_INTERVAL = 120      # 2 minutes for games starting in 0-2 hours (was 60s)
-LATER_POLL_INTERVAL = 300     # 5 minutes for games starting in 2-6 hours (was 120s)
+SOON_POLL_INTERVAL = 300      # 5 minutes for games starting in 0-1 hours
+LATER_POLL_INTERVAL = 3600    # 1 hour for games starting in 1-6 hours
 
 # Adaptive polling thresholds (for when odds aren't changing)
 # When odds stay the same, gradually slow down to conserve API calls
