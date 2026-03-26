@@ -75,6 +75,7 @@ struct EventDetailView: View {
     @State private var countdownText: String?
     @State private var countdownTimer: Timer?
     @State private var selectedPlayPoint: GamePlayPoint?
+    @State private var showSources = false
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     init(eventId: Int) {
@@ -150,10 +151,11 @@ struct EventDetailView: View {
                                 lastPoint: lastPlayPoint(event: event)
                             )
                         }
+                        // Sources toggle (bookmaker odds inside chart card)
+                        sourcesToggle(event)
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    if let ei = event.ei ?? event.pulse { eiSection(ei) }
                     LineMovementView(eventId: event.id,
                                      homeTeam: event.homeTeam,
                                      awayTeam: event.awayTeam,
@@ -171,7 +173,6 @@ struct EventDetailView: View {
                         preloadedData: vm.relatedFutures
                     )
                     espnSection(event)
-                    bookmakerSection(event)
                 }
                 .padding(.horizontal)
                 .padding(.bottom)
@@ -189,149 +190,73 @@ struct EventDetailView: View {
         return (away, home)
     }
 
-    // MARK: - Chart Header Bar
+    // MARK: - Chart Header Bar (v2: title + freshness)
 
     private func chartHeaderBar(_ event: EventDetail) -> some View {
-        let colors = teamColors(event)
-        let hasScore = (isLive || isFinished) && event.homeScore != nil && event.awayScore != nil
-        let homeShort = event.homeTeam.split(separator: " ").last.map(String.init) ?? event.homeTeam
-        let awayShort = event.awayTeam.split(separator: " ").last.map(String.init) ?? event.awayTeam
-        let homeCity = event.homeTeam.split(separator: " ").dropLast().joined(separator: " ")
-        let awayCity = event.awayTeam.split(separator: " ").dropLast().joined(separator: " ")
-
-        return HStack {
-            HStack(spacing: 16) {
-                // Away team
-                HStack(spacing: 8) {
-                    TeamLogoView(
-                        url: event.awayTeamData?.logoSmall,
-                        teamName: event.awayTeam,
-                        color: colors.away,
-                        size: 28
-                    )
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(awayCity.isEmpty ? awayShort : awayCity)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        if hasScore {
-                            Text("\(event.awayScore ?? 0)")
-                                .font(.title3)
-                                .fontWeight(.bold)
-                                .monospacedDigit()
-                        } else {
-                            Text(awayShort)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                        }
-                    }
+        HStack {
+            Text("Win Probability")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+            if isLive {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                    Text("Live")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.green)
                 }
-
-                // Status
-                if isLive {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 5, height: 5)
-                        Text("LIVE")
-                            .font(.caption2)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.green)
-                    }
-                } else if isFinished {
-                    Text("FINAL")
+            } else if isFinished {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(.secondary)
+                        .frame(width: 6, height: 6)
+                    Text("Final")
                         .font(.caption2)
                         .fontWeight(.medium)
                         .foregroundStyle(.secondary)
-                } else {
-                    Text(formatChartTime(event.commenceTime ?? ""))
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                }
-
-                // Home team
-                HStack(spacing: 8) {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text(homeCity.isEmpty ? homeShort : homeCity)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        if hasScore {
-                            Text("\(event.homeScore ?? 0)")
-                                .font(.title3)
-                                .fontWeight(.bold)
-                                .monospacedDigit()
-                        } else {
-                            Text(homeShort)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    TeamLogoView(
-                        url: event.homeTeamData?.logoSmall,
-                        teamName: event.homeTeam,
-                        color: colors.home,
-                        size: 28
-                    )
                 }
             }
-
             Spacer()
-
-            // Date + broadcast
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(formatChartDate(event.commenceTime ?? ""))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if let broadcast = event.espn?.broadcast {
-                    Text(broadcast)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
-    private func formatChartTime(_ dateString: String) -> String {
-        guard let date = dateString.asDate else { return "" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-        return formatter.string(from: date)
-    }
 
-    private func formatChartDate(_ dateString: String) -> String {
-        guard let date = dateString.asDate else { return "" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d, yyyy"
-        return formatter.string(from: date)
-    }
 
-    // MARK: - Hero Section
+    // MARK: - Hero Section (v2)
 
     private func heroSection(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
+        let hasScore = (isLive || isFinished) && event.homeScore != nil && event.awayScore != nil
 
         return VStack(spacing: 12) {
-            // Top row: sport + status + EI
-            HStack {
-                if let sport = event.sport {
-                    Text(sportDisplayName(for: sport))
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.white.opacity(0.7))
-                }
-                Spacer()
+            // Top meta row: status badge + broadcast + date
+            HStack(spacing: 8) {
                 heroStatusBadge(event)
                 Spacer()
-                if let ei = event.ei ?? event.pulse {
-                    EIBadgeView(ei: ei, size: .md)
+                if let broadcast = event.espn?.broadcast {
+                    HStack(spacing: 3) {
+                        Image(systemName: "tv")
+                            .font(.system(size: 8))
+                        Text(broadcast)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.white.opacity(0.6))
+                }
+                if let ct = event.commenceTime, let date = ct.asDate {
+                    Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.5))
                 }
             }
 
-            // Teams + score
+            // Center: logos flanking giant probabilities
             HStack(spacing: 0) {
-                // Away team
+                // Away team logo + score
                 VStack(spacing: 6) {
                     TeamLogoView(
                         url: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
@@ -340,53 +265,102 @@ struct EventDetailView: View {
                         size: logoSize
                     )
                     Text(event.awayTeam)
-                        .font(.caption)
+                        .font(.caption2)
                         .fontWeight(.semibold)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.white.opacity(0.8))
+                    if hasScore {
+                        Text("\(event.awayScore ?? 0)")
+                            .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(winnerColor(isAway: true, event: event))
+                    }
                     if let record = event.awayTeamData?.record {
-                        Text(record).font(.caption2).foregroundStyle(.white.opacity(0.5))
+                        Text(record).font(.caption2).foregroundStyle(.white.opacity(0.4))
                     }
                 }
                 .frame(maxWidth: .infinity)
 
-                // Score / vs
+                // Giant probabilities centered
                 VStack(spacing: 4) {
-                    if isLive || isFinished {
-                        HStack(spacing: 12) {
-                            Text("\(event.awayScore ?? 0)")
-                                .font(.system(size: scoreFontSize, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(winnerColor(isAway: true, event: event))
-                            Text("-")
-                                .font(.title2)
+                    if isFinished {
+                        let awayProb = event.openingOdds?.awayProbability ?? event.currentOdds?.awayProbability
+                        let homeProb = event.openingOdds?.homeProbability ?? event.currentOdds?.homeProbability
+                        if let ap = awayProb, let hp = homeProb {
+                            HStack(spacing: 8) {
+                                Text(formatProbability(ap))
+                                    .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.away)
+                                Text("\u{2013}")
+                                    .font(.title3)
+                                    .foregroundStyle(.white.opacity(0.3))
+                                Text(formatProbability(hp))
+                                    .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.home)
+                            }
+                            Text("Pre-game Odds")
+                                .font(.caption2)
                                 .foregroundStyle(.white.opacity(0.4))
-                            Text("\(event.homeScore ?? 0)")
-                                .font(.system(size: scoreFontSize, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(winnerColor(isAway: false, event: event))
                         }
-                        if let clock = event.espn?.gameClock, isLive {
-                            Text(clock).font(.caption2).foregroundStyle(.white.opacity(0.5))
+                    } else if isLive, let resolved = resolvedLiveProbability(event) {
+                        HStack(spacing: 8) {
+                            Text(formatProbability(resolved.away))
+                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(colors.away)
+                            Text("\u{2013}")
+                                .font(.title3)
+                                .foregroundStyle(.white.opacity(0.3))
+                            Text(formatProbability(resolved.home))
+                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(colors.home)
                         }
-                        if let period = event.espn?.period, isLive {
-                            Text(period).font(.caption2).foregroundStyle(.white.opacity(0.5))
+                        Text(resolved.label)
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.4))
+                    } else if let odds = event.currentOdds,
+                              let away = odds.awayProbability,
+                              let home = odds.homeProbability {
+                        HStack(spacing: 8) {
+                            Text(formatProbability(away))
+                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(colors.away)
+                            Text("\u{2013}")
+                                .font(.title3)
+                                .foregroundStyle(.white.opacity(0.3))
+                            Text(formatProbability(home))
+                                .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(colors.home)
                         }
+                        Text("Win Probability")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.4))
                     } else {
                         Text("vs")
                             .font(.title2)
                             .fontWeight(.medium)
                             .foregroundStyle(.white.opacity(0.4))
-                        if let ct = countdownText {
-                            Text("In \(ct)")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundStyle(.blue)
+                    }
+                    if let ct = countdownText, !isLive, !isFinished {
+                        Text("In \(ct)")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.blue)
+                    }
+                    // Opening odds below probability for live games
+                    if isLive,
+                       let opening = event.openingOdds,
+                       let awayOpen = opening.awayProbability,
+                       let homeOpen = opening.homeProbability {
+                        HStack(spacing: 4) {
+                            Text("Opened \(formatProbability(awayOpen)) \u{2013} \(formatProbability(homeOpen))")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.35))
                         }
                     }
                 }
                 .fixedSize(horizontal: true, vertical: false)
 
-                // Home team
+                // Home team logo + score
                 VStack(spacing: 6) {
                     TeamLogoView(
                         url: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
@@ -395,26 +369,30 @@ struct EventDetailView: View {
                         size: logoSize
                     )
                     Text(event.homeTeam)
-                        .font(.caption)
+                        .font(.caption2)
                         .fontWeight(.semibold)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.white.opacity(0.8))
+                    if hasScore {
+                        Text("\(event.homeScore ?? 0)")
+                            .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(winnerColor(isAway: false, event: event))
+                    }
                     if let record = event.homeTeamData?.record {
-                        Text(record).font(.caption2).foregroundStyle(.white.opacity(0.5))
+                        Text(record).font(.caption2).foregroundStyle(.white.opacity(0.4))
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
 
-            // Probability section
-            heroProbability(event, colors: colors)
+            // EI strip (compact, inline)
+            if let ei = event.ei ?? event.pulse {
+                EIBadgeView(ei: ei, size: .sm)
+            }
 
-            // Game context strip (broadcast, time, venue)
-            heroContextStrip(event)
-
-            // Data freshness strip
-            freshnessStrip(event)
+            // Divergence badge
+            divergenceBadge(event)
         }
         .padding()
         .background(
@@ -445,218 +423,6 @@ struct EventDetailView: View {
         }
     }
 
-    // MARK: - Hero Probability
-
-    /// For live games, cross-check current_odds against the latest valid history point.
-    /// If they diverge >5%, trust the history data (catches stale bookmaker issues).
-    /// Mirrors the web frontend logic in events/[id]/page.tsx.
-    private func resolvedLiveProbability(_ event: EventDetail) -> (away: Double, home: Double, label: String)? {
-        var awayProb = event.currentOdds?.awayProbability
-        var homeProb = event.currentOdds?.homeProbability
-        var label = "Live Win Probability"
-
-        if let historyPoints = vm.history?.history,
-           let latestValid = historyPoints.last(where: { $0.homeProbability != nil }) {
-            let historyHome = latestValid.homeProbability!
-            // If current odds are missing OR diverge >5% from history, trust history
-            if homeProb == nil || abs(historyHome - (homeProb ?? 0)) > 0.05 {
-                homeProb = historyHome
-                awayProb = latestValid.awayProbability ?? (1.0 - historyHome)
-                if let count = latestValid.bookmakerCount, count > 0 {
-                    label = "Live · \(count) sportsbook\(count != 1 ? "s" : "")"
-                }
-            }
-        }
-
-        guard let away = awayProb, let home = homeProb else { return nil }
-        return (away, home, label)
-    }
-
-    private func heroProbability(_ event: EventDetail, colors: (away: Color, home: Color)) -> some View {
-        VStack(spacing: 6) {
-            if isFinished {
-                // Completed: show pre-game odds prominently (fallback to current if no opening)
-                let awayProb = event.openingOdds?.awayProbability ?? event.currentOdds?.awayProbability
-                let homeProb = event.openingOdds?.homeProbability ?? event.currentOdds?.homeProbability
-                let label = event.openingOdds?.homeProbability != nil ? "Pre-game Odds" : "Win Probability"
-
-                if let awayProb, let homeProb {
-                    HStack {
-                        Text(formatProbability(awayProb))
-                            .font(.title3).fontWeight(.bold).monospacedDigit()
-                            .foregroundStyle(colors.away)
-                        Spacer()
-                        Text(label)
-                            .font(.caption2).fontWeight(.medium)
-                            .foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                        Text(formatProbability(homeProb))
-                            .font(.title3).fontWeight(.bold).monospacedDigit()
-                            .foregroundStyle(colors.home)
-                    }
-                    ProbabilityBar(
-                        awayProb: awayProb, homeProb: homeProb,
-                        awayColor: colors.away.opacity(0.7),
-                        homeColor: colors.home.opacity(0.7),
-                        height: 12
-                    )
-                }
-            } else if isLive, let resolved = resolvedLiveProbability(event) {
-                // Live: show cross-checked odds (history-verified to catch stale bookmaker data)
-                HStack {
-                    Text(formatProbability(resolved.away))
-                        .font(.title3).fontWeight(.bold).monospacedDigit()
-                        .foregroundStyle(colors.away)
-                    Spacer()
-                    Text(resolved.label)
-                        .font(.caption2).fontWeight(.medium)
-                        .foregroundStyle(.white.opacity(0.5))
-                    Spacer()
-                    Text(formatProbability(resolved.home))
-                        .font(.title3).fontWeight(.bold).monospacedDigit()
-                        .foregroundStyle(colors.home)
-                }
-                ProbabilityBar(
-                    awayProb: resolved.away, homeProb: resolved.home,
-                    awayColor: colors.away, homeColor: colors.home,
-                    height: 14, animated: true, glowing: true
-                )
-
-                // Show opening odds as secondary reference
-                if let opening = event.openingOdds,
-                   let awayOpen = opening.awayProbability,
-                   let homeOpen = opening.homeProbability {
-                    HStack {
-                        Text(formatProbability(awayOpen))
-                            .font(.caption2).foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                        Text("Opened")
-                            .font(.caption2).foregroundStyle(.white.opacity(0.35))
-                        Spacer()
-                        Text(formatProbability(homeOpen))
-                            .font(.caption2).foregroundStyle(.white.opacity(0.5))
-                    }
-                }
-            } else {
-                // Scheduled (or live before history loads): show current odds
-                if let odds = event.currentOdds,
-                   let away = odds.awayProbability,
-                   let home = odds.homeProbability {
-                    HStack {
-                        Text(formatProbability(away))
-                            .font(.title3).fontWeight(.bold).monospacedDigit()
-                            .foregroundStyle(colors.away)
-                        Spacer()
-                        Text("Win Probability")
-                            .font(.caption2).fontWeight(.medium)
-                            .foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                        Text(formatProbability(home))
-                            .font(.title3).fontWeight(.bold).monospacedDigit()
-                            .foregroundStyle(colors.home)
-                    }
-                    ProbabilityBar(
-                        awayProb: away, homeProb: home,
-                        awayColor: colors.away, homeColor: colors.home,
-                        height: 14, animated: true, glowing: isLive
-                    )
-                }
-
-                // Show opening odds as secondary reference for live games
-                if isLive,
-                   let opening = event.openingOdds,
-                   let awayOpen = opening.awayProbability,
-                   let homeOpen = opening.homeProbability {
-                    HStack {
-                        Text(formatProbability(awayOpen))
-                            .font(.caption2).foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                        Text("Opened")
-                            .font(.caption2).foregroundStyle(.white.opacity(0.35))
-                        Spacer()
-                        Text(formatProbability(homeOpen))
-                            .font(.caption2).foregroundStyle(.white.opacity(0.5))
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Hero Context Strip
-
-    @ViewBuilder
-    private func heroContextStrip(_ event: EventDetail) -> some View {
-        let hasInfo = event.espn?.broadcast != nil || event.commenceTime != nil
-        if hasInfo {
-            HStack(spacing: 8) {
-                if let broadcast = event.espn?.broadcast {
-                    HStack(spacing: 4) {
-                        Image(systemName: "tv")
-                            .font(.system(size: 9))
-                        Text(broadcast)
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                    }
-                    .foregroundStyle(.white.opacity(0.7))
-                }
-                if let ct = event.commenceTime, let date = ct.asDate {
-                    let isLive = event.status == "live"
-                    let isCompleted = event.status == "completed" || event.status == "closed"
-                    HStack(spacing: 4) {
-                        Image(systemName: isCompleted ? "calendar" : "clock")
-                            .font(.system(size: 9))
-                        if isLive {
-                            // Live: show game clock from ESPN if available
-                            if let clock = event.espn?.gameClock {
-                                Text(clock)
-                                    .font(.caption2)
-                            }
-                        } else if isCompleted {
-                            // Completed: show date
-                            Text(date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
-                                .font(.caption2)
-                        } else {
-                            // Scheduled: show day + time
-                            Text(date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
-                                .font(.caption2)
-                        }
-                    }
-                    .foregroundStyle(.white.opacity(0.6))
-                }
-            }
-        }
-    }
-
-    // MARK: - Data Freshness Strip
-
-    private func freshnessStrip(_ event: EventDetail) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                if let captured = event.currentOdds?.capturedAt,
-                   let date = captured.asDate {
-                    let elapsed = Int(-date.timeIntervalSinceNow)
-                    let text = elapsed < 60 ? "Just now" : elapsed < 3600 ? "\(elapsed / 60)m ago" : "\(elapsed / 3600)h ago"
-                    freshnessChip(icon: "clock", text: text)
-                }
-                divergenceBadge(event)
-            }
-        }
-    }
-
-    private func freshnessChip(icon: String, text: String) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 9))
-            Text(text)
-                .font(.caption2)
-        }
-        .foregroundStyle(.white.opacity(0.6))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.white.opacity(0.08))
-        .clipShape(Capsule())
-    }
-
     // MARK: - Divergence Badge
 
     @ViewBuilder
@@ -684,23 +450,6 @@ struct EventDetailView: View {
         }
     }
 
-    // MARK: - EI Section
-
-    private func eiSection(_ ei: EIData) -> some View {
-        VStack(spacing: 8) {
-            EIBadgeView(ei: ei, size: .lg)
-            if let meta = ei.metadata {
-                HStack(spacing: 16) {
-                    metadataItem(title: "Raw EI", value: meta.rawEi.map { String(format: "%.2f", $0) } ?? "-")
-                    metadataItem(title: "Lead Changes", value: meta.leadChanges.map { "\($0)" } ?? "-")
-                    metadataItem(title: "Comeback", value: meta.comebackFactor.map { formatProbability($0) } ?? "-")
-                }
-            }
-        }
-        .padding()
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
 
     // MARK: - Standings
 
@@ -909,64 +658,99 @@ struct EventDetailView: View {
         }
     }
 
-    // MARK: - Bookmakers (Probabilities)
+
+
+    // MARK: - Sources Toggle (v2)
 
     @ViewBuilder
-    private func bookmakerSection(_ event: EventDetail) -> some View {
+    private func sourcesToggle(_ event: EventDetail) -> some View {
         if let bookmakers = event.bookmakerOdds, !bookmakers.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "book.closed")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Text("Sportsbook Odds")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Text("\(min(bookmakers.count, 10))")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
-                        .clipShape(Capsule())
-                }
-
-                let colors = teamColors(event)
-                ForEach(bookmakers.prefix(10), id: \.bookmaker) { bm in
-                    let awayProb = bm.awayProbability ?? bm.awayMoneyline.map { moneylineToProbability($0) }
-                    let homeProb = bm.homeProbability ?? bm.homeMoneyline.map { moneylineToProbability($0) }
-
-                    HStack(spacing: 6) {
-                        Text(bm.bookmaker ?? "Unknown")
-                            .font(.caption)
-                            .frame(width: 90, alignment: .leading)
-                            .lineLimit(1)
-
-                        if let ap = awayProb, let hp = homeProb {
-                            ProbabilityBar(
-                                awayProb: ap, homeProb: hp,
-                                awayColor: colors.away,
-                                homeColor: colors.home,
-                                height: 6
-                            )
-                            .frame(maxWidth: .infinity)
-
-                            Text(formatProbability(ap))
-                                .font(.caption2.monospacedDigit())
-                                .frame(width: 36, alignment: .trailing)
-                            Text(formatProbability(hp))
-                                .font(.caption2.monospacedDigit())
-                                .frame(width: 36, alignment: .trailing)
+            // Legend + toggle button
+            VStack(spacing: 0) {
+                Divider()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSources.toggle()
+                    }
+                } label: {
+                    HStack {
+                        // Legend items
+                        HStack(spacing: 12) {
+                            legendItem(color: Color(hex: event.homeTeamData?.primaryColor ?? "#10B981"), label: "BainLuck")
+                            legendItem(color: .secondary.opacity(0.4), label: "Sportsbooks")
+                        }
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text("Sources")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(showSources ? 180 : 0))
                         }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+
+                if showSources {
+                    Divider()
+                    bookmakerContent(event)
                 }
             }
-            .padding()
-            .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
+    }
+
+    private func legendItem(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(color)
+                .frame(width: 14, height: 2)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func bookmakerContent(_ event: EventDetail) -> some View {
+        let colors = teamColors(event)
+        let bookmakers = event.bookmakerOdds ?? []
+        return VStack(spacing: 0) {
+            ForEach(bookmakers.prefix(10), id: \.bookmaker) { bm in
+                let awayProb = bm.awayProbability ?? bm.awayMoneyline.map { moneylineToProbability($0) }
+                let homeProb = bm.homeProbability ?? bm.homeMoneyline.map { moneylineToProbability($0) }
+
+                HStack(spacing: 6) {
+                    Text(bm.bookmaker ?? "Unknown")
+                        .font(.caption)
+                        .frame(width: 90, alignment: .leading)
+                        .lineLimit(1)
+
+                    if let ap = awayProb, let hp = homeProb {
+                        ProbabilityBar(
+                            awayProb: ap, homeProb: hp,
+                            awayColor: colors.away,
+                            homeColor: colors.home,
+                            height: 6
+                        )
+                        .frame(maxWidth: .infinity)
+
+                        Text(formatProbability(ap))
+                            .font(.caption2.monospacedDigit())
+                            .frame(width: 36, alignment: .trailing)
+                        Text(formatProbability(hp))
+                            .font(.caption2.monospacedDigit())
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(.vertical, 8)
     }
 
     // MARK: - Helpers
