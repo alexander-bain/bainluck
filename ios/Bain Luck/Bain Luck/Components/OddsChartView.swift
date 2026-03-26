@@ -90,6 +90,8 @@ struct OddsChartView: View {
     var status: String?
     var homeTeamName: String?
     var awayTeamName: String?
+    var homeTeamLogo: String?
+    var awayTeamLogo: String?
     /// Binding to expose the selected game play point (for GamePlayCardView)
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
@@ -125,6 +127,7 @@ struct OddsChartView: View {
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
          commenceTime: String? = nil, status: String? = nil,
          homeTeamName: String? = nil, awayTeamName: String? = nil,
+         homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil) {
         self.eventId = eventId
@@ -133,6 +136,8 @@ struct OddsChartView: View {
         self.status = status
         self.homeTeamName = homeTeamName
         self.awayTeamName = awayTeamName
+        self.homeTeamLogo = homeTeamLogo
+        self.awayTeamLogo = awayTeamLogo
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
@@ -181,22 +186,49 @@ struct OddsChartView: View {
                         .foregroundStyle(.secondary)
                         .frame(height: chartHeight)
                 } else {
-                    // Team favored labels above chart (matches web layout)
-                    HStack {
-                        Text("\(homeShort) favored ↑")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(teamColors?.home ?? .blue)
-                        Spacer()
-                        Text("\(awayShort) favored ↓")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(teamColors?.away ?? .red)
-                    }
-
-                    chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
-                        .onChange(of: selectedDate) { _, newDate in
-                            updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
+                    // Chart with vertical team labels alongside Y-axis
+                    HStack(spacing: 2) {
+                        // Vertical team labels on left
+                        VStack {
+                            // Home team (top)
+                            HStack(spacing: 2) {
+                                if let logo = homeTeamLogo, let url = URL(string: logo) {
+                                    AsyncImage(url: url) { img in
+                                        img.resizable().scaledToFit()
+                                    } placeholder: { EmptyView() }
+                                    .frame(width: 10, height: 10)
+                                }
+                                Text(homeShort.uppercased())
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(teamColors?.home ?? .blue)
+                            }
+                            .rotationEffect(.degrees(-90))
+                            .fixedSize()
+                            Spacer()
+                            // Away team (bottom)
+                            HStack(spacing: 2) {
+                                if let logo = awayTeamLogo, let url = URL(string: logo) {
+                                    AsyncImage(url: url) { img in
+                                        img.resizable().scaledToFit()
+                                    } placeholder: { EmptyView() }
+                                    .frame(width: 10, height: 10)
+                                }
+                                Text(awayShort.uppercased())
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(teamColors?.away ?? .red)
+                            }
+                            .rotationEffect(.degrees(-90))
+                            .fixedSize()
                         }
-                        .frame(height: chartHeight)
+                        .frame(width: 22)
+                        .padding(.vertical, 8)
+
+                        chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
+                            .onChange(of: selectedDate) { _, newDate in
+                                updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
+                            }
+                    }
+                    .frame(height: chartHeight)
 
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                 }
@@ -387,7 +419,7 @@ struct OddsChartView: View {
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: xAxisDomain(for: dataPoints))
         .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 5)) { value in
+            AxisMarks(values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {

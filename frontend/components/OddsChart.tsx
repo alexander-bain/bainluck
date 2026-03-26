@@ -1006,20 +1006,20 @@ export default function OddsChart({
       {/* Probability Chart with vertical team labels */}
       <div className={`flex ${fillContainer ? "flex-1 min-h-0" : "h-80"}`}>
         {/* Vertical team labels on left side of chart */}
-        <div className="flex flex-col items-center justify-between py-4 shrink-0" style={{ width: 28 }}>
-          <div className="flex flex-col items-center gap-0.5" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+        <div className="flex flex-col items-center justify-between py-3 shrink-0" style={{ width: 24 }}>
+          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
             {homeTeamLogo && (
-              <img src={homeTeamLogo} alt="" width={14} height={14} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+              <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[10px] font-semibold tracking-wide" style={{ color: homeTeamColor || "#16a34a" }}>
+            <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: homeTeamColor || "#16a34a" }}>
               {homeShort}
             </span>
           </div>
-          <div className="flex flex-col items-center gap-0.5" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
             {awayTeamLogo && (
-              <img src={awayTeamLogo} alt="" width={14} height={14} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+              <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[10px] font-semibold tracking-wide" style={{ color: awayTeamColor || "#2563eb" }}>
+            <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: awayTeamColor || "#2563eb" }}>
               {awayShort}
             </span>
           </div>

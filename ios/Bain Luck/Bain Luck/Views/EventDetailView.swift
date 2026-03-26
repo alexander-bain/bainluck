@@ -136,6 +136,8 @@ struct EventDetailView: View {
                                      commenceTime: event.commenceTime, status: event.status,
                                      homeTeamName: event.homeTeam,
                                      awayTeamName: event.awayTeam,
+                                     homeTeamLogo: event.homeTeamData?.logoSmall,
+                                     awayTeamLogo: event.awayTeamData?.logoSmall,
                                      selectedPlayPoint: $selectedPlayPoint,
                                      preloadedHistory: vm.history)
                         if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {
