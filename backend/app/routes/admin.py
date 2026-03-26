@@ -6117,3 +6117,247 @@ async def scrape_playoffstatus(
         "teams": teams_found,
         "errors": errors,
     }
+
+
+# ---------------------------------------------------------------------------
+# Consolidated Operations Dashboard
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard")
+async def operations_dashboard(
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Consolidated operations dashboard data.
+
+    Returns:
+    - Odds API quota + history with budget projection
+    - Source coverage by sport (which sources cover which events)
+    - Worker task metrics (success/failure, duration)
+    - Database health stats
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from sqlalchemy import text, func as sa_func, distinct, case, literal_column
+    from app.tasks.redis_state import (
+        get_odds_api_quota, get_odds_api_quota_history,
+        get_all_task_metrics, get_redis_client,
+    )
+    import calendar as cal_mod
+
+    now = datetime.now(timezone.utc)
+
+    # --- 1. Odds API Quota ---
+    quota = get_odds_api_quota()
+    history = get_odds_api_quota_history(hours=720)  # 30 days
+
+    # Compute daily usage deltas
+    daily_map: dict[str, dict] = {}
+    for entry in history:
+        day = entry["hour"][:10]
+        daily_map[day] = entry
+    daily_usage = []
+    sorted_days = sorted(daily_map.keys())
+    for i, day in enumerate(sorted_days):
+        used = daily_map[day]["used"]
+        prev_used = daily_map[sorted_days[i - 1]]["used"] if i > 0 else 0
+        delta = used - prev_used
+        if delta < 0:
+            delta = used  # month rollover
+        daily_usage.append({"date": day, "daily_requests": delta, "cumulative": used})
+
+    # Budget projection
+    total_budget = 5_000_000
+    today = now.date()
+    days_in_month = cal_mod.monthrange(today.year, today.month)[1]
+    day_of_month = today.day
+    days_remaining = days_in_month - day_of_month
+
+    # 48h pace: average daily burn over last 48 hours of data
+    recent_daily = [d for d in daily_usage if d["daily_requests"] > 0][-2:]
+    pace_48h = sum(d["daily_requests"] for d in recent_daily) / max(len(recent_daily), 1)
+    projected_eom = (quota.get("used", 0) or 0) + int(pace_48h * days_remaining)
+
+    # Linear budget line
+    linear_daily_budget = total_budget / days_in_month
+
+    quota_section = {
+        "current": quota,
+        "daily_usage": daily_usage,
+        "hourly_history": history[-168:],  # last 7 days
+        "budget": {
+            "total": total_budget,
+            "days_in_month": days_in_month,
+            "day_of_month": day_of_month,
+            "days_remaining": days_remaining,
+            "linear_daily_budget": round(linear_daily_budget),
+            "pace_48h_daily": round(pace_48h),
+            "projected_eom": projected_eom,
+            "projected_surplus": total_budget - projected_eom,
+        },
+    }
+
+    # --- 2. Source Coverage by Sport ---
+    # Count events per sport and how many have data from each source
+    try:
+        await db.execute(text("SET LOCAL statement_timeout = '10s'"))
+
+        # 2a. Event-level source coverage
+        coverage_q = await db.execute(text("""
+            WITH recent_events AS (
+                SELECT e.id, s.key AS sport_key,
+                       e.external_id, e.espn_id, e.statpal_fixture_id,
+                       e.win_probability_sources,
+                       e.status
+                FROM events e
+                JOIN sports s ON e.sport_id = s.id
+                WHERE e.commence_time >= NOW() - INTERVAL '7 days'
+                  AND e.commence_time <= NOW() + INTERVAL '2 days'
+            ),
+            pm_links AS (
+                SELECT DISTINCT fm.event_id, fm.source AS pm_source
+                FROM futures_markets fm
+                WHERE fm.event_id IS NOT NULL
+                  AND fm.market_type = 'game'
+            ),
+            wp_sources AS (
+                SELECT DISTINCT wp.event_id, wp.source AS wp_source
+                FROM win_prob_snapshots wp
+                WHERE wp.captured_at >= NOW() - INTERVAL '7 days'
+            )
+            SELECT
+                re.sport_key,
+                COUNT(*) AS total_events,
+                COUNT(CASE WHEN re.status = 'live' THEN 1 END) AS live_events,
+                COUNT(re.external_id) AS has_odds_api,
+                COUNT(re.espn_id) AS has_espn,
+                COUNT(re.statpal_fixture_id) AS has_statpal,
+                COUNT(DISTINCT CASE WHEN wp.wp_source = 'espn' THEN re.id END) AS has_espn_wp,
+                COUNT(DISTINCT CASE WHEN wp.wp_source = 'stat_model' THEN re.id END) AS has_model,
+                COUNT(DISTINCT CASE WHEN wp.wp_source = 'mlb' THEN re.id END) AS has_mlb,
+                COUNT(DISTINCT CASE WHEN wp.wp_source = 'kalshi' THEN re.id END) AS has_kalshi_wp,
+                COUNT(DISTINCT CASE WHEN wp.wp_source = 'polymarket' THEN re.id END) AS has_polymarket_wp,
+                COUNT(DISTINCT CASE WHEN pm.pm_source = 'kalshi' THEN re.id END) AS has_kalshi_pm,
+                COUNT(DISTINCT CASE WHEN pm.pm_source = 'polymarket' THEN re.id END) AS has_polymarket_pm
+            FROM recent_events re
+            LEFT JOIN pm_links pm ON pm.event_id = re.id
+            LEFT JOIN wp_sources wp ON wp.event_id = re.id
+            GROUP BY re.sport_key
+            ORDER BY COUNT(*) DESC
+        """))
+        source_coverage = [
+            {
+                "sport": r.sport_key,
+                "total": r.total_events,
+                "live": r.live_events,
+                "odds_api": r.has_odds_api,
+                "espn": r.has_espn,
+                "statpal": r.has_statpal,
+                "espn_wp": r.has_espn_wp,
+                "model": r.has_model,
+                "mlb": r.has_mlb,
+                "kalshi": max(r.has_kalshi_wp, r.has_kalshi_pm),
+                "polymarket": max(r.has_polymarket_wp, r.has_polymarket_pm),
+            }
+            for r in coverage_q.all()
+        ]
+
+        # 2b. Futures-level source coverage (by sport category)
+        futures_q = await db.execute(text("""
+            SELECT
+                COALESCE(s.key, fm.llm_sport_category, 'unknown') AS sport_key,
+                COUNT(DISTINCT fm.id) AS total_markets,
+                COUNT(DISTINCT CASE WHEN fm.source = 'odds_api' THEN fm.id END) AS odds_api,
+                COUNT(DISTINCT CASE WHEN fm.source = 'kalshi' THEN fm.id END) AS kalshi,
+                COUNT(DISTINCT CASE WHEN fm.source = 'polymarket' THEN fm.id END) AS polymarket,
+                COUNT(DISTINCT CASE WHEN fm.source = 'datagolf' THEN fm.id END) AS datagolf
+            FROM futures_markets fm
+            LEFT JOIN sports s ON fm.sport_id = s.id
+            WHERE fm.market_type != 'game'
+            GROUP BY COALESCE(s.key, fm.llm_sport_category, 'unknown')
+            ORDER BY COUNT(DISTINCT fm.id) DESC
+        """))
+        futures_coverage = [
+            {
+                "sport": r.sport_key,
+                "total_markets": r.total_markets,
+                "odds_api": r.odds_api,
+                "kalshi": r.kalshi,
+                "polymarket": r.polymarket,
+                "datagolf": r.datagolf,
+            }
+            for r in futures_q.all()
+        ]
+    except Exception as e:
+        source_coverage = [{"error": str(e)}]
+        futures_coverage = [{"error": str(e)}]
+
+    # --- 3. Worker Task Metrics ---
+    tasks = get_all_task_metrics()
+
+    # Worker heartbeat
+    try:
+        r = get_redis_client()
+        heartbeat = r.get("bainluck:heartbeat")
+        if heartbeat:
+            heartbeat_time = datetime.fromisoformat(heartbeat.decode())
+            heartbeat_age = (now - heartbeat_time).total_seconds()
+            worker_status = "healthy" if heartbeat_age < 180 else "unhealthy"
+        else:
+            heartbeat_age = None
+            worker_status = "unknown"
+    except Exception:
+        heartbeat_age = None
+        worker_status = "error"
+
+    critical_tasks = [t for t in tasks if t.get("health") == "critical"]
+    degraded_tasks = [t for t in tasks if t.get("health") == "degraded"]
+
+    worker_section = {
+        "worker_status": worker_status,
+        "heartbeat_age_seconds": round(heartbeat_age) if heartbeat_age else None,
+        "overall_health": (
+            "worker_down" if worker_status != "healthy"
+            else "critical" if critical_tasks
+            else "degraded" if degraded_tasks
+            else "healthy" if tasks
+            else "no_data"
+        ),
+        "critical_tasks": [t["task"] for t in critical_tasks],
+        "degraded_tasks": [t["task"] for t in degraded_tasks],
+        "tasks": tasks,
+    }
+
+    # --- 4. Database Health ---
+    try:
+        db_q = await db.execute(text("""
+            SELECT
+                (SELECT COUNT(*) FROM events WHERE status IN ('live', 'scheduled')
+                 AND commence_time >= NOW() - INTERVAL '1 day') AS active_events,
+                (SELECT COUNT(*) FROM events WHERE status = 'live') AS live_events,
+                (SELECT COUNT(*) FROM odds_snapshots
+                 WHERE captured_at >= NOW() - INTERVAL '1 hour') AS snapshots_last_hour,
+                (SELECT COUNT(*) FROM win_prob_snapshots
+                 WHERE captured_at >= NOW() - INTERVAL '1 hour') AS winprob_last_hour,
+                (SELECT pg_database_size(current_database())) AS db_size_bytes
+        """))
+        db_row = db_q.one()
+        db_section = {
+            "active_events": db_row.active_events,
+            "live_events": db_row.live_events,
+            "snapshots_last_hour": db_row.snapshots_last_hour,
+            "winprob_last_hour": db_row.winprob_last_hour,
+            "db_size_mb": round(db_row.db_size_bytes / 1024 / 1024, 1),
+        }
+    except Exception as e:
+        db_section = {"error": str(e)}
+
+    return {
+        "generated_at": now.isoformat(),
+        "quota": quota_section,
+        "source_coverage": source_coverage,
+        "futures_coverage": futures_coverage,
+        "worker": worker_section,
+        "database": db_section,
+    }
