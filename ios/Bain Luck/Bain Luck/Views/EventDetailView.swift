@@ -132,7 +132,6 @@ struct EventDetailView: View {
                 VStack(spacing: 16) {
                     heroSection(event)
                     VStack(spacing: 0) {
-                        chartHeaderBar(event)
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
                                      homeTeamName: event.homeTeam,

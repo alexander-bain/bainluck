@@ -657,7 +657,7 @@ celery_app.conf.beat_schedule = {
     },
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",
-        "schedule": crontab(minute=5, hour="*/4"),  # Every 4 hours — markets link once and stay linked
+        "schedule": crontab(minute=5, hour="*/4"),  # Every 4 hours — markets exist days before games
         "kwargs": {"limit": 200},
     },
     "poll-live-prediction-markets": {
