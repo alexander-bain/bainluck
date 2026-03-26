@@ -3,6 +3,7 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select, distinct, and_, or_
@@ -14,6 +15,22 @@ from app.tasks.config import ESPN_SPORT_MAPPING
 from app.utils.name_normalization import token_overlap_score as _team_name_match_score
 
 logger = logging.getLogger(__name__)
+
+# Pre-game status_detail strings like "Wed, March 25th at 10:00 PM EDT"
+# should not be stored as period values in game_state.
+_PREGAME_DATE_RE = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_period(status_detail: str | None) -> str | None:
+    """Return status_detail if it looks like a game period, else None."""
+    if not status_detail:
+        return None
+    if _PREGAME_DATE_RE.search(status_detail):
+        return None
+    return status_detail
 
 
 async def _enrich_events_metadata(limit: int = 50):
@@ -450,7 +467,7 @@ async def _sync_espn_live_events():
                                     away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
                                     game_state={
                                         "clock": ee.clock,
-                                        "period": ee.status_detail,
+                                        "period": _sanitize_period(ee.status_detail),
                                         "home_score": ee.home_score,
                                         "away_score": ee.away_score,
                                     },
@@ -471,7 +488,7 @@ async def _sync_espn_live_events():
                                     pregame_spread = float(event.opening_home_spread)
 
                                 # Prefer numeric period for reliability
-                                period_str = ee.status_detail
+                                period_str = _sanitize_period(ee.status_detail)
                                 if ee.period and not period_str:
                                     period_str = str(ee.period)
 
@@ -498,7 +515,7 @@ async def _sync_espn_live_events():
                                         away_win_probability=round(1.0 - stat_wp, 4),
                                         game_state={
                                             "clock": ee.clock,
-                                            "period": ee.status_detail,
+                                            "period": _sanitize_period(ee.status_detail),
                                             "home_score": ee.home_score,
                                             "away_score": ee.away_score,
                                             "pregame_spread": pregame_spread,

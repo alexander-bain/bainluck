@@ -26,6 +26,11 @@ export function normalizePeriodLabel(raw: string): string {
   if (!raw) return "";
   let s = raw.trim();
 
+  // Reject pre-game date strings like "Wed, March 25th at 10:00 PM EDT"
+  // These leak from ESPN status_detail during game transitions
+  if (/\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/i.test(s)) return "";
+  if (/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b.*\bat\b/i.test(s)) return "";
+
   // Strip clock prefix: "11:05 - 1st Quarter" → "1st Quarter"
   // ESPN status_detail includes game clock before the period name
   s = s.replace(/^[\d.:]+\s*-\s*/, "");
