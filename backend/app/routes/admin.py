@@ -6538,95 +6538,20 @@ async def operations_dashboard(
 @router.post("/cleanup/crypto")
 async def cleanup_crypto_futures(
     secret: str = Query(..., description="Admin secret for authorization"),
-    batch_size: int = Query(10000, description="Rows to delete per batch"),
-    db: AsyncSession = Depends(get_db),
+    batch_size: int = Query(5000, description="Rows to delete per batch"),
 ):
     """
-    Delete all crypto futures data (markets, outcomes, snapshots) to reclaim
-    database space. Crypto futures come from Polymarket/Kalshi with
-    llm_sport_category = 'crypto'.
-
-    Deletes in batched chunks to avoid long-running locks.
-    Order: snapshots -> outcomes -> markets.
+    Dispatch a Celery background task to delete all crypto futures data.
+    Returns immediately with a task ID — check Celery logs for progress.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from sqlalchemy import text
-
-    stats = {
-        "snapshots_deleted": 0,
-        "outcomes_deleted": 0,
-        "markets_deleted": 0,
-    }
-
-    # Step 1: Find all crypto market IDs
-    market_ids_result = await db.execute(text("""
-        SELECT id FROM futures_markets
-        WHERE llm_sport_category = 'crypto'
-    """))
-    market_ids = [r[0] for r in market_ids_result.fetchall()]
-
-    if not market_ids:
-        return {
-            "status": "nothing_to_delete",
-            "message": "No crypto futures markets found",
-            **stats,
-        }
-
-    # Step 2: Find all outcome IDs for those markets
-    outcome_ids_result = await db.execute(text("""
-        SELECT id FROM futures_outcomes
-        WHERE market_id = ANY(:market_ids)
-    """), {"market_ids": market_ids})
-    outcome_ids = [r[0] for r in outcome_ids_result.fetchall()]
-
-    # Step 3: Delete futures_odds_snapshots in batches
-    if outcome_ids:
-        while True:
-            result = await db.execute(text("""
-                DELETE FROM futures_odds_snapshots
-                WHERE id IN (
-                    SELECT id FROM futures_odds_snapshots
-                    WHERE outcome_id = ANY(:outcome_ids)
-                    LIMIT :batch_size
-                )
-            """), {"outcome_ids": outcome_ids, "batch_size": batch_size})
-            deleted = result.rowcount
-            await db.commit()
-            stats["snapshots_deleted"] += deleted
-            if deleted < batch_size:
-                break
-
-    # Step 4: Delete futures_outcomes in batches
-    if outcome_ids:
-        while True:
-            result = await db.execute(text("""
-                DELETE FROM futures_outcomes
-                WHERE id IN (
-                    SELECT id FROM futures_outcomes
-                    WHERE market_id = ANY(:market_ids)
-                    LIMIT :batch_size
-                )
-            """), {"market_ids": market_ids, "batch_size": batch_size})
-            deleted = result.rowcount
-            await db.commit()
-            stats["outcomes_deleted"] += deleted
-            if deleted < batch_size:
-                break
-
-    # Step 5: Delete futures_markets
-    result = await db.execute(text("""
-        DELETE FROM futures_markets
-        WHERE llm_sport_category = 'crypto'
-    """))
-    stats["markets_deleted"] = result.rowcount
-    await db.commit()
+    from app.tasks import cleanup_crypto
+    result = cleanup_crypto.delay(batch_size=batch_size)
 
     return {
-        "status": "success",
-        "message": f"Deleted {stats['markets_deleted']} crypto markets, "
-                   f"{stats['outcomes_deleted']} outcomes, "
-                   f"{stats['snapshots_deleted']} snapshots",
-        **stats,
+        "status": "dispatched",
+        "message": "Crypto cleanup task dispatched to Celery worker",
+        "task_id": result.id,
     }

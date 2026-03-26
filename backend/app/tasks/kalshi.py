@@ -117,7 +117,9 @@ def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
         return "economics"
     if "entertainment" in category_lower or "movie" in category_lower or "award" in category_lower:
         return "entertainment"
-    if "tech" in category_lower or "crypto" in category_lower:
+    if "crypto" in category_lower:
+        return "crypto"
+    if "tech" in category_lower:
         return "tech"
     if "weather" in category_lower or "climate" in category_lower:
         return "weather"

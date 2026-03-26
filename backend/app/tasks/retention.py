@@ -271,3 +271,62 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
     await session.execute(bridge_sql, {"part_id": partition_id, "cutoff": cutoff})
 
     return rows_deleted, keepers_updated
+
+
+# ---------------------------------------------------------------------------
+# Crypto cleanup
+# ---------------------------------------------------------------------------
+
+async def _cleanup_crypto_impl(batch_size: int = 5000):
+    """Delete all crypto futures data (markets, outcomes, snapshots) in batches."""
+    async with get_task_session() as session:
+        stats = {"snapshots_deleted": 0, "outcomes_deleted": 0, "markets_deleted": 0}
+
+        # Get crypto market IDs
+        result = await session.execute(text(
+            "SELECT id FROM futures_markets WHERE llm_sport_category = 'crypto'"
+        ))
+        market_ids = [r[0] for r in result.fetchall()]
+        if not market_ids:
+            return {"status": "nothing_to_delete", **stats}
+
+        # Get outcome IDs
+        result = await session.execute(text(
+            "SELECT id FROM futures_outcomes WHERE market_id = ANY(:ids)"
+        ), {"ids": market_ids})
+        outcome_ids = [r[0] for r in result.fetchall()]
+
+        # Delete snapshots in batches
+        if outcome_ids:
+            while True:
+                result = await session.execute(text("""
+                    DELETE FROM futures_odds_snapshots
+                    WHERE id IN (
+                        SELECT id FROM futures_odds_snapshots
+                        WHERE outcome_id = ANY(:ids) LIMIT :batch
+                    )
+                """), {"ids": outcome_ids, "batch": batch_size})
+                deleted = result.rowcount
+                await session.commit()
+                stats["snapshots_deleted"] += deleted
+                logger.info("Crypto cleanup: deleted %d snapshots (total: %d)",
+                           deleted, stats["snapshots_deleted"])
+                if deleted < batch_size:
+                    break
+
+        # Delete outcomes
+        result = await session.execute(text(
+            "DELETE FROM futures_outcomes WHERE market_id = ANY(:ids)"
+        ), {"ids": market_ids})
+        stats["outcomes_deleted"] = result.rowcount
+        await session.commit()
+
+        # Delete markets
+        result = await session.execute(text(
+            "DELETE FROM futures_markets WHERE llm_sport_category = 'crypto'"
+        ))
+        stats["markets_deleted"] = result.rowcount
+        await session.commit()
+
+        logger.info("Crypto cleanup complete: %s", stats)
+        return {"status": "success", **stats}

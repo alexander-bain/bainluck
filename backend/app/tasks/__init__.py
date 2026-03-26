@@ -585,6 +585,15 @@ def merge_duplicate_events_task(self, dry_run: bool = True):
     return run_async(_merge_duplicate_events_impl(dry_run=dry_run))
 
 
+# --- Cleanup ---
+
+@celery_app.task(bind=True, soft_time_limit=1800, time_limit=1860, name="app.tasks.cleanup_crypto")
+def cleanup_crypto(self, batch_size: int = 5000):
+    """Delete all crypto futures data (markets, outcomes, snapshots)."""
+    from app.tasks.retention import _cleanup_crypto_impl
+    return run_async(_cleanup_crypto_impl(batch_size))
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
