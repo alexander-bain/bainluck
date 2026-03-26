@@ -1406,7 +1406,28 @@ export default function EventPage({ params }: EventPageProps) {
       {chartFullscreen && (
         <div className="fixed inset-0 z-50 bg-white flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
-            <h2 className="text-sm font-semibold text-text-primary">Win Probability</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-semibold text-text-primary">Win Probability</h2>
+              {effectivelyLive && (
+                <div className="flex items-center gap-1.5">
+                  <div className="relative w-[18px] h-[18px]">
+                    <svg className="w-[18px] h-[18px] transform -rotate-90" viewBox="0 0 18 18">
+                      <circle cx="9" cy="9" r="7" fill="none" stroke="#E5E7EB" strokeWidth="2" />
+                      <circle cx="9" cy="9" r="7" fill="none" stroke="#10B981" strokeWidth="2"
+                        strokeDasharray="44" strokeDashoffset={44 - (countdownProgress / 100) * 44}
+                        strokeLinecap="round" className="transition-all duration-100" />
+                    </svg>
+                  </div>
+                  <span className="text-[10px] text-text-muted tabular-nums font-mono">{countdown}s</span>
+                </div>
+              )}
+              {isFinished && (
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-text-muted" />
+                  <span className="text-[10px] text-text-muted font-medium">Final</span>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setChartFullscreen(false)}
               className="p-2 rounded-md hover:bg-surface-elevated text-text-muted hover:text-text-primary transition-colors"
