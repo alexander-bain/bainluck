@@ -98,6 +98,7 @@ struct OddsChartView: View {
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
     @State private var selectedDate: Date?
+    @State private var isFullscreen = false
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var chartHeight: CGFloat {
@@ -169,6 +170,14 @@ struct OddsChartView: View {
                 Spacer()
                 if showPicker {
                     timeRangePicker
+                }
+                Button {
+                    isFullscreen = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
                 }
             }
 
@@ -248,6 +257,73 @@ struct OddsChartView: View {
                 vm.selectedRange = .sinceStart
             }
             await vm.load()
+        }
+        .fullScreenCover(isPresented: $isFullscreen) {
+            fullscreenChart
+        }
+    }
+
+    // MARK: - Fullscreen Chart
+
+    private var fullscreenChart: some View {
+        NavigationView {
+            Group {
+                if let history = vm.history {
+                    let allPoints = buildDataPoints(history)
+                    let enrichedPoints = enrichWithGameState(allPoints, history: history)
+                    let dataPoints = filterPoints(enrichedPoints)
+                    let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
+                    if !dataPoints.isEmpty {
+                        VStack(spacing: 8) {
+                            if showPicker {
+                                HStack {
+                                    Spacer()
+                                    timeRangePicker
+                                    Spacer()
+                                }
+                            }
+                            HStack(spacing: 0) {
+                                VStack {
+                                    HStack(spacing: 2) {
+                                        Text(homeShort.uppercased())
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(teamColors?.home ?? .blue)
+                                            .lineLimit(1)
+                                    }
+                                    .fixedSize()
+                                    .rotationEffect(.degrees(-90))
+                                    Spacer()
+                                    HStack(spacing: 2) {
+                                        Text(awayShort.uppercased())
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(teamColors?.away ?? .red)
+                                            .lineLimit(1)
+                                    }
+                                    .fixedSize()
+                                    .rotationEffect(.degrees(-90))
+                                }
+                                .frame(width: 24)
+                                .padding(.vertical, 12)
+
+                                chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
+                            }
+                            legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
+                        }
+                        .padding()
+                    }
+                }
+            }
+            .navigationTitle("Win Probability")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { isFullscreen = false } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
     }
 

@@ -159,6 +159,18 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // Score Differential Chart
+                    if let history = vm.history, (isLive || isFinished) {
+                        ScoreDifferentialChartView(
+                            history: history,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            commenceTime: event.commenceTime,
+                            eventStatus: event.status,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away
+                        )
+                    }
                     LineMovementView(eventId: event.id,
                                      homeTeam: event.homeTeam,
                                      awayTeam: event.awayTeam,
