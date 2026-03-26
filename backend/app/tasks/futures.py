@@ -168,6 +168,7 @@ async def _poll_futures_odds():
                     # QUOTA OPTIMIZATION: Use primary US books only for futures
                     # (saves half the quota vs us,us2). Most futures data is
                     # the same across US books.
+                    pre_used = service.last_requests_used
                     api_response = await service.get_futures_odds(
                         sport_key, regions="us",
                     )
@@ -180,6 +181,7 @@ async def _poll_futures_odds():
                             service.last_requests_remaining,
                             service.last_requests_used or 0,
                             "poll_futures",
+                            pre_call_used=pre_used,
                         )
 
                     if not markets_data:

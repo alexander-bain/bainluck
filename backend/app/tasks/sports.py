@@ -298,6 +298,7 @@ async def _discover_events():
                     # books to detect new events. Full market/region coverage
                     # happens in poll_all_odds when games are imminent.
                     # This saves 5/6 of quota vs default (3 markets × 2 regions).
+                    pre_used = service.last_requests_used
                     events_data = await service.get_odds(
                         sport_key,
                         regions="us",
@@ -320,6 +321,7 @@ async def _discover_events():
                             service.last_requests_remaining,
                             service.last_requests_used or 0,
                             "discover_events",
+                            pre_call_used=pre_used,
                         )
 
                     # Collect all team names from this sport's events

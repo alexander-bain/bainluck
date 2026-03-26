@@ -290,8 +290,16 @@ import logging
 _quota_logger = logging.getLogger(__name__)
 
 
-def record_odds_api_quota(remaining: int, used: int, source_task: str):
-    """Store latest quota reading from passive header capture."""
+def record_odds_api_quota(remaining: int, used: int, source_task: str, pre_call_used: int | None = None):
+    """Store latest quota reading from passive header capture.
+
+    Args:
+        remaining: Remaining quota from API header
+        used: Used quota from API header (after the call)
+        source_task: Which task made the call (poll_odds, discover_events, poll_futures)
+        pre_call_used: Used quota BEFORE the API call (from a previous header read).
+                       If provided, enables accurate per-task attribution.
+    """
     from datetime import datetime, timezone, timedelta
 
     r = get_redis_client()
@@ -300,10 +308,6 @@ def record_odds_api_quota(remaining: int, used: int, source_task: str):
     try:
         now = datetime.now(timezone.utc)
         hour_key = now.strftime("%Y-%m-%dT%H")
-
-        # Get previous used value to compute delta
-        prev_data = r.hgetall(QUOTA_KEY)
-        prev_used = int(prev_data.get(b"used", b"0")) if prev_data else 0
 
         pipe = r.pipeline()
         # Current snapshot (always up to date)
@@ -324,7 +328,14 @@ def record_odds_api_quota(remaining: int, used: int, source_task: str):
         pipe.expire(history_key, 86400 * 35)  # 35 day TTL (covers full billing cycle)
 
         # Per-task quota delta tracking
-        delta = used - prev_used
+        # Use pre_call_used if provided (accurate per-task attribution),
+        # otherwise fall back to global prev_used (may misattribute across tasks)
+        if pre_call_used is not None:
+            delta = used - pre_call_used
+        else:
+            prev_data = r.hgetall(QUOTA_KEY)
+            prev_used = int(prev_data.get(b"used", b"0")) if prev_data else 0
+            delta = used - prev_used
         if delta > 0:  # Skip negative deltas (month rollover)
             task_hourly_key = f"{QUOTA_TASK_HOURLY_PREFIX}:{source_task}:{hour_key}"
             pipe.incrby(task_hourly_key, delta)

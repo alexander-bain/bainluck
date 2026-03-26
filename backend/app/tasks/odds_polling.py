@@ -541,6 +541,7 @@ async def _poll_all_odds():
                     api_regions = "us"
 
                 try:
+                    pre_used = service.last_requests_used
                     events_data = await service.get_odds(
                         sport_key,
                         regions=api_regions,
@@ -556,6 +557,7 @@ async def _poll_all_odds():
                             service.last_requests_remaining,
                             service.last_requests_used or 0,
                             "poll_odds",
+                            pre_call_used=pre_used,
                         )
 
                     # Update last poll time and per-sport adaptive state in Redis
