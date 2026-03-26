@@ -135,8 +135,9 @@ class TestLeagueSpecificConfigs:
         for col in NCAA_BASKETBALL_CONFIG.columns:
             assert col.sequential is True
 
-    def test_ncaa_uses_region_split(self):
-        assert NCAA_BASKETBALL_CONFIG.region_split is True
+    def test_ncaa_flat_list(self):
+        """NCAA uses flat list (no region/conference split) for easy comparison."""
+        assert NCAA_BASKETBALL_CONFIG.region_split is False
         assert NCAA_BASKETBALL_CONFIG.conference_split is False
 
     def test_nfl_columns(self):

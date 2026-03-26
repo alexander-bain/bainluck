@@ -105,11 +105,97 @@ NHL_CONFERENCES: dict[str, str] = {
     "Vegas Golden Knights": "Western", "Winnipeg Jets": "Western",
 }
 
+MLS_CONFERENCES: dict[str, str] = {
+    # Eastern Conference (2026)
+    "Atlanta United": "Eastern", "Atlanta United FC": "Eastern",
+    "Charlotte FC": "Eastern", "Chicago Fire": "Eastern", "Chicago Fire FC": "Eastern",
+    "Cincinnati": "Eastern", "FC Cincinnati": "Eastern",
+    "Columbus Crew": "Eastern", "D.C. United": "Eastern",
+    "Inter Miami": "Eastern", "Inter Miami CF": "Eastern",
+    "CF Montréal": "Eastern", "Montréal": "Eastern", "Montreal": "Eastern",
+    "Nashville SC": "Eastern", "Nashville": "Eastern",
+    "New England Revolution": "Eastern", "New York City FC": "Eastern",
+    "New York Red Bulls": "Eastern", "New York RB": "Eastern",
+    "Orlando City": "Eastern", "Orlando City SC": "Eastern",
+    "Philadelphia Union": "Eastern", "Toronto FC": "Eastern",
+    # Western Conference (2026)
+    "Austin FC": "Western", "Colorado Rapids": "Western",
+    "FC Dallas": "Western", "Dallas": "Western",
+    "Houston Dynamo": "Western", "Houston Dynamo FC": "Western",
+    "LA Galaxy": "Western", "Los Angeles Galaxy": "Western", "Los Angeles G": "Western",
+    "Los Angeles FC": "Western", "LAFC": "Western",
+    "Minnesota United": "Western", "Minnesota United FC": "Western",
+    "Portland Timbers": "Western", "Real Salt Lake": "Western",
+    "San Diego FC": "Western", "San Jose Earthquakes": "Western",
+    "Seattle Sounders": "Western", "Seattle Sounders FC": "Western",
+    "Sporting Kansas City": "Western", "Sporting KC": "Western",
+    "St. Louis City": "Western", "St. Louis City SC": "Western",
+    "Saint Louis": "Western", "St Louis": "Western",
+    "Vancouver Whitecaps": "Western", "Vancouver Whitecaps FC": "Western",
+}
+
+WNBA_CONFERENCES: dict[str, str] = {
+    # Eastern Conference (2026)
+    "Atlanta Dream": "Eastern", "Chicago Sky": "Eastern",
+    "Connecticut Sun": "Eastern", "Indiana Fever": "Eastern",
+    "New York Liberty": "Eastern", "Washington Mystics": "Eastern",
+    # Western Conference (2026)
+    "Dallas Wings": "Western", "Golden State Valkyries": "Western",
+    "Las Vegas Aces": "Western", "Los Angeles Sparks": "Western",
+    "Minnesota Lynx": "Western", "Phoenix Mercury": "Western",
+    "Seattle Storm": "Western", "Portland": "Western",
+}
+
+NCAAF_CONFERENCES: dict[str, str] = {
+    # SEC
+    "Alabama Crimson Tide": "SEC", "Arkansas Razorbacks": "SEC",
+    "Auburn Tigers": "SEC", "Florida Gators": "SEC",
+    "Georgia Bulldogs": "SEC", "Kentucky Wildcats": "SEC",
+    "LSU Tigers": "SEC", "Mississippi State Bulldogs": "SEC",
+    "Missouri Tigers": "SEC", "Ole Miss Rebels": "SEC",
+    "South Carolina Gamecocks": "SEC", "Tennessee Volunteers": "SEC",
+    "Texas A&M Aggies": "SEC", "Texas Longhorns": "SEC",
+    "Vanderbilt Commodores": "SEC", "Oklahoma Sooners": "SEC",
+    # Big Ten
+    "Illinois Fighting Illini": "Big Ten", "Indiana Hoosiers": "Big Ten",
+    "Iowa Hawkeyes": "Big Ten", "Maryland Terrapins": "Big Ten",
+    "Michigan Wolverines": "Big Ten", "Michigan State Spartans": "Big Ten",
+    "Minnesota Golden Gophers": "Big Ten", "Nebraska Cornhuskers": "Big Ten",
+    "Northwestern Wildcats": "Big Ten", "Ohio State Buckeyes": "Big Ten",
+    "Oregon Ducks": "Big Ten", "Penn State Nittany Lions": "Big Ten",
+    "Purdue Boilermakers": "Big Ten", "Rutgers Scarlet Knights": "Big Ten",
+    "UCLA Bruins": "Big Ten", "USC Trojans": "Big Ten",
+    "Washington Huskies": "Big Ten", "Wisconsin Badgers": "Big Ten",
+    # Big 12
+    "Arizona Wildcats": "Big 12", "Arizona State Sun Devils": "Big 12",
+    "Baylor Bears": "Big 12", "BYU Cougars": "Big 12",
+    "Cincinnati Bearcats": "Big 12", "Colorado Buffaloes": "Big 12",
+    "Houston Cougars": "Big 12", "Iowa State Cyclones": "Big 12",
+    "Kansas Jayhawks": "Big 12", "Kansas State Wildcats": "Big 12",
+    "Oklahoma State Cowboys": "Big 12", "TCU Horned Frogs": "Big 12",
+    "Texas Tech Red Raiders": "Big 12", "UCF Knights": "Big 12",
+    "Utah Utes": "Big 12", "West Virginia Mountaineers": "Big 12",
+    # ACC
+    "Boston College Eagles": "ACC", "Clemson Tigers": "ACC",
+    "Duke Blue Devils": "ACC", "Florida State Seminoles": "ACC",
+    "Georgia Tech Yellow Jackets": "ACC", "Louisville Cardinals": "ACC",
+    "Miami Hurricanes": "ACC", "NC State Wolfpack": "ACC",
+    "North Carolina Tar Heels": "ACC", "North Carolina St.": "ACC",
+    "Pittsburgh Panthers": "ACC", "SMU Mustangs": "ACC",
+    "Syracuse Orange": "ACC", "Virginia Cavaliers": "ACC",
+    "Virginia Tech Hokies": "ACC", "Wake Forest Demon Deacons": "ACC",
+    # Independent
+    "Notre Dame Fighting Irish": "Independent",
+}
+
 _CONFERENCE_FALLBACKS: dict[str, dict[str, str]] = {
     "nba": NBA_CONFERENCES,
     "nfl": NFL_CONFERENCES,
     "mlb": MLB_CONFERENCES,
     "nhl": NHL_CONFERENCES,
+    "mls": MLS_CONFERENCES,
+    "wnba": WNBA_CONFERENCES,
+    "ncaa-football": NCAAF_CONFERENCES,
 }
 
 # ---------------------------------------------------------------------------
