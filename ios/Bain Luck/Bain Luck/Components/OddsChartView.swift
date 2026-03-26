@@ -192,7 +192,7 @@ struct OddsChartView: View {
                         .frame(height: chartHeight)
                 } else {
                     // Chart with vertical team labels alongside Y-axis
-                    HStack(spacing: 2) {
+                    HStack(spacing: 0) {
                         // Vertical team labels on left
                         VStack {
                             // Home team (top)
@@ -206,9 +206,10 @@ struct OddsChartView: View {
                                 Text(homeShort.uppercased())
                                     .font(.system(size: 8, weight: .bold))
                                     .foregroundStyle(teamColors?.home ?? .blue)
+                                    .lineLimit(1)
                             }
-                            .rotationEffect(.degrees(-90))
                             .fixedSize()
+                            .rotationEffect(.degrees(-90))
                             Spacer()
                             // Away team (bottom)
                             HStack(spacing: 2) {
@@ -221,11 +222,12 @@ struct OddsChartView: View {
                                 Text(awayShort.uppercased())
                                     .font(.system(size: 8, weight: .bold))
                                     .foregroundStyle(teamColors?.away ?? .red)
+                                    .lineLimit(1)
                             }
-                            .rotationEffect(.degrees(-90))
                             .fixedSize()
+                            .rotationEffect(.degrees(-90))
                         }
-                        .frame(width: 22)
+                        .frame(width: 20)
                         .padding(.vertical, 8)
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
@@ -394,15 +396,13 @@ struct OddsChartView: View {
                 RuleMark(x: .value("Period", marker.date))
                     .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
                     .foregroundStyle(.secondary.opacity(0.4))
-                    .annotation(position: .top, alignment: .leading) {
+                    .annotation(position: .overlay, alignment: .topLeading, spacing: 0) {
                         Text(marker.label)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.primary.opacity(0.7))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Color(.systemGray5))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .padding(.leading, 2)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .padding(.top, 2)
                     }
             }
 

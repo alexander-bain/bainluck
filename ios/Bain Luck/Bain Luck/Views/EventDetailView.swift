@@ -248,12 +248,12 @@ struct EventDetailView: View {
                             .font(.caption2)
                             .fontWeight(.medium)
                     }
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.secondary)
                 }
                 if let ct = event.commenceTime, let date = ct.asDate {
                     Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                         .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -272,14 +272,14 @@ struct EventDetailView: View {
                         .fontWeight(.semibold)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(.primary)
                     if hasScore {
                         Text("\(event.awayScore ?? 0)")
                             .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(winnerColor(isAway: true, event: event))
                     }
                     if let record = event.awayTeamData?.record {
-                        Text(record).font(.caption2).foregroundStyle(.white.opacity(0.4))
+                        Text(record).font(.caption2).foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -296,14 +296,14 @@ struct EventDetailView: View {
                                     .foregroundStyle(colors.away)
                                 Text("\u{2013}")
                                     .font(.title3)
-                                    .foregroundStyle(.white.opacity(0.3))
+                                    .foregroundStyle(.secondary.opacity(0.4))
                                 Text(formatProbability(hp))
                                     .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
                             }
                             Text("Pre-game Odds")
                                 .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.4))
+                                .foregroundStyle(.secondary)
                         }
                     } else if let odds = event.currentOdds,
                               let away = odds.awayProbability,
@@ -314,19 +314,19 @@ struct EventDetailView: View {
                                 .foregroundStyle(colors.away)
                             Text("\u{2013}")
                                 .font(.title3)
-                                .foregroundStyle(.white.opacity(0.3))
+                                .foregroundStyle(.secondary.opacity(0.4))
                             Text(formatProbability(home))
                                 .font(.system(size: 36, weight: .black, design: .rounded).monospacedDigit())
                                 .foregroundStyle(colors.home)
                         }
                         Text("Win Probability")
                             .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(.secondary)
                     } else {
                         Text("vs")
                             .font(.title2)
                             .fontWeight(.medium)
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(.secondary)
                     }
                     if let ct = countdownText, !isLive, !isFinished {
                         Text("In \(ct)")
@@ -342,7 +342,7 @@ struct EventDetailView: View {
                         HStack(spacing: 4) {
                             Text("Opened \(formatProbability(awayOpen)) \u{2013} \(formatProbability(homeOpen))")
                                 .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.35))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -361,14 +361,14 @@ struct EventDetailView: View {
                         .fontWeight(.semibold)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(.primary)
                     if hasScore {
                         Text("\(event.homeScore ?? 0)")
                             .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(winnerColor(isAway: false, event: event))
                     }
                     if let record = event.homeTeamData?.record {
-                        Text(record).font(.caption2).foregroundStyle(.white.opacity(0.4))
+                        Text(record).font(.caption2).foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -386,9 +386,9 @@ struct EventDetailView: View {
         .background(
             LinearGradient(
                 colors: [
-                    colors.away.opacity(0.15),
-                    Color.heroDarkBackground,
-                    colors.home.opacity(0.15),
+                    colors.away.opacity(0.06),
+                    Color.cardBackground,
+                    colors.home.opacity(0.06),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -773,13 +773,13 @@ struct EventDetailView: View {
     }
 
     private func winnerColor(isAway: Bool, event: EventDetail) -> Color {
-        guard isFinished else { return .white }
+        guard isFinished else { return .primary }
         let away = event.awayScore ?? 0
         let home = event.homeScore ?? 0
         if isAway {
-            return away > home ? .white : .white.opacity(0.4)
+            return away > home ? .primary : .secondary
         } else {
-            return home > away ? .white : .white.opacity(0.4)
+            return home > away ? .primary : .secondary
         }
     }
 
