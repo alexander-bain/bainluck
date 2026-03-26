@@ -55,6 +55,13 @@ tailwind.config = {
     box-shadow: 0 25px 60px rgba(0,0,0,0.12);
   }
   .iphone-notch { width: 126px; height: 34px; background: #1A1A1A; border-radius: 0 0 20px 20px; margin: 0 auto; }
+
+  /* Sources toggle */
+  .sources-toggle { cursor: pointer; user-select: none; }
+  .sources-toggle .chevron { transition: transform 0.2s ease; }
+  .sources-toggle.open .chevron { transform: rotate(180deg); }
+  .sources-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+  .sources-panel.open { max-height: 400px; }
 </style>
 </head>
 <body class="font-sans">
@@ -83,7 +90,7 @@ tailwind.config = {
 
   <!-- ===== HERO CARD ===== -->
   <section class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-3">
-    <!-- Top meta row: broadcast + date (no freshness here — moved to chart) -->
+    <!-- Top meta row: phase + broadcast + date/time -->
     <div class="px-5 py-2 flex items-center justify-between border-b border-gray-50">
       <div class="flex items-center gap-2">
         <!-- Phase badge (live/pregame/final) -->
@@ -99,20 +106,24 @@ tailwind.config = {
           <span id="hp-final" class="hidden text-[10px] font-semibold text-ink-tertiary">Final</span>
         </div>
       </div>
-      <!-- Broadcast + date -->
+      <!-- Broadcast + date + time -->
       <div class="flex items-center gap-2">
         <span id="tv-badge" class="px-1.5 py-0.5 rounded bg-gray-100 text-[10px] font-semibold text-ink-secondary tracking-wide">ESPN</span>
-        <span class="text-[10px] text-ink-faint">Mar 25, 2026</span>
+        <span id="date-time" class="text-[10px] text-ink-faint">Mar 25, 2026 &middot; 7:30 PM ET</span>
       </div>
     </div>
 
     <!-- Teams + Score + Probability -->
     <div class="px-6 py-5">
       <div class="flex items-center justify-between">
-        <!-- Home Team -->
+        <!-- Home Team (with logo placeholder) -->
         <div class="flex flex-col items-center flex-1">
-          <div class="w-14 h-14 rounded-2xl bg-celtics/8 flex items-center justify-center mb-1.5">
-            <span class="text-xl font-bold text-celtics">BOS</span>
+          <div class="w-14 h-14 rounded-2xl bg-celtics/8 flex items-center justify-center mb-1.5 overflow-hidden">
+            <!-- Logo placeholder: in production, replaced with <img src="team.logo_url"> -->
+            <svg viewBox="0 0 56 56" class="w-full h-full">
+              <circle cx="28" cy="28" r="22" fill="#007A33" opacity="0.12"/>
+              <text x="28" y="33" text-anchor="middle" fill="#007A33" font-size="14" font-weight="800" font-family="Inter">BOS</text>
+            </svg>
           </div>
           <span class="text-xs font-semibold text-ink">Celtics</span>
           <span id="home-score" class="text-2xl font-bold text-ink tabular-nums mt-0.5">87</span>
@@ -135,10 +146,13 @@ tailwind.config = {
           </div>
         </div>
 
-        <!-- Away Team -->
+        <!-- Away Team (with logo placeholder) -->
         <div class="flex flex-col items-center flex-1">
-          <div class="w-14 h-14 rounded-2xl bg-thunder/8 flex items-center justify-center mb-1.5">
-            <span class="text-xl font-bold text-thunder">OKC</span>
+          <div class="w-14 h-14 rounded-2xl bg-thunder/8 flex items-center justify-center mb-1.5 overflow-hidden">
+            <svg viewBox="0 0 56 56" class="w-full h-full">
+              <circle cx="28" cy="28" r="22" fill="#007AC1" opacity="0.12"/>
+              <text x="28" y="33" text-anchor="middle" fill="#007AC1" font-size="14" font-weight="800" font-family="Inter">OKC</text>
+            </svg>
           </div>
           <span class="text-xs font-semibold text-ink">Thunder</span>
           <span id="away-score" class="text-2xl font-bold text-ink tabular-nums mt-0.5">71</span>
@@ -153,7 +167,7 @@ tailwind.config = {
     <div class="px-5 pt-4 pb-1 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <h2 class="text-[13px] font-semibold text-ink">Win Probability</h2>
-        <!-- Freshness indicator (moved here from hero) -->
+        <!-- Freshness indicator -->
         <div id="freshness-web" class="flex items-center gap-1.5">
           <span id="fresh-live-web" class="flex items-center gap-1.5">
             <svg class="freshness-ring" viewBox="0 0 18 18">
@@ -293,7 +307,7 @@ tailwind.config = {
       </svg>
     </div>
 
-    <!-- Chart footer -->
+    <!-- Chart footer: Legend + Sources toggle -->
     <div class="px-5 py-2 border-t border-gray-50 flex items-center justify-between">
       <div class="flex items-center gap-4">
         <div class="flex items-center gap-1.5">
@@ -307,6 +321,105 @@ tailwind.config = {
         <div class="flex items-center gap-1.5">
           <div class="w-4 h-[2px] rounded bg-violet-300"></div>
           <span class="text-[10px] text-ink-faint">Kalshi</span>
+        </div>
+      </div>
+      <!-- Sources toggle button -->
+      <button onclick="toggleSources('web')" id="sources-toggle-web" class="sources-toggle flex items-center gap-1 px-2 py-1 rounded-md hover:bg-gray-50 transition-colors">
+        <span class="text-[10px] text-ink-tertiary font-medium">Sources</span>
+        <svg class="chevron w-3 h-3 text-ink-faint" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Sources panel (hidden by default, revealed by toggle) -->
+    <div id="sources-panel-web" class="sources-panel border-t border-gray-50">
+      <div class="px-4 py-3">
+        <div class="divide-y divide-gray-50">
+          <!-- BainLuck (primary row) -->
+          <div class="flex items-center py-2.5 gap-3">
+            <div class="w-16 flex-shrink-0">
+              <div class="flex items-center gap-1.5">
+                <div class="w-4 h-4 rounded bg-ink flex items-center justify-center">
+                  <span class="text-[7px] font-bold text-white">BL</span>
+                </div>
+                <span class="text-[11px] font-semibold text-ink">BainLuck</span>
+              </div>
+            </div>
+            <div class="flex-1 flex items-center gap-2">
+              <span class="text-sm font-bold tabular-nums w-10 text-right" style="color:#007A33">68%</span>
+              <div class="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden relative">
+                <div class="absolute inset-y-0 left-0 rounded-full" style="width:68%;background:#007A33"></div>
+              </div>
+              <span class="text-sm font-bold tabular-nums w-10" style="color:#007AC1">32%</span>
+            </div>
+            <div class="w-10 text-right">
+              <span class="text-[10px] font-medium text-emerald-600">+5</span>
+            </div>
+          </div>
+
+          <!-- Sportsbooks -->
+          <div class="flex items-center py-2.5 gap-3">
+            <div class="w-16 flex-shrink-0">
+              <span class="text-[11px] text-ink-secondary">Sportsbooks</span>
+            </div>
+            <div class="flex-1 flex items-center gap-2">
+              <span class="text-xs font-semibold tabular-nums w-10 text-right text-ink-secondary">65%</span>
+              <div class="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
+                <div class="h-full rounded-full bg-ink-tertiary" style="width:65%"></div>
+              </div>
+              <span class="text-xs font-semibold tabular-nums w-10 text-ink-secondary">35%</span>
+            </div>
+            <div class="w-10 text-right">
+              <span class="text-[10px] font-medium text-emerald-600">+3</span>
+            </div>
+          </div>
+
+          <!-- Kalshi -->
+          <div class="flex items-center py-2.5 gap-3">
+            <div class="w-16 flex-shrink-0">
+              <span class="text-[11px] text-ink-secondary">Kalshi</span>
+            </div>
+            <div class="flex-1 flex items-center gap-2">
+              <span class="text-xs font-semibold tabular-nums w-10 text-right text-ink-secondary">71%</span>
+              <div class="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
+                <div class="h-full rounded-full bg-violet-400" style="width:71%"></div>
+              </div>
+              <span class="text-xs font-semibold tabular-nums w-10 text-ink-secondary">29%</span>
+            </div>
+            <div class="w-10 text-right">
+              <span class="text-[10px] font-medium text-emerald-600">+7</span>
+            </div>
+          </div>
+
+          <!-- Polymarket -->
+          <div class="flex items-center py-2.5 gap-3">
+            <div class="w-16 flex-shrink-0">
+              <span class="text-[11px] text-ink-secondary">Polymarket</span>
+            </div>
+            <div class="flex-1 flex items-center gap-2">
+              <span class="text-xs font-semibold tabular-nums w-10 text-right text-ink-secondary">67%</span>
+              <div class="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
+                <div class="h-full rounded-full bg-blue-400" style="width:67%"></div>
+              </div>
+              <span class="text-xs font-semibold tabular-nums w-10 text-ink-secondary">33%</span>
+            </div>
+            <div class="w-10 text-right">
+              <span class="text-[10px] font-medium text-emerald-600">+4</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Compact divergence range bar -->
+        <div class="mt-2 px-1">
+          <div class="flex items-center gap-2">
+            <span class="text-[9px] text-ink-faint uppercase tracking-wider flex-shrink-0">Range</span>
+            <div class="flex-1 h-3 bg-gray-50 rounded-full relative">
+              <div class="absolute top-0.5 bottom-0.5 bg-amber-200 rounded-full" style="left:60%; width:12%"></div>
+              <div class="absolute top-0 bottom-0 w-0.5 bg-ink rounded-full" style="left:64%" title="BainLuck 68%"></div>
+            </div>
+            <span class="text-[9px] text-ink-faint tabular-nums flex-shrink-0">6% spread</span>
+          </div>
         </div>
       </div>
     </div>
@@ -333,22 +446,6 @@ tailwind.config = {
       </div>
     </div>
 
-    <!-- Team labels above chart -->
-    <div class="px-5 flex items-center justify-between mb-0">
-      <div class="flex items-center gap-1.5">
-        <div class="w-3 h-3 rounded bg-celtics/10 flex items-center justify-center">
-          <span class="text-[6px] font-bold text-celtics">B</span>
-        </div>
-        <span class="text-[10px] font-semibold text-celtics opacity-60">+ Celtics leading</span>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <span class="text-[10px] font-semibold text-thunder opacity-60">&ndash; Thunder leading</span>
-        <div class="w-3 h-3 rounded bg-thunder/10 flex items-center justify-center">
-          <span class="text-[6px] font-bold text-thunder">O</span>
-        </div>
-      </div>
-    </div>
-
     <!-- Score Diff Chart -->
     <div class="px-1">
       <svg viewBox="0 0 700 280" class="w-full" preserveAspectRatio="xMidYMid meet">
@@ -369,12 +466,16 @@ tailwind.config = {
         <line x1="425" y1="16" x2="425" y2="236" stroke="#F3F4F6" stroke-width="1"/>
         <line x1="555" y1="16" x2="555" y2="236" stroke="#F3F4F6" stroke-width="1"/>
 
-        <!-- Y-Axis labels -->
+        <!-- Y-Axis labels with team abbrevs -->
         <text x="46" y="36" text-anchor="end" class="text-[9px]" fill="#9CA3AF" font-family="Inter">+20</text>
         <text x="46" y="76" text-anchor="end" class="text-[9px]" fill="#9CA3AF" font-family="Inter">+10</text>
         <text x="46" y="130" text-anchor="end" class="text-[9px]" fill="#9CA3AF" font-weight="600" font-family="Inter">0</text>
         <text x="46" y="182" text-anchor="end" class="text-[9px]" fill="#9CA3AF" font-family="Inter">-10</text>
         <text x="46" y="222" text-anchor="end" class="text-[9px]" fill="#9CA3AF" font-family="Inter">-20</text>
+
+        <!-- Team Y-axis labels (rotated, matching Win Prob style) -->
+        <text x="8" y="60" class="text-[8px]" fill="#007A33" font-weight="700" font-family="Inter" opacity="0.35" transform="rotate(-90 8 60)">BOS</text>
+        <text x="8" y="210" class="text-[8px]" fill="#007AC1" font-weight="700" font-family="Inter" opacity="0.35" transform="rotate(-90 8 210)">OKC</text>
 
         <!-- Grid lines -->
         <line x1="52" y1="126" x2="680" y2="126" stroke="#E5E7EB" stroke-width="1"/>
@@ -395,14 +496,13 @@ tailwind.config = {
             L490,96 L510,92 L530,94 L545,92
             L555,88 L575,86 L590,84 L610,82"
             fill="none" stroke="#9CA3AF" stroke-width="1.5" stroke-linecap="round"/>
-          <!-- Additional faint book lines -->
           <path d="M107,122 L170,118 L235,112 L300,108 L365,112 L425,110 L490,98 L555,90 L610,84"
             fill="none" stroke="#9CA3AF" stroke-width="1" stroke-linecap="round"/>
           <path d="M107,118 L170,114 L235,108 L300,104 L365,108 L425,106 L490,94 L555,86 L610,80"
             fill="none" stroke="#9CA3AF" stroke-width="1" stroke-linecap="round"/>
         </g>
 
-        <!-- Projected Spread (BainLuck aggregate — green) -->
+        <!-- Projected Spread (BainLuck aggregate) -->
         <path d="M107,120 L135,118 L170,115 L200,110 L235,108 L270,106
           L300,104 L330,98 L350,103 L365,108
           L395,104 L425,106 L450,98 L470,94
@@ -461,98 +561,107 @@ tailwind.config = {
     </div>
   </section>
 
-  <!-- ===== SOURCE COMPARISON (compact) ===== -->
+  <!-- ===== RELATED FUTURES ("Bigger Picture") ===== -->
   <section class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-3">
-    <div class="px-5 pt-3.5 pb-1">
-      <h2 class="text-[13px] font-semibold text-ink">Sources</h2>
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between">
+      <h2 class="text-[13px] font-semibold text-ink">Bigger Picture</h2>
+      <span class="text-[10px] text-ink-faint">Related Futures</span>
     </div>
 
-    <div class="px-4 pb-3">
-      <div class="divide-y divide-gray-50">
-        <!-- BainLuck (primary row) -->
-        <div class="flex items-center py-2.5 gap-3">
-          <div class="w-16 flex-shrink-0">
-            <div class="flex items-center gap-1.5">
-              <div class="w-4 h-4 rounded bg-ink flex items-center justify-center">
-                <span class="text-[7px] font-bold text-white">BL</span>
+    <div class="px-4 pb-4">
+      <!-- 2-wide card grid -->
+      <div class="grid grid-cols-2 gap-2.5">
+
+        <!-- Card 1: NBA Championship -->
+        <a href="#" class="block rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all overflow-hidden">
+          <div class="p-3">
+            <div class="flex items-center gap-2 mb-2">
+              <!-- Team logo mini -->
+              <div class="w-6 h-6 rounded-md bg-celtics/10 flex items-center justify-center flex-shrink-0">
+                <span class="text-[7px] font-bold text-celtics">BOS</span>
               </div>
-              <span class="text-[11px] font-semibold text-ink">BainLuck</span>
+              <div class="min-w-0">
+                <div class="text-[10px] font-semibold text-ink truncate">NBA Championship</div>
+                <div class="text-[9px] text-ink-faint">Celtics to win title</div>
+              </div>
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-lg font-bold text-ink tabular-nums">24%</span>
+              <span class="text-[9px] text-emerald-600 font-medium">+2.1%</span>
+            </div>
+            <div class="mt-1.5 h-1 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-celtics" style="width:24%"></div>
             </div>
           </div>
-          <div class="flex-1 flex items-center gap-2">
-            <span class="text-sm font-bold tabular-nums w-10 text-right" style="color:#007A33">68%</span>
-            <div class="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden relative">
-              <div class="absolute inset-y-0 left-0 rounded-full" style="width:68%;background:#007A33"></div>
-            </div>
-            <span class="text-sm font-bold tabular-nums w-10" style="color:#007AC1">32%</span>
-          </div>
-          <div class="w-10 text-right">
-            <span class="text-[10px] font-medium text-emerald-600">+5</span>
-          </div>
-        </div>
+        </a>
 
-        <!-- Sportsbooks -->
-        <div class="flex items-center py-2.5 gap-3">
-          <div class="w-16 flex-shrink-0">
-            <span class="text-[11px] text-ink-secondary">Sportsbooks</span>
-          </div>
-          <div class="flex-1 flex items-center gap-2">
-            <span class="text-xs font-semibold tabular-nums w-10 text-right text-ink-secondary">65%</span>
-            <div class="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
-              <div class="h-full rounded-full bg-ink-tertiary" style="width:65%"></div>
+        <!-- Card 2: NBA Championship (opponent) -->
+        <a href="#" class="block rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all overflow-hidden">
+          <div class="p-3">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-6 h-6 rounded-md bg-thunder/10 flex items-center justify-center flex-shrink-0">
+                <span class="text-[7px] font-bold text-thunder">OKC</span>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[10px] font-semibold text-ink truncate">NBA Championship</div>
+                <div class="text-[9px] text-ink-faint">Thunder to win title</div>
+              </div>
             </div>
-            <span class="text-xs font-semibold tabular-nums w-10 text-ink-secondary">35%</span>
-          </div>
-          <div class="w-10 text-right">
-            <span class="text-[10px] font-medium text-emerald-600">+3</span>
-          </div>
-        </div>
-
-        <!-- Kalshi -->
-        <div class="flex items-center py-2.5 gap-3">
-          <div class="w-16 flex-shrink-0">
-            <span class="text-[11px] text-ink-secondary">Kalshi</span>
-          </div>
-          <div class="flex-1 flex items-center gap-2">
-            <span class="text-xs font-semibold tabular-nums w-10 text-right text-ink-secondary">71%</span>
-            <div class="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
-              <div class="h-full rounded-full bg-violet-400" style="width:71%"></div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-lg font-bold text-ink tabular-nums">31%</span>
+              <span class="text-[9px] text-red-500 font-medium">-0.8%</span>
             </div>
-            <span class="text-xs font-semibold tabular-nums w-10 text-ink-secondary">29%</span>
-          </div>
-          <div class="w-10 text-right">
-            <span class="text-[10px] font-medium text-emerald-600">+7</span>
-          </div>
-        </div>
-
-        <!-- Polymarket -->
-        <div class="flex items-center py-2.5 gap-3">
-          <div class="w-16 flex-shrink-0">
-            <span class="text-[11px] text-ink-secondary">Polymarket</span>
-          </div>
-          <div class="flex-1 flex items-center gap-2">
-            <span class="text-xs font-semibold tabular-nums w-10 text-right text-ink-secondary">67%</span>
-            <div class="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
-              <div class="h-full rounded-full bg-blue-400" style="width:67%"></div>
+            <div class="mt-1.5 h-1 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-thunder" style="width:31%"></div>
             </div>
-            <span class="text-xs font-semibold tabular-nums w-10 text-ink-secondary">33%</span>
           </div>
-          <div class="w-10 text-right">
-            <span class="text-[10px] font-medium text-emerald-600">+4</span>
-          </div>
-        </div>
-      </div>
+        </a>
 
-      <!-- Compact divergence range bar -->
-      <div class="mt-2 px-1">
-        <div class="flex items-center gap-2">
-          <span class="text-[9px] text-ink-faint uppercase tracking-wider flex-shrink-0">Range</span>
-          <div class="flex-1 h-3 bg-gray-50 rounded-full relative">
-            <div class="absolute top-0.5 bottom-0.5 bg-amber-200 rounded-full" style="left:60%; width:12%"></div>
-            <div class="absolute top-0 bottom-0 w-0.5 bg-ink rounded-full" style="left:64%" title="BainLuck 68%"></div>
+        <!-- Card 3: MVP (player image placeholder) -->
+        <a href="#" class="block rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all overflow-hidden">
+          <div class="p-3">
+            <div class="flex items-center gap-2 mb-2">
+              <!-- Player headshot placeholder -->
+              <div class="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                <svg class="w-4 h-4 text-ink-faint" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[10px] font-semibold text-ink truncate">NBA MVP</div>
+                <div class="text-[9px] text-ink-faint">SGA (OKC)</div>
+              </div>
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-lg font-bold text-ink tabular-nums">42%</span>
+              <span class="text-[9px] text-emerald-600 font-medium">+1.5%</span>
+            </div>
+            <div class="mt-1.5 h-1 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-thunder" style="width:42%"></div>
+            </div>
           </div>
-          <span class="text-[9px] text-ink-faint tabular-nums flex-shrink-0">6% spread</span>
-        </div>
+        </a>
+
+        <!-- Card 4: Eastern Conference -->
+        <a href="#" class="block rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all overflow-hidden">
+          <div class="p-3">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-6 h-6 rounded-md bg-celtics/10 flex items-center justify-center flex-shrink-0">
+                <span class="text-[7px] font-bold text-celtics">BOS</span>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[10px] font-semibold text-ink truncate">Eastern Conference</div>
+                <div class="text-[9px] text-ink-faint">Celtics to win East</div>
+              </div>
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-lg font-bold text-ink tabular-nums">38%</span>
+              <span class="text-[9px] text-emerald-600 font-medium">+3.2%</span>
+            </div>
+            <div class="mt-1.5 h-1 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-celtics" style="width:38%"></div>
+            </div>
+          </div>
+        </a>
+
       </div>
     </div>
   </section>
@@ -584,7 +693,7 @@ tailwind.config = {
 
     <!-- Mobile Hero -->
     <div class="px-4 pb-3">
-      <!-- Broadcast + phase -->
+      <!-- Phase + broadcast + date/time -->
       <div class="flex items-center justify-between mb-2">
         <span class="flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot"></span>
@@ -592,15 +701,18 @@ tailwind.config = {
         </span>
         <div class="flex items-center gap-1.5">
           <span class="px-1.5 py-0.5 rounded bg-gray-100 text-[9px] font-semibold text-ink-secondary">ESPN</span>
-          <span class="text-[9px] text-ink-faint">Mar 25</span>
+          <span class="text-[9px] text-ink-faint">Mar 25 &middot; 7:30 PM</span>
         </div>
       </div>
 
-      <!-- Teams row -->
+      <!-- Teams row (with logo placeholders) -->
       <div class="flex items-center justify-between">
         <div class="flex flex-col items-center w-16">
-          <div class="w-11 h-11 rounded-xl bg-celtics/8 flex items-center justify-center mb-1">
-            <span class="text-sm font-bold text-celtics">BOS</span>
+          <div class="w-11 h-11 rounded-xl bg-celtics/8 flex items-center justify-center mb-1 overflow-hidden">
+            <svg viewBox="0 0 44 44" class="w-full h-full">
+              <circle cx="22" cy="22" r="17" fill="#007A33" opacity="0.12"/>
+              <text x="22" y="26" text-anchor="middle" fill="#007A33" font-size="10" font-weight="800" font-family="Inter">BOS</text>
+            </svg>
           </div>
           <span class="text-[10px] font-semibold text-ink">Celtics</span>
           <span class="text-xl font-bold text-ink tabular-nums">87</span>
@@ -618,8 +730,11 @@ tailwind.config = {
         </div>
 
         <div class="flex flex-col items-center w-16">
-          <div class="w-11 h-11 rounded-xl bg-thunder/8 flex items-center justify-center mb-1">
-            <span class="text-sm font-bold text-thunder">OKC</span>
+          <div class="w-11 h-11 rounded-xl bg-thunder/8 flex items-center justify-center mb-1 overflow-hidden">
+            <svg viewBox="0 0 44 44" class="w-full h-full">
+              <circle cx="22" cy="22" r="17" fill="#007AC1" opacity="0.12"/>
+              <text x="22" y="26" text-anchor="middle" fill="#007AC1" font-size="10" font-weight="800" font-family="Inter">OKC</text>
+            </svg>
           </div>
           <span class="text-[10px] font-semibold text-ink">Thunder</span>
           <span class="text-xl font-bold text-ink tabular-nums">71</span>
@@ -714,10 +829,64 @@ tailwind.config = {
         <text x="320" y="174" text-anchor="middle" class="text-[7px]" fill="#9CA3AF" font-family="Inter">9:12</text>
       </svg>
 
-      <!-- Legend -->
-      <div class="px-3 py-1.5 border-t border-gray-50 flex items-center gap-3">
-        <div class="flex items-center gap-1"><div class="w-3 h-[1.5px] rounded bg-celtics"></div><span class="text-[8px] text-ink-tertiary">BainLuck</span></div>
-        <div class="flex items-center gap-1"><div class="w-3 h-[1.5px] rounded bg-ink-faint"></div><span class="text-[8px] text-ink-faint">Sportsbooks</span></div>
+      <!-- Legend + Sources toggle (mobile) -->
+      <div class="px-3 py-1.5 border-t border-gray-50 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-1"><div class="w-3 h-[1.5px] rounded bg-celtics"></div><span class="text-[8px] text-ink-tertiary">BainLuck</span></div>
+          <div class="flex items-center gap-1"><div class="w-3 h-[1.5px] rounded bg-ink-faint"></div><span class="text-[8px] text-ink-faint">Sportsbooks</span></div>
+        </div>
+        <button onclick="toggleSources('mobile')" id="sources-toggle-mobile" class="sources-toggle flex items-center gap-0.5 px-1.5 py-0.5 rounded-md">
+          <span class="text-[8px] text-ink-tertiary font-medium">Sources</span>
+          <svg class="chevron w-2.5 h-2.5 text-ink-faint" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Mobile Sources panel (hidden by default) -->
+      <div id="sources-panel-mobile" class="sources-panel border-t border-gray-50">
+        <div class="px-3 py-2 divide-y divide-gray-50">
+          <!-- BainLuck -->
+          <div class="flex items-center py-2 gap-2">
+            <div class="w-4 h-4 rounded bg-ink flex items-center justify-center flex-shrink-0">
+              <span class="text-[6px] font-bold text-white">BL</span>
+            </div>
+            <span class="text-[10px] font-semibold text-ink w-12">BainLuck</span>
+            <span class="text-[11px] font-bold tabular-nums" style="color:#007A33">68%</span>
+            <div class="flex-1 h-1 rounded-full bg-gray-100"><div class="h-full rounded-full" style="width:68%;background:#007A33"></div></div>
+            <span class="text-[11px] font-bold tabular-nums" style="color:#007AC1">32%</span>
+            <span class="text-[9px] text-emerald-600 font-medium w-6 text-right">+5</span>
+          </div>
+          <!-- Sportsbooks -->
+          <div class="flex items-center py-2 gap-2">
+            <div class="w-4 h-4 flex-shrink-0"></div>
+            <span class="text-[10px] text-ink-secondary w-12">Books</span>
+            <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">65%</span>
+            <div class="flex-1 h-0.5 rounded-full bg-gray-100"><div class="h-full rounded-full bg-ink-tertiary" style="width:65%"></div></div>
+            <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">35%</span>
+            <span class="text-[9px] text-emerald-600 font-medium w-6 text-right">+3</span>
+          </div>
+          <!-- Kalshi -->
+          <div class="flex items-center py-2 gap-2">
+            <div class="w-4 h-4 flex-shrink-0"></div>
+            <span class="text-[10px] text-ink-secondary w-12">Kalshi</span>
+            <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">71%</span>
+            <div class="flex-1 h-0.5 rounded-full bg-gray-100"><div class="h-full rounded-full bg-violet-400" style="width:71%"></div></div>
+            <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">29%</span>
+            <span class="text-[9px] text-emerald-600 font-medium w-6 text-right">+7</span>
+          </div>
+        </div>
+        <!-- Range bar -->
+        <div class="px-3 pb-2.5">
+          <div class="flex items-center gap-1.5">
+            <span class="text-[8px] text-ink-faint">Range</span>
+            <div class="flex-1 h-2 bg-gray-50 rounded-full relative">
+              <div class="absolute top-0.5 bottom-0.5 bg-amber-200 rounded-full" style="left:60%;width:12%"></div>
+              <div class="absolute top-0 bottom-0 w-0.5 bg-ink rounded-full" style="left:64%"></div>
+            </div>
+            <span class="text-[8px] text-ink-faint tabular-nums">6%</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -739,12 +908,6 @@ tailwind.config = {
         </div>
       </div>
 
-      <!-- Team labels -->
-      <div class="px-3 flex items-center justify-between">
-        <span class="text-[8px] font-semibold text-celtics opacity-50">+ BOS leading</span>
-        <span class="text-[8px] font-semibold text-thunder opacity-50">&ndash; OKC leading</span>
-      </div>
-
       <svg viewBox="0 0 360 160" class="w-full" preserveAspectRatio="xMidYMid meet">
         <!-- TOP: game state labels -->
         <text x="72" y="10" text-anchor="middle" class="text-[7px]" fill="#9CA3AF" font-weight="600" font-family="Inter">1Q</text>
@@ -759,10 +922,14 @@ tailwind.config = {
         <line x1="200" y1="14" x2="200" y2="120" stroke="#F3F4F6" stroke-width="0.5"/>
         <line x1="280" y1="14" x2="280" y2="120" stroke="#F3F4F6" stroke-width="0.5"/>
 
-        <!-- Y axis -->
+        <!-- Y axis with team labels -->
         <text x="16" y="30" text-anchor="end" class="text-[6px]" fill="#9CA3AF" font-family="Inter">+10</text>
         <text x="16" y="68" text-anchor="end" class="text-[6px]" fill="#9CA3AF" font-weight="600" font-family="Inter">0</text>
         <text x="16" y="106" text-anchor="end" class="text-[6px]" fill="#9CA3AF" font-family="Inter">-10</text>
+
+        <!-- Team Y-axis labels (rotated, matching win prob) -->
+        <text x="4" y="38" class="text-[5px]" fill="#007A33" font-weight="700" font-family="Inter" opacity="0.3" transform="rotate(-90 4 38)">BOS</text>
+        <text x="4" y="100" class="text-[5px]" fill="#007AC1" font-weight="700" font-family="Inter" opacity="0.3" transform="rotate(-90 4 100)">OKC</text>
 
         <!-- Gridlines -->
         <line x1="22" y1="66" x2="340" y2="66" stroke="#E5E7EB" stroke-width="0.75"/>
@@ -804,51 +971,89 @@ tailwind.config = {
       </div>
     </div>
 
-    <!-- Mobile Sources (compact) -->
+    <!-- Mobile Related Futures -->
     <div class="mx-3 mb-3 bg-white rounded-xl border border-gray-100 overflow-hidden">
-      <div class="px-3 pt-2.5 pb-1">
-        <span class="text-[11px] font-semibold text-ink">Sources</span>
+      <div class="px-3 pt-2.5 pb-1.5 flex items-center justify-between">
+        <span class="text-[11px] font-semibold text-ink">Bigger Picture</span>
+        <span class="text-[8px] text-ink-faint">Related Futures</span>
       </div>
-      <div class="px-3 pb-2 divide-y divide-gray-50">
-        <!-- BainLuck -->
-        <div class="flex items-center py-2 gap-2">
-          <div class="w-4 h-4 rounded bg-ink flex items-center justify-center flex-shrink-0">
-            <span class="text-[6px] font-bold text-white">BL</span>
-          </div>
-          <span class="text-[10px] font-semibold text-ink w-12">BainLuck</span>
-          <span class="text-[11px] font-bold tabular-nums" style="color:#007A33">68%</span>
-          <div class="flex-1 h-1 rounded-full bg-gray-100"><div class="h-full rounded-full" style="width:68%;background:#007A33"></div></div>
-          <span class="text-[11px] font-bold tabular-nums" style="color:#007AC1">32%</span>
-          <span class="text-[9px] text-emerald-600 font-medium w-6 text-right">+5</span>
-        </div>
-        <!-- Sportsbooks -->
-        <div class="flex items-center py-2 gap-2">
-          <div class="w-4 h-4 flex-shrink-0"></div>
-          <span class="text-[10px] text-ink-secondary w-12">Books</span>
-          <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">65%</span>
-          <div class="flex-1 h-0.5 rounded-full bg-gray-100"><div class="h-full rounded-full bg-ink-tertiary" style="width:65%"></div></div>
-          <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">35%</span>
-          <span class="text-[9px] text-emerald-600 font-medium w-6 text-right">+3</span>
-        </div>
-        <!-- Kalshi -->
-        <div class="flex items-center py-2 gap-2">
-          <div class="w-4 h-4 flex-shrink-0"></div>
-          <span class="text-[10px] text-ink-secondary w-12">Kalshi</span>
-          <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">71%</span>
-          <div class="flex-1 h-0.5 rounded-full bg-gray-100"><div class="h-full rounded-full bg-violet-400" style="width:71%"></div></div>
-          <span class="text-[10px] font-semibold tabular-nums text-ink-secondary">29%</span>
-          <span class="text-[9px] text-emerald-600 font-medium w-6 text-right">+7</span>
-        </div>
-      </div>
-      <!-- Range bar -->
-      <div class="px-3 pb-2.5">
-        <div class="flex items-center gap-1.5">
-          <span class="text-[8px] text-ink-faint">Range</span>
-          <div class="flex-1 h-2 bg-gray-50 rounded-full relative">
-            <div class="absolute top-0.5 bottom-0.5 bg-amber-200 rounded-full" style="left:60%;width:12%"></div>
-            <div class="absolute top-0 bottom-0 w-0.5 bg-ink rounded-full" style="left:64%"></div>
-          </div>
-          <span class="text-[8px] text-ink-faint tabular-nums">6%</span>
+      <div class="px-2.5 pb-3">
+        <div class="grid grid-cols-2 gap-2">
+          <!-- Card 1: Championship -->
+          <a href="#" class="block rounded-lg border border-gray-100 p-2.5">
+            <div class="flex items-center gap-1.5 mb-1.5">
+              <div class="w-5 h-5 rounded bg-celtics/10 flex items-center justify-center flex-shrink-0">
+                <span class="text-[6px] font-bold text-celtics">BOS</span>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[9px] font-semibold text-ink truncate">NBA Title</div>
+              </div>
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-sm font-bold text-ink tabular-nums">24%</span>
+              <span class="text-[8px] text-emerald-600 font-medium">+2.1</span>
+            </div>
+            <div class="mt-1 h-0.5 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-celtics" style="width:24%"></div>
+            </div>
+          </a>
+
+          <!-- Card 2: Championship (opponent) -->
+          <a href="#" class="block rounded-lg border border-gray-100 p-2.5">
+            <div class="flex items-center gap-1.5 mb-1.5">
+              <div class="w-5 h-5 rounded bg-thunder/10 flex items-center justify-center flex-shrink-0">
+                <span class="text-[6px] font-bold text-thunder">OKC</span>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[9px] font-semibold text-ink truncate">NBA Title</div>
+              </div>
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-sm font-bold text-ink tabular-nums">31%</span>
+              <span class="text-[8px] text-red-500 font-medium">-0.8</span>
+            </div>
+            <div class="mt-1 h-0.5 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-thunder" style="width:31%"></div>
+            </div>
+          </a>
+
+          <!-- Card 3: MVP -->
+          <a href="#" class="block rounded-lg border border-gray-100 p-2.5">
+            <div class="flex items-center gap-1.5 mb-1.5">
+              <div class="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                <svg class="w-3 h-3 text-ink-faint" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[9px] font-semibold text-ink truncate">MVP &middot; SGA</div>
+              </div>
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-sm font-bold text-ink tabular-nums">42%</span>
+              <span class="text-[8px] text-emerald-600 font-medium">+1.5</span>
+            </div>
+            <div class="mt-1 h-0.5 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-thunder" style="width:42%"></div>
+            </div>
+          </a>
+
+          <!-- Card 4: Conference -->
+          <a href="#" class="block rounded-lg border border-gray-100 p-2.5">
+            <div class="flex items-center gap-1.5 mb-1.5">
+              <div class="w-5 h-5 rounded bg-celtics/10 flex items-center justify-center flex-shrink-0">
+                <span class="text-[6px] font-bold text-celtics">BOS</span>
+              </div>
+              <div class="min-w-0">
+                <div class="text-[9px] font-semibold text-ink truncate">Win East</div>
+              </div>
+            </div>
+            <div class="flex items-baseline gap-1">
+              <span class="text-sm font-bold text-ink tabular-nums">38%</span>
+              <span class="text-[8px] text-emerald-600 font-medium">+3.2</span>
+            </div>
+            <div class="mt-1 h-0.5 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full bg-celtics" style="width:38%"></div>
+            </div>
+          </a>
         </div>
       </div>
     </div>
@@ -878,6 +1083,7 @@ function setState(state) {
     document.getElementById('away-score').textContent = '--';
     document.getElementById('starting-odds').innerHTML = '<span class="text-[10px] text-ink-faint">Today 7:30 PM ET</span>';
     document.getElementById('tv-badge').textContent = 'ESPN';
+    document.getElementById('date-time').textContent = 'Mar 25, 2026 \u00B7 7:30 PM ET';
   } else if (state === 'live-q3') {
     show('hp-live'); show('fresh-live-web');
     document.getElementById('home-prob').textContent = '68';
@@ -885,6 +1091,7 @@ function setState(state) {
     document.getElementById('home-score').textContent = '87';
     document.getElementById('away-score').textContent = '71';
     document.getElementById('starting-odds').innerHTML = '<span class="text-[10px] text-ink-faint">Opened 52% &ndash; 48%</span>';
+    document.getElementById('date-time').textContent = 'Mar 25, 2026 \u00B7 7:30 PM ET';
   } else {
     show('hp-final'); show('fresh-final-web');
     document.getElementById('home-prob').textContent = '100';
@@ -892,6 +1099,7 @@ function setState(state) {
     document.getElementById('home-score').textContent = '112';
     document.getElementById('away-score').textContent = '98';
     document.getElementById('starting-odds').innerHTML = '<span class="text-[10px] text-ink-faint">Opened 52% &ndash; 48%</span>';
+    document.getElementById('date-time').textContent = 'Mar 25, 2026 \u00B7 7:30 PM ET';
   }
 }
 
@@ -907,8 +1115,14 @@ function setFilter(f, btn) {
 }
 
 function toggleFullscreen(target) {
-  // Demo: show an alert since this is a static prototype
   alert('In production, this would expand the chart to fill the entire viewport while continuing to live-update. Press Escape or tap the X to return.');
+}
+
+function toggleSources(variant) {
+  const toggle = document.getElementById('sources-toggle-' + variant);
+  const panel = document.getElementById('sources-panel-' + variant);
+  toggle.classList.toggle('open');
+  panel.classList.toggle('open');
 }
 </script>
 </body>
