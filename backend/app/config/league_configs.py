@@ -261,7 +261,7 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
     ],
     team_sort="championship_desc",
     conference_split=False,
-    region_split=True,
+    region_split=False,  # Flat list — easier to compare across regions
     trend_hours=72,  # Tournament is ~3 weeks, show recent window
     max_teams=68,
     season_pattern="2026",
