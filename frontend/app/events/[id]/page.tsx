@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
-import ProbabilityBar from "@/components/ProbabilityBar";
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
@@ -17,7 +16,7 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
-import { getLeagueDisplay, getEmojiForLeague, getCategoryForLeague } from "@/lib/sportCategories";
+import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
 import {
   useAnalytics,
   usePageTracking,
@@ -329,6 +328,7 @@ export default function EventPage({ params }: EventPageProps) {
   const hasTrackedDetailView = useRef(false);
   const [activeChartPoint, setActiveChartPoint] = useState<ActiveChartPoint | null>(null);
   const [oddsChartDomain, setOddsChartDomain] = useState<{ start: string; end: string } | null>(null);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const handleRenderedDomain = useCallback((start: string, end: string) => {
     setOddsChartDomain((prev) => {
       if (prev && prev.start === start && prev.end === end) return prev;
@@ -611,7 +611,6 @@ export default function EventPage({ params }: EventPageProps) {
 
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
   const gameIsBlowout = isLive && isBlowout(homeProb);
-  const sportEmoji = event.sport ? getEmojiForLeague(event.sport) : "🏆";
 
   // Analyze sources from history data
   const sourceAnalysis = analyzeSourcesFromHistory(historyData?.bookmaker_history);
@@ -695,79 +694,82 @@ export default function EventPage({ params }: EventPageProps) {
         )}
       </div>
 
-      {/* Hero Section */}
-      <div className={`rounded-card shadow-card p-4 sm:p-5 ${
-        effectivelyLive
-          ? "bg-gradient-to-br from-emerald-50 to-white border-2 border-emerald-200"
-          : isFinished
-          ? "bg-slate-50 border border-slate-200"
-          : "bg-surface-card"
-      }`}>
-        {/* Top bar: sport badge, status, pin */}
-        <div className="flex items-center justify-between mb-3">
+      {/* Hero Section — v2 design */}
+      <div className="rounded-card shadow-card overflow-hidden bg-surface-card">
+        {/* Top meta row: phase + broadcast + date/time */}
+        <div className="px-4 sm:px-5 py-2 flex items-center justify-between border-b border-surface-border/30">
           <div className="flex items-center gap-2">
             {/* Pin button */}
             <button
               onClick={() => togglePin(eventId)}
               disabled={isMaxReached && !eventIsPinned}
               className={`
-                p-1.5 rounded-full transition-all
+                p-1 rounded-full transition-all
                 ${eventIsPinned
-                  ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
-                  : 'text-text-secondary/40 hover:text-text-secondary hover:bg-slate/10'
+                  ? 'text-amber-500'
+                  : 'text-text-muted/40 hover:text-text-secondary'
                 }
                 ${isMaxReached && !eventIsPinned ? 'cursor-not-allowed opacity-30' : ''}
-                focus:outline-none focus:ring-2 focus:ring-amber-300
+                focus:outline-none
               `}
               title={eventIsPinned ? 'Unpin event' : isMaxReached ? 'Maximum 6 pins' : 'Pin event'}
               aria-label={eventIsPinned ? 'Unpin event' : 'Pin event'}
             >
-              <PinIcon filled={eventIsPinned} className="w-5 h-5" />
+              <PinIcon filled={eventIsPinned} className="w-4 h-4" />
             </button>
 
-            {event.sport && (() => {
-              const cat = getCategoryForLeague(event.sport!);
-              const badge = (
-                <span className="text-sm bg-slate/10 px-3 py-1 rounded-full flex items-center gap-2">
-                  <span className="text-lg">{sportEmoji}</span>
-                  <span className="text-text-secondary font-medium">
-                    {getLeagueDisplay(event.sport!)}
-                  </span>
+            {/* Phase badge */}
+            {effectivelyLive ? (
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {event.espn?.period && event.espn?.game_clock
+                  ? `${event.espn.period} · ${event.espn.game_clock}`
+                  : "LIVE"
+                }
+              </span>
+            ) : isFinished ? (
+              <span className="text-[10px] font-semibold text-text-muted">Final</span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                <span className="text-[10px] text-amber-500 font-medium">
+                  {gameCountdown && !hasStarted ? `Starts in ${gameCountdown}` : "Pregame"}
                 </span>
-              );
-              return cat ? (
-                <Link href={`/categories/${cat.key}`} className="hover:opacity-80 transition-opacity">
-                  {badge}
-                </Link>
-              ) : badge;
-            })()}
+              </span>
+            )}
           </div>
 
-          {/* Status badge */}
-          {isCompleted && (
-            <span className="flex items-center gap-1 bg-slate/20 text-text-secondary px-3 py-1 rounded-full text-sm font-medium">
-              Closed
+          {/* Broadcast + date + time */}
+          <div className="flex items-center gap-2">
+            {event.espn?.broadcast && (
+              <span className="px-1.5 py-0.5 rounded bg-surface-elevated text-[10px] font-semibold text-text-secondary tracking-wide">
+                {event.espn.broadcast}
+              </span>
+            )}
+            <span className="text-[10px] text-text-muted">
+              {new Date(event.commence_time).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })} · {new Date(event.commence_time).toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+                timeZoneName: "short",
+              })}
             </span>
-          )}
-          {isClosed && (
-            <span className="flex items-center gap-1 bg-slate/20 text-text-secondary px-3 py-1 rounded-full text-sm font-medium">
-              Closed
-            </span>
-          )}
+          </div>
         </div>
 
         {/* Tag chips — contextual labels from taxonomy */}
         {event.event_tags && event.event_tags.length > 0 && (() => {
-          // Show interesting tags (skip sport/league/source/status/class/level/gender/category — those are visible elsewhere)
           const displayTags = event.event_tags.filter((t: string) => {
             const ns = t.split(":")[0];
             return ["importance", "signal", "timing", "tier", "ei", "stakes", "narrative", "audience", "competitive_structure"].includes(ns);
           });
-          // Filter out low-value tags that add noise
           const filteredTags = displayTags.filter((t: string) => {
-            return t !== "competitive_structure:head_to_head" // obvious for most games
-              && t !== "audience:local_interest" // too common
-              && t !== "stakes:meaningless"; // negative label
+            return t !== "competitive_structure:head_to_head"
+              && t !== "audience:local_interest"
+              && t !== "stakes:meaningless";
           });
           if (filteredTags.length === 0) return null;
 
@@ -787,7 +789,6 @@ export default function EventPage({ params }: EventPageProps) {
             "ei:must_watch": "Must-Watch",
             "ei:incredible": "Incredible",
             "ei:exciting": "Exciting",
-            // LLM-enriched stakes
             "stakes:elimination": "Elimination",
             "stakes:clinch": "Clinch Scenario",
             "stakes:playoff_race": "Playoff Race",
@@ -796,7 +797,6 @@ export default function EventPage({ params }: EventPageProps) {
             "stakes:record_chase": "Record Chase",
             "stakes:seeding": "Seeding",
             "stakes:streak": "Streak",
-            // LLM-enriched narrative
             "narrative:rivalry": "Rivalry",
             "narrative:historic_rivalry": "Historic Rivalry",
             "narrative:revenge_game": "Revenge Game",
@@ -810,12 +810,10 @@ export default function EventPage({ params }: EventPageProps) {
             "narrative:losing_streak": "Losing Streak",
             "narrative:debut": "Debut",
             "narrative:return_from_injury": "Return from Injury",
-            // LLM-enriched audience
             "audience:national_interest": "National Interest",
             "audience:crossover_appeal": "Crossover Appeal",
             "audience:viral_potential": "Viral Potential",
             "audience:casual_friendly": "Casual-Friendly",
-            // Competitive structure (only non-obvious ones)
             "competitive_structure:knockout": "Knockout",
             "competitive_structure:single_elimination": "Single Elimination",
             "competitive_structure:bracket": "Bracket",
@@ -837,7 +835,7 @@ export default function EventPage({ params }: EventPageProps) {
           };
 
           return (
-            <div className="flex flex-wrap gap-1.5 justify-center">
+            <div className="flex flex-wrap gap-1.5 justify-center px-4 pt-2">
               {filteredTags.map((tag: string) => {
                 const ns = tag.split(":")[0];
                 const color = tagColors[ns] || "bg-slate/10 text-text-muted";
@@ -855,373 +853,214 @@ export default function EventPage({ params }: EventPageProps) {
           );
         })()}
 
-        {/* Game time/status - compact for live */}
-        <div className="text-center mb-3">
-          {effectivelyLive ? (
-            <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
-              <span className="flex items-center gap-1.5 text-emerald-600 font-bold">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                LIVE
-              </span>
-              {event.espn?.game_clock && event.espn?.period && (
-                <>
-                  <span className="text-text-secondary/40">·</span>
-                  <span className="font-medium text-emerald-400">
-                    {event.espn.period} · {event.espn.game_clock}
-                  </span>
-                </>
-              )}
-              {event.espn?.broadcast && (
-                <>
-                  <span className="text-text-secondary/40">·</span>
-                  <span className="text-text-secondary">
-                    {event.espn.broadcast}
-                  </span>
-                </>
-              )}
-              {!event.espn?.game_clock && (
-                <>
-                  <span className="text-text-secondary/40">·</span>
-                  <span className="text-text-secondary">
-                    Started {formatStartTime(event.commence_time)}
-                  </span>
-                </>
-              )}
-              {gameIsBlowout && (
-                <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full text-xs">
-                  Blowout — odds less frequent
-                </span>
-              )}
-            </div>
-          ) : isFinished ? (
-            <div className="text-text-secondary space-y-0.5">
-              <div className="text-base font-medium">
-                {new Date(event.commence_time).toLocaleDateString("en-US", {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                })} at {new Date(event.commence_time).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  timeZoneName: "short",
-                })}
-              </div>
-              <div className="text-caption">Game finished</div>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {gameCountdown && !hasStarted && (
-                <div className="text-2xl font-bold text-text-primary">
-                  Starts in {gameCountdown}
-                </div>
-              )}
-              {hasStarted && (
-                <div className="text-sm text-text-secondary font-medium">
-                  Started {formatStartTime(event.commence_time)}
-                </div>
-              )}
-              {!hasStarted && (
-              <div className="text-base text-text-primary">
-                {new Date(event.commence_time).toLocaleDateString("en-US", {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                })} at {new Date(event.commence_time).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  timeZoneName: "short",
-                })}
-              </div>
-              )}
-              {event.espn?.broadcast && (
-                <div className="text-sm text-text-secondary">{event.espn.broadcast}</div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Score display for live/finished games */}
-        {(isLive || isFinished || hasStarted) && event.home_score !== null && event.away_score !== null && (
-          <div className="mb-3 py-3 bg-surface-card/50 rounded-lg">
-            <div className="flex items-center justify-center gap-6">
-              <div className="text-center">
-                <div className={`text-4xl font-bold font-mono ${
-                  effectivelyLive ? "text-emerald-600" : "text-text-primary"
-                }`}>
-                  {event.home_score}
-                </div>
-                <div className="text-sm text-text-secondary mt-0.5">
-                  {event.home_team.split(" ").pop()}
-                </div>
-              </div>
-              <div className="text-2xl text-text-secondary">—</div>
-              <div className="text-center">
-                <div className={`text-4xl font-bold font-mono ${
-                  effectivelyLive ? "text-emerald-600" : "text-text-primary"
-                }`}>
-                  {event.away_score}
-                </div>
-                <div className="text-sm text-text-secondary mt-0.5">
-                  {event.away_team.split(" ").pop()}
-                </div>
-              </div>
-            </div>
-            {isFinished && (
-              <div className="text-center mt-1.5 text-xs text-text-secondary">
-                Score when books closed (may not be final)
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Teams with probabilities — most important live info */}
-        <div className="space-y-3">
-          {/* Home Team */}
+        {/* Teams + Score + Giant Probability — v2 centered layout */}
+        <div className="px-5 sm:px-6 py-4 sm:py-5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {event.home_team_data?.logo_large ? (
-                <img
-                  src={event.home_team_data.logo_large}
-                  alt=""
-                  width={32}
-                  height={32}
-                  loading="lazy"
-                  className="w-8 h-8 object-contain"
-                />
-              ) : (
-                <div
-                  className="w-8 h-8 rounded flex-shrink-0 flex items-center justify-center text-xs font-bold text-white/90"
-                  style={{ backgroundColor: event.home_team_data?.primary_color || "#94A3B8" }}
-                >
-                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
-                </div>
-              )}
-              <div>
-                <h2 className={`text-xl font-semibold ${homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>
-                  {event.home_team}
-                </h2>
-                {(event.standings_context?.home || event.home_team_data?.record) && (
-                  <span className="text-xs text-text-muted">
-                    {event.standings_context?.home || event.home_team_data?.record}
+            {/* Home Team */}
+            <div className="flex flex-col items-center flex-1">
+              <div
+                className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
+                style={{ backgroundColor: `${event.home_team_data?.primary_color || "#94A3B8"}15` }}
+              >
+                {event.home_team_data?.logo_large ? (
+                  <img
+                    src={event.home_team_data.logo_large}
+                    alt=""
+                    width={48}
+                    height={48}
+                    loading="lazy"
+                    className="w-12 h-12 object-contain"
+                  />
+                ) : (
+                  <span
+                    className="text-sm font-extrabold"
+                    style={{ color: event.home_team_data?.primary_color || "#94A3B8" }}
+                  >
+                    {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                   </span>
                 )}
               </div>
-              {homeFavorite && homeProb && homeProb > 0.5 && (
-                <span className="text-xs bg-graphite/10 text-text-primary px-2 py-0.5 rounded">
-                  Favorite
+              <span className="text-xs font-semibold text-text-primary">
+                {event.home_team.split(" ").pop()}
+              </span>
+              {(event.standings_context?.home || event.home_team_data?.record) && (
+                <span className="text-[10px] text-text-muted">
+                  {event.standings_context?.home || event.home_team_data?.record}
+                </span>
+              )}
+              {(isLive || isFinished || hasStarted) && event.home_score !== null && (
+                <span className="text-2xl font-bold text-text-primary tabular-nums font-mono mt-0.5">
+                  {event.home_score}
                 </span>
               )}
             </div>
-            <span
-              className={`font-mono text-3xl font-bold tabular-nums ${
-                homeFavorite ? "text-text-primary" : "text-text-muted"
-              }`}
-            >
-              {formatProbability(homeProb)}
-            </span>
-          </div>
 
-          {/* Probability Bar with team colors */}
-          <ProbabilityBar
-            homeProbability={homeProb}
-            awayProbability={awayProb}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
-            showLabels={false}
-            size="lg"
-            isLive={effectivelyLive}
-            homeColor={event.home_team_data?.primary_color || undefined}
-            awayColor={event.away_team_data?.primary_color || undefined}
-          />
+            {/* Center: Giant Probability */}
+            <div className="flex flex-col items-center px-2 sm:px-4 flex-shrink-0">
+              <div className="flex items-baseline">
+                <span
+                  className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+                  style={{ color: event.home_team_data?.primary_color || "#F8FAFC" }}
+                >
+                  {homeProb !== null ? Math.round(homeProb * 100) : "—"}
+                </span>
+                <span
+                  className="text-lg font-bold leading-none ml-0.5"
+                  style={{ color: event.home_team_data?.primary_color || "#F8FAFC" }}
+                >
+                  %
+                </span>
+                <span className="text-lg font-light text-text-muted mx-1.5 self-center">{"–"}</span>
+                <span
+                  className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+                  style={{ color: event.away_team_data?.primary_color || "#94A3B8" }}
+                >
+                  {awayProb !== null ? Math.round(awayProb * 100) : "—"}
+                </span>
+                <span
+                  className="text-lg font-bold leading-none ml-0.5"
+                  style={{ color: event.away_team_data?.primary_color || "#94A3B8" }}
+                >
+                  %
+                </span>
+              </div>
+
+              {/* Opening odds (faint) */}
+              {openingHomeProb !== null && (
+                <div className="mt-1.5">
+                  <span className="text-[10px] text-text-muted">
+                    Opened {formatProbability(openingHomeProb)} {"–"} {formatProbability(openingAwayProb)}
+                  </span>
+                </div>
+              )}
+
+              {/* Source label */}
+              {probSourceLabel && (
+                <div className="mt-1">
+                  <span className="text-[10px] text-text-muted">
+                    {probSourceLabel}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Away Team */}
+            <div className="flex flex-col items-center flex-1">
+              <div
+                className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
+                style={{ backgroundColor: `${event.away_team_data?.primary_color || "#64748B"}15` }}
+              >
+                {event.away_team_data?.logo_large ? (
+                  <img
+                    src={event.away_team_data.logo_large}
+                    alt=""
+                    width={48}
+                    height={48}
+                    loading="lazy"
+                    className="w-12 h-12 object-contain"
+                  />
+                ) : (
+                  <span
+                    className="text-sm font-extrabold"
+                    style={{ color: event.away_team_data?.primary_color || "#64748B" }}
+                  >
+                    {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <span className="text-xs font-semibold text-text-primary">
+                {event.away_team.split(" ").pop()}
+              </span>
+              {(event.standings_context?.away || event.away_team_data?.record) && (
+                <span className="text-[10px] text-text-muted">
+                  {event.standings_context?.away || event.away_team_data?.record}
+                </span>
+              )}
+              {(isLive || isFinished || hasStarted) && event.away_score !== null && (
+                <span className="text-2xl font-bold text-text-primary tabular-nums font-mono mt-0.5">
+                  {event.away_score}
+                </span>
+              )}
+            </div>
+          </div>
 
           {/* Stakes context from standings */}
           {event.standings_context?.stakes && (
-            <div className="text-center">
-              <span className="text-xs text-text-muted bg-graphite/5 px-2 py-0.5 rounded">
+            <div className="text-center mt-3">
+              <span className="text-[10px] text-text-muted bg-surface-elevated px-2 py-0.5 rounded">
                 {event.standings_context.stakes}
               </span>
             </div>
           )}
 
-          {/* Season stats comparison strip */}
-          {(event.home_team_data?.season_stats || event.away_team_data?.season_stats) && (() => {
-            const homeStats = getKeyStats(event.home_team_data?.season_stats, event.sport ?? undefined);
-            const awayStats = getKeyStats(event.away_team_data?.season_stats, event.sport ?? undefined);
-            if (homeStats.length === 0 && awayStats.length === 0) return null;
-            // Use home stats labels as canonical
-            const labels = homeStats.length > 0 ? homeStats : awayStats;
-            return (
-              <div className="flex items-center gap-2 text-[11px] text-text-muted justify-center py-1">
-                {labels.map((stat, i) => {
-                  const homeVal = homeStats.find(s => s.label === stat.label)?.value;
-                  const awayVal = awayStats.find(s => s.label === stat.label)?.value;
-                  return (
-                    <span key={stat.label} className="flex items-center gap-1">
-                      {i > 0 && <span className="text-text-muted/30 mx-0.5">·</span>}
-                      <span className="text-text-muted/60">{stat.label}</span>
-                      <span className="tabular-nums font-medium text-text-secondary">
-                        {homeVal ?? "—"}</span>
-                      <span className="text-text-muted/40">v</span>
-                      <span className="tabular-nums font-medium text-text-secondary">
-                        {awayVal ?? "—"}</span>
-                    </span>
-                  );
-                })}
-              </div>
-            );
-          })()}
-
-          {/* Away Team */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {event.away_team_data?.logo_large ? (
-                <img
-                  src={event.away_team_data.logo_large}
-                  alt=""
-                  width={32}
-                  height={32}
-                  loading="lazy"
-                  className="w-8 h-8 object-contain"
-                />
-              ) : (
-                <div
-                  className="w-8 h-8 rounded flex-shrink-0 flex items-center justify-center text-xs font-bold text-white/90"
-                  style={{ backgroundColor: event.away_team_data?.primary_color || "#64748B" }}
-                >
-                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
-                </div>
-              )}
-              <div>
-                <h2 className={`text-xl font-semibold ${!homeFavorite ? "text-text-primary" : "text-text-secondary"}`}>
-                  {event.away_team}
-                </h2>
-                {(event.standings_context?.away || event.away_team_data?.record) && (
-                  <span className="text-xs text-text-muted">
-                    {event.standings_context?.away || event.away_team_data?.record}
-                  </span>
-                )}
-              </div>
-              {!homeFavorite && awayProb && awayProb > 0.5 && (
-                <span className="text-xs bg-graphite/10 text-text-primary px-2 py-0.5 rounded">
-                  Favorite
-                </span>
-              )}
-            </div>
-            <span
-              className={`font-mono text-3xl font-bold tabular-nums ${
-                !homeFavorite ? "text-text-primary" : "text-text-muted"
-              }`}
-            >
-              {formatProbability(awayProb)}
-            </span>
-          </div>
-        </div>
-
-        {/* Source label + ESPN model comparison + opening odds */}
-        <div className="mt-2 text-center space-y-1">
-          {probSourceLabel && (
-            <div>
-              <span className="text-[11px] text-text-muted tracking-wide">
-                {isFinished ? probSourceLabel : `Betting odds consensus · ${probSourceLabel}`}
-              </span>
-            </div>
-          )}
-          {effectivelyLive && event.espn?.win_probability != null && (
-            <div>
-              <span
-                className="text-[11px] text-orange-600 tracking-wide cursor-help"
-                title="ESPN's predictive model calculates win probability independently from betting odds, using their own game simulation"
-              >
-                ESPN model: {(event.espn.win_probability * 100).toFixed(0)}% {event.home_team.split(" ").pop()}
-              </span>
-            </div>
-          )}
-          {isLive && openingHomeProb !== null && (
-            <div>
-              <span className="text-[11px] text-text-muted tracking-wide">
-                Opened {formatProbability(openingHomeProb)} / {formatProbability(openingAwayProb)}
+          {/* Blowout warning */}
+          {gameIsBlowout && (
+            <div className="text-center mt-2">
+              <span className="text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full text-[10px]">
+                Blowout — odds less frequent
               </span>
             </div>
           )}
         </div>
 
-        {/* Excitement Index (EI) - Game Excitement Metric (compact) */}
+        {/* Excitement Index (EI) - compact dark-mode strip */}
         {(isFinished || isLive) && (event.ei || event.pulse) && (() => {
           const ei = (event.ei || event.pulse)!;
           return (
-          <div className={`mt-4 py-3 px-4 rounded-lg border ${
+          <div className={`mx-4 sm:mx-5 mb-4 py-2.5 px-4 rounded-lg border ${
             ei.score >= 81
-              ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-500/30"
+              ? "bg-red-500/10 border-red-500/20"
               : ei.score >= 61
-              ? "bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200"
+              ? "bg-orange-500/10 border-orange-500/20"
               : ei.score >= 41
-              ? "bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200"
-              : "bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200"
+              ? "bg-amber-500/10 border-amber-500/20"
+              : "bg-surface-elevated border-surface-border"
           }`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <h3 className={`text-sm font-semibold flex items-center gap-2 ${
-                  ei.score >= 81
-                    ? "text-red-800"
-                    : ei.score >= 61
-                    ? "text-orange-800"
-                    : ei.score >= 41
-                    ? "text-amber-800"
-                    : "text-text-secondary-700"
+                <span className="text-sm">{ei.emoji}</span>
+                <span className={`text-xs font-semibold ${
+                  ei.score >= 81 ? "text-red-400"
+                    : ei.score >= 61 ? "text-orange-400"
+                    : ei.score >= 41 ? "text-amber-400"
+                    : "text-text-secondary"
                 }`}>
-                  {ei.emoji} {isLive ? "Live Excitement" : "Excitement Index"}
-                  {isLive && (
-                    <span className="w-2 h-2 rounded-full bg-red-500/150 animate-pulse" />
-                  )}
-                </h3>
-                <span className={`text-sm font-medium ${
-                  ei.score >= 81
-                    ? "text-red-400"
-                    : ei.score >= 61
-                    ? "text-orange-700"
-                    : ei.score >= 41
-                    ? "text-amber-700"
-                    : "text-text-secondary-600"
+                  {isLive ? "Live Excitement" : "Excitement Index"}
+                </span>
+                <span className={`text-xs ${
+                  ei.score >= 81 ? "text-red-400/70"
+                    : ei.score >= 61 ? "text-orange-400/70"
+                    : ei.score >= 41 ? "text-amber-400/70"
+                    : "text-text-muted"
                 }`}>
-                  — {ei.label}
+                  {ei.label}
                 </span>
               </div>
-              <span className={`px-2.5 py-0.5 rounded-full text-sm font-bold ${
-                ei.score >= 81
-                  ? "bg-red-200 text-red-800"
-                  : ei.score >= 61
-                  ? "bg-orange-200 text-orange-800"
-                  : ei.score >= 41
-                  ? "bg-amber-200 text-amber-800"
-                  : "bg-surface-border text-text-secondary-700"
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                ei.score >= 81 ? "bg-red-500/20 text-red-400"
+                  : ei.score >= 61 ? "bg-orange-500/20 text-orange-400"
+                  : ei.score >= 41 ? "bg-amber-500/20 text-amber-400"
+                  : "bg-surface-border text-text-secondary"
               }`}>
-                {ei.score} / 100
+                {ei.score}
               </span>
             </div>
-
-            {/* EI Metadata Breakdown - inline */}
             {ei.metadata && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 pt-2 border-t border-slate-200/60 text-xs">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 pt-1.5 border-t border-surface-border/50 text-[10px]">
                 {ei.metadata.raw_ei != null && (
-                  <Tooltip content="Cumulative probability distance — how much the odds traveled" position="top">
-                    <span className="text-text-secondary-500 cursor-help">
-                      Travel <span className="font-mono font-semibold text-text-secondary-700">{ei.metadata.raw_ei.toFixed(2)}</span>
-                    </span>
-                  </Tooltip>
+                  <span className="text-text-muted">
+                    Travel <span className="font-mono font-semibold text-text-secondary">{ei.metadata.raw_ei.toFixed(2)}</span>
+                  </span>
                 )}
                 {ei.metadata.lead_changes > 0 && (
-                  <Tooltip content="How many times the favorite switched" position="top">
-                    <span className="text-orange-700 cursor-help">
-                      {ei.metadata.lead_changes} lead change{ei.metadata.lead_changes > 1 ? 's' : ''}
-                    </span>
-                  </Tooltip>
+                  <span className="text-orange-400/80">
+                    {ei.metadata.lead_changes} lead change{ei.metadata.lead_changes > 1 ? 's' : ''}
+                  </span>
                 )}
                 {ei.metadata.comeback_factor != null && ei.metadata.comeback_factor > 0 && (
-                  <Tooltip content="Winner's lowest probability during the game — lower means bigger comeback" position="top">
-                    <span className="text-text-secondary-500 cursor-help">
-                      Comeback <span className="font-mono font-semibold text-text-secondary-700">{Math.round(ei.metadata.comeback_factor * 100)}%</span>
-                    </span>
-                  </Tooltip>
+                  <span className="text-text-muted">
+                    Comeback <span className="font-mono font-semibold text-text-secondary">{Math.round(ei.metadata.comeback_factor * 100)}%</span>
+                  </span>
                 )}
               </div>
             )}
@@ -1229,61 +1068,20 @@ export default function EventPage({ params }: EventPageProps) {
           );
         })()}
 
-        {/* Data freshness strip */}
-        {odds?.captured_at && (
-          <div className="mt-4 pt-3 border-t border-surface-border/50 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm text-text-secondary">
-              <span className="flex items-center gap-1">
-                🕐 Updated {new Date(odds.captured_at).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                })} at {new Date(odds.captured_at).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-              <div className="flex items-center gap-4 text-xs text-text-muted">
-                {odds.spread !== null && (
-                  <span className="font-mono">
-                    Spread {odds.spread > 0 ? `+${odds.spread}` : odds.spread}
-                  </span>
-                )}
-                {odds.over_under !== null && (
-                  <span className="font-mono">
-                    O/U {odds.over_under}
-                  </span>
-                )}
-                {(() => {
-                  // Get bookmaker count from current_odds (most reliable)
-                  // Get names from bookmaker_odds or history for tooltip
-                  const bookmakerNames = event.bookmaker_odds?.map(b => b.bookmaker)
-                    || (historyData?.bookmaker_history ? Object.keys(historyData.bookmaker_history) : []);
-                  const count = odds.bookmaker_count || bookmakerNames.length || 0;
-                  if (count > 0) {
-                    return (
-                      <span
-                        className="cursor-help border-b border-dotted border-silver hover:text-text-secondary hover:border-text-secondary transition-colors px-1 py-0.5 -mx-1"
-                        title={bookmakerNames.length > 0 ? bookmakerNames.join(", ") : undefined}
-                      >
-                        {count} source{count !== 1 ? "s" : ""}
-                      </span>
-                    );
-                  }
-                  return null;
-                })()}
-              </div>
-            </div>
+        {/* Prediction market divergence + source analysis warnings */}
+        {(sourceAnalysis.divergenceWarning || predictionDivergence) && (
+          <div className="mx-4 sm:mx-5 mb-4 space-y-1.5">
             {sourceAnalysis.divergenceWarning && (
-              <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded">
+              <div className="flex items-center gap-2 text-[10px] text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded">
                 <span>⚠️</span>
                 <span>{sourceAnalysis.divergenceWarning}</span>
               </div>
             )}
             {predictionDivergence && (
-              <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded ${
+              <div className={`flex items-center gap-2 text-[10px] px-3 py-1.5 rounded ${
                 predictionDivergence.delta >= 0.10
-                  ? "text-purple-800 bg-purple-500/15 border border-purple-200"
-                  : "text-blue-700 bg-blue-50"
+                  ? "text-purple-400 bg-purple-500/10 border border-purple-500/20"
+                  : "text-blue-400 bg-blue-500/10"
               }`}>
                 <span>{predictionDivergence.delta >= 0.10 ? "📊" : "🔀"}</span>
                 <span>
@@ -1302,96 +1100,29 @@ export default function EventPage({ params }: EventPageProps) {
 
       {/* Win Probability Chart */}
       <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
-        {/* Game Header Bar */}
-        <div className="px-4 sm:px-5 py-3 border-b border-border/50 flex items-center justify-between">
-          <div className="flex items-center gap-4 sm:gap-6">
-            {/* Away Team */}
-            <div className="flex items-center gap-2.5">
-              {event.away_team_data?.logo_small ? (
-                <img
-                  src={event.away_team_data.logo_small}
-                  alt=""
-                  width={28}
-                  height={28}
-                  className="w-7 h-7 object-contain"
-                />
-              ) : (
-                <div
-                  className="w-7 h-7 rounded flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white/90"
-                  style={{ backgroundColor: event.away_team_data?.primary_color || "#94A3B8" }}
-                >
-                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+        {/* Chart Header — v2: title + freshness */}
+        <div className="px-4 sm:px-5 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h2 className="text-[13px] font-semibold text-text-primary">Win Probability</h2>
+            {effectivelyLive && (
+              <div className="flex items-center gap-1.5">
+                <div className="relative w-[18px] h-[18px]">
+                  <svg className="w-[18px] h-[18px] transform -rotate-90" viewBox="0 0 18 18">
+                    <circle cx="9" cy="9" r="7" fill="none" stroke="#242830" strokeWidth="2" />
+                    <circle cx="9" cy="9" r="7" fill="none" stroke="#10B981" strokeWidth="2"
+                      strokeDasharray="44" strokeDashoffset={44 - (countdownProgress / 100) * 44}
+                      strokeLinecap="round" className="transition-all duration-100" />
+                  </svg>
                 </div>
-              )}
-              <div>
-                <div className="text-xs text-text-secondary leading-tight">
-                  {event.away_team.split(" ").slice(0, -1).join(" ") || event.away_team}
-                </div>
-                {(isLive || isFinished || hasStarted) && event.away_score !== null ? (
-                  <div className="text-lg font-bold font-mono text-text-primary leading-tight">
-                    {event.away_score}
-                  </div>
-                ) : (
-                  <div className="text-sm font-semibold text-text-primary leading-tight">
-                    {event.away_team.split(" ").pop()}
-                  </div>
-                )}
+                <span className="text-[10px] text-text-muted tabular-nums font-mono">{countdown}s</span>
               </div>
-            </div>
-
-            {/* Status */}
-            <div className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-              {effectivelyLive ? (
-                <span className="text-emerald-600 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Live
-                </span>
-              ) : isFinished ? (
-                "Final"
-              ) : (
-                formatStartTime(event.commence_time)
-              )}
-            </div>
-
-            {/* Home Team */}
-            <div className="flex items-center gap-2.5">
-              <div className="text-right">
-                <div className="text-xs text-text-secondary leading-tight">
-                  {event.home_team.split(" ").slice(0, -1).join(" ") || event.home_team}
-                </div>
-                {(isLive || isFinished || hasStarted) && event.home_score !== null ? (
-                  <div className="text-lg font-bold font-mono text-text-primary leading-tight">
-                    {event.home_score}
-                  </div>
-                ) : (
-                  <div className="text-sm font-semibold text-text-primary leading-tight">
-                    {event.home_team.split(" ").pop()}
-                  </div>
-                )}
+            )}
+            {isFinished && (
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-text-muted" />
+                <span className="text-[10px] text-text-muted font-medium">Final</span>
               </div>
-              {event.home_team_data?.logo_small ? (
-                <img
-                  src={event.home_team_data.logo_small}
-                  alt=""
-                  width={28}
-                  height={28}
-                  className="w-7 h-7 object-contain"
-                />
-              ) : (
-                <div
-                  className="w-7 h-7 rounded flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white/90"
-                  style={{ backgroundColor: event.home_team_data?.primary_color || "#94A3B8" }}
-                >
-                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Date / Broadcast */}
-          <div className="text-right text-xs text-text-secondary hidden sm:block">
-            <div>{new Date(event.commence_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
-            {event.espn?.broadcast && <div>{event.espn.broadcast}</div>}
+            )}
           </div>
         </div>
 
@@ -1456,6 +1187,57 @@ export default function EventPage({ params }: EventPageProps) {
             />
           ) : null}
         </div>
+
+        {/* Chart footer: Legend + Sources toggle */}
+        {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
+          <>
+            <div className="px-4 sm:px-5 py-2 border-t border-surface-border flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-[2px] rounded" style={{ backgroundColor: event.home_team_data?.primary_color || '#10B981' }} />
+                  <span className="text-[10px] text-text-muted">BainLuck</span>
+                </div>
+                {historyData?.bookmaker_history && Object.keys(historyData.bookmaker_history).length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-4 h-[2px] rounded bg-text-muted/40" />
+                    <span className="text-[10px] text-text-muted">Sportsbooks</span>
+                  </div>
+                )}
+                {historyData?.win_prob_sources && Object.keys(historyData.win_prob_sources).some(k => k.toLowerCase().includes('kalshi')) && (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-4 h-[2px] rounded bg-violet-400" />
+                    <span className="text-[10px] text-text-muted">Kalshi</span>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setSourcesOpen(!sourcesOpen)}
+                className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-surface-elevated transition-colors"
+              >
+                <span className="text-[10px] text-text-muted font-medium">Sources</span>
+                <svg
+                  className={`w-3 h-3 text-text-muted transition-transform duration-200 ${sourcesOpen ? 'rotate-180' : ''}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Sources panel (collapsible) */}
+            {sourcesOpen && (
+              <div className="border-t border-surface-border">
+                <div className="px-4 py-3">
+                  <BookmakerTable
+                    bookmakerOdds={event.bookmaker_odds}
+                    homeTeam={event.home_team}
+                    awayTeam={event.away_team}
+                  />
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}
@@ -1483,20 +1265,6 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
             chartStartTime={oddsChartDomain?.start}
             chartEndTime={oddsChartDomain?.end}
-          />
-        </div>
-      )}
-
-      {/* Win Probabilities by Sportsbook */}
-      {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
-        <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
-          <h3 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
-            Win Probabilities by Sportsbook
-          </h3>
-          <BookmakerTable
-            bookmakerOdds={event.bookmaker_odds}
-            homeTeam={event.home_team}
-            awayTeam={event.away_team}
           />
         </div>
       )}
