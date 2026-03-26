@@ -2223,6 +2223,48 @@ async def get_playoff_grid(
                 "trend_24h": trend_24h,
             }
 
+        # ---- Kalshi noise filter + monotonicity enforcement ----
+        # Kalshi binary markets default to ~0.50-0.60 when illiquid.
+        # For single-source Kalshi cells where the probability looks like
+        # noise (0.45-0.65), remove the cell unless a prior sequential
+        # column already has a high probability that makes this plausible.
+        seq_cols = [c for c in config.columns if c.sequential]
+        seq_keys = [c.key for c in sorted(seq_cols, key=lambda c: c.order)]
+
+        for col_key in seq_keys:
+            cell = cells.get(col_key)
+            if not cell:
+                continue
+            srcs = cell.get("sources", [])
+            prob = cell["merged_probability"]
+            # Single-source Kalshi noise: probability in the 0.45-0.65 range
+            # with no corroboration from another source
+            if (len(srcs) == 1
+                    and srcs[0]["source"] == "kalshi"
+                    and 0.45 <= prob <= 0.65):
+                # Check if a later column (closer to championship) has a
+                # lower, non-noise probability that makes this plausible.
+                # If not, this is almost certainly noise — remove it.
+                del cells[col_key]
+
+        # Monotonicity: in sequential columns, P(round N) >= P(round N+1).
+        # Cap later rounds to the min of earlier rounds.
+        if len(seq_keys) >= 2:
+            for i in range(1, len(seq_keys)):
+                prev_key = seq_keys[i - 1]
+                curr_key = seq_keys[i]
+                prev_cell = cells.get(prev_key)
+                curr_cell = cells.get(curr_key)
+                if prev_cell and curr_cell:
+                    prev_p = prev_cell["merged_probability"]
+                    curr_p = curr_cell["merged_probability"]
+                    if curr_p > prev_p:
+                        curr_cell["merged_probability"] = prev_p
+                        # Also cap individual source probabilities
+                        for src in curr_cell.get("sources", []):
+                            if src["probability"] > prev_p:
+                                src["probability"] = round(prev_p, 4)
+
         if not cells:
             continue
 
