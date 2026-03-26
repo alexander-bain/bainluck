@@ -446,7 +446,7 @@ export default function EventPage({ params }: EventPageProps) {
   useEffect(() => {
     const interval = setInterval(() => {
       const elapsed = Date.now() - lastRefresh;
-      const remaining = Math.max(0, refreshInterval - elapsed);
+      const remaining = refreshInterval - (elapsed % refreshInterval);
       setCountdown(Math.ceil(remaining / 1000));
     }, 100);
     return () => clearInterval(interval);
@@ -476,19 +476,27 @@ export default function EventPage({ params }: EventPageProps) {
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
-  // Compute real game start time: use earliest ESPN/win_prob data point when it's
+  // Compute real game start time: use earliest livescores data point when it's
   // notably later than the Odds API commence_time (which can be off by minutes).
+  // Priority: StatPal score_history (most frequent) > ESPN > win_prob_history
   const realStartTime = useMemo(() => {
     const nominal = event?.commence_time;
     if (!nominal) return undefined;
     const nominalMs = new Date(nominal).getTime();
 
-    // Find earliest livescores data point
+    // Find earliest livescores data point across all sources
     let earliestLive = Infinity;
+    // StatPal livescores — most frequent updates, best source for real start
+    if (historyData?.score_history?.length) {
+      const first = new Date(historyData.score_history[0].timestamp).getTime();
+      if (first < earliestLive) earliestLive = first;
+    }
+    // ESPN history
     if (historyData?.espn_history?.length) {
       const first = new Date(historyData.espn_history[0].timestamp).getTime();
       if (first < earliestLive) earliestLive = first;
     }
+    // Win prob history (all sources)
     if (historyData?.win_prob_history) {
       for (const points of Object.values(historyData.win_prob_history)) {
         if (points.length > 0) {
@@ -503,7 +511,7 @@ export default function EventPage({ params }: EventPageProps) {
       return new Date(earliestLive).toISOString();
     }
     return nominal;
-  }, [event?.commence_time, historyData?.espn_history, historyData?.win_prob_history]);
+  }, [event?.commence_time, historyData?.score_history, historyData?.espn_history, historyData?.win_prob_history]);
 
   // Derive period boundaries from history data for chart annotations
   const periodBoundaries = useMemo(() => {
@@ -557,6 +565,10 @@ export default function EventPage({ params }: EventPageProps) {
       clock: lastEspn?.game_clock ?? null,
     };
   }, [historyData, event?.home_score, event?.away_score]);
+
+  // Best-known scores: prefer latest ESPN history (more frequent updates) over event SWR
+  const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
+  const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
 
   if (eventLoading) {
     return (
@@ -918,9 +930,9 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.standings_context?.home || event.home_team_data?.record}
                 </span>
               )}
-              {(isLive || isFinished || hasStarted) && event.home_score !== null && (
+              {(isLive || isFinished || hasStarted) && bestHomeScore !== null && (
                 <span className="text-2xl font-bold text-text-primary tabular-nums font-mono mt-0.5">
-                  {event.home_score}
+                  {bestHomeScore}
                 </span>
               )}
             </div>
@@ -1006,9 +1018,9 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.standings_context?.away || event.away_team_data?.record}
                 </span>
               )}
-              {(isLive || isFinished || hasStarted) && event.away_score !== null && (
+              {(isLive || isFinished || hasStarted) && bestAwayScore !== null && (
                 <span className="text-2xl font-bold text-text-primary tabular-nums font-mono mt-0.5">
-                  {event.away_score}
+                  {bestAwayScore}
                 </span>
               )}
             </div>

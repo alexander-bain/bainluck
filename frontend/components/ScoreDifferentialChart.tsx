@@ -558,14 +558,14 @@ export default function ScoreDifferentialChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="rgba(0,0,0,0.15)"
+                stroke="rgba(0,0,0,0.25)"
                 strokeWidth={1.5}
                 strokeDasharray="6 4"
                 isFront
                 label={{
                   value: b.label,
                   position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.5)", fontWeight: 700 },
+                  style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
                 }}
               />
             ))}
