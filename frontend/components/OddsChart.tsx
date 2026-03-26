@@ -786,11 +786,10 @@ export default function OddsChart({
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
-  // Custom Y-axis tick formatter: shows probability + team name at extremes
+  // Custom Y-axis tick formatter: shows probability percentages only
+  // Team names are shown separately above the chart as "X favored ↑ / ↓"
   const formatYTick = (value: number): string => {
     const prob = Math.min(100, 50 + Math.abs(value));
-    if (value === 50) return `100% ${homeShort}`;
-    if (value === -50) return `100% ${awayShort}`;
     return `${prob}%`;
   };
 
@@ -1080,7 +1079,7 @@ export default function OddsChart({
             <YAxis
               domain={yDomain}
               ticks={yTicks}
-              width={75}
+              width={45}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}

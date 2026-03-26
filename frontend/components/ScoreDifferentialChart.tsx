@@ -631,9 +631,10 @@ export default function ScoreDifferentialChart({
                 dataKey="actualDiff"
                 name="Actual Score Diff"
                 stroke="#f97316"
-                strokeWidth={2.5}
+                strokeWidth={3}
                 dot={false}
                 activeDot={{ r: 5 }}
+                connectNulls
               />
             )}
           </ComposedChart>
