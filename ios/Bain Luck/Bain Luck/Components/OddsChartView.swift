@@ -758,6 +758,12 @@ struct OddsChartView: View {
     private func normalizePeriodLabel(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespaces)
 
+        // Reject pre-game date strings like "Wed, March 25th at 10:00 PM EDT"
+        // These leak from ESPN status_detail during game transitions
+        let months = "January|February|March|April|May|June|July|August|September|October|November|December"
+        if s.range(of: months, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
+        if s.range(of: #"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b.*\bat\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return "" }
+
         // Strip clock prefix: "11:05 - 1st Quarter" → "1st Quarter"
         if let dashRange = s.range(of: #"^[\d.:]+\s*-\s*"#, options: .regularExpression) {
             s = String(s[dashRange.upperBound...])
