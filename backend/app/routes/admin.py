@@ -6829,25 +6829,19 @@ async def merge_duplicate_events(
         })
 
         if not dry_run:
-            # Migrate snapshots from pm_event to real event
-            await db.execute(
-                update(OddsSnapshot)
-                .where(OddsSnapshot.event_id == pm_event.id)
-                .values(event_id=best_match.id)
-            )
-            await db.execute(
-                update(WinProbSnapshot)
-                .where(WinProbSnapshot.event_id == pm_event.id)
-                .values(event_id=best_match.id)
-            )
-            # Migrate futures market links
-            await db.execute(
-                update(FuturesMarket)
-                .where(FuturesMarket.event_id == pm_event.id)
-                .values(event_id=best_match.id)
-            )
+            eid = pm_event.id
+            target = best_match.id
+            # Migrate all event_id references to real event
+            for tbl in ["odds_snapshots", "win_prob_snapshots", "score_snapshots",
+                        "espn_snapshots", "scoring_plays", "odds_aggregated",
+                        "line_movement_analyses", "futures_markets"]:
+                await db.execute(text(
+                    f"UPDATE {tbl} SET event_id = :target WHERE event_id = :eid"
+                ).bindparams(target=target, eid=eid))
             # Delete the pm_ event
-            await db.delete(pm_event)
+            await db.execute(text(
+                "DELETE FROM events WHERE id = :eid"
+            ).bindparams(eid=eid))
 
     if not dry_run:
         await db.commit()
