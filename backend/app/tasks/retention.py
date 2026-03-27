@@ -62,12 +62,16 @@ async def _collapse_snapshots_impl(min_age_hours: int = 48, table: str = "odds",
             # Resolved markets first, then open markets
             result = await session.execute(
                 text("""
-                    SELECT DISTINCT fos.outcome_id
-                    FROM futures_odds_snapshots fos
-                    JOIN futures_outcomes fo ON fo.id = fos.outcome_id
-                    JOIN futures_markets fm ON fm.id = fo.market_id
-                    WHERE fos.captured_at < :cutoff
-                    ORDER BY CASE WHEN fm.status = 'resolved' THEN 0 ELSE 1 END
+                    SELECT outcome_id FROM (
+                        SELECT DISTINCT fos.outcome_id,
+                            MIN(CASE WHEN fm.status = 'resolved' THEN 0 ELSE 1 END) AS priority
+                        FROM futures_odds_snapshots fos
+                        JOIN futures_outcomes fo ON fo.id = fos.outcome_id
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fos.captured_at < :cutoff
+                        GROUP BY fos.outcome_id
+                    ) sub
+                    ORDER BY priority
                     LIMIT :lim
                 """),
                 {"cutoff": cutoff, "lim": limit},
