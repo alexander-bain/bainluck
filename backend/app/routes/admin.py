@@ -6861,3 +6861,86 @@ async def merge_duplicate_events(
         "message": f"{'Would merge' if dry_run else 'Merged'} {len(merges)} duplicate events. "
                    f"{len(no_match)} pm_ events had no matching real event.",
     }
+
+
+@router.post("/cleanup/purge-orphan-pm-events")
+async def purge_orphan_pm_events(
+    secret: str = Query(...),
+    dry_run: bool = Query(True),
+    limit: int = Query(500, description="Max events to process per call"),
+    sport: Optional[str] = Query(None, description="Filter to specific sport key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete pm_ events that have no matching real event and no useful data.
+
+    These are empty shell events auto-created by Kalshi matching when quota
+    guard blocked discovery. They have no odds snapshots and just clutter
+    the database.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import OddsSnapshot, WinProbSnapshot, Sport
+
+    # Build sport filter
+    sport_filter_q = select(Sport.id)
+    if sport:
+        sport_filter_q = sport_filter_q.where(Sport.key == sport)
+
+    sport_ids_result = await db.execute(sport_filter_q)
+    sport_ids = [row[0] for row in sport_ids_result.all()]
+
+    # Find pm_ events with no odds snapshots
+    pm_result = await db.execute(
+        select(Event).where(
+            Event.external_id.like("pm_%"),
+            Event.sport_id.in_(sport_ids),
+        ).limit(limit)
+    )
+    pm_events = pm_result.scalars().all()
+
+    to_delete = []
+    has_data = []
+
+    for pm_event in pm_events:
+        # Check if this event has any snapshots worth keeping
+        snap_count = await db.execute(
+            select(func.count()).where(OddsSnapshot.event_id == pm_event.id)
+        )
+        odds_count = snap_count.scalar() or 0
+
+        wp_count = await db.execute(
+            select(func.count()).where(WinProbSnapshot.event_id == pm_event.id)
+        )
+        win_prob_count = wp_count.scalar() or 0
+
+        if odds_count == 0 and win_prob_count == 0:
+            to_delete.append({
+                "event_id": pm_event.id,
+                "teams": f"{pm_event.away_team_name} @ {pm_event.home_team_name}",
+                "ext_id": (pm_event.external_id or "")[:50],
+                "sport_id": pm_event.sport_id,
+                "status": pm_event.status,
+            })
+            if not dry_run:
+                await db.delete(pm_event)
+        else:
+            has_data.append({
+                "event_id": pm_event.id,
+                "teams": f"{pm_event.away_team_name} @ {pm_event.home_team_name}",
+                "odds_snapshots": odds_count,
+                "win_prob_snapshots": win_prob_count,
+            })
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "deleted_count": len(to_delete),
+        "kept_with_data": len(has_data),
+        "deleted_sample": to_delete[:30],
+        "kept_sample": has_data[:10],
+        "message": f"{'Would delete' if dry_run else 'Deleted'} {len(to_delete)} orphan pm_ events. "
+                   f"{len(has_data)} pm_ events have snapshot data and were kept.",
+    }
