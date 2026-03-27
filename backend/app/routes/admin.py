@@ -6733,6 +6733,8 @@ async def reclassify_misclassified_events(
 async def merge_duplicate_events(
     secret: str = Query(...),
     dry_run: bool = Query(True),
+    limit: int = Query(200, description="Max pm_ events to process per call"),
+    sport: Optional[str] = Query(None, description="Filter to specific sport_id"),
     db: AsyncSession = Depends(get_db),
 ):
     """Find and merge duplicate events created by prediction market matching.
@@ -6749,12 +6751,21 @@ async def merge_duplicate_events(
     from app.models.models import OddsSnapshot, WinProbSnapshot
     from app.utils.name_normalization import names_match
 
-    # Find all pm_ events
+    # Major sports only by default to avoid Heroku timeout
+    major_sports = [
+        "basketball_nba", "americanfootball_nfl", "icehockey_nhl",
+        "baseball_mlb", "basketball_ncaab", "basketball_wnba",
+        "basketball_wncaab", "americanfootball_ncaaf",
+    ]
+    sport_filter = [sport] if sport else major_sports
+
+    # Find pm_ events, limited to avoid timeout
     pm_result = await db.execute(
         select(Event).where(
             Event.external_id.like("pm_%"),
+            Event.sport_id.in_(sport_filter),
             Event.status.in_(["scheduled", "live", "completed", "closed"]),
-        )
+        ).limit(limit)
     )
     pm_events = pm_result.scalars().all()
 
