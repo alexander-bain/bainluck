@@ -290,23 +290,38 @@ QUOTA_WARNING_THRESHOLD = 1_000_000
 # When remaining calls drop below these, non-essential polling is disabled.
 # Guard auto-expires on QUOTA_GUARD_EXPIRY (next billing cycle reset).
 QUOTA_GUARD_LIVE_ONLY = 50_000   # Below this: only poll live games (no discovery/futures)
-QUOTA_GUARD_FULL_STOP = 20_000   # Below this: stop ALL Odds API calls
+QUOTA_GUARD_FULL_STOP = 20_000   # Below this: stop ALL Odds API calls (except priority sports)
 QUOTA_GUARD_EXPIRY = "2026-04-01T00:00:00+00:00"  # Auto-revert date (UTC)
+
+# Priority sports: allowed to poll even in FULL_STOP mode with conservation settings.
+# h2h only, single region, slower interval. Remove after April 1 reset.
+QUOTA_GUARD_PRIORITY_SPORTS = frozenset({
+    "basketball_nba",
+    "baseball_mlb",
+    "basketball_ncaab",
+})
+# Conservation poll interval for priority sports in low-quota mode (3 min)
+QUOTA_GUARD_CONSERVATION_INTERVAL = 180
 
 import logging
 _quota_logger = logging.getLogger(__name__)
 
 
-def check_quota_guard(task_type: str) -> tuple[bool, str]:
+def check_quota_guard(task_type: str, sport_key: str | None = None) -> tuple[bool, str]:
     """Check if an Odds API task should proceed based on remaining quota.
 
     Args:
         task_type: One of "poll_odds", "discover_events", "poll_futures".
                    "poll_odds" is further split: live games always allowed
                    until FULL_STOP; non-live polling stops at LIVE_ONLY.
+        sport_key: Optional sport key for per-sport priority filtering.
 
     Returns:
         (should_proceed, reason) — False means skip this task entirely.
+        Reason strings:
+          "conservation_<remaining>" — proceed but use h2h/us only + slow interval
+          "live_only_<remaining>" — proceed but only live games
+          "full_stop_<remaining>" — do not proceed
     """
     from datetime import datetime, timezone
 
@@ -327,6 +342,13 @@ def check_quota_guard(task_type: str) -> tuple[bool, str]:
         remaining = int(data.get(b"remaining", b"999999"))
 
         if remaining <= QUOTA_GUARD_FULL_STOP:
+            # Priority sports get through in conservation mode
+            if task_type == "poll_odds" and sport_key in QUOTA_GUARD_PRIORITY_SPORTS:
+                _quota_logger.info(
+                    "QUOTA GUARD: conservation mode — %s remaining. Allowing priority sport %s.",
+                    f"{remaining:,}", sport_key,
+                )
+                return True, f"conservation_{remaining}"
             _quota_logger.critical(
                 "QUOTA GUARD: FULL STOP — %s remaining. Blocking %s.",
                 f"{remaining:,}", task_type,

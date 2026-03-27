@@ -34,6 +34,8 @@ from app.tasks.redis_state import (
     check_quota_guard,
     POLL_STATE_KEY,
     QUOTA_GUARD_LIVE_ONLY,
+    QUOTA_GUARD_PRIORITY_SPORTS,
+    QUOTA_GUARD_CONSERVATION_INTERVAL,
 )
 
 logger = logging.getLogger(__name__)
@@ -419,14 +421,20 @@ async def _poll_all_odds():
     """
     from app.tasks.excitement_index import update_live_ei as update_live_gei
 
-    # Emergency quota guard: block all polling if quota critically low
+    # Emergency quota guard: check overall quota level
     guard_ok, guard_reason = check_quota_guard("poll_odds")
     if not guard_ok:
-        logger.warning("poll_all_odds SKIPPED by quota guard: %s", guard_reason)
-        return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
+        # Full stop — but priority sports may still be allowed (checked per-sport below)
+        if "full_stop" in guard_reason:
+            logger.info("poll_all_odds in FULL STOP — only priority sports allowed")
+        else:
+            logger.warning("poll_all_odds SKIPPED by quota guard: %s", guard_reason)
+            return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
 
     # Check if we're in live-only mode (quota < QUOTA_GUARD_LIVE_ONLY)
     quota_live_only = "live_only" in guard_reason
+    quota_full_stop = "full_stop" in guard_reason
+    quota_conservation = quota_full_stop or "conservation" in guard_reason
 
     service = OddsAPIService()
 
@@ -506,8 +514,17 @@ async def _poll_all_odds():
                     poll_interval = LATER_POLL_INTERVAL
                     tier = "later"
 
+                # Quota guard: in full-stop mode, only priority sports allowed
+                if quota_full_stop:
+                    if sport_key not in QUOTA_GUARD_PRIORITY_SPORTS:
+                        sports_skipped += 1
+                        continue
+                    # Re-check per-sport to get conservation reason
+                    _, guard_reason = check_quota_guard("poll_odds", sport_key=sport_key)
+                    quota_conservation = "conservation" in guard_reason
+
                 # Quota guard: in live-only mode, skip non-live sports entirely
-                if quota_live_only and tier != "live":
+                if quota_live_only and not quota_full_stop and tier != "live":
                     sports_skipped += 1
                     continue
 
@@ -549,7 +566,12 @@ async def _poll_all_odds():
                 # - "later" tier: h2h only (saves 2/3 of billed requests per event)
                 # - "soon"/"later" tiers: primary US bookmakers only (saves 1/2)
                 # - "live" tier: full params for maximum coverage
-                if tier == "live":
+                # - Conservation mode: always h2h + us only (even live)
+                if quota_conservation:
+                    api_markets = "h2h"
+                    api_regions = "us"
+                    poll_interval = max(poll_interval, QUOTA_GUARD_CONSERVATION_INTERVAL)
+                elif tier == "live":
                     api_markets = "h2h,spreads,totals"
                     api_regions = "us,us2"
                 else:  # "soon" and "later" — h2h only, primary US only
