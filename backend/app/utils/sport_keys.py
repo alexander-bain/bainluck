@@ -192,19 +192,48 @@ LLM_CATEGORY_TO_SPORT_PREFIX: dict[str, str] = {
 # =============================================================================
 
 KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
+    # Major US sports
     "kxnbagame": "basketball_nba",
     "kxnflgame": "americanfootball_nfl",
     "kxnhlgame": "icehockey_nhl",
     "kxmlbgame": "baseball_mlb",
-    "kxncaabgame": "basketball_ncaab",
-    "kxncaawbgame": "basketball_wncaab",
-    "kxncaafgame": "americanfootball_ncaaf",
     "kxwnbagame": "basketball_wnba",
     "kxmlsgame": "soccer_usa_mls",
-    "kxsoccergame": "soccer",
+    # College sports — men's
+    "kxncaabgame": "basketball_ncaab",
+    "kxncaabbgame": "basketball_ncaab",       # NIT/CBI/CIT post-season
+    "kxncaamb1hwinner": "basketball_ncaab",   # 1st half winner markets
+    "kxncaafgame": "americanfootball_ncaaf",
+    "kxncaamlaxgame": "lacrosse_ncaa",
+    "kxncaahockeygame": "icehockey_ncaa",
+    # College sports — women's
+    "kxncaawbgame": "basketball_wncaab",
+    # Hockey leagues
+    "kxahlgame": "icehockey_ahl",
+    "kxkhlgame": "icehockey_other",
+    "kxdelgame": "icehockey_other",           # DEL (German hockey)
+    # Tennis
+    "kxatpmatch": "tennis_atp",
+    "kxatpchallengermatch": "tennis_atp",
+    "kxatpsetwinner": "tennis_atp",
+    "kxwtamatch": "tennis_wta",
+    # Combat sports
     "kxufcfight": "mma_mixed_martial_arts",
     "kxboxingfight": "boxing_boxing",
+    # Esports
     "kxlolgame": "esports",
+    "kxcs2game": "esports",
+    "kxvalorantgame": "esports",
+    "kxdimayorgame": "esports",               # Dota 2 DPC
+    # Soccer
+    "kxsoccergame": "soccer",
+    "kxeculpgame": "soccer_other",            # Ecuadorian league
+    "kxvenfutvegame": "soccer_other",         # Venezuelan league
+    "kxapfddhgame": "soccer_other",           # Dominican league
+    # Asian basketball
+    "kxcbagame": "basketball_other",          # Chinese CBA
+    "kxjbleaguegame": "basketball_other",     # Japanese B.League
+    "kxarglnbgame": "basketball_other",       # Argentine LNB
     # Winter Olympics
     "kxwohockey": "icehockey_olympics",
     "kxwocurling": "curling_olympics",
@@ -219,26 +248,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
 # 8. KALSHI_GAME_TICKER_PREFIXES — tuple of Kalshi game ticker prefixes
 # =============================================================================
 
-KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = (
-    "kxnbagame",
-    "kxnflgame",
-    "kxnhlgame",
-    "kxmlbgame",
-    "kxncaabgame",
-    "kxncaafgame",
-    "kxncaawbgame",
-    "kxwnbagame",
-    "kxmlsgame",
-    "kxsoccergame",
-    "kxufcfight",
-    "kxboxingfight",
-    "kxlolgame",
-    "kxwohockey",
-    "kxwocurling",
-    "kxsohockey",
-    "kxsobasketball",
-    "kxsosoccer",
-)
+KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(KALSHI_TICKER_TO_SPORT_KEY.keys())
 
 
 # =============================================================================
@@ -251,14 +261,28 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxnhlgame": "NHL",
     "kxmlbgame": "MLB",
     "kxncaabgame": "NCAAB",
+    "kxncaabbgame": "NCAAB",
+    "kxncaamb1hwinner": "NCAAB",
     "kxncaawbgame": "WNCAAB",
     "kxncaafgame": "NCAAF",
+    "kxncaamlaxgame": "NCAA Lax",
+    "kxncaahockeygame": "NCAA Hockey",
     "kxwnbagame": "WNBA",
     "kxmlsgame": "MLS",
+    "kxahlgame": "AHL",
+    "kxkhlgame": "KHL",
+    "kxdelgame": "DEL",
     "kxsoccergame": "Soccer",
     "kxufcfight": "UFC",
     "kxboxingfight": "Boxing",
     "kxlolgame": "LoL",
+    "kxcs2game": "CS2",
+    "kxvalorantgame": "Valorant",
+    "kxdimayorgame": "Dota 2",
+    "kxatpmatch": "ATP",
+    "kxatpchallengermatch": "ATP Challenger",
+    "kxatpsetwinner": "ATP",
+    "kxwtamatch": "WTA",
 }
 
 

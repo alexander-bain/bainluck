@@ -553,13 +553,27 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
         </span>
         <span className="text-sm text-text-muted mb-1">/ {db.plan?.storage_limit_gb || 10} GB</span>
       </div>
-      {/* Progress bar */}
-      <div className="h-3 bg-surface-border rounded-full overflow-hidden mb-3">
-        <div
-          className={"h-full rounded-full transition-all " + (pct >= 95 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-green-500")}
-          style={{ width: Math.min(pct, 100) + "%" }}
-        />
-      </div>
+      {/* Progress bar — split into live (solid) and dead (striped) */}
+      {(() => {
+        const deadPct = db.dead_tuple_pct || 0;
+        const livePct = Math.min(pct, 100) * (1 - deadPct / 100);
+        const deadWidth = Math.min(pct, 100) * (deadPct / 100);
+        const barColor = pct >= 95 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-green-500";
+        const deadColor = pct >= 95 ? "bg-red-300" : pct >= 80 ? "bg-yellow-300" : "bg-green-300";
+        return (
+          <div className="h-3 bg-surface-border rounded-full overflow-hidden mb-3 flex">
+            <div className={"h-full transition-all " + barColor + (deadWidth > 0 ? "" : " rounded-full")} style={{ width: livePct + "%" }} />
+            {deadWidth > 0.5 && (
+              <div className={"h-full rounded-r-full transition-all " + deadColor} style={{ width: deadWidth + "%", backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 4px)" }} />
+            )}
+          </div>
+        );
+      })()}
+      {db.dead_tuple_pct != null && db.dead_tuple_pct > 0 && (
+        <div className="text-[10px] text-text-muted mb-2 -mt-1">
+          {((pct * (100 - db.dead_tuple_pct)) / 100).toFixed(0)}% live + {((pct * db.dead_tuple_pct) / 100).toFixed(1)}% reclaimable
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div>
           <span className="text-text-muted">Plan: </span>

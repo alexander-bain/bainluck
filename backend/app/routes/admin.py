@@ -9,6 +9,8 @@ from sqlalchemy import select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from sqlalchemy import text, func, delete, and_
+
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, MatchingOverride
 from app.services import get_db
 from app.utils import probability_to_american
@@ -6632,4 +6634,213 @@ async def turbo_collapse(
         "futures_task_id": futures_task.id,
         "odds_task_id": odds_task.id,
         "message": f"Turbo collapse dispatched (limit={limit} partitions per table). Check logs for progress.",
+    }
+
+
+@router.post("/cleanup/reclassify-events")
+async def reclassify_misclassified_events(
+    secret: str = Query(...),
+    dry_run: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reclassify events whose sport_key doesn't match their Kalshi ticker.
+
+    Finds events with pm_kalshi_ external_ids in wrong sport categories
+    (e.g., tennis events in basketball_other) and moves them to the correct
+    sport based on their ticker prefix.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import Sport
+    from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
+
+    # Find all events with pm_kalshi_ external_ids
+    result = await db.execute(
+        select(Event).join(Sport).where(
+            Event.external_id.like("pm_kalshi_%"),
+        )
+    )
+    events = result.scalars().all()
+
+    reclassified = []
+    sport_cache: dict[str, int] = {}
+
+    for event in events:
+        ext_id = event.external_id or ""
+        ticker = ext_id.replace("pm_kalshi_", "").lower()
+        # Find matching prefix
+        correct_sport_key = None
+        for prefix, sport_key in KALSHI_TICKER_TO_SPORT_KEY.items():
+            if ticker.startswith(prefix):
+                correct_sport_key = sport_key
+                break
+
+        if not correct_sport_key:
+            continue
+
+        # Get current sport key
+        current_sport = await db.execute(
+            select(Sport.key).where(Sport.id == event.sport_id)
+        )
+        current_key = current_sport.scalar_one_or_none()
+
+        if current_key == correct_sport_key:
+            continue  # Already correct
+
+        # Get or create the correct sport
+        if correct_sport_key not in sport_cache:
+            sport_result = await db.execute(
+                select(Sport).where(Sport.key == correct_sport_key)
+            )
+            sport = sport_result.scalar_one_or_none()
+            if not sport:
+                # Create the sport
+                sport = Sport(
+                    key=correct_sport_key,
+                    name=correct_sport_key.replace("_", " ").title(),
+                    group=correct_sport_key.split("_")[0],
+                    active=True,
+                )
+                db.add(sport)
+                await db.flush()
+            sport_cache[correct_sport_key] = sport.id
+
+        reclassified.append({
+            "event_id": event.id,
+            "teams": f"{event.away_team_name} @ {event.home_team_name}",
+            "from": current_key,
+            "to": correct_sport_key,
+            "ticker": ext_id[:50],
+        })
+
+        if not dry_run:
+            event.sport_id = sport_cache[correct_sport_key]
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "reclassified_count": len(reclassified),
+        "reclassified": reclassified[:100],  # Cap output
+        "message": f"{'Would reclassify' if dry_run else 'Reclassified'} {len(reclassified)} events. "
+                   f"Set dry_run=false to apply.",
+    }
+
+
+@router.post("/cleanup/merge-duplicate-events")
+async def merge_duplicate_events(
+    secret: str = Query(...),
+    dry_run: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find and merge duplicate events created by prediction market matching.
+
+    When the quota guard blocked discover_events, Kalshi's auto-create made
+    separate events with pm_ external_ids for games that later got real events
+    from The Odds API or StatPal. This endpoint finds those duplicates and
+    merges them: migrates any snapshots/futures links from the pm_ event to
+    the real event, then deletes the pm_ event.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.models.models import OddsSnapshot, WinProbSnapshot
+    from app.utils.name_normalization import names_match
+
+    # Find all pm_ events
+    pm_result = await db.execute(
+        select(Event).where(
+            Event.external_id.like("pm_%"),
+            Event.status.in_(["scheduled", "live", "completed", "closed"]),
+        )
+    )
+    pm_events = pm_result.scalars().all()
+
+    merges = []
+    no_match = []
+
+    for pm_event in pm_events:
+        # Search for a real event with the same teams on the same day
+        time_start = pm_event.commence_time - timedelta(hours=24)
+        time_end = pm_event.commence_time + timedelta(hours=24)
+
+        candidates_result = await db.execute(
+            select(Event).where(
+                Event.id != pm_event.id,
+                Event.sport_id == pm_event.sport_id,
+                Event.commence_time.between(time_start, time_end),
+                ~Event.external_id.like("pm_%"),  # Must be a "real" event
+            )
+        )
+        candidates = candidates_result.scalars().all()
+
+        best_match = None
+        for candidate in candidates:
+            # Check if teams match
+            home_match = names_match(
+                pm_event.home_team_name or "", candidate.home_team_name or ""
+            ) or names_match(
+                pm_event.home_team_name or "", candidate.away_team_name or ""
+            )
+            away_match = names_match(
+                pm_event.away_team_name or "", candidate.away_team_name or ""
+            ) or names_match(
+                pm_event.away_team_name or "", candidate.home_team_name or ""
+            )
+            if home_match and away_match:
+                best_match = candidate
+                break
+
+        if not best_match:
+            no_match.append({
+                "event_id": pm_event.id,
+                "teams": f"{pm_event.away_team_name} @ {pm_event.home_team_name}",
+                "ext_id": (pm_event.external_id or "")[:50],
+                "time": pm_event.commence_time.isoformat()[:16] if pm_event.commence_time else "?",
+            })
+            continue
+
+        merges.append({
+            "pm_event_id": pm_event.id,
+            "pm_teams": f"{pm_event.away_team_name} @ {pm_event.home_team_name}",
+            "pm_ext_id": (pm_event.external_id or "")[:50],
+            "real_event_id": best_match.id,
+            "real_teams": f"{best_match.away_team_name} @ {best_match.home_team_name}",
+            "real_ext_id": (best_match.external_id or "")[:50],
+        })
+
+        if not dry_run:
+            # Migrate snapshots from pm_event to real event
+            await db.execute(
+                update(OddsSnapshot)
+                .where(OddsSnapshot.event_id == pm_event.id)
+                .values(event_id=best_match.id)
+            )
+            await db.execute(
+                update(WinProbSnapshot)
+                .where(WinProbSnapshot.event_id == pm_event.id)
+                .values(event_id=best_match.id)
+            )
+            # Migrate futures market links
+            await db.execute(
+                update(FuturesMarket)
+                .where(FuturesMarket.event_id == pm_event.id)
+                .values(event_id=best_match.id)
+            )
+            # Delete the pm_ event
+            await db.delete(pm_event)
+
+    if not dry_run:
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "merged_count": len(merges),
+        "no_match_count": len(no_match),
+        "merges": merges[:100],
+        "no_match_sample": no_match[:20],
+        "message": f"{'Would merge' if dry_run else 'Merged'} {len(merges)} duplicate events. "
+                   f"{len(no_match)} pm_ events had no matching real event.",
     }
