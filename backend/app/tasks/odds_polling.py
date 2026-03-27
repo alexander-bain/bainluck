@@ -522,6 +522,10 @@ async def _poll_all_odds():
                     # Re-check per-sport to get conservation reason
                     _, guard_reason = check_quota_guard("poll_odds", sport_key=sport_key)
                     quota_conservation = "conservation" in guard_reason
+                    # In full-stop conservation, only poll live games
+                    if tier != "live":
+                        sports_skipped += 1
+                        continue
 
                 # Quota guard: in live-only mode, skip non-live sports entirely
                 if quota_live_only and not quota_full_stop and tier != "live":

@@ -300,8 +300,8 @@ QUOTA_GUARD_PRIORITY_SPORTS = frozenset({
     "baseball_mlb",
     "basketball_ncaab",
 })
-# Conservation poll interval for priority sports in low-quota mode (3 min)
-QUOTA_GUARD_CONSERVATION_INTERVAL = 180
+# Conservation poll interval for priority sports in low-quota mode (10 min)
+QUOTA_GUARD_CONSERVATION_INTERVAL = 600
 
 import logging
 _quota_logger = logging.getLogger(__name__)
