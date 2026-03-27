@@ -127,6 +127,14 @@ interface DbSizeTrendEntry {
   size_mb: number;
 }
 
+interface DeadTupleInfo {
+  table: string;
+  live_tuples: number;
+  dead_tuples: number;
+  dead_pct: number;
+  last_autovacuum: string | null;
+}
+
 interface DatabaseHealth {
   active_events: number;
   live_events: number;
@@ -137,6 +145,10 @@ interface DatabaseHealth {
   days_until_full: number | null;
   plan: DatabasePlan;
   table_sizes?: TableSize[];
+  dead_tuples?: DeadTupleInfo[];
+  total_dead_tuples?: number;
+  total_live_tuples?: number;
+  dead_tuple_pct?: number;
   size_trend?: DbSizeTrendEntry[];
 }
 
@@ -606,6 +618,40 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
               );
             })}
           </div>
+        </div>
+      )}
+      {/* Dead tuples (space reclaimable by VACUUM) */}
+      {db.dead_tuples && db.dead_tuples.length > 0 && (
+        <div className="mt-3 border-t border-surface-border/50 pt-2">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-micro text-text-muted uppercase tracking-wider">Dead Tuples (Reclaimable Space)</div>
+            {db.dead_tuple_pct != null && (
+              <span className={"text-xs font-medium " + (db.dead_tuple_pct > 20 ? "text-yellow-400" : "text-text-muted")}>
+                {db.dead_tuple_pct}% dead
+              </span>
+            )}
+          </div>
+          <div className="space-y-1">
+            {db.dead_tuples.filter((t: DeadTupleInfo) => t.dead_tuples > 1000).map((t: DeadTupleInfo) => (
+              <div key={t.table} className="flex items-center gap-2 text-xs">
+                <span className="font-mono text-text-secondary w-40 truncate">{t.table}</span>
+                <div className="flex-1 h-2 bg-surface-border rounded-full overflow-hidden">
+                  <div className="h-full rounded-full flex">
+                    <div className="h-full bg-green-500/60 rounded-l-full" style={{ width: (100 - t.dead_pct) + "%" }} />
+                    <div className="h-full bg-yellow-500/60 rounded-r-full" style={{ width: t.dead_pct + "%" }} />
+                  </div>
+                </div>
+                <span className="text-text-muted w-28 text-right">
+                  {t.dead_tuples > 1000000 ? (t.dead_tuples / 1000000).toFixed(1) + "M" : t.dead_tuples > 1000 ? Math.round(t.dead_tuples / 1000) + "K" : t.dead_tuples} dead ({t.dead_pct}%)
+                </span>
+              </div>
+            ))}
+          </div>
+          {db.dead_tuples[0]?.last_autovacuum && (
+            <div className="text-[10px] text-text-muted mt-1">
+              Last autovacuum: {new Date(db.dead_tuples[0].last_autovacuum).toLocaleString()}
+            </div>
+          )}
         </div>
       )}
       {/* Storage trend chart */}

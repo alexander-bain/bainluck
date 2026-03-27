@@ -6515,26 +6515,27 @@ async def operations_dashboard(
             for r in table_q.all()
         ]
 
-        # Crypto footprint (markets + outcomes only, skip snapshot join which is too slow)
-        crypto_q = await db.execute(text("""
-            SELECT
-                (SELECT COUNT(*) FROM futures_markets
-                 WHERE llm_sport_category = 'crypto') AS crypto_markets,
-                (SELECT COUNT(*) FROM futures_outcomes fo
-                 JOIN futures_markets fm ON fo.market_id = fm.id
-                 WHERE fm.llm_sport_category = 'crypto') AS crypto_outcomes,
-                (SELECT COUNT(*) FROM futures_markets) AS total_markets,
-                (SELECT COUNT(*) FROM futures_outcomes) AS total_outcomes
+        # Dead tuple stats from pg_stat_user_tables
+        dead_tuple_q = await db.execute(text("""
+            SELECT relname, n_live_tup, n_dead_tup,
+                   last_autovacuum, last_autoanalyze
+            FROM pg_stat_user_tables
+            WHERE schemaname = 'public'
+              AND n_live_tup + n_dead_tup > 1000
+            ORDER BY n_dead_tup DESC
         """))
-        cr = crypto_q.one()
-        crypto_info = {
-            "markets": cr.crypto_markets,
-            "outcomes": cr.crypto_outcomes,
-            "total_markets": cr.total_markets,
-            "total_outcomes": cr.total_outcomes,
-            "pct_of_markets": round(cr.crypto_markets / max(cr.total_markets, 1) * 100, 1),
-            "pct_of_outcomes": round(cr.crypto_outcomes / max(cr.total_outcomes, 1) * 100, 1),
-        }
+        dead_tuples = [
+            {
+                "table": r.relname,
+                "live_tuples": r.n_live_tup,
+                "dead_tuples": r.n_dead_tup,
+                "dead_pct": round(r.n_dead_tup / max(r.n_live_tup + r.n_dead_tup, 1) * 100, 1),
+                "last_autovacuum": r.last_autovacuum.isoformat() if r.last_autovacuum else None,
+            }
+            for r in dead_tuple_q.all()
+        ]
+        total_live = sum(d["live_tuples"] for d in dead_tuples)
+        total_dead = sum(d["dead_tuples"] for d in dead_tuples)
 
         # Record DB size for trending and fetch history
         from app.tasks.redis_state import record_db_size, get_db_size_history
@@ -6550,7 +6551,10 @@ async def operations_dashboard(
             "growth_rate_mb_per_day": growth_rate_mb_per_day,
             "days_until_full": days_until_full,
             "table_sizes": table_sizes,
-            "crypto": crypto_info,
+            "dead_tuples": dead_tuples,
+            "total_live_tuples": total_live,
+            "total_dead_tuples": total_dead,
+            "dead_tuple_pct": round(total_dead / max(total_live + total_dead, 1) * 100, 1),
             "size_trend": db_size_trend,
             "plan": {
                 "name": "essential-1",
