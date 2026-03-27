@@ -451,9 +451,34 @@ struct OddsChartView: View {
             }
         }
 
-        return firstSeen
-            .sorted { $0.date < $1.date }
-            .map { PeriodMarker(date: $0.date, label: $0.label, isGameStart: false) }
+        let sorted = firstSeen.sorted { $0.date < $1.date }
+
+        // Dedup markers that are too close together (same logic as web fix):
+        // When two markers are within 3% of chart duration (min 2 minutes),
+        // keep the later one (more informative label).
+        let chartDuration: TimeInterval
+        if let first = filteredPoints.first?.date, let last = filteredPoints.last?.date {
+            chartDuration = last.timeIntervalSince(first)
+        } else {
+            chartDuration = 3600
+        }
+        let minSpacing = max(chartDuration * 0.03, 120) // At least 2 minutes
+
+        var deduped: [(label: String, date: Date)] = []
+        for item in sorted {
+            if let last = deduped.last {
+                if item.date.timeIntervalSince(last.date) < minSpacing {
+                    // Replace previous with this one (keep later/more informative label)
+                    deduped[deduped.count - 1] = item
+                    continue
+                }
+            }
+            deduped.append(item)
+        }
+
+        return deduped
+            .enumerated()
+            .map { PeriodMarker(date: $1.date, label: $1.label, isGameStart: false) }
     }
 
     /// Infer the first period label from existing labels.
@@ -529,8 +554,10 @@ struct OddsChartView: View {
         // Period marker labels positioned inside chart via overlay
         .chartOverlay { proxy in
             GeometryReader { geo in
-                ForEach(visibleMarkers) { marker in
+                ForEach(Array(visibleMarkers.enumerated()), id: \.element.id) { index, marker in
                     if let xPos = proxy.position(forX: marker.date) {
+                        // Alternate label y-position to avoid overlap
+                        let yPos: CGFloat = index % 2 == 0 ? 12 : 28
                         Text(marker.label)
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(.primary.opacity(0.7))
@@ -538,7 +565,7 @@ struct OddsChartView: View {
                             .padding(.vertical, 2)
                             .background(Color.cardBackground.opacity(0.9))
                             .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .position(x: xPos + 16, y: 12)
+                            .position(x: xPos + 16, y: yPos)
                     }
                 }
             }

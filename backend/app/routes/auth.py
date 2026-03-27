@@ -259,7 +259,7 @@ async def google_access_token_sign_in(
         "email": email,
         "name": name,
         "picture": picture,
-        "expires_in": 28800,  # 8 hours
+        "expires_in": 2592000,  # 30 days
         "user": {
             "id": user.id,
             "email": user.email,
@@ -377,7 +377,7 @@ async def apple_sign_in(
         "email": email,
         "name": display_name,
         "picture": None,
-        "expires_in": 28800,  # 8 hours
+        "expires_in": 2592000,  # 30 days
         "user": {
             "id": user.id,
             "email": user.email,

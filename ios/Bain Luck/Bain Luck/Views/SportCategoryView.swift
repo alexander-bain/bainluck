@@ -12,8 +12,11 @@ final class SportCategoryViewModel: ObservableObject {
     @Published var items: [FeedItem] = []
     @Published var loading = true
     @Published var error: String?
+    @Published var loadingMore = false
+    @Published var hasMore = true
 
     let categoryKey: String
+    private let pageSize = 50
 
     init(categoryKey: String) {
         self.categoryKey = categoryKey
@@ -23,11 +26,12 @@ final class SportCategoryViewModel: ObservableObject {
         let isInitial = items.isEmpty
         if isInitial { loading = true }
         do {
-            let feed = try await APIClient.shared.fetchFeed(sport: categoryKey, limit: 200)
+            let feed = try await APIClient.shared.fetchFeed(sport: categoryKey, limit: pageSize, offset: 0)
             items = feed.items
+            hasMore = feed.hasMore
             error = nil
             loading = false
-            logger.info("Category \(self.categoryKey) loaded: \(self.items.count) items (server-filtered)")
+            logger.info("Category \(self.categoryKey) loaded: \(self.items.count) items")
         } catch {
             if isInitial {
                 self.error = error.localizedDescription
@@ -35,6 +39,20 @@ final class SportCategoryViewModel: ObservableObject {
             loading = false
             logger.error("Category feed error: \(error)")
         }
+    }
+
+    func loadMore() async {
+        guard !loadingMore, hasMore else { return }
+        loadingMore = true
+        do {
+            let feed = try await APIClient.shared.fetchFeed(sport: categoryKey, limit: pageSize, offset: items.count)
+            items.append(contentsOf: feed.items)
+            hasMore = feed.hasMore
+            logger.info("Category \(self.categoryKey) loaded more: +\(feed.items.count), total \(self.items.count)")
+        } catch {
+            logger.error("Category load more error: \(error)")
+        }
+        loadingMore = false
     }
 
     var liveNow: [FeedItem] {
@@ -165,6 +183,25 @@ struct SportCategoryView: View {
             }
             if !vm.topMarkets.isEmpty {
                 feedSection(title: "Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
+            }
+            if vm.hasMore {
+                Section {
+                    if vm.loadingMore {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                            Spacer()
+                        }
+                        .listRowBackground(Color.clear)
+                    } else {
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear {
+                                Task { await vm.loadMore() }
+                            }
+                            .listRowBackground(Color.clear)
+                    }
+                }
             }
         }
         #if os(iOS)

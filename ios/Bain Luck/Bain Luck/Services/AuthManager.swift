@@ -46,9 +46,12 @@ final class AuthManager: ObservableObject {
         } catch let apiError as APIError {
             switch apiError {
             case .httpError(let statusCode, _) where statusCode == 401 || statusCode == 403:
-                // Token is invalid/expired — clear and require re-auth
-                logger.warning("Session token rejected (\(statusCode)). Clearing stored token.")
-                clearStoredAuth()
+                // Token is invalid/expired — try silent Google re-auth before giving up
+                logger.warning("Session token rejected (\(statusCode)). Attempting silent Google restore.")
+                let silentRestored = await attemptSilentGoogleRestore()
+                if !silentRestored {
+                    clearStoredAuth()
+                }
             default:
                 // Network error, timeout, decoding — keep token and stay signed out temporarily
                 logger.warning("Session restore failed (transient): \(apiError). Keeping stored token.")
@@ -146,6 +149,35 @@ final class AuthManager: ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    /// Try to silently restore Google Sign-In and re-exchange for a fresh session token.
+    /// Returns true if successful (user is now authenticated).
+    private func attemptSilentGoogleRestore() async -> Bool {
+        do {
+            let result = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
+            let accessToken = result.accessToken.tokenString
+
+            let response = try await APIClient.shared.signInWithGoogle(accessToken: accessToken)
+
+            guard let tokenData = response.idToken.data(using: .utf8) else {
+                return false
+            }
+            _ = KeychainHelper.save(key: keychainTokenKey, data: tokenData)
+
+            await APIClient.shared.setAuthTokenProvider {
+                KeychainHelper.load(key: keychainTokenKey).flatMap { String(data: $0, encoding: .utf8) }
+            }
+
+            self.user = response.user
+            self.error = nil
+            AnalyticsService.setUserId(String(response.user.id))
+            logger.info("Silent Google restore successful: user \(response.user.id)")
+            return true
+        } catch {
+            logger.info("Silent Google restore failed: \(error)")
+            return false
+        }
+    }
 
     private func clearStoredAuth() {
         KeychainHelper.delete(key: keychainTokenKey)
