@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
@@ -23,6 +23,8 @@ function slugToTag(slug: string): string {
   return `sport:${slug}`;
 }
 
+const PAGE_SIZE = 50;
+
 export default function CategoryPage({
   params,
 }: {
@@ -41,6 +43,10 @@ export default function CategoryPage({
 
   const tags = useMemo(() => [slugToTag(slug)], [slug]);
 
+  const [extraItems, setExtraItems] = useState<FeedItem[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const {
     data: feedData,
     error: feedError,
@@ -52,22 +58,46 @@ export default function CategoryPage({
       : user
         ? ["feed-category", slug, user.uid]
         : ["feed-category-anon", slug],
-    () => fetchFeed({ limit: 200, tags }),
-    { refreshInterval: 30000 }
+    () => fetchFeed({ limit: PAGE_SIZE, tags }),
+    {
+      refreshInterval: 30000,
+      onSuccess: (data) => {
+        setHasMore(data?.has_more ?? false);
+        setExtraItems([]);
+      },
+    }
   );
 
+  const allItems = useMemo(() => {
+    if (!feedData) return [];
+    return [...feedData.items, ...extraItems];
+  }, [feedData, extraItems]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await fetchFeed({ limit: PAGE_SIZE, offset: allItems.length, tags });
+      setExtraItems((prev) => [...prev, ...result.items]);
+      setHasMore(result.has_more);
+    } catch (e) {
+      console.error("Load more failed:", e);
+    }
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, allItems.length, tags]);
+
   const feedSections = useMemo(() => {
-    if (!feedData || feedData.items.length === 0) return [];
-    return groupFeedIntoSections(feedData.items);
-  }, [feedData]);
+    if (allItems.length === 0) return [];
+    return groupFeedIntoSections(allItems);
+  }, [allItems]);
 
   const feedStats = useMemo(() => {
-    if (!feedData) return { events: 0, futures: 0 };
+    if (allItems.length === 0) return { events: 0, futures: 0 };
     return {
-      events: feedData.items.filter((i) => i.type === "event").length,
-      futures: feedData.items.filter((i) => i.type === "futures").length,
+      events: allItems.filter((i) => i.type === "event").length,
+      futures: allItems.filter((i) => i.type === "futures").length,
     };
-  }, [feedData]);
+  }, [allItems]);
 
   return (
     <div className="space-y-5">
@@ -82,7 +112,7 @@ export default function CategoryPage({
             <Link href="/categories" className="hover:text-text-secondary transition-colors">
               All Categories
             </Link>
-            {feedData && feedData.items.length > 0 && (
+            {allItems.length > 0 && (
               <>
                 <span>&middot;</span>
                 <span>
@@ -110,7 +140,7 @@ export default function CategoryPage({
       {/* Content */}
       {feedData && (
         <>
-          {feedData.items.length === 0 ? (
+          {allItems.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-body text-text-secondary mb-2">
                 No {categoryName.toLowerCase()} items right now
@@ -177,6 +207,19 @@ export default function CategoryPage({
                   </section>
                 );
               })}
+
+              {/* Load More */}
+              {hasMore && (
+                <div className="flex justify-center pt-2 pb-4">
+                  <button
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="px-5 py-2 text-sm font-medium text-text-secondary bg-surface-elevated hover:bg-surface-hover rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {loadingMore ? "Loading..." : "Load More"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </>
