@@ -646,20 +646,22 @@ async def _compute_matching_metrics_impl() -> dict:
     from sqlalchemy import text
 
     async with get_task_session() as session:
-        # All active events (scheduled or live, with commence_time in the future or recent)
+        # All active events with prediction market coverage via futures_markets join
         result = await session.execute(text("""
             SELECT
-                e.sport_key,
-                COUNT(*) AS total,
-                COUNT(CASE WHEN e.kalshi_event_id IS NOT NULL
-                            OR e.polymarket_event_id IS NOT NULL THEN 1 END) AS matched,
-                COUNT(CASE WHEN e.kalshi_event_id IS NOT NULL THEN 1 END) AS kalshi_matched,
-                COUNT(CASE WHEN e.polymarket_event_id IS NOT NULL THEN 1 END) AS poly_matched
+                s.key AS sport_key,
+                COUNT(DISTINCT e.id) AS total,
+                COUNT(DISTINCT CASE WHEN fm.id IS NOT NULL THEN e.id END) AS matched,
+                COUNT(DISTINCT CASE WHEN fm.source = 'kalshi' THEN e.id END) AS kalshi_matched,
+                COUNT(DISTINCT CASE WHEN fm.source = 'polymarket' THEN e.id END) AS poly_matched
             FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            LEFT JOIN futures_markets fm ON fm.event_id = e.id
+                AND fm.source IN ('kalshi', 'polymarket')
             WHERE e.status IN ('scheduled', 'live')
               AND e.commence_time >= NOW() - INTERVAL '6 hours'
-            GROUP BY e.sport_key
-            ORDER BY COUNT(*) DESC
+            GROUP BY s.key
+            ORDER BY COUNT(DISTINCT e.id) DESC
         """))
         rows = result.fetchall()
 
@@ -686,15 +688,18 @@ async def _compute_matching_metrics_impl() -> dict:
 
         # Unmatched major sport events (the ones we should NEVER miss)
         unmatched_major = await session.execute(text("""
-            SELECT e.id, e.sport_key, e.home_team, e.away_team,
+            SELECT e.id, s.key AS sport_key, e.home_team_name, e.away_team_name,
                    e.commence_time, e.status
             FROM events e
+            JOIN sports s ON e.sport_id = s.id
+            LEFT JOIN futures_markets fm ON fm.event_id = e.id
+                AND fm.source IN ('kalshi', 'polymarket')
             WHERE e.status IN ('scheduled', 'live')
               AND e.commence_time >= NOW() - INTERVAL '6 hours'
               AND e.commence_time <= NOW() + INTERVAL '24 hours'
-              AND e.kalshi_event_id IS NULL
-              AND e.polymarket_event_id IS NULL
-              AND e.sport_key = ANY(:sports)
+              AND fm.id IS NULL
+              AND s.key = ANY(:sports)
+            GROUP BY e.id, s.key, e.home_team_name, e.away_team_name, e.commence_time, e.status
             ORDER BY e.commence_time
             LIMIT 20
         """), {"sports": list(_MAJOR_SPORTS)})
@@ -702,7 +707,7 @@ async def _compute_matching_metrics_impl() -> dict:
             {
                 "id": r.id,
                 "sport": r.sport_key,
-                "matchup": f"{r.away_team} @ {r.home_team}",
+                "matchup": f"{r.away_team_name} @ {r.home_team_name}",
                 "time": r.commence_time.isoformat() if r.commence_time else None,
                 "status": r.status,
             }

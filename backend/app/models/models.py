@@ -47,7 +47,7 @@ class Team(Base):
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"))
     external_id: Mapped[Optional[str]] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    abbreviation: Mapped[Optional[str]] = mapped_column(String(10))
+    abbreviation: Mapped[Optional[str]] = mapped_column(String(20))
     logo_url: Mapped[Optional[str]] = mapped_column(Text)
 
     # ESPN enrichment fields
