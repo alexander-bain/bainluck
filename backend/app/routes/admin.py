@@ -6748,22 +6748,28 @@ async def merge_duplicate_events(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    from app.models.models import OddsSnapshot, WinProbSnapshot
+    from app.models.models import OddsSnapshot, WinProbSnapshot, Sport
     from app.utils.name_normalization import names_match
 
     # Major sports only by default to avoid Heroku timeout
-    major_sports = [
+    major_sport_keys = [
         "basketball_nba", "americanfootball_nfl", "icehockey_nhl",
         "baseball_mlb", "basketball_ncaab", "basketball_wnba",
         "basketball_wncaab", "americanfootball_ncaaf",
     ]
-    sport_filter = [sport] if sport else major_sports
+    sport_keys = [sport] if sport else major_sport_keys
+
+    # Resolve sport keys to IDs
+    sport_id_result = await db.execute(
+        select(Sport.id).where(Sport.key.in_(sport_keys))
+    )
+    sport_ids = [row[0] for row in sport_id_result.all()]
 
     # Find pm_ events, limited to avoid timeout
     pm_result = await db.execute(
         select(Event).where(
             Event.external_id.like("pm_%"),
-            Event.sport_id.in_(sport_filter),
+            Event.sport_id.in_(sport_ids),
             Event.status.in_(["scheduled", "live", "completed", "closed"]),
         ).limit(limit)
     )
