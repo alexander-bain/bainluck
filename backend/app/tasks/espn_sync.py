@@ -772,6 +772,89 @@ async def _sync_espn_live_events():
             except Exception as e:
                 stats["errors"].append(f"live_box_score_pass: {str(e)}")
 
+            # Fifth pass: backfill scores for recently completed events
+            # that have NO scores and NO espn_id. This catches niche sports
+            # (lacrosse, etc.) that were added to ESPN_SPORT_MAPPING after
+            # the events completed — they never went through the live sync.
+            try:
+                from datetime import timedelta
+                score_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                missing_scores_result = await session.execute(
+                    select(Event)
+                    .options(selectinload(Event.sport))
+                    .where(
+                        Event.status.in_(["completed", "closed"]),
+                        Event.home_score.is_(None),
+                        Event.away_score.is_(None),
+                        Event.commence_time >= score_cutoff,
+                    )
+                    .order_by(Event.commence_time.desc())
+                    .limit(20)
+                )
+                missing_score_events = missing_scores_result.scalars().all()
+
+                # Group by sport key to batch ESPN fetches
+                events_by_sport: dict[str, list] = {}
+                for ev in missing_score_events:
+                    sk = ev.sport.key if ev.sport else None
+                    if sk and sk in ESPN_SPORT_MAPPING:
+                        events_by_sport.setdefault(sk, []).append(ev)
+
+                if events_by_sport:
+                    score_espn = ESPNAPIService()
+                    try:
+                        for sport_key, events_list in events_by_sport.items():
+                            try:
+                                # Fetch scoreboard with date range covering these events
+                                from datetime import timedelta
+                                dates = set()
+                                for ev in events_list:
+                                    if ev.commence_time:
+                                        dates.add(ev.commence_time.strftime("%Y%m%d"))
+                                for date_str in dates:
+                                    espn_events = await score_espn.get_scoreboard(sport_key, date=date_str)
+                                    if not espn_events:
+                                        continue
+                                    for ev in events_list:
+                                        if ev.commence_time and ev.commence_time.strftime("%Y%m%d") != date_str:
+                                            continue
+                                        if ev.home_score is not None:
+                                            continue  # Already got scores
+                                        home_names, away_names = get_event_name_variations(ev)
+                                        for ee in espn_events:
+                                            if not ee.home_team or not ee.away_team:
+                                                continue
+                                            espn_home = ee.home_team.display_name or ee.home_team.name or ""
+                                            espn_away = ee.away_team.display_name or ee.away_team.name or ""
+                                            if names_match(home_names, espn_home) and names_match(away_names, espn_away):
+                                                if ee.home_score is not None:
+                                                    ev.home_score = ee.home_score
+                                                    ev.away_score = ee.away_score
+                                                    if ee.status_detail:
+                                                        ev.period = ee.status_detail
+                                                    if ee.espn_id and not ev.espn_id:
+                                                        ev.espn_id = ee.espn_id
+                                                    # Upsert teams for colors/logos
+                                                    home_team = await upsert_team(session, ev.home_team_name, ee.home_team, ev.sport_id)
+                                                    away_team = await upsert_team(session, ev.away_team_name, ee.away_team, ev.sport_id)
+                                                    if home_team and ev.home_team_id != home_team.id:
+                                                        ev.home_team_id = home_team.id
+                                                    if away_team and ev.away_team_id != away_team.id:
+                                                        ev.away_team_id = away_team.id
+                                                    stats["scores_backfilled"] = stats.get("scores_backfilled", 0) + 1
+                                                    logger.info(
+                                                        f"ESPN: Backfilled scores for event {ev.id} "
+                                                        f"({ev.away_team_name} @ {ev.home_team_name}): "
+                                                        f"{ee.away_score}-{ee.home_score}"
+                                                    )
+                                                break
+                            except Exception as e:
+                                stats["errors"].append(f"score_backfill_{sport_key}: {str(e)}")
+                    finally:
+                        await score_espn.close()
+            except Exception as e:
+                stats["errors"].append(f"score_backfill_pass: {str(e)}")
+
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
         import traceback
