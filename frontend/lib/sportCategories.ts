@@ -157,13 +157,6 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     prefixes: ["entertainment_"],
     tier: 2,
   },
-  {
-    key: "crypto",
-    name: "Crypto",
-    emoji: "₿",
-    prefixes: ["crypto_"],
-    tier: 2,
-  },
   // Tier 3: Tertiary sports (niche audience)
   {
     key: "esports",
@@ -894,43 +887,6 @@ export function getActiveCategoriesFromLeagues(leagueKeys: string[]): SportCateg
  * Tags not listed here get auto-formatted (e.g., "fed_rate" → "Fed Rate").
  */
 const SUBCATEGORY_DISPLAY_NAMES: Record<string, string> = {
-  // ── Crypto assets ──
-  bitcoin: "Bitcoin",
-  ethereum: "Ethereum",
-  solana: "Solana",
-  dogecoin: "Dogecoin",
-  xrp: "XRP",
-  cardano: "Cardano",
-  litecoin: "Litecoin",
-  polkadot: "Polkadot",
-  chainlink: "Chainlink",
-  avalanche: "Avalanche",
-  polygon: "Polygon",
-  uniswap: "Uniswap",
-  cosmos: "Cosmos",
-  bnb: "BNB",
-  tron: "Tron",
-  shiba_inu: "Shiba Inu",
-  toncoin: "Toncoin",
-  sui: "Sui",
-  aptos: "Aptos",
-  pepe: "Pepe",
-  near: "NEAR",
-  arbitrum: "Arbitrum",
-  optimism: "Optimism",
-  celestia: "Celestia",
-  jupiter: "Jupiter",
-  render: "Render",
-  stacks: "Stacks",
-  worldcoin: "Worldcoin",
-  // ── Crypto topics ──
-  crypto_etf: "Crypto ETFs",
-  defi: "DeFi",
-  nft: "NFTs",
-  stablecoin: "Stablecoins",
-  meme_coin: "Meme Coins",
-  halving: "Halving",
-  crypto_market_cap: "Market Cap",
   // ── Politicians / public figures ──
   trump: "Trump",
   biden: "Biden",
@@ -1052,7 +1008,7 @@ const SUBCATEGORY_DISPLAY_NAMES: Record<string, string> = {
  * These are too generic or are the parent category itself.
  */
 const EXCLUDED_SUBCATEGORY_TAGS = new Set([
-  "crypto", "politics", "economics", "tech", "entertainment",
+  "politics", "economics", "tech", "entertainment",
   "football", "basketball", "baseball", "hockey", "golf", "tennis",
   "soccer", "mma", "boxing", "motorsports", "esports", "rugby",
   "cricket", "aussierules", "horse_racing", "olympics", "lacrosse",

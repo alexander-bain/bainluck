@@ -6,7 +6,7 @@ import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
-import { isCryptoCategory, isNonSportsCategory, extractCoinName } from "@/lib/images";
+import { isNonSportsCategory } from "@/lib/images";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
@@ -48,7 +48,6 @@ function formatSourceName(source: string): string {
 const CATEGORY_ACCENT: Record<string, string> = {
   politics: "border-t-blue-500/60",
   entertainment: "border-t-yellow-500/60",
-  crypto: "border-t-orange-500/60",
   economics: "border-t-emerald-500/60",
   tech: "border-t-cyan-500/60",
 };
@@ -250,16 +249,12 @@ function OutcomeRow({
   const prob = outcome.probability ?? 0;
 
   // Determine entity image type
-  const isCrypto = isCryptoCategory(marketCategory ?? null);
   const isNonSports = isNonSportsCategory(marketCategory ?? null);
-  const coinName = isCrypto ? (extractCoinName(outcome.name) || extractCoinName(marketName || "")) : null;
 
   return (
     <div className="flex items-center gap-2">
       {/* Rank or Entity Image */}
-      {coinName ? (
-        <EntityImage type="crypto" name={coinName} size={20} className="flex-shrink-0" />
-      ) : isNonSports && !isCrypto ? (
+      {isNonSports ? (
         <EntityImage type="wikipedia" name={outcome.name} size={20} className="flex-shrink-0" />
       ) : (
         <span className={cn(

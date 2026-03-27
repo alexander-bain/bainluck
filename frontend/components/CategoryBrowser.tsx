@@ -25,7 +25,6 @@ const CATEGORY_EMOJI: Record<string, string> = {
   esports: "🎮",
   entertainment: "🎬",
   politics: "🏛️",
-  crypto: "₿",
   economics: "📈",
   tech: "💻",
   weather: "🌤️",

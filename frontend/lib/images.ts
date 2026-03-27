@@ -1,5 +1,5 @@
 /**
- * Image enrichment APIs — ESPN headshots, Wikipedia, Flagpedia, CoinGecko.
+ * Image enrichment APIs — ESPN headshots, Wikipedia, Flagpedia.
  *
  * Client-side only — all APIs are free, no auth, CORS-friendly.
  * Images are cached in localStorage with 24h TTL (same pattern as tmdb.ts).
@@ -323,98 +323,12 @@ export function isInternationalSport(sportKey: string | null): boolean {
 }
 
 // ============================================================================
-// 4. CoinGecko API
-// ============================================================================
-
-/**
- * Common coin names → CoinGecko IDs.
- * Covers the most common coins in prediction markets.
- */
-const COIN_IDS: Record<string, string> = {
-  bitcoin: "bitcoin", btc: "bitcoin",
-  ethereum: "ethereum", eth: "ethereum",
-  solana: "solana", sol: "solana",
-  dogecoin: "dogecoin", doge: "dogecoin",
-  xrp: "ripple", ripple: "ripple",
-  cardano: "cardano", ada: "cardano",
-  polkadot: "polkadot", dot: "polkadot",
-  avalanche: "avalanche-2", avax: "avalanche-2",
-  chainlink: "chainlink", link: "chainlink",
-  litecoin: "litecoin", ltc: "litecoin",
-  polygon: "matic-network", matic: "matic-network",
-  uniswap: "uniswap", uni: "uniswap",
-  cosmos: "cosmos", atom: "cosmos",
-  stellar: "stellar", xlm: "stellar",
-  algorand: "algorand", algo: "algorand",
-  tron: "tron", trx: "tron",
-  toncoin: "the-open-network", ton: "the-open-network",
-  sui: "sui",
-  aptos: "aptos", apt: "aptos",
-  near: "near",
-  arbitrum: "arbitrum", arb: "arbitrum",
-  optimism: "optimism", op: "optimism",
-  pepe: "pepe",
-  shiba: "shiba-inu", "shiba inu": "shiba-inu",
-  bonk: "bonk",
-  worldcoin: "worldcoin-wld", wld: "worldcoin-wld",
-};
-
-/**
- * Fetch a coin logo URL from CoinGecko.
- * Returns null if not found or on error.
- */
-export async function getCoinImage(coinName: string): Promise<string | null> {
-  const normalized = coinName.toLowerCase().trim();
-  const id = COIN_IDS[normalized];
-  if (!id) return null;
-
-  const cacheKey = `coin_${id}`;
-  const cached = cacheGet<string | null>(cacheKey);
-  if (cached !== undefined) return cached;
-
-  try {
-    const res = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${id}?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!res.ok) {
-      cacheSet(cacheKey, null);
-      return null;
-    }
-    const data = await res.json();
-    const url: string | null = data.image?.small || null;
-    cacheSet(cacheKey, url);
-    return url;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Extract a coin name from a market name string.
- * e.g., "Will Bitcoin hit $100k?" → "bitcoin"
- * e.g., "ETH price above $5000" → "eth"
- */
-export function extractCoinName(marketName: string): string | null {
-  const lower = marketName.toLowerCase();
-  // Check each known coin name against the market name
-  for (const name of Object.keys(COIN_IDS)) {
-    // Use word boundary matching to avoid partial matches
-    const regex = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-    if (regex.test(lower)) {
-      return name;
-    }
-  }
-  return null;
-}
-
-// ============================================================================
 // Non-sports category detection
 // ============================================================================
 
 const NON_SPORTS_CATEGORIES = new Set([
   "politics", "entertainment", "economics", "tech", "geopolitics",
-  "culture", "crypto", "weather", "other",
+  "culture", "weather", "other",
 ]);
 
 /**
@@ -423,12 +337,4 @@ const NON_SPORTS_CATEGORIES = new Set([
 export function isNonSportsCategory(category: string | null): boolean {
   if (!category) return false;
   return NON_SPORTS_CATEGORIES.has(category.toLowerCase());
-}
-
-/**
- * Check if a category is crypto.
- */
-export function isCryptoCategory(category: string | null): boolean {
-  if (!category) return false;
-  return category.toLowerCase() === "crypto";
 }

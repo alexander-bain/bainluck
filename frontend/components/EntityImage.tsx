@@ -6,12 +6,11 @@ import {
   sportKeyToEspnHeadshotSport,
   getWikipediaImage,
   flagUrl,
-  getCoinImage,
 } from "@/lib/images";
 
 interface EntityImageProps {
   /** Image source type */
-  type: "player" | "wikipedia" | "flag" | "crypto";
+  type: "player" | "wikipedia" | "flag";
   /** Entity name (player name, country name, coin name, person name) */
   name: string;
   /** ESPN player ID — required for type="player" */
@@ -30,7 +29,7 @@ interface EntityImageProps {
  * Shared image component for entity enrichment across futures/events.
  *
  * Renders a circular image with graceful fallback to colored-initial circle.
- * Loads asynchronously for Wikipedia and CoinGecko types.
+ * Loads asynchronously for Wikipedia type.
  */
 export default function EntityImage({
   type,
@@ -54,10 +53,6 @@ export default function EntityImage({
       setImageUrl(flagUrl(name));
     } else if (type === "wikipedia") {
       getWikipediaImage(name).then((url) => {
-        if (!cancelled) setImageUrl(url);
-      });
-    } else if (type === "crypto") {
-      getCoinImage(name).then((url) => {
         if (!cancelled) setImageUrl(url);
       });
     }

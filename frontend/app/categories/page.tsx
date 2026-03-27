@@ -14,7 +14,7 @@ import {
 
 // Categories to display, grouped by tier
 const DISPLAY_CATEGORIES = SPORT_CATEGORIES.filter(
-  (c) => c.prefixes.length > 0 || ["politics", "entertainment", "crypto", "economics", "tech", "weather", "geopolitics", "culture"].includes(c.key)
+  (c) => c.prefixes.length > 0 || ["politics", "entertainment", "economics", "tech", "weather", "geopolitics", "culture"].includes(c.key)
 );
 
 export default function CategoriesIndexPage() {

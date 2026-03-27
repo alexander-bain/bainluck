@@ -7,7 +7,7 @@ import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
-import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
+import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
 
 interface FeedCardProps {
@@ -529,9 +529,7 @@ function FuturesFeedCard({
   const catName = catKey ? getNameForCategory(catKey) : "Futures";
 
   // Entity image detection
-  const isCrypto = isCryptoCategory(catKey || null);
   const isNonSports = isNonSportsCategory(catKey || null);
-  const leaderCoinName = isCrypto && leader ? (extractCoinName(leader.name) || extractCoinName(data.name)) : null;
 
   // Resolution date
   const resolvesText = formatResolutionDate(data.resolution_date);
@@ -612,10 +610,7 @@ function FuturesFeedCard({
                 {formatProbability(leaderProb)}
               </div>
               <div className="flex items-center justify-end gap-1 text-[11px] text-text-muted truncate max-w-[100px]">
-                {leaderCoinName && (
-                  <EntityImage type="crypto" name={leaderCoinName} size={14} />
-                )}
-                {isNonSports && !isCrypto && leader && (
+                {isNonSports && leader && (
                   <EntityImage type="wikipedia" name={leader.name} size={14} />
                 )}
                 {leader.name}

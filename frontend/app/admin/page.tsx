@@ -122,15 +122,6 @@ interface TableSize {
   size_mb: number;
 }
 
-interface CryptoInfo {
-  markets: number;
-  outcomes: number;
-  total_markets: number;
-  total_outcomes: number;
-  pct_of_markets: number;
-  pct_of_outcomes: number;
-}
-
 interface DbSizeTrendEntry {
   date: string;
   size_mb: number;
@@ -146,7 +137,6 @@ interface DatabaseHealth {
   days_until_full: number | null;
   plan: DatabasePlan;
   table_sizes?: TableSize[];
-  crypto?: CryptoInfo;
   size_trend?: DbSizeTrendEntry[];
 }
 
@@ -642,17 +632,6 @@ function DatabaseCard({ db }: { db: DatabaseHealth }) {
                 <Line type="monotone" dataKey="size_gb" stroke="#8b5cf6" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-      {/* Crypto footprint */}
-      {db.crypto && db.crypto.markets > 0 && (
-        <div className="mt-3 border-t border-surface-border/50 pt-2">
-          <div className="text-micro text-text-muted uppercase tracking-wider mb-1">Crypto Footprint</div>
-          <div className="text-xs text-text-secondary">
-            <span className="font-medium text-yellow-400">{db.crypto.pct_of_markets}%</span> of futures markets ({db.crypto.markets.toLocaleString()} / {db.crypto.total_markets.toLocaleString()})
-            {" · "}
-            <span className="font-medium text-yellow-400">{db.crypto.pct_of_outcomes}%</span> of futures outcomes ({db.crypto.outcomes.toLocaleString()} / {db.crypto.total_outcomes.toLocaleString()})
           </div>
         </div>
       )}

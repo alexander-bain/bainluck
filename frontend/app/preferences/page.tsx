@@ -37,7 +37,6 @@ const ALL_CATEGORIES: { key: string; label: string; emoji: string }[] = [
   // Beyond sports
   { key: "politics", label: "Politics", emoji: "🏛️" },
   { key: "entertainment", label: "Entertainment", emoji: "🎬" },
-  { key: "crypto", label: "Crypto", emoji: "₿" },
   { key: "economics", label: "Economics", emoji: "📈" },
   { key: "tech", label: "Tech", emoji: "💻" },
   { key: "weather", label: "Weather", emoji: "🌤️" },

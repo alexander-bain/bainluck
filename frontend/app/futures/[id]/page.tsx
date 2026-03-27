@@ -26,7 +26,7 @@ import ThresholdGrid from "@/components/ThresholdGrid";
 import ProgressionTable from "@/components/ProgressionTable";
 import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
-import { isCryptoCategory, isNonSportsCategory, extractCoinName, isInternationalSport, flagUrl } from "@/lib/images";
+import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -704,10 +704,8 @@ function OutcomeRow({
   const rankChange = outcome.rank_change_24h;
 
   // Entity image detection
-  const isCrypto = isCryptoCategory(marketCategory ?? null);
   const isNonSports = isNonSportsCategory(marketCategory ?? null);
   const isIntl = isInternationalSport(marketCategory ?? null);
-  const coinName = isCrypto ? (extractCoinName(outcome.name) || extractCoinName(marketName || "")) : null;
   const outcomeFlag = isIntl ? flagUrl(outcome.name) : null;
 
   return (
@@ -769,9 +767,7 @@ function OutcomeRow({
 
       {/* Name */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        {coinName ? (
-          <EntityImage type="crypto" name={coinName} size={24} />
-        ) : outcomeFlag ? (
+        {outcomeFlag ? (
           <img
             src={outcomeFlag}
             alt={outcome.name}
@@ -780,7 +776,7 @@ function OutcomeRow({
             loading="lazy"
             className="rounded-sm flex-shrink-0"
           />
-        ) : isNonSports && !isCrypto ? (
+        ) : isNonSports ? (
           <EntityImage type="wikipedia" name={outcome.name} size={24} />
         ) : null}
         <div className="min-w-0">

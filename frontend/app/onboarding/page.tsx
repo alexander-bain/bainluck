@@ -31,7 +31,7 @@ const SPORT_LEVELS: { label: string; value: SportLevel; description: string }[] 
 
 // Non-sports categories from prediction markets (Polymarket, Kalshi)
 const BEYOND_SPORTS_KEYS = new Set([
-  "politics", "entertainment", "crypto", "economics", "tech", "weather",
+  "politics", "entertainment", "economics", "tech", "weather",
   "geopolitics", "culture",
 ]);
 
