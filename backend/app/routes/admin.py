@@ -6925,19 +6925,11 @@ async def purge_orphan_pm_events(
             if not dry_run:
                 eid = pm_event.id
                 # Clear all FK references before deleting
-                # scoring_plays, score_snapshots, espn_snapshots, user_pins
-                await db.execute(text(
-                    "DELETE FROM scoring_plays WHERE event_id = :eid"
-                ).bindparams(eid=eid))
-                await db.execute(text(
-                    "DELETE FROM score_snapshots WHERE event_id = :eid"
-                ).bindparams(eid=eid))
-                await db.execute(text(
-                    "DELETE FROM espn_snapshots WHERE event_id = :eid"
-                ).bindparams(eid=eid))
-                await db.execute(text(
-                    "DELETE FROM user_pins WHERE event_id = :eid"
-                ).bindparams(eid=eid))
+                for tbl in ["scoring_plays", "odds_snapshots", "odds_aggregated",
+                            "score_snapshots", "espn_snapshots", "win_prob_snapshots"]:
+                    await db.execute(text(
+                        f"DELETE FROM {tbl} WHERE event_id = :eid"
+                    ).bindparams(eid=eid))
                 # futures chain: odds → outcomes → markets
                 await db.execute(text("""
                     DELETE FROM futures_odds_snapshots WHERE outcome_id IN (
@@ -6953,10 +6945,6 @@ async def purge_orphan_pm_events(
                 """).bindparams(eid=eid))
                 await db.execute(text(
                     "DELETE FROM futures_markets WHERE event_id = :eid"
-                ).bindparams(eid=eid))
-                # matching_overrides
-                await db.execute(text(
-                    "DELETE FROM matching_overrides WHERE event_id = :eid"
                 ).bindparams(eid=eid))
                 # Now delete the event itself
                 await db.execute(text(
