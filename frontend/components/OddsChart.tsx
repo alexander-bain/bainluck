@@ -659,21 +659,46 @@ export default function OddsChart({
     return format(d, "h:mm a");
   }, [commenceTime, chartData]);
 
-  // Filter period boundaries to match chart time range and map to chart time format
+  // Filter period boundaries to match chart time range, deduplicate close markers,
+  // and alternate label positions to prevent overlapping text.
   const filteredPeriodBoundaries = useMemo(() => {
     if (!periodBoundaries || periodBoundaries.length === 0 || chartData.length === 0) return [];
     const chartStart = parseISO(chartData[0].timestamp).getTime();
     const chartEnd = parseISO(chartData[chartData.length - 1].timestamp).getTime();
+    const chartDuration = chartEnd - chartStart;
 
-    return periodBoundaries
+    // Minimum spacing: 3% of chart duration (prevents overlapping labels)
+    const minSpacing = Math.max(chartDuration * 0.03, 120_000); // At least 2 minutes
+
+    const filtered = periodBoundaries
       .filter((b) => {
         const t = parseISO(b.timestamp).getTime();
         return t >= chartStart && t <= chartEnd;
       })
-      .map((b) => ({
-        ...b,
-        time: format(parseISO(b.timestamp), "h:mm a"),
-      }));
+      .sort((a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime());
+
+    // Deduplicate: when two boundaries are too close, keep the later one
+    // (e.g., "End of Q2" and "HT" at nearly the same time -> keep "HT")
+    const deduped: typeof filtered = [];
+    for (const b of filtered) {
+      const t = parseISO(b.timestamp).getTime();
+      if (deduped.length > 0) {
+        const prevT = parseISO(deduped[deduped.length - 1].timestamp).getTime();
+        if (t - prevT < minSpacing) {
+          // Replace previous with this one (prefer later label like "HT" over "Q2 end")
+          deduped[deduped.length - 1] = b;
+          continue;
+        }
+      }
+      deduped.push(b);
+    }
+
+    return deduped.map((b, i) => ({
+      ...b,
+      time: format(parseISO(b.timestamp), "h:mm a"),
+      // Alternate label positions: even=top-left, odd=top-right
+      labelPosition: i % 2 === 0 ? "insideTopLeft" : "insideTopRight",
+    }));
   }, [periodBoundaries, chartData]);
 
   // Fixed 100-50-100 Y-axis: always show full probability range
@@ -1134,7 +1159,7 @@ export default function OddsChart({
                 isFront
                 label={{
                   value: b.label,
-                  position: "insideTopLeft",
+                  position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
                   style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
                 }}
               />
