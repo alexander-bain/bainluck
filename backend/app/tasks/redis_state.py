@@ -286,8 +286,67 @@ QUOTA_TASK_HOURLY_PREFIX = "bainluck:odds_api_quota:task_hourly"
 QUOTA_ALERT_THRESHOLD = 500_000
 QUOTA_WARNING_THRESHOLD = 1_000_000
 
+# Emergency quota guard thresholds
+# When remaining calls drop below these, non-essential polling is disabled.
+# Guard auto-expires on QUOTA_GUARD_EXPIRY (next billing cycle reset).
+QUOTA_GUARD_LIVE_ONLY = 50_000   # Below this: only poll live games (no discovery/futures)
+QUOTA_GUARD_FULL_STOP = 20_000   # Below this: stop ALL Odds API calls
+QUOTA_GUARD_EXPIRY = "2026-04-01T00:00:00+00:00"  # Auto-revert date (UTC)
+
 import logging
 _quota_logger = logging.getLogger(__name__)
+
+
+def check_quota_guard(task_type: str) -> tuple[bool, str]:
+    """Check if an Odds API task should proceed based on remaining quota.
+
+    Args:
+        task_type: One of "poll_odds", "discover_events", "poll_futures".
+                   "poll_odds" is further split: live games always allowed
+                   until FULL_STOP; non-live polling stops at LIVE_ONLY.
+
+    Returns:
+        (should_proceed, reason) — False means skip this task entirely.
+    """
+    from datetime import datetime, timezone
+
+    # Auto-expire: after the billing cycle resets, allow everything
+    expiry = datetime.fromisoformat(QUOTA_GUARD_EXPIRY)
+    if datetime.now(timezone.utc) >= expiry:
+        return True, "guard_expired"
+
+    r = get_redis_client()
+    if not r:
+        return True, "no_redis"
+
+    try:
+        data = r.hgetall(QUOTA_KEY)
+        if not data:
+            return True, "no_quota_data"
+
+        remaining = int(data.get(b"remaining", b"999999"))
+
+        if remaining <= QUOTA_GUARD_FULL_STOP:
+            _quota_logger.critical(
+                "QUOTA GUARD: FULL STOP — %s remaining. Blocking %s.",
+                f"{remaining:,}", task_type,
+            )
+            return False, f"full_stop_{remaining}"
+
+        if remaining <= QUOTA_GUARD_LIVE_ONLY:
+            # Only live game polling is allowed
+            if task_type in ("discover_events", "poll_futures"):
+                _quota_logger.warning(
+                    "QUOTA GUARD: live-only mode — %s remaining. Blocking %s.",
+                    f"{remaining:,}", task_type,
+                )
+                return False, f"live_only_{remaining}"
+            # poll_odds proceeds but will be filtered to live-only by caller
+            return True, f"live_only_{remaining}"
+
+        return True, f"ok_{remaining}"
+    except Exception:
+        return True, "redis_error"
 
 
 def record_odds_api_quota(remaining: int, used: int, source_task: str, pre_call_used: int | None = None):

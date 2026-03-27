@@ -137,6 +137,14 @@ def _aggregate_futures_outcomes(markets_data) -> dict:
 
 async def _poll_futures_odds():
     """Async implementation of futures polling."""
+    from app.tasks.redis_state import check_quota_guard
+
+    # Emergency quota guard: block futures polling when quota is low
+    guard_ok, guard_reason = check_quota_guard("poll_futures")
+    if not guard_ok:
+        logger.warning("poll_futures SKIPPED by quota guard: %s", guard_reason)
+        return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
+
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
     from app.utils.odds_math import american_to_probability, probability_to_american
     from sqlalchemy.dialects.postgresql import insert as pg_insert

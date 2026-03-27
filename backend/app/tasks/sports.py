@@ -18,7 +18,7 @@ from app.tasks.config import (
     DISCOVER_TIER3_INTERVAL,
     DISCOVER_TIER4_INTERVAL,
 )
-from app.tasks.redis_state import get_redis_client
+from app.tasks.redis_state import get_redis_client, check_quota_guard
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +249,12 @@ async def _discover_events():
     new games. This ensures NCAA basketball, etc. get picked up even if they
     currently have no events in the database.
     """
+    # Emergency quota guard: block discovery when quota is low
+    guard_ok, guard_reason = check_quota_guard("discover_events")
+    if not guard_ok:
+        logger.warning("discover_events SKIPPED by quota guard: %s", guard_reason)
+        return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
+
     from app.tasks.odds_polling import _create_or_update_snapshot
 
     service = OddsAPIService()

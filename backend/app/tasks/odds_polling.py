@@ -31,7 +31,9 @@ from app.tasks.redis_state import (
     compute_odds_hash,
     should_poll_now,
     update_poll_state,
+    check_quota_guard,
     POLL_STATE_KEY,
+    QUOTA_GUARD_LIVE_ONLY,
 )
 
 logger = logging.getLogger(__name__)
@@ -417,6 +419,15 @@ async def _poll_all_odds():
     """
     from app.tasks.excitement_index import update_live_ei as update_live_gei
 
+    # Emergency quota guard: block all polling if quota critically low
+    guard_ok, guard_reason = check_quota_guard("poll_odds")
+    if not guard_ok:
+        logger.warning("poll_all_odds SKIPPED by quota guard: %s", guard_reason)
+        return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
+
+    # Check if we're in live-only mode (quota < QUOTA_GUARD_LIVE_ONLY)
+    quota_live_only = "live_only" in guard_reason
+
     service = OddsAPIService()
 
     try:
@@ -494,6 +505,11 @@ async def _poll_all_odds():
                     # Starting later (1-6 hours) - poll every 1 hour
                     poll_interval = LATER_POLL_INTERVAL
                     tier = "later"
+
+                # Quota guard: in live-only mode, skip non-live sports entirely
+                if quota_live_only and tier != "live":
+                    sports_skipped += 1
+                    continue
 
                 # Adaptive slowdown: when odds haven't changed for a sport,
                 # gradually increase the interval to conserve API quota.
