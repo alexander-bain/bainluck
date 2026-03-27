@@ -160,9 +160,9 @@ class TestNamesMatchNegative:
         assert not names_match("Georgia Southern Eagles", "South Florida Bulls")
 
     def test_la_lakers_vs_los_angeles_lakers(self):
-        """Known limitation: 'LA' abbreviation is not expanded.
-        Token overlap: {'lakers'} / {'la', 'lakers'} = 0.5, NOT > 0.5."""
-        assert not names_match("LA Lakers", "Los Angeles Lakers")
+        """City abbreviation expansion: 'LA' -> 'Los Angeles'.
+        Token overlap after expansion: {'los', 'angeles', 'lakers'} = 1.0."""
+        assert names_match("LA Lakers", "Los Angeles Lakers")
 
 
 # =============================================================================

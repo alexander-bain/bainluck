@@ -22,6 +22,53 @@ _MATCH_STOPWORDS = frozenset({
     "fc", "sc", "cf", "ac", "as", "us",
 })
 
+# Common city abbreviations used by ESPN and other sources.
+# Applied during token overlap scoring so "LA Clippers" matches "Los Angeles Clippers".
+_CITY_ABBREVIATIONS: dict[str, str] = {
+    "la": "los angeles",
+    "ny": "new york",
+    "nyk": "new york",
+    "lv": "las vegas",
+    "kc": "kansas city",
+    "ok": "oklahoma",
+    "okc": "oklahoma city",
+    "gb": "green bay",
+    "tb": "tampa bay",
+    "sa": "san antonio",
+    "sf": "san francisco",
+    "sl": "st louis",
+    "stl": "st louis",
+    "no": "new orleans",
+    "nola": "new orleans",
+    "ne": "new england",
+    "dc": "washington",
+    "phx": "phoenix",
+    "jax": "jacksonville",
+    "min": "minnesota",
+    "mil": "milwaukee",
+    "den": "denver",
+    "det": "detroit",
+    "phi": "philadelphia",
+    "ind": "indianapolis",
+    "atl": "atlanta",
+    "chi": "chicago",
+    "cin": "cincinnati",
+    "cle": "cleveland",
+    "dal": "dallas",
+    "hou": "houston",
+    "mem": "memphis",
+    "mia": "miami",
+    "sac": "sacramento",
+    "cha": "charlotte",
+    "por": "portland",
+    "orl": "orlando",
+    "pit": "pittsburgh",
+    "bal": "baltimore",
+    "sea": "seattle",
+    "bos": "boston",
+    "buf": "buffalo",
+}
+
 
 def normalize_name(name: str) -> str:
     """Canonical name normalization: lowercase, strip diacritics, unify apostrophes,
@@ -47,6 +94,23 @@ def normalize_name(name: str) -> str:
     return result
 
 
+def _expand_abbreviations(name: str) -> str:
+    """Expand common city abbreviations in a normalized name.
+
+    Only expands when the abbreviation appears as a standalone word (not part
+    of a longer word). E.g. "la clippers" -> "los angeles clippers" but
+    "lacrosse" stays unchanged.
+    """
+    words = name.split()
+    expanded: list[str] = []
+    for w in words:
+        if w in _CITY_ABBREVIATIONS:
+            expanded.append(_CITY_ABBREVIATIONS[w])
+        else:
+            expanded.append(w)
+    return " ".join(expanded)
+
+
 def token_overlap_score(name_a: str, name_b: str) -> float:
     """Token-overlap scoring: min-coverage model returning 0.0-1.0.
 
@@ -55,10 +119,11 @@ def token_overlap_score(name_a: str, name_b: str) -> float:
     "Kentucky" (0.33) and shared mascots like "Air Force Falcons" vs
     "Atlanta Falcons" (0.33).
 
-    Names are normalized before comparison.
+    Names are normalized and city abbreviations expanded before comparison,
+    so "LA Clippers" matches "Los Angeles Clippers" (1.0).
     """
-    norm_a = normalize_name(name_a)
-    norm_b = normalize_name(name_b)
+    norm_a = _expand_abbreviations(normalize_name(name_a))
+    norm_b = _expand_abbreviations(normalize_name(name_b))
     if not norm_a or not norm_b:
         return 0.0
     words_a = {w for w in norm_a.split() if w not in _MATCH_STOPWORDS and len(w) > 1}
