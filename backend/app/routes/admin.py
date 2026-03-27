@@ -6923,7 +6923,45 @@ async def purge_orphan_pm_events(
                 "status": pm_event.status,
             })
             if not dry_run:
-                await db.delete(pm_event)
+                eid = pm_event.id
+                # Clear all FK references before deleting
+                # scoring_plays, score_snapshots, espn_snapshots, user_pins
+                await db.execute(text(
+                    "DELETE FROM scoring_plays WHERE event_id = :eid"
+                ).bindparams(eid=eid))
+                await db.execute(text(
+                    "DELETE FROM score_snapshots WHERE event_id = :eid"
+                ).bindparams(eid=eid))
+                await db.execute(text(
+                    "DELETE FROM espn_snapshots WHERE event_id = :eid"
+                ).bindparams(eid=eid))
+                await db.execute(text(
+                    "DELETE FROM user_pins WHERE event_id = :eid"
+                ).bindparams(eid=eid))
+                # futures chain: odds → outcomes → markets
+                await db.execute(text("""
+                    DELETE FROM futures_odds_snapshots WHERE outcome_id IN (
+                        SELECT fo.id FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fo.market_id = fm.id
+                        WHERE fm.event_id = :eid
+                    )
+                """).bindparams(eid=eid))
+                await db.execute(text("""
+                    DELETE FROM futures_outcomes WHERE market_id IN (
+                        SELECT id FROM futures_markets WHERE event_id = :eid
+                    )
+                """).bindparams(eid=eid))
+                await db.execute(text(
+                    "DELETE FROM futures_markets WHERE event_id = :eid"
+                ).bindparams(eid=eid))
+                # matching_overrides
+                await db.execute(text(
+                    "DELETE FROM matching_overrides WHERE event_id = :eid"
+                ).bindparams(eid=eid))
+                # Now delete the event itself
+                await db.execute(text(
+                    "DELETE FROM events WHERE id = :eid"
+                ).bindparams(eid=eid))
         else:
             has_data.append({
                 "event_id": pm_event.id,
