@@ -47,9 +47,16 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "tennis_wta": ("tennis", "wta"),
     # MMA
     "mma_ufc": ("mma", "ufc"),
+    "mma_mixed_martial_arts": ("mma", "ufc"),
     # Lacrosse
     "lacrosse_ncaa": ("lacrosse", "mens-college-lacrosse"),
     "lacrosse_pll": ("lacrosse", "pll"),
+    # Aussie Rules
+    "aussierules_afl": ("australian-football", "afl"),
+    # College Baseball
+    "baseball_ncaa": ("baseball", "college-baseball"),
+    # UFL
+    "americanfootball_ufl": ("football", "ufl"),
 }
 
 
@@ -82,9 +89,14 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     # Lacrosse
     "lacrosse_ncaa": "lacrosse/mens-college-lacrosse",
     "lacrosse_pll": "lacrosse/pll",
-    # Tennis and MMA have ESPN pages but scoreboard format may differ
-    # "tennis_atp": "tennis/atp",  # TODO: verify ESPN scoreboard format
-    # "mma_ufc": "mma/ufc",        # TODO: verify ESPN scoreboard format
+    # MMA
+    "mma_mixed_martial_arts": "mma/ufc",
+    # Aussie Rules
+    "aussierules_afl": "australian-football/afl",
+    # College Baseball
+    "baseball_ncaa": "baseball/college-baseball",
+    # UFL
+    "americanfootball_ufl": "football/ufl",
 }
 
 
