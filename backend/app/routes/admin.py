@@ -6926,7 +6926,8 @@ async def purge_orphan_pm_events(
                 eid = pm_event.id
                 # Clear all FK references before deleting
                 for tbl in ["scoring_plays", "odds_snapshots", "odds_aggregated",
-                            "score_snapshots", "espn_snapshots", "win_prob_snapshots"]:
+                            "score_snapshots", "espn_snapshots", "win_prob_snapshots",
+                            "line_movement_analyses"]:
                     await db.execute(text(
                         f"DELETE FROM {tbl} WHERE event_id = :eid"
                     ).bindparams(eid=eid))
