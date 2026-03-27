@@ -77,7 +77,7 @@ class TestDictContents:
         assert LLM_CATEGORY_TO_SPORT_PREFIX["motorsports"] == "motorsport"
 
     def test_kalshi_ticker_to_sport_key_size(self):
-        assert len(KALSHI_TICKER_TO_SPORT_KEY) == 17
+        assert len(KALSHI_TICKER_TO_SPORT_KEY) == 18
 
     def test_kalshi_ticker_to_sport_key_sample(self):
         assert KALSHI_TICKER_TO_SPORT_KEY["kxnbagame"] == "basketball_nba"
@@ -85,13 +85,13 @@ class TestDictContents:
         assert KALSHI_TICKER_TO_SPORT_KEY["kxsosoccer"] == "soccer_olympics"
 
     def test_kalshi_game_ticker_prefixes_size(self):
-        assert len(KALSHI_GAME_TICKER_PREFIXES) == 17
+        assert len(KALSHI_GAME_TICKER_PREFIXES) == 18
 
     def test_kalshi_game_ticker_prefixes_is_tuple(self):
         assert isinstance(KALSHI_GAME_TICKER_PREFIXES, tuple)
 
     def test_kalshi_ticker_to_display_label_size(self):
-        assert len(KALSHI_TICKER_TO_DISPLAY_LABEL) == 12
+        assert len(KALSHI_TICKER_TO_DISPLAY_LABEL) == 13
 
     def test_kalshi_ticker_to_display_label_sample(self):
         assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxnbagame"] == "NBA"

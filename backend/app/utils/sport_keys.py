@@ -226,6 +226,7 @@ KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = (
     "kxmlbgame",
     "kxncaabgame",
     "kxncaafgame",
+    "kxncaawbgame",
     "kxwnbagame",
     "kxmlsgame",
     "kxsoccergame",

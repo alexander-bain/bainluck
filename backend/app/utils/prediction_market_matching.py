@@ -736,11 +736,12 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "van": "Canucks", "cgy": "Flames", "edm": "Oilers",
     "sea_nhl": "Kraken", "vgk": "Golden Knights", "sjs": "Sharks",
     "ana": "Ducks", "lak": "Kings",
+    "uta_nhl": "Utah Hockey", "la_nhl": "Kings",
     # MLB
     "nyy": "Yankees", "nym": "Mets", "bos_mlb": "Red Sox",
     "lad": "Dodgers", "hou_mlb": "Astros", "atl_mlb": "Braves",
     "phi_mlb": "Phillies", "tex": "Rangers", "ari_mlb": "Diamondbacks",
-    "sd": "Padres", "chc": "Cubs", "chw": "White Sox",
+    "sd": "Padres", "chc": "Cubs", "chw": "White Sox", "cws": "White Sox",
     "det_mlb": "Tigers", "cle_mlb": "Guardians", "min_mlb": "Twins",
     "kc_mlb": "Royals", "stl_mlb": "Cardinals", "mil_mlb": "Brewers",
     "cin_mlb": "Reds", "pit_mlb": "Pirates", "sf_mlb": "Giants",
@@ -776,6 +777,9 @@ def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
         return None
 
     teams_str = m.group(2).lower()
+    # Strip optional time component (e.g., "1910" in KXMLBGAME-26MAR281910CWSMIL)
+    # MLB tickers embed game time as 4 digits between date and team abbreviations.
+    teams_str = teams_str.lstrip('0123456789')
     if len(teams_str) < 4:  # Need at least 2+2 chars for two teams
         return None
 
@@ -798,9 +802,13 @@ def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
         if len(abbrev_b) < 2 or len(abbrev_b) > 3:
             continue
 
-        # Look up both abbreviations
-        name_a = _KALSHI_TEAM_ABBREVS.get(abbrev_a) or _KALSHI_TEAM_ABBREVS.get(abbrev_a + sport_suffix)
-        name_b = _KALSHI_TEAM_ABBREVS.get(abbrev_b) or _KALSHI_TEAM_ABBREVS.get(abbrev_b + sport_suffix)
+        # Look up both abbreviations (sport-suffixed first for disambiguation)
+        if sport_suffix:
+            name_a = _KALSHI_TEAM_ABBREVS.get(abbrev_a + sport_suffix) or _KALSHI_TEAM_ABBREVS.get(abbrev_a)
+            name_b = _KALSHI_TEAM_ABBREVS.get(abbrev_b + sport_suffix) or _KALSHI_TEAM_ABBREVS.get(abbrev_b)
+        else:
+            name_a = _KALSHI_TEAM_ABBREVS.get(abbrev_a)
+            name_b = _KALSHI_TEAM_ABBREVS.get(abbrev_b)
 
         if name_a and name_b:
             best_pair = (name_a, name_b)
@@ -891,7 +899,7 @@ def extract_matchup_with_ticker_fallback(
 # hundreds of teams and maintaining a complete abbreviation map is impractical.
 
 _TICKER_FRAGMENT_RE = re.compile(
-    r'^([a-z]+)-(\d{2}[a-z]{3}\d{1,2})([a-z]+)$',
+    r'^([a-z]+)-(\d{2}[a-z]{3}\d{1,2})\d*([a-z]+)$',
     re.IGNORECASE,
 )
 
