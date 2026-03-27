@@ -603,6 +603,20 @@ def cleanup_crypto(self, batch_size: int = 5000):
     return run_async(_cleanup_crypto_impl(batch_size))
 
 
+@celery_app.task(bind=True, soft_time_limit=3600, time_limit=3660, name="app.tasks.turbo_collapse_futures")
+def turbo_collapse_futures(self, limit: int = 5000):
+    """Aggressive collapse pass for futures snapshots — high partition limit."""
+    from app.tasks.retention import _collapse_snapshots_impl
+    return run_async(_collapse_snapshots_impl(min_age_hours=24, table="futures", limit=limit))
+
+
+@celery_app.task(bind=True, soft_time_limit=3600, time_limit=3660, name="app.tasks.turbo_collapse_odds")
+def turbo_collapse_odds(self, limit: int = 5000):
+    """Aggressive collapse pass for odds snapshots — high partition limit."""
+    from app.tasks.retention import _collapse_snapshots_impl
+    return run_async(_collapse_snapshots_impl(min_age_hours=24, table="odds", limit=limit))
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
@@ -759,6 +773,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.collapse_snapshots",
         "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
         "kwargs": {"table": "futures", "limit": 500},
+    },
+    "turbo-collapse-futures": {
+        "task": "app.tasks.turbo_collapse_futures",
+        "schedule": crontab(minute=30, hour="*/6"),  # Every 6 hours — catch up on backlog
+        "kwargs": {"limit": 5000},
+    },
+    "turbo-collapse-odds": {
+        "task": "app.tasks.turbo_collapse_odds",
+        "schedule": crontab(minute=45, hour="*/6"),  # Every 6 hours
+        "kwargs": {"limit": 5000},
     },
     "matching-metrics-daily": {
         "task": "app.tasks.compute_matching_metrics",

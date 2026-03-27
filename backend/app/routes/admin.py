@@ -6602,3 +6602,30 @@ async def cleanup_crypto_futures(
         "message": "Crypto cleanup task dispatched to Celery worker",
         "task_id": result.id,
     }
+
+
+@router.post("/cleanup/turbo-collapse")
+async def turbo_collapse(
+    secret: str = Query(..., description="Admin secret for authorization"),
+    limit: int = Query(5000, description="Max partitions to process per table"),
+):
+    """
+    Run aggressive collapse on snapshot tables (same dedup logic, higher limit).
+
+    Collapses consecutive identical values into single rows with reading_count.
+    Prioritizes resolved futures markets. No data is lost — just deduplicated.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks import turbo_collapse_futures, turbo_collapse_odds
+
+    futures_task = turbo_collapse_futures.delay(limit=limit)
+    odds_task = turbo_collapse_odds.delay(limit=limit)
+
+    return {
+        "status": "dispatched",
+        "futures_task_id": futures_task.id,
+        "odds_task_id": odds_task.id,
+        "message": f"Turbo collapse dispatched (limit={limit} partitions per table). Check logs for progress.",
+    }

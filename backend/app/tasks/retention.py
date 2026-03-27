@@ -55,17 +55,33 @@ async def _collapse_snapshots_impl(min_age_hours: int = 48, table: str = "odds",
     total_updated = 0
     partitions_processed = 0
 
-    # Step 1: Find partition IDs with old snapshots (constant memory — just IDs)
+    # Step 1: Find partition IDs with old snapshots (constant memory — just IDs).
+    # For futures, prioritize resolved markets (they'll never get new data).
     async with get_task_session() as session:
-        result = await session.execute(
-            text(f"""
-                SELECT DISTINCT {cfg['partition_col']}
-                FROM {cfg['table']}
-                WHERE captured_at < :cutoff
-                LIMIT :lim
-            """),
-            {"cutoff": cutoff, "lim": limit},
-        )
+        if table == "futures":
+            # Resolved markets first, then open markets
+            result = await session.execute(
+                text("""
+                    SELECT DISTINCT fos.outcome_id
+                    FROM futures_odds_snapshots fos
+                    JOIN futures_outcomes fo ON fo.id = fos.outcome_id
+                    JOIN futures_markets fm ON fm.id = fo.market_id
+                    WHERE fos.captured_at < :cutoff
+                    ORDER BY CASE WHEN fm.status = 'resolved' THEN 0 ELSE 1 END
+                    LIMIT :lim
+                """),
+                {"cutoff": cutoff, "lim": limit},
+            )
+        else:
+            result = await session.execute(
+                text(f"""
+                    SELECT DISTINCT {cfg['partition_col']}
+                    FROM {cfg['table']}
+                    WHERE captured_at < :cutoff
+                    LIMIT :lim
+                """),
+                {"cutoff": cutoff, "lim": limit},
+            )
         partition_ids = [r[0] for r in result.fetchall()]
 
     # Step 2: Process each partition entirely in SQL

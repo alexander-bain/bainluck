@@ -157,7 +157,7 @@ class TestBeatScheduleCompleteness:
         "discover-new-events",
         "compute-gei-batch",
         "compute-gei-percentiles-hourly",
-        "poll-futures-every-2h",
+        "poll-futures-every-4h",
         "poll-kalshi",
         "poll-polymarket-hourly",
         "enrich-events-hourly",
@@ -189,6 +189,9 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
         "sync-mm-bracket",
+        "matching-metrics-daily",
+        "turbo-collapse-futures",
+        "turbo-collapse-odds",
     }
 
     def test_no_missing_entries(self):
