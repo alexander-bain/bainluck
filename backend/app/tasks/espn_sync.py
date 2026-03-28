@@ -4,7 +4,7 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, distinct, and_, or_
 from sqlalchemy.orm import selectinload
