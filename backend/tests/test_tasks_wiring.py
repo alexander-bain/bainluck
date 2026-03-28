@@ -192,6 +192,7 @@ class TestBeatScheduleCompleteness:
         "matching-metrics-daily",
         "turbo-collapse-futures",
         "turbo-collapse-odds",
+        "transition-event-statuses",
     }
 
     def test_no_missing_entries(self):

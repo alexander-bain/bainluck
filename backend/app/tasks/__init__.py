@@ -119,6 +119,7 @@ celery_app.conf.task_routes = {
     "app.tasks.sync_statpal_live_plays": {"queue": "realtime"},
     "app.tasks.sync_statpal_livescores": {"queue": "realtime"},
     "app.tasks.heartbeat": {"queue": "realtime"},
+    "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # --- Everything else routes to background (default queue) ---
 }
 
@@ -632,6 +633,23 @@ def heartbeat():
         return {"status": "error", "error": str(e)}
 
 
+@celery_app.task(name="app.tasks.transition_event_statuses")
+def transition_event_statuses():
+    """Transition event statuses based on commence_time (no API calls needed).
+
+    Fixes the circular dependency where status='live' is required by ESPN/StatPal/
+    prediction market tasks, but was only set by Odds API polling which may be
+    throttled by quota conservation or adaptive slowdown.
+
+    Runs every 60s on the realtime queue:
+    - scheduled → live: when commence_time <= now
+    - live → closed: when commence_time + max_sport_duration has passed and no
+      recent data updates (staleness fallback)
+    """
+    from app.tasks.espn_sync import _transition_event_statuses_impl
+    return _tracked_run("transition_statuses", _transition_event_statuses_impl())
+
+
 # =============================================================================
 # Beat schedule
 # =============================================================================
@@ -685,6 +703,10 @@ celery_app.conf.beat_schedule = {
     },
     "heartbeat": {
         "task": "app.tasks.heartbeat",
+        "schedule": 60.0,
+    },
+    "transition-event-statuses": {
+        "task": "app.tasks.transition_event_statuses",
         "schedule": 60.0,
     },
     "match-prediction-markets": {

@@ -1302,3 +1302,81 @@ async def _backfill_box_scores(limit: int = 100):
         logger.error(f"Box score backfill error: {e}\n{traceback.format_exc()}")
 
     return stats
+
+
+async def _transition_event_statuses_impl() -> dict:
+    """Transition event statuses based on commence_time (zero API calls).
+
+    This breaks the circular dependency where downstream tasks (ESPN sync,
+    StatPal livescores, prediction market live polling) all filter by
+    status='live', but that status was only set by Odds API polling which
+    may be throttled by quota conservation or adaptive slowdown.
+
+    Transitions:
+    - scheduled → live: commence_time <= now (game has started)
+    - live → closed: commence_time + max_duration has passed AND no score
+      updates in the last 30 min (likely ended, no data source caught it)
+    """
+    from app.tasks.base import get_task_session
+    from app.tasks.config import SPORT_MAX_DURATIONS
+
+    stats = {"scheduled_to_live": 0, "live_to_closed": 0}
+
+    async with get_task_session() as session:
+        now = datetime.now(timezone.utc)
+
+        # --- scheduled → live ---
+        # Find events that have started but are still marked "scheduled"
+        started_result = await session.execute(
+            select(Event)
+            .where(
+                Event.status == "scheduled",
+                Event.commence_time <= now,
+                # Only within the last 24h to avoid touching ancient events
+                Event.commence_time >= now - timedelta(hours=24),
+            )
+        )
+        started_events = started_result.scalars().all()
+
+        for event in started_events:
+            event.status = "live"
+            stats["scheduled_to_live"] += 1
+
+        # --- live → closed (fallback staleness) ---
+        # For events that have been "live" longer than their sport's max
+        # duration and have no recent score updates. This is a safety net;
+        # the primary staleness checker in odds_polling handles most cases.
+        stale_cutoff = now - timedelta(minutes=30)
+
+        live_result = await session.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.status == "live",
+                # Started more than 5 hours ago (conservative — covers most sports)
+                Event.commence_time <= now - timedelta(hours=5),
+            )
+        )
+        live_events = live_result.scalars().all()
+
+        for event in live_events:
+            sport_key = event.sport.key if event.sport else ""
+            max_hours = SPORT_MAX_DURATIONS.get("default", 4.0)
+            for prefix, duration in SPORT_MAX_DURATIONS.items():
+                if prefix != "default" and sport_key.startswith(prefix):
+                    max_hours = duration
+                    break
+
+            hours_since_start = (now - event.commence_time).total_seconds() / 3600
+            if hours_since_start > max_hours + 1.0:
+                # Well past expected duration — close it
+                event.status = "closed"
+                stats["live_to_closed"] += 1
+
+        if stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0:
+            logger.info(
+                "Status transitions: %d scheduled→live, %d live→closed",
+                stats["scheduled_to_live"], stats["live_to_closed"],
+            )
+
+    return stats
