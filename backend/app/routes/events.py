@@ -2119,6 +2119,12 @@ async def get_related_futures(
     three strategies (OR): external_id prefix, llm_sport_category, and sport_id.
     """
     from app.utils.team_linking import compute_relevance_score
+    from app.utils.market_label_normalization import (
+        normalize_market_label,
+        classify_market_category,
+        get_merge_group,
+        is_wrong_sport_leak,
+    )
 
     # 1. Load event with sport
     result = await db.execute(
@@ -2444,6 +2450,11 @@ async def get_related_futures(
                 if ticker_prefix != sport_prefix:
                     continue
 
+        # ── Wrong-sport leak detection ──
+        # Catches NCAA "Boston College" and NHL "Boston Bruins" leaking into NBA
+        if is_wrong_sport_leak(market.name or "", outcome.name, event_sport_key):
+            continue
+
         # ── Filter game-specific markets ──
         # For finished events: show stat props IF we have box score data,
         # but hide matchup markets (moneylines, spreads — meaningless post-game).
@@ -2503,9 +2514,19 @@ async def get_related_futures(
         else:
             next_update = now.replace(minute=next_poll_minute, second=0, microsecond=0)
 
+        # ── Normalize label, category, merge group ──
+        clean_label = normalize_market_label(market.name or "")
+        display_category = classify_market_category(
+            clean_label, raw_name=market.name or "", market_category=market.category or "",
+        )
+        merge_group = get_merge_group(clean_label)
+
         entry = {
             "market_id": market.id,
             "market_name": market.name,
+            "clean_label": clean_label,
+            "display_category": display_category,
+            "merge_group": merge_group,
             "market_tier": market.market_tier,
             "category": market.category,
             "source": market.source,

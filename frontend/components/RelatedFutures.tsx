@@ -127,13 +127,31 @@ const NOT_CHAMPIONSHIP_PATTERNS = [
   /\bexact\s+wins/i,          // "Exact Wins"
 ];
 
+/** Map backend display_category to tier number for rendering */
+const CATEGORY_TO_TIER: Record<string, number> = {
+  playoff_path: 1,
+  conference: 2,
+  award: 3,
+  season_stat: 4,
+  game_prop: 6,      // stat props get special display
+  trade: 4,
+  novelty: 4,
+  other: 5,
+};
+
 /**
- * Determine the effective display tier for a future, using name-based detection
- * as a fallback when market_tier from the backend may be wrong or null.
+ * Determine the effective display tier for a future.
+ * Uses backend display_category when available (new), falls back to
+ * name-based regex detection (legacy).
  *
  * Returns 1-5 for standard tiers, 6 for stat props (special display).
  */
 function effectiveTier(f: RelatedFuture): number {
+  // Use backend display_category if available
+  if (f.display_category && CATEGORY_TO_TIER[f.display_category] !== undefined) {
+    return CATEGORY_TO_TIER[f.display_category];
+  }
+
   if (!f.market_name) return 5;
 
   // Stat props get their own tier (6) for special display treatment
@@ -397,7 +415,7 @@ function HeroFutureCard({
             </span>
           </div>
           <div className="text-xs text-text-secondary leading-snug">
-            {cleanMarketName(future.market_name)}
+            {future.clean_label || cleanMarketName(future.market_name)}
           </div>
         </div>
         <SourceBadge source={future.source} />
@@ -446,10 +464,15 @@ function HeroFutureCard({
 
 /**
  * Extract a short award label from a market name.
+ * Uses backend clean_label when available, falls back to regex extraction.
  * e.g., "NBA Most Valuable Player" → "MVP"
  * e.g., "NBA Rookie of the Year" → "Rookie of the Year"
  */
-function shortAwardLabel(marketName: string): string {
+function shortAwardLabel(marketName: string, cleanLabel?: string): string {
+  // Use backend clean_label if available — already normalized
+  if (cleanLabel && cleanLabel !== marketName) {
+    return cleanLabel;
+  }
   const cleaned = cleanMarketName(marketName);
   // Common abbreviations
   if (/\bmvp\b|most\s+valuable/i.test(cleaned)) return "MVP";
@@ -497,7 +520,7 @@ function AwardCard({
   sportKey?: string;
   sourceCount?: number;
 }) {
-  const awardLabel = shortAwardLabel(future.market_name);
+  const awardLabel = shortAwardLabel(future.market_name, future.clean_label);
 
   return (
     <Link
@@ -1230,7 +1253,7 @@ function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; s
   const dedupMap = new Map<string, { future: RelatedFuture; sources: Set<string> }>();
   for (const f of filtered) {
     const playerKey = normalizeName(f.outcome_name);
-    const awardKey = shortAwardLabel(f.market_name).toLowerCase();
+    const awardKey = (f.merge_group || shortAwardLabel(f.market_name, f.clean_label)).toLowerCase();
     const key = `${playerKey}::${awardKey}`;
     const existing = dedupMap.get(key);
     if (!existing) {
@@ -1277,20 +1300,33 @@ function TeamColumn({
     return p > 0.01 && p < 0.99;
   });
 
-  const championship = activeFutures.filter((f) => effectiveTier(f) === 1);
-  const conference = activeFutures.filter((f) => {
-    const t = effectiveTier(f);
-    return t === 2 || t === 4;
-  });
-  const rawAwards = activeFutures.filter((f) => effectiveTier(f) === 3);
+  // Use display_category for grouping when available, fall back to tier-based
+  const championship = activeFutures.filter((f) =>
+    f.display_category === "playoff_path" || (!f.display_category && effectiveTier(f) === 1)
+  );
+  const conference = activeFutures.filter((f) =>
+    f.display_category === "conference" || (!f.display_category && effectiveTier(f) === 2)
+  );
+  const rawAwards = activeFutures.filter((f) =>
+    f.display_category === "award" || (!f.display_category && effectiveTier(f) === 3)
+  );
   const awards = deduplicateAwards(rawAwards);
-  const games = activeFutures.filter((f) => effectiveTier(f) === 5);
-  const statProps = activeFutures.filter((f) => effectiveTier(f) === 6);
+  const seasonStats = activeFutures.filter((f) =>
+    f.display_category === "season_stat" || (!f.display_category && effectiveTier(f) === 4)
+  );
+  const trades = activeFutures.filter((f) => f.display_category === "trade");
+  const novelty = activeFutures.filter((f) => f.display_category === "novelty");
+  const games = activeFutures.filter((f) =>
+    !f.display_category && effectiveTier(f) === 5
+  );
+  const statProps = activeFutures.filter((f) =>
+    f.display_category === "game_prop" || (!f.display_category && effectiveTier(f) === 6)
+  );
 
   const shortName = teamName.split(" ").pop() || teamName;
 
   // Count active items (post-filter)
-  const activeCount = championship.length + conference.length + awards.length + games.length + statProps.length;
+  const activeCount = championship.length + conference.length + awards.length + seasonStats.length + trades.length + novelty.length + games.length + statProps.length;
   if (activeCount === 0) return null;
 
   return (
@@ -1328,7 +1364,7 @@ function TeamColumn({
           />
         ))}
 
-        {/* Conference / Division — same hero treatment */}
+        {/* Conference — hero cards */}
         {conference.map((f) => (
           <HeroFutureCard
             key={f.outcome_id}
@@ -1349,6 +1385,94 @@ function TeamColumn({
                 sourceCount={sourceCount}
               />
             ))}
+          </div>
+        )}
+
+        {/* Season stats — hero cards (win totals, stat leaders, division) */}
+        {seasonStats.map((f) => (
+          <HeroFutureCard
+            key={f.outcome_id}
+            future={f}
+            teamColor={teamColor}
+          />
+        ))}
+
+        {/* Trade rumors — compact list */}
+        {trades.length > 0 && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+              <span style={{ fontSize: "10px" }}>{"🔄"}</span>
+              <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Trade Watch
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              {trades.slice(0, 5).map((f) => (
+                <Link
+                  key={f.outcome_id}
+                  href={`/futures/${f.market_id}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "6px 10px",
+                    borderRadius: "8px",
+                    background: `linear-gradient(135deg, ${teamColor}08, transparent)`,
+                    border: `1px solid ${teamColor}15`,
+                    textDecoration: "none",
+                  }}
+                >
+                  <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                    {f.clean_label || f.market_name}
+                  </span>
+                  <span style={{ fontSize: "13px", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: teamColor }}>
+                    {formatProbability(f.probability)}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Novelty — compact list */}
+        {novelty.length > 0 && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+              <span style={{ fontSize: "10px" }}>{"✨"}</span>
+              <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Fun Markets
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              {novelty.slice(0, 3).map((f) => (
+                <Link
+                  key={f.outcome_id}
+                  href={`/futures/${f.market_id}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "6px 10px",
+                    borderRadius: "8px",
+                    background: `linear-gradient(135deg, ${teamColor}08, transparent)`,
+                    border: `1px solid ${teamColor}15`,
+                    textDecoration: "none",
+                  }}
+                >
+                  <div>
+                    <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                      {f.clean_label || f.market_name}
+                    </span>
+                    <span style={{ fontSize: "11px", color: "var(--text-muted)", marginLeft: "6px" }}>
+                      {f.outcome_name}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: "13px", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: teamColor }}>
+                    {formatProbability(f.probability)}
+                  </span>
+                </Link>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1415,7 +1539,9 @@ export default function RelatedFutures({
   const CHAMPIONSHIP_NAME_RE = /\bchampionship\b|\bwin\s+(the\s+)?title\b|\btitle\s+winner\b|\bwin\s+it\s+all\b/i;
   function findBestChampionship(futures: RelatedFuture[]): RelatedFuture | undefined {
     const tier1 = futures.filter((f) => effectiveTier(f) === 1);
-    // Prefer market with "championship" in name
+    // Prefer market with championship merge_group (most reliable), then name match
+    const byMerge = tier1.find((f) => f.merge_group === 'nba_champion' || f.merge_group === 'nfl_champion' || f.merge_group === 'mlb_champion' || f.merge_group === 'nhl_champion');
+    if (byMerge) return byMerge;
     const named = tier1.find((f) => CHAMPIONSHIP_NAME_RE.test(f.market_name));
     return named || tier1[0];
   }

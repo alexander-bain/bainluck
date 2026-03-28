@@ -1,0 +1,1440 @@
+{
+  "_meta": {
+    "generated": "2026-03-28",
+    "description": "Hand-labeled truth set for market label normalization across NBA, NHL, NCAA, and MLB"
+  },
+  "markets": [
+    {"_comment": "──── NBA (Celtics vs Thunder, basketball_nba) ────"},
+
+    {
+      "raw_name": "Pro Basketball Champion",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "NBA Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "nba_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "2026 NBA Champion",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "NBA Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "nba_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Championship Winner",
+      "source": "odds_api",
+      "sport_key": "basketball_nba",
+      "expected_label": "NBA Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "nba_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Eastern Conference Champion ",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Eastern Conference Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "eastern_conf_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Eastern Conference Champion",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Eastern Conference Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "eastern_conf_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Western Conference Champion ",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Western Conference Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "western_conf_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Western Conference Champion",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Western Conference Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "western_conf_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Which teams will make the NBA Playoffs?",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Make NBA Playoffs",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_playoffs",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Playoff Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "NBA Playoff Qualifiers",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_playoffs",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Eastern Conference #1 Seed",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Eastern Conference #1 Seed",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "eastern_conf_1_seed",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Eastern Conference #1 Seed",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Eastern Conference #1 Seed",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "eastern_conf_1_seed",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Western Conference #1 Seed",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Western Conference #1 Seed",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "western_conf_1_seed",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Western Conference #1 Seed",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Western Conference #1 Seed",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "western_conf_1_seed",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Teams to Make the Eastern Conference Play-In Tournament",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Eastern Conference Play-In",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "eastern_conf_playin",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Teams to Make the Western Conference Play-In Tournament",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Western Conference Play-In",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "western_conf_playin",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Atlantic Division Winner",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Atlantic Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "atlantic_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Atlantic Division Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Atlantic Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "atlantic_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Northwest Division Winner",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Northwest Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "northwest_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Northwest Division Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Northwest Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "northwest_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Eastern Conference Finals Matchup",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Eastern Conference Finals Matchup",
+      "expected_category": "conference",
+      "expected_merge_group": "eastern_conf_finals_matchup",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Western Conference Finals Matchup",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Western Conference Finals Matchup",
+      "expected_category": "conference",
+      "expected_merge_group": "western_conf_finals_matchup",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Finals Matchup",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "NBA Finals Matchup",
+      "expected_category": "conference",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Eastern Conference Finals MVP Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Eastern Conf Finals MVP",
+      "expected_category": "conference",
+      "expected_merge_group": "eastern_conf_finals_mvp",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Western Conference Finals MVP Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Western Conf Finals MVP",
+      "expected_category": "conference",
+      "expected_merge_group": "western_conf_finals_mvp",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "MVP Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "MVP",
+      "expected_category": "award",
+      "expected_merge_group": "mvp",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA MVP ",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "MVP",
+      "expected_category": "award",
+      "expected_merge_group": "mvp",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Finals MVP Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Finals MVP",
+      "expected_category": "award",
+      "expected_merge_group": "finals_mvp",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Clutch Player of the Year Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Clutch Player",
+      "expected_category": "award",
+      "expected_merge_group": "clutch_player",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Clutch Player of the Year Winner",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Clutch Player",
+      "expected_category": "award",
+      "expected_merge_group": "clutch_player",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Sixth Man of the Year Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "6MOY",
+      "expected_category": "award",
+      "expected_merge_group": "6moy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Sixth Man of the Year Winner",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "6MOY",
+      "expected_category": "award",
+      "expected_merge_group": "6moy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Most Improved Player Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "MIP",
+      "expected_category": "award",
+      "expected_merge_group": "mip",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Most Improved Player Winner",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "MIP",
+      "expected_category": "award",
+      "expected_merge_group": "mip",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Defensive Player of the Year Winner",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "DPOY",
+      "expected_category": "award",
+      "expected_merge_group": "dpoy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Rookie of the Year Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "ROY",
+      "expected_category": "award",
+      "expected_merge_group": "roy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "All-Pro Basketball 1st Team Selections",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "All-NBA 1st Team",
+      "expected_category": "award",
+      "expected_merge_group": "all_nba_1",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "All-Pro Basketball 2nd Team Selections",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "All-NBA 2nd Team",
+      "expected_category": "award",
+      "expected_merge_group": "all_nba_2",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "All-Pro Basketball 3rd Team Selections",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "All-NBA 3rd Team",
+      "expected_category": "award",
+      "expected_merge_group": "all_nba_3",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball All-Defensive 1st Team Selections",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "All-Defensive 1st Team",
+      "expected_category": "award",
+      "expected_merge_group": "all_def_1",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball All-Defensive 2nd Team Selections",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "All-Defensive 2nd Team",
+      "expected_category": "award",
+      "expected_merge_group": "all_def_2",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Points Per Game Leader",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "PPG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "ppg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Points Per Game Leader",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "PPG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "ppg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Rebounds Per Game Leader",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "RPG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "rpg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Rebounds Per Game Leader",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "RPG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "rpg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Assists Per Game Leader",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "APG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "apg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Steals Per Game Leader",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "SPG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "spg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Steals Per Game Leader",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "SPG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "spg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Blocks Per Game Leader",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "BPG Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "bpg_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Three Pointers Made Per Game Leader",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "3PM Leader",
+      "expected_category": "season_stat",
+      "expected_merge_group": "3pm_leader",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Best Record",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Best Record",
+      "expected_category": "season_stat",
+      "expected_merge_group": "best_record",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Best Regular Season Record",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Best Record",
+      "expected_category": "season_stat",
+      "expected_merge_group": "best_record",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Worst Record",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Worst Record",
+      "expected_category": "season_stat",
+      "expected_merge_group": "worst_record",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NBA Win Totals: Over or Under?",
+      "source": "polymarket",
+      "sport_key": "basketball_nba",
+      "expected_label": "Win Total",
+      "expected_category": "season_stat",
+      "expected_merge_group": "win_total",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Boston pro basketball wins this season?",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Boston Win Total",
+      "expected_category": "season_stat",
+      "expected_merge_group": "win_total",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Oklahoma City pro basketball wins this season?",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Oklahoma City Win Total",
+      "expected_category": "season_stat",
+      "expected_merge_group": "win_total",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "How many games will Oklahoma City win in a row this season?",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Oklahoma City Win Streak",
+      "expected_category": "season_stat",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Oklahoma City at Boston: Three Pointers",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Oklahoma City at Boston: Three Pointers",
+      "expected_category": "game_prop",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Oklahoma City at Boston: Assists",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Oklahoma City at Boston: Assists",
+      "expected_category": "game_prop",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Oklahoma City at Boston: Steals",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Oklahoma City at Boston: Steals",
+      "expected_category": "game_prop",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Oklahoma City at Boston: Blocks",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Oklahoma City at Boston: Blocks",
+      "expected_category": "game_prop",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Zion Williamson's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Zion Williamson Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Ja Morant's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Ja Morant Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Draymond Green's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Draymond Green Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "James Harden's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "James Harden Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Giannis Antetokounmpo's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Giannis Antetokounmpo Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "LeBron James's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "LeBron James Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Josh Giddey's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Josh Giddey Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Julius Randle's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Julius Randle Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Devin Booker's Next Team",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Devin Booker Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Who will be on the cover of NBA 2K27?",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "NBA 2K Cover",
+      "expected_category": "novelty",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Jayson Tatum and Jaylen Brown play together on Boston again?",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "Jayson Tatum and Jaylen Brown Stay in Boston?",
+      "expected_category": "novelty",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "When will Kon Knueppel make his 207th three pointer of the regular season (breaking the rookie record)?",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "expected_label": "When will Kon Knueppel make his 207th three pointer of the regular season (breaking the rookie record)?",
+      "expected_category": "novelty",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's Round of 8 Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston College",
+      "expected_label": "Men's Round of 8",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": true
+    },
+    {
+      "raw_name": "Men's Round of 16 Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston College",
+      "expected_label": "Men's Round of 16",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": true
+    },
+    {
+      "raw_name": "Men's Round of 32 Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston College",
+      "expected_label": "Men's Round of 32",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": true
+    },
+    {
+      "raw_name": "Men's Semifinals Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston College",
+      "expected_label": "Men's Semifinals",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": true
+    },
+    {
+      "raw_name": "Men's Championship Game Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston College",
+      "expected_label": "Men's Championship Game",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": true
+    },
+    {
+      "raw_name": "Men's College Basketball Champion",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston College",
+      "expected_label": "Men's College Basketball Champion",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": true
+    },
+    {
+      "raw_name": "NCAAB Championship Winner",
+      "source": "odds_api",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston College Eagles",
+      "expected_label": "NCAAB Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "ncaa_champion",
+      "is_wrong_sport": true
+    },
+    {
+      "raw_name": "Eastern Conference Finals Winner?",
+      "source": "kalshi",
+      "sport_key": "basketball_nba",
+      "sample_outcome": "Boston Bruins",
+      "expected_label": "Eastern Conference Finals",
+      "expected_category": "conference",
+      "expected_merge_group": null,
+      "is_wrong_sport": true,
+      "wrong_sport_reason": "NHL team Boston Bruins matched for NBA game"
+    },
+
+    {"_comment": "──── NHL (Columbus Blue Jackets vs Boston Bruins, icehockey_nhl) ────"},
+
+    {
+      "raw_name": "NHL Championship Winner",
+      "source": "odds_api",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Stanley Cup Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "stanley_cup_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "2026 NHL Stanley Cup Champion ",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Stanley Cup Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "stanley_cup_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Stanley Cup\u00ae Champion?",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Stanley Cup Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "stanley_cup_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Stanley Cup\u00ae Playoff Qualifiers",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Make NHL Playoffs",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_nhl_playoffs",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Which teams will make the NHL Playoffs?",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Make NHL Playoffs",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_nhl_playoffs",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL: Eastern Conference Champion",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Eastern Conference Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "eastern_conf_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Hart Memorial Trophy Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Hart Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "hart_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Hart Memorial Trophy",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Hart Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "hart_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL James Norris Memorial Trophy Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Norris Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "norris_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL James Norris Memorial Trophy",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Norris Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "norris_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Vezina Trophy Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Vezina Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "vezina_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Vezina Trophy",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Vezina Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "vezina_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Calder Memorial Trophy Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Calder Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "calder_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Art Ross Trophy Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Art Ross Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "art_ross_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Art Ross Trophy",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Art Ross Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "art_ross_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Maurice 'Rocket' Richard Trophy Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Rocket Richard Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "rocket_richard_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Maurice \"Rocket\" Richard Trophy",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Rocket Richard Trophy",
+      "expected_category": "award",
+      "expected_merge_group": "rocket_richard_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Presidents' Trophy Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Presidents' Trophy",
+      "expected_category": "season_stat",
+      "expected_merge_group": "presidents_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL President's Trophy",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Presidents' Trophy",
+      "expected_category": "season_stat",
+      "expected_merge_group": "presidents_trophy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL: Atlantic Division Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Atlantic Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "atlantic_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Atlantic Division Winner",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Atlantic Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "atlantic_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL: Metropolitan Division Winner",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Metropolitan Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "metropolitan_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NHL Metropolitan Division Winner",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "expected_label": "Metropolitan Division Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "metropolitan_division",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "AHL: Springfield Thunderbirds vs. Providence Bruins",
+      "source": "polymarket",
+      "sport_key": "icehockey_nhl",
+      "sample_outcome": "Springfield Thunderbirds",
+      "expected_label": "AHL: Springfield Thunderbirds vs. Providence Bruins",
+      "expected_category": "other",
+      "expected_merge_group": null,
+      "is_wrong_sport": true,
+      "wrong_sport_reason": "AHL game leaking into NHL"
+    },
+    {
+      "raw_name": "College Hockey National Championship Winner",
+      "source": "kalshi",
+      "sport_key": "icehockey_nhl",
+      "sample_outcome": "Boston University",
+      "expected_label": "College Hockey National Championship",
+      "expected_category": "other",
+      "expected_merge_group": null,
+      "is_wrong_sport": true,
+      "wrong_sport_reason": "College hockey leaking into NHL"
+    },
+
+    {"_comment": "──── NCAA (Duke vs UConn, basketball_ncaab) ────"},
+
+    {
+      "raw_name": "2026 NCAA Tournament Winner",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NCAA Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "ncaa_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's College Basketball Champion",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Men's College Basketball Champion",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NCAAB Championship Winner",
+      "source": "odds_api",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NCAAB Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "ncaa_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NCAA Tournament: Team to make Semifinals",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Make Final Four",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_final_four",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's Semifinals Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Men's Semifinals",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NCAA Tournament: Team to make National Championship",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Make Championship Game",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_championship_game",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's Championship Game Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Men's Championship Game",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NCAA Tournament: Team to make Sweet Sixteen",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Make Sweet Sixteen",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_sweet_sixteen",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's Round of 16 Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Men's Round of 16",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's Round of 8 Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Men's Round of 8",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's Round of 32 Qualifiers",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Men's Round of 32",
+      "expected_category": "ncaa",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NCAA Tournament: Most Outstanding Player ",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Most Outstanding Player",
+      "expected_category": "award",
+      "expected_merge_group": "most_outstanding_player",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's College Basketball Tournament Most Outstanding Player",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Most Outstanding Player",
+      "expected_category": "award",
+      "expected_merge_group": "most_outstanding_player",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "College Basketball Naismith Player of the Year",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Naismith Player of the Year",
+      "expected_category": "award",
+      "expected_merge_group": "naismith_poty",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "2025-2026 Naismith College Player of the Year",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Naismith Player of the Year",
+      "expected_category": "award",
+      "expected_merge_group": "naismith_poty",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NCAAM: Naismith Defensive Player of the Year",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Naismith DPOY",
+      "expected_category": "award",
+      "expected_merge_group": "naismith_dpoy",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball #1 Overall Pick",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NBA Draft #1 Pick",
+      "expected_category": "award",
+      "expected_merge_group": "nba_draft_1",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball #2 Overall Pick",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NBA Draft #2 Pick",
+      "expected_category": "award",
+      "expected_merge_group": "nba_draft_2",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball #3 Overall Pick",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NBA Draft #3 Pick",
+      "expected_category": "award",
+      "expected_merge_group": "nba_draft_3",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "2026 NBA Draft: 1st Overall pick",
+      "source": "polymarket",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NBA Draft 1st Pick",
+      "expected_category": "award",
+      "expected_merge_group": "nba_draft_1",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Players Drafted Top 10",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NBA Draft Top 10",
+      "expected_category": "award",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Players Drafted Top 5",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NBA Draft Top 5",
+      "expected_category": "award",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Basketball Players Drafted Top 3",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "NBA Draft Top 3",
+      "expected_category": "award",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Men's 1 Seed",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "#1 Seed",
+      "expected_category": "playoff_path",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Team to Score the Most Points in the Semifinals",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Most Points in Semifinals",
+      "expected_category": "novelty",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Team to Score the Most Points in the Round of 8",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "Most Points in Round of 8",
+      "expected_category": "novelty",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "UConn vs Duke: First Half Winner",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "expected_label": "UConn vs Duke: First Half Winner",
+      "expected_category": "game_prop",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Eastern Conference Finals Winner?",
+      "source": "kalshi",
+      "sport_key": "basketball_ncaab",
+      "sample_outcome": "Boston Celtics",
+      "expected_label": "Eastern Conference Finals",
+      "expected_category": "conference",
+      "expected_merge_group": null,
+      "is_wrong_sport": true,
+      "wrong_sport_reason": "NBA conference finals leaking into NCAA game"
+    },
+
+    {"_comment": "──── MLB (Dodgers vs Diamondbacks, baseball_mlb) ────"},
+
+    {
+      "raw_name": "MLB World Series Winner",
+      "source": "odds_api",
+      "sport_key": "baseball_mlb",
+      "expected_label": "World Series Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "world_series_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "MLB World Series Champion 2026",
+      "source": "polymarket",
+      "sport_key": "baseball_mlb",
+      "expected_label": "World Series Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "world_series_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Baseball Champion",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "World Series Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "world_series_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "American League Champion",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "AL Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "al_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "MLB: 2026 American League Champion",
+      "source": "polymarket",
+      "sport_key": "baseball_mlb",
+      "expected_label": "AL Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "al_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "National League Champion",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "NL Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "nl_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "MLB: 2026 National League Champion",
+      "source": "polymarket",
+      "sport_key": "baseball_mlb",
+      "expected_label": "NL Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "nl_champion",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Baseball Playoff Qualifiers",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Make MLB Playoffs",
+      "expected_category": "playoff_path",
+      "expected_merge_group": "make_mlb_playoffs",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "AL West Division Winner",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "AL West Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "al_west",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "MLB: 2026 AL West Champion",
+      "source": "polymarket",
+      "sport_key": "baseball_mlb",
+      "expected_label": "AL West Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "al_west",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "NL West Division Winner",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "NL West Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "nl_west",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "MLB: 2026 NL West Champion ",
+      "source": "polymarket",
+      "sport_key": "baseball_mlb",
+      "expected_label": "NL West Winner",
+      "expected_category": "season_stat",
+      "expected_merge_group": "nl_west",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Baseball Best Record",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Best Record",
+      "expected_category": "season_stat",
+      "expected_merge_group": "best_record",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Baseball Worst Record",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Worst Record",
+      "expected_category": "season_stat",
+      "expected_merge_group": "worst_record",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Los Angeles D pro baseball wins this season?",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Los Angeles D Win Total",
+      "expected_category": "season_stat",
+      "expected_merge_group": "win_total",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Arizona pro baseball wins this season?",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Arizona Win Total",
+      "expected_category": "season_stat",
+      "expected_merge_group": "win_total",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "MLB: 2026 Regular Season Win Totals",
+      "source": "polymarket",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Win Total",
+      "expected_category": "season_stat",
+      "expected_merge_group": "win_total",
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Pro Baseball Championship Series Matchup",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "World Series Matchup",
+      "expected_category": "conference",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Longest regular season winning streak",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Longest winning Streak",
+      "expected_category": "season_stat",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Longest regular season losing streak",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Longest losing Streak",
+      "expected_category": "season_stat",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Ketel Marte's next team?",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Ketel Marte Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "Tarik Skubal's next team?",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "expected_label": "Tarik Skubal Trade Destination",
+      "expected_category": "trade",
+      "expected_merge_group": null,
+      "is_wrong_sport": false
+    },
+    {
+      "raw_name": "College Baseball D1 Champion",
+      "source": "kalshi",
+      "sport_key": "baseball_mlb",
+      "sample_outcome": "Arizona Wildcats",
+      "expected_label": "College Baseball D1 Champion",
+      "expected_category": "playoff_path",
+      "expected_merge_group": null,
+      "is_wrong_sport": true,
+      "wrong_sport_reason": "College baseball leaking into MLB game"
+    }
+  ]
+}

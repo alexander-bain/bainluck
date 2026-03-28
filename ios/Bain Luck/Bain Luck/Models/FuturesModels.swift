@@ -57,6 +57,9 @@ nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
 nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let marketId: Int
     let marketName: String
+    let cleanLabel: String?
+    let displayCategory: String?
+    let mergeGroup: String?
     let marketTier: Int?
     let category: String?
     let source: String?

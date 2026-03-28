@@ -567,6 +567,9 @@ export interface FuturesMoversResponse {
 export interface RelatedFuture {
   market_id: number;
   market_name: string;
+  clean_label?: string;
+  display_category?: string;
+  merge_group?: string | null;
   market_tier: number | null;
   category: string | null;
   source: string | null;

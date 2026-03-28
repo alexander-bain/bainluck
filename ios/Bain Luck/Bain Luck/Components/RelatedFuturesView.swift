@@ -90,9 +90,26 @@ final class RelatedFuturesViewModel: ObservableObject {
     }
 }
 
-// MARK: - Tier Detection (ports web effectiveTier)
+// MARK: - Category-to-Tier Mapping (backend display_category → render tier)
+
+private let categoryToTier: [String: Int] = [
+    "playoff_path": 1,
+    "conference": 2,
+    "award": 3,
+    "season_stat": 4,
+    "game_prop": 5,
+    "trade": 7,
+    "novelty": 8,
+    "ncaa": 4,
+    "other": 5,
+]
 
 private func effectiveTier(_ f: RelatedFuture) -> Int {
+    // Prefer backend display_category when available
+    if let cat = f.displayCategory, let tier = categoryToTier[cat] {
+        return tier
+    }
+    // Fallback to regex-based detection
     let name = f.marketName
     if isStatProp(name) { return 6 }
     if isGameMarket(name) { return 5 }
@@ -138,7 +155,11 @@ private func isNotChampionship(_ name: String) -> Bool {
     return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
 }
 
-private func shortAwardLabel(_ marketName: String) -> String {
+private func shortAwardLabel(_ marketName: String, cleanLabel: String? = nil) -> String {
+    // Use backend clean label if available
+    if let clean = cleanLabel, !clean.isEmpty {
+        return clean
+    }
     let n = marketName
     if n.range(of: "\\bmvp\\b|most\\s+valuable", options: [.regularExpression, .caseInsensitive]) != nil { return "MVP" }
     if n.range(of: "\\brookie\\s+of\\s+the\\s+year", options: [.regularExpression, .caseInsensitive]) != nil { return "Rookie of the Year" }
@@ -403,6 +424,8 @@ struct RelatedFuturesView: View {
         let awards = (tiered[3] ?? []) + (tiered[4] ?? [])
         let games = tiered[5] ?? []
         let statProps = tiered[6] ?? []
+        let trades = tiered[7] ?? []
+        let novelty = tiered[8] ?? []
 
         let displayLimit = expanded ? 999 : 6
         var shown = 0
@@ -460,7 +483,50 @@ struct RelatedFuturesView: View {
                 )
                 let _ = (shown += items.count)
             }
+
+            // Trade Watch
+            if !trades.isEmpty && shown < displayLimit {
+                let items = Array(trades.prefix(min(5, displayLimit - shown)))
+                sectionLabel(icon: "arrow.left.arrow.right", title: "Trade Watch")
+                ForEach(items) { future in
+                    compactFutureRow(future: future, teamColor: teamColor)
+                }
+                let _ = (shown += items.count)
+            }
+
+            // Fun Markets
+            if !novelty.isEmpty && shown < displayLimit {
+                let items = Array(novelty.prefix(min(3, displayLimit - shown)))
+                sectionLabel(icon: "sparkles", title: "Fun Markets")
+                ForEach(items) { future in
+                    compactFutureRow(future: future, teamColor: teamColor)
+                }
+                let _ = (shown += items.count)
+            }
         }
+    }
+
+    // Compact row for trade watch / fun markets
+    private func compactFutureRow(future: RelatedFuture, teamColor: Color) -> some View {
+        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+            HStack(spacing: 8) {
+                Text(future.cleanLabel ?? future.marketName)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                if let prob = future.probability {
+                    Text(formatProbability(prob))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(teamColor)
+                }
+                SourceBadge(source: future.source)
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Section Label
@@ -503,8 +569,8 @@ private struct ChampionshipCard: View {
                     SourceBadge(source: future.source)
                 }
 
-                // Market name
-                Text(future.marketName)
+                // Market name (prefer clean label from backend)
+                Text(future.cleanLabel ?? future.marketName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -598,7 +664,7 @@ private struct AwardCard: View {
                     HStack(spacing: 4) {
                         Text("\u{2B50}")
                             .font(.system(size: 9))
-                        Text(shortAwardLabel(future.marketName))
+                        Text(shortAwardLabel(future.marketName, cleanLabel: future.cleanLabel))
                             .font(.caption2)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
