@@ -291,6 +291,7 @@ QUOTA_WARNING_THRESHOLD = 1_000_000
 # Guard auto-expires on QUOTA_GUARD_EXPIRY (next billing cycle reset).
 QUOTA_GUARD_LIVE_ONLY = 50_000   # Below this: only poll live games (no discovery/futures)
 QUOTA_GUARD_FULL_STOP = 20_000   # Below this: stop ALL Odds API calls (except priority sports)
+QUOTA_GUARD_ABSOLUTE_STOP = 500  # Below this: stop ALL Odds API calls, no exceptions
 QUOTA_GUARD_EXPIRY = "2026-04-01T00:00:00+00:00"  # Auto-revert date (UTC)
 
 # Priority sports: allowed to poll even in FULL_STOP mode with conservation settings.
@@ -340,6 +341,15 @@ def check_quota_guard(task_type: str, sport_key: str | None = None) -> tuple[boo
             return True, "no_quota_data"
 
         remaining = int(data.get(b"remaining", b"999999"))
+
+        # Absolute stop: no exceptions, no priority sports, nothing.
+        # Live game data still flows via ESPN, StatPal, Kalshi, Polymarket.
+        if remaining <= QUOTA_GUARD_ABSOLUTE_STOP:
+            _quota_logger.critical(
+                "QUOTA GUARD: ABSOLUTE STOP — %s remaining. Blocking ALL Odds API calls.",
+                f"{remaining:,}",
+            )
+            return False, f"absolute_stop_{remaining}"
 
         if remaining <= QUOTA_GUARD_FULL_STOP:
             # Priority sports get through in conservation mode
