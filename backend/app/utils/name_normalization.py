@@ -22,6 +22,19 @@ _MATCH_STOPWORDS = frozenset({
     "fc", "sc", "cf", "ac", "as", "us",
 })
 
+# College abbreviations expanded during token overlap scoring.
+# "St." → "State", "Mt." → "Mount", etc.
+_COLLEGE_ABBREVIATIONS: dict[str, str] = {
+    "st.": "state",
+    "st": "state",      # some sources omit the period
+    "mt.": "mount",
+    "mt": "mount",
+    "n.": "north",
+    "s.": "south",
+    "e.": "east",
+    "w.": "west",
+}
+
 # Common city abbreviations used by ESPN and other sources.
 # Applied during token overlap scoring so "LA Clippers" matches "Los Angeles Clippers".
 _CITY_ABBREVIATIONS: dict[str, str] = {
@@ -95,17 +108,19 @@ def normalize_name(name: str) -> str:
 
 
 def _expand_abbreviations(name: str) -> str:
-    """Expand common city abbreviations in a normalized name.
+    """Expand common abbreviations in a normalized name.
 
-    Only expands when the abbreviation appears as a standalone word (not part
-    of a longer word). E.g. "la clippers" -> "los angeles clippers" but
-    "lacrosse" stays unchanged.
+    Handles city abbreviations ("la" -> "los angeles") and college
+    abbreviations ("st." -> "state", "mt." -> "mount").
+    Only expands when the abbreviation appears as a standalone word.
     """
     words = name.split()
     expanded: list[str] = []
     for w in words:
         if w in _CITY_ABBREVIATIONS:
             expanded.append(_CITY_ABBREVIATIONS[w])
+        elif w in _COLLEGE_ABBREVIATIONS:
+            expanded.append(_COLLEGE_ABBREVIATIONS[w])
         else:
             expanded.append(w)
     return " ".join(expanded)
@@ -143,7 +158,7 @@ def names_match(name_a: str, name_b: str) -> bool:
     1. Exact match after normalization
     2. Suffix containment at word boundaries (handles "Celtics" matching
        "Boston Celtics", "Red Sox" matching "Boston Red Sox")
-    3. Token overlap scoring (threshold >0.5)
+    3. Token overlap scoring (threshold >=0.5)
 
     Does NOT match:
     - "Air Force Falcons" vs "Atlanta Falcons" (token overlap ~0.33)
@@ -179,5 +194,5 @@ def names_match(name_a: str, name_b: str) -> bool:
             if longer_words[-len(shorter_words):] == shorter_words:
                 return True
 
-    # 3. Token overlap scoring (strict >0.5)
-    return token_overlap_score(name_a, name_b) > 0.5
+    # 3. Token overlap scoring (>=0.5 to catch single-token names like UCLA/VCU)
+    return token_overlap_score(name_a, name_b) >= 0.5

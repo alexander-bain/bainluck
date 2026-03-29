@@ -152,7 +152,7 @@ async def _sync_espn_live_events():
                     return True
         # Fallback: token-overlap scoring for abbreviation handling
         for name in our_names:
-            if _team_name_match_score(name, espn_name) > 0.5:
+            if _team_name_match_score(name, espn_name) >= 0.5:
                 return True
         return False
 
@@ -234,6 +234,21 @@ async def _sync_espn_live_events():
         if event.away_team_alt_names:
             away_names.extend(event.away_team_alt_names)
         return home_names, away_names
+
+    def get_espn_name_variants(espn_team):
+        """Get all name variants from an ESPN team object for matching."""
+        variants = []
+        for name in [espn_team.display_name, espn_team.short_name, espn_team.name, espn_team.location]:
+            if name and name not in variants:
+                variants.append(name)
+        return variants
+
+    def espn_names_match(our_names, espn_team):
+        """Check if any of our name variations match any ESPN name variant."""
+        for espn_name in get_espn_name_variants(espn_team):
+            if names_match(our_names, espn_name):
+                return True
+        return False
 
     try:
         async with get_task_session() as session:
@@ -328,9 +343,7 @@ async def _sync_espn_live_events():
                             for ee in espn_events:
                                 if not ee.home_team or not ee.away_team:
                                     continue
-                                espn_home = ee.home_team.display_name or ee.home_team.name or ""
-                                espn_away = ee.away_team.display_name or ee.away_team.name or ""
-                                if names_match(home_names, espn_home) and names_match(away_names, espn_away):
+                                if espn_names_match(home_names, ee.home_team) and espn_names_match(away_names, ee.away_team):
                                     matched_espn = ee
                                     match_method = "name"
                                     break
@@ -581,15 +594,13 @@ async def _sync_espn_live_events():
                         if event.espn_id and event.espn_id in espn_by_id_sched:
                             matched_espn = espn_by_id_sched[event.espn_id]
 
-                        # 2. Fall back to name matching
+                        # 2. Fall back to name matching (using all ESPN name variants)
                         if not matched_espn:
                             home_names, away_names = get_event_name_variations(event)
                             for ee in espn_events:
                                 if not ee.home_team or not ee.away_team:
                                     continue
-                                espn_home = ee.home_team.display_name or ee.home_team.name or ""
-                                espn_away = ee.away_team.display_name or ee.away_team.name or ""
-                                if names_match(home_names, espn_home) and names_match(away_names, espn_away):
+                                if espn_names_match(home_names, ee.home_team) and espn_names_match(away_names, ee.away_team):
                                     matched_espn = ee
                                     break
 

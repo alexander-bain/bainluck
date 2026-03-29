@@ -195,12 +195,11 @@ class TestNamesMatchEdgeCases:
         """Multi-word suffix should match."""
         assert names_match("Red Sox", "Boston Red Sox")
 
-    def test_prefix_not_used_for_matching(self):
-        """Prefix matching is not used — 'Boston' is NOT a suffix of 'Boston Celtics'.
-        Token overlap would give 1/1 vs 1/2 = 0.5 (not >0.5), so False."""
-        # "boston" has 1 meaningful word, "boston celtics" has 2
-        # overlap = {boston} = 1, min(1/1, 1/2) = 0.5 → not > 0.5
-        assert not names_match("Boston", "Boston Celtics")
+    def test_single_word_location_matches_full_name(self):
+        """Single-word location matches full team name at >=0.5 threshold.
+        Token overlap: 'boston' vs 'boston celtics' = min(1/1, 1/2) = 0.5.
+        This is acceptable because ESPN sync requires BOTH teams to match."""
+        assert names_match("Boston", "Boston Celtics")
 
 
 # =============================================================================
@@ -245,3 +244,20 @@ class TestTokenOverlapScore:
         """'Barcelona' is the only non-stopword in both."""
         score = token_overlap_score("FC Barcelona", "Barcelona SC")
         assert score == 1.0
+
+    def test_st_dot_expands_to_state(self):
+        """'St.' should expand to 'State' for college team matching."""
+        score = token_overlap_score("Michigan St.", "Michigan State Spartans")
+        # michigan, state vs michigan, state, spartans → min(2/2, 2/3) = 0.67
+        assert score >= 0.6
+
+    def test_college_abbreviations(self):
+        """College abbreviations: St., Mt., etc."""
+        assert token_overlap_score("Utah St.", "Utah State Aggies") >= 0.6
+        assert token_overlap_score("Wichita St.", "Wichita State Shockers") >= 0.6
+        assert token_overlap_score("Kennesaw St.", "Kennesaw State Owls") >= 0.6
+
+    def test_single_token_name(self):
+        """Single-token names like UCLA score 0.5 against 2-token ESPN names."""
+        assert token_overlap_score("UCLA", "UCLA Bruins") == 0.5
+        assert token_overlap_score("VCU", "VCU Rams") == 0.5

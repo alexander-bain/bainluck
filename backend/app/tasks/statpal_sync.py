@@ -907,13 +907,15 @@ def _fixture_match_key(home: str, away: str) -> str:
 async def _find_matching_event(session, Event, sport_id: int, fixture) -> Optional:
     """Find a matching Event record for a StatPal fixture.
 
-    Uses team name matching + time proximity (±6 hours) to find the best match.
+    Uses token-overlap name matching + time proximity (±6 hours) to find the best match.
     """
+    from app.utils.name_normalization import token_overlap_score, normalize_name
+
     if not fixture.home_team or not fixture.away_team:
         return None
 
-    home_lower = fixture.home_team.lower()
-    away_lower = fixture.away_team.lower()
+    home_lower = normalize_name(fixture.home_team)
+    away_lower = normalize_name(fixture.away_team)
 
     # Build time window
     if fixture.start_time:
@@ -924,63 +926,63 @@ async def _find_matching_event(session, Event, sport_id: int, fixture) -> Option
         window_start = now - timedelta(days=1)
         window_end = now + timedelta(days=7)
 
-    # Query for candidates
+    # Query for candidates — broader filter using multiple last-word tokens
+    # to catch more candidates for scoring
     from sqlalchemy import func as sqlfunc
+
+    # Use last meaningful word from each team (skip 1-char words)
+    home_words = [w for w in home_lower.split() if len(w) > 2]
+    away_words = [w for w in away_lower.split() if len(w) > 2]
+    home_last = home_words[-1] if home_words else home_lower.split()[-1]
+    away_last = away_words[-1] if away_words else away_lower.split()[-1]
 
     result = await session.execute(
         select(Event).where(
             Event.sport_id == sport_id,
             Event.commence_time.between(window_start, window_end),
             or_(
-                sqlfunc.lower(Event.home_team_name).contains(home_lower.split()[-1]),
-                sqlfunc.lower(Event.away_team_name).contains(away_lower.split()[-1]),
+                sqlfunc.lower(Event.home_team_name).contains(home_last),
+                sqlfunc.lower(Event.away_team_name).contains(away_last),
+                sqlfunc.lower(Event.home_team_name).contains(home_words[0] if home_words else home_last),
+                sqlfunc.lower(Event.away_team_name).contains(away_words[0] if away_words else away_last),
             ),
-        ).limit(10)
+        ).limit(20)
     )
     candidates = result.scalars().all()
 
     if not candidates:
         return None
 
-    # Score candidates
+    # Score candidates using token_overlap_score for robust name matching
     best = None
-    best_score = -1
+    best_score = -1.0
 
     for event in candidates:
-        score = 0
-        ev_home = event.home_team_name.lower()
-        ev_away = event.away_team_name.lower()
-
-        # Team name matching
-        if home_lower in ev_home or ev_home in home_lower:
-            score += 2
-        elif home_lower.split()[-1] in ev_home:
-            score += 1
-
-        if away_lower in ev_away or ev_away in away_lower:
-            score += 2
-        elif away_lower.split()[-1] in ev_away:
-            score += 1
+        home_score = token_overlap_score(fixture.home_team, event.home_team_name)
+        away_score = token_overlap_score(fixture.away_team, event.away_team_name)
 
         # Require both teams to match at some level
-        if score < 2:
+        if home_score < 0.4 or away_score < 0.4:
             continue
 
-        # Time proximity bonus
+        score = home_score + away_score  # 0.0 - 2.0
+
+        # Time proximity bonus (up to 0.3)
         if fixture.start_time and event.commence_time:
             diff_hours = abs((fixture.start_time - event.commence_time).total_seconds()) / 3600
             if diff_hours < 1:
-                score += 3
+                score += 0.3
             elif diff_hours < 3:
-                score += 2
+                score += 0.2
             elif diff_hours < 6:
-                score += 1
+                score += 0.1
 
         if score > best_score:
             best_score = score
             best = event
 
-    return best
+    # Require minimum combined score of 1.0 (both teams at least partially match)
+    return best if best_score >= 1.0 else None
 
 
 def _get_statpal_id(event) -> Optional[str]:
