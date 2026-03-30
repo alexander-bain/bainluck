@@ -7119,10 +7119,11 @@ async def db_storage_analysis(
         ))).fetchall()
         results["available_extensions"] = [r[0] for r in avail_ext]
 
-        # Try pgstattuple for exact breakdown, otherwise use estimates
+        # Enable pgstattuple if available
         pgstattuple_available = False
         try:
-            await db.execute(text("SELECT 1 FROM pgstattuple('pg_class') LIMIT 0"))
+            await db.execute(text("CREATE EXTENSION IF NOT EXISTS pgstattuple"))
+            await db.commit()
             pgstattuple_available = True
         except Exception:
             await db.rollback()
