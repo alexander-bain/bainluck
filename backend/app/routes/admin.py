@@ -6988,3 +6988,287 @@ async def purge_orphan_pm_events(
         "message": f"{'Would delete' if dry_run else 'Deleted'} {len(to_delete)} orphan pm_ events. "
                    f"{len(has_data)} pm_ events have snapshot data and were kept.",
     }
+
+
+# ── DB Storage Analysis & Cleanup ─────────────────────────────────────
+
+
+@router.get("/db/storage-analysis")
+async def db_storage_analysis(
+    secret: str = Query("", description="Admin secret"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Analyze DB storage: table sizes, futures_odds_snapshots age distribution,
+    resolved vs active market data, orphan snapshots.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    results = {}
+
+    # Table sizes
+    row = (await db.execute(text(
+        "SELECT pg_size_pretty(pg_total_relation_size('futures_odds_snapshots')),"
+        " pg_size_pretty(pg_total_relation_size('odds_snapshots')),"
+        " pg_size_pretty(pg_total_relation_size('win_prob_snapshots')),"
+        " pg_size_pretty(pg_database_size(current_database())),"
+        " pg_total_relation_size('futures_odds_snapshots'),"
+        " pg_database_size(current_database())"
+    ))).fetchone()
+    results["sizes"] = {
+        "futures_odds_snapshots": row[0],
+        "odds_snapshots": row[1],
+        "win_prob_snapshots": row[2],
+        "database_total": row[3],
+        "futures_odds_snapshots_bytes": row[4],
+        "database_total_bytes": row[5],
+        "futures_pct_of_db": round(row[4] / max(row[5], 1) * 100, 1),
+    }
+
+    # Oldest and newest days in futures_odds_snapshots
+    oldest = (await db.execute(text(
+        "SELECT DATE(captured_at) as day, COUNT(*) as rows"
+        " FROM futures_odds_snapshots"
+        " GROUP BY 1 ORDER BY 1 LIMIT 5"
+    ))).fetchall()
+    results["oldest_days"] = [{"date": str(r[0]), "rows": r[1]} for r in oldest]
+
+    newest = (await db.execute(text(
+        "SELECT DATE(captured_at) as day, COUNT(*) as rows"
+        " FROM futures_odds_snapshots"
+        " GROUP BY 1 ORDER BY 1 DESC LIMIT 5"
+    ))).fetchall()
+    results["newest_days"] = [{"date": str(r[0]), "rows": r[1]} for r in newest]
+
+    # By market resolution status
+    by_status = (await db.execute(text(
+        "SELECT"
+        " CASE WHEN fm.is_resolved THEN 'resolved' ELSE 'active' END as status,"
+        " COUNT(*) as rows"
+        " FROM futures_odds_snapshots fos"
+        " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
+        " JOIN futures_markets fm ON fo.market_id = fm.id"
+        " GROUP BY 1"
+    ))).fetchall()
+    results["by_market_status"] = [
+        {"status": r[0], "rows": r[1], "est_mb": round(r[1] * 144 / 1024 / 1024)}
+        for r in by_status
+    ]
+
+    # Orphan snapshots (no matching outcome)
+    orphan_count = (await db.execute(text(
+        "SELECT COUNT(*) FROM futures_odds_snapshots"
+        " WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
+    ))).scalar()
+    results["orphan_snapshots"] = orphan_count
+
+    # Total row count
+    total = (await db.execute(text(
+        "SELECT COUNT(*) FROM futures_odds_snapshots"
+    ))).scalar()
+    results["total_rows"] = total
+
+    # Resolved markets: age distribution
+    resolved_age = (await db.execute(text(
+        "SELECT"
+        " CASE"
+        "   WHEN fos.captured_at < NOW() - INTERVAL '90 days' THEN '90d+'"
+        "   WHEN fos.captured_at < NOW() - INTERVAL '60 days' THEN '60-90d'"
+        "   WHEN fos.captured_at < NOW() - INTERVAL '30 days' THEN '30-60d'"
+        "   ELSE '0-30d'"
+        " END as age_bucket,"
+        " COUNT(*) as rows"
+        " FROM futures_odds_snapshots fos"
+        " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
+        " JOIN futures_markets fm ON fo.market_id = fm.id"
+        " WHERE fm.is_resolved = true"
+        " GROUP BY 1 ORDER BY 1"
+    ))).fetchall()
+    results["resolved_by_age"] = [
+        {"bucket": r[0], "rows": r[1], "est_mb": round(r[1] * 144 / 1024 / 1024)}
+        for r in resolved_age
+    ]
+
+    # odds_snapshots age distribution
+    odds_age = (await db.execute(text(
+        "SELECT"
+        " CASE"
+        "   WHEN captured_at < NOW() - INTERVAL '30 days' THEN '30d+'"
+        "   WHEN captured_at < NOW() - INTERVAL '14 days' THEN '14-30d'"
+        "   WHEN captured_at < NOW() - INTERVAL '7 days' THEN '7-14d'"
+        "   ELSE '0-7d'"
+        " END as age_bucket,"
+        " COUNT(*) as rows"
+        " FROM odds_snapshots"
+        " GROUP BY 1 ORDER BY 1"
+    ))).fetchall()
+    results["odds_snapshots_by_age"] = [
+        {"bucket": r[0], "rows": r[1]} for r in odds_age
+    ]
+
+    return results
+
+
+@router.post("/db/delete-resolved-futures-snapshots")
+async def delete_resolved_futures_snapshots(
+    secret: str = Query("", description="Admin secret"),
+    older_than_days: int = Query(30, description="Delete snapshots for resolved markets older than N days"),
+    batch_size: int = Query(50000, description="Delete in batches of this size"),
+    dry_run: bool = Query(True, description="Preview without deleting"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete futures_odds_snapshots rows for resolved markets older than N days.
+    These are historical odds for markets that have already been resolved —
+    we keep the final state but don't need minute-by-minute history.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Count rows that would be deleted
+    count_result = (await db.execute(text(
+        "SELECT COUNT(*) FROM futures_odds_snapshots fos"
+        " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
+        " JOIN futures_markets fm ON fo.market_id = fm.id"
+        " WHERE fm.is_resolved = true"
+        " AND fos.captured_at < NOW() - INTERVAL :days || ' days'"
+    ).bindparams(days=older_than_days))).scalar()
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "would_delete": count_result,
+            "older_than_days": older_than_days,
+            "est_mb_freed": round(count_result * 144 / 1024 / 1024),
+            "message": f"Would delete {count_result:,} rows. Set dry_run=false to proceed.",
+        }
+
+    # Delete in batches to avoid locking the table for too long
+    total_deleted = 0
+    while True:
+        result = await db.execute(text(
+            "DELETE FROM futures_odds_snapshots"
+            " WHERE id IN ("
+            "   SELECT fos.id FROM futures_odds_snapshots fos"
+            "   JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
+            "   JOIN futures_markets fm ON fo.market_id = fm.id"
+            "   WHERE fm.is_resolved = true"
+            "   AND fos.captured_at < NOW() - INTERVAL :days || ' days'"
+            "   LIMIT :batch"
+            ")"
+        ).bindparams(days=older_than_days, batch=batch_size))
+        deleted = result.rowcount
+        total_deleted += deleted
+        await db.commit()
+        if deleted < batch_size:
+            break
+
+    return {
+        "dry_run": False,
+        "deleted": total_deleted,
+        "older_than_days": older_than_days,
+        "est_mb_freed": round(total_deleted * 144 / 1024 / 1024),
+        "message": f"Deleted {total_deleted:,} resolved futures snapshots older than {older_than_days} days. "
+                   f"Run VACUUM to reclaim space.",
+    }
+
+
+@router.post("/db/delete-orphan-futures-snapshots")
+async def delete_orphan_futures_snapshots(
+    secret: str = Query("", description="Admin secret"),
+    batch_size: int = Query(50000, description="Delete in batches"),
+    dry_run: bool = Query(True, description="Preview without deleting"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete futures_odds_snapshots with no matching outcome."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    count_result = (await db.execute(text(
+        "SELECT COUNT(*) FROM futures_odds_snapshots"
+        " WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
+    ))).scalar()
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "would_delete": count_result,
+            "est_mb_freed": round(count_result * 144 / 1024 / 1024),
+        }
+
+    total_deleted = 0
+    while True:
+        result = await db.execute(text(
+            "DELETE FROM futures_odds_snapshots"
+            " WHERE id IN ("
+            "   SELECT id FROM futures_odds_snapshots"
+            "   WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
+            "   LIMIT :batch"
+            ")"
+        ).bindparams(batch=batch_size))
+        deleted = result.rowcount
+        total_deleted += deleted
+        await db.commit()
+        if deleted < batch_size:
+            break
+
+    return {
+        "dry_run": False,
+        "deleted": total_deleted,
+        "est_mb_freed": round(total_deleted * 144 / 1024 / 1024),
+    }
+
+
+@router.post("/db/vacuum")
+async def vacuum_table(
+    secret: str = Query("", description="Admin secret"),
+    table: str = Query("futures_odds_snapshots", description="Table to vacuum"),
+    full: bool = Query(False, description="VACUUM FULL (rewrites table, reclaims disk)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Run VACUUM on a table. VACUUM (regular) marks dead tuples as reusable.
+    VACUUM FULL rewrites the table to reclaim disk space but locks the table.
+    Requires sufficient free disk space (~equal to table size) for FULL.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Allowlist tables
+    allowed = {"futures_odds_snapshots", "odds_snapshots", "win_prob_snapshots",
+               "odds_aggregated", "score_snapshots", "espn_snapshots"}
+    if table not in allowed:
+        raise HTTPException(status_code=400, detail=f"Table must be one of: {allowed}")
+
+    # Get table size before
+    size_before = (await db.execute(text(
+        f"SELECT pg_size_pretty(pg_total_relation_size('{table}')),"
+        f" pg_total_relation_size('{table}')"
+    ))).fetchone()
+
+    # VACUUM requires running outside a transaction
+    raw_conn = await db.connection()
+    underlying = await raw_conn.get_raw_connection()
+    old_autocommit = underlying.autocommit
+    await underlying.set_autocommit(True)
+    try:
+        cmd = f"VACUUM FULL {table}" if full else f"VACUUM {table}"
+        await underlying.execute(cmd)
+    finally:
+        await underlying.set_autocommit(old_autocommit)
+
+    # Get table size after
+    size_after = (await db.execute(text(
+        f"SELECT pg_size_pretty(pg_total_relation_size('{table}')),"
+        f" pg_total_relation_size('{table}')"
+    ))).fetchone()
+
+    return {
+        "table": table,
+        "vacuum_type": "FULL" if full else "regular",
+        "size_before": size_before[0],
+        "size_after": size_after[0],
+        "bytes_freed": size_before[1] - size_after[1],
+        "freed_pretty": f"{(size_before[1] - size_after[1]) / 1024 / 1024:.1f} MB",
+    }
