@@ -7116,70 +7116,88 @@ async def db_storage_analysis(
         ))).scalar()
         results["orphan_snapshots"] = orphan_count
 
+    if detail in ("collapse_estimate",):
+        # Sample a few resolved outcomes and measure collapse ratio using
+        # window functions (same approach as retention.py).
+        # Pick 50 outcomes to keep it fast.
+        sample_ids = (await db.execute(text("""
+            SELECT fo.id FROM futures_outcomes fo
+            JOIN futures_markets fm ON fo.market_id = fm.id
+            WHERE fm.status = 'resolved'
+            LIMIT 50
+        """))).fetchall()
+        sample_outcome_ids = [r[0] for r in sample_ids]
+
+        if sample_outcome_ids:
+            # Count total rows for these outcomes
+            total_rows = (await db.execute(text(
+                "SELECT COUNT(*) FROM futures_odds_snapshots"
+                " WHERE outcome_id = ANY(:ids)"
+            ), {"ids": sample_outcome_ids})).scalar()
+
+            # Count rows that are duplicates of their predecessor
+            # (same outcome_id, bookmaker, probability as the previous row)
+            dup_count = (await db.execute(text("""
+                WITH ordered AS (
+                    SELECT id, outcome_id, bookmaker, probability,
+                           LAG(probability) OVER (
+                               PARTITION BY outcome_id, bookmaker
+                               ORDER BY captured_at, id
+                           ) AS prev_prob
+                    FROM futures_odds_snapshots
+                    WHERE outcome_id = ANY(:ids)
+                )
+                SELECT COUNT(*) FROM ordered
+                WHERE probability IS NOT DISTINCT FROM prev_prob
+                  AND prev_prob IS NOT NULL
+            """), {"ids": sample_outcome_ids})).scalar()
+
+            ratio = dup_count / max(total_rows, 1)
+            # Get total resolved snapshots for extrapolation
+            total_resolved = (await db.execute(text(
+                "SELECT COUNT(*) FROM futures_odds_snapshots"
+                " WHERE outcome_id IN ("
+                "   SELECT fo.id FROM futures_outcomes fo"
+                "   JOIN futures_markets fm ON fo.market_id = fm.id"
+                "   WHERE fm.status = 'resolved'"
+                ")"
+            ))).scalar()
+
+            results["collapse_estimate"] = {
+                "sampled_outcomes": len(sample_outcome_ids),
+                "sample_total_rows": total_rows,
+                "sample_duplicate_rows": dup_count,
+                "sample_unique_rows": total_rows - dup_count,
+                "dedup_ratio": round(ratio, 3),
+                "total_resolved_snapshots": total_resolved,
+                "extrapolated_deletable": round(total_resolved * ratio),
+                "extrapolated_mb_freed": round(total_resolved * ratio * 144 / 1024 / 1024),
+            }
+
     return results
 
 
-@router.post("/db/delete-resolved-futures-snapshots")
-async def delete_resolved_futures_snapshots(
+@router.post("/db/collapse-resolved-futures")
+async def collapse_resolved_futures(
     secret: str = Query("", description="Admin secret"),
-    older_than_days: int = Query(30, description="Delete snapshots for resolved markets older than N days"),
-    batch_size: int = Query(50000, description="Delete in batches of this size"),
-    dry_run: bool = Query(True, description="Preview without deleting"),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(10000, description="Number of outcomes to process"),
 ):
     """
-    Delete futures_odds_snapshots rows for resolved markets older than N days.
-    These are historical odds for markets that have already been resolved —
-    we keep the final state but don't need minute-by-minute history.
+    Queue an aggressive collapse of resolved futures snapshots as a Celery task.
+    Uses the same dedup logic as the existing retention system but with a much
+    higher outcome limit. Returns immediately with a task ID.
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    # Count rows that would be deleted
-    count_result = (await db.execute(text(
-        "SELECT COUNT(*) FROM futures_odds_snapshots fos"
-        " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
-        " JOIN futures_markets fm ON fo.market_id = fm.id"
-        " WHERE fm.status = 'resolved'"
-        " AND fos.captured_at < NOW() - make_interval(days => :days)"
-    ).bindparams(days=older_than_days))).scalar()
-
-    if dry_run:
-        return {
-            "dry_run": True,
-            "would_delete": count_result,
-            "older_than_days": older_than_days,
-            "est_mb_freed": round(count_result * 144 / 1024 / 1024),
-            "message": f"Would delete {count_result:,} rows. Set dry_run=false to proceed.",
-        }
-
-    # Delete in batches to avoid locking the table for too long
-    total_deleted = 0
-    while True:
-        result = await db.execute(text(
-            "DELETE FROM futures_odds_snapshots"
-            " WHERE id IN ("
-            "   SELECT fos.id FROM futures_odds_snapshots fos"
-            "   JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
-            "   JOIN futures_markets fm ON fo.market_id = fm.id"
-            "   WHERE fm.status = 'resolved'"
-            "   AND fos.captured_at < NOW() - make_interval(days => :days)"
-            "   LIMIT :batch"
-            ")"
-        ).bindparams(days=older_than_days, batch=batch_size))
-        deleted = result.rowcount
-        total_deleted += deleted
-        await db.commit()
-        if deleted < batch_size:
-            break
-
+    from app.tasks import turbo_collapse_futures
+    task = turbo_collapse_futures.delay(limit=limit)
     return {
-        "dry_run": False,
-        "deleted": total_deleted,
-        "older_than_days": older_than_days,
-        "est_mb_freed": round(total_deleted * 144 / 1024 / 1024),
-        "message": f"Deleted {total_deleted:,} resolved futures snapshots older than {older_than_days} days. "
-                   f"Run VACUUM to reclaim space.",
+        "queued": True,
+        "task_id": str(task.id),
+        "limit": limit,
+        "message": f"Collapse task queued with limit={limit}. "
+                   f"Check worker logs for progress.",
     }
 
 
@@ -7194,38 +7212,32 @@ async def delete_orphan_futures_snapshots(
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
-    count_result = (await db.execute(text(
-        "SELECT COUNT(*) FROM futures_odds_snapshots"
-        " WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
-    ))).scalar()
-
     if dry_run:
+        count_result = (await db.execute(text(
+            "SELECT COUNT(*) FROM futures_odds_snapshots"
+            " WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
+        ))).scalar()
         return {
             "dry_run": True,
             "would_delete": count_result,
             "est_mb_freed": round(count_result * 144 / 1024 / 1024),
         }
 
-    total_deleted = 0
-    while True:
-        result = await db.execute(text(
-            "DELETE FROM futures_odds_snapshots"
-            " WHERE id IN ("
-            "   SELECT id FROM futures_odds_snapshots"
-            "   WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
-            "   LIMIT :batch"
-            ")"
-        ).bindparams(batch=batch_size))
-        deleted = result.rowcount
-        total_deleted += deleted
-        await db.commit()
-        if deleted < batch_size:
-            break
+    result = await db.execute(text(
+        "DELETE FROM futures_odds_snapshots"
+        " WHERE id IN ("
+        "   SELECT id FROM futures_odds_snapshots"
+        "   WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
+        "   LIMIT :batch"
+        ")"
+    ).bindparams(batch=batch_size))
+    deleted = result.rowcount
+    await db.commit()
 
     return {
         "dry_run": False,
-        "deleted": total_deleted,
-        "est_mb_freed": round(total_deleted * 144 / 1024 / 1024),
+        "deleted_this_batch": deleted,
+        "done": deleted < batch_size,
     }
 
 
