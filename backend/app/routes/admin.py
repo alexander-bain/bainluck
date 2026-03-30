@@ -7112,6 +7112,13 @@ async def db_storage_analysis(
     if detail in ("space_map",):
         # Exact breakdown of live, dead, and free space in the table file.
         # Uses pgstattuple extension if available, falls back to estimates.
+        # Check available extensions
+        avail_ext = (await db.execute(text(
+            "SELECT name FROM pg_available_extensions"
+            " WHERE name IN ('pgstattuple', 'pg_repack', 'pg_squeeze')"
+        ))).fetchall()
+        results["available_extensions"] = [r[0] for r in avail_ext]
+
         # Try pgstattuple for exact breakdown, otherwise use estimates
         pgstattuple_available = False
         try:
