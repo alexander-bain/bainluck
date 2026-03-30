@@ -7124,8 +7124,11 @@ async def db_storage_analysis(
         try:
             await db.execute(text("CREATE EXTENSION IF NOT EXISTS pgstattuple"))
             await db.commit()
+            # Verify it works
+            await db.execute(text("SELECT pgstattuple('pg_class')"))
             pgstattuple_available = True
-        except Exception:
+        except Exception as e:
+            results["pgstattuple_error"] = str(e)
             await db.rollback()
 
         for tbl_name in ["futures_odds_snapshots", "odds_snapshots"]:
