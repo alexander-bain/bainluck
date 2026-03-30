@@ -1,20 +1,26 @@
 """
 Statistical win probability model.
 
-Based on the methodology from Pro-Football-Reference / nflfastR:
-  - Final margin of victory is modeled as a normal distribution
+Clock sports (NFL, NBA, NHL):
+  Based on the methodology from Pro-Football-Reference / nflfastR:
+  - Final margin modeled as normal distribution
   - Mean = pregame spread scaled by remaining time + current score differential
   - Std dev = base std dev × sqrt(fraction of game remaining)
   - Win probability = P(margin > 0) using the normal CDF
 
-This gives an independent probability estimate from game state alone,
-complementing market-implied odds and ESPN's proprietary model.
+Baseball (MLB and all baseball):
+  Based on Poisson run-scoring distributions (Tom Tango / "The Book"):
+  - Remaining runs for each team modeled as Poisson(λ)
+  - λ = runs_per_half_inning × half_innings_remaining_for_team
+  - Normal approximation: final margin ~ N(score_diff + λ_home - λ_away, λ_home + λ_away)
+  - Accounts for home field advantage and walk-off rule
+  - Works for MLB, NCAA baseball, WBC, etc.
 
 Sport-specific parameters:
   - NFL/NCAAF: base_std = 13.45 (from Hal Stern's research, 1978-2012 NFL data)
   - NBA/NCAAB: base_std = 12.0 (estimated from final margin distributions)
   - NHL: base_std = 2.5 (low-scoring sport, tighter margins)
-  - MLB: Not well-suited to this model (inning-based, not clock-based)
+  - MLB: Poisson-based (runs_per_half_inning ≈ 0.5, derived from ~4.5 R/G avg)
 """
 
 import math
@@ -34,14 +40,230 @@ def _norm_cdf(x: float) -> float:
 
 # Sport-specific parameters
 SPORT_PARAMS = {
-    # (base_std_dev, total_game_seconds)
+    # (base_std_dev, total_game_units)
+    # Clock sports: total_game_units = total seconds
     "football_nfl": (13.45, 3600),      # 60 minutes
-    "football_ncaaf": (13.45, 3600),     # 60 minutes
-    "basketball_nba": (12.0, 2880),      # 48 minutes
-    "basketball_ncaab": (12.0, 2400),    # 40 minutes
-    "basketball_wncaab": (12.0, 2880),   # 40 minutes (4x10 quarters)
-    "hockey_nhl": (2.5, 3600),           # 60 minutes
+    "football_ncaaf": (13.45, 3600),    # 60 minutes
+    "basketball_nba": (12.0, 2880),     # 48 minutes
+    "basketball_ncaab": (12.0, 2400),   # 40 minutes
+    "basketball_wncaab": (12.0, 2880),  # 40 minutes (4x10 quarters)
+    "hockey_nhl": (2.5, 3600),          # 60 minutes
+    # Inning sports: total_game_units = total outs (9 innings × 6 outs/inning)
+    # All baseball keys use Poisson model (dispatched by sport_key.startswith("baseball_"))
+    # These entries are fallback for wall-clock estimation when period info is unavailable
+    "baseball_mlb": (4.0, 54),              # 54 outs in regulation
+    "baseball_mlb_preseason": (4.0, 54),    # Same rules as regular season
+    "baseball_ncaa": (4.0, 54),             # NCAA baseball: 9 innings
 }
+
+
+def parse_mlb_inning(period_str: str | None) -> float | None:
+    """
+    Parse MLB inning/half info into outs remaining (0-54 scale).
+
+    Thin wrapper around parse_baseball_state() for backward compatibility
+    with parse_game_clock().
+    """
+    state = parse_baseball_state(period_str)
+    if state is None:
+        return None
+    return state["outs_remaining"]
+
+
+def parse_baseball_state(period_str: str | None) -> dict | None:
+    """
+    Parse baseball inning/half info into structured game state.
+
+    Handles formats from ESPN and StatPal:
+      - "Top 5th", "Bot 7th", "Mid 3rd", "End 6th"
+      - "Top 5", "Bottom 7", "T5", "B7"
+      - Numeric period with no half info (assumes mid-inning)
+
+    Returns dict with:
+      - inning: int (1-based)
+      - is_top: bool | None (True=top/away batting, False=bottom/home batting)
+      - outs_in_half: float (estimated outs completed in current half-inning)
+      - home_half_innings_remaining: float
+      - away_half_innings_remaining: float
+      - outs_remaining: float (total, for backward compat)
+    Or None if unparsable.
+    """
+    import re
+
+    if not period_str:
+        return None
+
+    p = period_str.strip().lower()
+
+    # Detect half: top (away batting) vs bottom (home batting)
+    is_top = None
+    is_mid = False  # between halves
+    is_end = False  # between innings
+
+    if p.startswith(("top", "t ")) or (p[:1] == "t" and len(p) >= 2 and p[1:2].isdigit()):
+        is_top = True
+    elif p.startswith(("bot", "bottom", "b ")) or (p[:1] == "b" and len(p) >= 2 and p[1:2].isdigit()):
+        is_top = False
+    elif p.startswith("mid"):
+        is_mid = True
+    elif p.startswith("end"):
+        is_end = True
+
+    # Extract inning number
+    nums = re.findall(r'\d+', p)
+    if not nums:
+        return None
+    inning = int(nums[0])
+    if inning < 1:
+        return None
+
+    total_outs = 54  # 9 innings × 6 outs/inning
+    regulation_innings = 9
+
+    # Calculate remaining half-innings for each team
+    # In regulation: away bats top 1-9 (9 HI), home bats bottom 1-9 (9 HI)
+    if is_end:
+        # End of inning N: both halves complete
+        completed_full_innings = inning
+        away_hi = max(regulation_innings - completed_full_innings, 0)
+        home_hi = max(regulation_innings - completed_full_innings, 0)
+        outs_in_half = 0.0
+        outs_done = inning * 6
+    elif is_mid:
+        # Mid inning N: top complete, bottom about to start
+        away_hi = max(regulation_innings - inning, 0)  # away done with top N
+        home_hi = max(regulation_innings - inning + 1, 0)  # home still has bottom N
+        outs_in_half = 0.0
+        outs_done = (inning - 1) * 6 + 3
+    elif is_top is True:
+        # Top of inning N: away batting (~1.5 outs into half)
+        outs_in_half = 1.5
+        # Away: remaining in this HI + future tops
+        away_hi_after = max(regulation_innings - inning, 0)
+        away_hi = (3 - outs_in_half) / 3 + away_hi_after  # fractional current + full future
+        # Home: all bottoms from N onward
+        home_hi = max(regulation_innings - inning + 1, 0)
+        outs_done = (inning - 1) * 6 + outs_in_half
+    elif is_top is False:
+        # Bottom of inning N: home batting (~1.5 outs into half)
+        outs_in_half = 1.5
+        # Away: future tops only (current inning top already done)
+        away_hi = max(regulation_innings - inning, 0)
+        # Home: remaining in this HI + future bottoms
+        home_hi_after = max(regulation_innings - inning, 0)
+        home_hi = (3 - outs_in_half) / 3 + home_hi_after
+        outs_done = (inning - 1) * 6 + 3 + outs_in_half
+    else:
+        # Unknown half — assume mid-inning
+        away_hi = max(regulation_innings - inning, 0)
+        home_hi = max(regulation_innings - inning + 1, 0)
+        outs_in_half = 0.0
+        outs_done = (inning - 1) * 6 + 3
+
+    outs_remaining = max(total_outs - outs_done, 0.5)
+
+    return {
+        "inning": inning,
+        "is_top": is_top,
+        "outs_in_half": outs_in_half,
+        "home_half_innings_remaining": max(home_hi, 0.0),
+        "away_half_innings_remaining": max(away_hi, 0.0),
+        "outs_remaining": outs_remaining,
+    }
+
+
+# -------------------------------------------------------------------------
+# Baseball Win Probability (Poisson run-scoring model)
+# -------------------------------------------------------------------------
+
+# Average runs per half-inning in MLB (~4.5 R/G ÷ 9 innings ÷ 2 halves × 2 teams)
+# Adjustable for different leagues (college baseball averages ~5.5 R/G)
+BASEBALL_RUNS_PER_HALF_INNING = 0.5
+
+# Home field advantage: home teams win ~54% of MLB games historically.
+# Modeled as a constant boost to expected home margin (≈ +0.13 runs).
+BASEBALL_HOME_ADVANTAGE_RUNS = 0.13
+
+
+def compute_baseball_win_prob(
+    home_score: int,
+    away_score: int,
+    period_str: str | None,
+    pregame_spread: float | None = None,
+    runs_per_half_inning: float = BASEBALL_RUNS_PER_HALF_INNING,
+) -> float | None:
+    """
+    Compute baseball win probability using a Poisson run-scoring model.
+
+    Based on Tom Tango's methodology ("The Book") and FanGraphs' approach:
+    remaining runs for each team are Poisson-distributed, and the normal
+    approximation gives P(home wins) via the CDF.
+
+    Key features vs. the generic clock-based model:
+    - Asymmetric half-innings (home bats last → advantage)
+    - Walk-off handling (home leading entering bottom 9th = game over)
+    - Poisson variance (variance = mean, not a fixed base_std)
+    - Works for any baseball league by adjusting runs_per_half_inning
+
+    Args:
+        home_score: Current home team score
+        away_score: Current away team score
+        period_str: Inning string (e.g., "Top 5th", "Bot 7th", "3")
+        pregame_spread: Pregame Vegas spread (negative = home favored)
+        runs_per_half_inning: Average runs scored per half-inning (default: 0.5)
+
+    Returns:
+        Home win probability (0.0-1.0) or None if game state can't be parsed.
+    """
+    state = parse_baseball_state(period_str)
+    if state is None:
+        return None
+
+    score_diff = home_score - away_score
+    home_hi = state["home_half_innings_remaining"]
+    away_hi = state["away_half_innings_remaining"]
+
+    # Walk-off rule: if home is leading and it's top 9+ or later,
+    # and home has no remaining at-bats needed, game is effectively over
+    if score_diff > 0 and state["inning"] >= 9 and state["is_top"] is True and home_hi < 0.01:
+        return 0.999
+
+    # Expected remaining runs for each team (Poisson λ)
+    lambda_home = runs_per_half_inning * home_hi
+    lambda_away = runs_per_half_inning * away_hi
+
+    # Pregame spread adjustment: scale by fraction of game remaining
+    spread = pregame_spread if pregame_spread is not None else 0.0
+    total_hi = home_hi + away_hi
+    fraction_remaining = total_hi / 18.0 if total_hi > 0 else 0.001
+    spread_adjustment = -spread * fraction_remaining
+
+    # Expected final margin (positive = home wins)
+    # = current lead + expected remaining home runs - expected remaining away runs
+    #   + home field advantage (decays with game) + spread adjustment
+    home_advantage = BASEBALL_HOME_ADVANTAGE_RUNS * fraction_remaining
+    expected_margin = score_diff + (lambda_home - lambda_away) + home_advantage + spread_adjustment
+
+    # Poisson variance: Var(Poisson) = λ, and runs are independent
+    # Total variance = λ_home + λ_away (variance of difference of independent Poissons)
+    variance = lambda_home + lambda_away
+
+    # Edge case: near end of game, very low variance
+    if variance < 0.01:
+        if score_diff > 0:
+            return 0.999
+        elif score_diff < 0:
+            return 0.001
+        else:
+            # Tied at end of regulation → extra innings, slight home advantage
+            return 0.5 + BASEBALL_HOME_ADVANTAGE_RUNS * 0.1
+
+    std_dev = math.sqrt(variance)
+
+    # P(home wins) = Φ(expected_margin / std_dev)
+    win_prob = _norm_cdf(expected_margin / std_dev)
+
+    return max(0.001, min(0.999, win_prob))
 
 
 def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) -> float | None:
@@ -50,12 +272,20 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
 
     Returns None if the game state can't be parsed.
     """
-    if not clock_str or not period:
+    if not period:
         return None
 
     sport_key = _normalize_sport_key(sport_key)
     params = SPORT_PARAMS.get(sport_key)
     if not params:
+        return None
+
+    # Baseball: inning-based, doesn't use clock_str
+    if sport_key.startswith("baseball_"):
+        return parse_mlb_inning(period)
+
+    # Clock sports require clock_str
+    if not clock_str:
         return None
 
     _, total_seconds = params
@@ -203,6 +433,9 @@ def estimate_seconds_remaining_from_wall_clock(
         "basketball_ncaab": 8100,   # ~2h 15m
         "basketball_wncaab": 8100,  # ~2h 15m
         "hockey_nhl": 9000,         # ~2h 30m (NHL average ~2h 20m)
+        "baseball_mlb": 11400,          # ~3h 10m (MLB average ~3h 04m)
+        "baseball_mlb_preseason": 10800, # ~3h (spring training games often shorter)
+        "baseball_ncaa": 10800,          # ~3h (college baseball)
     }
 
     wall_duration = _WALL_CLOCK_DURATIONS.get(sport_key)
@@ -259,6 +492,19 @@ def compute_statistical_win_prob(
         Home win probability (0.0-1.0) or None if game state can't be parsed.
     """
     sport_key = _normalize_sport_key(sport_key)
+
+    # Baseball: use dedicated Poisson-based model when we have inning info.
+    # Falls through to wall-clock fallback below if period is None.
+    if sport_key.startswith("baseball_") and period:
+        result = compute_baseball_win_prob(
+            home_score=home_score,
+            away_score=away_score,
+            period_str=period,
+            pregame_spread=pregame_spread,
+        )
+        if result is not None:
+            return result
+
     params = SPORT_PARAMS.get(sport_key)
     if not params:
         return None

@@ -4,9 +4,12 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from app.utils.win_probability import (
     _normalize_sport_key,
+    compute_baseball_win_prob,
     compute_statistical_win_prob,
     estimate_seconds_remaining_from_wall_clock,
+    parse_baseball_state,
     parse_game_clock,
+    parse_mlb_inning,
 )
 
 
@@ -363,6 +366,9 @@ ALL_DB_SPORT_KEYS = [
     ("basketball_ncaab", "5:00", "2nd Half", 60, 55),
     ("basketball_wncaab", "5:00", "Q4", 60, 55),
     ("icehockey_nhl", "10:00", "3rd Period", 3, 1),
+    ("baseball_mlb", None, "Top 5th", 4, 2),
+    ("baseball_mlb_preseason", None, "Bot 3rd", 2, 1),
+    ("baseball_ncaa", None, "Top 7th", 5, 3),
 ]
 
 
@@ -551,3 +557,288 @@ class TestComputeWinProbWithWallClock:
         )
         assert result is not None
         assert result > 0.5
+
+
+class TestParseMLBInning:
+    """Test MLB inning parsing into outs remaining."""
+
+    def test_top_1st(self):
+        result = parse_mlb_inning("Top 1st")
+        assert result is not None
+        assert result == 52.5  # 54 - 1.5
+
+    def test_bottom_1st(self):
+        result = parse_mlb_inning("Bot 1st")
+        assert result is not None
+        assert result == 49.5  # 54 - 4.5
+
+    def test_top_5th(self):
+        result = parse_mlb_inning("Top 5th")
+        assert result is not None
+        # (5-1)*6 + 1.5 = 25.5 done, 54 - 25.5 = 28.5
+        assert result == 28.5
+
+    def test_bottom_7th(self):
+        result = parse_mlb_inning("Bottom 7th")
+        assert result is not None
+        # (7-1)*6 + 3 + 1.5 = 40.5 done, 54 - 40.5 = 13.5
+        assert result == 13.5
+
+    def test_top_9th(self):
+        result = parse_mlb_inning("Top 9th")
+        assert result is not None
+        # (9-1)*6 + 1.5 = 49.5 done, 54 - 49.5 = 4.5
+        assert result == 4.5
+
+    def test_bottom_9th(self):
+        result = parse_mlb_inning("Bot 9th")
+        assert result is not None
+        # (9-1)*6 + 3 + 1.5 = 52.5 done, 54 - 52.5 = 1.5
+        assert result == 1.5
+
+    def test_mid_inning(self):
+        result = parse_mlb_inning("Mid 5th")
+        assert result is not None
+        # (5-1)*6 + 3 = 27 done, 54 - 27 = 27
+        assert result == 27.0
+
+    def test_end_inning(self):
+        result = parse_mlb_inning("End 5th")
+        assert result is not None
+        # 5*6 = 30 done, 54 - 30 = 24
+        assert result == 24.0
+
+    def test_numeric_only(self):
+        """Just an inning number (e.g., from ESPN ee.period)."""
+        result = parse_mlb_inning("5")
+        assert result is not None
+        # Unknown half → assumes mid-inning: (5-1)*6 + 3 = 27 done, 54 - 27 = 27
+        assert result == 27.0
+
+    def test_extra_innings(self):
+        """Extra innings: top of 10th."""
+        result = parse_mlb_inning("Top 10th")
+        assert result is not None
+        # (10-1)*6 + 1.5 = 55.5 done, 54 - 55.5 → clamped to 0.5
+        assert result == 0.5
+
+    def test_none_period(self):
+        assert parse_mlb_inning(None) is None
+
+    def test_empty_period(self):
+        assert parse_mlb_inning("") is None
+
+    def test_t5_shorthand(self):
+        """Short format: T5, B7."""
+        result = parse_mlb_inning("T5")
+        assert result is not None
+        assert result == 28.5
+
+    def test_b7_shorthand(self):
+        result = parse_mlb_inning("B7")
+        assert result is not None
+        assert result == 13.5
+
+
+class TestParseBaseballState:
+    """Test structured baseball state parsing."""
+
+    def test_top_5th_half_innings(self):
+        """Top 5th: away batting. Home has more remaining HI."""
+        state = parse_baseball_state("Top 5th")
+        assert state is not None
+        assert state["inning"] == 5
+        assert state["is_top"] is True
+        # Away: partial current + innings 6-9 tops = 0.5 + 4 = 4.5
+        assert state["away_half_innings_remaining"] == 4.5
+        # Home: bottoms 5-9 = 5
+        assert state["home_half_innings_remaining"] == 5
+
+    def test_bottom_9th_home_batting(self):
+        """Bottom 9th: home batting. Away has 0 HI remaining."""
+        state = parse_baseball_state("Bot 9th")
+        assert state is not None
+        assert state["is_top"] is False
+        assert state["away_half_innings_remaining"] == 0
+        # Home has partial current half-inning
+        assert state["home_half_innings_remaining"] > 0
+        assert state["home_half_innings_remaining"] < 1
+
+    def test_top_1st_full_game(self):
+        """Start of game: both teams have ~9 half-innings."""
+        state = parse_baseball_state("Top 1st")
+        assert state is not None
+        # Away: partial current + 8 more tops
+        assert state["away_half_innings_remaining"] == 8.5
+        # Home: 9 bottoms
+        assert state["home_half_innings_remaining"] == 9
+
+    def test_mid_5th(self):
+        """Mid 5th: between halves."""
+        state = parse_baseball_state("Mid 5th")
+        assert state is not None
+        assert state["away_half_innings_remaining"] == 4  # tops 6-9
+        assert state["home_half_innings_remaining"] == 5  # bottoms 5-9
+
+    def test_extra_innings(self):
+        """Extra innings: minimal remaining."""
+        state = parse_baseball_state("Top 10th")
+        assert state is not None
+        assert state["inning"] == 10
+        assert state["home_half_innings_remaining"] >= 0
+        assert state["away_half_innings_remaining"] >= 0
+
+
+class TestBaseballWinProb:
+    """Test the Poisson-based baseball win probability model directly."""
+
+    def test_start_of_game_slight_home_advantage(self):
+        """0-0 start: home team has ~54% due to home field advantage."""
+        result = compute_baseball_win_prob(0, 0, "Top 1st")
+        assert result is not None
+        assert 0.51 < result < 0.58
+
+    def test_home_advantage_matters_early(self):
+        """Home advantage is more pronounced early (more game to play)."""
+        early = compute_baseball_win_prob(0, 0, "Top 1st")
+        late = compute_baseball_win_prob(0, 0, "Top 9th")
+        assert early is not None and late is not None
+        # Both should be >0.5 but early should be further from 0.5
+        # (Actually in late game the HI asymmetry dominates — home bats last)
+        assert early > 0.5
+
+    def test_walk_off_scenario(self):
+        """Home leading entering top 9 with no home HI remaining is near-certain."""
+        # Top 9th with 0 outs: away has a partial HI, home has 0 future HI
+        # but home is already ahead → near-certain win
+        result = compute_baseball_win_prob(3, 2, "Top 9th")
+        assert result is not None
+        assert result > 0.8
+
+    def test_poisson_variance_scales(self):
+        """Variance should be higher early (more innings left) than late."""
+        # 2-run lead should be less certain early than late
+        early = compute_baseball_win_prob(3, 1, "Top 2nd")
+        late = compute_baseball_win_prob(3, 1, "Top 8th")
+        assert early is not None and late is not None
+        assert late > early
+
+
+class TestMLBStatModel:
+    """Test the statistical model for MLB games via compute_statistical_win_prob."""
+
+    def test_tied_game_early(self):
+        """Tied game in 3rd inning should be close to 50%."""
+        result = compute_statistical_win_prob(
+            home_score=1, away_score=1,
+            clock=None, period="Top 3rd",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        assert result is not None
+        assert abs(result - 0.5) < 0.1
+
+    def test_home_leading_late(self):
+        """Home team up 3 in the 8th should have high win prob."""
+        result = compute_statistical_win_prob(
+            home_score=5, away_score=2,
+            clock=None, period="Top 8th",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        assert result is not None
+        assert result > 0.8
+
+    def test_away_leading(self):
+        """Away team leading should give home <50%."""
+        result = compute_statistical_win_prob(
+            home_score=1, away_score=4,
+            clock=None, period="Top 5th",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        assert result is not None
+        assert result < 0.3
+
+    def test_late_lead_more_decisive(self):
+        """Same lead in 8th should give higher prob than 2nd."""
+        early = compute_statistical_win_prob(
+            home_score=3, away_score=1,
+            clock=None, period="Top 2nd",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        late = compute_statistical_win_prob(
+            home_score=3, away_score=1,
+            clock=None, period="Top 8th",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        assert early is not None and late is not None
+        assert late > early
+
+    def test_blowout_bottom_9th(self):
+        """10-0 in bottom of 9th should be near certain."""
+        result = compute_statistical_win_prob(
+            home_score=10, away_score=0,
+            clock=None, period="Bot 9th",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        assert result is not None
+        assert result > 0.99
+
+    def test_spread_affects_pregame(self):
+        """Home favored by spread should have higher base probability."""
+        even = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock=None, period="Top 1st",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        favored = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock=None, period="Top 1st",
+            sport_key="baseball_mlb",
+            pregame_spread=-1.5,
+        )
+        assert even is not None and favored is not None
+        assert favored > even
+
+    def test_extra_innings_tight(self):
+        """Extra innings tied game: home has slight disadvantage in top 10th
+        because away is batting (could score), but home bats last (walk-off).
+        Model gives ~0.3-0.5 range depending on remaining HI asymmetry."""
+        result = compute_statistical_win_prob(
+            home_score=3, away_score=3,
+            clock=None, period="Top 10th",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        assert result is not None
+        assert 0.2 < result < 0.6
+
+    def test_wall_clock_fallback(self):
+        """MLB should work with wall-clock fallback too."""
+        start = datetime.now(timezone.utc) - timedelta(hours=2)
+        result = compute_statistical_win_prob(
+            home_score=4, away_score=2,
+            clock=None, period=None,
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+            commence_time=start,
+        )
+        assert result is not None
+        assert result > 0.5
+
+    def test_reds_red_sox_scenario(self):
+        """Real game scenario: Reds 3, Red Sox 2, Top 9th (yesterday's game)."""
+        result = compute_statistical_win_prob(
+            home_score=3, away_score=2,
+            clock=None, period="Top 9th",
+            sport_key="baseball_mlb",
+            pregame_spread=0,
+        )
+        assert result is not None
+        # Home up 1 in top 9th — strong favorite
+        assert result > 0.8

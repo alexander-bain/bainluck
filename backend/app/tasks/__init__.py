@@ -618,6 +618,24 @@ def turbo_collapse_odds(self, limit: int = 5000):
     return run_async(_collapse_snapshots_impl(min_age_hours=24, table="odds", limit=limit))
 
 
+# --- StatPal Usage Tracking ---
+
+@celery_app.task(name="app.tasks.track_statpal_usage")
+def track_statpal_usage():
+    """Fetch and record StatPal API daily request count (every 15 min)."""
+    from app.services.statpal_api import get_statpal_request_count
+    from app.tasks.redis_state import record_statpal_usage
+
+    async def _impl():
+        data = await get_statpal_request_count()
+        if data and data.get("request_count") is not None:
+            record_statpal_usage(data["request_count"], data.get("current_date", ""))
+            return {"recorded": True, **data}
+        return {"recorded": False, "reason": "no_data"}
+
+    return run_async(_impl())
+
+
 # --- Heartbeat ---
 
 @celery_app.task(name="app.tasks.heartbeat")
@@ -721,6 +739,10 @@ celery_app.conf.beat_schedule = {
     "sync-mlb-win-probability": {
         "task": "app.tasks.sync_mlb_win_probability",
         "schedule": 120.0,  # Every 2 minutes during MLB season
+    },
+    "track-statpal-usage": {
+        "task": "app.tasks.track_statpal_usage",
+        "schedule": crontab(minute="*/15"),  # Every 15 minutes
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",

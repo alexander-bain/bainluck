@@ -491,7 +491,9 @@ async def _sync_espn_live_events():
                                 pass  # Table may not exist yet
 
                         # Compute statistical model win probability (live games only)
-                        if ee.status == "in" and ee.home_score is not None and ee.away_score is not None and ee.clock:
+                        # Baseball doesn't have a clock — only needs period (inning)
+                        has_game_progress = ee.clock or sport_key.startswith("baseball_")
+                        if ee.status == "in" and ee.home_score is not None and ee.away_score is not None and has_game_progress:
                             try:
                                 from app.utils.win_probability import compute_statistical_win_prob
 

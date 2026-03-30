@@ -865,6 +865,33 @@ def _normalize_status(status: str) -> str:
     return s
 
 
+async def get_statpal_request_count(api_key: Optional[str] = None) -> dict | None:
+    """Fetch current daily request count from StatPal Usage Monitoring endpoint.
+
+    This endpoint does NOT count toward the daily quota.
+    Returns {"access_key": "...", "current_date": "YYYY-MM-DD", "request_count": N}
+    or None on failure.
+    """
+    key = api_key or os.getenv("STATPAL_API_KEY", "")
+    if not key:
+        return None
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(
+                "https://statpal.io/api/user-request-count",
+                params={"access_key": key},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return {
+                "current_date": data.get("current_date"),
+                "request_count": data.get("request_count", 0),
+            }
+        except Exception as e:
+            logger.warning(f"StatPal request count fetch failed: {e}")
+            return None
+
+
 def get_statpal_service(api_key: Optional[str] = None) -> StatPalAPIService:
     """Factory function to create a StatPal API service instance."""
     return StatPalAPIService(api_key=api_key)

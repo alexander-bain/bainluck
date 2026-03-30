@@ -2287,6 +2287,29 @@ async def odds_api_usage():
     }
 
 
+@router.get("/statpal/usage")
+async def statpal_usage():
+    """Current StatPal API usage and daily history."""
+    from app.tasks.redis_state import get_statpal_usage, get_statpal_usage_history
+
+    daily_limit = 300_000
+    current = get_statpal_usage()
+    history = get_statpal_usage_history(days=90)
+
+    # Add percentage and health status
+    if current.get("request_count") is not None:
+        count = current["request_count"]
+        pct = round(count / daily_limit * 100, 1)
+        current["daily_limit"] = daily_limit
+        current["pct_used"] = pct
+        current["health"] = "critical" if pct > 80 else "warning" if pct > 50 else "healthy"
+
+    return {
+        "current": current,
+        "daily_history": history,
+    }
+
+
 @router.get("/odds-api/daily-activity")
 async def odds_api_daily_activity(
     db: AsyncSession = Depends(get_db),

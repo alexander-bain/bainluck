@@ -72,7 +72,7 @@ async def _sync_mlb_win_probability():
                 .options(selectinload(Event.sport))
                 .where(
                     and_(
-                        Sport.key == "baseball_mlb",
+                        Sport.key.in_(["baseball_mlb", "baseball_mlb_preseason"]),
                         Event.status.in_(["live", "scheduled"]),
                         Event.commence_time >= window_start,
                         Event.commence_time <= now + timedelta(hours=1),

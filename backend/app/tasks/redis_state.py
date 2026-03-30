@@ -561,6 +561,78 @@ def get_odds_api_task_breakdown(hours: int = 168) -> list:
 
 DB_SIZE_HISTORY_PREFIX = "bainluck:db_size_history"
 
+# ---------------------------------------------------------------------------
+# StatPal API usage tracking
+# ---------------------------------------------------------------------------
+
+STATPAL_USAGE_KEY = "bainluck:statpal_usage"
+STATPAL_USAGE_HISTORY_PREFIX = "bainluck:statpal_usage:daily"
+
+
+def record_statpal_usage(request_count: int, api_date: str):
+    """Store a StatPal daily request count reading.
+
+    Args:
+        request_count: Number of requests made today (from StatPal API).
+        api_date: Date string from the API response (YYYY-MM-DD).
+    """
+    from datetime import datetime, timezone
+
+    r = get_redis_client()
+    if not r:
+        return
+    try:
+        now_str = datetime.now(timezone.utc).isoformat()
+        r.hset(STATPAL_USAGE_KEY, mapping={
+            "request_count": request_count,
+            "date": api_date,
+            "updated_at": now_str,
+        })
+        # Also store in daily history (keyed by the API date)
+        history_key = f"{STATPAL_USAGE_HISTORY_PREFIX}:{api_date}"
+        r.set(history_key, str(request_count), ex=86400 * 90)  # 90 day TTL
+    except Exception:
+        pass
+
+
+def get_statpal_usage() -> dict:
+    """Get current StatPal usage snapshot from Redis."""
+    r = get_redis_client()
+    if not r:
+        return {"status": "unknown"}
+    try:
+        data = r.hgetall(STATPAL_USAGE_KEY)
+        if not data:
+            return {"status": "no_data"}
+        return {
+            "request_count": int(data.get(b"request_count", b"0")),
+            "date": data.get(b"date", b"").decode(),
+            "updated_at": data.get(b"updated_at", b"").decode(),
+        }
+    except Exception:
+        return {"status": "error"}
+
+
+def get_statpal_usage_history(days: int = 90) -> list:
+    """Get daily StatPal request counts for trending."""
+    from datetime import datetime, timezone, timedelta
+
+    r = get_redis_client()
+    if not r:
+        return []
+    try:
+        results = []
+        now = datetime.now(timezone.utc)
+        for i in range(days):
+            day = (now - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+            key = f"{STATPAL_USAGE_HISTORY_PREFIX}:{day}"
+            val = r.get(key)
+            if val:
+                results.append({"date": day, "request_count": int(val)})
+        return results
+    except Exception:
+        return []
+
 
 def record_db_size(size_mb: float):
     """Store a DB size reading keyed by date (one per day)."""

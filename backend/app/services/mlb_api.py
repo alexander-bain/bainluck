@@ -190,22 +190,19 @@ class MLBAPIService:
             logger.warning(f"MLB context metrics failed for {game_pk}: {e}")
             return None
 
-        # The contextMetrics response has a "game" object with win probability
-        # Try common paths where win probability is stored
-        game_data = data.get("game", data)
-
-        # Try homeWinProbability directly
-        home_wp = game_data.get("homeWinProbability")
+        # The contextMetrics response has homeWinProbability at the TOP level,
+        # NOT inside the "game" sub-object.
+        # Check top-level first, then game sub-object as fallback.
+        home_wp = data.get("homeWinProbability")
         if home_wp is not None:
             return float(home_wp) / 100.0  # MLB API returns percentages
 
-        # Fallback: try currentPlay or probabilities
-        for key in ("currentPlay", "probabilities"):
-            sub = game_data.get(key, {})
-            if isinstance(sub, dict):
-                home_wp = sub.get("homeWinProbability")
-                if home_wp is not None:
-                    return float(home_wp) / 100.0
+        # Fallback: check inside "game" object
+        game_data = data.get("game", {})
+        if isinstance(game_data, dict):
+            home_wp = game_data.get("homeWinProbability")
+            if home_wp is not None:
+                return float(home_wp) / 100.0
 
         logger.warning(f"Could not parse win probability from contextMetrics for {game_pk}")
         return None

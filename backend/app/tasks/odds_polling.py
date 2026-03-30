@@ -923,7 +923,7 @@ async def _poll_all_odds():
                                 and event_status == "live"
                                 and home_score is not None
                                 and away_score is not None
-                                and (event_obj.game_clock or event_obj.commence_time)
+                                and (event_obj.game_clock or event_obj.period or event_obj.commence_time)
                             ):
                                 try:
                                     from app.utils.win_probability import compute_statistical_win_prob
