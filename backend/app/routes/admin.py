@@ -7489,12 +7489,13 @@ async def drop_duplicate_index(
             detail=f"No duplicate found for '{index_name}' — refusing to drop a unique index"
         )
 
-    # Get size before dropping
+    # Get size before dropping — cast to regclass via explicit syntax
     idx_size = (await db.execute(text(
-        "SELECT pg_size_pretty(pg_relation_size(:name::regclass)),"
-        " pg_relation_size(:name::regclass)",
+        "SELECT pg_size_pretty(pg_relation_size(quote_ident(:name))),"
+        " pg_relation_size(quote_ident(:name))",
     ), {"name": index_name})).fetchone()
 
+    # Use safe identifier quoting
     await db.execute(text(f'DROP INDEX "{index_name}"'))
     await db.commit()
 
