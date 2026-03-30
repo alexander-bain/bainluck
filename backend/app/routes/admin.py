@@ -6996,116 +6996,125 @@ async def purge_orphan_pm_events(
 @router.get("/db/storage-analysis")
 async def db_storage_analysis(
     secret: str = Query("", description="Admin secret"),
+    detail: str = Query("sizes", description="What to analyze: sizes, age, status, orphans, all"),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Analyze DB storage: table sizes, futures_odds_snapshots age distribution,
-    resolved vs active market data, orphan snapshots.
+    Analyze DB storage. Split into sections to avoid Heroku 30s timeout.
+    Use detail=sizes (fast), detail=age, detail=status, detail=orphans,
+    or detail=all (slow, may timeout).
     """
     if not _check_admin_secret(secret):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     results = {}
 
-    # Table sizes
-    row = (await db.execute(text(
-        "SELECT pg_size_pretty(pg_total_relation_size('futures_odds_snapshots')),"
-        " pg_size_pretty(pg_total_relation_size('odds_snapshots')),"
-        " pg_size_pretty(pg_total_relation_size('win_prob_snapshots')),"
-        " pg_size_pretty(pg_database_size(current_database())),"
-        " pg_total_relation_size('futures_odds_snapshots'),"
-        " pg_database_size(current_database())"
-    ))).fetchone()
-    results["sizes"] = {
-        "futures_odds_snapshots": row[0],
-        "odds_snapshots": row[1],
-        "win_prob_snapshots": row[2],
-        "database_total": row[3],
-        "futures_odds_snapshots_bytes": row[4],
-        "database_total_bytes": row[5],
-        "futures_pct_of_db": round(row[4] / max(row[5], 1) * 100, 1),
-    }
+    if detail in ("sizes", "all"):
+        row = (await db.execute(text(
+            "SELECT pg_size_pretty(pg_total_relation_size('futures_odds_snapshots')),"
+            " pg_size_pretty(pg_total_relation_size('odds_snapshots')),"
+            " pg_size_pretty(pg_total_relation_size('win_prob_snapshots')),"
+            " pg_size_pretty(pg_database_size(current_database())),"
+            " pg_total_relation_size('futures_odds_snapshots'),"
+            " pg_database_size(current_database())"
+        ))).fetchone()
+        results["sizes"] = {
+            "futures_odds_snapshots": row[0],
+            "odds_snapshots": row[1],
+            "win_prob_snapshots": row[2],
+            "database_total": row[3],
+            "futures_odds_snapshots_bytes": row[4],
+            "database_total_bytes": row[5],
+            "futures_pct_of_db": round(row[4] / max(row[5], 1) * 100, 1),
+        }
 
-    # Oldest and newest days in futures_odds_snapshots
-    oldest = (await db.execute(text(
-        "SELECT DATE(captured_at) as day, COUNT(*) as rows"
-        " FROM futures_odds_snapshots"
-        " GROUP BY 1 ORDER BY 1 LIMIT 5"
-    ))).fetchall()
-    results["oldest_days"] = [{"date": str(r[0]), "rows": r[1]} for r in oldest]
+        # Use pg_stat estimates for row counts (instant, no seq scan)
+        row_estimates = (await db.execute(text(
+            "SELECT relname, n_live_tup, n_dead_tup"
+            " FROM pg_stat_user_tables"
+            " WHERE relname IN ('futures_odds_snapshots', 'odds_snapshots', 'win_prob_snapshots')"
+            " ORDER BY n_live_tup DESC"
+        ))).fetchall()
+        results["row_estimates"] = [
+            {"table": r[0], "live_rows": r[1], "dead_rows": r[2]}
+            for r in row_estimates
+        ]
 
-    newest = (await db.execute(text(
-        "SELECT DATE(captured_at) as day, COUNT(*) as rows"
-        " FROM futures_odds_snapshots"
-        " GROUP BY 1 ORDER BY 1 DESC LIMIT 5"
-    ))).fetchall()
-    results["newest_days"] = [{"date": str(r[0]), "rows": r[1]} for r in newest]
+        # Resolved vs active market counts (fast — small table)
+        market_status = (await db.execute(text(
+            "SELECT status, COUNT(*) FROM futures_markets GROUP BY 1"
+        ))).fetchall()
+        results["market_status"] = [
+            {"status": r[0], "count": r[1]} for r in market_status
+        ]
 
-    # By market resolution status
-    by_status = (await db.execute(text(
-        "SELECT"
-        " CASE WHEN fm.status = 'resolved' THEN 'resolved' ELSE 'active' END as status,"
-        " COUNT(*) as rows"
-        " FROM futures_odds_snapshots fos"
-        " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
-        " JOIN futures_markets fm ON fo.market_id = fm.id"
-        " GROUP BY 1"
-    ))).fetchall()
-    results["by_market_status"] = [
-        {"status": r[0], "rows": r[1], "est_mb": round(r[1] * 144 / 1024 / 1024)}
-        for r in by_status
-    ]
+        # Resolved outcome IDs count (for estimating snapshot impact)
+        resolved_outcomes = (await db.execute(text(
+            "SELECT COUNT(*) FROM futures_outcomes fo"
+            " JOIN futures_markets fm ON fo.market_id = fm.id"
+            " WHERE fm.status = 'resolved'"
+        ))).scalar()
+        total_outcomes = (await db.execute(text(
+            "SELECT COUNT(*) FROM futures_outcomes"
+        ))).scalar()
+        results["outcomes"] = {
+            "total": total_outcomes,
+            "resolved": resolved_outcomes,
+            "active": total_outcomes - resolved_outcomes,
+        }
 
-    # Orphan snapshots (no matching outcome)
-    orphan_count = (await db.execute(text(
-        "SELECT COUNT(*) FROM futures_odds_snapshots"
-        " WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
-    ))).scalar()
-    results["orphan_snapshots"] = orphan_count
+    if detail in ("age", "all"):
+        # Use MIN/MAX instead of GROUP BY for speed
+        age_bounds = (await db.execute(text(
+            "SELECT MIN(captured_at), MAX(captured_at),"
+            " COUNT(*) FROM futures_odds_snapshots"
+        ))).fetchone()
+        results["futures_snapshots"] = {
+            "oldest": str(age_bounds[0]) if age_bounds[0] else None,
+            "newest": str(age_bounds[1]) if age_bounds[1] else None,
+            "total_rows": age_bounds[2],
+        }
 
-    # Total row count
-    total = (await db.execute(text(
-        "SELECT COUNT(*) FROM futures_odds_snapshots"
-    ))).scalar()
-    results["total_rows"] = total
+        # Monthly breakdown using date_trunc (can use index)
+        monthly = (await db.execute(text(
+            "SELECT date_trunc('month', captured_at)::date as month, COUNT(*)"
+            " FROM futures_odds_snapshots"
+            " GROUP BY 1 ORDER BY 1"
+        ))).fetchall()
+        results["futures_by_month"] = [
+            {"month": str(r[0]), "rows": r[1],
+             "est_mb": round(r[1] * 144 / 1024 / 1024)}
+            for r in monthly
+        ]
 
-    # Resolved markets: age distribution
-    resolved_age = (await db.execute(text(
-        "SELECT"
-        " CASE"
-        "   WHEN fos.captured_at < NOW() - INTERVAL '90 days' THEN '90d+'"
-        "   WHEN fos.captured_at < NOW() - INTERVAL '60 days' THEN '60-90d'"
-        "   WHEN fos.captured_at < NOW() - INTERVAL '30 days' THEN '30-60d'"
-        "   ELSE '0-30d'"
-        " END as age_bucket,"
-        " COUNT(*) as rows"
-        " FROM futures_odds_snapshots fos"
-        " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
-        " JOIN futures_markets fm ON fo.market_id = fm.id"
-        " WHERE fm.status = 'resolved'"
-        " GROUP BY 1 ORDER BY 1"
-    ))).fetchall()
-    results["resolved_by_age"] = [
-        {"bucket": r[0], "rows": r[1], "est_mb": round(r[1] * 144 / 1024 / 1024)}
-        for r in resolved_age
-    ]
+    if detail in ("status", "all"):
+        # Snapshot count by market status using outcome_id IN (resolved outcome IDs)
+        # This avoids a 3-way JOIN on the huge table
+        resolved_snap_count = (await db.execute(text(
+            "SELECT COUNT(*) FROM futures_odds_snapshots"
+            " WHERE outcome_id IN ("
+            "   SELECT fo.id FROM futures_outcomes fo"
+            "   JOIN futures_markets fm ON fo.market_id = fm.id"
+            "   WHERE fm.status = 'resolved'"
+            ")"
+        ))).scalar()
+        total_snaps = (await db.execute(text(
+            "SELECT COUNT(*) FROM futures_odds_snapshots"
+        ))).scalar()
+        results["snapshots_by_market_status"] = {
+            "resolved": resolved_snap_count,
+            "active": total_snaps - resolved_snap_count,
+            "total": total_snaps,
+            "resolved_est_mb": round(resolved_snap_count * 144 / 1024 / 1024),
+            "active_est_mb": round((total_snaps - resolved_snap_count) * 144 / 1024 / 1024),
+        }
 
-    # odds_snapshots age distribution
-    odds_age = (await db.execute(text(
-        "SELECT"
-        " CASE"
-        "   WHEN captured_at < NOW() - INTERVAL '30 days' THEN '30d+'"
-        "   WHEN captured_at < NOW() - INTERVAL '14 days' THEN '14-30d'"
-        "   WHEN captured_at < NOW() - INTERVAL '7 days' THEN '7-14d'"
-        "   ELSE '0-7d'"
-        " END as age_bucket,"
-        " COUNT(*) as rows"
-        " FROM odds_snapshots"
-        " GROUP BY 1 ORDER BY 1"
-    ))).fetchall()
-    results["odds_snapshots_by_age"] = [
-        {"bucket": r[0], "rows": r[1]} for r in odds_age
-    ]
+    if detail in ("orphans", "all"):
+        orphan_count = (await db.execute(text(
+            "SELECT COUNT(*) FROM futures_odds_snapshots"
+            " WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
+        ))).scalar()
+        results["orphan_snapshots"] = orphan_count
 
     return results
 
