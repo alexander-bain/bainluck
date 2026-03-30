@@ -7112,65 +7112,57 @@ async def db_storage_analysis(
     if detail in ("space_map",):
         # Exact breakdown of live, dead, and free space in the table file.
         # Uses pgstattuple extension if available, falls back to estimates.
+        # Try pgstattuple for exact breakdown, otherwise use estimates
+        pgstattuple_available = False
         try:
-            st = (await db.execute(text(
-                "SELECT * FROM pgstattuple('futures_odds_snapshots')"
-            ))).fetchone()
-            results["futures_space_map"] = {
-                "table_len_mb": round(st[0] / 1024 / 1024),
-                "tuple_count": st[1],  # live tuples
-                "tuple_len_mb": round(st[2] / 1024 / 1024),
-                "tuple_pct": st[3],  # % of file that is live data
-                "dead_tuple_count": st[4],
-                "dead_tuple_len_mb": round(st[5] / 1024 / 1024),
-                "dead_tuple_pct": st[6],  # % of file that is dead data
-                "free_space_mb": round(st[7] / 1024 / 1024),
-                "free_space_pct": st[8],  # % of file that is reusable free space
-            }
+            await db.execute(text("SELECT 1 FROM pgstattuple('pg_class') LIMIT 0"))
+            pgstattuple_available = True
         except Exception:
-            # pgstattuple not available — use estimates
-            heap_size = (await db.execute(text(
-                "SELECT pg_relation_size('futures_odds_snapshots'),"
-                " pg_indexes_size('futures_odds_snapshots'),"
-                " pg_total_relation_size('futures_odds_snapshots')"
-            ))).fetchone()
-            stats = (await db.execute(text(
-                "SELECT n_live_tup, n_dead_tup,"
-                " pg_size_pretty(pg_relation_size('futures_odds_snapshots')),"
-                " pg_size_pretty(pg_indexes_size('futures_odds_snapshots'))"
-                " FROM pg_stat_user_tables"
-                " WHERE relname = 'futures_odds_snapshots'"
-            ))).fetchone()
-            results["futures_space_map"] = {
-                "heap_size_mb": round(heap_size[0] / 1024 / 1024),
-                "indexes_size_mb": round(heap_size[1] / 1024 / 1024),
-                "total_size_mb": round(heap_size[2] / 1024 / 1024),
-                "live_tuples": stats[0],
-                "dead_tuples": stats[1],
-                "heap_pretty": stats[2],
-                "indexes_pretty": stats[3],
-                "note": "pgstattuple extension not available — dead/free breakdown is approximate. "
-                        "dead_tuples only shows rows pending next autovacuum, NOT total reusable space.",
-            }
+            await db.rollback()
 
-        # Also check odds_snapshots
-        try:
-            st2 = (await db.execute(text(
-                "SELECT * FROM pgstattuple('odds_snapshots')"
-            ))).fetchone()
-            results["odds_space_map"] = {
-                "table_len_mb": round(st2[0] / 1024 / 1024),
-                "tuple_count": st2[1],
-                "tuple_len_mb": round(st2[2] / 1024 / 1024),
-                "tuple_pct": st2[3],
-                "dead_tuple_count": st2[4],
-                "dead_tuple_len_mb": round(st2[5] / 1024 / 1024),
-                "dead_tuple_pct": st2[6],
-                "free_space_mb": round(st2[7] / 1024 / 1024),
-                "free_space_pct": st2[8],
-            }
-        except Exception:
-            pass
+        for tbl_name in ["futures_odds_snapshots", "odds_snapshots"]:
+            key = tbl_name.replace("_snapshots", "") + "_space_map"
+            if pgstattuple_available:
+                try:
+                    st = (await db.execute(text(
+                        f"SELECT * FROM pgstattuple('{tbl_name}')"
+                    ))).fetchone()
+                    results[key] = {
+                        "table_len_mb": round(st[0] / 1024 / 1024),
+                        "live_tuple_count": st[1],
+                        "live_tuple_mb": round(st[2] / 1024 / 1024),
+                        "live_pct": st[3],
+                        "dead_tuple_count": st[4],
+                        "dead_tuple_mb": round(st[5] / 1024 / 1024),
+                        "dead_pct": st[6],
+                        "free_space_mb": round(st[7] / 1024 / 1024),
+                        "free_pct": st[8],
+                    }
+                except Exception:
+                    await db.rollback()
+
+            if key not in results:
+                # Fallback: heap/index sizes + pg_stat estimates
+                sizes = (await db.execute(text(
+                    f"SELECT pg_relation_size('{tbl_name}'),"
+                    f" pg_indexes_size('{tbl_name}'),"
+                    f" pg_total_relation_size('{tbl_name}')"
+                ))).fetchone()
+                stats = (await db.execute(text(
+                    "SELECT n_live_tup, n_dead_tup"
+                    " FROM pg_stat_user_tables"
+                    f" WHERE relname = '{tbl_name}'"
+                ))).fetchone()
+                results[key] = {
+                    "heap_mb": round(sizes[0] / 1024 / 1024),
+                    "indexes_mb": round(sizes[1] / 1024 / 1024),
+                    "total_mb": round(sizes[2] / 1024 / 1024),
+                    "live_tuples_est": stats[0] if stats else None,
+                    "dead_tuples_pending": stats[1] if stats else None,
+                    "note": "pgstattuple not available. dead_tuples_pending shows only rows "
+                            "waiting for next autovacuum — NOT total reusable space. "
+                            "Free space (from past autovacuum runs) is invisible without pgstattuple.",
+                }
 
     if detail in ("orphans", "all", "categories"):
         orphan_count = (await db.execute(text(
