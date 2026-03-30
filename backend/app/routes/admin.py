@@ -7447,3 +7447,61 @@ async def vacuum_table(
         "bytes_freed": size_before[1] - size_after[1],
         "freed_pretty": f"{(size_before[1] - size_after[1]) / 1024 / 1024:.1f} MB",
     }
+
+
+@router.post("/db/drop-duplicate-index")
+async def drop_duplicate_index(
+    secret: str = Query("", description="Admin secret"),
+    index_name: str = Query(..., description="Index name to drop"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Drop a duplicate index by name. Only allows dropping known-safe duplicates."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    # Verify it exists and get its definition
+    idx_info = (await db.execute(text(
+        "SELECT tablename, indexdef FROM pg_indexes"
+        " WHERE schemaname = 'public' AND indexname = :name"
+    ), {"name": index_name})).fetchone()
+    if not idx_info:
+        raise HTTPException(status_code=404, detail=f"Index '{index_name}' not found")
+
+    # Check for another index on the same table with the same column definition
+    # (i.e., confirm it's actually a duplicate before dropping)
+    all_indexes = (await db.execute(text(
+        "SELECT indexname, indexdef FROM pg_indexes"
+        " WHERE schemaname = 'public' AND tablename = :tbl AND indexname != :name"
+    ), {"tbl": idx_info[0], "name": index_name})).fetchall()
+
+    # Extract column list from indexdef (everything after USING btree/hash/etc)
+    import re
+    def extract_cols(indexdef):
+        m = re.search(r'USING \w+ \((.+)\)$', indexdef)
+        return m.group(1).strip() if m else None
+
+    target_cols = extract_cols(idx_info[1])
+    duplicates = [r[0] for r in all_indexes if extract_cols(r[1]) == target_cols]
+
+    if not duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No duplicate found for '{index_name}' — refusing to drop a unique index"
+        )
+
+    # Get size before dropping
+    idx_size = (await db.execute(text(
+        "SELECT pg_size_pretty(pg_relation_size(:name::regclass)),"
+        " pg_relation_size(:name::regclass)",
+    ), {"name": index_name})).fetchone()
+
+    await db.execute(text(f'DROP INDEX "{index_name}"'))
+    await db.commit()
+
+    return {
+        "dropped": index_name,
+        "size_freed": idx_size[0],
+        "bytes_freed": idx_size[1],
+        "kept_duplicate": duplicates[0],
+        "table": idx_info[0],
+    }
