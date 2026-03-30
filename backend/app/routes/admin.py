@@ -7044,7 +7044,7 @@ async def db_storage_analysis(
     # By market resolution status
     by_status = (await db.execute(text(
         "SELECT"
-        " CASE WHEN fm.is_resolved THEN 'resolved' ELSE 'active' END as status,"
+        " CASE WHEN fm.status = 'resolved' THEN 'resolved' ELSE 'active' END as status,"
         " COUNT(*) as rows"
         " FROM futures_odds_snapshots fos"
         " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
@@ -7082,7 +7082,7 @@ async def db_storage_analysis(
         " FROM futures_odds_snapshots fos"
         " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
         " JOIN futures_markets fm ON fo.market_id = fm.id"
-        " WHERE fm.is_resolved = true"
+        " WHERE fm.status = 'resolved'"
         " GROUP BY 1 ORDER BY 1"
     ))).fetchall()
     results["resolved_by_age"] = [
@@ -7131,8 +7131,8 @@ async def delete_resolved_futures_snapshots(
         "SELECT COUNT(*) FROM futures_odds_snapshots fos"
         " JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
         " JOIN futures_markets fm ON fo.market_id = fm.id"
-        " WHERE fm.is_resolved = true"
-        " AND fos.captured_at < NOW() - INTERVAL :days || ' days'"
+        " WHERE fm.status = 'resolved'"
+        " AND fos.captured_at < NOW() - make_interval(days => :days)"
     ).bindparams(days=older_than_days))).scalar()
 
     if dry_run:
@@ -7153,8 +7153,8 @@ async def delete_resolved_futures_snapshots(
             "   SELECT fos.id FROM futures_odds_snapshots fos"
             "   JOIN futures_outcomes fo ON fos.outcome_id = fo.id"
             "   JOIN futures_markets fm ON fo.market_id = fm.id"
-            "   WHERE fm.is_resolved = true"
-            "   AND fos.captured_at < NOW() - INTERVAL :days || ' days'"
+            "   WHERE fm.status = 'resolved'"
+            "   AND fos.captured_at < NOW() - make_interval(days => :days)"
             "   LIMIT :batch"
             ")"
         ).bindparams(days=older_than_days, batch=batch_size))
@@ -7247,16 +7247,17 @@ async def vacuum_table(
         f" pg_total_relation_size('{table}')"
     ))).fetchone()
 
-    # VACUUM requires running outside a transaction
-    raw_conn = await db.connection()
-    underlying = await raw_conn.get_raw_connection()
-    old_autocommit = underlying.autocommit
-    await underlying.set_autocommit(True)
+    # VACUUM requires running outside a transaction — use raw asyncpg connection
+    import asyncpg
+    from app.services.database import DATABASE_URL
+
+    dsn = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+    raw = await asyncpg.connect(dsn)
     try:
         cmd = f"VACUUM FULL {table}" if full else f"VACUUM {table}"
-        await underlying.execute(cmd)
+        await raw.execute(cmd)
     finally:
-        await underlying.set_autocommit(old_autocommit)
+        await raw.close()
 
     # Get table size after
     size_after = (await db.execute(text(
