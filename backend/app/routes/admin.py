@@ -7206,6 +7206,57 @@ async def db_storage_analysis(
         ))).scalar()
         results["crypto_snapshots_remaining"] = crypto_snaps
 
+    if detail in ("indexes",):
+        # Per-table breakdown: heap vs indexes, plus individual index sizes
+        table_sizes = (await db.execute(text("""
+            SELECT
+                relname AS table,
+                pg_size_pretty(pg_relation_size(c.oid)) AS heap,
+                pg_size_pretty(pg_indexes_size(c.oid)) AS indexes,
+                pg_size_pretty(pg_total_relation_size(c.oid)) AS total,
+                pg_relation_size(c.oid) AS heap_bytes,
+                pg_indexes_size(c.oid) AS idx_bytes,
+                pg_total_relation_size(c.oid) AS total_bytes
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+            ORDER BY pg_total_relation_size(c.oid) DESC
+            LIMIT 15
+        """))).fetchall()
+        results["table_sizes"] = [
+            {
+                "table": r[0], "heap": r[1], "indexes": r[2], "total": r[3],
+                "index_pct": round(r[5] / max(r[6], 1) * 100, 1),
+            }
+            for r in table_sizes
+        ]
+
+        # Individual index sizes for the big 3 tables
+        idx_details = (await db.execute(text("""
+            SELECT
+                tablename,
+                indexname,
+                pg_size_pretty(pg_relation_size(indexname::regclass)) AS size,
+                pg_relation_size(indexname::regclass) AS size_bytes
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename IN ('futures_odds_snapshots', 'odds_snapshots', 'win_prob_snapshots')
+            ORDER BY pg_relation_size(indexname::regclass) DESC
+        """))).fetchall()
+        results["index_details"] = [
+            {"table": r[0], "index": r[1], "size": r[2], "size_bytes": r[3]}
+            for r in idx_details
+        ]
+
+        # Summary
+        total_idx = sum(r[5] for r in table_sizes)
+        total_heap = sum(r[4] for r in table_sizes)
+        results["index_summary"] = {
+            "total_index_mb": round(total_idx / 1024 / 1024),
+            "total_heap_mb": round(total_heap / 1024 / 1024),
+            "index_to_heap_ratio": round(total_idx / max(total_heap, 1), 2),
+        }
+
     if detail in ("collapse_estimate",):
         # Sample a few resolved outcomes and measure collapse ratio using
         # window functions (same approach as retention.py).
