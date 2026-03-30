@@ -7248,6 +7248,18 @@ async def db_storage_analysis(
             for r in idx_details
         ]
 
+        # Duplicate index detection: show full CREATE INDEX statement for each
+        dup_check = (await db.execute(text("""
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename IN ('futures_odds_snapshots', 'odds_snapshots', 'win_prob_snapshots')
+            ORDER BY tablename, indexname
+        """))).fetchall()
+        results["index_definitions"] = [
+            {"name": r[0], "definition": r[1]} for r in dup_check
+        ]
+
         # Summary
         total_idx = sum(r[5] for r in table_sizes)
         total_heap = sum(r[4] for r in table_sizes)
