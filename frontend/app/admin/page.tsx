@@ -1130,8 +1130,139 @@ export default function AdminDashboard() {
 
           {/* Worker tasks */}
           <TasksTable tasks={data.worker.tasks} />
+
+          {/* Monthly costs */}
+          <ProjectCosts />
         </>
       )}
+    </div>
+  );
+}
+
+// --- Project Costs ---
+
+interface CostItem {
+  name: string;
+  category: "infrastructure" | "data" | "ai" | "services";
+  monthly: number;
+  note?: string;
+  variable?: boolean;
+}
+
+const PROJECT_COSTS: CostItem[] = [
+  { name: "Web dyno (Standard-1X)", category: "infrastructure", monthly: 25 },
+  { name: "Scheduler dyno (Standard-1X)", category: "infrastructure", monthly: 25 },
+  { name: "Worker-background (Standard-1X)", category: "infrastructure", monthly: 25 },
+  { name: "Worker-realtime (Standard-2X)", category: "infrastructure", monthly: 50 },
+  { name: "PostgreSQL (Standard-0)", category: "infrastructure", monthly: 50, note: "64 GB" },
+  { name: "Redis (Premium-0)", category: "infrastructure", monthly: 15 },
+  { name: "Domain (bainluck.com)", category: "infrastructure", monthly: 1, note: "~$12/year" },
+  { name: "The Odds API", category: "data", monthly: 119, note: "5M requests/mo quota", variable: true },
+  { name: "StatPal API", category: "data", monthly: 99, note: "300K requests/day" },
+  { name: "DataGolf API", category: "data", monthly: 30, note: "Golf predictions + live" },
+  { name: "OpenAI (GPT-4o-mini)", category: "ai", monthly: 5, note: "LLM classification", variable: true },
+  { name: "Vercel (Frontend)", category: "services", monthly: 0, note: "Free tier" },
+  { name: "Firebase Auth", category: "services", monthly: 0, note: "Free tier" },
+  { name: "Google Analytics 4", category: "services", monthly: 0, note: "Free" },
+  { name: "ESPN API", category: "services", monthly: 0, note: "Free (undocumented)" },
+  { name: "MLB Stats API", category: "services", monthly: 0, note: "Free" },
+  { name: "Kalshi API", category: "services", monthly: 0, note: "Free (API key)" },
+  { name: "Polymarket API", category: "services", monthly: 0, note: "Free (no key)" },
+  { name: "TMDB API", category: "services", monthly: 0, note: "Free (Oscars posters)" },
+  { name: "Apple Developer Program", category: "services", monthly: 8.25, note: "$99/year for TestFlight" },
+];
+
+const CATEGORY_LABELS: Record<string, string> = {
+  infrastructure: "Infrastructure (Heroku)",
+  data: "Data Providers",
+  ai: "AI / LLM",
+  services: "Other Services",
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  infrastructure: "bg-blue-500",
+  data: "bg-emerald-500",
+  ai: "bg-purple-500",
+  services: "bg-gray-400",
+};
+
+function ProjectCosts() {
+  const total = PROJECT_COSTS.reduce((s, c) => s + c.monthly, 0);
+  const byCategory = PROJECT_COSTS.reduce<Record<string, { items: CostItem[]; subtotal: number }>>((acc, item) => {
+    if (!acc[item.category]) acc[item.category] = { items: [], subtotal: 0 };
+    acc[item.category].items.push(item);
+    acc[item.category].subtotal += item.monthly;
+    return acc;
+  }, {});
+
+  const paidTotal = PROJECT_COSTS.filter(c => c.monthly > 0).reduce((s, c) => s + c.monthly, 0);
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-text-primary">Monthly Project Costs</h3>
+        <div className="text-right">
+          <span className="text-2xl font-bold text-text-primary">${total.toFixed(0)}</span>
+          <span className="text-xs text-text-muted ml-1">/month</span>
+        </div>
+      </div>
+
+      <div className="h-4 bg-surface-border rounded-full overflow-hidden flex mb-3">
+        {["infrastructure", "data", "ai"].map(cat => {
+          const pct = byCategory[cat] ? (byCategory[cat].subtotal / paidTotal) * 100 : 0;
+          if (pct <= 0) return null;
+          return (
+            <div
+              key={cat}
+              className={"h-full " + CATEGORY_COLORS[cat]}
+              style={{ width: pct + "%" }}
+              title={CATEGORY_LABELS[cat] + ": $" + (byCategory[cat]?.subtotal || 0)}
+            />
+          );
+        })}
+      </div>
+
+      <div className="flex gap-4 mb-4 text-micro text-text-muted">
+        {["infrastructure", "data", "ai"].map(cat => (
+          <div key={cat} className="flex items-center gap-1">
+            <span className={"inline-block w-2.5 h-2.5 rounded-sm " + CATEGORY_COLORS[cat]} />
+            {CATEGORY_LABELS[cat]} (${byCategory[cat]?.subtotal || 0})
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-4">
+        {["infrastructure", "data", "ai", "services"].map(cat => {
+          const group = byCategory[cat];
+          if (!group) return null;
+          return (
+            <div key={cat}>
+              <div className="text-micro text-text-muted uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <span className={"inline-block w-2 h-2 rounded-sm " + CATEGORY_COLORS[cat]} />
+                {CATEGORY_LABELS[cat]}
+                <span className="ml-auto font-semibold">${group.subtotal.toFixed(0)}</span>
+              </div>
+              <div className="space-y-0.5">
+                {group.items.map(item => (
+                  <div key={item.name} className="flex items-center text-xs py-0.5">
+                    <span className="text-text-secondary flex-1">{item.name}</span>
+                    {item.note && <span className="text-text-muted text-micro mr-3 hidden sm:inline">{item.note}</span>}
+                    <span className={"font-medium tabular-nums " + (item.monthly > 0 ? "text-text-primary" : "text-green-600")}>
+                      {item.monthly > 0 ? "$" + item.monthly.toFixed(0) : "Free"}
+                    </span>
+                    {item.variable && <span className="text-micro text-text-muted ml-1">~</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-surface-border flex justify-between text-xs text-text-muted">
+        <span>Annual projection</span>
+        <span className="font-semibold text-text-primary">${(total * 12).toFixed(0)}/year</span>
+      </div>
     </div>
   );
 }

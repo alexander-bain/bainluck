@@ -6519,7 +6519,7 @@ async def operations_dashboard(
             # Rough estimate: odds ~500B/row, winprob ~300B/row, futures ~400B/row
             daily_bytes = (g.odds_rows_24h * 500) + (g.wp_rows_24h * 300) + (g.futures_rows_24h * 400)
             growth_rate_mb_per_day = round(daily_bytes / 1024 / 1024, 1)
-            storage_limit_gb = 10
+            storage_limit_gb = 64  # standard-0 plan
             remaining_gb = storage_limit_gb - db_size_gb
             if growth_rate_mb_per_day > 0:
                 days_until_full = round((remaining_gb * 1024) / growth_rate_mb_per_day)
@@ -6582,11 +6582,11 @@ async def operations_dashboard(
             "dead_tuple_pct": round(total_dead / max(total_live + total_dead, 1) * 100, 1),
             "size_trend": db_size_trend,
             "plan": {
-                "name": "essential-1",
-                "storage_limit_gb": 10,
+                "name": "standard-0",
+                "storage_limit_gb": 64,
                 "storage_used_gb": round(db_size_gb, 2),
-                "storage_pct": round(db_size_gb / 10 * 100, 1),
-                "connections_limit": 20,
+                "storage_pct": round(db_size_gb / 64 * 100, 1),
+                "connections_limit": 200,
             },
         }
     except Exception as e:
