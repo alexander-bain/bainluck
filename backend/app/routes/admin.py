@@ -7109,12 +7109,36 @@ async def db_storage_analysis(
             "active_est_mb": round((total_snaps - resolved_snap_count) * 144 / 1024 / 1024),
         }
 
-    if detail in ("orphans", "all"):
+    if detail in ("orphans", "all", "categories"):
         orphan_count = (await db.execute(text(
             "SELECT COUNT(*) FROM futures_odds_snapshots"
             " WHERE outcome_id NOT IN (SELECT id FROM futures_outcomes)"
         ))).scalar()
         results["orphan_snapshots"] = orphan_count
+
+    if detail in ("categories",):
+        # Check for remaining crypto or other category data
+        cats = (await db.execute(text(
+            "SELECT COALESCE(llm_sport_category, 'NULL') as cat,"
+            " COUNT(*) as markets,"
+            " SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved"
+            " FROM futures_markets GROUP BY 1 ORDER BY 2 DESC"
+        ))).fetchall()
+        results["market_categories"] = [
+            {"category": r[0], "markets": r[1], "resolved": r[2]}
+            for r in cats
+        ]
+
+        # Count snapshots for crypto outcomes specifically
+        crypto_snaps = (await db.execute(text(
+            "SELECT COUNT(*) FROM futures_odds_snapshots"
+            " WHERE outcome_id IN ("
+            "   SELECT fo.id FROM futures_outcomes fo"
+            "   JOIN futures_markets fm ON fo.market_id = fm.id"
+            "   WHERE fm.llm_sport_category = 'crypto'"
+            ")"
+        ))).scalar()
+        results["crypto_snapshots_remaining"] = crypto_snaps
 
     if detail in ("collapse_estimate",):
         # Sample a few resolved outcomes and measure collapse ratio using
