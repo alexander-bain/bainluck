@@ -1313,13 +1313,13 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       {/* Score Differential Chart - combines projected spread and actual score diff */}
-      {historyData?.history && historyData.history.length > 0 && (
+      {historyData && ((historyData.history?.length ?? 0) > 0 || (historyData.score_history?.length ?? 0) > 0 || (historyData.espn_history?.length ?? 0) > 0) && (
         <div className="bg-surface-card rounded-card shadow-card p-3 sm:p-4">
           <h3 className="text-sm font-semibold text-text-secondary mb-2 flex items-center gap-2">
             Score Differential
           </h3>
           <ScoreDifferentialChart
-            history={historyData.history}
+            history={historyData.history || []}
             homeTeam={event.home_team}
             awayTeam={event.away_team}
             commenceTime={event.commence_time}

@@ -96,10 +96,14 @@ export default function ScoreDifferentialChart({
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
   const hasPostStartData = useMemo(() => {
-    if (!history || history.length === 0 || !commenceTime) return false;
+    if (!commenceTime) return false;
     const cutoffTime = parseISO(commenceTime);
-    return history.some((point) => parseISO(point.timestamp) >= cutoffTime);
-  }, [history, commenceTime]);
+    // Check any data source for post-start data
+    if (history?.some((point) => parseISO(point.timestamp) >= cutoffTime)) return true;
+    if (scoreHistory?.some((point) => parseISO(point.timestamp) >= cutoffTime)) return true;
+    if (espnHistory?.some((point) => parseISO(point.timestamp) >= cutoffTime)) return true;
+    return false;
+  }, [history, scoreHistory, espnHistory, commenceTime]);
 
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
@@ -384,8 +388,8 @@ export default function ScoreDifferentialChart({
     }));
   }, [periodBoundaries, chartData]);
 
-  // Early returns
-  if (!history || history.length === 0) return null;
+  // Early returns — show chart if we have ANY data (projected or actual scores)
+  if ((!history || history.length === 0) && !hasActualScoreData) return null;
   if (!hasProjectedScoreData && !hasActualScoreData) {
     return (
       <div className="text-center py-4 text-sm text-text-muted">
