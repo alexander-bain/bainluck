@@ -1299,13 +1299,16 @@ function SectionDivider({ level, label, count }: { level: number; label: string;
 // ─── V5 PLAYOFF PATH (side-by-side progression cards) ───
 function classifyPlayoffStage(marketName: string, cleanLabel?: string): { name: string; order: number } {
   const text = (cleanLabel || marketName).toLowerCase();
-  if (/championship|champion|title|finals|world\s+series|super\s+bowl|stanley\s+cup/i.test(text))
-    return { name: "Championship", order: 5 };
+  // Check conference patterns FIRST — "Eastern Conference Finals Matchup" is a conference
+  // milestone, not a championship. Without this, "finals" matches the championship regex
+  // and inflates playoff path odds (e.g., 100% ECF matchup shown as "Championship").
   if (/conference|eastern|western|afc|nfc|american\s+league|national\s+league/i.test(text)) {
     const confMatch = text.match(/(eastern|western|afc|nfc|american|national)/i);
     const confName = confMatch ? confMatch[1].charAt(0).toUpperCase() + confMatch[1].slice(1) + " Champ" : "Conference";
     return { name: confName, order: 4 };
   }
+  if (/championship|champion|title|finals|world\s+series|super\s+bowl|stanley\s+cup/i.test(text))
+    return { name: "Championship", order: 5 };
   if (/division/i.test(text)) {
     const divMatch = text.match(/([\w]+)\s+division/i);
     const divName = divMatch && divMatch[1] ? divMatch[1].charAt(0).toUpperCase() + divMatch[1].slice(1) + " Div" : "Division";
