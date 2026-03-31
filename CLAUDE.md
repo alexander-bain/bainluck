@@ -305,8 +305,8 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 5. **Team/league-level odds** — Best way to compare odds for entire teams or leagues
 6. **Discovery & engagement** — Best way to discover and interact with events with interesting odds (possibly beyond sports; possibly as a game)
 
-### Operational (Late March 2026)
-- **Quota management** — Conservation mode deployed, surviving on ~17K remaining until April 1 reset
+### Operational (April 2026)
+- **Quota management** — Conservation mode deployed. Quota resets monthly on the 1st. Update `QUOTA_GUARD_EXPIRY` in `redis_state.py` each cycle.
 - **Data quality** — Reclassified 4078 misclassified events, purged 195 orphan pm_ events, expanded Kalshi ticker mappings (18→38)
 
 ### Backlog
@@ -319,6 +319,97 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 
 See `docs/completed-features.md` for shipped features.
 See Ideas Backlog in `docs/PRD.md` for longer-term ideas.
+
+---
+
+
+## Probability Aggregation (Core Data Flow)
+
+The BainLuck aggregated probability is the product's most important output. Everything flows toward it.
+
+### `compute_aggregate_probability()` (`utils/aggregation.py`)
+
+Three-tier fallback:
+1. **`Event.win_probability_sources`** (JSONB) — multi-source weighted average
+2. **`Event.espn_win_prob_home`** — ESPN-only fallback
+3. **`Event.opening_home_probability`** — pre-game opening odds
+
+Source weights: `betting: 3.0, espn: 1.5, stat_model: 1.0, kalshi: 0.8, polymarket: 0.8, mlb: 0.8`
+
+### Data Flow
+
+```
+Sources (ESPN, Kalshi, Polymarket, Odds API, stat model, DataGolf, MLB)
+  → win_prob_snapshots table (per-source, timestamped)
+  → Event.win_probability_sources JSONB (latest per-source)
+  → compute_aggregate_probability() (weighted average)
+  → Feed cards, event detail hero, OddsChart
+```
+
+### Feed vs Event Detail API
+
+Both MUST use `compute_aggregate_probability()`. The feed API (`routes/feed.py`) calls `_compute_aggregate_probability()` at line ~500. The event detail API (`routes/events.py`) returns `current_odds` from odds_snapshots with a fallback to `compute_aggregate_probability()`. If you add a new probability display, always use the aggregate — never raw odds_snapshots alone.
+
+### Frontend Probability Display
+
+- **Live events**: Show current aggregate probability
+- **Finished events**: Show opening odds (`opening_home_probability`), fall back to current aggregate. Never show 100%/0% completion probabilities — skip chart values >95%/<5% for finished events.
+- **FeedCard.tsx**: `displayHomeProb` logic handles this (lines ~274-276)
+
+---
+
+## Source-Agnostic Resilience
+
+The system MUST work when any single source goes dark. This was validated during March 2026 Odds API quota exhaustion (10/5M remaining for 4 days).
+
+### Design Principles
+
+1. **Events don't require Odds API** — StatPal creates events with `sport_id` FK but `external_id=None`. These are fully functional.
+2. **Prediction market matching works by team name + time** — `_find_matching_event()` uses ILIKE on team names + commence_time window. No `external_id` required on the event.
+3. **ESPN/StatPal data flows independently** — Score snapshots, ESPN history, and win_prob_snapshots from ESPN all write independently of Odds API polling.
+4. **Chart domains derive from game timeline** — `commenceTime` for start, last ESPN/score data timestamp for end. Charts NEVER depend solely on odds data for their time range.
+
+### What Each Source Provides
+
+| Source | Provides | Independent? |
+|--------|----------|-------------|
+| Odds API | Sportsbook odds, event discovery | No — quota-constrained |
+| ESPN | Win prob, scores, periods, team data | Yes — free, no quota |
+| StatPal | Schedules, play-by-play, rosters | Yes — separate API key |
+| Kalshi | Prediction market prices, game markets | Yes — free |
+| Polymarket | Prediction market prices | Yes — free, no key |
+| DataGolf | Golf predictions, leaderboards | Yes — separate API key |
+
+---
+
+## Chart Architecture (Event Detail Page)
+
+### OddsChart (`components/OddsChart.tsx`)
+- Multi-source win probability chart (betting, ESPN, Kalshi, Polymarket, stat model)
+- Reports its rendered domain via `onRenderedDomain` callback → `oddsChartDomain` state
+- Period boundaries (Q1, HT, Q3, etc.) rendered as vertical `ReferenceLine` markers
+
+### ScoreDifferentialChart (`components/ScoreDifferentialChart.tsx`)
+- Projected spread (from sportsbook odds) vs actual score difference
+- Domain derived from **game timeline**: `commenceTime` for start, last data timestamp for end
+- `chartEndTime` from OddsChart can extend (never shrink) the domain for live games
+- Also shows Kalshi/Polymarket implied spreads as flat lines
+
+### Period Boundaries (`lib/periodMarkers.ts`)
+- `derivePeriodBoundaries()` extracts game state transitions from ESPN/win_prob/scoring_plays
+- `normalizePeriodLabel()` converts "6:55 - 1st Quarter" → "Q1", "Halftime" → "HT", etc.
+- Both charts receive and render the same boundaries
+
+### Binary Spread Derivation (`utils/binary_spread.py`)
+- Derives implied spread from Kalshi/Polymarket "Team wins by X+" binary contracts
+- Interpolates the 50% probability crossover point
+- Also derives implied total and projected final score
+
+### Related Futures / Bigger Picture (`components/RelatedFutures.tsx`)
+- "Bigger Picture" section on event detail page
+- `classifyPlayoffStage()`: Conference patterns MUST be checked before championship patterns (otherwise "Eastern Conference Champion" matches "champion" and inflates championship odds)
+- 4-level hierarchy: Win Prob → Projected Score → Game Markets → Season Context
+- Content wrapped in `max-w-2xl` on desktop to prevent stretching
 
 ---
 
@@ -384,6 +475,12 @@ Key admin API endpoints (all require `?secret=$ADMIN_SECRET`):
 18. **Quota guard expiry date** must be updated monthly in `redis_state.py` (`QUOTA_GUARD_EXPIRY`).
 19. **Name normalization** — ALL team name matching goes through `utils/name_normalization.py`. City abbreviations (LA→Los Angeles, NY→New York, etc.) are expanded before token overlap scoring.
 20. **Championship grid data quality** — Kalshi 0.45-0.65 noise filter, monotonicity enforcement (P(round N) >= P(round N+1)), esports "Masters" pattern can leak into golf.
+21. **Frontend-only changes don't need Heroku push** — Only `git push origin master` needed. Vercel auto-deploys. Heroku push is only required when backend code changes.
+22. **Never show 100%/0% probabilities for finished events** — Post-game completion probabilities (winner=100%) must be filtered. Use opening odds or aggregate probability instead.
+23. **Chart domain must derive from game timeline** — Use `commenceTime` + last ESPN/score data timestamp. Never constrain chart domain solely from odds data (which may be sparse during API outages).
+24. **`classifyPlayoffStage()` order matters** — Conference patterns must be checked BEFORE championship patterns in `RelatedFutures.tsx`. "Eastern Conference Champion" contains "champion" and will misclassify as "Championship" if checked in wrong order.
+25. **`compute_aggregate_probability()` is the single source of truth** — Both feed API and event detail API must use it. Never display raw odds_snapshots without aggregate fallback.
+26. **Bash heredocs with Python** — When piping Python code via bash, use `python3 << 'PYEOF'` (quoted heredoc) to prevent shell variable expansion and `!=` escaping issues.
 
 ---
 
