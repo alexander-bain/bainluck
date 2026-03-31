@@ -527,6 +527,15 @@ def compute_matching_metrics(self):
     return run_async(_compute_matching_metrics_impl())
 
 
+# --- Data Quality Monitoring ---
+
+@celery_app.task(bind=True, name="app.tasks.check_data_quality")
+def check_data_quality(self):
+    """Check classification and matching health, alert on issues."""
+    from app.tasks.data_quality import _check_data_quality
+    return _tracked_run("check_data_quality", _check_data_quality())
+
+
 # --- Team Identity Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_team_identities")
@@ -831,6 +840,10 @@ celery_app.conf.beat_schedule = {
     "matching-metrics-daily": {
         "task": "app.tasks.compute_matching_metrics",
         "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC
+    },
+    "check-data-quality-daily": {
+        "task": "app.tasks.check_data_quality",
+        "schedule": crontab(minute=0, hour=11),  # Daily at 11:00 AM UTC (4 AM PT)
     },
     "recategorize-other-daily": {
         "task": "app.tasks.recategorize_other",

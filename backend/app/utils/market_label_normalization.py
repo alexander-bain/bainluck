@@ -17,8 +17,11 @@ Categories:
     other          — Uncategorized
 """
 
+import logging
 import re
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ── Label cleaning patterns ──────────────────────────────────────────────
@@ -488,6 +491,7 @@ def classify_market_category(
     if market_category in ("game_prop", "championship", "award"):
         return market_category
 
+    logger.debug("Unclassified market (category=other): clean=%r raw=%r", clean_label, raw_name)
     return "other"
 
 
@@ -764,4 +768,5 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     if effective_category in _NON_SPORT_CATEGORIES:
         return 2
 
+    logger.debug("Unclassified market (tier=5): name=%r category=%r", market_name, category)
     return 5

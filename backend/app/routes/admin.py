@@ -7506,3 +7506,47 @@ async def drop_duplicate_index(
         "kept_duplicate": duplicates[0],
         "table": idx_info[0],
     }
+
+
+# =========================================================================
+# Data Quality Monitoring
+# =========================================================================
+
+@router.get("/data-quality")
+async def get_data_quality_report(
+    secret: str = Query(...),
+):
+    """Get the latest data quality report (classification + matching health).
+
+    Report is generated daily by the check_data_quality task and cached in Redis.
+    Trigger a fresh check with POST /api/admin/data-quality/check.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+
+    try:
+        r = get_redis_client()
+        raw = r.get("bainluck:data_quality:latest")
+        if raw:
+            return _json.loads(raw)
+        return {"status": "no_data", "message": "No data quality report yet. Run POST /api/admin/data-quality/check to generate one."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/data-quality/check")
+async def trigger_data_quality_check(
+    secret: str = Query(...),
+):
+    """Trigger an immediate data quality check (runs inline, not queued)."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    from app.tasks.data_quality import _check_data_quality
+    from app.tasks.base import run_async
+
+    report = run_async(_check_data_quality())
+    return report

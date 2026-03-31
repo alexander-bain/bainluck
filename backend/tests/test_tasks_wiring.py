@@ -190,6 +190,7 @@ class TestBeatScheduleCompleteness:
         "mark-resolved-futures",
         "sync-mm-bracket",
         "matching-metrics-daily",
+        "check-data-quality-daily",
         "turbo-collapse-futures",
         "turbo-collapse-odds",
         "transition-event-statuses",
