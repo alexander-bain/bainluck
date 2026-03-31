@@ -266,6 +266,7 @@ private struct PlayoffStage {
     let probability: Double
     let order: Int
     let marketId: Int
+    let source: String?
     var isDone: Bool { probability >= 0.99 }
 }
 
@@ -284,8 +285,8 @@ private func classifyPlayoffStage(_ marketName: String, cleanLabel: String?) -> 
     }
     if text.range(of: "division", options: .regularExpression) != nil { return ("Division", 3) }
     if text.range(of: "play[- ]?in", options: .regularExpression) != nil { return ("Play-In", 2) }
-    if text.range(of: "make\\s+playoffs|playoff\\s+berth|playoffs$", options: .regularExpression) != nil { return ("Playoffs", 1) }
-    if text.range(of: "#1\\s+seed|top\\s+seed|first\\s+seed", options: .regularExpression) != nil { return ("#1 Seed", 6) }
+    if text.range(of: "make\\s+playoffs|playoff\\s+berth|playoff\\s+qualifiers|playoffs$", options: .regularExpression) != nil { return ("Playoffs", 1) }
+    if text.range(of: "#1\\s+seed|top\\s+seed|first\\s+seed|best\\s+record", options: .regularExpression) != nil { return ("#1 Seed", 6) }
     return (cleanLabel ?? marketName, 3)
 }
 
@@ -294,7 +295,7 @@ private func buildPlayoffStages(_ futures: [RelatedFuture]) -> [PlayoffStage] {
     for f in futures {
         guard let prob = f.probability else { continue }
         let (name, order) = classifyPlayoffStage(f.marketName, cleanLabel: f.cleanLabel)
-        stages.append(PlayoffStage(name: name, probability: prob, order: order, marketId: f.marketId))
+        stages.append(PlayoffStage(name: name, probability: prob, order: order, marketId: f.marketId, source: f.source))
     }
     stages.sort { $0.order < $1.order }
     var deduped: [String: PlayoffStage] = [:]
@@ -306,6 +307,22 @@ private func buildPlayoffStages(_ futures: [RelatedFuture]) -> [PlayoffStage] {
         }
     }
     return deduped.values.sorted { $0.order < $1.order }
+}
+
+
+private func extractTradePlayer(_ marketName: String) -> String {
+    // "Devin Booker's Next Team" → "Devin Booker"
+    // "Jimmy Butler' Next Team" → "Jimmy Butler"
+    let suffixes = ["'s Next Team", "' Next Team", "'s next destination", "' next destination"]
+    let lower = marketName.lowercased()
+    for suffix in suffixes {
+        if let range = lower.range(of: suffix.lowercased()) {
+            let player = String(marketName[marketName.startIndex..<range.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+            if !player.isEmpty { return player }
+        }
+    }
+    return marketName
 }
 
 // MARK: - Categorize Futures (V5)
@@ -321,6 +338,17 @@ private struct CategorizedFutures {
     var other: [RelatedFuture] = []
 }
 
+private let divisionPlayoffPattern = try! NSRegularExpression(
+    pattern: "division|playoff|play[- ]?in|#1\\s+seed|best\\s+record|worst\\s+record",
+    options: .caseInsensitive
+)
+
+private func isDivisionOrPlayoff(_ f: RelatedFuture) -> Bool {
+    let text = f.cleanLabel ?? f.marketName
+    let range = NSRange(text.startIndex..., in: text)
+    return divisionPlayoffPattern.firstMatch(in: text, range: range) != nil
+}
+
 private func categorizeFutures(_ futures: [RelatedFuture]) -> CategorizedFutures {
     var cats = CategorizedFutures()
     for f in futures {
@@ -328,7 +356,13 @@ private func categorizeFutures(_ futures: [RelatedFuture]) -> CategorizedFutures
         switch tier {
         case 1, 2: cats.championships.append(f)
         case 3: cats.awards.append(f)
-        case 4: cats.seasonStats.append(f)
+        case 4:
+            // Pull division/playoff items into championship path instead
+            if isDivisionOrPlayoff(f) {
+                cats.championships.append(f)
+            } else {
+                cats.seasonStats.append(f)
+            }
         case 5: cats.games.append(f)
         case 6: cats.statProps.append(f)
         case 7: cats.trades.append(f)
@@ -523,6 +557,8 @@ struct RelatedFuturesView: View {
                     WinTotalsPairView(
                         homeStats: homeCats.seasonStats,
                         awayStats: awayCats.seasonStats,
+                        homeTeam: homeTeam,
+                        awayTeam: awayTeam,
                         homeColor: hColor,
                         awayColor: aColor
                     )
@@ -685,6 +721,9 @@ private struct PlayoffPathPairView: View {
                             .fontWeight(.bold)
                             .monospacedDigit()
                             .foregroundStyle(stage.isDone ? .green : color)
+                        Circle()
+                            .fill(sourceColor(stage.source))
+                            .frame(width: 4, height: 4)
                     }
                 }
             }
@@ -707,27 +746,89 @@ private struct PlayoffPathPairView: View {
 
 // MARK: - V5 Win Totals Pair
 
+private struct SeasonStatRowView: View {
+    let future: RelatedFuture
+    let teamColor: Color
+
+    var body: some View {
+        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+            HStack(spacing: 6) {
+                Text(future.cleanLabel ?? future.marketName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                if let prob = future.probability {
+                    Text(formatProbability(prob))
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .monospacedDigit()
+                        .foregroundStyle(prob >= 0.10 ? teamColor : .secondary)
+                }
+                if let rank = future.rank {
+                    Text("#\(rank)")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 8)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct WinTotalsPairView: View {
     let homeStats: [RelatedFuture]
     let awayStats: [RelatedFuture]
+    let homeTeam: String
+    let awayTeam: String
     let homeColor: Color
     let awayColor: Color
 
     var body: some View {
         if !homeStats.isEmpty || !awayStats.isEmpty {
             HStack(alignment: .top, spacing: 8) {
-                if let f = awayStats.first {
-                    ChampionshipCard(future: f, teamColor: awayColor)
-                } else if !homeStats.isEmpty {
-                    Spacer()
-                }
-                if let f = homeStats.first {
-                    ChampionshipCard(future: f, teamColor: homeColor)
-                } else if !awayStats.isEmpty {
-                    Spacer()
-                }
+                statColumn(futures: awayStats, teamName: awayTeam, color: awayColor)
+                statColumn(futures: homeStats, teamName: homeTeam, color: homeColor)
             }
         }
+    }
+
+    private func statColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
+        let shortName = teamName.split(separator: " ").last.map(String.init) ?? teamName
+        let sorted = futures.sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(color)
+                    .frame(width: 14, height: 14)
+                    .overlay(
+                        Text(shortName.prefix(3).uppercased())
+                            .font(.system(size: 5, weight: .heavy))
+                            .foregroundStyle(.white)
+                    )
+                Text(shortName)
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+
+            Divider()
+
+            ForEach(Array(sorted.prefix(5))) { f in
+                SeasonStatRowView(future: f, teamColor: color)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.systemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -820,13 +921,14 @@ private struct TradeWatchPairView: View {
                 ForEach(futures.prefix(4)) { future in
                     NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
                         HStack(spacing: 6) {
+                            let playerName = extractTradePlayer(future.marketName)
                             PlayerHeadshotView(
                                 player: future.matchedPlayer,
-                                name: future.outcomeName,
+                                name: playerName,
                                 teamColor: color,
                                 size: 20
                             )
-                            Text(future.outcomeName)
+                            Text(playerName)
                                 .font(.caption2)
                                 .lineLimit(1)
                                 .foregroundStyle(.primary)
@@ -900,7 +1002,7 @@ private struct NoveltyCardView: View {
                     .font(.caption)
                     .fontWeight(.medium)
                     .foregroundStyle(.primary)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Spacer()
@@ -917,7 +1019,7 @@ private struct NoveltyCardView: View {
                 }
             }
             .padding(12)
-            .frame(width: 150, height: 100)
+            .frame(width: 180, height: 110)
             .background(
                 LinearGradient(
                     colors: [gradient.0, gradient.1],
@@ -1214,7 +1316,7 @@ private struct StatPropsSection: View {
                 HStack(spacing: 5) {
                     Image(systemName: (isLive && hasBoxScore) ? "sportscourt.fill" : "chart.bar.fill")
                         .font(.system(size: 10))
-                    Text((isLive && hasBoxScore) ? "Live Player Stats" : isFinished && hasBoxScore ? "Player Results" : "Player Stats")
+                    Text((isLive && hasBoxScore) ? "Live Game Props" : isFinished && hasBoxScore ? "Game Results" : "Game Props")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .textCase(.uppercase)

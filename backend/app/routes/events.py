@@ -2410,26 +2410,101 @@ async def get_related_futures(
             return True
         return False
 
+    def _extract_market_teams(market_name: str) -> list[str]:
+        """Extract team names from a game-specific market name.
+
+        Handles patterns like:
+          "Boston Celtics at Miami Heat: Points" → ["Boston Celtics", "Miami Heat"]
+          "Golden State vs. Boston" → ["Golden State", "Boston"]
+          "Miami (OH) at SMU: Rebounds" → ["Miami (OH)", "SMU"]
+        """
+        if not market_name:
+            return []
+        # Strip stat prop suffix: "Team at Team: Points" → "Team at Team"
+        base = re.split(r":\s*(?:points|assists|rebounds|steals|blocks|"
+                        r"three\s*pointers?|3-?pointers?|turnovers|strikeouts|"
+                        r"hits|runs|home\s*runs|goals|saves|sacks|"
+                        r"passing\s*yards|rushing\s*yards|receiving\s*yards|"
+                        r"touchdowns|completions|interceptions|aces|"
+                        r"double\s*faults|kills|double\s*doubles?|"
+                        r"triple\s*doubles?|total\s*points|spread|"
+                        r"moneyline|over|under|winner)",
+                        market_name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        # Try "Team1 at Team2" or "Team1 vs. Team2" split
+        parts = re.split(r"\s+(?:at|vs\.?|–)\s+", base, maxsplit=1, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            return [p.strip() for p in parts if p.strip()]
+        return []
+
+    def _market_teams_match_event(market_teams: list[str]) -> bool:
+        """Check if extracted market teams match this event's teams.
+
+        For two-team markets (e.g., "Team A at Team B"), BOTH must match
+        (one per event side). This prevents "Miami (OH) at SMU" from
+        matching a Celtics-Heat game just because "Miami" overlaps.
+
+        For single-team extraction, requires the team to match either side.
+        """
+        from app.utils.name_normalization import names_match
+        if not market_teams:
+            return False
+
+        event_teams = []
+        if event.home_team_name:
+            event_teams.append(event.home_team_name)
+        if event.away_team_name:
+            event_teams.append(event.away_team_name)
+        if not event_teams:
+            return False
+
+        if len(market_teams) == 2:
+            # Two-team market: each must match a DIFFERENT event team.
+            # This prevents "Miami (OH) at SMU" matching Celtics vs Heat.
+            matched_event_teams: set[int] = set()
+            for mt in market_teams:
+                for i, et in enumerate(event_teams):
+                    if i not in matched_event_teams and names_match(mt, et):
+                        matched_event_teams.add(i)
+                        break
+            return len(matched_event_teams) == 2
+        else:
+            # Single team: must match at least one side
+            mt = market_teams[0]
+            return any(names_match(mt, et) for et in event_teams)
+
     def _game_market_matches_event(mkt: FuturesMarket) -> bool:
-        """Check if a game-specific market belongs to THIS event."""
-        # Direct event_id link
+        """Check if a game-specific market belongs to THIS event.
+
+        Requires BOTH temporal proximity AND team name validation.
+        Temporal proximity alone is not sufficient — prevents cross-game
+        leaks like "Miami (OH) at SMU" appearing on a Celtics-Heat page.
+        """
+        # Direct event_id link — most reliable
         if mkt.event_id is not None:
             return mkt.event_id == event_id
-        # Check if market name contains BOTH teams from this event
+
         name_lower = (mkt.name or "").lower()
         home_short = event.home_team_name.split()[-1].lower() if event.home_team_name else ""
         away_short = event.away_team_name.split()[-1].lower() if event.away_team_name else ""
+
+        # Strong match: BOTH teams appear in market name
         if (home_short and len(home_short) >= 4 and home_short in name_lower and
                 away_short and len(away_short) >= 4 and away_short in name_lower):
             return True
-        # Temporal proximity
-        if event_commence_time:
+
+        # Moderate match: parse "Team A at/vs Team B" from market name,
+        # require team match + temporal proximity
+        market_teams = _extract_market_teams(mkt.name or "")
+        has_team_match = _market_teams_match_event(market_teams) if market_teams else False
+
+        if has_team_match and event_commence_time:
             for dt in (mkt.commence_time, mkt.resolution_date):
                 if dt:
                     diff = abs((dt - event_commence_time).total_seconds())
                     if diff <= GAME_TIME_WINDOW.total_seconds():
                         return True
-        # No timing info — exclude to be safe
+
+        # No team match or no timing confirmation — exclude
         return False
 
     for outcome in outcomes:
