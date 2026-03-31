@@ -258,12 +258,27 @@ _LABEL_REWRITES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^Who will be on the cover of NBA 2K\d+\??\s*$", re.I), "NBA 2K Cover"),
     (re.compile(r"^(.+?) play together on (.+?) again\??\s*$", re.I),
      r"\1 Stay in \2?"),
+
+    # "When will X make/break/reach his Nth..." → "X: Milestone Description"
+    (re.compile(
+        r"^When will (.+?) (?:make|hit|reach|break|score|get) "
+        r"(?:his|her|their)\s+(\d+)(?:st|nd|rd|th)\s+(.+?)(?:\s+\(.*\))?\??\s*$",
+        re.I),
+     r"\1: \2th \3"),
+
+    # "Will X break/set the record for..." → "X: Record Name"
+    (re.compile(
+        r"^Will (.+?) (?:break|set|beat) (?:the )?"
+        r"(?:record|all-time record) (?:for )?(.+?)\??\s*$",
+        re.I),
+     r"\1: \2 Record"),
 ]
 
 # Game prop detection: "Team at Team: Stat Category"
 _GAME_STAT_PROP_RE = re.compile(
     r".+\s+(?:at|vs\.?)\s+.+:\s*(Points|Rebounds|Assists|Steals|Blocks|Three\s*Pointers?|"
-    r"Turnovers|Double\s*Doubles?|Triple\s*Doubles?|First\s+Half\s+Winner)",
+    r"Turnovers|Double\s*Doubles?|Triple\s*Doubles?|First\s+Half\s+Winner|"
+    r"Spread|Total\s*Points?|Team\s*Totals?)",
     re.IGNORECASE,
 )
 
@@ -290,7 +305,7 @@ _CATEGORY_RULES: list[tuple[re.Pattern, str]] = [
     # Novelty
     (re.compile(
         r"2K\s*Cover|play together|record.*three\s*pointer|breaking.*record|"
-        r"Most Points in|Stay in .+\?",
+        r"Most Points in|Stay in .+\?|^\w.+:\s+\d+th\s+",
         re.I,
     ), "novelty"),
 
@@ -438,7 +453,18 @@ def normalize_market_label(raw_name: str) -> str:
     for pat, repl in _VERBOSE_SUFFIXES:
         label = pat.sub(repl, label)
 
-    return label.strip()
+    label = label.strip()
+
+    # Step 7: Truncate very long labels (novelty/misc) at a word boundary
+    if len(label) > 60:
+        truncated = label[:57]
+        # Cut at last space to avoid breaking mid-word
+        last_space = truncated.rfind(" ")
+        if last_space > 30:
+            truncated = truncated[:last_space]
+        label = truncated.rstrip(".,;: ") + "…"
+
+    return label
 
 
 def classify_market_category(
