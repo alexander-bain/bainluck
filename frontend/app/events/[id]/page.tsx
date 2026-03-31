@@ -652,7 +652,10 @@ export default function EventPage({ params }: EventPageProps) {
   }
 
   // Fallback: if no sportsbook odds, use win_prob_history (ESPN/stat_model/Kalshi)
-  if (homeProb === null && lastChartPoint && lastChartPoint.homeProb !== 0.5) {
+  // For finished events, skip this fallback if the value is essentially 100%/0%
+  // (post-game completion probability, not a meaningful pre-game prediction)
+  if (homeProb === null && lastChartPoint && lastChartPoint.homeProb !== 0.5
+      && !(isFinished && (lastChartPoint.homeProb > 0.95 || lastChartPoint.homeProb < 0.05))) {
     homeProb = lastChartPoint.homeProb;
     awayProb = lastChartPoint.awayProb;
     // Determine source label from win_prob_sources

@@ -1954,6 +1954,27 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                 })
         response["bookmaker_odds"] = bookmaker_odds_list
 
+    # Fallback: if no odds snapshots, compute aggregate from alternative sources
+    # (ESPN win probability, Kalshi, Polymarket, stat model)
+    if "current_odds" not in response:
+        from app.utils.aggregation import compute_aggregate_probability
+        agg_prob = compute_aggregate_probability(event)
+        if agg_prob is not None:
+            response["current_odds"] = {
+                "home_probability": agg_prob,
+                "away_probability": round(1.0 - agg_prob, 6),
+                "source": "aggregate",
+                "bookmaker_count": 0,
+            }
+
+    # Include opening odds in event detail response for frontend fallback
+    if event.opening_home_probability is not None:
+        response["opening_odds"] = {
+            "home_probability": float(event.opening_home_probability),
+            "away_probability": float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - float(event.opening_home_probability), 4),
+            "favorite": event.opening_favorite,
+        }
+
     return response
 
 

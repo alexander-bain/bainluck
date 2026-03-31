@@ -271,9 +271,12 @@ function EventFeedCard({
   const homeWon = isFinished && data.home_score != null && data.away_score != null && data.home_score > data.away_score;
   const awayWon = isFinished && data.home_score != null && data.away_score != null && data.away_score > data.home_score;
 
-  // For finished events, don't show probabilities — the score tells the story
-  const displayHomeProb = isFinished ? null : homeProb;
-  const displayAwayProb = isFinished ? null : awayProb;
+  // For finished events, show opening odds (pre-game prediction context).
+  // Fall back to current aggregate if opening odds aren't available.
+  const openingHome = data.opening_odds?.home_probability ?? null;
+  const openingAway = data.opening_odds?.away_probability ?? null;
+  const displayHomeProb = isFinished ? (openingHome ?? homeProb) : homeProb;
+  const displayAwayProb = isFinished ? (openingAway ?? awayProb) : awayProb;
 
   // Team colors for probability bar
   const homeColor = data.home_team_data?.primary_color ?? null;
