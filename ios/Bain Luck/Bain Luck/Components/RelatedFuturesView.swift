@@ -272,9 +272,6 @@ private struct PlayoffStage {
 
 private func classifyPlayoffStage(_ marketName: String, cleanLabel: String?) -> (name: String, order: Int) {
     let text = (cleanLabel ?? marketName).lowercased()
-    if text.range(of: "championship|champion|title|finals|world\\s+series|super\\s+bowl|stanley\\s+cup", options: .regularExpression) != nil {
-        return ("Championship", 5)
-    }
     if text.range(of: "conference|eastern|western|afc|nfc|american\\s+league|national\\s+league", options: .regularExpression) != nil {
         if let m = text.range(of: "(eastern|western|afc|nfc|american|national)", options: .regularExpression) {
             let raw = String(text[m])
@@ -282,6 +279,9 @@ private func classifyPlayoffStage(_ marketName: String, cleanLabel: String?) -> 
             return (confName, 4)
         }
         return ("Conference", 4)
+    }
+    if text.range(of: "championship|champion|title|finals|world\\s+series|super\\s+bowl|stanley\\s+cup", options: .regularExpression) != nil {
+        return ("Championship", 5)
     }
     if text.range(of: "division", options: .regularExpression) != nil { return ("Division", 3) }
     if text.range(of: "play[- ]?in", options: .regularExpression) != nil { return ("Play-In", 2) }
