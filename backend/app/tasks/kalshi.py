@@ -310,7 +310,7 @@ async def _poll_kalshi_markets():
                         expiration_time = max(expiration_times) if expiration_times else None
 
                     # Compute market tier for relevance ranking
-                    from app.utils.team_linking import compute_market_tier
+                    from app.utils.market_label_normalization import compute_market_tier
                     from app.utils.futures_categorization import (
                         detect_league, detect_season,
                         compute_canonical_market_key,

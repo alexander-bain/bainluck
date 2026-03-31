@@ -129,7 +129,8 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
     Also sets market_tier on any FuturesMarket where it's NULL.
     """
     from app.models import FuturesMarket, FuturesOutcome
-    from app.utils.team_linking import compute_market_tier, get_sport_keys_for_category
+    from app.utils.market_label_normalization import compute_market_tier
+    from app.utils.team_linking import get_sport_keys_for_category
 
     stats = {
         "outcomes_processed": 0,

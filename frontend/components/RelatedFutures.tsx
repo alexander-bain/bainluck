@@ -30,12 +30,6 @@ const TIER_CONFIG: Record<number, { label: string; icon: string }> = {
 
 const DEFAULT_COLOR = "#6B7280";
 
-/** Stat prop market patterns — "Team at Team: Stat Category" from Kalshi */
-const STAT_PROP_PATTERNS = [
-  /:\s*(points|assists|rebounds|steals|blocks|three\s*pointers?|3-?pointers?|turnovers|strikeouts|hits|runs|home\s*runs|goals|saves|sacks|passing\s*yards|rushing\s*yards|receiving\s*yards|touchdowns|completions|interceptions|aces|double\s*faults|kills|double\s*doubles?|triple\s*doubles?)/i,
-  /\bat\b.*:\s*\w/i,       // "Team at Team: Something" (Kalshi game stat format)
-];
-
 /** Stat category config — emoji + display name */
 const STAT_CATEGORIES: Record<string, { emoji: string; label: string }> = {
   points: { emoji: "🏀", label: "Points" },
@@ -70,63 +64,6 @@ const STAT_CATEGORIES: Record<string, { emoji: string; label: string }> = {
   tripledoubles: { emoji: "🔥", label: "Triple-Doubles" },
 };
 
-/** Game-level market name patterns — these are individual matchup markets, not futures */
-const GAME_MARKET_PATTERNS = [
-  /\bvs\.?\s/i,           // "Team A vs. Team B" or "Team A vs Team B"
-  /\s–\s/,                // "Team A – Team B" (en-dash)
-  /more\s+markets$/i,     // "... - More Markets" (Polymarket suffix)
-  /moneyline$/i,          // "Game X Moneyline"
-  /\bgame\s+\d/i,         // "Game 1", "Game 7"
-  /^\w[\w\s.'()-]+\bat\b\s+\w[\w\s.'()-]+$/i, // "Stanford at Miami" (bare matchup with "at")
-];
-
-/** Award market name patterns */
-const AWARD_PATTERNS = [
-  /\bmvp\b/i,
-  /\bgolden\s+boot\b/i,
-  /\bgolden\s+glove\b/i,
-  /\bcyoung\b|cy\s+young/i,
-  /\bnewcomer\b|\brookie\b/i,
-  /player\s+of\s+(the\s+)?year/i,
-  /\bballon\b/i,
-  /\bbest\s+(actor|actress|picture|director|supporting)\b/i,
-  /\bleader\b/i,            // "NBA Rebounds Per Game Leader"
-  /\bper\s+game\b/i,        // "Points Per Game"
-  /\bclutch\b/i,            // "Clutch Player of the Year"
-  /\bfinals\s+mvp\b/i,      // "Finals MVP"
-  /\b[ew]cf\s+mvp\b/i,      // "WCF MVP", "ECF MVP"
-  /\bmost\s+improved\b/i,   // "Most Improved Player"
-  /\bsixth\s+man\b/i,       // "Sixth Man"
-  /\b6th\s+man\b/i,         // "6th Man"
-  /\ball[- ]?star\s+mvp\b/i, // "All-Star MVP"
-  /\bscoring\s+(leader|title|champion)/i, // "Scoring Leader"
-  /\bhome\s+run\s+(leader|king)/i,        // "Home Run Leader"
-  /\bcover\s+of\b/i,        // "Cover of NBA 2K"
-  /\b2k\b/i,                // "NBA 2K" cover
-  /\bnba2k\b/i,             // "NBA2K"
-];
-
-/**
- * Markets that should NEVER be classified as championship/conference hero cards,
- * even if the backend tier says so. These get downgraded to tier 4 (division/other).
- */
-const NOT_CHAMPIONSHIP_PATTERNS = [
-  /\bwin\s+total/i,          // "NBA Season Win Totals"
-  /\bover\/under\b/i,        // "Season Over/Under"
-  /\bregular\s+season\s+wins/i,
-  /\bcover\s+of\b/i,         // "Cover of NBA 2K"
-  /\b2k\b/i,                 // "NBA 2K"
-  /\bplayoff\s+appearance/i,  // "Make Playoffs?"
-  /\bmake\s+playoffs/i,
-  /\bplayoff\s*berth/i,       // "Playoff Berth"
-  /\bto\s+make\b/i,           // "Team X To Make Playoffs"
-  /\bseeding\b/i,             // "NBA Seeding"
-  /\bseed\b/i,                // "#1 Seed"
-  /\bover\s+\d/i,             // "Over 48.5 Wins"
-  /\bunder\s+\d/i,            // "Under 48.5 Wins"
-  /\bexact\s+wins/i,          // "Exact Wins"
-];
-
 /** Map backend display_category to tier number for rendering */
 const CATEGORY_TO_TIER: Record<string, number> = {
   playoff_path: 1,
@@ -141,40 +78,18 @@ const CATEGORY_TO_TIER: Record<string, number> = {
 
 /**
  * Determine the effective display tier for a future.
- * Uses backend display_category when available (new), falls back to
- * name-based regex detection (legacy).
+ * Uses backend display_category (always provided by the API).
+ * Falls back to market_tier for any edge cases.
  *
  * Returns 1-5 for standard tiers, 6 for stat props (special display).
  */
 function effectiveTier(f: RelatedFuture): number {
-  // Use backend display_category if available
   if (f.display_category && CATEGORY_TO_TIER[f.display_category] !== undefined) {
     return CATEGORY_TO_TIER[f.display_category];
   }
-
-  if (!f.market_name) return 5;
-
-  // Stat props get their own tier (6) for special display treatment
-  if (STAT_PROP_PATTERNS.some((p) => p.test(f.market_name))) {
-    return 6;
-  }
-  // If the name looks like a game-level market, always treat as tier 5
-  if (GAME_MARKET_PATTERNS.some((p) => p.test(f.market_name))) {
-    return 5;
-  }
-  // If the name looks like an award, treat as tier 3
-  if (AWARD_PATTERNS.some((p) => p.test(f.market_name))) {
-    return 3;
-  }
-  // Prevent non-championship markets from being hero cards
-  if (NOT_CHAMPIONSHIP_PATTERNS.some((p) => p.test(f.market_name))) {
-    return 4; // Division/other tier — shows as hero but smaller
-  }
-  // Trust the backend tier if it's set
   if (f.market_tier && f.market_tier >= 1 && f.market_tier <= 5) {
     return f.market_tier;
   }
-  // Default: generic market
   return 5;
 }
 
@@ -1754,7 +1669,7 @@ function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", away
   });
   return {
     championship: active.filter((f) => {
-      if (f.display_category === "playoff_path" || (!f.display_category && effectiveTier(f) === 1)) return true;
+      if (f.display_category === "playoff_path") return true;
       // Also pull division/playoff items from season_stat
       if (f.display_category === "season_stat") {
         const name = (f.clean_label || f.market_name).toLowerCase();
@@ -1762,14 +1677,10 @@ function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", away
       }
       return false;
     }),
-    conference: active.filter(
-      (f) => f.display_category === "conference" || (!f.display_category && effectiveTier(f) === 2),
-    ),
-    awards: active.filter(
-      (f) => f.display_category === "award" || (!f.display_category && effectiveTier(f) === 3),
-    ),
+    conference: active.filter((f) => f.display_category === "conference"),
+    awards: active.filter((f) => f.display_category === "award"),
     seasonStats: active.filter((f) => {
-      if (f.display_category === "season_stat" || (!f.display_category && effectiveTier(f) === 4)) {
+      if (f.display_category === "season_stat") {
         // Pull division/playoff/seed items into playoff path instead
         const name = (f.clean_label || f.market_name).toLowerCase();
         if (/division|playoff|play[- ]?in|#1\s+seed|best\s+record|worst\s+record/i.test(name)) return false;
@@ -1779,10 +1690,8 @@ function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", away
     }),
     trades: active.filter((f) => f.display_category === "trade"),
     novelty: active.filter((f) => f.display_category === "novelty"),
-    games: active.filter((f) => !f.display_category && effectiveTier(f) === 5),
-    statProps: active.filter(
-      (f) => f.display_category === "game_prop" || (!f.display_category && effectiveTier(f) === 6),
-    ),
+    games: active.filter((f) => f.display_category === "other"),
+    statProps: active.filter((f) => f.display_category === "game_prop"),
   };
 }
 

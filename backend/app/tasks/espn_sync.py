@@ -12,7 +12,11 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, Sport
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import ESPN_SPORT_MAPPING
-from app.utils.name_normalization import token_overlap_score as _team_name_match_score
+from app.utils.name_normalization import (
+    token_overlap_score as _team_name_match_score,
+    names_match as _canonical_names_match,
+    normalize_name as _normalize_name_canonical,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,39 +126,14 @@ async def _sync_espn_live_events():
         "errors": [],
     }
 
-    def _normalize_name(name: str) -> str:
-        """Normalize team name for matching — strip accents, unify quotes/apostrophes."""
-        import unicodedata
-        # Normalize unicode (NFD decomposition) then strip combining marks (accents)
-        normalized = unicodedata.normalize("NFD", name)
-        normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-        # Unify all apostrophe/quote variants to standard ASCII apostrophe
-        for ch in ("\u2018", "\u2019", "\u02BB", "\u02BC", "\u0060", "\u00B4", "\u2032"):
-            normalized = normalized.replace(ch, "'")
-        return normalized.lower().strip()
-
     def names_match(our_names: list, espn_name: str) -> bool:
-        """Name matching with unicode normalization.
+        """Check if any of our name variations match an ESPN name.
 
-        Primary: substring containment (only for longer names ≥8 chars to prevent
-        "Miami" matching "Miami (OH)" or "Kansas" matching "Kansas State").
-        Fallback: token-overlap scoring via _team_name_match_score()
-        to handle abbreviation differences common in college sports
-        (e.g., "Ohio St Buckeyes" vs "Ohio State Buckeyes").
+        Delegates to canonical names_match() from name_normalization.py.
         """
-        espn_lower = _normalize_name(espn_name or "")
-        for name in our_names:
-            name_lower = _normalize_name(name)
-            # Only allow substring matching if both names are substantial
-            # Prevents short names from causing false positives
-            if len(name_lower) >= 8 and len(espn_lower) >= 8:
-                if name_lower in espn_lower or espn_lower in name_lower:
-                    return True
-        # Fallback: token-overlap scoring for abbreviation handling
-        for name in our_names:
-            if _team_name_match_score(name, espn_name) >= 0.5:
-                return True
-        return False
+        if not espn_name:
+            return False
+        return any(_canonical_names_match(name, espn_name) for name in our_names if name)
 
     async def upsert_team(session, team_name, espn_team, sport_id):
         """Create or update a Team record with ESPN enrichment data.

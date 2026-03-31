@@ -12,7 +12,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
-from app.utils.team_linking import _normalize_name
+from app.utils.name_normalization import normalize_name as _normalize_name
 from app.utils.sport_keys import (
     KALSHI_GAME_TICKER_PREFIXES as _KALSHI_GAME_TICKER_PREFIXES,
     KALSHI_TICKER_TO_SPORT_KEY as _TICKER_TO_SPORT_PREFIX,

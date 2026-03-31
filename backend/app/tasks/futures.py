@@ -204,7 +204,7 @@ async def _poll_futures_odds():
                     sport_id = sport_map.get(base_sport_key)
 
                     # Compute market tier for relevance ranking
-                    from app.utils.team_linking import compute_market_tier
+                    from app.utils.market_label_normalization import compute_market_tier
                     from app.utils.futures_categorization import (
                         categorize_by_rules, detect_league,
                         detect_season, compute_canonical_market_key,

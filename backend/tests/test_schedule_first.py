@@ -13,7 +13,8 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.tasks.sports import _names_match, _find_statpal_event_for_odds_api
+from app.utils.name_normalization import names_match as _names_match
+from app.tasks.sports import _find_statpal_event_for_odds_api
 
 
 # =============================================================================
@@ -41,16 +42,16 @@ class TestNamesMatch:
     def test_containment_reverse(self):
         assert _names_match("boston celtics", "celtics") is True
 
-    def test_containment_short_rejected(self):
-        """3-char strings should not match via containment."""
-        assert _names_match("la", "los angeles lakers") is False
+    def test_containment_short_expanded(self):
+        """'LA' expands to 'Los Angeles' via city abbreviation, so it matches."""
+        assert _names_match("la", "los angeles lakers") is True
 
     def test_containment_minimum_4_chars(self):
         assert _names_match("lakers", "los angeles lakers") is True
 
-    def test_last_word_match(self):
-        """Mascot match: last word of both names matches."""
-        assert _names_match("golden state warriors", "washington warriors") is True
+    def test_last_word_different_city_rejected(self):
+        """Shared mascot but different city — token overlap too low (0.33 < 0.5)."""
+        assert _names_match("golden state warriors", "washington warriors") is False
 
     def test_last_word_short_rejected(self):
         """Short last-word (<4 chars) should not match."""

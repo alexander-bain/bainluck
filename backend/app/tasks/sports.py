@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models import Sport, Event, OddsSnapshot, Team
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
+from app.utils.name_normalization import names_match as _canonical_names_match
 from app.tasks.config import (
     DISCOVER_TIER1_INTERVAL,
     DISCOVER_TIER2_INTERVAL,
@@ -87,8 +88,6 @@ async def _find_statpal_event_for_odds_api(
     3. Have matching team names (fuzzy)
     4. Are within 6 hours of the Odds API commence_time
     """
-    from app.services.team_identity import normalize_name
-
     window = timedelta(hours=6)
     result = await session.execute(
         select(Event).where(
@@ -101,9 +100,6 @@ async def _find_statpal_event_for_odds_api(
     )
     candidates = result.scalars().all()
 
-    home_norm = normalize_name(home_team)
-    away_norm = normalize_name(away_team)
-
     logger.info(
         "StatPal match: looking for '%s' vs '%s' (sport_id=%d, time=%s) — "
         "%d candidates with external_id=NULL",
@@ -112,16 +108,13 @@ async def _find_statpal_event_for_odds_api(
     )
 
     for candidate in candidates:
-        c_home = normalize_name(candidate.home_team_name)
-        c_away = normalize_name(candidate.away_team_name)
-
         # Check normal orientation
-        home_match = _names_match(home_norm, c_home)
-        away_match = _names_match(away_norm, c_away)
+        home_match = _canonical_names_match(home_team, candidate.home_team_name)
+        away_match = _canonical_names_match(away_team, candidate.away_team_name)
 
         # Check swapped home/away
-        home_as_away = _names_match(home_norm, c_away)
-        away_as_home = _names_match(away_norm, c_home)
+        home_as_away = _canonical_names_match(home_team, candidate.away_team_name)
+        away_as_home = _canonical_names_match(away_team, candidate.home_team_name)
 
         logger.info(
             "  candidate %d: '%s' vs '%s' (time=%s) — "
@@ -157,8 +150,6 @@ async def _find_existing_event_by_teams(
         exclude_external_id: Skip events that already have this external_id
             (they're the same event, not a duplicate).
     """
-    from app.services.team_identity import normalize_name
-
     window = timedelta(hours=3)
     result = await session.execute(
         select(Event).where(
@@ -170,30 +161,22 @@ async def _find_existing_event_by_teams(
     )
     candidates = result.scalars().all()
 
-    home_norm = normalize_name(home_team)
-    away_norm = normalize_name(away_team)
-
     for candidate in candidates:
         # Skip the event we're about to create (same external_id)
         if exclude_external_id and candidate.external_id == exclude_external_id:
             continue
 
-        c_home = normalize_name(candidate.home_team_name)
-        c_away = normalize_name(candidate.away_team_name)
-
         # Check normal orientation
-        if _names_match(home_norm, c_home) and _names_match(away_norm, c_away):
+        if _canonical_names_match(home_team, candidate.home_team_name) and \
+           _canonical_names_match(away_team, candidate.away_team_name):
             return candidate
 
         # Check swapped home/away
-        if _names_match(home_norm, c_away) and _names_match(away_norm, c_home):
+        if _canonical_names_match(home_team, candidate.away_team_name) and \
+           _canonical_names_match(away_team, candidate.home_team_name):
             return candidate
 
     return None
-
-
-def _names_match(a: str, b: str) -> bool:
-    """Check if two normalized team names match via containment or last-word."""
 
 
 async def _external_id_in_use(session, external_id: str) -> Optional[int]:
@@ -207,38 +190,6 @@ async def _external_id_in_use(session, external_id: str) -> Optional[int]:
         select(Event.id).where(Event.external_id == external_id).limit(1)
     )
     return result.scalar_one_or_none()
-
-
-def _names_match(a: str, b: str) -> bool:
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    if len(a) >= 4 and len(b) >= 4 and (a in b or b in a):
-        return True
-    # Last-word (mascot) match
-    a_parts = a.split()
-    b_parts = b.split()
-    if a_parts and b_parts and len(a_parts[-1]) >= 4 and a_parts[-1] == b_parts[-1]:
-        return True
-    return False
-
-
-def _espn_names_match(our_name: str, espn_name: str) -> bool:
-    """Match a single team name against ESPN name.
-
-    Uses substring containment + token-overlap scoring fallback
-    for abbreviation differences (e.g., 'Ohio St' vs 'Ohio State').
-    """
-    from app.tasks.espn_sync import _team_name_match_score
-
-    our_lower = our_name.lower().strip()
-    espn_lower = (espn_name or "").lower().strip()
-    if not our_lower or not espn_lower:
-        return False
-    if our_lower in espn_lower or espn_lower in our_lower:
-        return True
-    return _team_name_match_score(our_name, espn_name) > 0.5
 
 
 async def _discover_events():
@@ -407,9 +358,9 @@ async def _discover_events():
                                     or ee.away_team.name
                                     or ""
                                 )
-                                if _espn_names_match(
+                                if _canonical_names_match(
                                     event_data["home_team"], espn_home
-                                ) and _espn_names_match(
+                                ) and _canonical_names_match(
                                     event_data["away_team"], espn_away
                                 ):
                                     espn_commence_time = ee.date

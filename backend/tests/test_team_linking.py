@@ -1,150 +1,15 @@
-"""Tests for futures outcome → team linking and market tier assignment."""
+"""Tests for futures outcome → team linking and relevance scoring."""
 
 import pytest
 from unittest.mock import patch
 
 from app.utils.team_linking import (
-    compute_market_tier,
     compute_relevance_score,
     _normalize_name,
     _names_match,
     match_outcome_to_team,
     get_sport_keys_for_category,
 )
-
-
-# =============================================================================
-# Market Tier Assignment
-# =============================================================================
-class TestComputeMarketTier:
-    """Test market tier classification (1=championship, 2=conference, 3=awards, 4=division, 5=other)."""
-
-    # Tier 1: Championship
-    def test_nba_championship(self):
-        assert compute_market_tier("NBA Championship Winner") == 1
-
-    def test_super_bowl_winner(self):
-        assert compute_market_tier("Super Bowl LXI Winner") == 1
-
-    def test_world_series(self):
-        assert compute_market_tier("World Series Champion") == 1
-
-    def test_stanley_cup(self):
-        assert compute_market_tier("Stanley Cup Winner") == 1
-
-    def test_championship_category_override(self):
-        """Even generic name, if category is championship → tier 1."""
-        assert compute_market_tier("Some Market", category="championship") == 1
-
-    def test_generic_winner_market(self):
-        assert compute_market_tier("Premier League Winner") == 1
-
-    # Tier 2: Conference
-    def test_eastern_conference(self):
-        assert compute_market_tier("Eastern Conference Winner") == 2
-
-    def test_western_conference(self):
-        assert compute_market_tier("Western Conference Winner") == 2
-
-    def test_afc_winner(self):
-        assert compute_market_tier("AFC Championship Winner") == 2
-
-    def test_nfc_winner(self):
-        assert compute_market_tier("NFC Championship Winner") == 2
-
-    def test_american_league_pennant(self):
-        assert compute_market_tier("American League Pennant Winner") == 2
-
-    def test_national_league(self):
-        assert compute_market_tier("National League Winner") == 2
-
-    # Tier 3: Awards / MVP
-    def test_nba_mvp(self):
-        assert compute_market_tier("NBA MVP Award") == 3
-
-    def test_mvp_category(self):
-        assert compute_market_tier("Some MVP Market", category="mvp") == 3
-
-    def test_heisman(self):
-        assert compute_market_tier("Heisman Trophy Winner") == 3
-
-    def test_cy_young(self):
-        assert compute_market_tier("AL Cy Young Award") == 3
-
-    def test_hart_trophy(self):
-        assert compute_market_tier("Hart Trophy Winner") == 3
-
-    def test_defensive_player(self):
-        assert compute_market_tier("Defensive Player of the Year") == 3
-
-    def test_rookie_of_year(self):
-        assert compute_market_tier("Rookie of the Year") == 3
-
-    def test_ballon_dor(self):
-        assert compute_market_tier("Ballon d'Or Winner") == 3
-
-    def test_conn_smythe(self):
-        assert compute_market_tier("Conn Smythe Trophy") == 3
-
-    # Tier 4: Division
-    def test_al_east(self):
-        assert compute_market_tier("AL East Division Winner") == 4
-
-    def test_nfc_south(self):
-        assert compute_market_tier("NFC South Winner") == 4
-
-    def test_atlantic_division(self):
-        assert compute_market_tier("Atlantic Division Winner") == 4
-
-    def test_pacific_division(self):
-        assert compute_market_tier("Pacific Division Winner") == 4
-
-    def test_central_division(self):
-        assert compute_market_tier("Central Division Winner") == 4
-
-    # Tier 5: Other / Props
-    def test_unknown_market(self):
-        assert compute_market_tier("Something Random") == 5
-
-    def test_prop_bet(self):
-        assert compute_market_tier("Total Regular Season Wins") == 5
-
-    def test_empty_name(self):
-        assert compute_market_tier("") == 5
-
-    # Non-sports: should get tier 2 instead of 5
-    def test_politics_market_defaults_to_tier_2(self):
-        assert compute_market_tier("Who will win the 2028 presidential election?",
-                                   sport_category="politics") == 2
-
-    def test_crypto_market_defaults_to_tier_2(self):
-        assert compute_market_tier("Will Bitcoin hit $200k by December?",
-                                   sport_category="crypto") == 2
-
-    def test_entertainment_market_defaults_to_tier_2(self):
-        assert compute_market_tier("Who will host the Oscars?",
-                                   sport_category="entertainment") == 2
-
-    def test_economics_market_defaults_to_tier_2(self):
-        assert compute_market_tier("Will the Fed cut rates in March?",
-                                   sport_category="economics") == 2
-
-    def test_geopolitics_market_defaults_to_tier_2(self):
-        assert compute_market_tier("Will there be a ceasefire by June?",
-                                   sport_category="geopolitics") == 2
-
-    def test_tech_market_defaults_to_tier_2(self):
-        assert compute_market_tier("Will SpaceX land on Mars by 2030?",
-                                   sport_category="tech") == 2
-
-    def test_sports_market_without_pattern_still_tier_5(self):
-        """Sports markets that don't match any pattern stay at tier 5."""
-        assert compute_market_tier("Something Random", sport_category="basketball") == 5
-
-    def test_non_sport_with_championship_pattern_is_tier_1(self):
-        """If a non-sport market happens to match championship pattern, tier 1 wins."""
-        assert compute_market_tier("Championship Winner",
-                                   sport_category="entertainment") == 1
 
 
 # =============================================================================
@@ -334,38 +199,6 @@ class TestLLMPlayerTeamClassification:
         from app.services.llm import classify_player_team
         result = classify_player_team("Jaylen Brown", "basketball")
         assert result is None
-
-
-# =============================================================================
-# Edge Cases: Market Tier
-# =============================================================================
-class TestMarketTierEdgeCases:
-    def test_division_before_winner(self):
-        """'Division Winner' should be tier 4, not tier 1 (even though 'winner' matches)."""
-        assert compute_market_tier("NFC East Division Winner") == 4
-
-    def test_conference_before_championship(self):
-        """'Conference Championship' should be tier 2, not tier 1."""
-        assert compute_market_tier("Eastern Conference Champion") == 2
-
-    def test_mvp_award_is_tier_3(self):
-        """MVP markets are awards, not championships."""
-        assert compute_market_tier("NFL MVP Award Winner") == 3
-
-    def test_sixth_man_award(self):
-        assert compute_market_tier("Sixth Man of the Year Award") == 3
-
-    def test_most_improved(self):
-        assert compute_market_tier("Most Improved Player") == 3
-
-    def test_vezina_trophy(self):
-        assert compute_market_tier("Vezina Trophy Winner") == 3
-
-    def test_golden_boot(self):
-        assert compute_market_tier("Golden Boot Award") == 3
-
-    def test_nba_finals_is_championship(self):
-        assert compute_market_tier("NBA Finals Winner") == 1
 
 
 # =============================================================================

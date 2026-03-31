@@ -235,7 +235,7 @@ async def _poll_polymarket_markets():
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
     from app.services.polymarket_api import PolymarketAPIService
     from app.utils.odds_math import probability_to_american
-    from app.utils.team_linking import compute_market_tier
+    from app.utils.market_label_normalization import compute_market_tier
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     service = PolymarketAPIService()

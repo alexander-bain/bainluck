@@ -105,54 +105,13 @@ private let categoryToTier: [String: Int] = [
 ]
 
 private func effectiveTier(_ f: RelatedFuture) -> Int {
-    // Prefer backend display_category when available
+    // Use backend display_category (always provided by the API)
     if let cat = f.displayCategory, let tier = categoryToTier[cat] {
         return tier
     }
-    // Fallback to regex-based detection
-    let name = f.marketName
-    if isStatProp(name) { return 6 }
-    if isGameMarket(name) { return 5 }
-    if isAwardMarket(name) { return 3 }
-    if isNotChampionship(name) { return 4 }
+    // Fallback to market_tier for edge cases
     if let tier = f.marketTier, tier >= 1, tier <= 5 { return tier }
     return 5
-}
-
-private func isStatProp(_ name: String) -> Bool {
-    let patterns = [
-        ":\\s*(points|assists|rebounds|steals|blocks|three\\s*pointers?|3-?pointers?|turnovers|strikeouts|hits|runs|home\\s*runs|goals|saves|sacks|passing\\s*yards|rushing\\s*yards|receiving\\s*yards|touchdowns|completions|interceptions|aces|double\\s*doubles?|triple\\s*doubles?)",
-        "\\bat\\b.*:\\s*\\w",
-    ]
-    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
-}
-
-private func isGameMarket(_ name: String) -> Bool {
-    let patterns = ["\\bvs\\.?\\s", "\\s\u{2013}\\s", "more\\s+markets$", "moneyline$", "\\bgame\\s+\\d"]
-    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
-}
-
-private func isAwardMarket(_ name: String) -> Bool {
-    let patterns = [
-        "\\bmvp\\b", "\\bgolden\\s+boot\\b", "\\bgolden\\s+glove\\b", "cy\\s*young",
-        "\\bnewcomer\\b|\\brookie\\b", "player\\s+of\\s+(the\\s+)?year", "\\bballon\\b",
-        "\\bbest\\s+(actor|actress|picture|director|supporting)\\b",
-        "\\bleader\\b", "\\bper\\s+game\\b", "\\bclutch\\b", "\\bfinals\\s+mvp\\b",
-        "\\b[ew]cf\\s+mvp\\b", "\\bmost\\s+improved\\b", "\\bsixth\\s+man\\b", "\\b6th\\s+man\\b",
-        "\\ball[- ]?star\\s+mvp\\b", "\\bscoring\\s+(leader|title|champion)",
-        "\\bhome\\s+run\\s+(leader|king)", "\\bcover\\s+of\\b", "\\b2k\\b",
-    ]
-    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
-}
-
-private func isNotChampionship(_ name: String) -> Bool {
-    let patterns = [
-        "\\bwin\\s+total", "\\bover/under\\b", "\\bregular\\s+season\\s+wins",
-        "\\bcover\\s+of\\b", "\\b2k\\b", "\\bplayoff\\s+appearance", "\\bmake\\s+playoffs",
-        "\\bplayoff\\s*berth", "\\bto\\s+make\\b", "\\bseeding\\b", "\\bseed\\b",
-        "\\bover\\s+\\d", "\\bunder\\s+\\d", "\\bexact\\s+wins",
-    ]
-    return patterns.contains { name.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
 }
 
 private func shortAwardLabel(_ marketName: String, cleanLabel: String? = nil) -> String {

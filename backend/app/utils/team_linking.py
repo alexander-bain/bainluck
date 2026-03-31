@@ -1,115 +1,23 @@
 """
 Futures outcome → Team linking utility.
 
-Matches FuturesOutcome names to Team records using:
-1. Exact name match (case-insensitive)
-2. Substring match against Team.name + Team.alternate_names
-3. LLM player-team classification (for player names like "Jaylen Brown")
+Matches FuturesOutcome names to Team records using the canonical name
+normalization from name_normalization.py.
 
-Also assigns market_tier values to FuturesMarket records.
+Uses a conservative matching strategy (exact + suffix containment only,
+no token overlap) because outcomes iterate through ALL teams and must
+distinguish same-city teams like Lakers vs Clippers.
 """
 
 import logging
-import re
 from typing import Optional
 
-from app.utils.name_normalization import normalize_name as _normalize_name
+from app.utils.name_normalization import normalize_name as _normalize_name  # noqa: F401 — re-exported
+
+# Re-export for backward compatibility — canonical location is market_label_normalization
+from app.utils.market_label_normalization import compute_market_tier  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Market tier assignment
-# =============================================================================
-
-# Tier 1: Championship / title winner
-_TIER_1_PATTERNS = [
-    re.compile(r"\b(championship|champion|super.bowl|world.series|stanley.cup|nba.finals|title)\b", re.I),
-    re.compile(r"\bwinner\b", re.I),  # Catch-all for "X Winner" markets
-]
-
-# Tier 2: Conference winner
-_TIER_2_PATTERNS = [
-    re.compile(r"\b(conference|eastern|western|afc|nfc|american.league|national.league)\b", re.I),
-]
-
-# Tier 3: Awards / MVP / individual honors
-_TIER_3_PATTERNS = [
-    re.compile(r"\b(mvp|rookie|defensive.player|sixth.man|most.improved|cy.young|heisman)\b", re.I),
-    re.compile(r"\b(hart.trophy|vezina|calder|norris.trophy|selke|conn.smythe|ballon.d.or)\b", re.I),
-    re.compile(r"\b(award|trophy|player.of.the.year|golden.boot|golden.glove)\b", re.I),
-]
-
-# Tier 4: Division winner
-_TIER_4_PATTERNS = [
-    re.compile(r"\b(division|atlantic|pacific|central|southeast|northwest|southwest)\b", re.I),
-    re.compile(r"\b(al.east|al.west|al.central|nl.east|nl.west|nl.central)\b", re.I),
-    re.compile(r"\b(afc.east|afc.west|afc.north|afc.south|nfc.east|nfc.west|nfc.north|nfc.south)\b", re.I),
-    re.compile(r"\b(metropolitan|atlantic.division|pacific.division|central.division)\b", re.I),
-]
-
-
-_NON_SPORT_CATEGORIES = {
-    "politics", "crypto", "economics", "entertainment", "tech",
-    "weather", "geopolitics", "culture",
-}
-
-
-def compute_market_tier(market_name: str, category: Optional[str] = None,
-                        sport_category: Optional[str] = None) -> int:
-    """
-    Assign a tier (1-5) to a futures market based on its name and category.
-
-    Tiers:
-        1 = Championship / title winner (highest relevance)
-        2 = Conference winner / non-sports top-level
-        3 = Awards / MVP / individual honors
-        4 = Division winner
-        5 = Props / other (lowest relevance)
-
-    Non-sports markets (politics, crypto, entertainment, etc.) default to
-    tier 2 since they have no championship/conference hierarchy — they're
-    all top-level questions that should rank alongside major sports futures.
-
-    Returns:
-        Integer 1-5
-    """
-    name_lower = (market_name or "").lower()
-    cat_lower = (category or "").lower()
-
-    # Check category field first for quick classification
-    if cat_lower == "mvp":
-        return 3
-
-    # Division check before championship — "Division Winner" contains "winner"
-    # but should be tier 4, not tier 1
-    for pattern in _TIER_4_PATTERNS:
-        if pattern.search(name_lower):
-            return 4
-
-    # Conference check before championship — "Conference Winner" also contains "winner"
-    for pattern in _TIER_2_PATTERNS:
-        if pattern.search(name_lower):
-            return 2
-
-    # Awards check before championship — "MVP Award" also might match "winner"
-    for pattern in _TIER_3_PATTERNS:
-        if pattern.search(name_lower):
-            return 3
-
-    # Championship / title
-    if cat_lower == "championship":
-        return 1
-    for pattern in _TIER_1_PATTERNS:
-        if pattern.search(name_lower):
-            return 1
-
-    # Non-sports markets default to tier 2 (no hierarchy — all top-level)
-    effective_category = (sport_category or category or "").lower()
-    if effective_category in _NON_SPORT_CATEGORIES:
-        return 2
-
-    return 5
 
 
 # =============================================================================
@@ -118,17 +26,14 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
 
 
 def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = None) -> bool:
-    """
-    Check if a candidate string (futures outcome name) matches a team.
+    """Check if a candidate string (futures outcome name) matches a team.
 
-    Uses full-string matching to avoid false positives (e.g., "Los Angeles"
-    matching both Lakers and Clippers). Only does substring matching when
-    the candidate is long enough (>= 8 chars) to avoid city-only matches.
+    Uses conservative matching (exact + substring ≥8 chars) because futures
+    outcomes iterate through ALL teams and need to distinguish same-city teams
+    (e.g., "Los Angeles Clippers" must NOT match "LA Lakers").
 
-    Args:
-        candidate: The outcome name to match (e.g., "Boston Celtics")
-        team_name: The team's canonical name (e.g., "Boston Celtics")
-        alt_names: List of alternate names (e.g., ["Celtics", "Boston"])
+    For 1:1 event matching (where both teams are known), use the more
+    aggressive names_match() from name_normalization.py instead.
     """
     candidate_norm = _normalize_name(candidate)
     if not candidate_norm:

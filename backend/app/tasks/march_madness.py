@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from sqlalchemy import select, and_
 
+from app.utils.name_normalization import token_overlap_score
+
 from app.tasks.base import get_task_session
 
 logger = logging.getLogger(__name__)
@@ -103,27 +105,12 @@ def _parse_seed(competitor: dict) -> int | None:
     return None
 
 
-def _normalize_name(name: str) -> str:
-    """Normalize team name for matching."""
-    import unicodedata
-    name = unicodedata.normalize("NFD", name)
-    name = "".join(c for c in name if unicodedata.category(c) != "Mn")
-    return name.lower().strip()
-
-
 def _names_overlap(espn_name: str, db_name: str) -> bool:
-    """Check if ESPN team name matches our DB team name."""
-    a = set(_normalize_name(espn_name).split())
-    b = set(_normalize_name(db_name).split())
-    # Remove common stopwords
-    stopwords = {"the", "of", "fc", "sc", "cf", "at", "st", "st."}
-    a -= stopwords
-    b -= stopwords
-    if not a or not b:
-        return False
-    overlap = a & b
-    score = min(len(overlap) / len(a), len(overlap) / len(b))
-    return score > 0.5
+    """Check if ESPN team name matches our DB team name.
+
+    Delegates to canonical token_overlap_score() from name_normalization.py.
+    """
+    return token_overlap_score(espn_name, db_name) > 0.5
 
 
 async def _sync_march_madness_bracket() -> dict:
