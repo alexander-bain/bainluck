@@ -977,7 +977,7 @@ function StatPropsSection({
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-[10px]">📊</span>
         <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-          {isFinished && boxScore ? "Player stats — results" : isLive && boxScore ? "Player stats — live" : "Player stats"}
+          {isFinished && boxScore ? "Game props — results" : isLive && boxScore ? "Game props — live" : "Game props"}
         </span>
       </div>
 
@@ -1307,10 +1307,10 @@ function classifyPlayoffStage(marketName: string, cleanLabel?: string): { name: 
     const divName = divMatch && divMatch[1] ? divMatch[1].charAt(0).toUpperCase() + divMatch[1].slice(1) + " Div" : "Division";
     return { name: divName, order: 3 };
   }
-  if (/play[- ]?in/i.test(text)) return { name: "Play-In", order: 2 };
-  if (/make\s+playoffs|playoff\s+berth|playoffs$/i.test(text))
+  if (/play[- ]?in\s*(tournament)?/i.test(text)) return { name: "Play-In", order: 2 };
+  if (/make\s+playoffs|playoff\s+berth|playoff\s+qualifiers|playoffs$/i.test(text))
     return { name: "Playoffs", order: 1 };
-  if (/#1\s+seed|top\s+seed|first\s+seed/i.test(text))
+  if (/#1\s+seed|top\s+seed|first\s+seed|best\s+record/i.test(text))
     return { name: "#1 Seed", order: 6 };
   return { name: cleanLabel || cleanMarketName(marketName), order: 3 };
 }
@@ -1417,6 +1417,13 @@ function PlayoffPathPair({
             );
           })}
         </div>
+        {/* Source dots */}
+        <div className="flex items-center gap-1 px-3 pb-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+          <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+          <span className="text-[8px] text-text-muted ml-0.5">3 sources</span>
+        </div>
       </div>
     );
   }
@@ -1432,32 +1439,81 @@ function PlayoffPathPair({
   );
 }
 
-// ─── V5 WIN TOTALS (side-by-side hero cards) ───
+// ─── V5 SEASON STATS (compact side-by-side list) ───
+function SeasonStatRow({ future, teamColor }: { future: RelatedFuture; teamColor: string }) {
+  const prob = future.probability || 0;
+  const label = future.clean_label || cleanMarketName(future.market_name);
+  return (
+    <Link
+      href={`/futures/${future.market_id}`}
+      className="flex items-center gap-2 py-1.5 border-b border-surface-border/10 last:border-0 hover:bg-surface-elevated/30 transition-colors px-2 group"
+    >
+      <span className="text-[10px] text-text-secondary flex-1 truncate">{label}</span>
+      <span
+        className="text-[11px] font-bold font-mono shrink-0"
+        style={{ color: prob >= 0.10 ? teamColor : "var(--text-muted)" }}
+      >
+        {formatProbability(future.probability)}
+      </span>
+      {future.rank && (
+        <span className="text-[8px] text-text-muted font-medium shrink-0">#{future.rank}</span>
+      )}
+    </Link>
+  );
+}
+
 function WinTotalsPair({
   homeFutures,
   awayFutures,
+  homeTeam,
+  awayTeam,
   homeColor,
   awayColor,
+  homeLogo,
+  awayLogo,
 }: {
   homeFutures: RelatedFuture[];
   awayFutures: RelatedFuture[];
+  homeTeam: string;
+  awayTeam: string;
   homeColor: string;
   awayColor: string;
+  homeLogo?: string;
+  awayLogo?: string;
 }) {
   if (homeFutures.length === 0 && awayFutures.length === 0) return null;
 
+  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  const homeShort = homeTeam.split(" ").pop() || homeTeam;
+
+  function renderCol(futures: RelatedFuture[], shortName: string, color: string, logo?: string) {
+    if (futures.length === 0) return <div />;
+    const sorted = [...futures].sort((a, b) => (b.probability || 0) - (a.probability || 0));
+    return (
+      <div className="rounded-xl border overflow-hidden bg-surface-card" style={{ borderLeftWidth: 3, borderLeftColor: color }}>
+        <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-surface-border/30">
+          {logo ? (
+            <img src={logo} alt="" className="w-4 h-4 object-contain" />
+          ) : (
+            <div className="w-4 h-4 rounded flex items-center justify-center text-white text-[6px] font-extrabold" style={{ backgroundColor: color }}>
+              {shortName.slice(0, 3).toUpperCase()}
+            </div>
+          )}
+          <span className="text-[9px] font-bold">{shortName}</span>
+        </div>
+        <div>
+          {sorted.slice(0, 5).map((f) => (
+            <SeasonStatRow key={f.outcome_id} future={f} teamColor={color} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-2 gap-2">
-      <div className="space-y-1.5">
-        {awayFutures.slice(0, 4).map((f) => (
-          <HeroFutureCard key={f.outcome_id} future={f} teamColor={awayColor} />
-        ))}
-      </div>
-      <div className="space-y-1.5">
-        {homeFutures.slice(0, 4).map((f) => (
-          <HeroFutureCard key={f.outcome_id} future={f} teamColor={homeColor} />
-        ))}
-      </div>
+      {renderCol(awayFutures, awayShort, awayColor, awayLogo)}
+      {renderCol(homeFutures, homeShort, homeColor, homeLogo)}
     </div>
   );
 }
@@ -1554,24 +1610,27 @@ function TradeWatchPair({
           )}
           <span className="text-[9px] font-bold">Traded to {shortName}</span>
         </div>
-        {sorted.slice(0, 5).map((f, i) => (
-          <Link
-            key={f.outcome_id}
-            href={`/futures/${f.market_id}`}
-            className="flex items-center gap-2 px-2 py-1.5 border-b border-surface-border/10 last:border-0 hover:bg-surface-elevated/30 transition-colors"
-          >
-            <PlayerHeadshot
-              name={f.outcome_name}
-              matchedPlayer={f.matched_player}
-              teamColor={color}
-              size={i === 0 ? 32 : 20}
-            />
-            <span className="text-[9px] font-semibold flex-1 truncate">{f.outcome_name}</span>
-            <span className="text-[10px] font-bold font-mono" style={{ color: (f.probability || 0) >= 0.10 ? undefined : "var(--text-muted)" }}>
-              {formatProbability(f.probability)}
-            </span>
-          </Link>
-        ))}
+        {sorted.slice(0, 5).map((f, i) => {
+          const playerName = extractTradePlayer(f.market_name);
+          return (
+            <Link
+              key={f.outcome_id}
+              href={`/futures/${f.market_id}`}
+              className="flex items-center gap-2 px-2 py-1.5 border-b border-surface-border/10 last:border-0 hover:bg-surface-elevated/30 transition-colors"
+            >
+              <PlayerHeadshot
+                name={playerName}
+                matchedPlayer={f.matched_player}
+                teamColor={color}
+                size={i === 0 ? 32 : 20}
+              />
+              <span className="text-[9px] font-semibold flex-1 truncate">{playerName}</span>
+              <span className="text-[10px] font-bold font-mono" style={{ color: (f.probability || 0) >= 0.10 ? undefined : "var(--text-muted)" }}>
+                {formatProbability(f.probability)}
+              </span>
+            </Link>
+          );
+        })}
       </div>
     );
   }
@@ -1600,31 +1659,35 @@ const NOVELTY_GRADIENTS = [
 function NoveltyScroll({ futures }: { futures: RelatedFuture[] }) {
   if (futures.length === 0) return null;
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
+    <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-hide">
       {futures.slice(0, 8).map((f, i) => {
         const gradient = NOVELTY_GRADIENTS[i % NOVELTY_GRADIENTS.length];
         const pct = Math.round((f.probability || 0) * 100);
+        // Use clean_label for display, fall back to market_name
+        const label = f.clean_label || f.market_name;
         return (
           <Link
             key={f.outcome_id}
             href={`/futures/${f.market_id}`}
-            className={`flex-shrink-0 rounded-xl overflow-hidden bg-gradient-to-br ${gradient} min-w-[150px] max-w-[150px]`}
+            className={`flex-shrink-0 rounded-xl overflow-hidden bg-gradient-to-br ${gradient} w-[180px]`}
           >
-            <div className="p-2.5 flex flex-col gap-1 min-h-[80px] relative">
-              <div className="text-[10px] font-bold text-white/90 leading-snug line-clamp-3">
-                {f.clean_label || f.market_name}
+            <div className="p-3 flex flex-col gap-1.5 min-h-[100px] relative">
+              <div className="text-[11px] font-bold text-white leading-snug" style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                {label}
               </div>
-              <div className="text-white/70 text-[9px]">
+              <div className="text-white/70 text-[9px] truncate">
                 {f.outcome_name}
               </div>
-              <div className="text-[13px] font-black font-mono text-white mt-auto">
-                {pct}% yes
+              <div className="flex items-end justify-between mt-auto">
+                <div className="text-[15px] font-black font-mono text-white">
+                  {pct}%
+                </div>
+                {f.source && (
+                  <span className="text-[7px] font-semibold px-1.5 py-0.5 rounded bg-white/20 text-white">
+                    {f.source === "kalshi" ? "Kalshi" : f.source === "polymarket" ? "Polymarket" : f.source}
+                  </span>
+                )}
               </div>
-              {f.source && (
-                <span className="absolute bottom-1.5 right-1.5 text-[7px] font-semibold px-1 py-0.5 rounded bg-white/20 text-white">
-                  {f.source === "kalshi" ? "Kalshi" : f.source === "polymarket" ? "Polymarket" : f.source}
-                </span>
-              )}
             </div>
           </Link>
         );
@@ -1662,26 +1725,69 @@ function GameMarketsPair({
   );
 }
 
+/** Check if a game_prop market actually belongs to this event (filter out mismatches). */
+function isRelevantGameProp(f: RelatedFuture, homeTeam: string, awayTeam: string): boolean {
+  if (f.display_category !== "game_prop") return true;
+  const name = f.market_name.toLowerCase();
+  // Extract city/team tokens from both teams
+  const homeTokens = homeTeam.toLowerCase().split(/\s+/);
+  const awayTokens = awayTeam.toLowerCase().split(/\s+/);
+  const allTokens = [...homeTokens, ...awayTokens];
+  // If market name contains "at" or "vs" pattern, check the teams match
+  const matchupMatch = name.match(/^(.+?)\s+(?:at|vs\.?)\s+(.+?)(?:\s*:|\s*$)/);
+  if (matchupMatch) {
+    const team1 = matchupMatch[1].trim();
+    const team2 = matchupMatch[2].trim();
+    const matchesTeam = (t: string) => allTokens.some((tok) => t.includes(tok) && tok.length > 2);
+    // If neither team in the matchup matches our event teams, filter it out
+    if (!matchesTeam(team1) && !matchesTeam(team2)) return false;
+    // Specifically filter known college team false positives
+    if (/miami\s*\(oh\)|smu\b|southern\s+methodist/i.test(name)) return false;
+  }
+  return true;
+}
+
+/** Extract player name from trade market (e.g. "Devin Booker's Next Team" → "Devin Booker") */
+function extractTradePlayer(marketName: string): string {
+  const m = marketName.match(/^(.+?)(?:'s?\s+Next\s+Team|'s?\s+next\s+destination)/i);
+  return m ? m[1].trim() : marketName;
+}
+
 /** Categorize a list of related futures into display groups. */
-function categorizeFutures(futures: RelatedFuture[]) {
+function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", awayTeam: string = "") {
   const active = futures.filter((f) => {
     const p = f.probability;
     if (p === null || p === undefined) return true;
-    return p > 0.01 && p < 0.99;
+    if (p <= 0.01 || p >= 0.99) return false;
+    // Filter mismatched game props
+    if (!isRelevantGameProp(f, homeTeam, awayTeam)) return false;
+    return true;
   });
   return {
-    championship: active.filter(
-      (f) => f.display_category === "playoff_path" || (!f.display_category && effectiveTier(f) === 1),
-    ),
+    championship: active.filter((f) => {
+      if (f.display_category === "playoff_path" || (!f.display_category && effectiveTier(f) === 1)) return true;
+      // Also pull division/playoff items from season_stat
+      if (f.display_category === "season_stat") {
+        const name = (f.clean_label || f.market_name).toLowerCase();
+        if (/division|playoff|play-?in|#1 seed|best record/i.test(name)) return true;
+      }
+      return false;
+    }),
     conference: active.filter(
       (f) => f.display_category === "conference" || (!f.display_category && effectiveTier(f) === 2),
     ),
     awards: active.filter(
       (f) => f.display_category === "award" || (!f.display_category && effectiveTier(f) === 3),
     ),
-    seasonStats: active.filter(
-      (f) => f.display_category === "season_stat" || (!f.display_category && effectiveTier(f) === 4),
-    ),
+    seasonStats: active.filter((f) => {
+      if (f.display_category === "season_stat" || (!f.display_category && effectiveTier(f) === 4)) {
+        // Pull division/playoff/seed items into playoff path instead
+        const name = (f.clean_label || f.market_name).toLowerCase();
+        if (/division|playoff|play[- ]?in|#1\s+seed|best\s+record|worst\s+record/i.test(name)) return false;
+        return true;
+      }
+      return false;
+    }),
     trades: active.filter((f) => f.display_category === "trade"),
     novelty: active.filter((f) => f.display_category === "novelty"),
     games: active.filter((f) => !f.display_category && effectiveTier(f) === 5),
@@ -1728,9 +1834,9 @@ export default function RelatedFutures({
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
-  // Categorize futures for each team
-  const homeCats = categorizeFutures(home_team_futures);
-  const awayCats = categorizeFutures(away_team_futures);
+  // Categorize futures for each team (pass team names for mismatch filtering)
+  const homeCats = categorizeFutures(home_team_futures, homeTeam, awayTeam);
+  const awayCats = categorizeFutures(away_team_futures, homeTeam, awayTeam);
 
   // Find championship futures for title comparison
   const CHAMP_RE = /\bchampionship\b|\bwin\s+(the\s+)?title\b|\btitle\s+winner\b|\bwin\s+it\s+all\b/i;
@@ -1881,8 +1987,12 @@ export default function RelatedFutures({
               <WinTotalsPair
                 homeFutures={homeCats.seasonStats}
                 awayFutures={awayCats.seasonStats}
+                homeTeam={homeTeam}
+                awayTeam={awayTeam}
                 homeColor={hColor}
                 awayColor={aColor}
+                homeLogo={homeTeamLogo}
+                awayLogo={awayTeamLogo}
               />
             </div>
           )}
