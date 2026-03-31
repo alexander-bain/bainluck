@@ -330,20 +330,19 @@ export default function ScoreDifferentialChart({
       let first = parseISO(allTimestamps[0]);
       let last = parseISO(allTimestamps[allTimestamps.length - 1]);
 
-      // Use chartStartTime/chartEndTime from OddsChart's actual rendered domain.
-      // These are the EXACT first and last timestamps OddsChart displays,
-      // reported via the onRenderedDomain callback — no replication of logic needed.
+      // Take the UNION (widest range) of our own data and OddsChart's domain.
+      // This ensures we show full game data even when OddsChart has sparse data
+      // (e.g., when Odds API is down and only a few end-of-game snapshots exist).
       if (chartStartTime) {
         const startFromParent = parseISO(chartStartTime);
         startFromParent.setSeconds(0, 0);
-        first = startFromParent;
+        if (startFromParent < first) first = startFromParent;
       }
 
-      // Match the Win Probability chart's end time exactly
       if (chartEndTime) {
         const endFromParent = parseISO(chartEndTime);
         endFromParent.setSeconds(0, 0);
-        last = endFromParent;
+        if (endFromParent > last) last = endFromParent;
       }
 
       const cursor = new Date(first.getTime());
