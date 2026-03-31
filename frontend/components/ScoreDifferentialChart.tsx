@@ -47,9 +47,9 @@ interface ScoreDifferentialChartProps {
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
   awayTeamLogo?: string;
-  /** Start timestamp (ISO) from the Win Probability chart so both charts share the same x-axis range */
+  /** @deprecated — start is now derived from commenceTime + data. Kept for backward compat. */
   chartStartTime?: string;
-  /** End timestamp (ISO) from the Win Probability chart so both charts share the same x-axis range */
+  /** End timestamp (ISO) from the Win Probability chart — extends domain for live games if OddsChart has later data */
   chartEndTime?: string;
   /** Prediction market spread/total data from binary contracts */
   pmSpreadData?: {
@@ -324,26 +324,34 @@ export default function ScoreDifferentialChart({
     // Both charts use categorical XAxis where each category gets equal pixel width.
     // Without filling gaps, this chart has fewer categories than OddsChart,
     // causing different pixel-per-minute spacing and visible x-axis misalignment.
-    // chartStartTime/chartEndTime are the EXACT rendered bounds from OddsChart.
+    // Determine chart domain from authoritative game timeline, not from
+    // whatever data happens to exist. commenceTime is the game start;
+    // the last ESPN/score/odds timestamp is the game end (or current time if live).
     const allTimestamps = Array.from(dataMap.keys()).sort();
-    if (allTimestamps.length >= 2) {
-      let first = parseISO(allTimestamps[0]);
-      let last = parseISO(allTimestamps[allTimestamps.length - 1]);
+    if (allTimestamps.length >= 2 || commenceTime) {
+      let first = allTimestamps.length >= 2
+        ? parseISO(allTimestamps[0])
+        : parseISO(commenceTime!);
+      let last = allTimestamps.length >= 2
+        ? parseISO(allTimestamps[allTimestamps.length - 1])
+        : first;
 
-      // Take the UNION (widest range) of our own data and OddsChart's domain.
-      // This ensures we show full game data even when OddsChart has sparse data
-      // (e.g., when Odds API is down and only a few end-of-game snapshots exist).
-      if (chartStartTime) {
-        const startFromParent = parseISO(chartStartTime);
-        startFromParent.setSeconds(0, 0);
-        if (startFromParent < first) first = startFromParent;
+      // In "Since Start" mode, always start at commenceTime
+      if (timeRange === "live" && commenceTime) {
+        const gameStart = parseISO(commenceTime);
+        gameStart.setSeconds(0, 0);
+        if (gameStart < first) first = gameStart;
       }
 
+      // Extend end to match OddsChart if it has later data (e.g., live games)
       if (chartEndTime) {
         const endFromParent = parseISO(chartEndTime);
         endFromParent.setSeconds(0, 0);
         if (endFromParent > last) last = endFromParent;
       }
+
+      first.setSeconds(0, 0);
+      last.setSeconds(0, 0);
 
       const cursor = new Date(first.getTime());
       cursor.setMinutes(cursor.getMinutes() + 1);
