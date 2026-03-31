@@ -259,6 +259,86 @@ private func formatOdds(_ odds: Int?) -> String {
     return odds > 0 ? "+\(odds)" : "\(odds)"
 }
 
+// MARK: - Playoff Stage Classification
+
+private struct PlayoffStage {
+    let name: String
+    let probability: Double
+    let order: Int
+    let marketId: Int
+    var isDone: Bool { probability >= 0.99 }
+}
+
+private func classifyPlayoffStage(_ marketName: String, cleanLabel: String?) -> (name: String, order: Int) {
+    let text = (cleanLabel ?? marketName).lowercased()
+    if text.range(of: "championship|champion|title|finals|world\\s+series|super\\s+bowl|stanley\\s+cup", options: .regularExpression) != nil {
+        return ("Championship", 5)
+    }
+    if text.range(of: "conference|eastern|western|afc|nfc|american\\s+league|national\\s+league", options: .regularExpression) != nil {
+        if let m = text.range(of: "(eastern|western|afc|nfc|american|national)", options: .regularExpression) {
+            let raw = String(text[m])
+            let confName = raw.prefix(1).uppercased() + raw.dropFirst() + " Champ"
+            return (confName, 4)
+        }
+        return ("Conference", 4)
+    }
+    if text.range(of: "division", options: .regularExpression) != nil { return ("Division", 3) }
+    if text.range(of: "play[- ]?in", options: .regularExpression) != nil { return ("Play-In", 2) }
+    if text.range(of: "make\\s+playoffs|playoff\\s+berth|playoffs$", options: .regularExpression) != nil { return ("Playoffs", 1) }
+    if text.range(of: "#1\\s+seed|top\\s+seed|first\\s+seed", options: .regularExpression) != nil { return ("#1 Seed", 6) }
+    return (cleanLabel ?? marketName, 3)
+}
+
+private func buildPlayoffStages(_ futures: [RelatedFuture]) -> [PlayoffStage] {
+    var stages: [PlayoffStage] = []
+    for f in futures {
+        guard let prob = f.probability else { continue }
+        let (name, order) = classifyPlayoffStage(f.marketName, cleanLabel: f.cleanLabel)
+        stages.append(PlayoffStage(name: name, probability: prob, order: order, marketId: f.marketId))
+    }
+    stages.sort { $0.order < $1.order }
+    var deduped: [String: PlayoffStage] = [:]
+    for s in stages {
+        if let existing = deduped[s.name] {
+            if s.probability > existing.probability { deduped[s.name] = s }
+        } else {
+            deduped[s.name] = s
+        }
+    }
+    return deduped.values.sorted { $0.order < $1.order }
+}
+
+// MARK: - Categorize Futures (V5)
+
+private struct CategorizedFutures {
+    var championships: [RelatedFuture] = []
+    var awards: [RelatedFuture] = []
+    var seasonStats: [RelatedFuture] = []
+    var games: [RelatedFuture] = []
+    var statProps: [RelatedFuture] = []
+    var trades: [RelatedFuture] = []
+    var novelty: [RelatedFuture] = []
+    var other: [RelatedFuture] = []
+}
+
+private func categorizeFutures(_ futures: [RelatedFuture]) -> CategorizedFutures {
+    var cats = CategorizedFutures()
+    for f in futures {
+        let tier = effectiveTier(f)
+        switch tier {
+        case 1, 2: cats.championships.append(f)
+        case 3: cats.awards.append(f)
+        case 4: cats.seasonStats.append(f)
+        case 5: cats.games.append(f)
+        case 6: cats.statProps.append(f)
+        case 7: cats.trades.append(f)
+        case 8: cats.novelty.append(f)
+        default: cats.other.append(f)
+        }
+    }
+    return cats
+}
+
 // MARK: - View
 
 struct RelatedFuturesView: View {
@@ -269,7 +349,6 @@ struct RelatedFuturesView: View {
     var homeTeam: String = ""
     var sportKey: String? = nil
     @StateObject private var vm: RelatedFuturesViewModel
-    @State private var expanded = false
 
     init(eventId: Int,
          awayTeamColor: Color = .gray,
@@ -320,7 +399,7 @@ struct RelatedFuturesView: View {
         }
     }
 
-    // MARK: - Content
+    // MARK: - Content (V5 Cross-Team Layout)
 
     @ViewBuilder
     private func content(_ rf: RelatedFuturesResponse) -> some View {
@@ -329,7 +408,18 @@ struct RelatedFuturesView: View {
         let totalCount = awayFutures.count + homeFutures.count
 
         if totalCount > 0 {
-            VStack(alignment: .leading, spacing: 16) {
+            let homeCats = categorizeFutures(homeFutures)
+            let awayCats = categorizeFutures(awayFutures)
+            let hColor = homeTeamColor
+            let aColor = awayTeamColor
+
+            // Merge cross-team collections
+            let mergedAwards = awayCats.awards + homeCats.awards
+            let mergedNovelty = awayCats.novelty + homeCats.novelty
+            let mergedStatProps = awayCats.statProps + homeCats.statProps
+            let mergedGames = awayCats.games + homeCats.games
+
+            VStack(alignment: .leading, spacing: 12) {
                 // Header
                 HStack(spacing: 6) {
                     Image(systemName: "chart.bar.xaxis.ascending")
@@ -362,187 +452,486 @@ struct RelatedFuturesView: View {
                         )
                 }
 
-                // Away team futures
-                if !awayFutures.isEmpty {
-                    teamSection(
-                        teamName: rf.awayTeam,
-                        futures: awayFutures,
-                        teamColor: awayTeamColor,
-                        allFutures: awayFutures + homeFutures,
-                        boxScore: rf.boxScore,
-                        eventStatus: rf.eventStatus,
-                        gamePeriod: rf.gamePeriod,
-                        gameClock: rf.gameClock
-                    )
-                }
-
-                // Home team futures
-                if !homeFutures.isEmpty {
-                    teamSection(
-                        teamName: rf.homeTeam,
-                        futures: homeFutures,
-                        teamColor: homeTeamColor,
-                        allFutures: awayFutures + homeFutures,
-                        boxScore: rf.boxScore,
-                        eventStatus: rf.eventStatus,
-                        gamePeriod: rf.gamePeriod,
-                        gameClock: rf.gameClock
-                    )
-                }
-
-                // Expand/collapse
-                if totalCount > 6 && !expanded {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            expanded = true
+                // Title Odds — side-by-side championship cards
+                let homeChamps = homeCats.championships
+                let awayChamps = awayCats.championships
+                if !homeChamps.isEmpty || !awayChamps.isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        if let f = awayChamps.first {
+                            ChampionshipCard(future: f, teamColor: aColor)
+                        } else {
+                            Spacer()
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("See all \(totalCount) futures")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 10, weight: .semibold))
+                        if let f = homeChamps.first {
+                            ChampionshipCard(future: f, teamColor: hColor)
+                        } else {
+                            Spacer()
                         }
-                        .foregroundStyle(.blue)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
                     }
                 }
+
+                // ── Level 3: Game Markets ──
+                if !mergedStatProps.isEmpty || !mergedGames.isEmpty {
+                    SectionDividerView(level: 3, label: "Game Markets", count: mergedStatProps.count + mergedGames.count)
+
+                    // Stat Props (merged across teams)
+                    if !mergedStatProps.isEmpty {
+                        StatPropsSection(
+                            futures: mergedStatProps,
+                            teamColor: hColor,
+                            boxScore: rf.boxScore,
+                            eventStatus: rf.eventStatus,
+                            gamePeriod: rf.gamePeriod,
+                            gameClock: rf.gameClock,
+                            sportKey: sportKey
+                        )
+                    }
+
+                    // Upcoming Games (side-by-side)
+                    if !mergedGames.isEmpty {
+                        GameMarketsPairView(
+                            homeGames: homeCats.games,
+                            awayGames: awayCats.games,
+                            homeTeam: homeTeam,
+                            awayTeam: awayTeam,
+                            homeColor: hColor,
+                            awayColor: aColor
+                        )
+                    }
+                }
+
+                // ── Level 4: Season Context ──
+                let hasSeasonContext = !homeCats.championships.isEmpty || !awayCats.championships.isEmpty ||
+                    !homeCats.seasonStats.isEmpty || !awayCats.seasonStats.isEmpty ||
+                    !mergedAwards.isEmpty || !homeCats.trades.isEmpty || !awayCats.trades.isEmpty ||
+                    !mergedNovelty.isEmpty
+
+                if hasSeasonContext {
+                    SectionDividerView(level: 4, label: "Season Context")
+
+                    // Playoff Path
+                    PlayoffPathPairView(
+                        homeFutures: homeCats.championships,
+                        awayFutures: awayCats.championships,
+                        homeTeam: homeTeam,
+                        awayTeam: awayTeam,
+                        homeColor: hColor,
+                        awayColor: aColor
+                    )
+
+                    // Season Stats (win totals etc) — side-by-side hero cards
+                    WinTotalsPairView(
+                        homeStats: homeCats.seasonStats,
+                        awayStats: awayCats.seasonStats,
+                        homeColor: hColor,
+                        awayColor: aColor
+                    )
+
+                    // Awards — compact rows
+                    if !mergedAwards.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 10))
+                                Text("AWARDS")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .tracking(0.8)
+                            }
+                            .foregroundStyle(.secondary)
+
+                            ForEach(mergedAwards.sorted(by: { ($0.probability ?? 0) > ($1.probability ?? 0) }).prefix(6)) { future in
+                                AwardCompactRowView(
+                                    future: future,
+                                    teamColor: future.outcomeName.localizedCaseInsensitiveContains(homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam) ? hColor : aColor
+                                )
+                            }
+                        }
+                    }
+
+                    // Trade Watch — side-by-side
+                    if !homeCats.trades.isEmpty || !awayCats.trades.isEmpty {
+                        TradeWatchPairView(
+                            homeTrades: homeCats.trades,
+                            awayTrades: awayCats.trades,
+                            homeTeam: homeTeam,
+                            awayTeam: awayTeam,
+                            homeColor: hColor,
+                            awayColor: aColor
+                        )
+                    }
+
+                    // Novelty — horizontal scroll
+                    if !mergedNovelty.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 10))
+                                Text("NOVELTY & FUN")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .tracking(0.8)
+                            }
+                            .foregroundStyle(.secondary)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 10) {
+                                    ForEach(Array(mergedNovelty.enumerated()), id: \.element.id) { idx, future in
+                                        NoveltyCardView(future: future, index: idx)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Footer
+                HStack {
+                    Spacer()
+                    Text("\(totalCount) related futures from multiple sources")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+                .padding(.top, 4)
             }
             .padding()
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
     }
+}
 
-    // MARK: - Team Section
+// MARK: - V5 Section Divider
 
-    private func teamSection(teamName: String, futures: [RelatedFuture], teamColor: Color, allFutures: [RelatedFuture], boxScore: [String: [String: Double]]? = nil, eventStatus: String? = nil, gamePeriod: Int? = nil, gameClock: String? = nil) -> some View {
-        let tiered = Dictionary(grouping: futures) { effectiveTier($0) }
-        let championships = (tiered[1] ?? []) + (tiered[2] ?? [])
-        let awards = (tiered[3] ?? []) + (tiered[4] ?? [])
-        let games = tiered[5] ?? []
-        let statProps = tiered[6] ?? []
-        let trades = tiered[7] ?? []
-        let novelty = tiered[8] ?? []
+private struct SectionDividerView: View {
+    let level: Int
+    let label: String
+    var count: Int? = nil
 
-        let displayLimit = expanded ? 999 : 6
-        var shown = 0
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("\(level)")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+                .background(Color.gray)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
 
-        return VStack(alignment: .leading, spacing: 12) {
-            // Team header
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(teamColor)
-                    .frame(width: 8, height: 8)
-                Text(teamName)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.primary)
+            Text(label)
+                .font(.system(size: 10, weight: .bold))
+                .textCase(.uppercase)
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+
+            Rectangle()
+                .fill(Color.secondary.opacity(0.2))
+                .frame(height: 1)
+
+            if let count, count > 0 {
+                Text("\(count) items")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
             }
+        }
+        .padding(.top, 8)
+    }
+}
 
-            // Championships
-            if !championships.isEmpty && shown < displayLimit {
-                let items = Array(championships.prefix(displayLimit - shown))
-                ForEach(items) { future in
-                    ChampionshipCard(future: future, teamColor: teamColor)
-                }
-                let _ = (shown += items.count)
-            }
+// MARK: - V5 Playoff Path Pair
 
-            // Awards
-            if !awards.isEmpty && shown < displayLimit {
-                let items = Array(awards.prefix(displayLimit - shown))
-                sectionLabel(icon: "star.fill", title: "Awards")
-                ForEach(items) { future in
-                    AwardCard(future: future, teamColor: teamColor)
-                }
-                let _ = (shown += items.count)
-            }
+private struct PlayoffPathPairView: View {
+    let homeFutures: [RelatedFuture]
+    let awayFutures: [RelatedFuture]
+    let homeTeam: String
+    let awayTeam: String
+    let homeColor: Color
+    let awayColor: Color
 
-            // Game grid
-            if !games.isEmpty && shown < displayLimit {
-                let items = Array(games.prefix(displayLimit - shown))
-                sectionLabel(icon: "calendar", title: "Upcoming Games")
-                GameGrid(futures: items, teamColor: teamColor, teamName: teamName)
-                let _ = (shown += items.count)
-            }
+    var body: some View {
+        let homeStages = buildPlayoffStages(homeFutures)
+        let awayStages = buildPlayoffStages(awayFutures)
 
-            // Stat props
-            if !statProps.isEmpty && shown < displayLimit {
-                let items = Array(statProps.prefix(displayLimit - shown))
-                StatPropsSection(
-                    futures: items,
-                    teamColor: teamColor,
-                    boxScore: boxScore,
-                    eventStatus: eventStatus,
-                    gamePeriod: gamePeriod,
-                    gameClock: gameClock,
-                    sportKey: sportKey
-                )
-                let _ = (shown += items.count)
-            }
-
-            // Trade Watch
-            if !trades.isEmpty && shown < displayLimit {
-                let items = Array(trades.prefix(min(5, displayLimit - shown)))
-                sectionLabel(icon: "arrow.left.arrow.right", title: "Trade Watch")
-                ForEach(items) { future in
-                    compactFutureRow(future: future, teamColor: teamColor)
-                }
-                let _ = (shown += items.count)
-            }
-
-            // Fun Markets
-            if !novelty.isEmpty && shown < displayLimit {
-                let items = Array(novelty.prefix(min(3, displayLimit - shown)))
-                sectionLabel(icon: "sparkles", title: "Fun Markets")
-                ForEach(items) { future in
-                    compactFutureRow(future: future, teamColor: teamColor)
-                }
-                let _ = (shown += items.count)
+        if !homeStages.isEmpty || !awayStages.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                pathCard(stages: awayStages, shortName: shortTeamName(awayTeam), color: awayColor)
+                pathCard(stages: homeStages, shortName: shortTeamName(homeTeam), color: homeColor)
             }
         }
     }
 
-    // Compact row for trade watch / fun markets
-    private func compactFutureRow(future: RelatedFuture, teamColor: Color) -> some View {
+    private func pathCard(stages: [PlayoffStage], shortName: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(shortName)
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+
+            if stages.isEmpty {
+                Text("No playoff data")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(Array(stages.enumerated()), id: \.element.marketId) { _, stage in
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(stage.isDone ? Color.green : (stage.probability >= 0.5 ? Color.orange : Color.gray.opacity(0.3)))
+                            .frame(width: 8, height: 8)
+                        Text(stage.name)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(formatProbability(stage.probability))
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                            .foregroundStyle(stage.isDone ? .green : color)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.secondary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private func shortTeamName(_ name: String) -> String {
+        name.split(separator: " ").last.map(String.init) ?? name
+    }
+}
+
+// MARK: - V5 Win Totals Pair
+
+private struct WinTotalsPairView: View {
+    let homeStats: [RelatedFuture]
+    let awayStats: [RelatedFuture]
+    let homeColor: Color
+    let awayColor: Color
+
+    var body: some View {
+        if !homeStats.isEmpty || !awayStats.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                if let f = awayStats.first {
+                    ChampionshipCard(future: f, teamColor: awayColor)
+                } else if !homeStats.isEmpty {
+                    Spacer()
+                }
+                if let f = homeStats.first {
+                    ChampionshipCard(future: f, teamColor: homeColor)
+                } else if !awayStats.isEmpty {
+                    Spacer()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - V5 Award Compact Row
+
+private struct AwardCompactRowView: View {
+    let future: RelatedFuture
+    let teamColor: Color
+
+    var body: some View {
         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
             HStack(spacing: 8) {
-                Text(future.cleanLabel ?? future.marketName)
+                PlayerHeadshotView(
+                    player: future.matchedPlayer,
+                    name: future.outcomeName,
+                    teamColor: teamColor,
+                    size: 24
+                )
+
+                Text(future.outcomeName)
                     .font(.caption)
-                    .foregroundStyle(.primary)
+                    .fontWeight(.medium)
                     .lineLimit(1)
+                    .foregroundStyle(.primary)
+
+                Text(shortAwardLabel(future.marketName, cleanLabel: future.cleanLabel))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
                 Spacer()
+
                 if let prob = future.probability {
                     Text(formatProbability(prob))
                         .font(.caption)
-                        .fontWeight(.semibold)
+                        .fontWeight(.bold)
                         .monospacedDigit()
                         .foregroundStyle(teamColor)
                 }
-                SourceBadge(source: future.source)
+
+                MovementPill(change: future.probabilityChange24h)
             }
             .padding(.vertical, 4)
+            .padding(.horizontal, 8)
         }
         .buttonStyle(.plain)
     }
+}
 
-    // MARK: - Section Label
+// MARK: - V5 Trade Watch Pair
 
-    private func sectionLabel(icon: String, title: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-            Text(title)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .textCase(.uppercase)
-                .tracking(0.5)
+private struct TradeWatchPairView: View {
+    let homeTrades: [RelatedFuture]
+    let awayTrades: [RelatedFuture]
+    let homeTeam: String
+    let awayTeam: String
+    let homeColor: Color
+    let awayColor: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.system(size: 10))
+                Text("TRADE WATCH")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+            }
+            .foregroundStyle(.secondary)
+
+            HStack(alignment: .top, spacing: 8) {
+                tradeColumn(futures: awayTrades, teamName: awayTeam, color: awayColor)
+                tradeColumn(futures: homeTrades, teamName: homeTeam, color: homeColor)
+            }
         }
-        .foregroundStyle(.secondary)
-        .padding(.top, 4)
+    }
+
+    private func tradeColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(teamName.split(separator: " ").last.map(String.init) ?? teamName)
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+
+            if futures.isEmpty {
+                Text("None")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(futures.prefix(4)) { future in
+                    NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+                        HStack(spacing: 6) {
+                            PlayerHeadshotView(
+                                player: future.matchedPlayer,
+                                name: future.outcomeName,
+                                teamColor: color,
+                                size: 20
+                            )
+                            Text(future.outcomeName)
+                                .font(.caption2)
+                                .lineLimit(1)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if let prob = future.probability {
+                                Text(formatProbability(prob))
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(color)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.04))
+        )
+    }
+}
+
+// MARK: - V5 Game Markets Pair
+
+private struct GameMarketsPairView: View {
+    let homeGames: [RelatedFuture]
+    let awayGames: [RelatedFuture]
+    let homeTeam: String
+    let awayTeam: String
+    let homeColor: Color
+    let awayColor: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if !awayGames.isEmpty {
+                GameGrid(futures: Array(awayGames.prefix(4)), teamColor: awayColor, teamName: awayTeam)
+            }
+            if !homeGames.isEmpty {
+                GameGrid(futures: Array(homeGames.prefix(4)), teamColor: homeColor, teamName: homeTeam)
+            }
+        }
+    }
+}
+
+// MARK: - V5 Novelty Card
+
+private let noveltyGradients: [(Color, Color)] = [
+    (Color.purple.opacity(0.15), Color.blue.opacity(0.08)),
+    (Color.orange.opacity(0.15), Color.pink.opacity(0.08)),
+    (Color.green.opacity(0.15), Color.teal.opacity(0.08)),
+    (Color.blue.opacity(0.15), Color.indigo.opacity(0.08)),
+    (Color.pink.opacity(0.15), Color.red.opacity(0.08)),
+    (Color.teal.opacity(0.15), Color.green.opacity(0.08)),
+]
+
+private struct NoveltyCardView: View {
+    let future: RelatedFuture
+    let index: Int
+
+    private var gradient: (Color, Color) {
+        noveltyGradients[index % noveltyGradients.count]
+    }
+
+    var body: some View {
+        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(future.cleanLabel ?? future.marketName)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer()
+
+                HStack {
+                    if let prob = future.probability {
+                        Text(formatProbability(prob))
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                    }
+                    Spacer()
+                    SourceBadge(source: future.source)
+                }
+            }
+            .padding(12)
+            .frame(width: 150, height: 100)
+            .background(
+                LinearGradient(
+                    colors: [gradient.0, gradient.1],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.secondary.opacity(0.1), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
