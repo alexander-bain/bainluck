@@ -12,6 +12,7 @@ from app.utils.sport_keys import (
     KALSHI_TICKER_TO_SPORT_KEY,
     KALSHI_GAME_TICKER_PREFIXES,
     KALSHI_TICKER_TO_DISPLAY_LABEL,
+    KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
     LLM_CATEGORY_TO_SPORT_KEYS,
     # accessor functions
     get_espn_path,
@@ -77,25 +78,33 @@ class TestDictContents:
         assert LLM_CATEGORY_TO_SPORT_PREFIX["motorsports"] == "motorsport"
 
     def test_kalshi_ticker_to_sport_key_size(self):
-        assert len(KALSHI_TICKER_TO_SPORT_KEY) == 38
+        assert len(KALSHI_TICKER_TO_SPORT_KEY) >= 200  # 205 game-level prefixes
 
     def test_kalshi_ticker_to_sport_key_sample(self):
         assert KALSHI_TICKER_TO_SPORT_KEY["kxnbagame"] == "basketball_nba"
         assert KALSHI_TICKER_TO_SPORT_KEY["kxnflgame"] == "americanfootball_nfl"
         assert KALSHI_TICKER_TO_SPORT_KEY["kxsosoccer"] == "soccer_olympics"
+        # New game-level tickers
+        assert KALSHI_TICKER_TO_SPORT_KEY["kxnflspread"] == "americanfootball_nfl"
+        assert KALSHI_TICKER_TO_SPORT_KEY["kxnhlgoal"] == "icehockey_nhl"
+        assert KALSHI_TICKER_TO_SPORT_KEY["kxmlbf5"] == "baseball_mlb"
+        # Baseball/basketball fix
+        assert KALSHI_TICKER_TO_SPORT_KEY["kxncaabbgame"] == "baseball_ncaa"
 
     def test_kalshi_game_ticker_prefixes_size(self):
-        assert len(KALSHI_GAME_TICKER_PREFIXES) == 38
+        assert len(KALSHI_GAME_TICKER_PREFIXES) >= 200
 
     def test_kalshi_game_ticker_prefixes_is_tuple(self):
         assert isinstance(KALSHI_GAME_TICKER_PREFIXES, tuple)
 
     def test_kalshi_ticker_to_display_label_size(self):
-        assert len(KALSHI_TICKER_TO_DISPLAY_LABEL) == 27
+        assert len(KALSHI_TICKER_TO_DISPLAY_LABEL) >= 190  # 194 display labels
 
     def test_kalshi_ticker_to_display_label_sample(self):
         assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxnbagame"] == "NBA"
         assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxlolgame"] == "LoL"
+        assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxnflspread"] == "NFL"
+        assert KALSHI_TICKER_TO_DISPLAY_LABEL["kxncaabbgame"] == "NCAA Baseball"
 
     def test_llm_category_to_sport_keys_size(self):
         assert len(LLM_CATEGORY_TO_SPORT_KEYS) == 8
@@ -206,6 +215,55 @@ class TestIsKalshiGameTicker:
 
     def test_case_insensitive(self):
         assert is_kalshi_game_ticker("kxmlbgame-26MAR15NYYBOS") is True
+
+    def test_nfl_spread_is_game_ticker(self):
+        assert is_kalshi_game_ticker("KXNFLSPREAD-26SEP07KCBUF") is True
+
+    def test_nhl_goal_is_game_ticker(self):
+        assert is_kalshi_game_ticker("KXNHLGOAL-26MAR30BOSMON") is True
+
+    def test_mlb_f5_is_game_ticker(self):
+        assert is_kalshi_game_ticker("KXMLBF5-26APR01NYYBOS") is True
+
+    def test_futures_not_game_ticker(self):
+        """Futures tickers should NOT be classified as game tickers."""
+        assert is_kalshi_game_ticker("KXNFLMVP-26") is False
+        assert is_kalshi_game_ticker("KXNHLHART-26") is False
+        assert is_kalshi_game_ticker("KXMLBWS-26") is False
+        assert is_kalshi_game_ticker("KXWNBA-26") is False
+        assert is_kalshi_game_ticker("KXNFLAFCCHAMP-26") is False
+
+
+class TestFuturesTickerResolution:
+    """Futures tickers resolve to sport via get_sport_key_from_ticker."""
+
+    def test_nfl_mvp(self):
+        assert get_sport_key_from_ticker("KXNFLMVP-26") == "americanfootball_nfl"
+
+    def test_nhl_hart(self):
+        assert get_sport_key_from_ticker("KXNHLHART-26") == "icehockey_nhl"
+
+    def test_mlb_world_series(self):
+        assert get_sport_key_from_ticker("KXMLBWS-26") == "baseball_mlb"
+
+    def test_wnba_championship(self):
+        assert get_sport_key_from_ticker("KXWNBA-26") == "basketball_wnba"
+
+    def test_ncaaf_conference(self):
+        assert get_sport_key_from_ticker("KXNCAAFSEC-26") == "americanfootball_ncaaf"
+
+    def test_nfl_win_totals(self):
+        assert get_sport_key_from_ticker("KXNFLWINS-KC") == "americanfootball_nfl"
+
+    def test_ncaab_conference_tournament(self):
+        assert get_sport_key_from_ticker("KXNCAAMBSEC-26") == "basketball_ncaab"
+
+    def test_college_baseball_correctly_classified(self):
+        assert get_sport_key_from_ticker("KXNCAABASEBALL-26") == "baseball_ncaa"
+
+    def test_esports_world_cup_mlbb_is_esports_not_baseball(self):
+        """KXEWCMLBB is Mobile Legends at Esports World Cup, NOT baseball."""
+        assert get_sport_key_from_ticker("KXEWCMLBB-26") == "esports"
 
 
 class TestGetSportKeysForCategory:

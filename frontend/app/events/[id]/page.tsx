@@ -651,6 +651,22 @@ export default function EventPage({ params }: EventPageProps) {
     }
   }
 
+  // Fallback: if no sportsbook odds, use win_prob_history (ESPN/stat_model/Kalshi)
+  if (homeProb === null && lastChartPoint && lastChartPoint.homeProb !== 0.5) {
+    homeProb = lastChartPoint.homeProb;
+    awayProb = lastChartPoint.awayProb;
+    // Determine source label from win_prob_sources
+    const wpSources = historyData?.win_prob_sources;
+    if (wpSources && Object.keys(wpSources).length > 0) {
+      const sourceNames = Object.keys(wpSources).map(s =>
+        s === "stat_model" ? "Model" : s === "espn" ? "ESPN" : s.charAt(0).toUpperCase() + s.slice(1)
+      );
+      probSourceLabel = isLive
+        ? `Live · ${sourceNames.join(", ")}`
+        : sourceNames.join(", ");
+    }
+  }
+
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
   const gameIsBlowout = isLive && isBlowout(homeProb);
 

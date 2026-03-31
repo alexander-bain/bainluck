@@ -192,39 +192,214 @@ LLM_CATEGORY_TO_SPORT_PREFIX: dict[str, str] = {
 # =============================================================================
 
 KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
-    # Major US sports
+    # Major US sports — moneyline
     "kxnbagame": "basketball_nba",
     "kxnflgame": "americanfootball_nfl",
     "kxnhlgame": "icehockey_nhl",
     "kxmlbgame": "baseball_mlb",
     "kxwnbagame": "basketball_wnba",
     "kxmlsgame": "soccer_usa_mls",
+    # NBA game-level props (spread, total, halves, quarters, player props)
+    "kxnbaspread": "basketball_nba",          # Game spread
+    "kxnbatotal": "basketball_nba",           # Game total points
+    "kxnbateamtotal": "basketball_nba",       # Team total points
+    "kxnba1hwinner": "basketball_nba",        # 1st half winner
+    "kxnba1hspread": "basketball_nba",        # 1st half spread
+    "kxnba1htotal": "basketball_nba",         # 1st half total
+    "kxnba2hwinner": "basketball_nba",        # 2nd half winner
+    "kxnba2hspread": "basketball_nba",        # 2nd half spread
+    "kxnba2htotal": "basketball_nba",         # 2nd half total
+    "kxnba1qwinner": "basketball_nba",        # 1st quarter winner
+    "kxnba1qspread": "basketball_nba",        # 1st quarter spread
+    "kxnba1qtotal": "basketball_nba",         # 1st quarter total
+    "kxnba2qwinner": "basketball_nba",        # 2nd quarter winner
+    "kxnba2qspread": "basketball_nba",        # 2nd quarter spread
+    "kxnba2qtotal": "basketball_nba",         # 2nd quarter total
+    "kxnba3qwinner": "basketball_nba",        # 3rd quarter winner
+    "kxnba3qspread": "basketball_nba",        # 3rd quarter spread
+    "kxnba3qtotal": "basketball_nba",         # 3rd quarter total
+    "kxnba4qwinner": "basketball_nba",        # 4th quarter winner
+    "kxnba4qspread": "basketball_nba",        # 4th quarter spread
+    "kxnba4qtotal": "basketball_nba",         # 4th quarter total
+    "kxnbapts": "basketball_nba",             # Player points props
+    "kxnbaast": "basketball_nba",             # Player assists props
+    "kxnbareb": "basketball_nba",             # Player rebounds props
+    "kxnbablk": "basketball_nba",             # Player blocks props
+    "kxnbastl": "basketball_nba",             # Player steals props
+    "kxnba3pt": "basketball_nba",             # Player threes props
+    "kxnbapa": "basketball_nba",              # Points + Assists combo
+    "kxnbapr": "basketball_nba",              # Points + Rebounds combo
+    "kxnbapra": "basketball_nba",             # Points + Rebounds + Assists
+    "kxnbara": "basketball_nba",              # Rebounds + Assists combo
+    "kxnba2d": "basketball_nba",              # Double-double
+    "kxnba3d": "basketball_nba",              # Triple-double
+    "kxnbafirstbasket": "basketball_nba",     # First basket scorer
+    # NFL game-level props (spread, total, halves, quarters, player props)
+    "kxnflspread": "americanfootball_nfl",           # Game spread
+    "kxnfltotal": "americanfootball_nfl",            # Game total points
+    "kxnflteamtotal": "americanfootball_nfl",        # Team total points
+    "kxnfl1hwinner": "americanfootball_nfl",         # 1st half winner
+    "kxnfl1hspread": "americanfootball_nfl",         # 1st half spread
+    "kxnfl1htotal": "americanfootball_nfl",          # 1st half total
+    "kxnfl2hwinner": "americanfootball_nfl",         # 2nd half winner
+    "kxnfl2hspread": "americanfootball_nfl",         # 2nd half spread
+    "kxnfl2htotal": "americanfootball_nfl",          # 2nd half total
+    "kxnfl1qwinner": "americanfootball_nfl",         # 1st quarter winner
+    "kxnfl1qspread": "americanfootball_nfl",         # 1st quarter spread
+    "kxnfl1qtotal": "americanfootball_nfl",          # 1st quarter total
+    "kxnfl2qwinner": "americanfootball_nfl",         # 2nd quarter winner
+    "kxnfl2qspread": "americanfootball_nfl",         # 2nd quarter spread
+    "kxnfl2qtotal": "americanfootball_nfl",          # 2nd quarter total
+    "kxnfl3qwinner": "americanfootball_nfl",         # 3rd quarter winner
+    "kxnfl3qspread": "americanfootball_nfl",         # 3rd quarter spread
+    "kxnfl3qtotal": "americanfootball_nfl",          # 3rd quarter total
+    "kxnfl4qwinner": "americanfootball_nfl",         # 4th quarter winner
+    "kxnfl4qspread": "americanfootball_nfl",         # 4th quarter spread
+    "kxnfl4qtotal": "americanfootball_nfl",          # 4th quarter total
+    "kxnflpasstds": "americanfootball_nfl",          # Player passing TDs
+    "kxnflpassyds": "americanfootball_nfl",          # Player passing yards
+    "kxnflrecyds": "americanfootball_nfl",           # Player receiving yards
+    "kxnflrshyds": "americanfootball_nfl",           # Player rushing yards
+    "kxnflrec": "americanfootball_nfl",              # Player receptions
+    "kxnflanytd": "americanfootball_nfl",            # Anytime TD scorer
+    "kxnflfirsttd": "americanfootball_nfl",          # First TD scorer
+    "kxnflnexttd": "americanfootball_nfl",           # Next TD scorer
+    "kxnflteamfirsttd": "americanfootball_nfl",      # Team first TD
+    "kxnfl2td": "americanfootball_nfl",              # Multiple TDs
+    "kxnflfirsttdtime": "americanfootball_nfl",      # First TD time
+    "kxnflgamefg": "americanfootball_nfl",           # Game field goals
+    "kxnflgamesack": "americanfootball_nfl",         # Game sacks
+    "kxnflgametd": "americanfootball_nfl",           # Game touchdowns
+    "kxnflgameto": "americanfootball_nfl",           # Game turnovers
+    "kxnflot": "americanfootball_nfl",               # Overtime
+    "kxnflwinmargin": "americanfootball_nfl",        # Win margin
+    "kxnfldsttd": "americanfootball_nfl",            # D/ST touchdown
+    "kxnflsafety": "americanfootball_nfl",           # Safeties
+    "kxnflhighscoreq": "americanfootball_nfl",       # Highest scoring quarter
+    "kxnflnoscoreq": "americanfootball_nfl",         # Scoreless quarter
+    "kxnfllargelead": "americanfootball_nfl",        # Largest lead
+    "kxnfllargestlead": "americanfootball_nfl",      # Largest lead (alt)
+    "kxnflleadchange": "americanfootball_nfl",       # Lead changes
+    "kxnfllongesttd": "americanfootball_nfl",        # Longest TD
+    "kxnflshortesttd": "americanfootball_nfl",       # Shortest TD
+    "kxnflmostrecyds": "americanfootball_nfl",       # Most receiving yards
+    "kxnflmostrshyds": "americanfootball_nfl",       # Most rushing yards
+    "kxnflnonqbpass": "americanfootball_nfl",        # Non-QB passes
+    "kxnfl2ptconv": "americanfootball_nfl",          # 2-point conversions
+    "kxnfl4dconv": "americanfootball_nfl",           # 4th down conversions
+    "kxnfl4downconv": "americanfootball_nfl",        # 4th down conversions (alt)
+    "kxnflcombo": "americanfootball_nfl",            # Combo props
+    "kxnflprepack": "americanfootball_nfl",          # Pre-pack bundles
+    # NHL game-level props
+    "kxnhlspread": "icehockey_nhl",                  # Game spread (puck line)
+    "kxnhltotal": "icehockey_nhl",                   # Game goal total
+    "kxnhlanygoal": "icehockey_nhl",                 # Anytime goal scorer
+    "kxnhlgoal": "icehockey_nhl",                    # Goal scorer props
+    "kxnhlfirstgoal": "icehockey_nhl",               # First goal scorer
+    "kxnhlpts": "icehockey_nhl",                     # Player points props
+    "kxnhlast": "icehockey_nhl",                     # Player assists props
+    "kxnhlsaves": "icehockey_nhl",                   # Goalie saves props
+    # MLB game-level props
+    "kxmlbspread": "baseball_mlb",                   # Game spread (run line)
+    "kxmlbtotal": "baseball_mlb",                    # Game total runs
+    "kxmlbteamtotal": "baseball_mlb",                # Team total runs
+    "kxmlbf5": "baseball_mlb",                       # First 5 innings winner
+    "kxmlbf5spread": "baseball_mlb",                 # First 5 innings spread
+    "kxmlbf5total": "baseball_mlb",                  # First 5 innings total
+    "kxmlbhit": "baseball_mlb",                      # Player hits props
+    "kxmlbhr": "baseball_mlb",                       # Player home runs props
+    "kxmlbks": "baseball_mlb",                       # Player strikeouts props
+    "kxmlbtb": "baseball_mlb",                       # Player total bases props
+    "kxmlbhrr": "baseball_mlb",                      # Hits + Runs + RBIs combo
+    "kxmlbrfi": "baseball_mlb",                      # Run in first inning
+    "kxmlbstgame": "baseball_mlb",                   # Spring training game
     # College sports — men's
     "kxncaabgame": "basketball_ncaab",
-    "kxncaabbgame": "basketball_ncaab",       # NIT/CBI/CIT post-season
-    "kxncaamb1hwinner": "basketball_ncaab",   # 1st half winner markets
+    "kxncaambgame": "basketball_ncaab",       # Men's college basketball game
+    "kxncaamb1hwinner": "basketball_ncaab",   # 1st half winner
+    "kxncaamb1hspread": "basketball_ncaab",   # 1st half spread
+    "kxncaamb1htotal": "basketball_ncaab",    # 1st half total
+    "kxncaambspread": "basketball_ncaab",     # Game spread
+    "kxncaambtotal": "basketball_ncaab",      # Game total
+    "kxncaamb2ml": "basketball_ncaab",        # 2-game moneyline combo
+    "kxncaambfirst10": "basketball_ncaab",    # Race to 10 points
+    "kxncaambteammostpts": "basketball_ncaab",  # Team with most points
+    # College baseball (NOT basketball — "BB" = baseball in Kalshi tickers)
+    "kxncaabbgame": "baseball_ncaa",          # College baseball game
+    "kxncaabbspread": "baseball_ncaa",        # College baseball spread
+    "kxncaabbtotal": "baseball_ncaa",         # College baseball total runs
+    # College football
     "kxncaafgame": "americanfootball_ncaaf",
+    "kxncaaf1hwinner": "americanfootball_ncaaf",  # 1st half winner
+    "kxncaafspread": "americanfootball_ncaaf",    # Game spread
+    "kxncaaftotal": "americanfootball_ncaaf",     # Game total
+    "kxncaafteamtotal": "americanfootball_ncaaf", # Team total
+    "kxncaafd3game": "americanfootball_ncaaf",    # D3 football game
+    "kxncaafcsgame": "americanfootball_ncaaf",    # FCS football game
     "kxncaamlaxgame": "lacrosse_ncaa",
     "kxncaahockeygame": "icehockey_ncaa",
     # College sports — women's
     "kxncaawbgame": "basketball_wncaab",
+    "kxncaawbspread": "basketball_wncaab",    # Women's basketball spread
+    "kxncaawbtotal": "basketball_wncaab",     # Women's basketball total
     # Hockey leagues
     "kxahlgame": "icehockey_ahl",
     "kxkhlgame": "icehockey_other",
     "kxdelgame": "icehockey_other",           # DEL (German hockey)
+    # MLS game-level props
+    "kxmlsspread": "soccer_usa_mls",             # MLS spread
+    "kxmlstotal": "soccer_usa_mls",              # MLS goal total
+    "kxmlsbtts": "soccer_usa_mls",               # Both teams to score
+    "kxmlsadvance": "soccer_usa_mls",            # To advance
+    # Soccer game-level props
+    "kxsoccerspread": "soccer",                  # Soccer spread
+    "kxsoccertotal": "soccer",                   # Soccer goal total
+    "kxsoccerbtts": "soccer",                    # Both teams to score
     # Tennis
     "kxatpmatch": "tennis_atp",
     "kxatpchallengermatch": "tennis_atp",
     "kxatpsetwinner": "tennis_atp",
+    "kxatpanyset": "tennis_atp",                 # Any set winner
+    "kxatpexactmatch": "tennis_atp",             # Exact match score
+    "kxatpexactsets": "tennis_atp",              # Exact sets
+    "kxatpgamespread": "tennis_atp",             # Game spread
+    "kxatpgspread": "tennis_atp",                # Game spread (alt ticker)
+    "kxatpgametotal": "tennis_atp",              # Total games
+    "kxatptotalsets": "tennis_atp",              # Total sets
+    "kxatpdoubles": "tennis_atp",                # Doubles match
+    "kxatpgame": "tennis_atp",                   # Match winner (by event)
     "kxwtamatch": "tennis_wta",
+    "kxwtachallengermatch": "tennis_wta",         # WTA Challenger match
+    "kxwtadoubles": "tennis_wta",                # WTA doubles match
+    "kxwtagame": "tennis_wta",                   # WTA match winner (by event)
     # Combat sports
     "kxufcfight": "mma_mixed_martial_arts",
+    "kxufcdistance": "mma_mixed_martial_arts",   # To go the distance
+    "kxufcmof": "mma_mixed_martial_arts",        # Method of finish
+    "kxufcmov": "mma_mixed_martial_arts",        # Method of victory
+    "kxufcrounds": "mma_mixed_martial_arts",     # Total rounds
+    "kxufcvicround": "mma_mixed_martial_arts",   # Round of victory
     "kxboxingfight": "boxing_boxing",
+    "kxboxingdistance": "boxing_boxing",          # To go the distance
+    "kxboxing1min": "boxing_boxing",              # 1 minute fight
+    "kxboxingknockout": "boxing_boxing",          # Knockout
+    "kxboxingmov": "boxing_boxing",               # Method of victory
+    "kxboxingrounds": "boxing_boxing",            # Total rounds
+    "kxboxingvicround": "boxing_boxing",          # Victory in round
     # Esports
     "kxlolgame": "esports",
+    "kxlolgames": "esports",                    # LoL games in series
+    "kxlolmap": "esports",                      # LoL map winner
+    "kxloltotal": "esports",                    # LoL total maps
+    "kxloltotalmaps": "esports",                # LoL total maps (alt)
     "kxcs2game": "esports",
+    "kxcs2games": "esports",                    # CS2 games in series
+    "kxcs2map": "esports",                      # CS2 map winner
+    "kxcs2mapwinner": "esports",                # CS2 map winner (alt)
+    "kxcs2totalmaps": "esports",                # CS2 total maps
     "kxvalorantgame": "esports",
-    "kxdimayorgame": "esports",               # Dota 2 DPC
+    "kxvalorantmap": "esports",                 # Valorant map winner
+    "kxdimayorgame": "esports",                  # Dota 2 DPC
     # Soccer
     "kxsoccergame": "soccer",
     "kxeculpgame": "soccer_other",            # Ecuadorian league
@@ -252,6 +427,304 @@ KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(KALSHI_TICKER_TO_SPORT_KEY.
 
 
 # =============================================================================
+# 8b. KALSHI_FUTURES_TICKER_TO_SPORT_KEY — season/futures tickers → sport key
+#     NOT in KALSHI_GAME_TICKER_PREFIXES (these are NOT game-level markets).
+#     Used by get_sport_key_from_ticker() for sport classification of futures.
+# =============================================================================
+
+KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
+    # NFL futures
+    "kxnflmvp": "americanfootball_nfl",              # Regular season MVP
+    "kxnfldpoty": "americanfootball_nfl",             # Defensive Player of the Year
+    "kxnfldpoy": "americanfootball_nfl",              # DPOY (alt)
+    "kxnflopoty": "americanfootball_nfl",             # Offensive Player of the Year
+    "kxnflopoy": "americanfootball_nfl",              # OPOY (alt)
+    "kxnfldroty": "americanfootball_nfl",             # Defensive Rookie of the Year
+    "kxnfldroy": "americanfootball_nfl",              # DROY (alt)
+    "kxnfloroty": "americanfootball_nfl",             # Offensive Rookie of the Year
+    "kxnfloroy": "americanfootball_nfl",              # OROY (alt)
+    "kxnflcpoty": "americanfootball_nfl",             # Comeback Player of the Year
+    "kxnflcoach": "americanfootball_nfl",             # Coach of the Year
+    "kxnflcoty": "americanfootball_nfl",              # COTY (alt)
+    "kxnflasscoach": "americanfootball_nfl",          # Assistant Coach of the Year
+    "kxnflcomeback": "americanfootball_nfl",          # Comeback award
+    "kxnflsbmvp": "americanfootball_nfl",             # Super Bowl MVP
+    "kxnflsbmvpdef": "americanfootball_nfl",          # Defensive SB MVP
+    "kxnflsbmvppos": "americanfootball_nfl",          # SB MVP position
+    "kxnflsbmvpqb": "americanfootball_nfl",           # Non-QB SB MVP
+    "kxnflafcchamp": "americanfootball_nfl",          # AFC Champion
+    "kxnflnfcchamp": "americanfootball_nfl",          # NFC Champion
+    "kxnflafceast": "americanfootball_nfl",           # AFC East winner
+    "kxnflafcnorth": "americanfootball_nfl",          # AFC North winner
+    "kxnflafcsouth": "americanfootball_nfl",          # AFC South winner
+    "kxnflafcwest": "americanfootball_nfl",           # AFC West winner
+    "kxnflnfceast": "americanfootball_nfl",           # NFC East winner
+    "kxnflnfcnorth": "americanfootball_nfl",          # NFC North winner
+    "kxnflnfcsouth": "americanfootball_nfl",          # NFC South winner
+    "kxnflnfcwest": "americanfootball_nfl",           # NFC West winner
+    "kxnflplayoff": "americanfootball_nfl",           # Playoff qualifiers
+    "kxnflwins": "americanfootball_nfl",              # Team win totals (all 32 teams)
+    "kxnflexactwins": "americanfootball_nfl",         # Exact win totals
+    "kxnfldraft": "americanfootball_nfl",             # Draft picks (all positions)
+    "kxnflfirstpick": "americanfootball_nfl",         # First pick
+    "kxnfltrade": "americanfootball_nfl",             # Trades
+    "kxnflhirecoach": "americanfootball_nfl",         # Coach hiring
+    "kxnflprobowl": "americanfootball_nfl",           # Pro Bowl
+    "kxnflprobowlwin": "americanfootball_nfl",        # Pro Bowl game
+    "kxnflprimetime": "americanfootball_nfl",         # Primetime games
+    "kxnflcombine": "americanfootball_nfl",           # NFL Combine
+    "kxnflcombine40": "americanfootball_nfl",         # Combine 40 time
+    "kxnflcontractsize": "americanfootball_nfl",      # Contract size
+    "kxnflfantasymost": "americanfootball_nfl",       # Most fantasy points
+    "kxnflcelebritygame": "americanfootball_nfl",     # Celebrity flag football
+    "kxnflreboot": "americanfootball_nfl",            # Reboot rules
+    "kxnflredzoneads": "americanfootball_nfl",        # Redzone ads
+    "kxnflredzonebrandads": "americanfootball_nfl",   # Redzone brand ads
+    "kxnflrecydsrecord": "americanfootball_nfl",      # Receiving yards record
+    "kxnflsackrecord": "americanfootball_nfl",        # Sack record
+    "kxnflseasonhr": "americanfootball_nfl",          # Season stats
+    "kxnfldepthposition": "americanfootball_nfl",     # Depth chart
+    "kxnflgpickenscontract": "americanfootball_nfl",  # Pickens contract
+    "kxnfl1ydpass": "americanfootball_nfl",           # 1 yard pass novelty
+    # NFL cross-cutting tickers (don't start with "kxnfl")
+    "kxcoachoutnfl": "americanfootball_nfl",          # Coach fired
+    "kxnextcoachoutnfl": "americanfootball_nfl",      # Next coach fired
+    "kxnextnflcoach": "americanfootball_nfl",         # Next coach hired
+    "kxnextteamnfl": "americanfootball_nfl",          # Player next team
+    "kxleadernfl": "americanfootball_nfl",            # Stat leaders (all categories)
+    "kxrecordnfl": "americanfootball_nfl",            # Best/worst record
+    "kxtradeoffnfl": "americanfootball_nfl",          # Offseason trades
+    "kxphilipriversnfl": "americanfootball_nfl",      # Philip Rivers novelty
+    # NHL futures
+    "kxnhl": "icehockey_nhl",                         # Stanley Cup (broad prefix catches all)
+    # More specific NHL futures for clarity:
+    "kxnhlheart": "icehockey_nhl",                    # Hart Trophy (deprecated, use kxnhlhart)
+    "kxnhlhart": "icehockey_nhl",                     # Hart Memorial Trophy
+    "kxnhlnorris": "icehockey_nhl",                   # Norris Trophy
+    "kxnhlvezina": "icehockey_nhl",                   # Vezina Trophy
+    "kxnhlcalder": "icehockey_nhl",                   # Calder Trophy
+    "kxnhlross": "icehockey_nhl",                     # Art Ross Trophy
+    "kxnhlrichard": "icehockey_nhl",                  # Rocket Richard Trophy
+    "kxnhladams": "icehockey_nhl",                    # Jack Adams Award
+    "kxnhlpres": "icehockey_nhl",                     # President's Trophy
+    "kxnhlmvp": "icehockey_nhl",                      # Hart Trophy (alt)
+    "kxnhleast": "icehockey_nhl",                     # Eastern Conference
+    "kxnhlwest": "icehockey_nhl",                     # Western Conference
+    "kxnhlatlantic": "icehockey_nhl",                 # Atlantic Division
+    "kxnhlcentral": "icehockey_nhl",                  # Central Division
+    "kxnhlmetropolitan": "icehockey_nhl",             # Metropolitan Division
+    "kxnhlpacific": "icehockey_nhl",                  # Pacific Division
+    "kxnhlplayoff": "icehockey_nhl",                  # Playoff qualifiers
+    "kxnhlseries": "icehockey_nhl",                   # Playoff series
+    "kxnhlfinalsexact": "icehockey_nhl",              # Finals exact score
+    "kxnhlwins": "icehockey_nhl",                     # Team win totals
+    "kxnhl1stteam": "icehockey_nhl",                  # All-NHL First Team
+    "kxnhl4nations": "icehockey_nhl",                 # 4 Nations Face Off
+    # MLB futures
+    "kxmlb": "baseball_mlb",                          # World Series (broad prefix)
+    "kxmlbal": "baseball_mlb",                        # AL Championship + divisions + awards
+    "kxmlbnl": "baseball_mlb",                        # NL Championship + divisions + awards
+    "kxmlbplayoffs": "baseball_mlb",                  # Playoff qualifiers
+    "kxmlbwins": "baseball_mlb",                      # Team win totals (all 30 teams)
+    "kxmlb500": "baseball_mlb",                       # Teams at .500
+    "kxmlbbestrecord": "baseball_mlb",                # Best record
+    "kxmlbworstrecord": "baseball_mlb",               # Worst record
+    "kxmlbdivwinner": "baseball_mlb",                 # Division winners
+    "kxmlbasgame": "baseball_mlb",                    # All-Star Game
+    "kxmlbhrderby": "baseball_mlb",                   # Home Run Derby
+    "kxmlbseasonhr": "baseball_mlb",                  # Season home runs
+    "kxmlbss": "baseball_mlb",                        # Silver Slugger
+    "kxmlbstat": "baseball_mlb",                      # Season stats
+    "kxmlbstatcount": "baseball_mlb",                 # Season stat counts
+    "kxmlbseries": "baseball_mlb",                    # Playoff series
+    "kxmlbseriesexact": "baseball_mlb",               # Series exact result
+    "kxmlbseriesgametotal": "baseball_mlb",           # Series total games
+    "kxmlbws": "baseball_mlb",                        # World Series (alt)
+    "kxmlbwsmvp": "baseball_mlb",                     # WS MVP
+    "kxmlbeoty": "baseball_mlb",                      # Executive of the Year
+    "kxmlbtrade": "baseball_mlb",                     # Trades
+    "kxmlblstreak": "baseball_mlb",                   # Longest losing streak
+    "kxmlbwstreak": "baseball_mlb",                   # Longest winning streak
+    "kxmlbworld": "baseball_mlb",                     # World Baseball Classic
+    "kxleadermlb": "baseball_mlb",                    # Stat leaders (all categories)
+    "kxnextteammlb": "baseball_mlb",                  # Player next team
+    "kxcitymlbexpand": "baseball_mlb",                # Expansion city
+    # NCAAF futures
+    "kxncaaf": "americanfootball_ncaaf",              # Championship (broad prefix)
+    "kxncaafacc": "americanfootball_ncaaf",           # ACC Champion
+    "kxncaafb10": "americanfootball_ncaaf",           # Big Ten Champion
+    "kxncaafb12": "americanfootball_ncaaf",           # Big 12 Champion
+    "kxncaafbacc": "americanfootball_ncaaf",          # ACC Champion (alt)
+    "kxncaafbb10": "americanfootball_ncaaf",          # Big Ten (alt)
+    "kxncaafbb12": "americanfootball_ncaaf",          # Big 12 (alt)
+    "kxncaafbsec": "americanfootball_ncaaf",          # SEC Champion
+    "kxncaafsec": "americanfootball_ncaaf",           # SEC Champion (alt)
+    "kxncaafconf": "americanfootball_ncaaf",          # Championship conference
+    "kxncaaffinalist": "americanfootball_ncaaf",      # Finalist
+    "kxncaafplayoff": "americanfootball_ncaaf",       # Playoff qualifiers
+    "kxncaafaprank": "americanfootball_ncaaf",        # AP rankings
+    "kxncaafcoty": "americanfootball_ncaaf",          # Coach of the Year
+    "kxncaafcotw": "americanfootball_ncaaf",          # Coach of the Week
+    "kxncaafundefeated": "americanfootball_ncaaf",    # Undefeated season
+    "kxncaafwins": "americanfootball_ncaaf",          # Win totals
+    "kxncaafcs": "americanfootball_ncaaf",            # FCS Champion
+    "kxncaafd3": "americanfootball_ncaaf",            # D3 Champion
+    "kxncaafaac": "americanfootball_ncaaf",           # AAC Champion
+    "kxncaafcusa": "americanfootball_ncaaf",          # Conference USA
+    "kxncaafivy": "americanfootball_ncaaf",           # Ivy League
+    "kxncaafmac": "americanfootball_ncaaf",           # MAC Champion
+    "kxncaafmwc": "americanfootball_ncaaf",           # Mountain West
+    "kxncaafpac10": "americanfootball_ncaaf",         # Pac-10 Champion
+    "kxncaafpac12": "americanfootball_ncaaf",         # Pac-12 Champion
+    "kxncaafsbelt": "americanfootball_ncaaf",         # Sun Belt
+    "kxncaafprepack": "americanfootball_ncaaf",       # Pre-pack bundles
+    "kxcoachoutncaafb": "americanfootball_ncaaf",     # Coach fired
+    # NCAAB futures
+    "kxncaabacc": "basketball_ncaab",                 # ACC Tournament
+    "kxncaabbig10": "basketball_ncaab",               # Big Ten Tournament
+    "kxncaabbig12": "basketball_ncaab",               # Big 12 Tournament
+    "kxncaabbigeast": "basketball_ncaab",             # Big East Tournament
+    "kxncaabbigten": "basketball_ncaab",              # Big Ten (alt)
+    "kxncaabsec": "basketball_ncaab",                 # SEC Tournament
+    "kxncaabivy": "basketball_ncaab",                 # Ivy League Tournament
+    "kxncaambacc": "basketball_ncaab",                # ACC Tournament (men's)
+    "kxncaambbig10": "basketball_ncaab",              # Big 10 Tournament (men's)
+    "kxncaambbig12": "basketball_ncaab",              # Big 12 Tournament (men's)
+    "kxncaambbigeast": "basketball_ncaab",            # Big East (men's)
+    "kxncaambigeast": "basketball_ncaab",             # Big East (alt)
+    "kxncaambigten": "basketball_ncaab",              # Big Ten (alt)
+    "kxncaambig12": "basketball_ncaab",               # Big 12 (alt)
+    "kxncaambsec": "basketball_ncaab",                # SEC (men's)
+    "kxncaambivy": "basketball_ncaab",                # Ivy League (men's)
+    "kxncaamba10": "basketball_ncaab",                # Atlantic-10
+    "kxncaambae": "basketball_ncaab",                 # American East
+    "kxncaambamer": "basketball_ncaab",               # American Conference
+    "kxncaambasun": "basketball_ncaab",               # Atlantic Sun
+    "kxncaambbsky": "basketball_ncaab",               # Big Sky
+    "kxncaambbsou": "basketball_ncaab",               # Big South
+    "kxncaambbwest": "basketball_ncaab",              # Big West
+    "kxncaambcaa": "basketball_ncaab",                # CAA
+    "kxncaambhl": "basketball_ncaab",                 # Horizon League
+    "kxncaambhor": "basketball_ncaab",                # Horizon League (alt)
+    "kxncaambmaa": "basketball_ncaab",                # MAAC
+    "kxncaambmamer": "basketball_ncaab",              # Mid-American
+    "kxncaambmeac": "basketball_ncaab",               # MEAC
+    "kxncaambmval": "basketball_ncaab",               # Missouri Valley
+    "kxncaambmw": "basketball_ncaab",                 # Mountain West
+    "kxncaambnec": "basketball_ncaab",                # Northeast
+    "kxncaambov": "basketball_ncaab",                 # Ohio Valley
+    "kxncaambpat": "basketball_ncaab",                # Patriot League
+    "kxncaambsbelt": "basketball_ncaab",              # Sun Belt
+    "kxncaambslc": "basketball_ncaab",                # Southland
+    "kxncaambsocon": "basketball_ncaab",              # Southern
+    "kxncaambsum": "basketball_ncaab",                # Summit League
+    "kxncaambsun": "basketball_ncaab",                # Atlantic Sun (alt)
+    "kxncaambswac": "basketball_ncaab",               # SWAC
+    "kxncaambusa": "basketball_ncaab",                # Conference USA
+    "kxncaambwac": "basketball_ncaab",                # WAC
+    "kxncaambwcc": "basketball_ncaab",                # WCC
+    "kxncaambcbc": "basketball_ncaab",                # Crown winner
+    "kxncaambcoty": "basketball_ncaab",               # Coach of the Year
+    "kxncaambnaismith": "basketball_ncaab",           # Naismith Award
+    "kxncaambmop": "basketball_ncaab",                # Most Outstanding Player
+    "kxncaambnit": "basketball_ncaab",                # NIT Champion
+    "kxncaambnextcoach": "basketball_ncaab",          # Next coach
+    "kxncaambaprank": "basketball_ncaab",             # AP Poll
+    "kxncaambundefeated": "basketball_ncaab",         # Undefeated season
+    # College baseball futures
+    "kxncaabaseball": "baseball_ncaa",                # College Baseball Champion
+    "kxncaabbgs": "baseball_ncaa",                    # Golden Spikes Award
+    "kxncaambachamp": "baseball_ncaa",                # College Baseball Championship
+    # WNCAAB futures
+    "kxncaawb": "basketball_wncaab",                  # Women's March Madness Champion
+    "kxncaawbmop": "basketball_wncaab",               # Most Outstanding Player
+    "kxncaawbnit": "basketball_wncaab",               # Women's NIT
+    "kxncaawbwbit": "basketball_wncaab",              # WBIT
+    # WNBA futures
+    "kxwnba": "basketball_wnba",                     # WNBA Championship
+    "kxwnbamvp": "basketball_wnba",                  # MVP
+    "kxwnbaroty": "basketball_wnba",                 # Rookie of the Year
+    "kxwnbaplayoff": "basketball_wnba",              # Playoff qualifiers
+    "kxwnbaseries": "basketball_wnba",               # Playoff series
+    "kxwnbadraft1": "basketball_wnba",               # Draft 1st pick
+    "kxwnbadrafttop3": "basketball_wnba",            # Draft top 3
+    "kxwnbaasgame": "basketball_wnba",               # All-Star Game
+    "kxwnbagamesplayed": "basketball_wnba",          # Games played
+    "kxwnba7figs": "basketball_wnba",                # 7-figure salary
+    "kxwnbadelay": "basketball_wnba",                # Season delay
+    "kxwnbaportnoy": "basketball_wnba",              # Portnoy ban
+    "kxwnbaraise": "basketball_wnba",                # Raise
+    # MLS futures
+    "kxmlscup": "soccer_usa_mls",                    # MLS Cup
+    "kxmlseast": "soccer_usa_mls",                   # Eastern Conference
+    "kxmlswest": "soccer_usa_mls",                   # Western Conference
+    # Soccer futures
+    "kxsoccertransfer": "soccer",                    # Transfer market
+    "kxsoccerplaycron": "soccer",                    # Ronaldo World Cup
+    "kxsoccerplaymessi": "soccer",                   # Messi World Cup
+    "kxeculp": "soccer_other",                       # Ecuadorian league
+    "kxapfddh": "soccer_other",                      # Dominican league
+    "kxvenfutve": "soccer_other",                    # Venezuelan league
+    # Tennis futures
+    "kxatp1rank": "tennis_atp",                      # #1 ranked player
+    "kxatprank": "tennis_atp",                       # Rankings (alt)
+    "kxatpfinals": "tennis_atp",                     # ATP Finals
+    "kxatpnextgen": "tennis_atp",                    # Next Gen Finals
+    "kxatpgrandslam": "tennis_atp",                  # Grand Slam winner
+    "kxatpgrandslamfield": "tennis_atp",             # Grand Slam field winner
+    "kxatpamt": "tennis_atp",                        # Mexican Open
+    "kxatpit": "tennis_atp",                         # Italian Open
+    "kxatpiwo": "tennis_atp",                        # Indian Wells
+    "kxatpmad": "tennis_atp",                        # Madrid
+    "kxatpmc": "tennis_atp",                         # Monte Carlo
+    "kxatpmco": "tennis_atp",                        # Chile Open
+    "kxatpmia": "tennis_atp",                        # Miami
+    "kxatpwddf": "tennis_atp",                       # Dubai
+    "kxwtafinals": "tennis_wta",                     # WTA Finals
+    "kxwtagrandslam": "tennis_wta",                  # WTA Grand Slam
+    "kxwtait": "tennis_wta",                         # Italian Open
+    "kxwtaiwo": "tennis_wta",                        # Indian Wells
+    "kxwtamad": "tennis_wta",                        # Madrid
+    "kxwtamia": "tennis_wta",                        # Miami
+    "kxwtamoa": "tennis_wta",                        # Merida Open
+    "kxwtaatx": "tennis_wta",                        # ATX Open
+    "kxwtaddf": "tennis_wta",                        # Dubai
+    "kxwtaserena": "tennis_wta",                     # Serena Williams
+    # Combat futures
+    "kxufc": "mma_mixed_martial_arts",               # Weightclass champions
+    "kxufctitle": "mma_mixed_martial_arts",           # Title fights
+    "kxufcbantamweighttitle": "mma_mixed_martial_arts",
+    "kxufcfeatherweighttitle": "mma_mixed_martial_arts",
+    "kxufcflyweighttitle": "mma_mixed_martial_arts",
+    "kxufcheavyweighttitle": "mma_mixed_martial_arts",
+    "kxufclheavyweighttitle": "mma_mixed_martial_arts",
+    "kxufclightweighttitle": "mma_mixed_martial_arts",
+    "kxufcmiddleweighttitle": "mma_mixed_martial_arts",
+    "kxufcwelterweighttitle": "mma_mixed_martial_arts",
+    "kxufcmweight": "mma_mixed_martial_arts",        # Middleweight champ
+    "kxufcwhitehouse": "mma_mixed_martial_arts",     # White House event
+    "kxcardpresenceufcwh": "mma_mixed_martial_arts", # White House card
+    "kxboxing": "boxing_boxing",                     # Boxing champion
+    # Esports futures
+    "kxcs2": "esports",                              # CS2 tournament winner
+    "kxcs2iemcologne": "esports",                    # IEM Cologne
+    "kxcs2qualifier": "esports",                     # CS2 qualifiers
+    "kxcs2qualifiers": "esports",                    # CS2 qualifiers (alt)
+    "kxcs2qualify": "esports",                       # CS2 qualifiers (alt2)
+    "kxvalorant": "esports",                         # Valorant tournament
+    "kxvalorantmastersfinals": "esports",            # Valorant Masters Finals
+    "kxvalorantgameteam": "esports",                 # Valorant team matchup
+    "kxlol1sttimewin": "esports",                    # LoL first-time winner
+    "kxcharcountlolworlds": "esports",               # LoL Worlds
+    "kxranklistcs2player": "esports",                # HLTV Player of Year
+    "kxranklistcs2team": "esports",                  # HLTV Team of Year
+    "kxewccs2": "esports",                           # Esports World Cup CS2
+    "kxewcvalorant": "esports",                      # Esports World Cup Valorant
+    "kxewcmlbb": "esports",                          # Esports World Cup MLBB (NOT baseball)
+}
+
+
+# =============================================================================
 # 9. KALSHI_TICKER_TO_DISPLAY_LABEL — Kalshi ticker prefix → display label
 # =============================================================================
 
@@ -260,29 +733,211 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxnflgame": "NFL",
     "kxnhlgame": "NHL",
     "kxmlbgame": "MLB",
+    # NBA game-level props
+    "kxnbaspread": "NBA",
+    "kxnbatotal": "NBA",
+    "kxnbateamtotal": "NBA",
+    "kxnba1hwinner": "NBA",
+    "kxnba1hspread": "NBA",
+    "kxnba1htotal": "NBA",
+    "kxnba2hwinner": "NBA",
+    "kxnba2hspread": "NBA",
+    "kxnba2htotal": "NBA",
+    "kxnba1qwinner": "NBA",
+    "kxnba1qspread": "NBA",
+    "kxnba1qtotal": "NBA",
+    "kxnba2qwinner": "NBA",
+    "kxnba2qspread": "NBA",
+    "kxnba2qtotal": "NBA",
+    "kxnba3qwinner": "NBA",
+    "kxnba3qspread": "NBA",
+    "kxnba3qtotal": "NBA",
+    "kxnba4qwinner": "NBA",
+    "kxnba4qspread": "NBA",
+    "kxnba4qtotal": "NBA",
+    "kxnbapts": "NBA",
+    "kxnbaast": "NBA",
+    "kxnbareb": "NBA",
+    "kxnbablk": "NBA",
+    "kxnbastl": "NBA",
+    "kxnba3pt": "NBA",
+    "kxnbapa": "NBA",
+    "kxnbapr": "NBA",
+    "kxnbapra": "NBA",
+    "kxnbara": "NBA",
+    "kxnba2d": "NBA",
+    "kxnba3d": "NBA",
+    "kxnbafirstbasket": "NBA",
+    # NFL game-level
+    "kxnflspread": "NFL",
+    "kxnfltotal": "NFL",
+    "kxnflteamtotal": "NFL",
+    "kxnfl1hwinner": "NFL",
+    "kxnfl1hspread": "NFL",
+    "kxnfl1htotal": "NFL",
+    "kxnfl2hwinner": "NFL",
+    "kxnfl2hspread": "NFL",
+    "kxnfl2htotal": "NFL",
+    "kxnfl1qwinner": "NFL",
+    "kxnfl1qspread": "NFL",
+    "kxnfl1qtotal": "NFL",
+    "kxnfl2qwinner": "NFL",
+    "kxnfl2qspread": "NFL",
+    "kxnfl2qtotal": "NFL",
+    "kxnfl3qwinner": "NFL",
+    "kxnfl3qspread": "NFL",
+    "kxnfl3qtotal": "NFL",
+    "kxnfl4qwinner": "NFL",
+    "kxnfl4qspread": "NFL",
+    "kxnfl4qtotal": "NFL",
+    "kxnflpasstds": "NFL",
+    "kxnflpassyds": "NFL",
+    "kxnflrecyds": "NFL",
+    "kxnflrshyds": "NFL",
+    "kxnflrec": "NFL",
+    "kxnflanytd": "NFL",
+    "kxnflfirsttd": "NFL",
+    "kxnflnexttd": "NFL",
+    "kxnflteamfirsttd": "NFL",
+    "kxnfl2td": "NFL",
+    "kxnflfirsttdtime": "NFL",
+    "kxnflgamefg": "NFL",
+    "kxnflgamesack": "NFL",
+    "kxnflgametd": "NFL",
+    "kxnflgameto": "NFL",
+    "kxnflot": "NFL",
+    "kxnflwinmargin": "NFL",
+    "kxnfldsttd": "NFL",
+    "kxnflsafety": "NFL",
+    "kxnflhighscoreq": "NFL",
+    "kxnflnoscoreq": "NFL",
+    "kxnfllargelead": "NFL",
+    "kxnfllargestlead": "NFL",
+    "kxnflleadchange": "NFL",
+    "kxnfllongesttd": "NFL",
+    "kxnflshortesttd": "NFL",
+    "kxnflmostrecyds": "NFL",
+    "kxnflmostrshyds": "NFL",
+    "kxnflnonqbpass": "NFL",
+    "kxnfl2ptconv": "NFL",
+    "kxnfl4dconv": "NFL",
+    "kxnfl4downconv": "NFL",
+    "kxnflcombo": "NFL",
+    "kxnflprepack": "NFL",
+    # NHL game-level
+    "kxnhlspread": "NHL",
+    "kxnhltotal": "NHL",
+    "kxnhlanygoal": "NHL",
+    "kxnhlgoal": "NHL",
+    "kxnhlfirstgoal": "NHL",
+    "kxnhlpts": "NHL",
+    "kxnhlast": "NHL",
+    "kxnhlsaves": "NHL",
+    # MLB game-level
+    "kxmlbspread": "MLB",
+    "kxmlbtotal": "MLB",
+    "kxmlbteamtotal": "MLB",
+    "kxmlbf5": "MLB",
+    "kxmlbf5spread": "MLB",
+    "kxmlbf5total": "MLB",
+    "kxmlbhit": "MLB",
+    "kxmlbhr": "MLB",
+    "kxmlbks": "MLB",
+    "kxmlbtb": "MLB",
+    "kxmlbhrr": "MLB",
+    "kxmlbrfi": "MLB",
+    "kxmlbstgame": "MLB",
+    # College basketball
     "kxncaabgame": "NCAAB",
-    "kxncaabbgame": "NCAAB",
+    "kxncaambgame": "NCAAB",
     "kxncaamb1hwinner": "NCAAB",
-    "kxncaawbgame": "WNCAAB",
+    "kxncaamb1hspread": "NCAAB",
+    "kxncaamb1htotal": "NCAAB",
+    "kxncaambspread": "NCAAB",
+    "kxncaambtotal": "NCAAB",
+    "kxncaamb2ml": "NCAAB",
+    "kxncaambfirst10": "NCAAB",
+    "kxncaambteammostpts": "NCAAB",
+    # College baseball
+    "kxncaabbgame": "NCAA Baseball",
+    "kxncaabbspread": "NCAA Baseball",
+    "kxncaabbtotal": "NCAA Baseball",
+    # College football
     "kxncaafgame": "NCAAF",
+    "kxncaaf1hwinner": "NCAAF",
+    "kxncaafspread": "NCAAF",
+    "kxncaaftotal": "NCAAF",
+    "kxncaafteamtotal": "NCAAF",
+    "kxncaafd3game": "NCAAF",
+    "kxncaafcsgame": "NCAAF",
+    # Women's college basketball
+    "kxncaawbgame": "WNCAAB",
+    "kxncaawbspread": "WNCAAB",
+    "kxncaawbtotal": "WNCAAB",
+    # Other leagues
     "kxncaamlaxgame": "NCAA Lax",
     "kxncaahockeygame": "NCAA Hockey",
     "kxwnbagame": "WNBA",
+    # MLS game-level
     "kxmlsgame": "MLS",
+    "kxmlsspread": "MLS",
+    "kxmlstotal": "MLS",
+    "kxmlsbtts": "MLS",
+    "kxmlsadvance": "MLS",
+    # Soccer game-level
+    "kxsoccergame": "Soccer",
+    "kxsoccerspread": "Soccer",
+    "kxsoccertotal": "Soccer",
+    "kxsoccerbtts": "Soccer",
+    # Minor leagues
     "kxahlgame": "AHL",
     "kxkhlgame": "KHL",
     "kxdelgame": "DEL",
-    "kxsoccergame": "Soccer",
-    "kxufcfight": "UFC",
-    "kxboxingfight": "Boxing",
-    "kxlolgame": "LoL",
-    "kxcs2game": "CS2",
-    "kxvalorantgame": "Valorant",
-    "kxdimayorgame": "Dota 2",
+    # Tennis
     "kxatpmatch": "ATP",
     "kxatpchallengermatch": "ATP Challenger",
     "kxatpsetwinner": "ATP",
+    "kxatpanyset": "ATP",
+    "kxatpexactmatch": "ATP",
+    "kxatpexactsets": "ATP",
+    "kxatpgamespread": "ATP",
+    "kxatpgspread": "ATP",
+    "kxatpgametotal": "ATP",
+    "kxatptotalsets": "ATP",
+    "kxatpdoubles": "ATP",
+    "kxatpgame": "ATP",
     "kxwtamatch": "WTA",
+    "kxwtachallengermatch": "WTA Challenger",
+    "kxwtadoubles": "WTA",
+    "kxwtagame": "WTA",
+    # Combat
+    "kxufcfight": "UFC",
+    "kxufcdistance": "UFC",
+    "kxufcmof": "UFC",
+    "kxufcmov": "UFC",
+    "kxufcrounds": "UFC",
+    "kxufcvicround": "UFC",
+    "kxboxingfight": "Boxing",
+    "kxboxingdistance": "Boxing",
+    "kxboxing1min": "Boxing",
+    "kxboxingknockout": "Boxing",
+    "kxboxingmov": "Boxing",
+    "kxboxingrounds": "Boxing",
+    "kxboxingvicround": "Boxing",
+    # Esports
+    "kxlolgame": "LoL",
+    "kxlolgames": "LoL",
+    "kxlolmap": "LoL",
+    "kxloltotal": "LoL",
+    "kxloltotalmaps": "LoL",
+    "kxcs2game": "CS2",
+    "kxcs2games": "CS2",
+    "kxcs2map": "CS2",
+    "kxcs2mapwinner": "CS2",
+    "kxcs2totalmaps": "CS2",
+    "kxvalorantgame": "Valorant",
+    "kxvalorantmap": "Valorant",
+    "kxdimayorgame": "Dota 2",
 }
 
 
@@ -329,14 +984,20 @@ def get_sport_prefix_for_category(llm_category: str) -> Optional[str]:
 
 
 def get_sport_key_from_ticker(external_id: str) -> Optional[str]:
-    """Get the Odds API sport key for a Kalshi game ticker.
+    """Get the Odds API sport key for a Kalshi ticker (game-level or futures).
 
+    Checks game-level tickers first, then futures tickers.
     Returns a sport key (e.g., ``"basketball_nba"``) or ``None``.
     """
     if not external_id:
         return None
     ext_lower = external_id.lower()
+    # Check game-level tickers first (more specific prefixes)
     for prefix, sport in KALSHI_TICKER_TO_SPORT_KEY.items():
+        if ext_lower.startswith(prefix):
+            return sport
+    # Check futures-level tickers
+    for prefix, sport in KALSHI_FUTURES_TICKER_TO_SPORT_KEY.items():
         if ext_lower.startswith(prefix):
             return sport
     return None
