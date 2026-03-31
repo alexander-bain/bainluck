@@ -23,6 +23,7 @@ from app.utils.market_label_normalization import (
     classify_market_category,
     get_merge_group,
     is_wrong_sport_leak,
+    compute_playoff_stage,
 )
 
 
@@ -299,6 +300,77 @@ class TestIsWrongSportLeak:
         assert is_wrong_sport_leak(
             "NCAA Tournament: Team to make Semifinals", "Duke", "basketball_ncaab"
         ) is False
+
+
+# ── Playoff stage classification ──────────────────────────────────────────
+
+
+class TestComputePlayoffStage:
+    """Test the single-source-of-truth playoff stage classification.
+
+    These encode every edge case that previously caused bugs in the
+    frontend/iOS classifyPlayoffStage() functions.
+    """
+
+    @pytest.mark.parametrize("label,expected_type,expected_display,expected_order", [
+        # Championship markets
+        ("NBA Champion", "championship", "Championship", 5),
+        ("Stanley Cup Champion", "championship", "Championship", 5),
+        ("World Series Champion", "championship", "Championship", 5),
+        ("Super Bowl Champion", "championship", "Championship", 5),
+        ("NCAAB Champion", "championship", "Championship", 5),
+
+        # Conference markets — THE BUG: these must NOT match championship
+        ("Eastern Conference Champion", "conference", "Eastern Champ", 4),
+        ("Western Conference Champion", "conference", "Western Champ", 4),
+        ("AFC Champion", "conference", "AFC Champ", 4),
+        ("NFC Champion", "conference", "NFC Champ", 4),
+        ("AL Champion", "conference", "AL Champ", 4),
+        ("NL Champion", "conference", "NL Champ", 4),
+        ("Eastern Conference Finals Matchup", "conference", "Eastern Champ", 4),
+        ("Western Conf Finals MVP", "conference", "Western Champ", 4),
+
+        # Division markets
+        ("Atlantic Division Winner", "division", "Atlantic Div", 3),
+        ("NFC East", "conference", "NFC Champ", 4),  # NFC triggers conference
+
+        # Play-In
+        ("Eastern Conference Play-In", "conference", "Eastern Champ", 4),  # conference first
+        ("Play-In Tournament", "play_in", "Play-In", 2),
+
+        # Make Playoffs
+        ("Make NBA Playoffs", "playoffs", "Playoffs", 1),
+        ("NBA Playoff Qualifiers", "playoffs", "Playoffs", 1),
+
+        # #1 Seed / Best Record
+        ("#1 Seed", "top_seed", "#1 Seed", 6),
+        ("Best Record", "top_seed", "#1 Seed", 6),
+
+        # Non-playoff markets return None
+        ("MVP", None, None, None),
+        ("PPG Leader", None, None, None),
+        ("Win Total", None, None, None),
+    ])
+    def test_stage_classification(self, label, expected_type, expected_display, expected_order):
+        stage_type, display, order = compute_playoff_stage(label)
+        assert stage_type == expected_type, f"{label!r}: expected type={expected_type!r}, got {stage_type!r}"
+        assert display == expected_display, f"{label!r}: expected display={expected_display!r}, got {display!r}"
+        assert order == expected_order, f"{label!r}: expected order={expected_order!r}, got {order!r}"
+
+    def test_conference_before_championship_regression(self):
+        """The exact bug that was fixed 3 times (web, iOS, web again).
+
+        'Eastern Conference Champion' contains both 'conference' and 'champion'.
+        Must classify as conference (order 4), NOT championship (order 5).
+        """
+        stage_type, display, order = compute_playoff_stage("Eastern Conference Champion")
+        assert stage_type == "conference"
+        assert order == 4
+        assert "Eastern" in display
+
+    def test_empty_input(self):
+        assert compute_playoff_stage("") == (None, None, None)
+        assert compute_playoff_stage("", "") == (None, None, None)
 
 
 # ── Aggregate quality metrics ─────────────────────────────────────────────

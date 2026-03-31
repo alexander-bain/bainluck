@@ -60,6 +60,9 @@ nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let cleanLabel: String?
     let displayCategory: String?
     let mergeGroup: String?
+    let playoffStage: String?
+    let playoffStageType: String?
+    let stageOrder: Int?
     let marketTier: Int?
     let category: String?
     let source: String?

@@ -260,6 +260,9 @@ private func formatOdds(_ odds: Int?) -> String {
 }
 
 // MARK: - Playoff Stage Classification
+// Playoff stage classification is now computed server-side in
+// market_label_normalization.py:compute_playoff_stage() and returned
+// as playoffStage, playoffStageType, and stageOrder fields.
 
 private struct PlayoffStage {
     let name: String
@@ -270,31 +273,13 @@ private struct PlayoffStage {
     var isDone: Bool { probability >= 0.99 }
 }
 
-private func classifyPlayoffStage(_ marketName: String, cleanLabel: String?) -> (name: String, order: Int) {
-    let text = (cleanLabel ?? marketName).lowercased()
-    if text.range(of: "conference|eastern|western|afc|nfc|american\\s+league|national\\s+league", options: .regularExpression) != nil {
-        if let m = text.range(of: "(eastern|western|afc|nfc|american|national)", options: .regularExpression) {
-            let raw = String(text[m])
-            let confName = raw.prefix(1).uppercased() + raw.dropFirst() + " Champ"
-            return (confName, 4)
-        }
-        return ("Conference", 4)
-    }
-    if text.range(of: "championship|champion|title|finals|world\\s+series|super\\s+bowl|stanley\\s+cup", options: .regularExpression) != nil {
-        return ("Championship", 5)
-    }
-    if text.range(of: "division", options: .regularExpression) != nil { return ("Division", 3) }
-    if text.range(of: "play[- ]?in", options: .regularExpression) != nil { return ("Play-In", 2) }
-    if text.range(of: "make\\s+playoffs|playoff\\s+berth|playoff\\s+qualifiers|playoffs$", options: .regularExpression) != nil { return ("Playoffs", 1) }
-    if text.range(of: "#1\\s+seed|top\\s+seed|first\\s+seed|best\\s+record", options: .regularExpression) != nil { return ("#1 Seed", 6) }
-    return (cleanLabel ?? marketName, 3)
-}
-
 private func buildPlayoffStages(_ futures: [RelatedFuture]) -> [PlayoffStage] {
     var stages: [PlayoffStage] = []
     for f in futures {
         guard let prob = f.probability else { continue }
-        let (name, order) = classifyPlayoffStage(f.marketName, cleanLabel: f.cleanLabel)
+        // Use server-computed playoff stage fields
+        let name = f.playoffStage ?? f.cleanLabel ?? f.marketName
+        let order = f.stageOrder ?? 3
         stages.append(PlayoffStage(name: name, probability: prob, order: order, marketId: f.marketId, source: f.source))
     }
     stages.sort { $0.order < $1.order }

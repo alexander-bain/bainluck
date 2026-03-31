@@ -1297,30 +1297,10 @@ function SectionDivider({ level, label, count }: { level: number; label: string;
 }
 
 // ─── V5 PLAYOFF PATH (side-by-side progression cards) ───
-function classifyPlayoffStage(marketName: string, cleanLabel?: string): { name: string; order: number } {
-  const text = (cleanLabel || marketName).toLowerCase();
-  // Check conference patterns FIRST — "Eastern Conference Finals Matchup" is a conference
-  // milestone, not a championship. Without this, "finals" matches the championship regex
-  // and inflates playoff path odds (e.g., 100% ECF matchup shown as "Championship").
-  if (/conference|eastern|western|afc|nfc|american\s+league|national\s+league/i.test(text)) {
-    const confMatch = text.match(/(eastern|western|afc|nfc|american|national)/i);
-    const confName = confMatch ? confMatch[1].charAt(0).toUpperCase() + confMatch[1].slice(1) + " Champ" : "Conference";
-    return { name: confName, order: 4 };
-  }
-  if (/championship|champion|title|finals|world\s+series|super\s+bowl|stanley\s+cup/i.test(text))
-    return { name: "Championship", order: 5 };
-  if (/division/i.test(text)) {
-    const divMatch = text.match(/([\w]+)\s+division/i);
-    const divName = divMatch && divMatch[1] ? divMatch[1].charAt(0).toUpperCase() + divMatch[1].slice(1) + " Div" : "Division";
-    return { name: divName, order: 3 };
-  }
-  if (/play[- ]?in\s*(tournament)?/i.test(text)) return { name: "Play-In", order: 2 };
-  if (/make\s+playoffs|playoff\s+berth|playoff\s+qualifiers|playoffs$/i.test(text))
-    return { name: "Playoffs", order: 1 };
-  if (/#1\s+seed|top\s+seed|first\s+seed|best\s+record/i.test(text))
-    return { name: "#1 Seed", order: 6 };
-  return { name: cleanLabel || cleanMarketName(marketName), order: 3 };
-}
+// Playoff stage classification is now computed server-side in
+// market_label_normalization.py:compute_playoff_stage() and returned
+// as playoff_stage, playoff_stage_type, and stage_order fields.
+// No client-side regex classification needed.
 
 interface PlayoffStage {
   name: string;
@@ -1334,7 +1314,9 @@ function buildPlayoffStages(futures: RelatedFuture[]): PlayoffStage[] {
   const stages: PlayoffStage[] = [];
   for (const f of futures) {
     if (f.probability === null || f.probability === undefined) continue;
-    const { name, order } = classifyPlayoffStage(f.market_name, f.clean_label);
+    // Use server-computed playoff stage fields
+    const name = f.playoff_stage || f.clean_label || cleanMarketName(f.market_name);
+    const order = f.stage_order ?? 3;
     stages.push({
       name,
       probability: f.probability,

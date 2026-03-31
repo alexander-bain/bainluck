@@ -2148,6 +2148,7 @@ async def get_related_futures(
         classify_market_category,
         get_merge_group,
         is_wrong_sport_leak,
+        compute_playoff_stage,
     )
 
     # 1. Load event with sport
@@ -2620,12 +2621,20 @@ async def get_related_futures(
         )
         merge_group = get_merge_group(clean_label)
 
+        # Compute playoff stage classification (single source of truth)
+        stage_type, stage_display, stage_order = compute_playoff_stage(
+            clean_label, raw_name=market.name or "",
+        )
+
         entry = {
             "market_id": market.id,
             "market_name": market.name,
             "clean_label": clean_label,
             "display_category": display_category,
             "merge_group": merge_group,
+            "playoff_stage": stage_display,
+            "playoff_stage_type": stage_type,
+            "stage_order": stage_order,
             "market_tier": market.market_tier,
             "category": market.category,
             "source": market.source,

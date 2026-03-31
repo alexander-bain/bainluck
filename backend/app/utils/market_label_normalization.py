@@ -563,6 +563,90 @@ def is_wrong_sport_leak(
     return False
 
 
+# ── Playoff stage classification ─────────────────────────────────────────
+# Single source of truth for playoff stage names and ordering.
+# Frontends should use these pre-computed values instead of re-deriving.
+# Priority order matters: conference MUST be checked before championship
+# to prevent "Eastern Conference Champion" matching "champion" first.
+
+_PLAYOFF_STAGE_RULES: list[tuple[re.Pattern, str, int]] = [
+    # Priority 1: Conference (checked FIRST — "Eastern Conference Champion" is conference, not championship)
+    # Includes "\bAL\b" and "\bNL\b" for MLB pennant (American/National League Champion)
+    (re.compile(r"conference|eastern|western|afc|nfc|american\s+league|national\s+league|\bAL\b\s+champ|\bNL\b\s+champ", re.I),
+     "conference", 4),
+    # Priority 2: Championship
+    (re.compile(r"championship|champion|title|finals|world\s+series|super\s+bowl|stanley\s+cup", re.I),
+     "championship", 5),
+    # Priority 3: Division
+    (re.compile(r"division", re.I), "division", 3),
+    # Priority 4: Play-In
+    (re.compile(r"play[- ]?in", re.I), "play_in", 2),
+    # Priority 5: Make Playoffs
+    (re.compile(r"make\s+playoffs|playoff\s+berth|playoff\s+qualifiers|playoffs$", re.I),
+     "playoffs", 1),
+    # Priority 6: #1 Seed / Best Record
+    (re.compile(r"#1\s+seed|top\s+seed|first\s+seed|best\s+record", re.I),
+     "top_seed", 6),
+]
+
+# Extract specific conference/division name for display
+_CONF_NAME_RE = re.compile(r"(eastern|western|afc|nfc|american|national|\bAL\b|\bNL\b)", re.I)
+_DIV_NAME_RE = re.compile(r"([\w]+)\s+division", re.I)
+
+
+def compute_playoff_stage(
+    clean_label: str,
+    raw_name: str = "",
+) -> tuple[Optional[str], Optional[str], Optional[int]]:
+    """Compute playoff stage classification for a market.
+
+    Returns (stage_type, stage_display_name, stage_order) or (None, None, None)
+    if not a playoff-path market.
+
+    stage_type: machine-readable key ("conference", "championship", "division", etc.)
+    stage_display_name: human-readable label ("Eastern Champ", "Championship", "Atlantic Div")
+    stage_order: sort order (1=Playoffs, 2=Play-In, 3=Division, 4=Conference, 5=Championship, 6=#1 Seed)
+    """
+    text = (clean_label or raw_name or "").lower()
+    if not text:
+        return None, None, None
+
+    for pattern, stage_type, order in _PLAYOFF_STAGE_RULES:
+        if pattern.search(text):
+            # Compute display name based on stage type
+            if stage_type == "conference":
+                m = _CONF_NAME_RE.search(text)
+                if m:
+                    raw = m.group(1)
+                    # Keep abbreviations uppercase (AL, NL, AFC, NFC)
+                    if raw.upper() in ("AL", "NL", "AFC", "NFC"):
+                        display = raw.upper() + " Champ"
+                    else:
+                        display = raw[0].upper() + raw[1:] + " Champ"
+                else:
+                    display = "Conference"
+            elif stage_type == "championship":
+                display = "Championship"
+            elif stage_type == "division":
+                m = _DIV_NAME_RE.search(text)
+                if m and m.group(1).lower() not in ("the", "a", "win"):
+                    display = m.group(1)[0].upper() + m.group(1)[1:] + " Div"
+                else:
+                    display = "Division"
+            elif stage_type == "play_in":
+                display = "Play-In"
+            elif stage_type == "playoffs":
+                display = "Playoffs"
+            elif stage_type == "top_seed":
+                display = "#1 Seed"
+            else:
+                display = clean_label or raw_name
+
+            return stage_type, display, order
+
+    return None, None, None
+
+
 # ── Relevance filtering ──────────────────────────────────────────────────
 
 CATEGORY_RELEVANCE_ORDER = [

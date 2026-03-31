@@ -588,6 +588,9 @@ export interface RelatedFuture {
   clean_label?: string;
   display_category?: string;
   merge_group?: string | null;
+  playoff_stage?: string | null;
+  playoff_stage_type?: string | null;
+  stage_order?: number | null;
   market_tier: number | null;
   category: string | null;
   source: string | null;
