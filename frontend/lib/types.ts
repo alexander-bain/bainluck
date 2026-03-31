@@ -585,6 +585,8 @@ export interface RelatedFuture {
   last_updated: string | null;
   next_update_expected: string;
   resolution_date: string | null;
+  bookmaker_count?: number;
+  all_sources?: string[];
   matched_player?: {
     name: string;
     espn_id?: string;

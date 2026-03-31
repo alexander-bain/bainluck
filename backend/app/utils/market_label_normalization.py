@@ -358,13 +358,25 @@ _MERGE_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(\w+) Division Winner", re.I), r"\1_division"),
     (re.compile(r"(Eastern|Western) Conference Finals Matchup", re.I),
      r"\1_conf_finals_matchup"),
+    (re.compile(r"NBA Finals Matchup", re.I), "nba_finals_matchup"),
     (re.compile(r"(Eastern|Western) Conf Finals MVP", re.I), r"\1_conf_finals_mvp"),
     (re.compile(r"All-NBA (\d)", re.I), r"all_nba_\1"),
     (re.compile(r"All-Defensive (\d)", re.I), r"all_def_\1"),
     (re.compile(r"NBA Draft #?(\d+)\w*\s+Pick", re.I), r"nba_draft_\1"),
 
+    # Trade destinations (per-player merge group)
+    (re.compile(r"^(.+?)\s+Trade Destination$", re.I), r"\1_trade"),
+
+    # NFL
+    (re.compile(r"Super Bowl Champion", re.I), "nfl_champion"),
+    (re.compile(r"(AFC|NFC) Champion", re.I), r"\1_champion"),
+    (re.compile(r"Super Bowl Matchup", re.I), "super_bowl_matchup"),
+    (re.compile(r"Make NFL Playoffs", re.I), "make_nfl_playoffs"),
+    (re.compile(r"^NFL MVP$", re.I), "nfl_mvp"),
+
     # NHL
     (re.compile(r"Stanley Cup Champion", re.I), "stanley_cup_champion"),
+    (re.compile(r"Stanley Cup Matchup", re.I), "stanley_cup_matchup"),
     (re.compile(r"Make NHL Playoffs", re.I), "make_nhl_playoffs"),
     (re.compile(r"^Hart Trophy$", re.I), "hart_trophy"),
     (re.compile(r"^Norris Trophy$", re.I), "norris_trophy"),
@@ -381,6 +393,7 @@ _MERGE_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^AL Champion$", re.I), "al_champion"),
     (re.compile(r"^NL Champion$", re.I), "nl_champion"),
     (re.compile(r"Make MLB Playoffs", re.I), "make_mlb_playoffs"),
+    (re.compile(r"World Series Matchup", re.I), "world_series_matchup"),
     (re.compile(r"^(AL|NL)\s+(East|West|Central)\s+Winner$", re.I), r"\1_\2"),
 
     # NCAA

@@ -418,7 +418,11 @@ function HeroFutureCard({
             {future.clean_label || cleanMarketName(future.market_name)}
           </div>
         </div>
-        <SourceBadge source={future.source} />
+        {future.all_sources && future.all_sources.length > 1 ? (
+          <MultiSourceBadge sources={future.all_sources} />
+        ) : (
+          <SourceBadge source={future.source} />
+        )}
       </div>
 
       {/* Big probability + movement + odds */}

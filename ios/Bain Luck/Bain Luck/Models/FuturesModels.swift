@@ -75,6 +75,8 @@ nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
     let lastUpdated: String?
     let nextUpdateExpected: String?
     let resolutionDate: String?
+    let bookmakerCount: Int?
+    let allSources: [String]?
     let matchedPlayer: MatchedPlayer?
 
     var id: Int { outcomeId }

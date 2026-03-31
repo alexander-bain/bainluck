@@ -2617,6 +2617,7 @@ async def get_related_futures(
             "last_updated": outcome.last_updated.isoformat() if outcome.last_updated else None,
             "next_update_expected": next_update.isoformat(),
             "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "bookmaker_count": bookmaker_counts.get(outcome.id, 1),
         }
 
         # Add matched player metadata (ESPN headshot) when outcome matches a roster player
@@ -2628,6 +2629,35 @@ async def get_related_futures(
             home_futures.append(entry)
         else:
             away_futures.append(entry)
+
+    # ── Cross-source deduplication ──────────────────────────────────
+    # Merge entries with the same (merge_group, outcome_name) across sources.
+    # Keeps the entry with the highest bookmaker count (most liquid).
+    # Aggregates all sources into an `all_sources` list on the winner.
+    def _dedup_by_merge_group(futures: list[dict]) -> list[dict]:
+        groups: dict[tuple[str, str], list[dict]] = {}
+        ungrouped: list[dict] = []
+        for f in futures:
+            mg = f.get("merge_group")
+            if mg:
+                key = (mg, f["outcome_name"].lower())
+                groups.setdefault(key, []).append(f)
+            else:
+                ungrouped.append(f)
+        result = list(ungrouped)
+        for entries in groups.values():
+            if len(entries) == 1:
+                result.append(entries[0])
+            else:
+                # Keep the one with highest bookmaker count (most reliable)
+                entries.sort(key=lambda x: x.get("bookmaker_count", 0), reverse=True)
+                winner = entries[0]
+                winner["all_sources"] = list({e["source"] for e in entries if e.get("source")})
+                result.append(winner)
+        return result
+
+    home_futures = _dedup_by_merge_group(home_futures)
+    away_futures = _dedup_by_merge_group(away_futures)
 
     # Sort each side by relevance score descending
     home_futures.sort(key=lambda x: x["relevance_score"], reverse=True)
