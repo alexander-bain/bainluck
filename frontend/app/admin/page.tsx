@@ -1128,6 +1128,9 @@ export default function AdminDashboard() {
           <SourceCoverageTable data={data.source_coverage} />
           <FuturesCoverageTable data={data.futures_coverage} />
 
+          {/* Data Quality */}
+          <DataQualityCard secret={submittedSecret} />
+
           {/* Worker tasks */}
           <TasksTable tasks={data.worker.tasks} />
 
@@ -1138,6 +1141,198 @@ export default function AdminDashboard() {
     </div>
   );
 }
+
+// --- Data Quality Card ---
+
+interface DataQualityReport {
+  status: string;
+  timestamp?: string;
+  period?: string;
+  alerts?: string[];
+  message?: string;
+  checks?: {
+    classification?: {
+      total_markets_24h: number;
+      tier_distribution: Record<string, number>;
+      unclassified_count: number;
+      unclassified_rate: number;
+    };
+    unclassified_samples?: { name: string; source: string }[];
+    team_linking?: {
+      total_outcomes: number;
+      linked_outcomes: number;
+      unlinked_rate: number;
+    };
+    source_distribution?: Record<string, number>;
+  };
+}
+
+function DataQualityCard({ secret }: { secret: string }) {
+  const { data, error, mutate } = useSWR<DataQualityReport>(
+    ["data-quality", secret],
+    () =>
+      fetch(API_URL + "/api/admin/data-quality?secret=" + encodeURIComponent(secret))
+        .then((r) => r.json()),
+    { refreshInterval: 300000 } // 5 min
+  );
+
+  const [checking, setChecking] = useState(false);
+
+  const runCheck = async () => {
+    setChecking(true);
+    try {
+      const r = await fetch(
+        API_URL + "/api/admin/data-quality/check?secret=" + encodeURIComponent(secret),
+        { method: "POST" }
+      );
+      const report = await r.json();
+      mutate(report, false);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  if (error) return null;
+  if (!data) return null;
+  if (data.status === "no_data" && !data.checks) {
+    return (
+      <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-text-primary">Data Quality</h3>
+          <span
+            onClick={runCheck}
+            className="text-micro px-2 py-1 rounded bg-surface-elevated border border-surface-border text-text-muted cursor-pointer hover:text-text-primary"
+          >
+            {checking ? "Checking..." : "Run Check"}
+          </span>
+        </div>
+        <p className="text-xs text-text-muted">{data.message || "No report yet."}</p>
+      </div>
+    );
+  }
+
+  const cls = data.checks?.classification;
+  const linking = data.checks?.team_linking;
+  const samples = data.checks?.unclassified_samples || [];
+  const statusHealth = data.status === "healthy" ? "healthy" : data.status === "warning" ? "warning" : data.status === "critical" ? "critical" : "healthy";
+
+  return (
+    <div className={"rounded-xl border p-4 " + healthBg(statusHealth)}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-text-primary">
+          Data Quality
+          <span className={"ml-2 text-micro font-normal " + healthColor(statusHealth)}>
+            {statusHealth.toUpperCase()}
+          </span>
+        </h3>
+        <div className="flex items-center gap-3">
+          {data.timestamp && (
+            <span className="text-micro text-text-muted">{timeAgo(data.timestamp)}</span>
+          )}
+          <span
+            onClick={runCheck}
+            className="text-micro px-2 py-1 rounded bg-surface-elevated border border-surface-border text-text-muted cursor-pointer hover:text-text-primary"
+          >
+            {checking ? "..." : "Refresh"}
+          </span>
+        </div>
+      </div>
+
+      {/* Alerts */}
+      {data.alerts && data.alerts.length > 0 && (
+        <div className="space-y-1 mb-3">
+          {data.alerts.map((alert, i) => (
+            <div key={i} className="text-xs p-2 rounded-lg bg-red-500/10 text-red-400">
+              {alert}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-3 mb-3">
+        {cls && (
+          <>
+            <div className="text-center">
+              <div className="text-lg font-bold text-text-primary">{cls.total_markets_24h}</div>
+              <div className="text-micro text-text-muted">Markets (24h)</div>
+            </div>
+            <div className="text-center">
+              <div className={"text-lg font-bold " + (cls.unclassified_rate > 0.15 ? "text-yellow-400" : cls.unclassified_rate > 0.3 ? "text-red-400" : "text-green-400")}>
+                {(cls.unclassified_rate * 100).toFixed(1)}%
+              </div>
+              <div className="text-micro text-text-muted">Unclassified</div>
+            </div>
+          </>
+        )}
+        {linking && (
+          <div className="text-center">
+            <div className={"text-lg font-bold " + (linking.unlinked_rate > 0.4 ? "text-yellow-400" : "text-green-400")}>
+              {((1 - linking.unlinked_rate) * 100).toFixed(0)}%
+            </div>
+            <div className="text-micro text-text-muted">Team Linked</div>
+          </div>
+        )}
+      </div>
+
+      {/* Tier distribution */}
+      {cls && (
+        <div className="mb-3">
+          <div className="text-micro text-text-muted mb-1">Tier Distribution</div>
+          <div className="flex gap-1 h-4 rounded overflow-hidden">
+            {["1", "2", "3", "4", "5"].map((tier) => {
+              const count = cls.tier_distribution[tier] || 0;
+              const pct = cls.total_markets_24h > 0 ? (count / cls.total_markets_24h) * 100 : 0;
+              if (pct < 1) return null;
+              const colors: Record<string, string> = {
+                "1": "bg-green-500",
+                "2": "bg-blue-500",
+                "3": "bg-purple-500",
+                "4": "bg-yellow-500",
+                "5": "bg-red-400",
+              };
+              return (
+                <div
+                  key={tier}
+                  className={colors[tier] + " relative group"}
+                  style={{ width: pct + "%" }}
+                  title={"Tier " + tier + ": " + count + " (" + pct.toFixed(0) + "%)"}
+                >
+                  <span className="absolute inset-0 flex items-center justify-center text-micro text-white font-medium opacity-0 group-hover:opacity-100">
+                    T{tier}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex gap-3 mt-1 text-micro text-text-muted">
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-green-500 mr-0.5" />Championship</span>
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-blue-500 mr-0.5" />Conference</span>
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-purple-500 mr-0.5" />Award</span>
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-yellow-500 mr-0.5" />Division</span>
+            <span><span className="inline-block w-2 h-2 rounded-sm bg-red-400 mr-0.5" />Other</span>
+          </div>
+        </div>
+      )}
+
+      {/* Unclassified samples */}
+      {samples.length > 0 && (
+        <div>
+          <div className="text-micro text-text-muted mb-1">Unclassified Markets (sample)</div>
+          <div className="max-h-48 overflow-y-auto space-y-0.5">
+            {samples.map((s, i) => (
+              <div key={i} className="flex items-center text-xs py-0.5">
+                <span className="text-text-secondary flex-1 truncate" title={s.name}>{s.name}</span>
+                <span className="text-micro text-text-muted ml-2 shrink-0">{s.source}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 // --- Project Costs ---
 
