@@ -1273,232 +1273,427 @@ function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; s
   }));
 }
 
-// ─── TEAM COLUMN: Tier-grouped display ───
-function TeamColumn({
-  teamName,
-  futures,
-  teamColor,
-  teamLogo,
-  sportKey,
-  isFinished,
-  isLive,
-  boxScore,
+
+// ─── V5 SECTION DIVIDER ───
+function SectionDivider({ level, label, count }: { level: number; label: string; count?: number }) {
+  return (
+    <div className="flex items-center gap-2 mt-5 mb-3">
+      <span className="text-[9px] font-bold text-white bg-gray-400 px-1.5 py-0.5 rounded text-center min-w-[18px]">
+        {level}
+      </span>
+      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-text-muted">
+        {label}
+      </span>
+      <div className="flex-1 h-px bg-surface-border" />
+      {count !== undefined && count > 0 && (
+        <span className="text-[10px] text-text-muted/50 font-medium">{count} items</span>
+      )}
+    </div>
+  );
+}
+
+// ─── V5 PLAYOFF PATH (side-by-side progression cards) ───
+function classifyPlayoffStage(marketName: string, cleanLabel?: string): { name: string; order: number } {
+  const text = (cleanLabel || marketName).toLowerCase();
+  if (/championship|champion|title|finals|world\s+series|super\s+bowl|stanley\s+cup/i.test(text))
+    return { name: "Championship", order: 5 };
+  if (/conference|eastern|western|afc|nfc|american\s+league|national\s+league/i.test(text)) {
+    const confMatch = text.match(/(eastern|western|afc|nfc|american|national)/i);
+    const confName = confMatch ? confMatch[1].charAt(0).toUpperCase() + confMatch[1].slice(1) + " Champ" : "Conference";
+    return { name: confName, order: 4 };
+  }
+  if (/division/i.test(text)) {
+    const divMatch = text.match(/([\w]+)\s+division/i);
+    const divName = divMatch && divMatch[1] ? divMatch[1].charAt(0).toUpperCase() + divMatch[1].slice(1) + " Div" : "Division";
+    return { name: divName, order: 3 };
+  }
+  if (/play[- ]?in/i.test(text)) return { name: "Play-In", order: 2 };
+  if (/make\s+playoffs|playoff\s+berth|playoffs$/i.test(text))
+    return { name: "Playoffs", order: 1 };
+  if (/#1\s+seed|top\s+seed|first\s+seed/i.test(text))
+    return { name: "#1 Seed", order: 6 };
+  return { name: cleanLabel || cleanMarketName(marketName), order: 3 };
+}
+
+interface PlayoffStage {
+  name: string;
+  probability: number;
+  order: number;
+  marketId: number;
+  isDone: boolean;
+}
+
+function buildPlayoffStages(futures: RelatedFuture[]): PlayoffStage[] {
+  const stages: PlayoffStage[] = [];
+  for (const f of futures) {
+    if (f.probability === null || f.probability === undefined) continue;
+    const { name, order } = classifyPlayoffStage(f.market_name, f.clean_label);
+    stages.push({
+      name,
+      probability: f.probability,
+      order,
+      marketId: f.market_id,
+      isDone: f.probability >= 0.99,
+    });
+  }
+  stages.sort((a, b) => a.order - b.order);
+  const deduped = new Map<string, PlayoffStage>();
+  for (const s of stages) {
+    const existing = deduped.get(s.name);
+    if (!existing || s.probability > existing.probability) {
+      deduped.set(s.name, s);
+    }
+  }
+  return Array.from(deduped.values()).sort((a, b) => a.order - b.order);
+}
+
+function PlayoffPathPair({
+  homeFutures,
+  awayFutures,
+  homeTeam,
+  awayTeam,
+  homeColor,
+  awayColor,
+  homeLogo,
+  awayLogo,
 }: {
-  teamName: string;
-  futures: RelatedFuture[];
-  teamColor: string;
-  teamLogo?: string;
-  sportKey?: string;
-  isFinished?: boolean;
-  isLive?: boolean;
-  boxScore?: Record<string, Record<string, number>> | null;
+  homeFutures: RelatedFuture[];
+  awayFutures: RelatedFuture[];
+  homeTeam: string;
+  awayTeam: string;
+  homeColor: string;
+  awayColor: string;
+  homeLogo?: string;
+  awayLogo?: string;
 }) {
-  // Filter out near-100% and near-0% entries globally (resolved markets)
-  const activeFutures = futures.filter((f) => {
-    const p = f.probability;
-    if (p === null || p === undefined) return true; // keep if no probability
-    return p > 0.01 && p < 0.99;
-  });
+  const homeStages = buildPlayoffStages(homeFutures);
+  const awayStages = buildPlayoffStages(awayFutures);
 
-  // Use display_category for grouping when available, fall back to tier-based
-  const championship = activeFutures.filter((f) =>
-    f.display_category === "playoff_path" || (!f.display_category && effectiveTier(f) === 1)
-  );
-  const conference = activeFutures.filter((f) =>
-    f.display_category === "conference" || (!f.display_category && effectiveTier(f) === 2)
-  );
-  const rawAwards = activeFutures.filter((f) =>
-    f.display_category === "award" || (!f.display_category && effectiveTier(f) === 3)
-  );
-  const awards = deduplicateAwards(rawAwards);
-  const seasonStats = activeFutures.filter((f) =>
-    f.display_category === "season_stat" || (!f.display_category && effectiveTier(f) === 4)
-  );
-  const trades = activeFutures.filter((f) => f.display_category === "trade");
-  const novelty = activeFutures.filter((f) => f.display_category === "novelty");
-  const games = activeFutures.filter((f) =>
-    !f.display_category && effectiveTier(f) === 5
-  );
-  const statProps = activeFutures.filter((f) =>
-    f.display_category === "game_prop" || (!f.display_category && effectiveTier(f) === 6)
-  );
+  if (homeStages.length === 0 && awayStages.length === 0) return null;
 
-  const shortName = teamName.split(" ").pop() || teamName;
+  function renderCard(stages: PlayoffStage[], shortName: string, color: string, logo?: string) {
+    if (stages.length === 0) return <div />;
+    return (
+      <div
+        className="rounded-xl border overflow-hidden bg-surface-card"
+        style={{ borderLeftWidth: 3, borderLeftColor: color }}
+      >
+        <div className="flex items-center gap-2 px-3 py-2.5">
+          {logo ? (
+            <img src={logo} alt="" className="w-7 h-7 object-contain" />
+          ) : (
+            <div
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-extrabold text-[10px]"
+              style={{ backgroundColor: color }}
+            >
+              {shortName.slice(0, 3).toUpperCase()}
+            </div>
+          )}
+          <span className="text-[13px] font-bold flex-1">{shortName}</span>
+          <span className="text-[9px] font-semibold text-text-muted tracking-wide">PLAYOFFS</span>
+        </div>
+        <div className="px-3 pb-2.5">
+          {stages.map((stage) => {
+            const pct = Math.round(stage.probability * 100);
+            return (
+              <Link
+                key={stage.name}
+                href={`/futures/${stage.marketId}`}
+                className="flex items-center gap-1.5 py-1 group"
+              >
+                <div className={`w-[7px] h-[7px] rounded-full shrink-0 ${
+                  stage.isDone ? "bg-emerald-500" : pct >= 30 ? "bg-amber-500" : "bg-gray-300"
+                }`} />
+                <span className="text-[11px] text-text-secondary flex-1">{stage.name}</span>
+                <span
+                  className={`text-[11px] font-bold font-mono ${
+                    stage.isDone ? "text-emerald-500" : ""
+                  }`}
+                  style={stage.isDone ? undefined : { color: pct >= 30 ? undefined : "var(--text-muted)" }}
+                >
+                  {stage.isDone ? "done" : `${pct}%`}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
-  // Count active items (post-filter)
-  const activeCount = championship.length + conference.length + awards.length + seasonStats.length + trades.length + novelty.length + games.length + statProps.length;
-  if (activeCount === 0) return null;
+  const homeShort = homeTeam.split(" ").pop() || homeTeam;
+  const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
   return (
-    <div className="flex-1 min-w-0">
-      {/* Team header */}
-      <div
-        className="flex items-center gap-2 mb-4 pb-2"
-        style={{ borderBottom: `2px solid ${teamColor}40` }}
-      >
-        {teamLogo && (
-          <img
-            src={teamLogo}
-            alt=""
-            width={20}
-            height={20}
-            loading="lazy"
-            className="w-5 h-5 object-contain"
-          />
-        )}
-        <h4 className="text-xs font-bold uppercase tracking-wider text-text-primary">
-          {shortName}
-        </h4>
-        <span className="text-[10px] text-text-muted">
-          {activeCount} market{activeCount !== 1 ? "s" : ""}
-        </span>
+    <div className="grid grid-cols-2 gap-2">
+      {renderCard(awayStages, awayShort, awayColor, awayLogo)}
+      {renderCard(homeStages, homeShort, homeColor, homeLogo)}
+    </div>
+  );
+}
+
+// ─── V5 WIN TOTALS (side-by-side hero cards) ───
+function WinTotalsPair({
+  homeFutures,
+  awayFutures,
+  homeColor,
+  awayColor,
+}: {
+  homeFutures: RelatedFuture[];
+  awayFutures: RelatedFuture[];
+  homeColor: string;
+  awayColor: string;
+}) {
+  if (homeFutures.length === 0 && awayFutures.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <div className="space-y-1.5">
+        {awayFutures.slice(0, 4).map((f) => (
+          <HeroFutureCard key={f.outcome_id} future={f} teamColor={awayColor} />
+        ))}
       </div>
-
-      <div className="space-y-3">
-        {/* Championship — hero cards */}
-        {championship.map((f) => (
-          <HeroFutureCard
-            key={f.outcome_id}
-            future={f}
-            teamColor={teamColor}
-          />
+      <div className="space-y-1.5">
+        {homeFutures.slice(0, 4).map((f) => (
+          <HeroFutureCard key={f.outcome_id} future={f} teamColor={homeColor} />
         ))}
-
-        {/* Conference — hero cards */}
-        {conference.map((f) => (
-          <HeroFutureCard
-            key={f.outcome_id}
-            future={f}
-            teamColor={teamColor}
-          />
-        ))}
-
-        {/* Awards — player-centric rows with headshots (deduplicated) */}
-        {awards.length > 0 && (
-          <div className="space-y-1.5">
-            {awards.map(({ future: f, sourceCount }) => (
-              <AwardCard
-                key={`${f.outcome_id}-${f.market_id}`}
-                future={f}
-                teamColor={teamColor}
-                sportKey={sportKey}
-                sourceCount={sourceCount}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Season stats — hero cards (win totals, stat leaders, division) */}
-        {seasonStats.map((f) => (
-          <HeroFutureCard
-            key={f.outcome_id}
-            future={f}
-            teamColor={teamColor}
-          />
-        ))}
-
-        {/* Trade rumors — compact list */}
-        {trades.length > 0 && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
-              <span style={{ fontSize: "10px" }}>{"🔄"}</span>
-              <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Trade Watch
-              </span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              {trades.slice(0, 5).map((f) => (
-                <Link
-                  key={f.outcome_id}
-                  href={`/futures/${f.market_id}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "6px 10px",
-                    borderRadius: "8px",
-                    background: `linear-gradient(135deg, ${teamColor}08, transparent)`,
-                    border: `1px solid ${teamColor}15`,
-                    textDecoration: "none",
-                  }}
-                >
-                  <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                    {f.clean_label || f.market_name}
-                  </span>
-                  <span style={{ fontSize: "13px", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: teamColor }}>
-                    {formatProbability(f.probability)}
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Novelty — compact list */}
-        {novelty.length > 0 && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
-              <span style={{ fontSize: "10px" }}>{"✨"}</span>
-              <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Fun Markets
-              </span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              {novelty.slice(0, 3).map((f) => (
-                <Link
-                  key={f.outcome_id}
-                  href={`/futures/${f.market_id}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "6px 10px",
-                    borderRadius: "8px",
-                    background: `linear-gradient(135deg, ${teamColor}08, transparent)`,
-                    border: `1px solid ${teamColor}15`,
-                    textDecoration: "none",
-                  }}
-                >
-                  <div>
-                    <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                      {f.clean_label || f.market_name}
-                    </span>
-                    <span style={{ fontSize: "11px", color: "var(--text-muted)", marginLeft: "6px" }}>
-                      {f.outcome_name}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: "13px", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: teamColor }}>
-                    {formatProbability(f.probability)}
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Game markets — dense 2-col grid */}
-        <GameMarketsGrid
-          futures={games}
-          teamColor={teamColor}
-          teamName={teamName}
-        />
-
-        {/* Stat props — player stat cards with gauges or settled results */}
-        <StatPropsSection
-          futures={statProps}
-          teamColor={teamColor}
-          sportKey={sportKey}
-          isFinished={isFinished}
-          isLive={isLive}
-          boxScore={boxScore}
-        />
       </div>
     </div>
   );
 }
 
+// ─── V5 AWARD COMPACT ROW ───
+function AwardCompactRow({
+  future,
+  teamColor,
+  teamLabel,
+  sportKey,
+}: {
+  future: RelatedFuture;
+  teamColor: string;
+  teamLabel: string;
+  sportKey?: string;
+}) {
+  const awardLabel = shortAwardLabel(future.market_name, future.clean_label);
+  const prob = future.probability || 0;
+  return (
+    <Link
+      href={`/futures/${future.market_id}`}
+      className="flex items-center gap-2 py-1.5 border-b border-surface-border/20 last:border-0 group hover:bg-surface-elevated/30 transition-colors -mx-1 px-1 rounded"
+    >
+      <PlayerHeadshot
+        name={future.outcome_name}
+        matchedPlayer={future.matched_player}
+        sportKey={sportKey}
+        teamColor={teamColor}
+        size={24}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] font-bold text-text-primary truncate leading-tight">
+          {future.outcome_name}
+        </div>
+        <div className="text-[8px] text-text-muted font-medium">{awardLabel}</div>
+      </div>
+      <span
+        className="text-[7px] font-bold px-1.5 py-0.5 rounded text-white shrink-0"
+        style={{ backgroundColor: teamColor }}
+      >
+        {teamLabel}
+      </span>
+      <div className="flex items-center gap-1 shrink-0">
+        <span
+          className="text-[11px] font-extrabold font-mono"
+          style={{ color: prob >= 0.10 ? undefined : "var(--text-muted)" }}
+        >
+          {formatProbability(future.probability)}
+        </span>
+        {future.probability_change_24h && Math.abs(future.probability_change_24h) >= 0.005 && (
+          <span className={`text-[8px] font-bold ${future.probability_change_24h > 0 ? "text-emerald-500" : "text-red-500"}`}>
+            {future.probability_change_24h > 0 ? "+" : ""}{Math.round(future.probability_change_24h * 100)}%
+          </span>
+        )}
+      </div>
+    </Link>
+  );
+}
+
+// ─── V5 TRADE WATCH (2-col per team) ───
+function TradeWatchPair({
+  homeTrades,
+  awayTrades,
+  homeTeam,
+  awayTeam,
+  homeColor,
+  awayColor,
+  homeLogo,
+  awayLogo,
+}: {
+  homeTrades: RelatedFuture[];
+  awayTrades: RelatedFuture[];
+  homeTeam: string;
+  awayTeam: string;
+  homeColor: string;
+  awayColor: string;
+  homeLogo?: string;
+  awayLogo?: string;
+}) {
+  if (homeTrades.length === 0 && awayTrades.length === 0) return null;
+
+  function renderCol(trades: RelatedFuture[], shortName: string, color: string, logo?: string) {
+    if (trades.length === 0) return <div />;
+    const sorted = [...trades].sort((a, b) => (b.probability || 0) - (a.probability || 0));
+    return (
+      <div className="rounded-xl border overflow-hidden bg-surface-card" style={{ borderTop: `3px solid ${color}` }}>
+        <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-surface-border/30">
+          {logo ? (
+            <img src={logo} alt="" className="w-4 h-4 object-contain" />
+          ) : (
+            <div className="w-4 h-4 rounded flex items-center justify-center text-white text-[6px] font-extrabold" style={{ backgroundColor: color }}>
+              {shortName.slice(0, 3).toUpperCase()}
+            </div>
+          )}
+          <span className="text-[9px] font-bold">Traded to {shortName}</span>
+        </div>
+        {sorted.slice(0, 5).map((f, i) => (
+          <Link
+            key={f.outcome_id}
+            href={`/futures/${f.market_id}`}
+            className="flex items-center gap-2 px-2 py-1.5 border-b border-surface-border/10 last:border-0 hover:bg-surface-elevated/30 transition-colors"
+          >
+            <PlayerHeadshot
+              name={f.outcome_name}
+              matchedPlayer={f.matched_player}
+              teamColor={color}
+              size={i === 0 ? 32 : 20}
+            />
+            <span className="text-[9px] font-semibold flex-1 truncate">{f.outcome_name}</span>
+            <span className="text-[10px] font-bold font-mono" style={{ color: (f.probability || 0) >= 0.10 ? undefined : "var(--text-muted)" }}>
+              {formatProbability(f.probability)}
+            </span>
+          </Link>
+        ))}
+      </div>
+    );
+  }
+
+  const homeShort = homeTeam.split(" ").pop() || homeTeam;
+  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {renderCol(awayTrades, awayShort, awayColor, awayLogo)}
+      {renderCol(homeTrades, homeShort, homeColor, homeLogo)}
+    </div>
+  );
+}
+
+// ─── V5 NOVELTY SCROLL (horizontal gradient cards) ───
+const NOVELTY_GRADIENTS = [
+  "from-purple-600 to-pink-500",
+  "from-sky-700 to-cyan-500",
+  "from-red-600 to-orange-500",
+  "from-emerald-600 to-emerald-400",
+  "from-violet-700 to-purple-400",
+  "from-amber-600 to-yellow-400",
+];
+
+function NoveltyScroll({ futures }: { futures: RelatedFuture[] }) {
+  if (futures.length === 0) return null;
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
+      {futures.slice(0, 8).map((f, i) => {
+        const gradient = NOVELTY_GRADIENTS[i % NOVELTY_GRADIENTS.length];
+        const pct = Math.round((f.probability || 0) * 100);
+        return (
+          <Link
+            key={f.outcome_id}
+            href={`/futures/${f.market_id}`}
+            className={`flex-shrink-0 rounded-xl overflow-hidden bg-gradient-to-br ${gradient} min-w-[150px] max-w-[150px]`}
+          >
+            <div className="p-2.5 flex flex-col gap-1 min-h-[80px] relative">
+              <div className="text-[10px] font-bold text-white/90 leading-snug line-clamp-3">
+                {f.clean_label || f.market_name}
+              </div>
+              <div className="text-white/70 text-[9px]">
+                {f.outcome_name}
+              </div>
+              <div className="text-[13px] font-black font-mono text-white mt-auto">
+                {pct}% yes
+              </div>
+              {f.source && (
+                <span className="absolute bottom-1.5 right-1.5 text-[7px] font-semibold px-1 py-0.5 rounded bg-white/20 text-white">
+                  {f.source === "kalshi" ? "Kalshi" : f.source === "polymarket" ? "Polymarket" : f.source}
+                </span>
+              )}
+            </div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── V5 GAME MARKETS PAIR (upcoming games side-by-side) ───
+function GameMarketsPair({
+  homeFutures,
+  awayFutures,
+  homeTeam,
+  awayTeam,
+  homeColor,
+  awayColor,
+}: {
+  homeFutures: RelatedFuture[];
+  awayFutures: RelatedFuture[];
+  homeTeam: string;
+  awayTeam: string;
+  homeColor: string;
+  awayColor: string;
+}) {
+  if (homeFutures.length === 0 && awayFutures.length === 0) return null;
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+      {awayFutures.length > 0 && (
+        <GameMarketsGrid futures={awayFutures} teamColor={awayColor} teamName={awayTeam} />
+      )}
+      {homeFutures.length > 0 && (
+        <GameMarketsGrid futures={homeFutures} teamColor={homeColor} teamName={homeTeam} />
+      )}
+    </div>
+  );
+}
+
+/** Categorize a list of related futures into display groups. */
+function categorizeFutures(futures: RelatedFuture[]) {
+  const active = futures.filter((f) => {
+    const p = f.probability;
+    if (p === null || p === undefined) return true;
+    return p > 0.01 && p < 0.99;
+  });
+  return {
+    championship: active.filter(
+      (f) => f.display_category === "playoff_path" || (!f.display_category && effectiveTier(f) === 1),
+    ),
+    conference: active.filter(
+      (f) => f.display_category === "conference" || (!f.display_category && effectiveTier(f) === 2),
+    ),
+    awards: active.filter(
+      (f) => f.display_category === "award" || (!f.display_category && effectiveTier(f) === 3),
+    ),
+    seasonStats: active.filter(
+      (f) => f.display_category === "season_stat" || (!f.display_category && effectiveTier(f) === 4),
+    ),
+    trades: active.filter((f) => f.display_category === "trade"),
+    novelty: active.filter((f) => f.display_category === "novelty"),
+    games: active.filter((f) => !f.display_category && effectiveTier(f) === 5),
+    statProps: active.filter(
+      (f) => f.display_category === "game_prop" || (!f.display_category && effectiveTier(f) === 6),
+    ),
+  };
+}
+
 /**
  * Related Futures — "Bigger Picture" section on event detail page.
+ * V5 layout: cross-team sections instead of per-team columns.
  */
 export default function RelatedFutures({
   eventId,
@@ -1510,13 +1705,12 @@ export default function RelatedFutures({
   awayTeamLogo,
   sportKey,
 }: RelatedFuturesProps) {
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const { data, error, isLoading } = useSWR<RelatedFuturesResponse>(
     ["related-futures", eventId],
     () => fetchRelatedFutures(eventId),
     {
       revalidateOnFocus: false,
-      dedupingInterval: 300000, // 5 min — futures update hourly
+      dedupingInterval: 300000,
     }
   );
 
@@ -1524,58 +1718,70 @@ export default function RelatedFutures({
     return null;
   }
 
-  const { home_team_futures, away_team_futures, summary, event_status, box_score } = data;
+  const { home_team_futures, away_team_futures, event_status, box_score } = data;
   const isFinished = event_status === "completed" || event_status === "closed";
   const isLive = event_status === "live";
   const boxScore = box_score ?? null;
-  // LLM summary disabled — data quality issues cause nonsensical output.
-  // Re-enable after fixing related futures sport filtering + data validation.
-  const hasSummary = false;
 
-  // Find championship futures for the comparison bar.
-  // Prefer markets with "championship" in the name (most reliable signal),
-  // then fall back to any tier-1 market. This prevents "Make Playoffs" (94%)
-  // from being shown instead of the actual championship market (2%).
-  const CHAMPIONSHIP_NAME_RE = /\bchampionship\b|\bwin\s+(the\s+)?title\b|\btitle\s+winner\b|\bwin\s+it\s+all\b/i;
+  const hColor = homeTeamColor || DEFAULT_COLOR;
+  const aColor = awayTeamColor || DEFAULT_COLOR;
+  const homeShort = homeTeam.split(" ").pop() || homeTeam;
+  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+
+  // Categorize futures for each team
+  const homeCats = categorizeFutures(home_team_futures);
+  const awayCats = categorizeFutures(away_team_futures);
+
+  // Find championship futures for title comparison
+  const CHAMP_RE = /\bchampionship\b|\bwin\s+(the\s+)?title\b|\btitle\s+winner\b|\bwin\s+it\s+all\b/i;
   function findBestChampionship(futures: RelatedFuture[]): RelatedFuture | undefined {
     const tier1 = futures.filter((f) => effectiveTier(f) === 1);
-    // Prefer market with championship merge_group (most reliable), then name match
-    const byMerge = tier1.find((f) => f.merge_group === 'nba_champion' || f.merge_group === 'nfl_champion' || f.merge_group === 'mlb_champion' || f.merge_group === 'nhl_champion');
+    const byMerge = tier1.find((f) =>
+      f.merge_group === "nba_champion" || f.merge_group === "nfl_champion" ||
+      f.merge_group === "mlb_champion" || f.merge_group === "nhl_champion"
+    );
     if (byMerge) return byMerge;
-    const named = tier1.find((f) => CHAMPIONSHIP_NAME_RE.test(f.market_name));
-    return named || tier1[0];
+    return tier1.find((f) => CHAMP_RE.test(f.market_name)) || tier1[0];
   }
   const homeChamp = findBestChampionship(home_team_futures);
   const awayChamp = findBestChampionship(away_team_futures);
   const showTitleComparison = !!(homeChamp && awayChamp);
 
-  const hColor = homeTeamColor || DEFAULT_COLOR;
-  const aColor = awayTeamColor || DEFAULT_COLOR;
+  // Merge awards across both teams
+  const mergedAwards = [
+    ...deduplicateAwards(homeCats.awards).map((a) => ({
+      ...a,
+      teamColor: hColor,
+      teamLabel: homeShort,
+    })),
+    ...deduplicateAwards(awayCats.awards).map((a) => ({
+      ...a,
+      teamColor: aColor,
+      teamLabel: awayShort,
+    })),
+  ].sort((a, b) => (b.future.probability || 0) - (a.future.probability || 0));
 
-  const teamDetails = (
-    <div className="flex flex-col sm:flex-row gap-6">
-      <TeamColumn
-        teamName={homeTeam}
-        futures={home_team_futures}
-        teamColor={hColor}
-        teamLogo={homeTeamLogo}
-        sportKey={sportKey}
-        isFinished={isFinished}
-        isLive={isLive}
-        boxScore={boxScore}
-      />
-      <TeamColumn
-        teamName={awayTeam}
-        futures={away_team_futures}
-        teamColor={aColor}
-        teamLogo={awayTeamLogo}
-        sportKey={sportKey}
-        isFinished={isFinished}
-        isLive={isLive}
-        boxScore={boxScore}
-      />
-    </div>
+  // Merge novelty across teams
+  const mergedNovelty = [...homeCats.novelty, ...awayCats.novelty].sort(
+    (a, b) => (b.probability || 0) - (a.probability || 0),
   );
+
+  // Playoff path (championship + conference combined)
+  const homePlayoff = [...homeCats.championship, ...homeCats.conference];
+  const awayPlayoff = [...awayCats.championship, ...awayCats.conference];
+
+  // Section counts
+  const gameMarketCount =
+    homeCats.statProps.length + awayCats.statProps.length +
+    homeCats.games.length + awayCats.games.length;
+  const seasonCount =
+    homePlayoff.length + awayPlayoff.length +
+    homeCats.seasonStats.length + awayCats.seasonStats.length +
+    mergedAwards.length +
+    homeCats.trades.length + awayCats.trades.length +
+    mergedNovelty.length;
+
+  if (gameMarketCount === 0 && seasonCount === 0) return null;
 
   return (
     <div className="bg-surface-card rounded-card shadow-card p-4 sm:p-5">
@@ -1583,18 +1789,11 @@ export default function RelatedFutures({
         Bigger Picture
       </h3>
 
-      {/* LLM Summary */}
-      {hasSummary && (
-        <p className="text-sm text-text-primary leading-relaxed mb-3">
-          {summary}
-        </p>
-      )}
-
-      {/* Title Odds comparison — always visible when available */}
+      {/* Title Odds comparison */}
       {showTitleComparison && (
         <TitleComparison
-          homeChamp={homeChamp}
-          awayChamp={awayChamp}
+          homeChamp={homeChamp!}
+          awayChamp={awayChamp!}
           homeTeam={homeTeam}
           awayTeam={awayTeam}
           homeTeamColor={hColor}
@@ -1602,38 +1801,168 @@ export default function RelatedFutures({
         />
       )}
 
-      {/* Team detail sections */}
-      {hasSummary ? (
+      {/* === Level 3: Game Markets === */}
+      {gameMarketCount > 0 && (
         <>
-          <button
-            onClick={() => setDetailsExpanded(!detailsExpanded)}
-            className="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-400 font-medium transition-colors mb-3"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              className={`transition-transform duration-200 ${
-                detailsExpanded ? "rotate-90" : ""
-              }`}
-            >
-              <path
-                d="M4 2L8 6L4 10"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                fill="none"
-                strokeLinecap="round"
-              />
-            </svg>
-            {detailsExpanded
-              ? "Hide details"
-              : `See all ${data.total_count} futures`}
-          </button>
-          {detailsExpanded && teamDetails}
+          <SectionDivider level={3} label="Game Markets" count={gameMarketCount} />
+
+          {/* Stat props (player props) — per team */}
+          {(homeCats.statProps.length > 0 || awayCats.statProps.length > 0) && (
+            <div className="space-y-4 mb-3">
+              {homeCats.statProps.length > 0 && (
+                <StatPropsSection
+                  futures={homeCats.statProps}
+                  teamColor={hColor}
+                  sportKey={sportKey}
+                  isFinished={isFinished}
+                  isLive={isLive}
+                  boxScore={boxScore}
+                />
+              )}
+              {awayCats.statProps.length > 0 && (
+                <StatPropsSection
+                  futures={awayCats.statProps}
+                  teamColor={aColor}
+                  sportKey={sportKey}
+                  isFinished={isFinished}
+                  isLive={isLive}
+                  boxScore={boxScore}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Upcoming game markets */}
+          <GameMarketsPair
+            homeFutures={homeCats.games}
+            awayFutures={awayCats.games}
+            homeTeam={homeTeam}
+            awayTeam={awayTeam}
+            homeColor={hColor}
+            awayColor={aColor}
+          />
         </>
-      ) : (
-        teamDetails
       )}
+
+      {/* === Level 4: Season Context === */}
+      {seasonCount > 0 && (
+        <>
+          <SectionDivider level={4} label="Season Context" count={seasonCount} />
+
+          {/* Playoff Path — side-by-side progression cards */}
+          {(homePlayoff.length > 0 || awayPlayoff.length > 0) && (
+            <div className="mb-3">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                  Playoff Path
+                </span>
+              </div>
+              <PlayoffPathPair
+                homeFutures={homePlayoff}
+                awayFutures={awayPlayoff}
+                homeTeam={homeTeam}
+                awayTeam={awayTeam}
+                homeColor={hColor}
+                awayColor={aColor}
+                homeLogo={homeTeamLogo}
+                awayLogo={awayTeamLogo}
+              />
+            </div>
+          )}
+
+          {/* Season Stats — win totals, division, seeding */}
+          {(homeCats.seasonStats.length > 0 || awayCats.seasonStats.length > 0) && (
+            <div className="mb-3">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                  Season Stats
+                </span>
+              </div>
+              <WinTotalsPair
+                homeFutures={homeCats.seasonStats}
+                awayFutures={awayCats.seasonStats}
+                homeColor={hColor}
+                awayColor={aColor}
+              />
+            </div>
+          )}
+
+          {/* Awards — merged compact rows from both teams */}
+          {mergedAwards.length > 0 && (
+            <div className="rounded-xl border border-surface-border overflow-hidden mb-3">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-surface-border/30">
+                <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-text-muted">
+                  Awards & All-Team
+                </span>
+                <span className="text-[10px] text-text-muted/50">
+                  {homeShort}/{awayShort} players
+                </span>
+              </div>
+              <div className="px-3 py-1">
+                {mergedAwards.slice(0, 10).map(({ future, teamColor, teamLabel }) => (
+                  <AwardCompactRow
+                    key={`${future.outcome_id}-${future.market_id}`}
+                    future={future}
+                    teamColor={teamColor}
+                    teamLabel={teamLabel}
+                    sportKey={sportKey}
+                  />
+                ))}
+                {mergedAwards.length > 10 && (
+                  <div className="text-center py-1">
+                    <span className="text-[10px] text-text-muted/50">
+                      +{mergedAwards.length - 10} more
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Trade Watch — 2-col per team */}
+          {(homeCats.trades.length > 0 || awayCats.trades.length > 0) && (
+            <div className="mb-3">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                  Trade Watch
+                </span>
+              </div>
+              <TradeWatchPair
+                homeTrades={homeCats.trades}
+                awayTrades={awayCats.trades}
+                homeTeam={homeTeam}
+                awayTeam={awayTeam}
+                homeColor={hColor}
+                awayColor={aColor}
+                homeLogo={homeTeamLogo}
+                awayLogo={awayTeamLogo}
+              />
+            </div>
+          )}
+
+          {/* Novelty & Fun — horizontal scroll gradient cards */}
+          {mergedNovelty.length > 0 && (
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                  Novelty & Fun
+                </span>
+                <span className="text-[10px] text-text-muted/50">
+                  {mergedNovelty.length} items
+                </span>
+              </div>
+              <NoveltyScroll futures={mergedNovelty} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Footer count */}
+      <div className="text-center pt-2 border-t border-surface-border/30 mt-3">
+        <span className="text-[9px] text-text-muted">
+          {data.total_count} related futures from multiple sources
+        </span>
+      </div>
     </div>
   );
 }
