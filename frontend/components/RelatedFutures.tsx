@@ -1901,6 +1901,7 @@ export default function RelatedFutures({
       <h3 className="text-sm font-semibold text-text-secondary mb-3">
         Bigger Picture
       </h3>
+      <div className="max-w-2xl mx-auto">
 
       {/* Title Odds comparison */}
       {showTitleComparison && (
@@ -2073,6 +2074,8 @@ export default function RelatedFutures({
           )}
         </>
       )}
+
+      </div>
 
       {/* Footer count */}
       <div className="text-center pt-2 border-t border-surface-border/30 mt-3">
