@@ -1000,6 +1000,15 @@ export default function EventPage({ params }: EventPageProps) {
                   </span>
                 </div>
               )}
+
+              {/* Projected final score — derived from spread + total, no gambling jargon */}
+              {historyData?.pm_spread_data?.projected_final && (
+                <div className="mt-1.5">
+                  <span className="text-[10px] text-text-muted">
+                    Projected final: {Math.round(historyData.pm_spread_data.projected_final.home_score)}{"\u2009\u2013\u2009"}{Math.round(historyData.pm_spread_data.projected_final.away_score)}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Away Team */}
@@ -1337,6 +1346,7 @@ export default function EventPage({ params }: EventPageProps) {
             awayTeamLogo={event.away_team_data?.logo_small || undefined}
             chartStartTime={oddsChartDomain?.start}
             chartEndTime={oddsChartDomain?.end}
+            pmSpreadData={historyData?.pm_spread_data}
           />
         </div>
       )}

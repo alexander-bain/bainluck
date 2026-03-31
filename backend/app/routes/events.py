@@ -1,6 +1,9 @@
 """Events API endpoints."""
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -3098,6 +3101,150 @@ async def get_event_odds_history(
     except Exception:
         pass
 
+    # ── Prediction market spread/total binary contracts ──
+    # Query FuturesMarkets linked to this event for spread/total data,
+    # then derive implied spread, total, and projected final score.
+    pm_spread_data = {}
+    try:
+        from app.utils.binary_spread import (
+            binary_to_implied_spread,
+            binary_to_implied_total,
+            projected_final_score as calc_projected_score,
+            extract_spread_threshold,
+            extract_total_threshold,
+        )
+        from app.models.models import FuturesOddsSnapshot
+
+        # Get all futures markets linked to this event
+        fm_result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(FuturesMarket.event_id == event_id)
+        )
+        linked_markets = fm_result.scalars().all()
+
+        # Separate spread vs total contracts by source
+        spread_contracts_by_source: dict[str, list] = {}
+        total_contracts_by_source: dict[str, list] = {}
+
+        for market in linked_markets:
+            source = market.source  # "kalshi" or "polymarket"
+            for outcome in market.outcomes:
+                name = outcome.name or ""
+                prob = float(outcome.current_probability) if outcome.current_probability else None
+                if prob is None or prob <= 0:
+                    continue
+
+                # Try to extract spread threshold
+                spread_val = extract_spread_threshold(name)
+                if spread_val is not None:
+                    if source not in spread_contracts_by_source:
+                        spread_contracts_by_source[source] = []
+                    spread_contracts_by_source[source].append({
+                        "threshold": spread_val,
+                        "probability": prob,
+                        "name": name,
+                    })
+                    continue
+
+                # Try to extract total threshold
+                total_val = extract_total_threshold(name)
+                if total_val is not None:
+                    if source not in total_contracts_by_source:
+                        total_contracts_by_source[source] = []
+                    total_contracts_by_source[source].append({
+                        "threshold": total_val,
+                        "probability": prob,
+                        "name": name,
+                    })
+
+        # Derive implied values per source
+        implied_spreads = {}
+        implied_totals = {}
+
+        for source, contracts in spread_contracts_by_source.items():
+            result = binary_to_implied_spread(contracts)
+            if result:
+                implied_spreads[source] = {
+                    "spread": result.spread,
+                    "confidence": result.confidence,
+                    "contracts": sorted(
+                        [{"threshold": c["threshold"], "probability": c["probability"]}
+                         for c in contracts],
+                        key=lambda x: x["threshold"],
+                    ),
+                }
+
+        for source, contracts in total_contracts_by_source.items():
+            result = binary_to_implied_total(contracts)
+            if result:
+                implied_totals[source] = {
+                    "total": result.total,
+                    "confidence": result.confidence,
+                    "contracts": sorted(
+                        [{"threshold": c["threshold"], "probability": c["probability"]}
+                         for c in contracts],
+                        key=lambda x: x["threshold"],
+                    ),
+                }
+
+        # Also include sportsbook spread/total from the odds history
+        if history:
+            latest = history[-1]
+            sb_ou = latest.get("over_under")
+            sb_home = latest.get("projected_home_score")
+            sb_away = latest.get("projected_away_score")
+            if sb_home is not None and sb_away is not None:
+                sb_spread = sb_away - sb_home  # negative = home favored
+                implied_spreads["sportsbook"] = {
+                    "spread": round(sb_spread, 1),
+                    "confidence": 1.0,
+                    "contracts": [],
+                }
+            if sb_ou is not None:
+                implied_totals["sportsbook"] = {
+                    "total": sb_ou,
+                    "confidence": 1.0,
+                    "contracts": [],
+                }
+
+        # Compute projected final score from best available data
+        # Priority: kalshi > polymarket > sportsbook
+        best_spread = None
+        best_spread_source = None
+        for src in ["kalshi", "polymarket", "sportsbook"]:
+            if src in implied_spreads:
+                best_spread = implied_spreads[src]["spread"]
+                best_spread_source = src
+                break
+
+        best_total = None
+        best_total_source = None
+        for src in ["kalshi", "polymarket", "sportsbook"]:
+            if src in implied_totals:
+                best_total = implied_totals[src]["total"]
+                best_total_source = src
+                break
+
+        projected = None
+        if best_spread is not None and best_total is not None:
+            proj = calc_projected_score(best_spread, best_total)
+            projected = {
+                "home_score": proj.home_score,
+                "away_score": proj.away_score,
+                "spread_source": best_spread_source,
+                "total_source": best_total_source,
+            }
+
+        pm_spread_data = {
+            "implied_spreads": implied_spreads,
+            "implied_totals": implied_totals,
+            "projected_final": projected,
+        }
+    except Exception as e:
+        logger.warning("Error computing PM spread data for event %d: %s", event_id, e)
+        pm_spread_data = {}
+
     # ── Compute backend aggregate line using the aggregation engine ──
     # Combines sportsbook consensus + all win prob sources into a single
     # weighted-median time series with staleness decay and smoothing.
@@ -3157,6 +3304,7 @@ async def get_event_odds_history(
         "scoring_plays": scoring_plays,
         "period_markers": period_markers,
         "aggregate_line": aggregate_line if aggregate_line else None,
+        "pm_spread_data": pm_spread_data if pm_spread_data else None,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
         "snapshot_count": len(snapshots),

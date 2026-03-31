@@ -246,6 +246,24 @@ export interface EventHistoryResponse {
   aggregate_line?: Array<{ timestamp: string; home_probability: number }>;
   points: number;
   espn_snapshot_count?: number;
+  pm_spread_data?: {
+    implied_spreads: Record<string, {
+      spread: number;
+      confidence: number;
+      contracts: Array<{ threshold: number; probability: number }>;
+    }>;
+    implied_totals: Record<string, {
+      total: number;
+      confidence: number;
+      contracts: Array<{ threshold: number; probability: number }>;
+    }>;
+    projected_final?: {
+      home_score: number;
+      away_score: number;
+      spread_source: string;
+      total_source: string;
+    };
+  };
 }
 
 export interface ScoringPlay {

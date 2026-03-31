@@ -51,6 +51,12 @@ interface ScoreDifferentialChartProps {
   chartStartTime?: string;
   /** End timestamp (ISO) from the Win Probability chart so both charts share the same x-axis range */
   chartEndTime?: string;
+  /** Prediction market spread/total data from binary contracts */
+  pmSpreadData?: {
+    implied_spreads?: Record<string, { spread: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
+    implied_totals?: Record<string, { total: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
+    projected_final?: { home_score: number; away_score: number; spread_source: string; total_source: string } | null;
+  } | null;
 }
 
 type TimeRange = "all" | "live";
@@ -92,6 +98,7 @@ export default function ScoreDifferentialChart({
   awayTeamLogo,
   chartStartTime,
   chartEndTime,
+  pmSpreadData,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
@@ -347,11 +354,25 @@ export default function ScoreDifferentialChart({
       }
     }
 
+    // Add prediction market implied spread as a constant line at current value
+    // (This is a snapshot, not a time series — we only have the current implied spread)
+    if (pmSpreadData?.implied_spreads) {
+      const allPts = Array.from(dataMap.values());
+      for (const [source, data] of Object.entries(pmSpreadData.implied_spreads)) {
+        if (source === "sportsbook") continue; // Already shown as projected spread
+        const key = `pm_${source}_spread`;
+        for (const pt of allPts) {
+          // Show the implied spread as a flat line across all timestamps
+          pt[key] = data.spread;
+        }
+      }
+    }
+
     return Array.from(dataMap.values()).sort(
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData]);
 
   // Filter period boundaries, deduplicate close markers, alternate label positions
   const filteredPeriodBoundaries = useMemo(() => {
@@ -466,6 +487,16 @@ export default function ScoreDifferentialChart({
           {actualEntry && (
             <p className="text-sm font-semibold text-orange-600">
               Actual: {formatDiff(actualEntry.value)}
+            </p>
+          )}
+          {payload?.find(e => e.dataKey === "pm_kalshi_spread" && e.value !== null) && (
+            <p className="text-sm font-semibold" style={{ color: "#7c3aed" }}>
+              Kalshi: {formatDiff(payload!.find(e => e.dataKey === "pm_kalshi_spread")!.value)}
+            </p>
+          )}
+          {payload?.find(e => e.dataKey === "pm_polymarket_spread" && e.value !== null) && (
+            <p className="text-sm font-semibold" style={{ color: "#db2777" }}>
+              Polymarket: {formatDiff(payload!.find(e => e.dataKey === "pm_polymarket_spread")!.value)}
             </p>
           )}
           {bookmakerEntries.length > 0 && (
@@ -614,6 +645,12 @@ export default function ScoreDifferentialChart({
                       },
                     ]
                   : []),
+                ...(pmSpreadData?.implied_spreads?.kalshi
+                  ? [{ value: "Kalshi Implied" as string, type: "circle" as const, color: "#7c3aed" }]
+                  : []),
+                ...(pmSpreadData?.implied_spreads?.polymarket
+                  ? [{ value: "Polymarket Implied" as string, type: "circle" as const, color: "#db2777" }]
+                  : []),
               ]}
             />
 
@@ -656,6 +693,34 @@ export default function ScoreDifferentialChart({
                 strokeWidth={3}
                 dot={false}
                 activeDot={{ r: 5 }}
+                connectNulls
+              />
+            )}
+
+            {/* Prediction market implied spread lines */}
+            {pmSpreadData?.implied_spreads?.kalshi && (
+              <Line
+                type="monotone"
+                dataKey="pm_kalshi_spread"
+                name="Kalshi Implied"
+                stroke="#7c3aed"
+                strokeWidth={2}
+                strokeDasharray="8 4"
+                dot={false}
+                activeDot={{ r: 4, fill: "#7c3aed" }}
+                connectNulls
+              />
+            )}
+            {pmSpreadData?.implied_spreads?.polymarket && (
+              <Line
+                type="monotone"
+                dataKey="pm_polymarket_spread"
+                name="Polymarket Implied"
+                stroke="#db2777"
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                dot={false}
+                activeDot={{ r: 4, fill: "#db2777" }}
                 connectNulls
               />
             )}
