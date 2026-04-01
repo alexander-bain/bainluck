@@ -1,6 +1,7 @@
 """Admin API endpoints for maintenance tasks."""
 
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -7550,6 +7551,106 @@ async def trigger_data_quality_check(
 
     report = run_async(_check_data_quality())
     return report
+
+
+@router.get("/audit")
+async def run_audit(
+    secret: str = Query(...),
+    grid: str = Query("mlb", description="Grid to audit: nba, nhl, mlb, golf"),
+    skip_event: bool = Query(False, description="Skip event detail audit"),
+    skip_grid: bool = Query(False, description="Skip grid audit"),
+):
+    """Run the page health audit and return JSON results.
+
+    Executes the audit_matching_quality.py script with --json --skip-llm
+    and returns the structured report for dashboard display.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import asyncio
+    import json as json_mod
+
+    cmd = [
+        sys.executable, "scripts/audit_matching_quality.py",
+        "--json", "--skip-llm", "--grid", grid,
+    ]
+    if skip_event:
+        cmd.append("--skip-event")
+    if skip_grid:
+        cmd.append("--skip-grid")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "PYTHONPATH": "."},
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+
+        if proc.returncode != 0:
+            return {
+                "status": "error",
+                "returncode": proc.returncode,
+                "stderr": stderr.decode()[-500:],
+            }
+
+        return json_mod.loads(stdout.decode())
+
+    except asyncio.TimeoutError:
+        return {"status": "error", "error": "Audit timed out after 60s"}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)[:500]}
+
+
+@router.get("/audit/all")
+async def run_audit_all_grids(
+    secret: str = Query(...),
+):
+    """Run audit across all grids and return combined results."""
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    import asyncio
+    import json as json_mod
+
+    grids = ["nba", "nhl", "mlb", "golf"]
+    results = {}
+
+    for grid in grids:
+        cmd = [
+            sys.executable, "scripts/audit_matching_quality.py",
+            "--json", "--skip-llm", "--skip-event", "--grid", grid,
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "PYTHONPATH": "."},
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+
+            if proc.returncode == 0:
+                results[grid] = json_mod.loads(stdout.decode())
+            else:
+                results[grid] = {"status": "error", "stderr": stderr.decode()[-200:]}
+        except Exception as exc:
+            results[grid] = {"status": "error", "error": str(exc)[:200]}
+
+    # Summary row
+    scores = {
+        g: r.get("health_score", "?")
+        for g, r in results.items()
+        if isinstance(r.get("health_score"), int)
+    }
+
+    return {
+        "scores": scores,
+        "avg_score": round(sum(scores.values()) / len(scores)) if scores else None,
+        "grids": results,
+    }
 
 
 @router.get("/debug/golf-markets")
