@@ -7572,7 +7572,7 @@ async def run_audit(
     import json as json_mod
 
     cmd = [
-        sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "audit_matching_quality.py"),
+        sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts", "audit_matching_quality.py"),
         "--json", "--skip-llm", "--grid", grid,
     ]
     if skip_event:
@@ -7596,7 +7596,12 @@ async def run_audit(
                 "stderr": stderr.decode()[-500:],
             }
 
-        return json_mod.loads(stdout.decode())
+        # Script prints debug lines before JSON — extract the JSON block
+        output = stdout.decode()
+        json_start = output.find("{")
+        if json_start == -1:
+            return {"status": "error", "error": "No JSON in output", "raw": output[-500:]}
+        return json_mod.loads(output[json_start:])
 
     except asyncio.TimeoutError:
         return {"status": "error", "error": "Audit timed out after 60s"}
@@ -7620,7 +7625,7 @@ async def run_audit_all_grids(
 
     for grid in grids:
         cmd = [
-            sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "audit_matching_quality.py"),
+            sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts", "audit_matching_quality.py"),
             "--json", "--skip-llm", "--skip-event", "--grid", grid,
         ]
         try:
@@ -7633,7 +7638,12 @@ async def run_audit_all_grids(
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
 
             if proc.returncode == 0:
-                results[grid] = json_mod.loads(stdout.decode())
+                output = stdout.decode()
+                json_start = output.find("{")
+                if json_start >= 0:
+                    results[grid] = json_mod.loads(output[json_start:])
+                else:
+                    results[grid] = {"status": "error", "error": "No JSON"}
             else:
                 results[grid] = {"status": "error", "stderr": stderr.decode()[-200:]}
         except Exception as exc:
