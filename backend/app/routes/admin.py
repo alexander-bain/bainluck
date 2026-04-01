@@ -7550,3 +7550,76 @@ async def trigger_data_quality_check(
 
     report = run_async(_check_data_quality())
     return report
+
+
+@router.get("/debug/golf-markets")
+async def debug_golf_markets(
+    secret: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all golf markets from Kalshi/Polymarket/Odds API in the DB.
+
+    Shows market names, sources, outcome counts, and probabilities
+    to diagnose tournament matching issues in the golf grid.
+    """
+    if not _check_admin_secret(secret):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+
+    stmt = (
+        select(FuturesMarket)
+        .where(
+            or_(
+                FuturesMarket.llm_sport_category == "golf",
+                FuturesMarket.external_id.ilike("golf_%"),
+            ),
+            FuturesMarket.status != "resolved",
+            FuturesMarket.source != "datagolf",
+        )
+        .options(selectinload(FuturesMarket.outcomes))
+        .order_by(FuturesMarket.source, FuturesMarket.name)
+    )
+    result = await db.execute(stmt)
+    markets = result.scalars().unique().all()
+
+    market_list = []
+    for m in markets:
+        outcomes = sorted(
+            m.outcomes,
+            key=lambda o: float(o.current_probability or 0),
+            reverse=True,
+        )
+        top_outcomes = [
+            {
+                "name": o.name,
+                "probability": float(o.current_probability) if o.current_probability else None,
+                "yes_bid": float(o.current_yes_bid) if o.current_yes_bid else None,
+                "yes_ask": float(o.current_yes_ask) if o.current_yes_ask else None,
+            }
+            for o in outcomes[:5]
+        ]
+        prob_sum = sum(
+            float(o.current_probability)
+            for o in outcomes
+            if o.current_probability
+        )
+        market_list.append({
+            "id": m.id,
+            "source": m.source,
+            "name": m.name,
+            "external_id": m.external_id[:80] if m.external_id else None,
+            "category": m.category,
+            "market_tier": m.market_tier,
+            "mutually_exclusive": m.mutually_exclusive,
+            "outcome_count": len(outcomes),
+            "prob_sum": round(prob_sum, 3),
+            "top_outcomes": top_outcomes,
+        })
+
+    return {
+        "total_markets": len(market_list),
+        "by_source": {
+            src: sum(1 for m in market_list if m["source"] == src)
+            for src in sorted(set(m["source"] for m in market_list))
+        },
+        "markets": market_list,
+    }
