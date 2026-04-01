@@ -2149,8 +2149,36 @@ _PLAYER_PROP_RE = re.compile(
 _THRESHOLD_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
 
+def _is_team_stat_market(name: str) -> bool:
+    """Check if this is a team-level stat market (not a player prop).
+
+    Team stat markets have patterns like "Cleveland at LA: Points" where
+    the part after the colon is ONLY a stat word. Player props have a
+    player name before the stat: "Cleveland at LA: Trae Young Points".
+    """
+    colon_idx = name.find(":")
+    if colon_idx < 0:
+        return False
+    after_colon = name[colon_idx + 1:].strip()
+    # If the text after the colon is JUST a stat word (with optional whitespace),
+    # it's a team stat market, not a player prop
+    return bool(re.fullmatch(
+        r"(?:points|assists|rebounds|steals|blocks|three.?pointers?|3.?pointers?|"
+        r"turnovers|strikeouts|hits|runs|home.?runs|goals|saves|sacks|"
+        r"passing.?yards|rushing.?yards|receiving.?yards|touchdowns|kills)",
+        after_colon,
+        re.IGNORECASE,
+    ))
+
+
 def _classify_game_market(name: str) -> str:
-    """Classify a game-level market name into a type."""
+    """Classify a game-level market name into a type.
+
+    Distinguishes team-level stat markets ("Cleveland at LA: Rebounds")
+    from player props ("Trae Young Points") by checking whether the
+    stat word is the ENTIRE content after the colon (team stat) vs.
+    having a player name before it (player prop).
+    """
     lower = name.lower()
     # Totals first — "Total Points" is a total, not a player prop
     if "total" in lower or "o/u" in lower:
@@ -2165,11 +2193,14 @@ def _classify_game_market(name: str) -> str:
     if "over" in lower or "under" in lower:
         # If a stat word precedes "Over/Under", it's a player prop
         # e.g., "Rebounds Over 8.5" vs just "Over 224.5"
-        if _PLAYER_PROP_RE.search(name):
+        if _PLAYER_PROP_RE.search(name) and not _is_team_stat_market(name):
             return "player_prop"
         return "game_total"
     if "spread" in lower or "margin" in lower or "handicap" in lower:
         return "spread"
+    # Team-level stat markets: "Team at Team: Points" (no player name)
+    if _is_team_stat_market(name):
+        return "team_total"
     # Player props without over/under (e.g., "Trae Young Points")
     if _PLAYER_PROP_RE.search(name):
         return "player_prop"

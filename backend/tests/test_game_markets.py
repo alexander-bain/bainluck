@@ -32,6 +32,18 @@ class TestClassifyGameMarket:
     def test_player_prop_rebounds(self):
         assert _classify_game_market("Rebounds Over 8.5") == "player_prop"
 
+    def test_team_stat_points(self):
+        assert _classify_game_market("Cleveland at Los Angeles L: Points") == "team_total"
+
+    def test_team_stat_rebounds(self):
+        assert _classify_game_market("Cleveland at Los Angeles L: Rebounds") == "team_total"
+
+    def test_team_stat_assists(self):
+        assert _classify_game_market("Boston at Atlanta: Assists") == "team_total"
+
+    def test_team_stat_steals(self):
+        assert _classify_game_market("Portland at Denver: Steals") == "team_total"
+
     def test_spread(self):
         assert _classify_game_market("Spread -4.5") == "spread"
 
