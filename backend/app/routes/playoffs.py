@@ -622,6 +622,8 @@ _TEAM_NAME_ALIASES: dict[str, str] = {
     "ucf": "central florida",
     "vcu": "virginia commonwealth",
     "byu": "brigham young",
+    "a's": "athletics",
+    "oakland a's": "oakland athletics",
 }
 
 
@@ -1319,17 +1321,15 @@ async def _build_golf_tour_grid(
             "championship", "tournament", "invitational", "classic",
             "presented", "by", "the", "at", "pga", "tour", "winner",
             "top", "finish", "hosted", "sponsored", "powered",
+            "open",  # Too generic — matches "US Open", "The Open"
         }
         tourney_tokens = [
             w for w in tournament_name.lower().split()
             if w not in _GOLF_STOPWORDS and len(w) >= 3
         ]
         # Handle ambiguous tournament names:
-        # "The Open" / "US Open" → use full name phrase to avoid cross-match
+        # "The Open" → all tokens filtered out → use full name phrase
         if not tourney_tokens and tournament_name:
-            tourney_tokens = [tournament_name.lower().strip()]
-        elif len(tourney_tokens) == 1 and tourney_tokens[0] == "open":
-            # "open" alone matches both "US Open" and "The Open" — use phrase
             tourney_tokens = [tournament_name.lower().strip()]
 
         def _market_matches_tournament(market_name: str) -> bool:
@@ -1340,16 +1340,44 @@ async def _build_golf_tour_grid(
             # At least one distinctive tournament token must appear
             return any(tok in name_lower for tok in tourney_tokens)
 
-        db_markets = [
+        db_markets_name_matched = [
             m for m in all_db_markets
             if _market_matches_tournament(m.name)
         ]
 
+        # Filter out garbage binary-market aggregates from Polymarket.
+        # Non-NegRisk events with many outcomes at ~50% each (prob_sum >> 1)
+        # are collections of independent binary markets with zero liquidity.
+        # E.g., "Valero Texas Open Top 10" has 100 outcomes all at 0.50.
+        db_markets = []
+        garbage_count = 0
+        for m in db_markets_name_matched:
+            if (
+                len(m.outcomes) > 10
+                and not m.mutually_exclusive
+                and m.source == "polymarket"
+            ):
+                prob_sum = sum(
+                    float(o.current_probability)
+                    for o in m.outcomes
+                    if o.current_probability
+                )
+                if prob_sum > 2.0:
+                    garbage_count += 1
+                    logger.info(
+                        "Golf grid [%s]: skipping garbage binary aggregate '%s' "
+                        "(outcomes=%d, prob_sum=%.1f)",
+                        tour, m.name, len(m.outcomes), prob_sum,
+                    )
+                    continue
+            db_markets.append(m)
+
         if len(db_markets) < len(all_db_markets):
             logger.info(
-                "Golf grid [%s]: filtered %d → %d DB markets (tournament='%s', tokens=%s)",
+                "Golf grid [%s]: filtered %d → %d DB markets "
+                "(tournament='%s', tokens=%s, garbage_binary=%d)",
                 tour, len(all_db_markets), len(db_markets),
-                tournament_name, tourney_tokens,
+                tournament_name, tourney_tokens, garbage_count,
             )
 
         # 4. Match DB market outcomes to DataGolf golfers
