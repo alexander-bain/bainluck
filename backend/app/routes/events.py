@@ -1829,13 +1829,38 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
     result = await db.execute(
         select(Event)
-        .options(selectinload(Event.odds_snapshots), selectinload(Event.sport))
+        .options(selectinload(Event.sport))
         .where(Event.id == event_id)
     )
     event = result.scalar_one_or_none()
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # Load only the latest odds snapshot per bookmaker (not ALL snapshots).
+    # This prevents R14 memory errors on events with thousands of snapshots.
+    ranked = (
+        select(
+            OddsSnapshot.id,
+            func.row_number().over(
+                partition_by=OddsSnapshot.bookmaker,
+                order_by=OddsSnapshot.captured_at.desc(),
+            ).label("rn"),
+        )
+        .where(OddsSnapshot.event_id == event_id)
+        .subquery()
+    )
+    latest_ids_result = await db.execute(
+        select(ranked.c.id).where(ranked.c.rn == 1)
+    )
+    latest_ids = [row[0] for row in latest_ids_result.fetchall()]
+    if latest_ids:
+        snap_result = await db.execute(
+            select(OddsSnapshot).where(OddsSnapshot.id.in_(latest_ids))
+        )
+        latest_snapshots = list(snap_result.scalars().all())
+    else:
+        latest_snapshots = []
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
@@ -1870,15 +1895,9 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     if standings_context:
         response["standings_context"] = standings_context
 
-    if event.odds_snapshots:
-        # Get the most recent snapshot for each bookmaker
-        # (deduplication means different bookmakers may have different latest times)
-        latest_by_bookmaker = {}
-        for s in event.odds_snapshots:
-            if s.bookmaker not in latest_by_bookmaker or s.captured_at > latest_by_bookmaker[s.bookmaker].captured_at:
-                latest_by_bookmaker[s.bookmaker] = s
-
-        all_latest_snapshots = list(latest_by_bookmaker.values())
+    if latest_snapshots:
+        # latest_snapshots already contains only the most recent per bookmaker
+        all_latest_snapshots = latest_snapshots
 
         # Filter for aggregation: exclude pre-game-only bookmakers from consensus
         filtered_snapshots = _filter_stale_bookmaker_snapshots(
