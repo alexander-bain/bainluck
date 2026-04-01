@@ -167,6 +167,16 @@ class TestClassifyMarketCategory:
         ("NBA Draft Top 10", "award"),
         ("Most Points in Semifinals", "novelty"),
         ("UConn vs Duke: First Half Winner", "game_prop"),
+        # Polymarket game props (vs. format)
+        ("Celtics vs. Heat: Spread -4.5", "game_prop"),
+        ("Celtics vs. Heat: O/U 229.5", "game_prop"),
+        ("Celtics vs. Heat: 1H Spread -2.5", "game_prop"),
+        ("Celtics vs. Heat: 1H Moneyline", "game_prop"),
+        ("Celtics vs. Heat: Tyler Herro: Points O/U 22.5", "game_prop"),
+        ("Celtics vs. Heat: 1H O/U 117.5", "game_prop"),
+        # Bare matchup (Polymarket moneyline)
+        ("Celtics vs. Heat", "game_prop"),
+        ("Thunder vs Celtics", "game_prop"),
     ])
     def test_known_categories(self, label, expected_cat):
         assert classify_market_category(label) == expected_cat

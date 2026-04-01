@@ -277,11 +277,20 @@ _LABEL_REWRITES: list[tuple[re.Pattern, str]] = [
      r"\1: \2 Record"),
 ]
 
-# Game prop detection: "Team at Team: Stat Category"
+# Game prop detection: "Team at/vs Team: Stat" or "Team vs. Team" (bare moneyline)
 _GAME_STAT_PROP_RE = re.compile(
-    r".+\s+(?:at|vs\.?)\s+.+:\s*(Points|Rebounds|Assists|Steals|Blocks|Three\s*Pointers?|"
+    r".+\s+(?:at|vs\.?)\s+.+:\s*(?:1H\s+)?(?:O/U\s+\d|"
+    r"Points|Rebounds|Assists|Steals|Blocks|Three\s*Pointers?|"
     r"Turnovers|Double\s*Doubles?|Triple\s*Doubles?|First\s+Half\s+Winner|"
-    r"Spread|Total\s*Points?|Team\s*Totals?)",
+    r"Spread|Total\s*Points?|Team\s*Totals?|Moneyline|"
+    # Polymarket player prop format: "Player: Stat O/U X"
+    r"[A-Z][a-z]+\s+[A-Z])",
+    re.IGNORECASE,
+)
+
+# Bare "Team vs. Team" markets (Polymarket moneyline, no stat qualifier)
+_BARE_MATCHUP_RE = re.compile(
+    r"^[A-Z][\w\s.]+\s+vs\.?\s+[A-Z][\w\s.]+$",
     re.IGNORECASE,
 )
 
@@ -296,8 +305,9 @@ _NCAA_ROUND_RE = re.compile(
 # ── Category assignment ──────────────────────────────────────────────────
 
 _CATEGORY_RULES: list[tuple[re.Pattern, str]] = [
-    # Game props (highest priority)
+    # Game props (highest priority — check before championship/conference patterns)
     (_GAME_STAT_PROP_RE, "game_prop"),
+    (_BARE_MATCHUP_RE, "game_prop"),
 
     # NCAA bracket rounds
     (_NCAA_ROUND_RE, "ncaa"),
