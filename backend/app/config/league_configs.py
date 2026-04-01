@@ -401,11 +401,13 @@ MLB_CONFIG = LeagueConfig(
         r"\bWorld\s+Series\b",
         r"\bPro\s+Baseball\b",
         r"\bMajor\s+League\s+Baseball\b",
+        r"\bAmerican\s+League\b",
+        r"\bNational\s+League\b",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
         GridColumn(key="division", label="Division", order=2),
-        GridColumn(key="pennant", label="Pennant", order=3),
+        GridColumn(key="pennant", label="AL / NL Champ", order=3),
         GridColumn(key="championship", label="World Series", order=4),
     ],
     matching_rules=[
