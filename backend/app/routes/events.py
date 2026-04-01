@@ -2130,6 +2130,355 @@ def _team_name_patterns(full_name: str) -> list[str]:
     return patterns
 
 
+# ── Regex helpers for game-market classification ────────────────────────
+_TOTAL_RE = re.compile(
+    r"(?:total|over|under|o/u)\b",
+    re.IGNORECASE,
+)
+_SPREAD_RE = re.compile(
+    r"(?:spread|margin|handicap)\b",
+    re.IGNORECASE,
+)
+_PLAYER_PROP_RE = re.compile(
+    r"(?:points|assists|rebounds|steals|blocks|three.?pointers?|3.?pointers?|"
+    r"turnovers|strikeouts|hits|runs|home.?runs|goals|saves|sacks|"
+    r"passing.?yards|rushing.?yards|receiving.?yards|touchdowns|"
+    r"PRA|PA|PR|RA|double.?double|triple.?double|first.?basket)\b",
+    re.IGNORECASE,
+)
+_THRESHOLD_RE = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+def _classify_game_market(name: str) -> str:
+    """Classify a game-level market name into a type."""
+    lower = name.lower()
+    # Totals first — "Total Points" is a total, not a player prop
+    if "total" in lower or "o/u" in lower:
+        if "team" in lower:
+            return "team_total"
+        if any(x in lower for x in ("1st half", "1h", "2nd half", "2h")):
+            return "half_total"
+        if any(x in lower for x in ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "1q", "2q", "3q", "4q")):
+            return "quarter_total"
+        return "game_total"
+    # Over/Under without "total" — check if it's a player prop or game total
+    if "over" in lower or "under" in lower:
+        # If a stat word precedes "Over/Under", it's a player prop
+        # e.g., "Rebounds Over 8.5" vs just "Over 224.5"
+        if _PLAYER_PROP_RE.search(name):
+            return "player_prop"
+        return "game_total"
+    if "spread" in lower or "margin" in lower or "handicap" in lower:
+        return "spread"
+    # Player props without over/under (e.g., "Trae Young Points")
+    if _PLAYER_PROP_RE.search(name):
+        return "player_prop"
+    if "moneyline" in lower or "winner" in lower or "win" in lower:
+        return "moneyline"
+    return "other"
+
+
+def _extract_threshold(outcome_name: str) -> Optional[float]:
+    """Extract the numeric threshold from an outcome name like 'Over 224.5'."""
+    m = _THRESHOLD_RE.search(outcome_name)
+    return float(m.group(1)) if m else None
+
+
+def _estimate_game_pace(
+    home_score: Optional[int],
+    away_score: Optional[int],
+    period: Optional[str],
+    game_clock: Optional[str],
+    sport_key: Optional[str],
+) -> Optional[dict]:
+    """Estimate current scoring pace for total points spectrum.
+
+    Returns {total_scored, projected_total, fraction_elapsed, time_remaining_display}
+    or None if insufficient data.
+    """
+    if home_score is None or away_score is None:
+        return None
+    total_scored = home_score + away_score
+
+    # Parse sport-specific game duration
+    sport_prefix = (sport_key or "").split("_")[0]
+    total_minutes = {"basketball": 48, "americanfootball": 60, "icehockey": 60, "baseball": 54}.get(sport_prefix)
+    if total_minutes is None:
+        return None
+
+    # Parse elapsed time from period + clock
+    if not period:
+        return None
+
+    period_str = period.lower().strip()
+    # Strip clock prefix like "6:55 - 3rd Quarter"
+    if " - " in period_str:
+        period_str = period_str.split(" - ", 1)[-1].strip()
+
+    # Basketball quarters
+    quarter_map = {"1st quarter": 1, "q1": 1, "2nd quarter": 2, "q2": 2,
+                   "3rd quarter": 3, "q3": 3, "4th quarter": 4, "q4": 4}
+    half_map = {"1st half": 1, "halftime": 2, "ht": 2, "2nd half": 2}
+    # Football quarters (same)
+    # Hockey periods
+    hockey_map = {"1st period": 1, "p1": 1, "2nd period": 2, "p2": 2, "3rd period": 3, "p3": 3}
+
+    elapsed_minutes = None
+    period_minutes = total_minutes / 4 if sport_prefix in ("basketball", "americanfootball") else total_minutes / 3
+
+    for label, num in {**quarter_map, **hockey_map}.items():
+        if label in period_str:
+            # Parse remaining clock time
+            clock_remaining = 0
+            if game_clock:
+                parts = game_clock.replace(":", " ").split()
+                try:
+                    if len(parts) >= 2:
+                        clock_remaining = int(parts[0]) + int(parts[1]) / 60
+                    elif len(parts) == 1:
+                        clock_remaining = float(parts[0])
+                except (ValueError, IndexError):
+                    pass
+            elapsed_minutes = (num - 1) * period_minutes + (period_minutes - clock_remaining)
+            break
+
+    for label, num in half_map.items():
+        if label in period_str:
+            half_minutes = total_minutes / 2
+            # Halftime/HT means exactly half is done, no clock needed
+            if label in ("halftime", "ht"):
+                elapsed_minutes = half_minutes
+                break
+            clock_remaining = 0
+            if game_clock:
+                parts = game_clock.replace(":", " ").split()
+                try:
+                    if len(parts) >= 2:
+                        clock_remaining = int(parts[0]) + int(parts[1]) / 60
+                    elif len(parts) == 1:
+                        clock_remaining = float(parts[0])
+                except (ValueError, IndexError):
+                    pass
+            elapsed_minutes = (num - 1) * half_minutes + (half_minutes - clock_remaining)
+            break
+
+    if "ot" in period_str or "overtime" in period_str:
+        elapsed_minutes = float(total_minutes)
+
+    if elapsed_minutes is None or elapsed_minutes <= 0:
+        return None
+
+    fraction = min(elapsed_minutes / total_minutes, 1.0)
+    projected = round(total_scored / fraction) if fraction > 0.05 else None
+    remaining = max(total_minutes - elapsed_minutes, 0)
+    mins_left = int(remaining)
+    secs_left = int((remaining - mins_left) * 60)
+
+    return {
+        "total_scored": total_scored,
+        "projected_total": projected,
+        "fraction_elapsed": round(fraction, 3),
+        "time_remaining_display": f"{mins_left}:{secs_left:02d} left",
+    }
+
+
+@router.get("/{event_id}/game-markets")
+async def get_game_markets(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get game-level markets for an event (totals spectrum, player props, spreads).
+
+    Returns markets linked via FuturesMarket.event_id OR matching event teams
+    in game-prop markets.
+    """
+    from app.models import FuturesOddsSnapshot
+
+    # 1. Load event with sport
+    result = await db.execute(
+        select(Event)
+        .options(selectinload(Event.sport))
+        .where(Event.id == event_id)
+    )
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    sport_key = event.sport.key if event.sport else None
+
+    # 2. Find game-level markets linked to this event
+    market_result = await db.execute(
+        select(FuturesMarket)
+        .where(
+            FuturesMarket.event_id == event_id,
+            FuturesMarket.status == "open",
+        )
+    )
+    markets = list(market_result.scalars().all())
+
+    # 3. Also find unlinked game-prop markets matching team names + time window
+    if sport_key and event.commence_time:
+        home_patterns = _team_name_patterns(event.home_team_name)
+        away_patterns = _team_name_patterns(event.away_team_name)
+        all_patterns = home_patterns + away_patterns
+        name_conditions = [FuturesMarket.name.ilike(f"%{p}%") for p in all_patterns if len(p) >= 4]
+
+        if name_conditions:
+            window = timedelta(hours=6)
+            unlinked_result = await db.execute(
+                select(FuturesMarket)
+                .where(
+                    FuturesMarket.event_id.is_(None),
+                    FuturesMarket.status == "open",
+                    FuturesMarket.category == "game_prop",
+                    or_(*name_conditions),
+                )
+            )
+            linked_ids = {m.id for m in markets}
+            for m in unlinked_result.scalars().all():
+                if m.id not in linked_ids:
+                    markets.append(m)
+
+    if not markets:
+        return {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "other": [], "pace": None}
+
+    # 4. Load outcomes for all markets
+    market_ids = [m.id for m in markets]
+    outcomes_result = await db.execute(
+        select(FuturesOutcome)
+        .where(FuturesOutcome.market_id.in_(market_ids))
+        .order_by(FuturesOutcome.current_probability.desc().nullslast())
+    )
+    outcomes = outcomes_result.scalars().all()
+
+    # Build market_id → market lookup
+    market_map = {m.id: m for m in markets}
+
+    # 5. Classify and group
+    totals_thresholds: list[dict] = []
+    player_props: list[dict] = []
+    spreads: list[dict] = []
+    other_markets: list[dict] = []
+
+    # Group outcomes by market
+    from collections import defaultdict
+    outcomes_by_market: dict[int, list] = defaultdict(list)
+    for o in outcomes:
+        outcomes_by_market[o.market_id].append(o)
+
+    for market in markets:
+        market_outcomes = outcomes_by_market.get(market.id, [])
+        if not market_outcomes:
+            continue
+
+        market_type = _classify_game_market(market.name)
+
+        if market_type in ("game_total", "half_total", "quarter_total", "team_total"):
+            # Extract thresholds with probabilities
+            for o in market_outcomes:
+                threshold = _extract_threshold(o.name)
+                if threshold is None:
+                    continue
+                is_over = o.name.lower().startswith("over") or "yes" in o.name.lower()
+                prob = float(o.current_probability) if o.current_probability is not None else None
+                if prob is None:
+                    continue
+                # For "Under X", convert to "probability of going OVER"
+                over_prob = prob if is_over else 1.0 - prob
+
+                totals_thresholds.append({
+                    "threshold": threshold,
+                    "over_probability": round(over_prob, 4),
+                    "source": market.source,
+                    "market_type": market_type,
+                    "market_name": market.name,
+                    "outcome_name": o.name,
+                    "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
+                        if o.opening_probability is not None and o.current_probability is not None else None,
+                })
+
+        elif market_type == "player_prop":
+            for o in market_outcomes:
+                threshold = _extract_threshold(o.name)
+                prob = float(o.current_probability) if o.current_probability is not None else None
+                if prob is None:
+                    continue
+                is_over = o.name.lower().startswith("over") or "yes" in o.name.lower()
+                over_prob = prob if is_over else 1.0 - prob
+
+                # Try to extract player name and stat type from market name
+                # Market names look like "Boston at Atlanta: Trae Young Points"
+                player_props.append({
+                    "market_name": market.name,
+                    "outcome_name": o.name,
+                    "threshold": threshold,
+                    "over_probability": round(over_prob, 4),
+                    "source": market.source,
+                    "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
+                        if o.opening_probability is not None and o.current_probability is not None else None,
+                })
+
+        elif market_type == "spread":
+            for o in market_outcomes:
+                threshold = _extract_threshold(o.name)
+                prob = float(o.current_probability) if o.current_probability is not None else None
+                spreads.append({
+                    "market_name": market.name,
+                    "outcome_name": o.name,
+                    "threshold": threshold,
+                    "probability": round(prob, 4) if prob else None,
+                    "source": market.source,
+                })
+
+        else:
+            for o in market_outcomes:
+                prob = float(o.current_probability) if o.current_probability is not None else None
+                other_markets.append({
+                    "market_name": market.name,
+                    "outcome_name": o.name,
+                    "probability": round(prob, 4) if prob else None,
+                    "source": market.source,
+                })
+
+    # 6. Sort totals by threshold value
+    totals_thresholds.sort(key=lambda t: t["threshold"])
+
+    # 7. Deduplicate totals — keep only game_total, prefer Kalshi over others
+    # Group by threshold value, keep one entry per threshold
+    seen_thresholds: dict[float, dict] = {}
+    for t in totals_thresholds:
+        if t["market_type"] != "game_total":
+            continue  # Filter to game totals only for the spectrum
+        key = t["threshold"]
+        if key not in seen_thresholds or t["source"] == "kalshi":
+            seen_thresholds[key] = t
+    game_totals = sorted(seen_thresholds.values(), key=lambda t: t["threshold"])
+
+    # 8. Calculate pace
+    pace = _estimate_game_pace(
+        event.home_score,
+        event.away_score,
+        event.period,
+        event.game_clock,
+        sport_key,
+    )
+
+    return {
+        "event_id": event_id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "home_score": event.home_score,
+        "away_score": event.away_score,
+        "status": event.status,
+        "totals": game_totals,
+        "player_props": player_props,
+        "spreads": spreads,
+        "other": other_markets,
+        "pace": pace,
+    }
+
+
 @router.get("/{event_id}/related-futures")
 async def get_related_futures(
     event_id: int,

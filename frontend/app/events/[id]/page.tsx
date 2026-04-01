@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, formatProbability } from "@/lib/api";
+import { fetchEvent, fetchEventHistory, fetchGameMarkets, formatProbability } from "@/lib/api";
+import type { GameMarketsResponse } from "@/lib/api";
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false });
 const BookmakerTable = dynamic(() => import("@/components/BookmakerTable"), { ssr: false });
@@ -12,6 +13,8 @@ const RelatedFutures = dynamic(() => import("@/components/RelatedFutures"), { ss
 const LineMovementExplainer = dynamic(() => import("@/components/LineMovementExplainer"), { ssr: false });
 const GamePlayCard = dynamic(() => import("@/components/GamePlayCard"), { ssr: false });
 const SeriesProbability = dynamic(() => import("@/components/SeriesProbability"), { ssr: false });
+const TotalPointsSpectrum = dynamic(() => import("@/components/TotalPointsSpectrum"), { ssr: false });
+const PlayerPropsGrid = dynamic(() => import("@/components/PlayerPropsGrid"), { ssr: false });
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
@@ -473,6 +476,13 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     event ? ["history", eventId] : null,
     () => fetchEventHistory(eventId, 48),
+    { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
+  );
+
+  // Game-level markets (totals spectrum, player props)
+  const { data: gameMarkets } = useSWR(
+    event ? ["game-markets", eventId] : null,
+    () => fetchGameMarkets(eventId),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
@@ -1351,6 +1361,22 @@ export default function EventPage({ params }: EventPageProps) {
             chartEndTime={oddsChartDomain?.end}
             pmSpreadData={historyData?.pm_spread_data}
           />
+        </div>
+      )}
+
+      {/* Game Markets — Total Points Spectrum + Player Props (v5 Level 3) */}
+      {gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0) && (
+        <div className="space-y-3">
+          {gameMarkets.totals.length >= 2 && (
+            <TotalPointsSpectrum data={gameMarkets} />
+          )}
+          {gameMarkets.player_props.length > 0 && (
+            <PlayerPropsGrid
+              data={gameMarkets}
+              homeColor={event.home_team_data?.primary_color || undefined}
+              awayColor={event.away_team_data?.primary_color || undefined}
+            />
+          )}
         </div>
       )}
 

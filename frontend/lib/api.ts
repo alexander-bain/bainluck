@@ -544,6 +544,62 @@ export async function fetchRelatedFutures(
 }
 
 /**
+ * Fetch game-level markets for an event (totals spectrum, player props, spreads)
+ */
+export interface GameMarketsResponse {
+  event_id: number;
+  home_team: string;
+  away_team: string;
+  home_score: number | null;
+  away_score: number | null;
+  status: string;
+  totals: {
+    threshold: number;
+    over_probability: number;
+    source: string;
+    market_type: string;
+    market_name: string;
+    outcome_name: string;
+    movement: number | null;
+  }[];
+  player_props: {
+    market_name: string;
+    outcome_name: string;
+    threshold: number | null;
+    over_probability: number;
+    source: string;
+    movement: number | null;
+  }[];
+  spreads: {
+    market_name: string;
+    outcome_name: string;
+    threshold: number | null;
+    probability: number | null;
+    source: string;
+  }[];
+  other: {
+    market_name: string;
+    outcome_name: string;
+    probability: number | null;
+    source: string;
+  }[];
+  pace: {
+    total_scored: number;
+    projected_total: number | null;
+    fraction_elapsed: number;
+    time_remaining_display: string;
+  } | null;
+}
+
+export async function fetchGameMarkets(
+  eventId: number
+): Promise<GameMarketsResponse> {
+  return apiFetch<GameMarketsResponse>(
+    `/api/events/${eventId}/game-markets`
+  );
+}
+
+/**
  * Fetch related events for a futures market (upcoming/recent games featuring contender teams)
  */
 export async function fetchRelatedEvents(
