@@ -7572,7 +7572,7 @@ async def run_audit(
     import json as json_mod
 
     cmd = [
-        sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts", "audit_matching_quality.py"),
+        sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "audit_matching_quality.py"),
         "--json", "--skip-llm", "--grid", grid,
     ]
     if skip_event:
@@ -7625,7 +7625,7 @@ async def run_audit_all_grids(
 
     for grid in grids:
         cmd = [
-            sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts", "audit_matching_quality.py"),
+            sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "audit_matching_quality.py"),
             "--json", "--skip-llm", "--skip-event", "--grid", grid,
         ]
         try:
