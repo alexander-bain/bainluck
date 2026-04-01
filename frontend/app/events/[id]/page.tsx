@@ -1422,6 +1422,8 @@ export default function EventPage({ params }: EventPageProps) {
         awayTeamLogo={event.away_team_data?.logo_small || undefined}
         sportKey={event.sport || undefined}
         eventStatus={event.status}
+        homeStandings={event.home_team_data?.standings || undefined}
+        awayStandings={event.away_team_data?.standings || undefined}
       />
 
       {/* Championship Grid link */}

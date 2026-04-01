@@ -7,6 +7,17 @@ import type { RelatedFuture, RelatedFuturesResponse } from "@/lib/types";
 import { fetchRelatedFutures, formatProbability } from "@/lib/api";
 import EntityImage from "./EntityImage";
 
+interface TeamStandings {
+  wins?: number;
+  losses?: number;
+  draws?: number;
+  ties?: number;
+  conf_rank?: number;
+  conference?: string;
+  div_rank?: number;
+  division?: string;
+}
+
 interface RelatedFuturesProps {
   eventId: number;
   homeTeam: string;
@@ -17,6 +28,8 @@ interface RelatedFuturesProps {
   awayTeamLogo?: string;
   sportKey?: string;
   eventStatus?: string;
+  homeStandings?: TeamStandings;
+  awayStandings?: TeamStandings;
 }
 
 /** Tier display config */
@@ -1366,6 +1379,174 @@ function SeasonStatRow({ future, teamColor }: { future: RelatedFuture; teamColor
   );
 }
 
+// ── Games per season by sport ──
+const SEASON_GAMES: Record<string, number> = {
+  basketball_nba: 82,
+  basketball_wnba: 40,
+  basketball_ncaab: 33,
+  americanfootball_nfl: 18,
+  americanfootball_ncaaf: 14,
+  baseball_mlb: 162,
+  icehockey_nhl: 82,
+  soccer_epl: 38,
+  soccer_usa_mls: 34,
+};
+
+/** Parse threshold number from an outcome name like "Over 55.5" */
+function parseWinTotalThreshold(outcomeName: string): number | null {
+  const m = outcomeName.match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+interface WinTotalThreshold {
+  value: number;
+  probability: number;
+  change24h: number | null;
+  marketId: number;
+}
+
+// ─── V5 WIN TOTALS GAUGE ───
+function WinTotalsGauge({
+  teamName,
+  teamColor,
+  standings,
+  thresholds,
+  sportKey,
+  logo,
+}: {
+  teamName: string;
+  teamColor: string;
+  standings?: TeamStandings;
+  thresholds: WinTotalThreshold[];
+  sportKey?: string;
+  logo?: string;
+}) {
+  if (thresholds.length === 0) return null;
+
+  const shortName = teamName.split(" ").pop() || teamName;
+  const wins = standings?.wins;
+  const losses = standings?.losses;
+  const totalGames = sportKey ? SEASON_GAMES[sportKey] || 82 : 82;
+  const gamesPlayed = wins != null && losses != null ? wins + losses : null;
+  const gamesRemaining = gamesPlayed != null ? Math.max(0, totalGames - gamesPlayed) : null;
+
+  // Sort thresholds
+  const sorted = [...thresholds].sort((a, b) => a.value - b.value);
+
+  // Find the "interesting line" — threshold closest to 50% probability
+  const interestingLine = sorted.reduce((best, t) =>
+    Math.abs(t.probability - 0.5) < Math.abs(best.probability - 0.5) ? t : best
+  );
+
+  // Gauge range
+  const minThresh = sorted[0].value;
+  const maxThresh = sorted[sorted.length - 1].value;
+  const gaugeMin = Math.min(minThresh - 3, wins != null ? wins - 2 : minThresh - 3);
+  const gaugeMax = maxThresh + 3;
+  const gaugeRange = gaugeMax - gaugeMin;
+
+  // Position helpers (0-100%)
+  const pos = (val: number) => Math.max(0, Math.min(100, ((val - gaugeMin) / gaugeRange) * 100));
+
+  const winsPos = wins != null ? pos(wins) : null;
+  const interestingPos = pos(interestingLine.value);
+  const interestingProb = Math.round(interestingLine.probability * 100);
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-card p-3 text-center">
+      {/* Team name */}
+      <div className="flex items-center justify-center gap-1.5 mb-2">
+        {logo ? (
+          <img src={logo} alt="" className="w-4 h-4 object-contain" />
+        ) : (
+          <div
+            className="w-4 h-4 rounded flex items-center justify-center text-white text-[6px] font-extrabold"
+            style={{ backgroundColor: teamColor }}
+          >
+            {shortName.slice(0, 3).toUpperCase()}
+          </div>
+        )}
+        <span className="text-[10px] font-bold" style={{ color: teamColor }}>
+          {teamName}
+        </span>
+      </div>
+
+      {/* Gauge */}
+      <div className="relative h-11 mb-1">
+        {/* Track */}
+        <div className="absolute left-0 right-0 top-[18px] h-2 rounded bg-surface-elevated" />
+        {/* Fill to current wins */}
+        {winsPos !== null && (
+          <div
+            className="absolute top-[18px] left-0 h-2 rounded"
+            style={{
+              width: `${winsPos}%`,
+              background: `linear-gradient(90deg, ${teamColor}, ${teamColor}40)`,
+            }}
+          />
+        )}
+        {/* Current wins marker */}
+        {winsPos !== null && wins != null && (
+          <div
+            className="absolute top-[8px] w-0.5 h-7 rounded-full"
+            style={{ left: `${winsPos}%`, backgroundColor: teamColor }}
+          >
+            <div
+              className="absolute top-0 left-1/2 -translate-x-1/2 text-[8px] font-bold whitespace-nowrap"
+              style={{ color: teamColor, top: "-12px" }}
+            >
+              {wins}W
+            </div>
+          </div>
+        )}
+        {/* Interesting line marker */}
+        <div
+          className="absolute top-[12px] w-px h-5"
+          style={{ left: `${interestingPos}%`, backgroundColor: "#f97316" }}
+        >
+          <div className="absolute bottom-[-14px] left-1/2 -translate-x-1/2 text-[7px] font-medium text-text-muted whitespace-nowrap">
+            {interestingLine.value}
+          </div>
+        </div>
+      </div>
+
+      {/* Interesting line callout */}
+      <div className="text-[11px] font-extrabold mb-0.5" style={{ color: teamColor }}>
+        {interestingLine.value}+ wins: {interestingProb}%
+      </div>
+      <div className="text-[9px] text-text-secondary">The interesting line</div>
+
+      {/* Current record */}
+      {wins != null && losses != null && (
+        <div className="text-[8px] text-text-muted mt-0.5">
+          Currently {wins}-{losses}
+          {gamesRemaining != null && gamesRemaining > 0 && ` · ${gamesRemaining} games left`}
+        </div>
+      )}
+
+      {/* Threshold pills */}
+      <div className="flex flex-wrap gap-1 mt-2 justify-center">
+        {sorted.map((t) => {
+          const isHot = t === interestingLine;
+          const prob = Math.round(t.probability * 100);
+          return (
+            <span
+              key={t.value}
+              className={`text-[7px] font-semibold font-mono px-1 py-0.5 rounded ${
+                isHot
+                  ? "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 font-bold"
+                  : "bg-surface-elevated text-text-muted"
+              }`}
+            >
+              {t.value}: {prob}%
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function WinTotalsPair({
   homeFutures,
   awayFutures,
@@ -1375,6 +1556,9 @@ function WinTotalsPair({
   awayColor,
   homeLogo,
   awayLogo,
+  homeStandings,
+  awayStandings,
+  sportKey,
 }: {
   homeFutures: RelatedFuture[];
   awayFutures: RelatedFuture[];
@@ -1384,13 +1568,42 @@ function WinTotalsPair({
   awayColor: string;
   homeLogo?: string;
   awayLogo?: string;
+  homeStandings?: TeamStandings;
+  awayStandings?: TeamStandings;
+  sportKey?: string;
 }) {
   if (homeFutures.length === 0 && awayFutures.length === 0) return null;
 
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
 
-  function renderCol(futures: RelatedFuture[], shortName: string, color: string, logo?: string) {
+  // Separate win total futures from other season stats
+  function extractWinTotals(futures: RelatedFuture[]): { winTotals: WinTotalThreshold[]; other: RelatedFuture[] } {
+    const winTotals: WinTotalThreshold[] = [];
+    const other: RelatedFuture[] = [];
+    for (const f of futures) {
+      if (f.merge_group === "win_total") {
+        const threshold = parseWinTotalThreshold(f.outcome_name);
+        if (threshold != null && f.probability != null) {
+          winTotals.push({
+            value: threshold,
+            probability: f.probability,
+            change24h: f.probability_change_24h,
+            marketId: f.market_id,
+          });
+        }
+      } else {
+        other.push(f);
+      }
+    }
+    return { winTotals, other };
+  }
+
+  const homeExtracted = extractWinTotals(homeFutures);
+  const awayExtracted = extractWinTotals(awayFutures);
+  const hasGauge = homeExtracted.winTotals.length >= 2 || awayExtracted.winTotals.length >= 2;
+
+  function renderListCol(futures: RelatedFuture[], shortName: string, color: string, logo?: string) {
     if (futures.length === 0) return <div />;
     const sorted = [...futures].sort((a, b) => (b.probability || 0) - (a.probability || 0));
     return (
@@ -1415,10 +1628,182 @@ function WinTotalsPair({
   }
 
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {renderCol(awayFutures, awayShort, awayColor, awayLogo)}
-      {renderCol(homeFutures, homeShort, homeColor, homeLogo)}
-    </div>
+    <>
+      {/* Win Totals — v5 gauge cards */}
+      {hasGauge && (
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          {awayExtracted.winTotals.length >= 2 ? (
+            <WinTotalsGauge
+              teamName={awayTeam}
+              teamColor={awayColor}
+              standings={awayStandings}
+              thresholds={awayExtracted.winTotals}
+              sportKey={sportKey}
+              logo={awayLogo}
+            />
+          ) : <div />}
+          {homeExtracted.winTotals.length >= 2 ? (
+            <WinTotalsGauge
+              teamName={homeTeam}
+              teamColor={homeColor}
+              standings={homeStandings}
+              thresholds={homeExtracted.winTotals}
+              sportKey={sportKey}
+              logo={homeLogo}
+            />
+          ) : <div />}
+        </div>
+      )}
+      {/* Other season stats — list view */}
+      {(homeExtracted.other.length > 0 || awayExtracted.other.length > 0) && (
+        <div className="grid grid-cols-2 gap-2">
+          {renderListCol(awayExtracted.other, awayShort, awayColor, awayLogo)}
+          {renderListCol(homeExtracted.other, homeShort, homeColor, homeLogo)}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── V5 MATCHUP GRID ───
+/** Label lookup for matchup merge groups */
+const MATCHUP_LABELS: Record<string, string> = {
+  nba_finals_matchup: "NBA Finals Matchup",
+  super_bowl_matchup: "Super Bowl Matchup",
+  stanley_cup_matchup: "Stanley Cup Matchup",
+  world_series_matchup: "World Series Matchup",
+};
+
+function MatchupGrid({
+  futures,
+  teamName,
+  teamColor,
+  logo,
+}: {
+  futures: RelatedFuture[];
+  teamName: string;
+  teamColor: string;
+  logo?: string;
+}) {
+  if (futures.length === 0) return null;
+
+  // Group by merge_group to separate finals vs conference matchups
+  const groups: Record<string, RelatedFuture[]> = {};
+  for (const f of futures) {
+    const key = f.merge_group || "other";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(f);
+  }
+
+  const shortName = teamName.split(" ").pop() || teamName;
+  const abbrev = teamName.split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase();
+
+  return (
+    <>
+      {Object.entries(groups).map(([groupKey, items]) => {
+        const sorted = [...items].sort((a, b) => (b.probability || 0) - (a.probability || 0));
+        const maxProb = sorted[0]?.probability || 0;
+
+        // Determine label
+        let label = MATCHUP_LABELS[groupKey];
+        if (!label) {
+          // Try to extract from merge_group (e.g., "eastern_conf_finals_matchup" → "East Conf Finals")
+          const confMatch = groupKey.match(/^(eastern|western)_conf_finals_matchup$/);
+          if (confMatch) {
+            label = `${confMatch[1] === "eastern" ? "East" : "West"} Conf Finals`;
+          } else {
+            label = (sorted[0]?.clean_label || sorted[0]?.market_name || groupKey).replace(/\s*Matchup\s*$/i, "");
+          }
+        }
+
+        const sources = [...new Set(sorted.map(s => s.source).filter(Boolean))];
+        const sourceLabel = sources.map(s => s === "kalshi" ? "Kalshi" : s === "polymarket" ? "Polymarket" : s).join(" · ");
+
+        return (
+          <div key={groupKey} className="rounded-xl border border-surface-border bg-surface-card overflow-hidden mb-2">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-surface-border/30">
+              <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-text-secondary">
+                {label}
+              </span>
+              <span className="text-[10px] text-text-muted">
+                {sorted.length} matchups · {sourceLabel}
+              </span>
+            </div>
+            <div className="px-3 py-1.5">
+              {/* Header: team logo + "Team vs ..." */}
+              <div className="flex items-center gap-1.5 pb-1.5 border-b border-surface-border/30 mb-1">
+                {logo ? (
+                  <img src={logo} alt="" className="w-5 h-5 object-contain" />
+                ) : (
+                  <div
+                    className="w-5 h-5 rounded flex items-center justify-center text-white text-[7px] font-extrabold"
+                    style={{ backgroundColor: teamColor }}
+                  >
+                    {abbrev}
+                  </div>
+                )}
+                <span className="text-[10px] font-semibold text-text-secondary">
+                  {shortName} vs ...
+                </span>
+              </div>
+
+              {/* Ranked rows */}
+              {sorted.slice(0, 8).map((f, i) => {
+                const prob = f.probability || 0;
+                const pct = Math.round(prob * 100);
+                const barWidth = maxProb > 0 ? (prob / maxProb) * 100 : 0;
+                const isTop = i === 0;
+                const isFaded = prob < 0.05;
+
+                return (
+                  <Link
+                    key={f.outcome_id}
+                    href={`/futures/${f.market_id}`}
+                    className={`flex items-center gap-1.5 py-1 group ${
+                      isTop
+                        ? "bg-amber-50 dark:bg-amber-900/10 rounded-md px-1 border border-amber-200 dark:border-amber-800/30 -mx-1"
+                        : "border-b border-surface-border/10 last:border-0"
+                    }`}
+                    style={{ opacity: isFaded ? 0.5 : undefined }}
+                  >
+                    <span className="text-[8px] font-bold text-text-muted w-3 text-right shrink-0">
+                      {i + 1}
+                    </span>
+                    <div
+                      className="w-[18px] h-[18px] rounded flex items-center justify-center text-white text-[6px] font-extrabold shrink-0"
+                      style={{ backgroundColor: "#6B7280" }}
+                    >
+                      {(f.outcome_name || "").split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase()}
+                    </div>
+                    <span className="text-[10px] font-semibold flex-1 truncate text-text-primary group-hover:text-text-primary/80">
+                      {f.outcome_name}
+                    </span>
+                    <div className="w-[60px] h-[5px] rounded bg-surface-elevated overflow-hidden shrink-0">
+                      <div
+                        className="h-full rounded"
+                        style={{
+                          width: `${barWidth}%`,
+                          background: isTop
+                            ? `linear-gradient(90deg, #6B7280, ${teamColor})`
+                            : prob >= 0.05 ? "#6B7280" : "#aaa",
+                        }}
+                      />
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold font-mono min-w-[28px] text-right shrink-0 ${
+                        isTop ? "text-amber-600 dark:text-amber-400" : isFaded ? "text-text-muted" : ""
+                      }`}
+                    >
+                      {pct < 1 && prob > 0 ? "<1" : pct}%
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -1677,7 +2062,16 @@ function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", away
       }
       return false;
     }),
-    conference: active.filter((f) => f.display_category === "conference"),
+    conference: active.filter((f) => {
+      if (f.display_category !== "conference") return false;
+      // Exclude matchup items — they get their own section
+      if (f.merge_group && /_matchup$/.test(f.merge_group)) return false;
+      return true;
+    }),
+    matchups: active.filter((f) => {
+      if (f.display_category !== "conference") return false;
+      return !!(f.merge_group && /_matchup$/.test(f.merge_group));
+    }),
     awards: active.filter((f) => f.display_category === "award"),
     seasonStats: active.filter((f) => {
       if (f.display_category === "season_stat") {
@@ -1708,6 +2102,8 @@ export default function RelatedFutures({
   homeTeamLogo,
   awayTeamLogo,
   sportKey,
+  homeStandings,
+  awayStandings,
 }: RelatedFuturesProps) {
   const { data, error, isLoading } = useSWR<RelatedFuturesResponse>(
     ["related-futures", eventId],
@@ -1780,6 +2176,7 @@ export default function RelatedFutures({
     homeCats.games.length + awayCats.games.length;
   const seasonCount =
     homePlayoff.length + awayPlayoff.length +
+    homeCats.matchups.length + awayCats.matchups.length +
     homeCats.seasonStats.length + awayCats.seasonStats.length +
     mergedAwards.length +
     homeCats.trades.length + awayCats.trades.length +
@@ -1875,6 +2272,28 @@ export default function RelatedFutures({
             </div>
           )}
 
+          {/* Matchup Grids — Finals, Conference Finals */}
+          {(homeCats.matchups.length > 0 || awayCats.matchups.length > 0) && (
+            <div className="mb-3">
+              {homeCats.matchups.length > 0 && (
+                <MatchupGrid
+                  futures={homeCats.matchups}
+                  teamName={homeTeam}
+                  teamColor={hColor}
+                  logo={homeTeamLogo}
+                />
+              )}
+              {awayCats.matchups.length > 0 && (
+                <MatchupGrid
+                  futures={awayCats.matchups}
+                  teamName={awayTeam}
+                  teamColor={aColor}
+                  logo={awayTeamLogo}
+                />
+              )}
+            </div>
+          )}
+
           {/* Season Stats — win totals, division, seeding */}
           {(homeCats.seasonStats.length > 0 || awayCats.seasonStats.length > 0) && (
             <div className="mb-3">
@@ -1892,6 +2311,9 @@ export default function RelatedFutures({
                 awayColor={aColor}
                 homeLogo={homeTeamLogo}
                 awayLogo={awayTeamLogo}
+                homeStandings={homeStandings}
+                awayStandings={awayStandings}
+                sportKey={sportKey}
               />
             </div>
           )}
