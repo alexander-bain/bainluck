@@ -2148,6 +2148,16 @@ _PLAYER_PROP_RE = re.compile(
 )
 _THRESHOLD_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
+# Matches per-player outcome names inside team stat markets.
+# Kalshi uses "PlayerName: X+" format for individual player contracts
+# within team-level markets (e.g., "Joel Embiid: 1+" inside "Team at Team: Steals").
+# Requires at least two name tokens (first + last) before ": digit".
+# Handles apostrophes (De'Aaron), hyphens (Gilgeous-Alexander), suffixes (Jr.).
+_PLAYER_OUTCOME_RE = re.compile(
+    r"^[A-Z][A-Za-z']+(?:-[A-Z][A-Za-z']+)*"
+    r"(?:\s+[A-Z][A-Za-z'.]+(?:-[A-Z][A-Za-z']+)*)+\s*:\s*\d",
+)
+
 
 def _is_team_stat_market(name: str) -> bool:
     """Check if this is a team-level stat market (not a player prop).
@@ -2417,6 +2427,21 @@ async def get_game_markets(
                     continue
                 # For "Under X", convert to "probability of going OVER"
                 over_prob = prob if is_over else 1.0 - prob
+
+                # Detect player props hiding inside team_total markets.
+                # Kalshi names markets "Team at Team: Steals" but outcomes
+                # are per-player: "Joel Embiid: 1+". Route these to player_props.
+                if market_type == "team_total" and _PLAYER_OUTCOME_RE.match(o.name):
+                    player_props.append({
+                        "market_name": market.name,
+                        "outcome_name": o.name,
+                        "threshold": threshold,
+                        "over_probability": round(over_prob, 4),
+                        "source": market.source,
+                        "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
+                            if o.opening_probability is not None and o.current_probability is not None else None,
+                    })
+                    continue
 
                 totals_thresholds.append({
                     "threshold": threshold,

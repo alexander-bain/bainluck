@@ -29,41 +29,58 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
   const props = useMemo(() => {
     if (!player_props || player_props.length === 0) return [];
 
-    // Parse market names like "Boston at Atlanta: Trae Young Points"
+    // Parse two market name formats:
+    // 1. "Boston at Atlanta: Trae Young Points" (player + stat in market name)
+    // 2. "Philadelphia at Washington: Steals" with outcome "Joel Embiid: 1+"
+    //    (stat in market name, player in outcome name)
     const parsed: ParsedProp[] = [];
     const seen = new Set<string>();
 
+    const statTypes = [
+      "Points", "Assists", "Rebounds", "Steals", "Blocks",
+      "Three Pointers", "3-Pointers", "Turnovers",
+      "PRA", "PA", "PR", "RA",
+      "Strikeouts", "Hits", "Runs", "Home Runs",
+      "Goals", "Saves", "Sacks",
+      "Passing Yards", "Rushing Yards", "Receiving Yards", "Touchdowns",
+      "Double Double", "Triple Double", "First Basket",
+    ];
+
     for (const p of player_props) {
       const name = p.market_name || "";
-      // Extract stat type from market name
       const colonIdx = name.indexOf(":");
       const afterColon = colonIdx >= 0 ? name.slice(colonIdx + 1).trim() : name;
 
-      // Try to find player name + stat type
-      // Common patterns: "Trae Young Points", "Jaylen Brown Assists"
-      const statTypes = [
-        "Points", "Assists", "Rebounds", "Steals", "Blocks",
-        "Three Pointers", "3-Pointers", "Turnovers",
-        "PRA", "PA", "PR", "RA",
-        "Strikeouts", "Hits", "Runs", "Home Runs",
-        "Goals", "Saves", "Sacks",
-        "Passing Yards", "Rushing Yards", "Receiving Yards", "Touchdowns",
-        "Double Double", "Triple Double", "First Basket",
-      ];
-
-      let playerName = afterColon;
+      let playerName = "";
       let statType = "";
-      for (const st of statTypes) {
-        if (afterColon.toLowerCase().endsWith(st.toLowerCase())) {
-          playerName = afterColon.slice(0, -st.length).trim();
-          statType = st;
-          break;
+
+      // Check if afterColon IS a stat type (team stat market format)
+      const exactStatMatch = statTypes.find(
+        (st) => afterColon.toLowerCase() === st.toLowerCase(),
+      );
+      if (exactStatMatch) {
+        // Format 2: stat from market name, player from outcome name
+        // Outcome format: "PlayerName: X+" — extract name before ":"
+        statType = exactStatMatch;
+        const outcomeColon = (p.outcome_name || "").indexOf(":");
+        if (outcomeColon > 0) {
+          playerName = p.outcome_name.slice(0, outcomeColon).trim();
+        }
+      } else {
+        // Format 1: "PlayerName StatType" after the colon
+        playerName = afterColon;
+        for (const st of statTypes) {
+          if (afterColon.toLowerCase().endsWith(st.toLowerCase())) {
+            playerName = afterColon.slice(0, -st.length).trim();
+            statType = st;
+            break;
+          }
         }
       }
 
       if (!playerName || !p.threshold) continue;
 
-      // Deduplicate by player+stat
+      // Deduplicate by player+stat — keep highest threshold per player+stat combo
       const key = `${playerName.toLowerCase()}-${statType.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -72,8 +89,6 @@ export default function PlayerPropsGrid({ data, homeColor, awayColor }: PlayerPr
       const beforeColon = colonIdx >= 0 ? name.slice(0, colonIdx) : "";
       let team: "home" | "away" | "unknown" = "unknown";
       if (home_team && beforeColon.toLowerCase().includes(home_team.split(" ").pop()!.toLowerCase())) {
-        // Check if player appears first (away) or second (home) in "Away at Home" pattern
-        // This is approximate — good enough for coloring
         team = "home";
       }
       if (away_team && beforeColon.toLowerCase().includes(away_team.split(" ").pop()!.toLowerCase())) {

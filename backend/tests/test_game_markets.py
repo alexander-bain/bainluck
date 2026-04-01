@@ -1,7 +1,7 @@
 """Tests for the game-markets endpoint helpers."""
 
 import pytest
-from app.routes.events import _classify_game_market, _extract_threshold, _estimate_game_pace
+from app.routes.events import _classify_game_market, _extract_threshold, _estimate_game_pace, _PLAYER_OUTCOME_RE
 
 
 class TestClassifyGameMarket:
@@ -106,3 +106,38 @@ class TestEstimateGamePace:
         pace = _estimate_game_pace(110, 108, "OT", "", "basketball_nba")
         assert pace is not None
         assert pace["fraction_elapsed"] == 1.0
+
+
+class TestPlayerOutcomeRegex:
+    """Tests for _PLAYER_OUTCOME_RE — detects player props hiding in team stat markets."""
+
+    def test_simple_name(self):
+        assert _PLAYER_OUTCOME_RE.match("Joel Embiid: 1+")
+
+    def test_initials(self):
+        assert _PLAYER_OUTCOME_RE.match("VJ Edgecombe: 1+")
+
+    def test_suffix_jr(self):
+        assert _PLAYER_OUTCOME_RE.match("Kelly Oubre Jr.: 1+")
+
+    def test_apostrophe(self):
+        assert _PLAYER_OUTCOME_RE.match("De'Aaron Fox: 3+")
+
+    def test_hyphenated(self):
+        assert _PLAYER_OUTCOME_RE.match("Shai Gilgeous-Alexander: 2+")
+
+    def test_high_threshold(self):
+        assert _PLAYER_OUTCOME_RE.match("Jaylen Brown: 30+")
+
+    def test_over_not_player(self):
+        assert not _PLAYER_OUTCOME_RE.match("Over 224.5 points scored")
+
+    def test_under_not_player(self):
+        assert not _PLAYER_OUTCOME_RE.match("Under 218.5")
+
+    def test_total_not_player(self):
+        assert not _PLAYER_OUTCOME_RE.match("Total: 3+")
+
+    def test_yes_no_not_player(self):
+        assert not _PLAYER_OUTCOME_RE.match("Yes")
+        assert not _PLAYER_OUTCOME_RE.match("No")
