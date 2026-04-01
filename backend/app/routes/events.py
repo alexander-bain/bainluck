@@ -2475,15 +2475,17 @@ async def get_game_markets(
     # 6. Sort totals by threshold value
     totals_thresholds.sort(key=lambda t: t["threshold"])
 
-    # 7. Deduplicate totals — keep only game_total, prefer Kalshi over others
-    # Group by threshold value, keep one entry per threshold
+    # 7. Deduplicate totals — split game_total vs team_total
+    # Game totals go into TotalPointsSpectrum, team totals get their own section
     seen_thresholds: dict[float, dict] = {}
+    team_total_items: list[dict] = []
     for t in totals_thresholds:
-        if t["market_type"] != "game_total":
-            continue  # Filter to game totals only for the spectrum
-        key = t["threshold"]
-        if key not in seen_thresholds or t["source"] == "kalshi":
-            seen_thresholds[key] = t
+        if t["market_type"] == "game_total":
+            key = t["threshold"]
+            if key not in seen_thresholds or t["source"] == "kalshi":
+                seen_thresholds[key] = t
+        elif t["market_type"] == "team_total":
+            team_total_items.append(t)
     game_totals = sorted(seen_thresholds.values(), key=lambda t: t["threshold"])
 
     # 8. Calculate pace
@@ -2504,6 +2506,7 @@ async def get_game_markets(
         "status": event.status,
         "totals": game_totals,
         "player_props": player_props,
+        "team_totals": team_total_items,
         "spreads": spreads,
         "other": other_markets,
         "pace": pace,

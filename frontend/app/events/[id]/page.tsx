@@ -651,6 +651,10 @@ export default function EventPage({ params }: EventPageProps) {
     if (!probSourceLabel && count > 0) {
       probSourceLabel = `Live · ${count} sportsbook${count !== 1 ? "s" : ""}`;
     }
+    // Fallback label when aggregate probability comes from non-sportsbook sources
+    if (!probSourceLabel && homeProb !== null && odds?.source === "aggregate") {
+      probSourceLabel = "Live · Aggregate";
+    }
   } else {
     // Scheduled: current betting consensus
     homeProb = odds?.home_probability ?? null;
@@ -658,6 +662,8 @@ export default function EventPage({ params }: EventPageProps) {
     const count = odds?.bookmaker_count ?? 0;
     if (count > 0) {
       probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
+    } else if (homeProb !== null && odds?.source === "aggregate") {
+      probSourceLabel = "Aggregate";
     }
   }
 
@@ -1424,6 +1430,7 @@ export default function EventPage({ params }: EventPageProps) {
         eventStatus={event.status}
         homeStandings={event.home_team_data?.standings || undefined}
         awayStandings={event.away_team_data?.standings || undefined}
+        hasGameMarkets={!!gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.team_totals?.length ?? 0) > 0)}
       />
 
       {/* Championship Grid link */}

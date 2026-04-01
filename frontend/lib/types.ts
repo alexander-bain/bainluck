@@ -21,6 +21,7 @@ export interface CurrentOdds {
   projected_home_score: number | null;
   projected_away_score: number | null;
   bookmaker_count?: number;
+  source?: string;
   probability_range?: {
     min: number | null;
     max: number | null;

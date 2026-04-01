@@ -30,6 +30,8 @@ interface RelatedFuturesProps {
   eventStatus?: string;
   homeStandings?: TeamStandings;
   awayStandings?: TeamStandings;
+  /** When true, game-level stat props are already shown by TotalPointsSpectrum/PlayerPropsGrid above — suppress duplicate display here */
+  hasGameMarkets?: boolean;
 }
 
 /** Tier display config */
@@ -2104,6 +2106,7 @@ export default function RelatedFutures({
   sportKey,
   homeStandings,
   awayStandings,
+  hasGameMarkets = false,
 }: RelatedFuturesProps) {
   const { data, error, isLoading } = useSWR<RelatedFuturesResponse>(
     ["related-futures", eventId],
@@ -2170,9 +2173,10 @@ export default function RelatedFutures({
   const homePlayoff = [...homeCats.championship, ...homeCats.conference];
   const awayPlayoff = [...awayCats.championship, ...awayCats.conference];
 
-  // Section counts
+  // Section counts — suppress stat props when game-markets components already show them
+  const effectiveStatProps = hasGameMarkets ? 0 : homeCats.statProps.length + awayCats.statProps.length;
   const gameMarketCount =
-    homeCats.statProps.length + awayCats.statProps.length +
+    effectiveStatProps +
     homeCats.games.length + awayCats.games.length;
   const seasonCount =
     homePlayoff.length + awayPlayoff.length +
@@ -2208,8 +2212,8 @@ export default function RelatedFutures({
         <>
           <SectionDivider level={3} label="Game Markets" count={gameMarketCount} />
 
-          {/* Stat props (player props) — per team */}
-          {(homeCats.statProps.length > 0 || awayCats.statProps.length > 0) && (
+          {/* Stat props (player props) — per team; hidden when game-markets section shows them above */}
+          {!hasGameMarkets && (homeCats.statProps.length > 0 || awayCats.statProps.length > 0) && (
             <div className="space-y-4 mb-3">
               {homeCats.statProps.length > 0 && (
                 <StatPropsSection

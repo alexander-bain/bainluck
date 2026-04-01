@@ -570,6 +570,15 @@ export interface GameMarketsResponse {
     source: string;
     movement: number | null;
   }[];
+  team_totals: {
+    threshold: number;
+    over_probability: number;
+    source: string;
+    market_type: string;
+    market_name: string;
+    outcome_name: string;
+    movement: number | null;
+  }[];
   spreads: {
     market_name: string;
     outcome_name: string;
