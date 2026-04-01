@@ -165,10 +165,20 @@ export default function OddsChart({
   const { track } = useAnalyticsContext();
 
   const hasPostStartData = useMemo(() => {
-    if (!history || history.length === 0 || !commenceTime) return false;
+    if (!commenceTime) return false;
     const cutoffTime = parseISO(commenceTime);
-    return history.some((point) => parseISO(point.timestamp) >= cutoffTime);
-  }, [history, commenceTime]);
+    // Check sportsbook history
+    if (history?.some((point) => parseISO(point.timestamp) >= cutoffTime)) return true;
+    // Check win prob history (ESPN, Kalshi, stat model, etc.)
+    if (winProbHistory) {
+      for (const pts of Object.values(winProbHistory)) {
+        if (pts?.some((p) => parseISO(p.timestamp) >= cutoffTime)) return true;
+      }
+    }
+    // Check ESPN history
+    if (espnHistory?.some((p) => parseISO(p.timestamp) >= cutoffTime)) return true;
+    return false;
+  }, [history, winProbHistory, espnHistory, commenceTime]);
 
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
