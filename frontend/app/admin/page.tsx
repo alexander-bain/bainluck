@@ -363,8 +363,10 @@ function QuotaChart({ data, budget }: { data: DailyUsage[]; budget: QuotaBudget 
     const budgetPerDay = budget.total / budget.days_in_month;
     const points: Record<string, { date: string; budget: number; used?: number; projected?: number }> = {};
 
-    // Generate budget for every day of the month
-    const monthPrefix = data[0]?.date.slice(0, 8) || "2026-03-";
+    // Generate budget for every day of the month (UTC-based)
+    const utcNow = new Date();
+    const utcMonth = String(utcNow.getUTCMonth() + 1).padStart(2, "0");
+    const monthPrefix = `${utcNow.getUTCFullYear()}-${utcMonth}-`;
     for (let d = 1; d <= budget.days_in_month; d++) {
       const dateStr = monthPrefix + String(d).padStart(2, "0");
       const label = dateStr.slice(5); // MM-DD
@@ -1036,8 +1038,13 @@ export default function AdminDashboard() {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold text-text-primary">Operations Dashboard</h1>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-4">
+          <h1 className="text-lg font-bold text-text-primary">Operations Dashboard</h1>
+          <a href="/admin/eval" className="text-xs font-medium text-accent-primary hover:text-accent-hover transition-colors px-2 py-1 rounded border border-accent-primary/30 hover:border-accent-primary/60">
+            Eval &rarr;
+          </a>
+        </div>
         {data && (
           <span className="text-micro text-text-muted">
             Auto-refreshes every 60s &middot; Updated {new Date(data.generated_at).toLocaleTimeString()}
@@ -1130,6 +1137,7 @@ export default function AdminDashboard() {
 
           {/* Data Quality */}
           <DataQualityCard secret={submittedSecret} />
+          <GridHealthCard secret={submittedSecret} />
 
           {/* Worker tasks */}
           <TasksTable tasks={data.worker.tasks} />
@@ -1333,6 +1341,122 @@ function DataQualityCard({ secret }: { secret: string }) {
   );
 }
 
+
+// --- Grid Health (audit scores) ---
+
+interface GridAuditResult {
+  scores: Record<string, number>;
+  avg_score: number | null;
+  grids: Record<string, {
+    health_score?: number;
+    findings?: { check: string; severity: string; description: string; details?: Record<string, unknown> }[];
+    status?: string;
+    error?: string;
+  }>;
+}
+
+function GridHealthCard({ secret }: { secret: string }) {
+  const { data, error, mutate } = useSWR<GridAuditResult>(
+    ["grid-health", secret],
+    () =>
+      fetch(API_URL + "/api/admin/audit/all?secret=" + encodeURIComponent(secret))
+        .then((r) => r.json()),
+    { refreshInterval: 600000 } // 10 min
+  );
+
+  const [checking, setChecking] = useState(false);
+
+  const refresh = async () => {
+    setChecking(true);
+    try {
+      const r = await fetch(
+        API_URL + "/api/admin/audit/all?secret=" + encodeURIComponent(secret)
+      );
+      const report = await r.json();
+      mutate(report, false);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  if (error) return null;
+
+  const scoreColor = (s: number) =>
+    s >= 90 ? "text-green-400" : s >= 70 ? "text-yellow-400" : "text-red-400";
+  const scoreBg = (s: number) =>
+    s >= 90 ? "border-green-500/20" : s >= 70 ? "border-yellow-500/20" : "border-red-500/20";
+  const severityIcon = (s: string) =>
+    s === "critical" ? "🔴" : s === "warning" ? "🟡" : "🔵";
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-text-primary">
+          Grid Health
+          {data?.avg_score != null && (
+            <span className={"ml-2 text-sm font-bold " + scoreColor(data.avg_score)}>
+              {data.avg_score}/100
+            </span>
+          )}
+        </h3>
+        <span
+          onClick={refresh}
+          className="text-micro px-2 py-1 rounded bg-surface-elevated border border-surface-border text-text-muted cursor-pointer hover:text-text-primary"
+        >
+          {checking ? "Auditing..." : data ? "Refresh" : "Run Audit"}
+        </span>
+      </div>
+
+      {!data && !checking && (
+        <p className="text-xs text-text-muted">Click &quot;Run Audit&quot; to check grid health across all leagues.</p>
+      )}
+      {checking && !data && (
+        <p className="text-xs text-text-muted animate-pulse">Running audit across NBA, NHL, MLB, Golf...</p>
+      )}
+
+      {data?.scores && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+          {["nba", "nhl", "mlb", "golf"].map((g) => {
+            const score = data.scores[g];
+            if (score == null) return (
+              <div key={g} className="text-center p-2 rounded border border-surface-border">
+                <div className="text-xs font-bold text-text-muted uppercase">{g}</div>
+                <div className="text-sm text-text-muted">—</div>
+              </div>
+            );
+            return (
+              <a key={g} href={"/playoffs/" + g} className={"text-center p-2 rounded border " + scoreBg(score) + " hover:bg-surface-elevated transition-colors"}>
+                <div className="text-xs font-bold text-text-muted uppercase">{g}</div>
+                <div className={"text-lg font-bold " + scoreColor(score)}>{score}</div>
+              </a>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Show findings for any grid scoring below 90 */}
+      {data?.grids && Object.entries(data.grids)
+        .filter(([, v]) => (v.findings?.length ?? 0) > 0)
+        .map(([grid, v]) => (
+          <div key={grid} className="mb-2">
+            <div className="text-micro font-semibold text-text-secondary uppercase mb-1">{grid} findings</div>
+            <div className="space-y-0.5 max-h-32 overflow-y-auto">
+              {v.findings!.slice(0, 8).map((f, i) => (
+                <div key={i} className="text-xs text-text-muted flex gap-1.5">
+                  <span className="shrink-0">{severityIcon(f.severity)}</span>
+                  <span className="truncate" title={f.description}>{f.description}</span>
+                </div>
+              ))}
+              {(v.findings!.length > 8) && (
+                <div className="text-micro text-text-muted">+{v.findings!.length - 8} more</div>
+              )}
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  );
+}
 
 // --- Project Costs ---
 

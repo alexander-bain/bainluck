@@ -6213,10 +6213,13 @@ async def operations_dashboard(
     history = get_odds_api_quota_history(hours=720)  # 30 days
     task_breakdown = get_odds_api_task_breakdown(hours=720)  # 30 days
 
-    # Compute daily usage deltas
+    # Compute daily usage deltas — only include current month (UTC)
+    current_month_prefix = now.strftime("%Y-%m-")
     daily_map: dict[str, dict] = {}
     for entry in history:
         day = entry["hour"][:10]
+        if not day.startswith(current_month_prefix):
+            continue  # skip previous month's data
         daily_map[day] = entry
     daily_usage = []
     sorted_days = sorted(daily_map.keys())
