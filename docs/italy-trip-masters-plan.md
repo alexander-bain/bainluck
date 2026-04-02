@@ -1,18 +1,20 @@
 # Italy Trip Plan — Masters Week (April 3-10, 2026)
 
-Alex is traveling in Italy April 3-10. No laptop, but has phone + iPad with internet. Can use Claude.ai, GitHub web UI, and bainluck.com. Frontend changes auto-deploy via Vercel. Backend changes auto-deploy via Heroku (verify before departing!).
+Alex is traveling in Italy April 3-10. No laptop, but has phone + iPad with internet. Can use Claude.ai, GitHub web UI, and bainluck.com. **Both frontend AND backend auto-deploy from GitHub** (Heroku auto-deploy confirmed working April 2). Full deployment capability from phone/iPad.
 
 ---
 
 ## Pre-Flight Checklist (April 2)
 
 ### Must Complete Today
-- [ ] Push the Kalshi non-winner market filter fix (`golf.py` — committed, needs push)
-- [ ] Verify Heroku auto-deploy: push to GitHub only, check Heroku activity dashboard
-- [ ] If Heroku auto-deploy doesn't work: `git push heroku master` manually + set up GitHub Actions
-- [ ] Smoke-test golf page after deploy: `bainluck.com/categories/golf` — Masters odds should be sane
-- [ ] Smoke-test golf grid: `bainluck.com/playoffs/golf`
-- [ ] Give feedback on Masters prototype mockup (design decisions for implementation)
+- [x] Push the Kalshi non-winner market filter fix (`golf.py` — committed, needs push)
+- [x] Verify Heroku auto-deploy — **CONFIRMED WORKING** (April 2, 2026)
+- [x] Give feedback on Masters prototype mockup (design decisions captured in memory)
+- [x] Fix MLB championship grid (missing columns, missing teams — 30/30 across all 4 columns now)
+- [x] Fix admin dashboard (quota chart UTC, grid health scores, eval page link)
+- [x] Fix grid page loading (was 20s blank screen, now shows skeleton immediately)
+- [x] Fix chart axis visibility (white-on-white bug)
+- [ ] Smoke-test golf page on phone: `bainluck.com/categories/golf`
 - [ ] Test bainluck.com on phone (Safari/Chrome) — note any mobile UX issues
 
 ### Should Complete Today
@@ -130,9 +132,9 @@ Things you can change via Claude.ai + GitHub web commits (Vercel auto-deploys):
 4. Commit directly to `master` branch via GitHub web UI
 5. Vercel deploys automatically in ~60 seconds
 
-**Things you CANNOT do from phone** (unless Heroku auto-deploy works):
+**Things you CAN also do from phone** (Heroku auto-deploy confirmed):
 - Backend Python changes
-- Database migrations
+- Database migrations (auto-run on deploy)
 - Celery task modifications
 - API endpoint changes
 

@@ -276,14 +276,14 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
               y1={scaleY(tick)}
               x2={width - pad.right}
               y2={scaleY(tick)}
-              stroke="rgba(255,255,255,0.06)"
+              className="stroke-gray-200 dark:stroke-white/[0.06]"
               strokeWidth={1}
             />
             <text
               x={pad.left - 6}
               y={scaleY(tick) + 4}
               textAnchor="end"
-              fill="rgba(255,255,255,0.3)"
+              className="fill-gray-500 dark:fill-white/30"
               fontSize={11}
               fontFamily="monospace"
             >
@@ -313,7 +313,7 @@ function TrendMiniChart({ chart }: { chart: ChampionshipGridResponse["trend_char
             x={scaleX(tick.ts)}
             y={height - 4}
             textAnchor="middle"
-            fill="rgba(255,255,255,0.3)"
+            className="fill-gray-500 dark:fill-white/30"
             fontSize={10}
             fontFamily="monospace"
           >
