@@ -219,6 +219,28 @@ _PROP_OUTCOME_RE = re.compile(
     re.I,
 )
 
+# Markets that are NOT outright winner markets — exclude from headline probability.
+# These include field/participation markets, placement, and prop bets.
+_NON_WINNER_MARKET_RE = re.compile(
+    r"(?:"
+    r"\bcompete\s+in\b|"         # "Golfers to compete in The Masters"
+    r"\bplay\s+in\b|"            # "Will Tiger Woods play in..."
+    r"\bparticipat|"             # "participate in"
+    r"\bmake\s+cut\b|"           # "Make Cut" placement markets
+    r"\bmade\s+cut\b|"           # "Made Cut" (past tense)
+    r"\bTop\s+\d+\b|"            # "Top 5/10/20 Finishers"
+    r"\bRound\s+\d+\s+Leader\b|" # "Round 1 Leader"
+    r"\bfirst\s+round\s+leader\b|"
+    r"\b(?:miss|made)\s+the\s+cut\b|"
+    r"\bfield\s+size\b|"         # "Field size" props
+    r"\bnumber\s+of\b|"          # "Number of birdies" etc.
+    r"\bhole[- ]in[- ]one\b|"    # Hole-in-one props
+    r"\bplayoff\b|"              # "Will there be a playoff"
+    r"\bwill\b.*\bplay\b"        # "Will X play in..."
+    r")",
+    re.I,
+)
+
 # Women's / LPGA detection
 _WOMENS_RE = re.compile(r"\b(?:lpga|women'?s?|ladies)\b", re.I)
 
@@ -639,6 +661,12 @@ async def get_golf(
             if market.resolution_date:
                 if latest_resolution is None or market.resolution_date > latest_resolution:
                     latest_resolution = market.resolution_date
+
+            # Only include outright winner markets in golfer probability aggregation.
+            # Skip placement (Top 5/10/20), participation ("compete in", "will play"),
+            # make cut, and other non-winner markets to avoid polluting win odds.
+            if _NON_WINNER_MARKET_RE.search(market.name):
+                continue
 
             for outcome in market.outcomes:
                 if outcome.current_probability is None:
