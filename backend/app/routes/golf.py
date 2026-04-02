@@ -822,11 +822,19 @@ async def get_golf(
     # ========================================================================
     # Enrich tournaments with DataGolf schedule data
     # ========================================================================
+    # Map tournament keys (from _normalize_tournament) to schedule keys (from DataGolf).
+    # e.g., "masters" → "masters_tournament", "us_open" → "u_s_open", etc.
+    _TOURN_TO_SCHED_KEY = {
+        "masters": "masters_tournament",
+        "us_open": "u_s_open",
+        "the_open": "the_open_championship",
+        "players": "the_players_championship",
+    }
     for t in tournaments:
         # Add slug for tournament detail page URLs
         t["slug"] = _clean_slug(t["name"])
 
-        sched = schedule_by_key.get(t["key"])
+        sched = schedule_by_key.get(t["key"]) or schedule_by_key.get(_TOURN_TO_SCHED_KEY.get(t["key"], ""))
         if sched:
             t["venue"] = sched.get("venue") or t.get("venue") or None
             t["location"] = sched.get("location") or None
