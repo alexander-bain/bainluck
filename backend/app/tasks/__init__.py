@@ -281,9 +281,9 @@ def poll_futures_odds(self):
 
 # --- Kalshi ---
 
-@celery_app.task(bind=True, name="app.tasks.poll_kalshi_markets")
+@celery_app.task(bind=True, name="app.tasks.poll_kalshi_markets", soft_time_limit=600, time_limit=660)
 def poll_kalshi_markets(self):
-    """Poll prediction markets from Kalshi."""
+    """Poll prediction markets from Kalshi (11 min limit for market backfill)."""
     from app.tasks.kalshi import _poll_kalshi_markets
     return _tracked_run("poll_kalshi", _poll_kalshi_markets())
 

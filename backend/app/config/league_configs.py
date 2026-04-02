@@ -403,6 +403,8 @@ MLB_CONFIG = LeagueConfig(
         r"\bMajor\s+League\s+Baseball\b",
         r"\bAmerican\s+League\b",
         r"\bNational\s+League\b",
+        r"\bAL\s+(?:East|West|Central)\b",
+        r"\bNL\s+(?:East|West|Central)\b",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
@@ -418,6 +420,7 @@ MLB_CONFIG = LeagueConfig(
                 r"World\s+Series",
                 r"MLB\s+Championship",
                 r"MLB\s+Champion",
+                r"Pro\s+Baseball\s+Champion",
             ],
             canonical_prefix="baseball_mlb_championship",
         ),
