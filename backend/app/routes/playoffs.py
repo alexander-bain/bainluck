@@ -2499,14 +2499,20 @@ async def get_playoff_grid(
     norm_names = sorted(grid_raw.keys(), key=len, reverse=True)  # longest first
     merge_map: dict[str, str] = {}  # short_name → long_name
 
+    # Abbreviation expansions for team name merging
+    _ABBREV_MAP = {
+        "st": "state",
+        "state": "st",
+        "ws": "white sox",
+    }
+
     def _expand_abbrevs(words):
         expanded = set()
         for w in words:
             expanded.add(w)
-            if w == "st":
-                expanded.add("state")
-            elif w == "state":
-                expanded.add("st")
+            expansion = _ABBREV_MAP.get(w)
+            if expansion:
+                expanded.update(expansion.split())
         return expanded
 
     for i, long_name in enumerate(norm_names):
@@ -2684,9 +2690,15 @@ async def get_playoff_grid(
                     and srcs[0]["source"] == "kalshi"
                     and 0.45 <= prob <= 0.65):
                 # Check if a later column (closer to championship) has a
-                # lower, non-noise probability that makes this plausible.
-                # If not, this is almost certainly noise — remove it.
-                del cells[col_key]
+                # non-noise probability that makes this plausible.
+                # If so, this team is real and the probability is genuine.
+                col_idx = seq_keys.index(col_key)
+                has_later_data = any(
+                    cells.get(sk) is not None
+                    for sk in seq_keys[col_idx + 1:]
+                )
+                if not has_later_data:
+                    del cells[col_key]
 
         # Monotonicity: in sequential columns, P(round N) >= P(round N+1).
         # Cap later rounds to the min of earlier rounds.
