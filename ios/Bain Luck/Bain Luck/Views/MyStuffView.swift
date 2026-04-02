@@ -137,6 +137,12 @@ struct MyStuffView: View {
                     SportCategoryView(categoryKey: key, categoryName: name)
                 case .leagueGrid(let slug):
                     LeagueGridView(slug: slug)
+                case .golfCategory:
+                    Text("Golf Category")
+                case .golfLeaderboard:
+                    MastersLiveView()
+                case .golfTournament(_, let name):
+                    SportCategoryView(categoryKey: "golf", categoryName: name)
                 }
             }
         }

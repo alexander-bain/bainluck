@@ -1159,6 +1159,37 @@ export interface GolfTournamentDetailResponse {
 }
 
 // ============================================================================
+// Golf Leaderboard types
+// ============================================================================
+
+export interface GolfLeaderboardPlayer {
+  position: string;
+  name: string;
+  score: string;
+  total_score_raw: number | null;
+  today: string;
+  today_raw: number | null;
+  thru: string;
+  hole: string;
+  win_prob: number;
+  top_5_prob: number | null;
+  top_10_prob: number | null;
+  make_cut_prob: number | null;
+  current_round: number | null;
+}
+
+export interface GolfLeaderboardResponse {
+  status: 'live' | 'no_event';
+  event_name: string | null;
+  current_round: number | null;
+  last_updated: string | null;
+  tour: string;
+  player_count: number;
+  players: GolfLeaderboardPlayer[];
+  message?: string;
+}
+
+// ============================================================================
 // Tournament Progression types
 // ============================================================================
 

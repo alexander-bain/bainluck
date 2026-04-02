@@ -8,4 +8,7 @@ enum Route: Hashable {
     case preferences
     case sportCategory(key: String, name: String)
     case leagueGrid(slug: String)
+    case golfCategory
+    case golfLeaderboard
+    case golfTournament(slug: String, name: String)
 }

@@ -44,7 +44,7 @@ struct LeaguesView: View {
                     if !leagues.isEmpty {
                         Section(group) {
                             ForEach(leagues) { league in
-                                NavigationLink(value: Route.leagueGrid(slug: league.slug)) {
+                                NavigationLink(value: league.slug == "golf" ? Route.golfCategory : Route.leagueGrid(slug: league.slug)) {
                                     HStack(spacing: 12) {
                                         Text(league.emoji)
                                             .font(.title2)
@@ -82,6 +82,12 @@ struct LeaguesView: View {
                     PreferencesView()
                 case .sportCategory(let key, let name):
                     SportCategoryView(categoryKey: key, categoryName: name)
+                case .golfCategory:
+                    GolfCategoryView()
+                case .golfLeaderboard:
+                    MastersLiveView()
+                case .golfTournament(_, let name):
+                    SportCategoryView(categoryKey: "golf", categoryName: name)
                 }
             }
             .onAppear {

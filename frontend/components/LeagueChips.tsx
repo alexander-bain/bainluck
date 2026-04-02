@@ -44,7 +44,7 @@ export default function LeagueChips({ activeSlug }: LeagueChipsProps) {
         return (
           <Link
             key={chip.slug}
-            href={`/playoffs/${chip.slug}`}
+            href={chip.slug === "golf" ? `/categories/golf` : `/playoffs/${chip.slug}`}
             className={`
               flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
               whitespace-nowrap transition-colors shrink-0

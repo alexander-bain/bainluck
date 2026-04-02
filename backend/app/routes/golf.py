@@ -1221,3 +1221,117 @@ async def get_golf_tournament(
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,
     }
+
+
+# ============================================================================
+# Live leaderboard (ultra-low-data endpoint)
+# ============================================================================
+
+# In-process cache for leaderboard (avoid hammering DataGolf on every refresh)
+_leaderboard_cache: dict[str, tuple[float, dict]] = {}
+_LEADERBOARD_CACHE_TTL = 120  # 2 minutes
+
+
+@router.get("/leaderboard")
+async def get_golf_leaderboard(
+    tour: str = "pga",
+):
+    """Live leaderboard with position, score, thru, hole, and win probability.
+
+    Designed for ultra-low-data views — returns everything needed to render
+    a lightweight leaderboard table without JavaScript.
+    """
+    import time
+
+    cache_key = f"leaderboard_{tour}"
+    now = time.time()
+
+    # Check cache
+    if cache_key in _leaderboard_cache:
+        cached_time, cached_data = _leaderboard_cache[cache_key]
+        if now - cached_time < _LEADERBOARD_CACHE_TTL:
+            return cached_data
+
+    from app.services.datagolf_api import DataGolfAPIService
+
+    service = DataGolfAPIService()
+    try:
+        players, info = await service.get_in_play_with_info(tour)
+    finally:
+        await service.close()
+
+    if not players:
+        return {
+            "status": "no_event",
+            "message": "No tournament currently in play",
+            "event_name": None,
+            "current_round": None,
+            "last_updated": None,
+            "players": [],
+        }
+
+    # Sort by position (numeric sort, with CUT/WD at bottom)
+    def _pos_sort_key(p):
+        pos = (p.position or "999").lstrip("T")
+        try:
+            return int(pos)
+        except ValueError:
+            return 9999
+
+    players.sort(key=_pos_sort_key)
+
+    # Build response
+    leaderboard = []
+    for p in players:
+        # Determine hole — thru "F" means finished round, otherwise it's the hole number
+        thru = p.thru
+        if thru and thru.upper() == "F":
+            hole_display = "F"
+        elif thru and thru.isdigit():
+            hole_display = f"H{thru}"
+        else:
+            hole_display = thru or "—"
+
+        # Format scores
+        total = p.total_score
+        if total is not None:
+            score_display = "E" if total == 0 else f"{total:+d}" if total != 0 else "E"
+        else:
+            score_display = "—"
+
+        today = p.today_score
+        if today is not None:
+            today_display = "E" if today == 0 else f"{today:+d}" if today != 0 else "E"
+        else:
+            today_display = "—"
+
+        leaderboard.append({
+            "position": p.position or "—",
+            "name": p.player_name,
+            "score": score_display,
+            "total_score_raw": p.total_score,
+            "today": today_display,
+            "today_raw": p.today_score,
+            "thru": thru or "—",
+            "hole": hole_display,
+            "win_prob": round(p.win * 100, 1) if p.win else 0.0,
+            "top_5_prob": round(p.top_5 * 100, 1) if p.top_5 else None,
+            "top_10_prob": round(p.top_10 * 100, 1) if p.top_10 else None,
+            "make_cut_prob": round(p.make_cut * 100, 1) if p.make_cut else None,
+            "current_round": p.current_round,
+        })
+
+    result = {
+        "status": "live",
+        "event_name": info.get("event_name", "Unknown Event"),
+        "current_round": info.get("current_round"),
+        "last_updated": info.get("last_updated") or datetime.now(timezone.utc).isoformat(),
+        "tour": tour,
+        "player_count": len(leaderboard),
+        "players": leaderboard,
+    }
+
+    # Cache it
+    _leaderboard_cache[cache_key] = (now, result)
+
+    return result

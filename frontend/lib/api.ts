@@ -1048,6 +1048,13 @@ export async function fetchGolfTournament(slug: string): Promise<GolfTournamentD
   return apiFetch<GolfTournamentDetailResponse>(`/api/golf/tournaments/${encodeURIComponent(slug)}`);
 }
 
+/**
+ * Fetch live golf leaderboard from DataGolf
+ */
+export async function fetchGolfLeaderboard(tour: string = "pga"): Promise<GolfLeaderboardResponse> {
+  return apiFetch<GolfLeaderboardResponse>(`/api/golf/leaderboard?tour=${encodeURIComponent(tour)}`);
+}
+
 // ============================================================================
 // March Madness API
 // ============================================================================

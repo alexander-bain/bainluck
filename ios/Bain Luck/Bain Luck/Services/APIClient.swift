@@ -459,6 +459,16 @@ actor APIClient {
         return try await fetch("/api/playoffs/\(slug)", cacheTTL: 300)
     }
 
+    // MARK: - Golf
+
+    func fetchGolfLanding() async throws -> GolfLandingResponse {
+        return try await fetch("/api/golf", cacheTTL: 120)
+    }
+
+    func fetchGolfLeaderboard(tour: String = "pga") async throws -> GolfLeaderboardResponse {
+        return try await fetch("/api/golf/leaderboard", query: ["tour": tour], cacheTTL: 30)
+    }
+
     func addPin(type: String, id: Int) async throws -> StatusResponse {
         return try await postEncodable("/api/me/pins", body: PinRequest(pinType: type, targetId: id))
     }

@@ -178,6 +178,12 @@ struct FeedView: View {
                     SportCategoryView(categoryKey: key, categoryName: name)
                 case .leagueGrid(let slug):
                     LeagueGridView(slug: slug)
+                case .golfCategory:
+                    GolfCategoryView()
+                case .golfLeaderboard:
+                    MastersLiveView()
+                case .golfTournament(_, let name):
+                    SportCategoryView(categoryKey: "golf", categoryName: name)
                 }
             }
         }

@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Golf Tournament Event Cards — Mockups (v2)</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --border-lt: #eef0f3;
+    --text: #1a1d23;
+    --text2: #5a5f6b;
+    --text3: #8c919d;
+    --text4: #b5b9c3;
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --blue: #2563eb;
+    --blue-bg: #eff6ff;
+    --amber: #d97706;
+    --amber-bg: #fffbeb;
+    --live-red: #ef4444;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  .page { max-width: 880px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: var(--text3); margin-bottom: 32px; }
+
+  .section { margin-bottom: 48px; }
+  .section-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text3); margin-bottom: 4px;
+  }
+  .section h2 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+  .section > p { font-size: 13px; color: var(--text2); margin-bottom: 14px; max-width: 560px; }
+
+  /* ── Card styles ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: box-shadow 0.2s, border-color 0.2s;
+  }
+  .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-color: #d0d4db; }
+
+  /* ── Live badge ── */
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; color: var(--live-red);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--live-red);
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Change indicators ── */
+  .change-up { color: var(--green); font-weight: 600; }
+  .change-down { color: var(--red); font-weight: 600; }
+  .change-flat { color: var(--text4); }
+
+  /* ── Note boxes ── */
+  .note {
+    display: flex; gap: 8px; padding: 9px 12px; margin-top: 10px;
+    border-radius: 7px; font-size: 12px; line-height: 1.5;
+  }
+  .note-best { background: var(--green-bg); border: 1px solid #dcfce7; }
+  .note-info { background: var(--blue-bg); border: 1px solid #dbeafe; }
+  .note-rev { background: var(--amber-bg); border: 1px solid #fef3c7; }
+  .note b { flex-shrink: 0; }
+  .note-best b { color: var(--green); }
+  .note-info b { color: var(--blue); }
+  .note-rev b { color: var(--amber); }
+  .note span { color: var(--text2); }
+
+  .sep { height: 1px; background: var(--border-lt); margin: 40px 0; }
+
+  /* ═══════════════════════════════════════ */
+  /* CARD VARIANT 1: COMPACT (revised)      */
+  /* ═══════════════════════════════════════ */
+  .c1 { padding: 14px 16px; }
+  .c1-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+  .c1-title { font-size: 15px; font-weight: 700; }
+  .c1-venue { font-size: 12px; color: var(--text3); margin-top: 1px; }
+  .c1-leaders {
+    display: grid; grid-template-columns: auto 1fr auto auto auto;
+    gap: 2px 10px; font-size: 13px; align-items: baseline;
+  }
+  .c1-pos { font-weight: 600; color: var(--text3); font-variant-numeric: tabular-nums; width: 20px; }
+  .c1-name { font-weight: 500; }
+  .c1-score { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .c1-hole { font-size: 11px; color: var(--text3); font-variant-numeric: tabular-nums; }
+  .c1-prob { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); font-size: 14px; }
+  .c1-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+  .c1-field { font-size: 11px; color: var(--text4); }
+  .c1-cta { font-size: 12px; font-weight: 500; color: var(--blue); }
+
+  /* ═══════════════════════════════════════ */
+  /* CARD VARIANT 2: VISUAL                 */
+  /* ═══════════════════════════════════════ */
+  .c2-header {
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #1a472a 0%, #2d5a3f 100%);
+    color: white;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .c2-header-masters {
+    background: linear-gradient(135deg, #0c4a1f 0%, #166534 100%);
+  }
+  .c2-title { font-size: 15px; font-weight: 700; }
+  .c2-meta { font-size: 11px; opacity: 0.8; margin-top: 1px; }
+  .c2-badge {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; padding: 3px 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.15);
+  }
+  .c2-body { padding: 12px 16px; }
+  .c2-leader-row {
+    display: flex; align-items: center; gap: 10px; padding: 6px 0;
+    border-bottom: 1px solid var(--border-lt);
+  }
+  .c2-leader-row:last-child { border-bottom: none; }
+  .c2-rank {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
+  }
+  .c2-rank-1 { background: #fef3c7; color: #92400e; }
+  .c2-rank-2 { background: #f1f5f9; color: #475569; }
+  .c2-rank-3 { background: #fff7ed; color: #9a3412; }
+  .c2-rank-n { background: #f5f6f8; color: var(--text3); }
+  .c2-player { flex: 1; }
+  .c2-player-name { font-size: 13px; font-weight: 600; }
+  .c2-player-score { font-size: 11px; color: var(--text3); }
+  .c2-prob-bar {
+    width: 80px; flex-shrink: 0; text-align: right;
+  }
+  .c2-prob-val { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .c2-prob-change { font-size: 10px; }
+  .c2-footer {
+    padding: 8px 16px; border-top: 1px solid var(--border-lt);
+    background: #fafbfc; display: flex; justify-content: space-between;
+    font-size: 11px; color: var(--text4);
+  }
+
+  /* ═══════════════════════════════════════ */
+  /* CARD VARIANT 3: FEED-NATIVE            */
+  /* ═══════════════════════════════════════ */
+  .c3 { padding: 14px 16px; }
+  .c3-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .c3-sport { font-size: 11px; font-weight: 500; color: var(--text3); }
+  .c3-title { font-size: 14px; font-weight: 700; margin-top: 1px; }
+  .c3-tv {
+    font-size: 10px; font-weight: 600; color: var(--text3);
+    padding: 2px 6px; border-radius: 3px; background: #f1f5f9;
+    letter-spacing: 0.02em;
+  }
+  .c3-hero {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; background: #f8fafb; border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  .c3-hero-prob { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .c3-hero-name { font-size: 14px; font-weight: 600; }
+  .c3-hero-detail { font-size: 12px; color: var(--text3); }
+  .c3-chasers {
+    display: flex; gap: 0; border-top: 1px solid var(--border-lt);
+    padding-top: 8px;
+  }
+  .c3-chaser {
+    flex: 1; text-align: center;
+    padding: 4px 0;
+    border-right: 1px solid var(--border-lt);
+  }
+  .c3-chaser:last-child { border-right: none; }
+  .c3-chaser-name { font-size: 11px; font-weight: 500; color: var(--text2); }
+  .c3-chaser-prob { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .c3-chaser-score { font-size: 10px; color: var(--text3); }
+
+  /* ═══════════════════════════════════════ */
+  /* CARD VARIANT 4: ULTRA-COMPACT          */
+  /* ═══════════════════════════════════════ */
+  .c4 {
+    padding: 10px 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .c4-left { flex: 1; }
+  .c4-title { font-size: 13px; font-weight: 700; }
+  .c4-meta { font-size: 11px; color: var(--text3); }
+  .c4-right { text-align: right; flex-shrink: 0; }
+  .c4-leader-name { font-size: 12px; font-weight: 500; color: var(--text2); }
+  .c4-leader-prob { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+  /* ═══════════════════════════════════════ */
+  /* CATEGORIES PAGE MOCKUP                 */
+  /* ═══════════════════════════════════════ */
+  .cat-section { margin-bottom: 28px; }
+  .cat-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .cat-title {
+    font-size: 14px; font-weight: 700;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .cat-see-all { font-size: 12px; color: var(--blue); font-weight: 500; text-decoration: none; }
+
+  /* Tour headers for desktop */
+  .tour-header {
+    font-size: 16px; font-weight: 700; color: var(--text);
+    padding-bottom: 6px; border-bottom: 2px solid var(--border);
+    margin-bottom: 12px; margin-top: 8px;
+  }
+  .tour-header:first-child { margin-top: 0; }
+
+  /* Follow CTA — per-tour */
+  .follow-cta {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--blue); font-weight: 500;
+    cursor: pointer; padding: 2px 8px; border-radius: 4px;
+    border: 1px solid var(--blue); background: var(--blue-bg);
+  }
+  .follow-cta.following {
+    color: var(--green); border-color: var(--green); background: var(--green-bg);
+  }
+
+  /* Mobile chips for tour switching */
+  .cat-chip-row {
+    display: none; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+    margin-bottom: 16px;
+  }
+  .cat-chip {
+    padding: 6px 14px; border-radius: 100px;
+    border: 1px solid var(--border); background: var(--card);
+    font-size: 12px; font-weight: 500; color: var(--text2);
+    white-space: nowrap; cursor: pointer; font-family: inherit;
+    transition: all 0.15s;
+  }
+  .cat-chip:hover { border-color: #ccd0d8; }
+  .cat-chip.active { background: var(--text); color: white; border-color: var(--text); }
+
+  @media (max-width: 639px) {
+    .cat-chip-row { display: flex; }
+    .tour-header { display: none; }
+    .tour-section.hidden-mobile { display: none; }
+  }
+
+  /* Low-data table */
+  .low-data-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+  .low-data-table th {
+    text-align: left; font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text3); padding: 6px 8px;
+    border-bottom: 2px solid var(--border);
+  }
+  .low-data-table th:nth-child(n+3) { text-align: right; }
+  .low-data-table td {
+    padding: 5px 8px; border-bottom: 1px solid var(--border-lt);
+    font-variant-numeric: tabular-nums;
+  }
+  .low-data-table td:nth-child(n+3) { text-align: right; }
+  .low-data-table tr:hover { background: #f9fafb; }
+  .low-data-table .pos { font-weight: 600; color: var(--text3); }
+  .low-data-table .name { font-weight: 500; }
+  .low-data-table .day-label { font-size: 10px; color: var(--text3); font-weight: 400; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Golf Tournament Cards + Categories (v2)</h1>
+<p class="sub">Updated with feedback: per-hole display, prominent win%, TV channel, per-tour follow, tour-based layout, and day-based deltas.</p>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- VARIANT 1: COMPACT (REVISED)               -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Card Variant 1</div>
+  <h2>Compact Leaderboard</h2>
+  <p>Per-golfer hole number (not shared "Thru 14"). Win probability is the rightmost, most prominent column.</p>
+
+  <div class="card" style="max-width:420px">
+    <div class="c1">
+      <div class="c1-top">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="c1-title">Valero Texas Open</span>
+            <span class="live-badge"><span class="live-dot"></span> R2</span>
+          </div>
+          <div class="c1-venue">TPC San Antonio</div>
+        </div>
+      </div>
+      <div class="c1-leaders">
+        <span class="c1-pos">1</span>
+        <span class="c1-name">Matti Schmid</span>
+        <span class="c1-score" style="color:var(--red)">-11</span>
+        <span class="c1-hole">H14</span>
+        <span class="c1-prob">10.0%</span>
+
+        <span class="c1-pos">2</span>
+        <span class="c1-name">Will Zalatoris</span>
+        <span class="c1-score" style="color:var(--red)">-9</span>
+        <span class="c1-hole">H16</span>
+        <span class="c1-prob">7.1%</span>
+
+        <span class="c1-pos">3</span>
+        <span class="c1-name">Sam Ryder</span>
+        <span class="c1-score" style="color:var(--red)">-8</span>
+        <span class="c1-hole">F</span>
+        <span class="c1-prob">6.9%</span>
+      </div>
+      <div class="c1-footer">
+        <span class="c1-field">156 players &middot; 3 sources</span>
+        <span class="c1-cta">Full leaderboard &rarr;</span>
+      </div>
+    </div>
+  </div>
+  <div class="note note-rev"><b>v2 changes</b> <span>Removed shared "Thru 14" — each golfer now shows their own hole (H14, H16, F for finished). Win% bolded and larger as the primary value column.</span></div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- VARIANT 2: VISUAL / BRANDED CARD          -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Card Variant 2</div>
+  <h2>Visual / Branded</h2>
+  <p>Colored header with tournament name. Ranked leaderboard with medal-style position indicators. Shows probability with today's change. More editorial — good for major tournaments.</p>
+
+  <div class="card" style="max-width:420px">
+    <div class="c2-header">
+      <div>
+        <div class="c2-title">Valero Texas Open</div>
+        <div class="c2-meta">TPC San Antonio &middot; Apr 2–5</div>
+      </div>
+      <span class="c2-badge">Round 2 Live</span>
+    </div>
+    <div class="c2-body">
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-1">1</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Matti Schmid</div>
+          <div class="c2-player-score">-11 &middot; H14 &middot; Today: -3</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">10.0%</div>
+          <div class="c2-prob-change change-up">+9.0%</div>
+        </div>
+      </div>
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-2">2</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Will Zalatoris</div>
+          <div class="c2-player-score">-9 &middot; H16 &middot; Today: -1</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">7.1%</div>
+          <div class="c2-prob-change change-up">+5.6%</div>
+        </div>
+      </div>
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-3">3</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Sam Ryder</div>
+          <div class="c2-player-score">-8 &middot; F &middot; Today: -5</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">6.9%</div>
+          <div class="c2-prob-change change-up">+5.9%</div>
+        </div>
+      </div>
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-n">4</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Min Woo Lee</div>
+          <div class="c2-player-score">-7 &middot; H12 &middot; Today: E</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">6.7%</div>
+          <div class="c2-prob-change change-up">+6.7%</div>
+        </div>
+      </div>
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-n">5</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Tommy Fleetwood</div>
+          <div class="c2-player-score">-7 &middot; H15 &middot; Today: -2</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">6.7%</div>
+          <div class="c2-prob-change change-up">+1.2%</div>
+        </div>
+      </div>
+    </div>
+    <div class="c2-footer">
+      <span>156 players &middot; Kalshi + Polymarket + DataGolf</span>
+      <span style="color:var(--blue)">View tournament &rarr;</span>
+    </div>
+  </div>
+
+  <!-- Masters variant -->
+  <div class="card" style="max-width:420px; margin-top:12px">
+    <div class="c2-header c2-header-masters">
+      <div>
+        <div class="c2-title">The Masters</div>
+        <div class="c2-meta">Augusta National &middot; Apr 9–12</div>
+      </div>
+      <span class="c2-badge">Starts Thursday</span>
+    </div>
+    <div class="c2-body">
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-1">1</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Scottie Scheffler</div>
+          <div class="c2-player-score">Pre-tournament favorite</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">18.5%</div>
+          <div class="c2-prob-change change-flat">&mdash;</div>
+        </div>
+      </div>
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-2">2</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Rory McIlroy</div>
+          <div class="c2-player-score">Career Grand Slam bid</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">9.5%</div>
+          <div class="c2-prob-change change-flat">&mdash;</div>
+        </div>
+      </div>
+      <div class="c2-leader-row">
+        <div class="c2-rank c2-rank-3">3</div>
+        <div class="c2-player">
+          <div class="c2-player-name">Xander Schauffele</div>
+          <div class="c2-player-score">2-time major champion</div>
+        </div>
+        <div class="c2-prob-bar">
+          <div class="c2-prob-val">8.5%</div>
+          <div class="c2-prob-change change-flat">&mdash;</div>
+        </div>
+      </div>
+    </div>
+    <div class="c2-footer">
+      <span>87 invitees &middot; Augusta National Golf Club</span>
+      <span style="color:var(--blue)">Preview &rarr;</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- VARIANT 3: FEED-NATIVE / HERO PROB        -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Card Variant 3 — Preferred</div>
+  <h2>Feed-Native Hero</h2>
+  <p>Leader's win probability is the hero number. TV channel badge in top-right. "Chasers" strip below shows the next 4 with per-golfer hole number. Most consistent with how BainLuck shows regular game cards.</p>
+
+  <div class="card" style="max-width:420px">
+    <div class="c3">
+      <div class="c3-header">
+        <div>
+          <div class="c3-sport">&#9971; PGA Tour &middot; <span class="live-badge"><span class="live-dot"></span> Round 2</span></div>
+          <div class="c3-title">Valero Texas Open</div>
+        </div>
+        <span class="c3-tv">ESPN+</span>
+      </div>
+      <div class="c3-hero">
+        <div class="c3-hero-prob">10.0<span style="font-size:16px;font-weight:600">%</span></div>
+        <div class="c3-hero-info">
+          <div class="c3-hero-name">Matti Schmid</div>
+          <div class="c3-hero-detail">Leader &middot; -11 &middot; H14 &middot; <span class="change-up">+9.0% today</span></div>
+        </div>
+      </div>
+      <div class="c3-chasers">
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">Zalatoris</div>
+          <div class="c3-chaser-prob">7.1%</div>
+          <div class="c3-chaser-score">-9 &middot; H16</div>
+        </div>
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">Ryder</div>
+          <div class="c3-chaser-prob">6.9%</div>
+          <div class="c3-chaser-score">-8 &middot; F</div>
+        </div>
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">M.W. Lee</div>
+          <div class="c3-chaser-prob">6.7%</div>
+          <div class="c3-chaser-score">-7 &middot; H12</div>
+        </div>
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">Fleetwood</div>
+          <div class="c3-chaser-prob">6.7%</div>
+          <div class="c3-chaser-score">-7 &middot; H15</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Masters hero variant with CBS -->
+  <div class="card" style="max-width:420px; margin-top:12px">
+    <div class="c3">
+      <div class="c3-header">
+        <div>
+          <div class="c3-sport">&#9971; The Masters &middot; <span class="live-badge"><span class="live-dot"></span> Round 3</span></div>
+          <div class="c3-title">Augusta National Golf Club</div>
+        </div>
+        <span class="c3-tv">CBS</span>
+      </div>
+      <div class="c3-hero" style="background:#f0fdf4">
+        <div class="c3-hero-prob" style="color:#166534">42.3<span style="font-size:16px;font-weight:600">%</span></div>
+        <div class="c3-hero-info">
+          <div class="c3-hero-name">Scottie Scheffler</div>
+          <div class="c3-hero-detail">Leader &middot; -14 &middot; H15 &middot; <span class="change-up">+18.1% today</span></div>
+        </div>
+      </div>
+      <div class="c3-chasers">
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">McIlroy</div>
+          <div class="c3-chaser-prob">18.7%</div>
+          <div class="c3-chaser-score">-12 &middot; H16</div>
+        </div>
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">Morikawa</div>
+          <div class="c3-chaser-prob">12.1%</div>
+          <div class="c3-chaser-score">-11 &middot; H14</div>
+        </div>
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">Schauffele</div>
+          <div class="c3-chaser-prob">8.9%</div>
+          <div class="c3-chaser-score">-10 &middot; H15</div>
+        </div>
+        <div class="c3-chaser">
+          <div class="c3-chaser-name">Aberg</div>
+          <div class="c3-chaser-prob">6.2%</div>
+          <div class="c3-chaser-score">-10 &middot; H13</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note note-best"><b>Preferred</b> <span>Hero probability draws the eye. TV channel badge (ESPN+, CBS, etc.) in top-right like other feed cards. Per-golfer hole number in chaser strip. Masters variant uses Augusta green tint. Works at any width.</span></div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- VARIANT 4: ULTRA-COMPACT                  -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Card Variant 4</div>
+  <h2>Ultra-Compact</h2>
+  <p>Single row. For upcoming events lists and dense multi-tournament views.</p>
+
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:420px">
+    <div class="card">
+      <div class="c4">
+        <div class="c4-left">
+          <div class="c4-title" style="display:flex;align-items:center;gap:6px">Valero Texas Open <span class="live-badge" style="font-size:10px"><span class="live-dot" style="width:5px;height:5px"></span> R2</span></div>
+          <div class="c4-meta">TPC San Antonio &middot; Apr 2–5</div>
+        </div>
+        <div class="c4-right">
+          <div class="c4-leader-name">Schmid</div>
+          <div class="c4-leader-prob">10.0%</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="c4">
+        <div class="c4-left">
+          <div class="c4-title">The Masters</div>
+          <div class="c4-meta">Augusta National &middot; Apr 9–12</div>
+        </div>
+        <div class="c4-right">
+          <div class="c4-leader-name">Scheffler</div>
+          <div class="c4-leader-prob">18.5%</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="c4">
+        <div class="c4-left">
+          <div class="c4-title">PGA Championship</div>
+          <div class="c4-meta">Quail Hollow &middot; May 14–17</div>
+        </div>
+        <div class="c4-right">
+          <div class="c4-leader-name">Scheffler</div>
+          <div class="c4-leader-prob">16.2%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sep"></div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- CATEGORIES PAGE CONCEPT (REVISED)          -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Page Concept</div>
+  <h2>/categories/golf — Tour-Based Layout</h2>
+  <p>Desktop: H2-style tour headers with per-tour follow buttons. Mobile: pill chips across top to switch tours. No "All Tours" — each tour is its own section.</p>
+
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;max-width:520px">
+
+    <!-- Mobile: chips (hidden on desktop) -->
+    <div class="cat-chip-row">
+      <button class="cat-chip active">PGA Tour</button>
+      <button class="cat-chip">DP World</button>
+      <button class="cat-chip">LIV</button>
+      <button class="cat-chip">LPGA</button>
+    </div>
+
+    <!-- PGA Tour section -->
+    <div class="tour-section">
+      <div class="tour-header" style="display:flex;justify-content:space-between;align-items:baseline">
+        PGA Tour
+        <span class="follow-cta following">&#10003; Following</span>
+      </div>
+
+      <!-- Live -->
+      <div class="cat-section">
+        <div class="cat-header">
+          <div class="cat-title"><span class="live-badge" style="font-size:10px"><span class="live-dot" style="width:5px;height:5px"></span></span> Live Now</div>
+        </div>
+        <div class="card">
+          <div class="c3" style="padding:12px 14px">
+            <div class="c3-header" style="margin-bottom:6px">
+              <div>
+                <div class="c3-sport">PGA Tour &middot; <span style="font-weight:600;color:var(--live-red)">Round 2</span></div>
+                <div class="c3-title" style="font-size:13px">Valero Texas Open</div>
+              </div>
+              <span class="c3-tv">ESPN+</span>
+            </div>
+            <div class="c3-hero" style="padding:8px 10px">
+              <div class="c3-hero-prob" style="font-size:24px">10.0<span style="font-size:14px">%</span></div>
+              <div class="c3-hero-info">
+                <div class="c3-hero-name" style="font-size:13px">Matti Schmid</div>
+                <div class="c3-hero-detail" style="font-size:11px">-11 &middot; H14</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upcoming -->
+      <div class="cat-section">
+        <div class="cat-header">
+          <div class="cat-title">Upcoming</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="card"><div class="c4"><div class="c4-left"><div class="c4-title">The Masters</div><div class="c4-meta">Augusta National &middot; Apr 9–12</div></div><div class="c4-right"><div class="c4-leader-name">Scheffler</div><div class="c4-leader-prob">18.5%</div></div></div></div>
+          <div class="card"><div class="c4"><div class="c4-left"><div class="c4-title">PGA Championship</div><div class="c4-meta">Quail Hollow &middot; May 14–17</div></div><div class="c4-right"><div class="c4-leader-name">Scheffler</div><div class="c4-leader-prob">16.2%</div></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DP World Tour section -->
+    <div class="tour-section" style="margin-top:20px">
+      <div class="tour-header" style="display:flex;justify-content:space-between;align-items:baseline">
+        DP World Tour
+        <span class="follow-cta">+ Follow</span>
+      </div>
+
+      <div class="cat-section">
+        <div class="cat-header">
+          <div class="cat-title">Upcoming</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="card"><div class="c4"><div class="c4-left"><div class="c4-title">Soudal Open</div><div class="c4-meta">Rinkven GC &middot; May 8–11</div></div><div class="c4-right"><div class="c4-leader-name">&mdash;</div><div class="c4-leader-prob">&mdash;</div></div></div></div>
+          <div class="card"><div class="c4"><div class="c4-left"><div class="c4-title">European Open</div><div class="c4-meta">Green Eagle GC &middot; May 22–25</div></div><div class="c4-right"><div class="c4-leader-name">&mdash;</div><div class="c4-leader-prob">&mdash;</div></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LPGA section -->
+    <div class="tour-section" style="margin-top:20px">
+      <div class="tour-header" style="display:flex;justify-content:space-between;align-items:baseline">
+        LPGA Tour
+        <span class="follow-cta">+ Follow</span>
+      </div>
+
+      <div class="cat-section">
+        <div class="cat-header">
+          <div class="cat-title">Upcoming</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="card"><div class="c4"><div class="c4-left"><div class="c4-title">Cognizant Founders Cup</div><div class="c4-meta">Upper Montclair CC &middot; May 8–11</div></div><div class="c4-right"><div class="c4-leader-name">Ko</div><div class="c4-leader-prob">8.2%</div></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Championship grid link -->
+    <div style="padding:10px 12px;background:#f8fafb;border-radius:8px;margin-top:16px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:12px;font-weight:600">Season Championship Grid</div>
+        <div style="font-size:11px;color:var(--text3)">Major winners, odds across the full season</div>
+      </div>
+      <span style="font-size:12px;color:var(--blue);font-weight:500">View &rarr;</span>
+    </div>
+  </div>
+  <div class="note note-rev"><b>v2 changes</b> <span>Removed "All Tours" chip — each tour is its own section. Desktop uses H2 tour headers (horizontal). Mobile uses pill chips to switch. Follow is per-tour ("Follow PGA Tour") not per-sport. TV channel badges on live cards.</span></div>
+</div>
+
+<div class="sep"></div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- ULTRA-LOW-DATA MASTERS LEADERBOARD        -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">Bonus</div>
+  <h2>Ultra-Low-Data Masters Leaderboard</h2>
+  <p>Plain HTML table. No JavaScript, no charts, no images. Loads in under 1 second on any connection. Position and probability deltas are since the start of play today (not 24 hours).</p>
+
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;overflow-x:auto">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+      <div>
+        <div style="font-size:15px;font-weight:700">The Masters — Round 3</div>
+        <div style="font-size:12px;color:var(--text3)">Augusta National &middot; Saturday Apr 11 &middot; Updated 2:34 PM ET</div>
+      </div>
+      <span class="live-badge"><span class="live-dot"></span> Live</span>
+    </div>
+    <table class="low-data-table">
+      <thead>
+        <tr>
+          <th>Pos</th>
+          <th>Player</th>
+          <th>Score</th>
+          <th>Thru</th>
+          <th>Win%</th>
+          <th>Pos <span class="day-label">(today)</span></th>
+          <th>Win <span class="day-label">(today)</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="pos">1</td><td class="name">Scottie Scheffler</td><td style="color:var(--red);font-weight:600">-14</td><td>15</td><td style="font-weight:700">42.3%</td><td class="change-up">&uarr;2</td><td class="change-up">+18.1%</td></tr>
+        <tr><td class="pos">2</td><td class="name">Rory McIlroy</td><td style="color:var(--red);font-weight:600">-12</td><td>16</td><td style="font-weight:700">18.7%</td><td class="change-flat">&mdash;</td><td class="change-up">+3.2%</td></tr>
+        <tr><td class="pos">3</td><td class="name">Collin Morikawa</td><td style="color:var(--red);font-weight:600">-11</td><td>14</td><td style="font-weight:700">12.1%</td><td class="change-up">&uarr;4</td><td class="change-up">+7.8%</td></tr>
+        <tr><td class="pos">T4</td><td class="name">Xander Schauffele</td><td style="color:var(--red);font-weight:600">-10</td><td>15</td><td style="font-weight:700">8.9%</td><td class="change-down">&darr;2</td><td class="change-down">-3.1%</td></tr>
+        <tr><td class="pos">T4</td><td class="name">Ludvig Aberg</td><td style="color:var(--red);font-weight:600">-10</td><td>13</td><td style="font-weight:700">6.2%</td><td class="change-up">&uarr;1</td><td class="change-up">+2.0%</td></tr>
+        <tr><td class="pos">6</td><td class="name">Jon Rahm</td><td style="color:var(--red);font-weight:600">-9</td><td>16</td><td style="font-weight:700">4.1%</td><td class="change-down">&darr;3</td><td class="change-down">-5.4%</td></tr>
+        <tr><td class="pos">T7</td><td class="name">Bryson DeChambeau</td><td style="color:var(--red);font-weight:600">-8</td><td>14</td><td style="font-weight:700">2.8%</td><td class="change-up">&uarr;5</td><td class="change-up">+1.9%</td></tr>
+        <tr><td class="pos">T7</td><td class="name">Viktor Hovland</td><td style="color:var(--red);font-weight:600">-8</td><td>15</td><td style="font-weight:700">2.3%</td><td class="change-flat">&mdash;</td><td class="change-down">-0.8%</td></tr>
+        <tr><td class="pos">9</td><td class="name">Brooks Koepka</td><td style="color:var(--red);font-weight:600">-7</td><td>17</td><td style="font-weight:700">1.1%</td><td class="change-down">&darr;1</td><td class="change-down">-2.1%</td></tr>
+        <tr><td class="pos">T10</td><td class="name">Hideki Matsuyama</td><td style="color:var(--red);font-weight:600">-6</td><td>13</td><td style="font-weight:700">0.8%</td><td class="change-up">&uarr;3</td><td class="change-up">+0.4%</td></tr>
+        <tr><td class="pos">T10</td><td class="name">Tommy Fleetwood</td><td style="color:var(--red);font-weight:600">-6</td><td>16</td><td style="font-weight:700">0.5%</td><td class="change-down">&darr;2</td><td class="change-down">-1.2%</td></tr>
+        <tr><td class="pos">12</td><td class="name">Justin Thomas</td><td style="color:var(--red);font-weight:600">-5</td><td>14</td><td style="font-weight:700">0.2%</td><td class="change-flat">&mdash;</td><td class="change-down">-0.3%</td></tr>
+      </tbody>
+    </table>
+    <div style="margin-top:8px;font-size:11px;color:var(--text4);text-align:center">
+      Position and probability changes are since the start of Round 3 play today.
+    </div>
+  </div>
+  <div class="note note-best"><b>Built for Italy</b> <span>Server-rendered HTML. No JS required. Auto-refreshes every 60s. Deltas are since start of play today (not 24h). Column headers say "(today)" to make the time period clear. Footer confirms the reference point.</span></div>
+</div>
+
+</div>
+</body>
+</html>
