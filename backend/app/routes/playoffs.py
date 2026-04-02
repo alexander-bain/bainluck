@@ -2499,20 +2499,28 @@ async def get_playoff_grid(
     norm_names = sorted(grid_raw.keys(), key=len, reverse=True)  # longest first
     merge_map: dict[str, str] = {}  # short_name → long_name
 
-    # Abbreviation expansions for team name merging
+    # Abbreviation expansions for team name merging.
+    # Single-word expansions keep both forms; multi-word expansions
+    # replace the abbreviation (so subset check works correctly).
     _ABBREV_MAP = {
-        "st": "state",
-        "state": "st",
-        "ws": "white sox",
+        "st": ["state"],
+        "state": ["st"],
+        "ws": ["white", "sox"],
     }
 
     def _expand_abbrevs(words):
         expanded = set()
         for w in words:
-            expanded.add(w)
             expansion = _ABBREV_MAP.get(w)
-            if expansion:
-                expanded.update(expansion.split())
+            if expansion and len(expansion) > 1:
+                # Multi-word: replace abbreviation with expansion
+                expanded.update(expansion)
+            elif expansion:
+                # Single-word: keep both forms
+                expanded.add(w)
+                expanded.update(expansion)
+            else:
+                expanded.add(w)
         return expanded
 
     for i, long_name in enumerate(norm_names):
