@@ -121,8 +121,7 @@ bainluck/
 Development happens primarily through **Claude Code**. No local dev environment needed.
 
 - **Backend** and **frontend** auto-deploy from `master` via Heroku and Vercel
-- **Heroku deploys require direct push**: `git push heroku master` (GitHub auto-deploy doesn't work)
-- **Always push to both**: `git push origin master && git push heroku master`
+- **Both auto-deploy from GitHub**: `git push origin master` is sufficient (Heroku auto-deploy confirmed working April 2, 2026)
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
 - **Backend tests**: `cd backend && python3 -m pytest tests/ -v`
 - **Frontend tests**: `cd frontend && npx jest`
@@ -273,8 +272,8 @@ Add page type to `frontend/lib/analytics/types.ts` (3 places).
 
 Both backend and frontend auto-deploy from `master`.
 
-- **Backend (Heroku)**: `git push heroku master` — runs `alembic upgrade head` on release
-- **Frontend (Vercel)**: Push to master triggers build (auto-preview for PRs)
+- **Backend (Heroku)**: Auto-deploys from GitHub `master` — runs `alembic upgrade head` on release
+- **Frontend (Vercel)**: Auto-deploys from GitHub `master` (auto-preview for PRs)
 
 ---
 
@@ -453,6 +452,80 @@ Key admin API endpoints (all require `?secret=$ADMIN_SECRET`):
 
 ---
 
+## Quality Audit System ("Quality Ratchet")
+
+A self-reinforcing data quality loop. The goal: define a problem once, it's fixed forever. New issues get added to the quality definition so they're caught going forward.
+
+### The Script
+`backend/scripts/audit_matching_quality.py` — comprehensive page health audit with deterministic + LLM checks.
+
+```bash
+# Quick scan (free, ~5s):
+python3 scripts/audit_matching_quality.py --skip-llm --save
+
+# Full audit with LLM + compare against last baseline:
+OPENAI_API_KEY=... python3 scripts/audit_matching_quality.py --compare --save
+
+# Grid-only or event-only:
+python3 scripts/audit_matching_quality.py --skip-event --grid nba --skip-llm
+python3 scripts/audit_matching_quality.py --skip-grid --event-id 12086896 --skip-llm
+```
+
+### Health Score
+- Starts at 100, penalized per finding: 🔴 critical = −10, 🟡 warning = −3, 🔵 info = −1
+- `--save` persists results to `scripts/audit_results/` with timestamps
+- `--compare` shows delta vs last run: ✅ FIXED / 🆕 NEW / ⏳ PERSISTENT findings
+
+### The Practice (MANDATORY)
+When fixing ANY data quality, matching, grouping, or display issue:
+1. **Run the audit BEFORE** your fix: `python3 scripts/audit_matching_quality.py --skip-llm --save`
+2. **Make your fix** (code changes)
+3. **Add a check** to the audit script that catches this class of issue (deterministic preferred, LLM if semantic understanding needed)
+4. **Run the audit AFTER** your fix: `python3 scripts/audit_matching_quality.py --skip-llm --compare --save`
+5. **Verify** the score improved and the finding shows as ✅ FIXED
+
+### When to Use Deterministic vs LLM Checks
+- **Deterministic** (preferred): Probability sums, missing data fields, fill rates, source disagreements, monotonicity, duplicates, trend anomalies. These are free, instant, and 100% reliable.
+- **LLM** (semantic): Label clarity ("is this name understandable to a casual fan?"), team-market matching ("is this player on this team?"), category correctness. These cost ~$0.01/run but can have false positives — tune the prompt and re-run.
+
+### Current Checks
+| Check | Type | Category | What it catches |
+|-------|------|----------|----------------|
+| `hero_probability_sum` | Deterministic | Event | Home + away odds not summing to ~100% |
+| `feed_detail_mismatch` | Deterministic | Event | Feed vs detail page probability inconsistency |
+| `missing_team_logo` | Deterministic | Event | Missing logos in event data |
+| `matchup_prob_sum` | Deterministic | Futures | Matchup probs inflated (NegRisk market sum check) |
+| `duplicate_label` | Deterministic | Futures | Same market from same source appearing twice |
+| `cross_source_visual_dupe` | Deterministic | Futures | Same label from different sources (visual clutter) |
+| `win_total_resolved` | Deterministic | Futures | Near-resolved win total thresholds (noise) |
+| `label_clarity` | LLM | Futures | Unclear/misleading market labels |
+| `team_matching` | LLM | Futures | Market incorrectly associated with team |
+| `grid_fill_rate` | Deterministic | Grid | Columns with low data coverage |
+| `grid_single_source` | Deterministic | Grid | Columns using only 1 source when more available |
+| `grid_team_identity` | Deterministic | Grid | Teams missing logo, team_id, record |
+| `grid_source_disagreement` | Deterministic | Grid | >15pp source disagreement |
+| `grid_monotonicity` | Deterministic | Grid | Later round prob > earlier round prob |
+| `grid_universal_decline` | Deterministic | Grid | >75% of teams trending same direction |
+| `grid_prob_sum` | Deterministic | Grid | Championship probs not summing to ~100% |
+
+### Adding New Checks
+Add a function to the audit script following the pattern:
+```python
+def check_my_new_issue(data: dict, report: AuditReport):
+    """Check for [description of the issue]."""
+    if problem_detected:
+        report.add(AuditFinding(
+            check="my_new_issue",
+            severity=SEVERITY_WARNING,  # critical/warning/info
+            category="grid",            # event_detail/related_futures/grid
+            description="Human-readable description of the problem",
+            details={"key": "value"},   # Stable keys for fingerprinting
+        ))
+```
+Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update this table.
+
+---
+
 ## Gotchas & Tips
 
 1. **Alembic revision IDs must be <=32 characters** — `alembic_version.version_num` is `VARCHAR(32)`
@@ -466,7 +539,7 @@ Key admin API endpoints (all require `?secret=$ADMIN_SECRET`):
 9. **The Odds API bills per `events * market_types * regions`**, NOT per HTTP call. Monitor quota constantly.
 10. **`event.period` can contain clock prefixes** (e.g., `"6:55 - 1st Quarter"`) — strip before parsing
 11. **Feed loading is auth-gated intentionally** — do NOT pre-fetch anonymous feed for logged-in users
-12. **Heroku auto-deploy from GitHub does NOT work** — must `git push heroku master` directly
+12. **Heroku auto-deploy from GitHub is working** (confirmed April 2, 2026) — `git push origin master` deploys both frontend (Vercel) and backend (Heroku)
 13. **iOS models must be `Decodable` not `Codable`** and prefixed with `nonisolated` for Sendable conformance
 14. **iOS ViewModels: NO `@MainActor` on class** — only on individual async methods
 15. **`Event.sport_id` is an integer FK** to `sports.id`, NOT a string. Filter by sport key using `Sport.key` join/subquery.
