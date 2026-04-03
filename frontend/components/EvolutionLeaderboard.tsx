@@ -6,231 +6,151 @@ import type {
   DataGolfLeaderboardEntry,
 } from "@/lib/types";
 
+/**
+ * Color palette matching EvolutionChart — kept in sync for dot colors.
+ */
+const EVOLUTION_COLORS = [
+  "#c41e3a", "#005eb8", "#1d4ed8", "#0e7490", "#b91c1c",
+  "#0369a1", "#92400e", "#4338ca", "#be185d", "#065f46",
+];
+
 interface EvolutionLeaderboardProps {
-  /** History data per outcome */
   historyData: FuturesOutcomeHistory[];
-  /** IDs of outcomes currently shown on chart */
   selectedOutcomeIds: Set<number>;
-  /** Callback to toggle outcome on/off chart */
   onToggleOutcome: (outcomeId: number) => void;
-  /** ID of outcome being hovered */
+  onAddOutcome: (outcomeId: number) => void;
   highlightedOutcomeId?: number | null;
-  /** Callback when user hovers a row */
   onHoverOutcome?: (outcomeId: number | null) => void;
-  /** Optional leaderboard data from DataGolf (position, score, round, thru) */
   leaderboard?: DataGolfLeaderboardEntry[] | null;
-  /** Optional class name */
   className?: string;
 }
 
-interface LeaderboardRow {
+interface SidebarRow {
   outcomeId: number;
   name: string;
   currentProbability: number;
-  change24h: number;
-  /** DataGolf leaderboard position (e.g., "1", "T3") */
-  position?: string | null;
-  /** DataGolf total score (e.g., -12) */
-  totalScore?: number | null;
-  /** DataGolf today score (e.g., -3) */
-  todayScore?: number | null;
-  /** DataGolf thru holes (e.g., "14", "F") */
-  thru?: string | null;
-  /** Whether this participant has been eliminated */
+  color: string;
   eliminated?: boolean;
-}
-
-function formatScore(score: number | null | undefined): string {
-  if (score == null) return "";
-  if (score === 0) return "E";
-  return score > 0 ? `+${score}` : `${score}`;
 }
 
 export function EvolutionLeaderboard({
   historyData,
   selectedOutcomeIds,
   onToggleOutcome,
+  onAddOutcome,
   highlightedOutcomeId,
   onHoverOutcome,
-  leaderboard,
   className,
 }: EvolutionLeaderboardProps) {
-  // Build leaderboard rows by merging history data with DataGolf leaderboard
-  const rows = useMemo(() => {
-    // Build a lookup from player name to leaderboard entry
-    const lbLookup = new Map<string, DataGolfLeaderboardEntry>();
-    if (leaderboard) {
-      for (const entry of leaderboard) {
-        lbLookup.set(entry.name.toLowerCase(), entry);
-      }
-    }
-
-    return historyData
-      .map((outcome): LeaderboardRow => {
-        const history = outcome.history;
-        const latest = history[history.length - 1]?.probability ?? 0;
-
-        // Compute 24h change
-        const now = Date.now();
-        const cutoff24h = now - 24 * 60 * 60 * 1000;
-        let oldest24h = latest;
-        for (const point of history) {
-          const ts = new Date(point.timestamp).getTime();
-          if (ts >= cutoff24h) {
-            oldest24h = point.probability ?? latest;
-            break;
-          }
-        }
-        const change24h = latest - oldest24h;
-
-        // Try to match DataGolf leaderboard
-        const lb = lbLookup.get(outcome.name.toLowerCase());
-
-        return {
-          outcomeId: outcome.outcome_id,
-          name: outcome.name,
-          currentProbability: latest,
-          change24h,
-          position: lb?.position,
-          totalScore: lb?.total_score,
-          todayScore: lb?.today_score,
-          thru: lb?.thru,
-          eliminated: outcome.eliminated,
-        };
-      })
+  // Build sidebar rows: only show selected outcomes
+  const selectedRows = useMemo(() => {
+    const sorted = historyData
+      .filter((o) => selectedOutcomeIds.has(o.outcome_id))
       .sort((a, b) => {
-        // Push eliminated participants to the bottom
-        if (a.eliminated && !b.eliminated) return 1;
-        if (!a.eliminated && b.eliminated) return -1;
-        return b.currentProbability - a.currentProbability;
+        const aLast = a.history[a.history.length - 1]?.probability ?? 0;
+        const bLast = b.history[b.history.length - 1]?.probability ?? 0;
+        return bLast - aLast;
       });
-  }, [historyData, leaderboard]);
+    return sorted.map((o, i): SidebarRow => ({
+      outcomeId: o.outcome_id,
+      name: shortName(o.name),
+      currentProbability: o.history[o.history.length - 1]?.probability ?? 0,
+      color: o.eliminated ? "#b5b9c3" : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length],
+      eliminated: o.eliminated,
+    }));
+  }, [historyData, selectedOutcomeIds]);
 
-  const hasLeaderboardData = rows.some((r) => r.position != null);
+  // Build unselected outcomes for the dropdown
+  const unselected = useMemo(() => {
+    return historyData
+      .filter((o) => !selectedOutcomeIds.has(o.outcome_id) && !o.eliminated)
+      .sort((a, b) => {
+        const aLast = a.history[a.history.length - 1]?.probability ?? 0;
+        const bLast = b.history[b.history.length - 1]?.probability ?? 0;
+        return bLast - aLast;
+      });
+  }, [historyData, selectedOutcomeIds]);
 
   return (
-    <div className={`text-sm ${className || ""}`}>
-      {/* Header */}
-      <div className="grid gap-2 px-2 py-1.5 text-xs text-gray-500 font-medium border-b border-gray-800"
-        style={{
-          gridTemplateColumns: hasLeaderboardData
-            ? "28px 1fr 60px 50px 40px 40px 60px"
-            : "28px 1fr 60px 60px",
-        }}
-      >
-        <span></span>
-        <span className="flex items-center gap-1.5">
-          Player
-          {hasLeaderboardData && (
-            <span className="text-[9px] text-amber-400/70 bg-amber-400/10 px-1 py-0.5 rounded font-medium">
-              DataGolf
-            </span>
-          )}
-        </span>
-        {hasLeaderboardData && (
-          <>
-            <span className="text-right">Pos</span>
-            <span className="text-right">Score</span>
-            <span className="text-right">Today</span>
-            <span className="text-right">Thru</span>
-          </>
-        )}
-        <span className="text-right">Prob</span>
-        <span className="text-right">24h</span>
+    <div className={`flex flex-col ${className || ""}`}>
+      {/* Title */}
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
+        Players
       </div>
 
-      {/* Rows */}
-      <div className="max-h-[480px] overflow-y-auto">
-        {rows.map((row) => {
-          const isSelected = selectedOutcomeIds.has(row.outcomeId);
-          const isHighlighted = highlightedOutcomeId === row.outcomeId;
+      {/* Add player dropdown */}
+      {unselected.length > 0 && (
+        <select
+          className="w-full px-2 py-1.5 border border-gray-200 rounded-[5px] text-[11.5px] text-gray-700 bg-white cursor-pointer outline-none mb-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
+          value=""
+          onChange={(e) => {
+            const id = parseInt(e.target.value, 10);
+            if (!isNaN(id)) onAddOutcome(id);
+          }}
+        >
+          <option value="">Find player...</option>
+          {unselected.map((o) => (
+            <option key={o.outcome_id} value={o.outcome_id}>
+              {shortName(o.name)} — {((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%
+            </option>
+          ))}
+        </select>
+      )}
 
+      {/* Player list */}
+      <div className="flex flex-col overflow-y-auto">
+        {selectedRows.map((row) => {
+          const isHighlighted = highlightedOutcomeId === row.outcomeId;
           return (
             <div
               key={row.outcomeId}
-              className={`grid gap-2 px-2 py-2 cursor-pointer transition-colors border-b border-gray-800/50 ${
-                isHighlighted
-                  ? "bg-white/10"
-                  : "hover:bg-white/5"
+              className={`flex items-center gap-1.5 px-1 py-[4px] rounded text-xs cursor-default transition-colors ${
+                isHighlighted ? "bg-gray-100" : "hover:bg-gray-50"
               }`}
-              style={{
-                gridTemplateColumns: hasLeaderboardData
-                  ? "28px 1fr 60px 50px 40px 40px 60px"
-                  : "28px 1fr 60px 60px",
-              }}
-              onClick={() => onToggleOutcome(row.outcomeId)}
               onMouseEnter={() => onHoverOutcome?.(row.outcomeId)}
               onMouseLeave={() => onHoverOutcome?.(null)}
             >
-              {/* Toggle checkbox */}
-              <div className="flex items-center justify-center">
-                <div
-                  className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] ${
-                    isSelected
-                      ? "border-yellow-400 bg-yellow-400/20 text-yellow-400"
-                      : "border-gray-600 text-transparent"
-                  }`}
-                >
-                  ✓
-                </div>
-              </div>
+              {/* Color dot */}
+              <span
+                className="w-[7px] h-[7px] rounded-full flex-shrink-0"
+                style={{ backgroundColor: row.color }}
+              />
 
               {/* Name */}
-              <span
-                className={`truncate flex items-center gap-1.5 ${
-                  row.eliminated
-                    ? "text-gray-600 line-through"
-                    : isSelected ? "text-white" : "text-gray-400"
-                }`}
-              >
+              <span className={`flex-1 min-w-0 font-medium truncate ${
+                row.eliminated ? "text-gray-400 line-through" : "text-gray-900"
+              }`}>
                 {row.name}
-                {row.eliminated && (
-                  <span className="text-[9px] text-red-400/70 bg-red-400/10 px-1 py-0.5 rounded font-medium no-underline inline-block">
-                    OUT
-                  </span>
-                )}
               </span>
 
-              {/* DataGolf leaderboard columns */}
-              {hasLeaderboardData && (
-                <>
-                  <span className="text-right text-gray-300 font-mono">
-                    {row.position ?? "—"}
-                  </span>
-                  <span className="text-right text-gray-300 font-mono">
-                    {formatScore(row.totalScore)}
-                  </span>
-                  <span className="text-right text-gray-400 font-mono text-xs">
-                    {formatScore(row.todayScore)}
-                  </span>
-                  <span className="text-right text-gray-400 font-mono text-xs">
-                    {row.thru ?? "—"}
-                  </span>
-                </>
-              )}
-
               {/* Probability */}
-              <span className="text-right text-white font-mono">
+              <span className="text-[11px] text-gray-600 tabular-nums flex-shrink-0">
                 {(row.currentProbability * 100).toFixed(1)}%
               </span>
 
-              {/* 24h change */}
-              <span
-                className={`text-right font-mono text-xs ${
-                  row.change24h > 0.005
-                    ? "text-green-400"
-                    : row.change24h < -0.005
-                      ? "text-red-400"
-                      : "text-gray-500"
-                }`}
+              {/* Remove button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleOutcome(row.outcomeId);
+                }}
+                className="text-gray-300 hover:text-red-500 hover:bg-red-50 rounded px-0.5 text-xs leading-none transition-colors flex-shrink-0"
+                title="Remove"
               >
-                {row.change24h > 0 ? "+" : ""}
-                {(row.change24h * 100).toFixed(1)}%
-              </span>
+                &times;
+              </button>
             </div>
           );
         })}
       </div>
     </div>
   );
+}
+
+/** Extract last name or short display name */
+function shortName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length <= 1) return fullName;
+  // Return last name only for golf players
+  return parts[parts.length - 1];
 }

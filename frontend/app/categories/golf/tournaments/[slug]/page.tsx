@@ -436,9 +436,8 @@ export default function GolfTournamentPage() {
 // Leaderboard Grid
 // ============================================================================
 
-// Grid template columns for desktop
-const GRID_LIVE = "grid-cols-[40px_1fr_64px_56px_48px_88px_72px_72px_72px]";
-const GRID_PRE = "grid-cols-[40px_1fr_88px_72px]";
+// Grid template columns for desktop — always show all columns
+const GRID_COLS = "grid-cols-[40px_1fr_64px_56px_48px_88px_72px_72px_72px]";
 
 function LeaderboardGrid({
   golfers,
@@ -454,32 +453,22 @@ function LeaderboardGrid({
   const [showAll, setShowAll] = useState(false);
   const INITIAL_SHOW = 30;
   const displayGolfers = showAll ? golfers : golfers.slice(0, INITIAL_SHOW);
-  const gridCols = isLive ? GRID_LIVE : GRID_PRE;
 
   return (
     <section>
       {/* ── Desktop grid ── */}
       <div className="hidden sm:block border border-gray-200 rounded-xl overflow-hidden bg-white">
         {/* Header row */}
-        <div className={`grid ${gridCols} gap-1 text-[10px] text-gray-400 uppercase tracking-wider font-semibold px-3 py-2.5 border-b border-gray-200`}>
+        <div className={`grid ${GRID_COLS} gap-1 text-[10px] text-gray-500 uppercase tracking-wider font-semibold px-3 py-2.5 border-b border-gray-200`}>
           <div>Pos</div>
           <div>Golfer</div>
-          {isLive && (
-            <>
-              <div className="text-center">Score</div>
-              <div className="text-center">Today</div>
-              <div className="text-center">Thru</div>
-            </>
-          )}
+          <div className="text-center">Score</div>
+          <div className="text-center">Today</div>
+          <div className="text-center">Thru</div>
           <div className="text-center" style={{ color: accentColor }}>Win</div>
-          {isLive && (
-            <>
-              <div className="text-center">Top 5</div>
-              <div className="text-center">Top 10</div>
-              <div className="text-center">Top 20</div>
-            </>
-          )}
-          {!isLive && <div className="text-center">24h</div>}
+          <div className="text-center">Top 5</div>
+          <div className="text-center">Top 10</div>
+          <div className="text-center">Top 20</div>
         </div>
 
         {/* Golfer rows */}
@@ -490,9 +479,7 @@ function LeaderboardGrid({
               golfer={golfer}
               isLeader={i === 0}
               accentColor={accentColor}
-              isLive={isLive}
               hasSnapshot={hasSnapshot}
-              gridCols={gridCols}
             />
           ))}
         </div>
@@ -581,47 +568,42 @@ function DesktopRow({
   golfer,
   isLeader,
   accentColor,
-  isLive,
   hasSnapshot,
-  gridCols,
 }: {
   golfer: MergedGolfer;
   isLeader: boolean;
   accentColor: string;
-  isLive: boolean;
   hasSnapshot: boolean;
-  gridCols: string;
 }) {
   const scoreColor =
     golfer.totalScoreRaw != null && golfer.totalScoreRaw < 0
       ? "text-green-600"
-      : "";
+      : golfer.score === "\u2014" ? "text-gray-300" : "";
 
   const todayColor =
     golfer.todayRaw != null && golfer.todayRaw < 0
       ? "text-green-600"
       : golfer.todayRaw != null && golfer.todayRaw > 0
         ? "text-red-500"
-        : "text-gray-400";
+        : "text-gray-300";
 
-  // Win prob change indicator
+  // Win prob change indicator (live snapshot or 24h movement for pre-tournament)
   const wpc = golfer.winProbChange;
-  let wpcDisplay = "";
-  let wpcColor = "";
-  if (hasSnapshot && wpc != null && Math.abs(wpc) >= 0.1) {
-    wpcDisplay = wpc > 0 ? `\u2191${wpc.toFixed(1)}` : `\u2193${Math.abs(wpc).toFixed(1)}`;
-    wpcColor = wpc > 0 ? "text-green-600" : "text-red-500";
-  }
-
-  // 24h movement for pre-tournament
   const mv = golfer.movement24h;
-  const hasMv = mv != null && Math.abs(mv) >= 0.005;
-  const mvDelta = hasMv ? Math.abs(Math.round(mv! * 100)) : 0;
-  const mvUp = hasMv && mv! > 0;
+  let changeDisplay = "";
+  let changeColor = "";
+  if (hasSnapshot && wpc != null && Math.abs(wpc) >= 0.1) {
+    changeDisplay = wpc > 0 ? `\u2191${wpc.toFixed(1)}` : `\u2193${Math.abs(wpc).toFixed(1)}`;
+    changeColor = wpc > 0 ? "text-green-600" : "text-red-500";
+  } else if (mv != null && Math.abs(mv) >= 0.005) {
+    const delta = Math.abs(Math.round(mv * 100));
+    changeDisplay = mv > 0 ? `\u2191${delta}` : `\u2193${delta}`;
+    changeColor = mv > 0 ? "text-green-600" : "text-red-500";
+  }
 
   return (
     <div
-      className={`grid ${gridCols} gap-1 items-center rounded-lg px-3 py-3 ${
+      className={`grid ${GRID_COLS} gap-1 items-center rounded-lg px-3 py-3 ${
         isLeader ? "border" : "hover:bg-gray-50"
       }`}
       style={
@@ -643,20 +625,20 @@ function DesktopRow({
         <div className="text-sm font-semibold text-gray-900">{golfer.name}</div>
       </div>
 
-      {/* Score / Today / Thru — live only */}
-      {isLive && (
-        <>
-          <div className={`text-center font-mono text-sm font-bold tabular-nums ${scoreColor}`}>
-            {golfer.score}
-          </div>
-          <div className={`text-center font-mono text-xs tabular-nums ${todayColor}`}>
-            {golfer.today}
-          </div>
-          <div className="text-center font-mono text-xs tabular-nums text-gray-400">
-            {golfer.thru}
-          </div>
-        </>
-      )}
+      {/* Score */}
+      <div className={`text-center font-mono text-sm font-bold tabular-nums ${scoreColor}`}>
+        {golfer.score}
+      </div>
+
+      {/* Today */}
+      <div className={`text-center font-mono text-xs tabular-nums ${todayColor}`}>
+        {golfer.today}
+      </div>
+
+      {/* Thru */}
+      <div className="text-center font-mono text-xs tabular-nums text-gray-300">
+        {golfer.thru || "\u2014"}
+      </div>
 
       {/* Win probability */}
       <div className="text-center">
@@ -666,40 +648,25 @@ function DesktopRow({
         >
           {golfer.winProb.toFixed(1)}%
         </span>
-        {wpcDisplay && (
-          <span className={`text-[9px] ml-1 ${wpcColor}`}>{wpcDisplay}</span>
+        {changeDisplay && (
+          <span className={`text-[9px] ml-1 ${changeColor}`}>{changeDisplay}</span>
         )}
       </div>
 
-      {/* Top 5 / Top 10 / Top 20 — live only */}
-      {isLive && (
-        <>
-          <div className="text-center font-mono text-xs tabular-nums text-gray-500">
-            {golfer.top5Prob != null ? `${Math.round(golfer.top5Prob)}%` : "\u2014"}
-          </div>
-          <div className="text-center font-mono text-xs tabular-nums text-gray-500">
-            {golfer.top10Prob != null ? `${Math.round(golfer.top10Prob)}%` : "\u2014"}
-          </div>
-          <div className="text-center font-mono text-xs tabular-nums text-gray-500">
-            {golfer.top20Prob != null ? `${Math.round(golfer.top20Prob)}%` : "\u2014"}
-          </div>
-        </>
-      )}
+      {/* Top 5 */}
+      <div className="text-center font-mono text-xs tabular-nums text-gray-500">
+        {golfer.top5Prob != null ? `${Math.round(golfer.top5Prob)}%` : "\u2014"}
+      </div>
 
-      {/* 24h movement — pre-tournament only */}
-      {!isLive && (
-        <div
-          className={`text-center tabular-nums text-xs ${
-            hasMv
-              ? mvUp
-                ? "text-green-600 font-semibold"
-                : "text-red-500 font-semibold"
-              : "text-gray-300"
-          }`}
-        >
-          {hasMv ? (mvUp ? `\u25B2${mvDelta}%` : `\u25BC${mvDelta}%`) : "\u2014"}
-        </div>
-      )}
+      {/* Top 10 */}
+      <div className="text-center font-mono text-xs tabular-nums text-gray-500">
+        {golfer.top10Prob != null ? `${Math.round(golfer.top10Prob)}%` : "\u2014"}
+      </div>
+
+      {/* Top 20 */}
+      <div className="text-center font-mono text-xs tabular-nums text-gray-500">
+        {golfer.top20Prob != null ? `${Math.round(golfer.top20Prob)}%` : "\u2014"}
+      </div>
     </div>
   );
 }
