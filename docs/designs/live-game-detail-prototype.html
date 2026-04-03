@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BainLuck - Live Game Detail Prototype</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+      colors: {
+        surface: { DEFAULT: '#FFFFFF', secondary: '#F8F9FA', tertiary: '#F1F3F5' },
+        ink: { DEFAULT: '#1A1A1A', secondary: '#6B7280', tertiary: '#9CA3AF', faint: '#D1D5DB' },
+        accent: { DEFAULT: '#2563EB', light: '#EFF6FF', dark: '#1D4ED8' },
+        celtics: '#007A33',
+        thunder: '#007AC1',
+        positive: '#16A34A',
+        negative: '#DC2626',
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { -webkit-font-smoothing: antialiased; }
+  .state-btn.active { background: #1A1A1A; color: white; }
+  .device-btn.active { background: #2563EB; color: white; }
+
+  /* Chart tooltip */
+  .chart-container { position: relative; }
+  .scrub-line { opacity: 0; transition: opacity 0.15s; }
+  .chart-container:hover .scrub-line { opacity: 1; }
+
+  /* Ribbon */
+  .phase-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .phase-connector { height: 2px; flex: 1; min-width: 12px; }
+
+  /* iPhone frame */
+  .iphone-frame {
+    width: 390px; height: 844px;
+    border-radius: 44px;
+    border: 8px solid #1A1A1A;
+    overflow: hidden;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.15);
+  }
+  .iphone-notch {
+    width: 126px; height: 34px;
+    background: #1A1A1A;
+    border-radius: 0 0 20px 20px;
+    margin: 0 auto;
+  }
+
+  /* Probability animation */
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+  .pulse-soft { animation: pulse-soft 2s ease-in-out infinite; }
+
+  /* Chart area */
+  .chart-gradient-home { fill: url(#homeGradient); }
+  .chart-gradient-away { fill: url(#awayGradient); }
+
+  /* Smooth transitions */
+  .transition-all-smooth { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+</style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+<!-- Controls Bar -->
+<div class="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-b border-gray-200 px-6 py-3">
+  <div class="max-w-7xl mx-auto flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-sm font-semibold text-ink">Prototype Controls</span>
+      <div class="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+        <button onclick="setState('pregame')" class="state-btn px-3 py-1.5 rounded-md text-xs font-medium text-ink-secondary hover:bg-gray-200 transition-all" data-state="pregame">Pregame</button>
+        <button onclick="setState('live')" class="state-btn active px-3 py-1.5 rounded-md text-xs font-medium text-ink-secondary hover:bg-gray-200 transition-all" data-state="live">Live</button>
+        <button onclick="setState('final')" class="state-btn px-3 py-1.5 rounded-md text-xs font-medium text-ink-secondary hover:bg-gray-200 transition-all" data-state="final">Final</button>
+      </div>
+    </div>
+    <div class="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+      <button onclick="setDevice('web')" class="device-btn active px-3 py-1.5 rounded-md text-xs font-medium text-ink-secondary hover:bg-blue-50 transition-all" data-device="web">Web</button>
+      <button onclick="setDevice('iphone')" class="device-btn px-3 py-1.5 rounded-md text-xs font-medium text-ink-secondary hover:bg-blue-50 transition-all" data-device="iphone">iPhone</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- WEB LAYOUT -->
+<!-- ============================================ -->
+<div id="web-layout" class="pt-20 pb-16">
+  <div class="max-w-3xl mx-auto px-4">
+
+    <!-- ========== 1. GAME HERO ========== -->
+    <section id="hero" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-3">
+
+      <!-- Update Status Bar -->
+      <div id="update-bar" class="px-5 py-2 flex items-center justify-between border-b border-gray-50">
+        <!-- Pregame -->
+        <div id="status-pregame" class="hidden w-full flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            <span class="text-xs font-medium text-amber-600">Pregame</span>
+          </div>
+          <span class="text-xs text-ink-tertiary">Tipoff at 7:30 PM ET</span>
+        </div>
+        <!-- Live -->
+        <div id="status-live" class="w-full flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-soft"></span>
+            <span class="text-xs font-medium text-emerald-600">Live</span>
+            <span class="text-[10px] text-ink-tertiary ml-1">Updated 12s ago</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-xs text-ink-tertiary">
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            <span>Next update in <span class="font-mono font-medium text-ink-secondary">18s</span></span>
+          </div>
+        </div>
+        <!-- Final -->
+        <div id="status-final" class="hidden w-full flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-ink-tertiary"></span>
+            <span class="text-xs font-medium text-ink-secondary">Final</span>
+          </div>
+          <span class="text-xs text-ink-tertiary">March 25, 2026</span>
+        </div>
+      </div>
+
+      <!-- Main Hero Content -->
+      <div class="px-6 py-6">
+        <!-- Teams Row -->
+        <div class="flex items-center justify-between">
+          <!-- Home Team -->
+          <div class="flex flex-col items-center flex-1">
+            <div class="w-16 h-16 rounded-2xl bg-celtics/10 flex items-center justify-center mb-2">
+              <span class="text-2xl font-bold text-celtics">BOS</span>
+            </div>
+            <span class="text-sm font-semibold text-ink">Celtics</span>
+            <span id="home-score-web" class="text-3xl font-bold text-ink mt-1 tabular-nums">87</span>
+          </div>
+
+          <!-- Center: Probability + Game State -->
+          <div class="flex flex-col items-center px-6 flex-shrink-0">
+            <!-- Game Phase Badge -->
+            <div id="phase-badge" class="mb-3">
+              <span id="phase-pregame-badge" class="hidden px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold">
+                7:30 PM ET
+              </span>
+              <span id="phase-live-badge" class="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold">
+                3rd Quarter &middot; 4:32
+              </span>
+              <span id="phase-final-badge" class="hidden px-3 py-1 rounded-full bg-gray-100 text-ink-secondary text-xs font-semibold">
+                Final
+              </span>
+            </div>
+
+            <!-- Giant Probability -->
+            <div class="relative flex items-baseline gap-1">
+              <span id="home-prob-web" class="text-5xl font-extrabold tracking-tight" style="color: #007A33">68</span>
+              <span class="text-2xl font-bold text-ink-faint">-</span>
+              <span id="away-prob-web" class="text-5xl font-extrabold tracking-tight" style="color: #007AC1">32</span>
+            </div>
+            <span class="text-xs text-ink-tertiary mt-1 tracking-wide uppercase">Win Probability %</span>
+
+            <!-- Trend Arrow -->
+            <div id="trend-indicator" class="flex items-center gap-1 mt-2">
+              <svg class="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+              <span class="text-xs font-semibold text-emerald-600">+5% since start</span>
+            </div>
+          </div>
+
+          <!-- Away Team -->
+          <div class="flex flex-col items-center flex-1">
+            <div class="w-16 h-16 rounded-2xl bg-thunder/10 flex items-center justify-center mb-2">
+              <span class="text-2xl font-bold text-thunder">OKC</span>
+            </div>
+            <span class="text-sm font-semibold text-ink">Thunder</span>
+            <span id="away-score-web" class="text-3xl font-bold text-ink mt-1 tabular-nums">71</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 2. GAME-STATE RIBBON ========== -->
+    <section id="ribbon" class="bg-white rounded-2xl shadow-sm border border-gray-100 px-5 py-4 mb-3">
+      <div class="flex items-center gap-1">
+        <!-- Each phase -->
+        <div class="flex flex-col items-center">
+          <div class="phase-dot bg-ink"></div>
+          <span class="text-[10px] font-semibold text-ink mt-1.5">1Q</span>
+        </div>
+        <div class="phase-connector bg-ink"></div>
+
+        <div class="flex flex-col items-center">
+          <div class="phase-dot bg-ink"></div>
+          <span class="text-[10px] font-semibold text-ink mt-1.5">2Q</span>
+        </div>
+        <div class="phase-connector bg-ink"></div>
+
+        <div class="flex flex-col items-center">
+          <div class="phase-dot bg-ink/30"></div>
+          <span class="text-[10px] font-medium text-ink-tertiary mt-1.5">HT</span>
+        </div>
+        <div class="phase-connector bg-ink"></div>
+
+        <div id="ribbon-3q" class="flex flex-col items-center relative">
+          <div class="phase-dot bg-emerald-500 ring-4 ring-emerald-100"></div>
+          <span class="text-[10px] font-bold text-emerald-600 mt-1.5">3Q</span>
+          <span class="absolute -top-5 text-[9px] font-medium text-emerald-600 whitespace-nowrap">4:32</span>
+        </div>
+        <div class="phase-connector bg-gray-200"></div>
+
+        <div class="flex flex-col items-center">
+          <div class="phase-dot bg-gray-200"></div>
+          <span class="text-[10px] font-medium text-ink-faint mt-1.5">4Q</span>
+        </div>
+        <div class="phase-connector bg-gray-200"></div>
+
+        <div class="flex flex-col items-center">
+          <div class="phase-dot bg-gray-200 border border-gray-300"></div>
+          <span class="text-[10px] font-medium text-ink-faint mt-1.5">Final</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 3. MAIN PROBABILITY CHART ========== -->
+    <section id="chart-section" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-3">
+      <!-- Chart Header -->
+      <div class="px-5 pt-4 pb-2 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-ink">Win Probability</h2>
+        <div class="flex bg-gray-100 rounded-lg p-0.5">
+          <button id="filter-all" onclick="setFilter('all')" class="px-3 py-1 rounded-md text-xs font-medium text-ink-secondary hover:bg-white transition-all">All</button>
+          <button id="filter-live" onclick="setFilter('live')" class="px-3 py-1 rounded-md text-xs font-medium bg-white shadow-sm text-ink transition-all">Since Start</button>
+        </div>
+      </div>
+
+      <!-- Chart Area -->
+      <div class="chart-container px-2 pb-2">
+        <svg id="prob-chart" viewBox="0 0 700 320" class="w-full" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <linearGradient id="homeGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#007A33" stop-opacity="0.12"/>
+              <stop offset="100%" stop-color="#007A33" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="awayGradient" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stop-color="#007AC1" stop-opacity="0.12"/>
+              <stop offset="100%" stop-color="#007AC1" stop-opacity="0"/>
+            </linearGradient>
+            <clipPath id="chartClip"><rect x="45" y="20" width="630" height="260"/></clipPath>
+          </defs>
+
+          <!-- Y-Axis Labels (Mirrored 100-50-100) -->
+          <text x="38" y="30" text-anchor="end" class="text-[10px] fill-celtics/60" font-weight="600" font-family="Inter">100%</text>
+          <text x="38" y="85" text-anchor="end" class="text-[10px] fill-celtics/40" font-family="Inter">75%</text>
+          <text x="38" y="152" text-anchor="end" class="text-[10px] fill-ink-tertiary" font-weight="600" font-family="Inter">50/50</text>
+          <text x="38" y="218" text-anchor="end" class="text-[10px] fill-thunder/40" font-family="Inter">75%</text>
+          <text x="38" y="275" text-anchor="end" class="text-[10px] fill-thunder/60" font-weight="600" font-family="Inter">100%</text>
+
+          <!-- Team Labels on Y-Axis -->
+          <text x="6" y="65" text-anchor="start" class="text-[9px] fill-celtics/70" font-weight="700" font-family="Inter" transform="rotate(-90 6 65)">BOS</text>
+          <text x="6" y="245" text-anchor="start" class="text-[9px] fill-thunder/70" font-weight="700" font-family="Inter" transform="rotate(-90 6 245)">OKC</text>
+
+          <!-- Grid Lines -->
+          <line x1="45" y1="150" x2="675" y2="150" stroke="#E5E7EB" stroke-width="1.5"/>
+          <line x1="45" y1="85" x2="675" y2="85" stroke="#F3F4F6" stroke-width="0.5"/>
+          <line x1="45" y1="215" x2="675" y2="215" stroke="#F3F4F6" stroke-width="0.5"/>
+
+          <!-- Pregame zone shading -->
+          <rect x="45" y="20" width="120" height="260" fill="#F9FAFB" opacity="0.7"/>
+          <line x1="165" y1="20" x2="165" y2="280" stroke="#E5E7EB" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="105" y="295" text-anchor="middle" class="text-[9px] fill-ink-faint" font-family="Inter">Pregame</text>
+
+          <!-- Period markers -->
+          <line x1="292" y1="20" x2="292" y2="280" stroke="#F3F4F6" stroke-width="1"/>
+          <text x="292" y="295" text-anchor="middle" class="text-[9px] fill-ink-tertiary" font-weight="500" font-family="Inter">2Q</text>
+          <line x1="420" y1="20" x2="420" y2="280" stroke="#F3F4F6" stroke-width="1"/>
+          <text x="420" y="295" text-anchor="middle" class="text-[9px] fill-ink-tertiary" font-weight="500" font-family="Inter">HT</text>
+          <line x1="480" y1="20" x2="480" y2="280" stroke="#F3F4F6" stroke-width="1"/>
+          <text x="480" y="295" text-anchor="middle" class="text-[9px] fill-ink-tertiary" font-weight="500" font-family="Inter">3Q</text>
+
+          <!-- Game start marker -->
+          <text x="165" y="15" text-anchor="middle" class="text-[8px] fill-ink-tertiary" font-weight="500" font-family="Inter">Tipoff 7:30 PM</text>
+
+          <!-- "Now" marker -->
+          <line x1="610" y1="20" x2="610" y2="280" stroke="#16A34A" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.5"/>
+          <text x="610" y="15" text-anchor="middle" class="text-[8px] fill-emerald-500" font-weight="600" font-family="Inter">Now</text>
+
+          <!-- Probability line - home fill area -->
+          <g clip-path="url(#chartClip)">
+            <path d="M45,150 L80,148 L120,145 L165,142
+              L190,138 L220,130 L250,120 L280,115
+              L310,108 L340,100 L360,105 L380,112
+              L400,108 L420,110 L440,100 L460,95
+              L480,92 L500,85 L520,90 L540,88
+              L560,80 L580,75 L600,72 L610,70
+              L610,150 L45,150 Z"
+              fill="url(#homeGradient)"/>
+            <path d="M45,150 L80,152 L120,155 L165,158
+              L190,162 L220,170 L250,180 L280,185
+              L310,192 L340,200 L360,195 L380,188
+              L400,192 L420,190 L440,200 L460,205
+              L480,208 L500,215 L520,210 L540,212
+              L560,220 L580,225 L600,228 L610,230
+              L610,150 L45,150 Z"
+              fill="url(#awayGradient)"/>
+          </g>
+
+          <!-- Main probability line -->
+          <path d="M45,150 L80,148 L120,145 L165,142
+            L190,138 L220,130 L250,120 L280,115
+            L310,108 L340,100 L360,105 L380,112
+            L400,108 L420,110 L440,100 L460,95
+            L480,92 L500,85 L520,90 L540,88
+            L560,80 L580,75 L600,72 L610,70"
+            fill="none" stroke="#007A33" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            clip-path="url(#chartClip)"/>
+
+          <!-- Current point dot -->
+          <circle cx="610" cy="70" r="5" fill="#007A33" stroke="white" stroke-width="2.5"/>
+
+          <!-- Current probability label -->
+          <rect x="620" y="60" width="48" height="22" rx="6" fill="#007A33"/>
+          <text x="644" y="75" text-anchor="middle" fill="white" class="text-[11px]" font-weight="700" font-family="Inter">68%</text>
+
+          <!-- X-Axis time labels -->
+          <text x="45" y="310" text-anchor="start" class="text-[9px] fill-ink-faint" font-family="Inter">5:00 PM</text>
+          <text x="165" y="310" text-anchor="middle" class="text-[9px] fill-ink-tertiary" font-weight="500" font-family="Inter">7:30</text>
+          <text x="400" y="310" text-anchor="middle" class="text-[9px] fill-ink-faint" font-family="Inter">8:30</text>
+          <text x="610" y="310" text-anchor="middle" class="text-[9px] fill-ink-faint" font-family="Inter">9:15</text>
+
+          <!-- Hover scrub line (hidden by default) -->
+          <g class="scrub-line">
+            <line x1="400" y1="20" x2="400" y2="280" stroke="#1A1A1A" stroke-width="1" opacity="0.3"/>
+            <rect x="370" y="108" width="60" height="36" rx="8" fill="#1A1A1A"/>
+            <text x="400" y="122" text-anchor="middle" fill="white" class="text-[9px]" font-weight="600" font-family="Inter">BOS 62%</text>
+            <text x="400" y="136" text-anchor="middle" fill="white" class="text-[9px]" font-weight="400" font-family="Inter" opacity="0.7">OKC 38%</text>
+          </g>
+        </svg>
+      </div>
+
+      <!-- Chart Footer - source attribution -->
+      <div class="px-5 py-2.5 border-t border-gray-50 flex items-center justify-between">
+        <div class="flex items-center gap-1.5">
+          <div class="w-2 h-2 rounded-full bg-celtics"></div>
+          <span class="text-[10px] text-ink-tertiary">BainLuck Composite</span>
+        </div>
+        <span class="text-[10px] text-ink-faint">Aggregated from 4 sources</span>
+      </div>
+    </section>
+
+    <!-- ========== 4. COMPARISON MODULE ========== -->
+    <section id="comparison" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-3">
+      <div class="px-5 pt-4 pb-3">
+        <h2 class="text-sm font-semibold text-ink">Source Comparison</h2>
+        <p class="text-xs text-ink-tertiary mt-0.5">How different sources see this game</p>
+      </div>
+
+      <!-- BainLuck (Primary) -->
+      <div class="mx-4 mb-2 px-4 py-3.5 rounded-xl bg-gray-50 border border-gray-100">
+        <div class="flex items-center justify-between mb-2.5">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-md bg-ink flex items-center justify-center">
+              <span class="text-[9px] font-bold text-white">BL</span>
+            </div>
+            <div>
+              <span class="text-xs font-semibold text-ink">BainLuck</span>
+              <span class="text-[10px] text-ink-tertiary ml-1.5">Composite</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-1">
+            <svg class="w-3 h-3 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+            <span class="text-[10px] font-medium text-emerald-600">+5%</span>
+          </div>
+        </div>
+        <!-- Probability Bar -->
+        <div class="flex items-center gap-3">
+          <span class="text-lg font-bold tabular-nums" style="color: #007A33">68%</span>
+          <div class="flex-1 h-2 rounded-full bg-gray-200 overflow-hidden flex">
+            <div class="h-full rounded-full" style="width: 68%; background: #007A33"></div>
+          </div>
+          <span class="text-lg font-bold tabular-nums" style="color: #007AC1">32%</span>
+        </div>
+      </div>
+
+      <!-- Secondary Sources -->
+      <div class="px-4 pb-4 space-y-1.5">
+        <!-- Sportsbooks -->
+        <div class="px-4 py-3 rounded-xl hover:bg-gray-50 transition-colors">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <div class="w-5 h-5 rounded bg-emerald-100 flex items-center justify-center">
+                <span class="text-[8px] font-bold text-emerald-700">SB</span>
+              </div>
+              <span class="text-xs font-medium text-ink-secondary">Sportsbook Consensus</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <svg class="w-3 h-3 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+              <span class="text-[10px] font-medium text-emerald-600">+3%</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-semibold tabular-nums text-ink-secondary">65%</span>
+            <div class="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden flex">
+              <div class="h-full rounded-full bg-ink-tertiary" style="width: 65%"></div>
+            </div>
+            <span class="text-sm font-semibold tabular-nums text-ink-secondary">35%</span>
+          </div>
+        </div>
+
+        <!-- Kalshi -->
+        <div class="px-4 py-3 rounded-xl hover:bg-gray-50 transition-colors">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <div class="w-5 h-5 rounded bg-violet-100 flex items-center justify-center">
+                <span class="text-[8px] font-bold text-violet-700">K</span>
+              </div>
+              <span class="text-xs font-medium text-ink-secondary">Kalshi</span>
+              <span class="text-[10px] text-ink-faint">Prediction Market</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <svg class="w-3 h-3 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+              <span class="text-[10px] font-medium text-emerald-600">+7%</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-semibold tabular-nums text-ink-secondary">71%</span>
+            <div class="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden flex">
+              <div class="h-full rounded-full bg-violet-400" style="width: 71%"></div>
+            </div>
+            <span class="text-sm font-semibold tabular-nums text-ink-secondary">29%</span>
+          </div>
+        </div>
+
+        <!-- Divergence callout -->
+        <div class="mx-4 mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100">
+          <div class="flex items-start gap-2">
+            <svg class="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <p class="text-[11px] text-amber-700 leading-relaxed">
+              <span class="font-semibold">6% divergence</span> between Kalshi (71%) and sportsbooks (65%). Prediction markets are more bullish on the Celtics.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 5. UPDATE STATES (shown as examples) ========== -->
+    <section id="update-states" class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-3">
+      <div class="px-5 pt-4 pb-3">
+        <h2 class="text-sm font-semibold text-ink">Update States</h2>
+        <p class="text-xs text-ink-tertiary mt-0.5">How data freshness is communicated</p>
+      </div>
+      <div class="px-4 pb-4 space-y-2">
+        <!-- Fresh / Countdown -->
+        <div class="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gray-50">
+          <div class="flex items-center gap-2 flex-1">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span class="text-xs font-medium text-emerald-700">Live</span>
+          </div>
+          <span class="text-[11px] text-ink-tertiary font-mono">Next update in 18s</span>
+        </div>
+        <!-- Currently Updating -->
+        <div class="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-100">
+          <div class="flex items-center gap-2 flex-1">
+            <svg class="w-3.5 h-3.5 text-blue-500 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-dasharray="32" stroke-dashoffset="12"/></svg>
+            <span class="text-xs font-medium text-blue-700">Updating...</span>
+          </div>
+          <span class="text-[11px] text-blue-500">Fetching latest odds</span>
+        </div>
+        <!-- Stale / Delayed -->
+        <div class="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-100">
+          <div class="flex items-center gap-2 flex-1">
+            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            <span class="text-xs font-medium text-amber-700">Delayed</span>
+          </div>
+          <span class="text-[11px] text-amber-600">Last update 3m ago</span>
+        </div>
+        <!-- Final -->
+        <div class="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gray-50">
+          <div class="flex items-center gap-2 flex-1">
+            <span class="w-2 h-2 rounded-full bg-ink-faint"></span>
+            <span class="text-xs font-medium text-ink-secondary">Final</span>
+          </div>
+          <span class="text-[11px] text-ink-tertiary">Game ended at 10:12 PM ET</span>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- iPHONE LAYOUT -->
+<!-- ============================================ -->
+<div id="iphone-layout" class="hidden pt-20 pb-16 flex justify-center">
+  <div class="iphone-frame bg-white">
+    <div class="iphone-notch"></div>
+    <div class="h-full overflow-y-auto pb-8" style="max-height: calc(100% - 34px)">
+
+      <!-- Status Bar (fake iOS) -->
+      <div class="flex items-center justify-between px-6 pt-1 pb-2">
+        <span class="text-[11px] font-semibold text-ink">9:15</span>
+        <div class="flex items-center gap-1">
+          <svg class="w-3.5 h-3.5 text-ink" fill="currentColor" viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3a4.237 4.237 0 00-6 0zm-4-4l2 2a7.074 7.074 0 0110 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>
+          <svg class="w-3.5 h-3.5 text-ink" fill="currentColor" viewBox="0 0 24 24"><rect x="17" y="6" width="4" height="14" rx="1"/><rect x="11" y="9" width="4" height="11" rx="1"/><rect x="5" y="12" width="4" height="8" rx="1"/></svg>
+          <div class="w-6 h-3 border border-ink rounded-sm ml-0.5 relative"><div class="absolute inset-0.5 bg-ink rounded-[1px]" style="width:70%"></div></div>
+        </div>
+      </div>
+
+      <!-- Back nav -->
+      <div class="flex items-center px-4 py-2">
+        <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        <span class="text-sm text-accent font-medium ml-0.5">Back</span>
+      </div>
+
+      <!-- Mobile Hero -->
+      <div class="px-4 pb-3">
+        <!-- Update status -->
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-soft"></span>
+            <span class="text-[10px] font-semibold text-emerald-600">Live</span>
+            <span class="text-[10px] text-ink-faint">12s ago</span>
+          </div>
+          <span class="text-[10px] text-ink-faint font-mono">Next: 18s</span>
+        </div>
+
+        <!-- Teams + Score + Probability -->
+        <div class="flex items-center justify-between">
+          <!-- Home -->
+          <div class="flex flex-col items-center w-20">
+            <div class="w-12 h-12 rounded-xl bg-celtics/10 flex items-center justify-center mb-1">
+              <span class="text-base font-bold text-celtics">BOS</span>
+            </div>
+            <span class="text-[11px] font-semibold text-ink">Celtics</span>
+            <span class="text-2xl font-bold text-ink tabular-nums">87</span>
+          </div>
+
+          <!-- Center Prob -->
+          <div class="flex flex-col items-center">
+            <span class="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-semibold mb-1.5">
+              3Q &middot; 4:32
+            </span>
+            <div class="flex items-baseline gap-0.5">
+              <span class="text-4xl font-extrabold tracking-tight" style="color: #007A33">68</span>
+              <span class="text-xl font-bold text-ink-faint">-</span>
+              <span class="text-4xl font-extrabold tracking-tight" style="color: #007AC1">32</span>
+            </div>
+            <span class="text-[9px] text-ink-tertiary tracking-widest uppercase mt-0.5">Win Prob %</span>
+          </div>
+
+          <!-- Away -->
+          <div class="flex flex-col items-center w-20">
+            <div class="w-12 h-12 rounded-xl bg-thunder/10 flex items-center justify-center mb-1">
+              <span class="text-base font-bold text-thunder">OKC</span>
+            </div>
+            <span class="text-[11px] font-semibold text-ink">Thunder</span>
+            <span class="text-2xl font-bold text-ink tabular-nums">71</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile Ribbon -->
+      <div class="px-4 py-2.5 mx-4 mb-2 bg-gray-50 rounded-xl">
+        <div class="flex items-center gap-0.5">
+          <div class="flex flex-col items-center">
+            <div class="w-[6px] h-[6px] rounded-full bg-ink"></div>
+            <span class="text-[8px] font-semibold text-ink mt-1">1Q</span>
+          </div>
+          <div class="h-[2px] flex-1 bg-ink"></div>
+          <div class="flex flex-col items-center">
+            <div class="w-[6px] h-[6px] rounded-full bg-ink"></div>
+            <span class="text-[8px] font-semibold text-ink mt-1">2Q</span>
+          </div>
+          <div class="h-[2px] flex-1 bg-ink"></div>
+          <div class="flex flex-col items-center">
+            <div class="w-[6px] h-[6px] rounded-full bg-ink/30"></div>
+            <span class="text-[8px] text-ink-tertiary mt-1">HT</span>
+          </div>
+          <div class="h-[2px] flex-1 bg-ink"></div>
+          <div class="flex flex-col items-center relative">
+            <div class="w-[6px] h-[6px] rounded-full bg-emerald-500 ring-[3px] ring-emerald-100"></div>
+            <span class="text-[8px] font-bold text-emerald-600 mt-1">3Q</span>
+          </div>
+          <div class="h-[2px] flex-1 bg-gray-200"></div>
+          <div class="flex flex-col items-center">
+            <div class="w-[6px] h-[6px] rounded-full bg-gray-200"></div>
+            <span class="text-[8px] text-ink-faint mt-1">4Q</span>
+          </div>
+          <div class="h-[2px] flex-1 bg-gray-200"></div>
+          <div class="flex flex-col items-center">
+            <div class="w-[6px] h-[6px] rounded-full bg-gray-200 border border-gray-300"></div>
+            <span class="text-[8px] text-ink-faint mt-1">End</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile Chart -->
+      <div class="mx-4 mb-2 bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div class="px-3 pt-3 pb-1 flex items-center justify-between">
+          <span class="text-xs font-semibold text-ink">Win Probability</span>
+          <div class="flex bg-gray-100 rounded-md p-0.5">
+            <button class="px-2 py-0.5 rounded text-[10px] font-medium text-ink-tertiary">All</button>
+            <button class="px-2 py-0.5 rounded bg-white shadow-sm text-[10px] font-medium text-ink">Since Start</button>
+          </div>
+        </div>
+        <svg viewBox="0 0 350 180" class="w-full" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <linearGradient id="homeGradientMobile" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#007A33" stop-opacity="0.1"/>
+              <stop offset="100%" stop-color="#007A33" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <!-- Y Labels -->
+          <text x="18" y="22" text-anchor="end" class="text-[7px] fill-celtics/50" font-weight="600" font-family="Inter">100</text>
+          <text x="18" y="90" text-anchor="end" class="text-[7px] fill-ink-faint" font-weight="600" font-family="Inter">50</text>
+          <text x="18" y="158" text-anchor="end" class="text-[7px] fill-thunder/50" font-weight="600" font-family="Inter">100</text>
+
+          <line x1="22" y1="88" x2="340" y2="88" stroke="#E5E7EB" stroke-width="1"/>
+
+          <!-- Pregame zone -->
+          <rect x="22" y="10" width="50" height="150" fill="#F9FAFB" opacity="0.7"/>
+          <line x1="72" y1="10" x2="72" y2="160" stroke="#E5E7EB" stroke-width="0.5" stroke-dasharray="3 2"/>
+
+          <!-- Period lines -->
+          <line x1="150" y1="10" x2="150" y2="160" stroke="#F3F4F6" stroke-width="0.5"/>
+          <line x1="210" y1="10" x2="210" y2="160" stroke="#F3F4F6" stroke-width="0.5"/>
+          <line x1="240" y1="10" x2="240" y2="160" stroke="#F3F4F6" stroke-width="0.5"/>
+
+          <!-- Fill -->
+          <path d="M72,82 L100,78 L130,70 L150,65 L175,58 L195,62 L210,60 L230,55 L250,50 L270,52 L290,46 L310,42 L320,40 L320,88 L72,88 Z"
+            fill="url(#homeGradientMobile)"/>
+
+          <!-- Line -->
+          <path d="M22,88 L50,86 L72,82 L100,78 L130,70 L150,65 L175,58 L195,62 L210,60 L230,55 L250,50 L270,52 L290,46 L310,42 L320,40"
+            fill="none" stroke="#007A33" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+          <circle cx="320" cy="40" r="4" fill="#007A33" stroke="white" stroke-width="2"/>
+
+          <!-- Current label -->
+          <rect x="292" y="24" width="36" height="14" rx="4" fill="#007A33"/>
+          <text x="310" y="34" text-anchor="middle" fill="white" class="text-[8px]" font-weight="700" font-family="Inter">68%</text>
+
+          <!-- X labels -->
+          <text x="72" y="173" text-anchor="middle" class="text-[7px] fill-ink-tertiary" font-family="Inter">7:30</text>
+          <text x="210" y="173" text-anchor="middle" class="text-[7px] fill-ink-faint" font-family="Inter">8:30</text>
+          <text x="320" y="173" text-anchor="middle" class="text-[7px] fill-ink-faint" font-family="Inter">Now</text>
+        </svg>
+        <div class="px-3 py-1.5 border-t border-gray-50 flex items-center gap-1.5">
+          <div class="w-1.5 h-1.5 rounded-full bg-celtics"></div>
+          <span class="text-[9px] text-ink-tertiary">BainLuck Composite</span>
+        </div>
+      </div>
+
+      <!-- Mobile Comparison -->
+      <div class="mx-4 mb-2 bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div class="px-3 pt-3 pb-2">
+          <span class="text-xs font-semibold text-ink">Sources</span>
+        </div>
+        <!-- BainLuck -->
+        <div class="mx-3 mb-2 px-3 py-2.5 rounded-lg bg-gray-50">
+          <div class="flex items-center justify-between mb-1.5">
+            <div class="flex items-center gap-1.5">
+              <div class="w-4 h-4 rounded bg-ink flex items-center justify-center">
+                <span class="text-[7px] font-bold text-white">BL</span>
+              </div>
+              <span class="text-[11px] font-semibold text-ink">BainLuck</span>
+            </div>
+            <div class="flex items-center gap-0.5">
+              <svg class="w-2.5 h-2.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+              <span class="text-[9px] font-medium text-emerald-600">+5%</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-bold tabular-nums" style="color:#007A33">68%</span>
+            <div class="flex-1 h-1.5 rounded-full bg-gray-200 overflow-hidden"><div class="h-full rounded-full" style="width:68%;background:#007A33"></div></div>
+            <span class="text-sm font-bold tabular-nums" style="color:#007AC1">32%</span>
+          </div>
+        </div>
+        <!-- Sportsbooks -->
+        <div class="mx-3 mb-1.5 px-3 py-2">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] text-ink-secondary">Sportsbooks</span>
+            <span class="text-[9px] text-emerald-600 font-medium">+3%</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-[11px] font-semibold tabular-nums text-ink-secondary">65%</span>
+            <div class="flex-1 h-1 rounded-full bg-gray-100"><div class="h-full rounded-full bg-ink-tertiary" style="width:65%"></div></div>
+            <span class="text-[11px] font-semibold tabular-nums text-ink-secondary">35%</span>
+          </div>
+        </div>
+        <!-- Kalshi -->
+        <div class="mx-3 mb-3 px-3 py-2">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] text-ink-secondary">Kalshi</span>
+            <span class="text-[9px] text-emerald-600 font-medium">+7%</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-[11px] font-semibold tabular-nums text-ink-secondary">71%</span>
+            <div class="flex-1 h-1 rounded-full bg-gray-100"><div class="h-full rounded-full bg-violet-400" style="width:71%"></div></div>
+            <span class="text-[11px] font-semibold tabular-nums text-ink-secondary">29%</span>
+          </div>
+        </div>
+        <!-- Divergence -->
+        <div class="mx-3 mb-3 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-100">
+          <p class="text-[9px] text-amber-700"><span class="font-semibold">6% divergence</span> - Kalshi more bullish on Celtics</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+let currentState = 'live';
+let currentDevice = 'web';
+
+function setState(state) {
+  currentState = state;
+  document.querySelectorAll('.state-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.state === state);
+  });
+
+  // Hero states
+  const show = (id) => document.getElementById(id)?.classList.remove('hidden');
+  const hide = (id) => document.getElementById(id)?.classList.add('hidden');
+
+  hide('status-pregame'); hide('status-live'); hide('status-final');
+  hide('phase-pregame-badge'); hide('phase-live-badge'); hide('phase-final-badge');
+
+  if (state === 'pregame') {
+    show('status-pregame'); show('phase-pregame-badge');
+    setProbs(52, 48, '--', '--');
+    document.getElementById('trend-indicator').classList.add('hidden');
+  } else if (state === 'live') {
+    show('status-live'); show('phase-live-badge');
+    setProbs(68, 32, 87, 71);
+    document.getElementById('trend-indicator').classList.remove('hidden');
+  } else {
+    show('status-final'); show('phase-final-badge');
+    setProbs(100, 0, 112, 98);
+    document.getElementById('trend-indicator').classList.add('hidden');
+  }
+}
+
+function setProbs(home, away, homeScore, awayScore) {
+  const el = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
+  el('home-prob-web', home);
+  el('away-prob-web', away);
+  el('home-score-web', homeScore);
+  el('away-score-web', awayScore);
+}
+
+function setDevice(device) {
+  currentDevice = device;
+  document.querySelectorAll('.device-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.device === device);
+  });
+  document.getElementById('web-layout').classList.toggle('hidden', device !== 'web');
+  document.getElementById('iphone-layout').classList.toggle('hidden', device !== 'iphone');
+}
+
+function setFilter(filter) {
+  const allBtn = document.getElementById('filter-all');
+  const liveBtn = document.getElementById('filter-live');
+  if (filter === 'all') {
+    allBtn.classList.add('bg-white', 'shadow-sm', 'text-ink');
+    allBtn.classList.remove('text-ink-secondary');
+    liveBtn.classList.remove('bg-white', 'shadow-sm', 'text-ink');
+    liveBtn.classList.add('text-ink-secondary');
+  } else {
+    liveBtn.classList.add('bg-white', 'shadow-sm', 'text-ink');
+    liveBtn.classList.remove('text-ink-secondary');
+    allBtn.classList.remove('bg-white', 'shadow-sm', 'text-ink');
+    allBtn.classList.add('text-ink-secondary');
+  }
+}
+</script>
+
+</body>
+</html>

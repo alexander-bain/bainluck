@@ -308,6 +308,13 @@ The guard auto-expires on `QUOTA_GUARD_EXPIRY` (set to billing cycle reset date)
 - **Quota management** — Conservation mode deployed. Quota resets monthly on the 1st. Update `QUOTA_GUARD_EXPIRY` in `redis_state.py` each cycle.
 - **Data quality** — Reclassified 4078 misclassified events, purged 195 orphan pm_ events, expanded Kalshi ticker mappings (18→38)
 
+### Golf (April 2026)
+- **Golf product strategy**: `docs/golf-product-strategy.md` — comprehensive plan for golf UX, cards, following, props
+- **Evolution chart shipped**: `EvolutionChart.tsx` + `EvolutionView.tsx` + `EvolutionLeaderboard.tsx` — DataGolf-style interactive line chart with position toggle (Top 20/10/5/Win), time range, fullscreen, player sidebar
+- **Tournament detail page**: `/categories/golf/tournaments/[slug]` — leaderboard (9-column grid), bubble watch, evolution chart
+- **Known golf data issues**: tour misclassification (Hainan Classic labeled PGA Tour), false "LIVE" badges, Polymarket binary "Yes" market in charts, "Augusta National Invitational" ghost tournament
+- **Phase 1 cleanup needed before Masters** (April 9-12): fix tour classification, fix LIVE badge logic, filter non-winner markets from cards, add "to win" labels
+
 ### Backlog
 - Sport-specific EI normalization (different ceilings per sport)
 - Hockey win probability model research (lit search for better models)
@@ -554,6 +561,10 @@ Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update 
 24. **`classifyPlayoffStage()` order matters** — Conference patterns must be checked BEFORE championship patterns in `RelatedFutures.tsx`. "Eastern Conference Champion" contains "champion" and will misclassify as "Championship" if checked in wrong order.
 25. **`compute_aggregate_probability()` is the single source of truth** — Both feed API and event detail API must use it. Never display raw odds_snapshots without aggregate fallback.
 26. **Bash heredocs with Python** — When piping Python code via bash, use `python3 << 'PYEOF'` (quoted heredoc) to prevent shell variable expansion and `!=` escaping issues.
+27. **Golf market filtering** — `_NON_WINNER_MARKET_RE` in `routes/golf.py` filters out "compete in", "make the cut", "top N finishers" etc. from headline probabilities. Only outright winner/champion markets should appear in card hero probabilities.
+28. **Golf evolution chart** — `EvolutionView.tsx` supports `positionOptions` prop for switching between Kalshi markets (Win, Top 5, Top 10, Top 20). The categories page does NOT use this yet — only the tournament detail page does.
+29. **Golf tour classification** — Many events are mislabeled as "PGA Tour" when they're DP World Tour, Asian Tour, etc. DataGolf provides the correct `tour` field. Fix needed.
+30. **Golf "LIVE" badge** — `isTournamentLive()` in the tournament page checks DataGolf leaderboard status. Can false-positive when leaderboard data exists but tournament hasn't started. Needs date-based validation.
 
 ---
 
@@ -566,6 +577,7 @@ Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update 
 | EI Hall of Fame | https://bainluck.com/ei/hall-of-fame |
 | Oscars | https://bainluck.com/oscars |
 | Golf | https://bainluck.com/categories/golf |
+| Golf strategy | `docs/golf-product-strategy.md` |
 | Playoffs | https://bainluck.com/playoffs |
 | March Madness | https://bainluck.com/march-madness |
 | Debug endpoints | `/api/events/debug/*` |

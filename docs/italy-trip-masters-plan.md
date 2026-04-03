@@ -6,7 +6,7 @@ Alex is traveling in Italy April 3-10. No laptop, but has phone + iPad with inte
 
 ## Pre-Flight Checklist (April 2)
 
-### Must Complete Today
+### Completed (April 2-3)
 - [x] Push the Kalshi non-winner market filter fix (`golf.py` — committed, needs push)
 - [x] Verify Heroku auto-deploy — **CONFIRMED WORKING** (April 2, 2026)
 - [x] Give feedback on Masters prototype mockup (design decisions captured in memory)
@@ -14,13 +14,21 @@ Alex is traveling in Italy April 3-10. No laptop, but has phone + iPad with inte
 - [x] Fix admin dashboard (quota chart UTC, grid health scores, eval page link)
 - [x] Fix grid page loading (was 20s blank screen, now shows skeleton immediately)
 - [x] Fix chart axis visibility (white-on-white bug)
-- [ ] Smoke-test golf page on phone: `bainluck.com/categories/golf`
-- [ ] Test bainluck.com on phone (Safari/Chrome) — note any mobile UX issues
+- [x] Evolution chart redesign — DataGolf-style interactive highlight (EvolutionChart + EvolutionView + EvolutionLeaderboard)
+- [x] Position toggle (Top 20 / Top 10 / Top 5 / Win) switching between Kalshi markets
+- [x] Fix "Champion" regex in golf.py to match Kalshi market titles
+- [x] Unified 9-column leaderboard grid (Score/Today/Thru/Win/Top5/Top10/Top20)
+- [x] Fix sidebar player names invisible (CSS flex min-w-0)
+- [x] Bubble Watch / Cut Line section built and deployed
 
-### Should Complete Today
-- [ ] Build matching eval admin page (`/admin/matching-eval`)
-- [ ] Review Masters tournament detail page: `bainluck.com/categories/golf/tournaments/the-masters`
+### Smoke Test Completed (April 3) — Desktop Only
+Results logged. 10 bugs found, plus strategic direction needed. See `docs/golf-product-strategy.md`.
+
+### Still To Do Before/During Trip
+- [ ] **Phase 1 golf cleanup** (see TODO.md) — fix tour classification, LIVE badge, chart data, card labels
+- [ ] Mobile smoke test (phone Safari) — not yet done
 - [ ] Verify DataGolf live polling will activate for Masters (check Redis gate + schedule detection)
+- [ ] Review `docs/golf-product-strategy.md` and approve/edit the plan
 
 ---
 
@@ -48,8 +56,9 @@ Use bainluck.com during the Masters and note issues in a Google Doc or Apple Not
 - Does the golf page show Masters as current event?
 - Are the golfer probabilities reasonable? (Scheffler ~15-20%, Rory ~8-10%, etc.)
 - Do the odds update live during play? (DataGolf polls every 5 min)
-- Does the Evolution chart show sensible movements?
-- Are the Movers showing real movement?
+- Does the Evolution chart show sensible movements? Does position toggle (Top 20/10/5/Win) work?
+- Does the leaderboard update with Score/Today/Thru during live play?
+- Does Bubble Watch appear during Rounds 1-2 with cut line probabilities?
 - Does the championship grid (`/playoffs/golf`) update during the tournament?
 - Mobile layout: anything cut off, overlapping, or hard to tap?
 
@@ -58,6 +67,7 @@ Use bainluck.com during the Masters and note issues in a Google Doc or Apple Not
 - If odds seem stale (same numbers for >30 min during active play), note it
 - If probabilities don't sum to ~100%, note it
 - If eliminated/cut players still show high odds, note it
+- Evolution chart: do different position markets (Win vs Top 5 vs Top 10 vs Top 20) show different player curves?
 
 ### 2. Manual Matching Curation (Medium-High Value)
 
@@ -153,10 +163,12 @@ Low-energy, high-value work for downtime:
 
 ### Frontend (Can deploy from iPad)
 
-1. **Masters-themed golf page** — Augusta green accents, azalea pink highlights during Masters week
-2. **Bubble Watch / Cut Line section** — Show players near projected cut line with make-cut probabilities (DataGolf provides `make_cut` market data)
+1. ~~**Masters-themed golf page**~~ ✅ Done — Augusta green (#006747) accents, "The Masters" pill badge
+2. ~~**Bubble Watch / Cut Line section**~~ ✅ Done — Shows players near projected cut line with make-cut probabilities
 3. **Mobile golf improvements** — Any layout issues found during testing
 4. **Non-sports category tabs** — If we identify good markets, add Politics/Entertainment tabs
+5. **H2H Matchups** — Option B (compact) + probability line + round/hole info (needs backend change first)
+6. **Populate Top 5/10/20 columns** from Kalshi position market data in pre-tournament leaderboard
 
 ### Backend (Needs Heroku push — or auto-deploy)
 
@@ -230,11 +242,14 @@ Show non-sports futures markets with current odds:
 ## Success Criteria for the Trip
 
 By April 10 (return), we should have:
+- [x] Golf product strategy doc written and reviewed (`docs/golf-product-strategy.md`)
+- [x] Desktop smoke test completed (10 bugs logged, strategic direction set)
+- [ ] Phase 1 golf cleanup deployed (tour classification, LIVE badge, card labels)
 - [ ] Masters tournament working well on BainLuck (live odds, current event, evolution chart)
+- [ ] Mobile smoke test completed (phone Safari)
 - [ ] A curated Google Sheet of Kalshi/Polymarket market mappings for NBA + NHL playoff grids
 - [ ] A list of 10-20 interesting non-sports markets to potentially feature
 - [ ] A UX bug/improvement list from real-world mobile testing during Masters
-- [ ] (Stretch) Matching eval feedback in the DB if the admin page was built
 
 ---
 

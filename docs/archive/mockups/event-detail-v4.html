@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BainLuck - Event Detail v4 (Boston at Atlanta)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap');
+  :root {
+    --bg: #fafbfc; --card: #fff; --border: #eaedf0; --text: #0f1419;
+    --t2: #536471; --t3: #8899a6; --blue: #1d9bf0; --blue2: #e8f5fd;
+    --green: #00ba7c; --green2: #def9ec; --red: #f4212e; --red2: #fde8e8;
+    --orange: #f97316; --purple: #7c3aed; --purple2: #ede9fe;
+    --pink: #ec4899; --cyan: #06b6d4; --gold: #d4a843;
+    --atl: #c8102e; --bos: #008348;
+    --r: 16px; --r2: 10px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;}
+
+  /* PHONE FRAME */
+  .frame{width:393px;margin:40px auto;background:var(--bg);border-radius:44px;border:6px solid #0a0a0a;padding:12px 0;box-shadow:0 24px 80px rgba(0,0,0,0.15);}
+  .screen{height:852px;overflow-y:auto;padding:0 16px;scroll-behavior:smooth;}
+  .screen::-webkit-scrollbar{display:none;}
+
+  /* CARDS */
+  .c{background:var(--card);border-radius:var(--r);border:1px solid var(--border);margin-bottom:10px;overflow:hidden;}
+  .c-head{padding:12px 16px;display:flex;align-items:center;justify-content:space-between;}
+  .c-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--t2);}
+  .c-count{font-size:10px;color:var(--t3);font-weight:500;}
+  .c-pad{padding:12px 16px;}
+
+  /* ============================================ */
+  /*  HERO — Win Probability with Source Rings    */
+  /* ============================================ */
+  .hero{padding:16px 16px 8px;}
+  .hero-status{display:flex;align-items:center;gap:6px;margin-bottom:10px;}
+  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--red);animation:pulse 1.2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+  .status-tag{font-size:10px;font-weight:700;text-transform:uppercase;color:var(--red);letter-spacing:0.06em;}
+  .quarter-tag{font-size:10px;color:var(--t2);font-weight:600;}
+
+  .hero-teams{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .hero-team{display:flex;flex-direction:column;align-items:center;gap:2px;width:100px;}
+  .team-logo{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:800;color:white;font-size:16px;}
+  .team-name{font-size:11px;font-weight:600;color:var(--t2);}
+  .team-score{font-size:28px;font-weight:900;letter-spacing:-0.02em;}
+
+  /* Source rings: stacked ring chart for win prob by source */
+  .hero-prob-center{display:flex;flex-direction:column;align-items:center;gap:2px;}
+  .source-rings{position:relative;width:100px;height:100px;}
+  .ring-svg{width:100px;height:100px;transform:rotate(-90deg);}
+  .ring-label{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;}
+  .ring-prob{font-size:22px;font-weight:900;letter-spacing:-0.02em;line-height:1;}
+  .ring-sub{font-size:8px;color:var(--t3);font-weight:600;text-transform:uppercase;margin-top:1px;}
+
+  .source-ring-legend{display:flex;gap:8px;justify-content:center;margin-top:4px;}
+  .srl-item{display:flex;align-items:center;gap:3px;font-size:8px;font-weight:600;color:var(--t3);}
+  .srl-dot{width:6px;height:6px;border-radius:50%;}
+
+  /* EI badge */
+  .ei-badge{display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;margin-top:4px;}
+
+  /* ============================================ */
+  /*  CHART                                       */
+  /* ============================================ */
+  .chart{padding:12px 16px;}
+  .chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+  .chart-title{font-size:12px;font-weight:700;}
+  .pills{display:flex;gap:3px;}
+  .pill{font-size:10px;padding:3px 9px;border-radius:6px;font-weight:600;cursor:pointer;}
+  .pill-off{background:#f0f2f5;color:var(--t2);}
+  .pill-on{background:var(--text);color:white;}
+  .chart-area{height:140px;position:relative;border-bottom:1px solid var(--border);}
+  .chart-legend{display:flex;gap:10px;margin-top:6px;flex-wrap:wrap;}
+  .leg{font-size:9px;color:var(--t3);display:flex;align-items:center;gap:3px;font-weight:500;}
+  .leg-dot{width:8px;height:2px;border-radius:1px;}
+
+  /* ============================================ */
+  /*  SECTION DIVIDERS                            */
+  /* ============================================ */
+  .sec{display:flex;align-items:center;gap:8px;margin:14px 0 8px;}
+  .sec-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--t3);}
+  .sec-line{flex:1;height:1px;background:var(--border);}
+  .sec-num{font-size:9px;font-weight:700;color:white;background:var(--t3);padding:1px 5px;border-radius:3px;}
+
+  /* SOURCE TAGS */
+  .src{display:inline-flex;align-items:center;gap:2px;font-size:8px;font-weight:600;padding:1px 5px;border-radius:3px;letter-spacing:0.02em;}
+  .src-k{background:#e0f2fe;color:#0369a1;}
+  .src-p{background:#ede9fe;color:#6d28d9;}
+  .src-o{background:#ecfdf5;color:#047857;}
+  .src-e{background:#fef3c7;color:#92400e;}
+  .src-m{background:#f3e8ff;color:#7e22ce;}
+
+  /* ============================================ */
+  /*  SCORE DIFFERENTIAL — a line chart of margin */
+  /* ============================================ */
+  .score-diff{padding:12px 16px;}
+  .score-diff-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .score-diff-chart{height:80px;position:relative;background:linear-gradient(180deg,rgba(0,131,72,0.03) 0%,rgba(0,131,72,0.03) 49.5%,transparent 49.5%,transparent 50.5%,rgba(200,16,46,0.03) 50.5%,rgba(200,16,46,0.03) 100%);border-radius:8px;border:1px solid var(--border);}
+  .score-diff-zero{position:absolute;top:50%;left:0;right:0;height:1px;background:var(--border);z-index:1;}
+  .score-diff-label-top{position:absolute;top:4px;left:8px;font-size:8px;font-weight:600;color:var(--bos);opacity:0.5;}
+  .score-diff-label-bot{position:absolute;bottom:4px;left:8px;font-size:8px;font-weight:600;color:var(--atl);opacity:0.5;}
+  .score-diff-current{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:flex-end;}
+  .score-diff-val{font-size:18px;font-weight:800;letter-spacing:-0.02em;}
+  .score-diff-note{font-size:8px;color:var(--t3);font-weight:500;}
+  /* Quarter markers */
+  .q-marker{position:absolute;bottom:0;top:0;width:1px;background:var(--border);opacity:0.5;}
+  .q-marker-label{position:absolute;bottom:2px;font-size:7px;color:var(--t3);font-weight:600;transform:translateX(-50%);}
+
+  /* Projected final */
+  .proj-final{display:flex;align-items:center;justify-content:center;gap:12px;padding:6px 0 2px;margin-top:4px;}
+  .proj-label{font-size:9px;color:var(--t3);font-weight:600;text-transform:uppercase;}
+  .proj-score{font-size:13px;font-weight:800;}
+  .proj-dash{font-size:11px;color:var(--t3);}
+
+  /* ============================================ */
+  /*  TOTAL POINTS SPECTRUM                       */
+  /* ============================================ */
+  .spectrum{padding:12px 16px;}
+  .spectrum-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+  .spectrum-pace{display:flex;align-items:center;gap:6px;margin-bottom:8px;padding:6px 10px;background:linear-gradient(90deg,#f0f2f5,#e8f5fd);border-radius:8px;border:1px solid var(--border);}
+  .pace-label{font-size:9px;font-weight:600;color:var(--t3);text-transform:uppercase;}
+  .pace-val{font-size:16px;font-weight:800;color:var(--blue);letter-spacing:-0.02em;}
+  .pace-sub{font-size:9px;color:var(--t2);font-weight:500;margin-left:auto;}
+  .spectrum-bar{position:relative;height:32px;border-radius:8px;overflow:hidden;margin-bottom:4px;background:#f0f2f5;}
+  .spectrum-segment{position:absolute;top:0;bottom:0;transition:opacity 0.2s;}
+  .spectrum-marker{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--text);z-index:5;border-radius:1px;}
+  .spectrum-marker-label{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-size:8px;font-weight:700;white-space:nowrap;background:var(--text);color:white;padding:1px 4px;border-radius:3px;}
+  .spectrum-ticks{display:flex;justify-content:space-between;padding:0 2px;}
+  .spectrum-tick{font-size:8px;color:var(--t3);font-weight:500;text-align:center;display:flex;flex-direction:column;align-items:center;gap:1px;}
+  .spectrum-tick-pct{font-size:7px;font-weight:600;}
+
+  /* ============================================ */
+  /*  PLAYER PROPS                                */
+  /* ============================================ */
+  .props-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:0 16px 12px;}
+  .prop-card{background:#f8f9fa;border-radius:10px;padding:8px 10px;border:1px solid var(--border);position:relative;overflow:hidden;}
+  .prop-player{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+  .prop-headshot{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#ddd,#eee);border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--t3);}
+  .prop-name{font-size:10px;font-weight:700;line-height:1.2;}
+  .prop-team-dot{width:4px;height:4px;border-radius:50%;display:inline-block;margin-right:2px;}
+  .prop-stat{display:flex;align-items:baseline;gap:4px;margin-bottom:3px;}
+  .prop-stat-val{font-size:16px;font-weight:800;font-family:'JetBrains Mono',monospace;}
+  .prop-stat-label{font-size:9px;color:var(--t2);font-weight:500;}
+  .prop-stat-target{font-size:9px;color:var(--t3);font-weight:600;}
+  .prop-progress{height:3px;border-radius:2px;background:#e5e7eb;margin-bottom:3px;overflow:hidden;}
+  .prop-progress-fill{height:100%;border-radius:2px;}
+  .prop-bottom{display:flex;justify-content:space-between;align-items:center;}
+  .prop-prob{font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+  .prop-movement{font-size:8px;font-weight:700;display:flex;align-items:center;gap:1px;}
+
+  /* ============================================ */
+  /*  PLAYOFF PATH CARDS                          */
+  /* ============================================ */
+  .playoff-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px 12px;}
+  .playoff-card{border-radius:12px;border:1px solid var(--border);overflow:hidden;background:var(--card);}
+  .playoff-card-header{padding:8px 10px;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);}
+  .playoff-logo{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:white;font-weight:800;font-size:9px;}
+  .playoff-team-name{font-size:11px;font-weight:700;flex:1;}
+  .playoff-tag{font-size:8px;font-weight:600;color:var(--t3);}
+  .playoff-stages{padding:6px 10px 8px;}
+  .playoff-stage{display:flex;align-items:center;gap:5px;padding:3px 0;}
+  .playoff-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+  .playoff-dot-done{background:var(--green);}
+  .playoff-dot-pending{background:#d1d5db;}
+  .playoff-stage-name{font-size:10px;color:var(--t2);flex:1;}
+  .playoff-stage-bar{width:50px;height:3px;border-radius:2px;background:#e5e7eb;overflow:hidden;}
+  .playoff-stage-fill{height:100%;border-radius:2px;}
+  .playoff-stage-pct{font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;min-width:28px;text-align:right;}
+  .playoff-movement{font-size:7px;font-weight:700;margin-left:2px;}
+
+  /* ============================================ */
+  /*  WIN TOTALS                                  */
+  /* ============================================ */
+  .wt-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px 12px;}
+  .wt-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center;}
+  .wt-team{font-size:10px;font-weight:700;margin-bottom:6px;}
+  .wt-gauge{position:relative;height:44px;margin-bottom:4px;}
+  .wt-gauge-bg{width:100%;height:8px;border-radius:4px;background:#f0f2f5;position:absolute;top:18px;}
+  .wt-gauge-fill{height:8px;border-radius:4px;position:absolute;top:18px;left:0;}
+  .wt-gauge-marker{position:absolute;top:8px;width:2px;height:28px;border-radius:1px;}
+  .wt-gauge-label{position:absolute;top:0;font-size:8px;font-weight:700;transform:translateX(-50%);}
+  .wt-gauge-sub{position:absolute;top:38px;font-size:7px;font-weight:500;color:var(--t3);transform:translateX(-50%);}
+  .wt-interesting{font-size:11px;font-weight:800;margin-bottom:2px;}
+  .wt-line{font-size:9px;color:var(--t2);}
+  .wt-current{font-size:8px;color:var(--t3);margin-top:2px;}
+  .wt-thresholds{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px;justify-content:center;}
+  .wt-thresh{font-size:7px;padding:2px 4px;border-radius:3px;background:#f0f2f5;color:var(--t3);font-weight:600;font-family:'JetBrains Mono',monospace;}
+  .wt-thresh-hot{background:#e8f5fd;color:var(--blue);font-weight:700;}
+
+  /* ============================================ */
+  /*  MATCHUP HEAT MAP                            */
+  /* ============================================ */
+  .matchup-grid{padding:0 16px 12px;}
+  .matchup-row{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #f5f5f5;}
+  .matchup-row:last-child{border-bottom:none;}
+  .matchup-rank{font-size:8px;font-weight:700;color:var(--t3);width:12px;text-align:right;}
+  .matchup-logo{width:20px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:white;font-size:7px;font-weight:800;flex-shrink:0;}
+  .matchup-name{font-size:10px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .matchup-bar{width:80px;height:6px;border-radius:3px;background:#f0f2f5;overflow:hidden;flex-shrink:0;}
+  .matchup-bar-fill{height:100%;border-radius:3px;}
+  .matchup-pct{font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;min-width:30px;text-align:right;}
+  .matchup-src{flex-shrink:0;}
+
+  /* ============================================ */
+  /*  AWARDS — Player image cards                 */
+  /* ============================================ */
+  .awards-scroll{display:flex;gap:8px;padding:0 16px 12px;overflow-x:auto;}
+  .awards-scroll::-webkit-scrollbar{display:none;}
+  .award-card{min-width:110px;max-width:110px;border-radius:12px;border:1px solid var(--border);overflow:hidden;background:var(--card);flex-shrink:0;}
+  .award-img{width:110px;height:80px;background:linear-gradient(135deg,#f0f2f5,#e5e7eb);display:flex;align-items:flex-end;justify-content:center;overflow:hidden;position:relative;}
+  .award-img img{width:70px;height:auto;object-fit:contain;}
+  .award-img-placeholder{font-size:28px;font-weight:900;color:#d1d5db;margin-bottom:8px;}
+  .award-trophy{position:absolute;top:4px;right:4px;font-size:10px;}
+  .award-body{padding:6px 8px;}
+  .award-name{font-size:9px;font-weight:700;line-height:1.2;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .award-label{font-size:8px;color:var(--t3);font-weight:500;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .award-prob-row{display:flex;align-items:center;justify-content:space-between;}
+  .award-prob{font-size:12px;font-weight:800;font-family:'JetBrains Mono',monospace;}
+  .award-movement{font-size:8px;font-weight:700;}
+  .award-sources{display:flex;gap:2px;margin-top:3px;}
+
+  /* ============================================ */
+  /*  TRADE WATCH                                 */
+  /* ============================================ */
+  .trade-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px 12px;}
+  .trade-col{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--card);}
+  .trade-col-head{padding:6px 8px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:4px;}
+  .trade-col-logo{width:16px;height:16px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:white;font-size:6px;font-weight:800;}
+  .trade-col-title{font-size:9px;font-weight:700;}
+  .trade-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid #f8f8f8;}
+  .trade-item:last-child{border-bottom:none;}
+  .trade-headshot{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#ddd,#eee);display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:600;color:var(--t3);overflow:hidden;flex-shrink:0;}
+  .trade-name{font-size:9px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .trade-pct{font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+
+  /* ============================================ */
+  /*  STAT LEADERS — Visual bars                  */
+  /* ============================================ */
+  .stat-leaders{padding:0 16px 12px;}
+  .stat-cat{margin-bottom:8px;}
+  .stat-cat:last-child{margin-bottom:0;}
+  .stat-cat-label{font-size:9px;font-weight:700;text-transform:uppercase;color:var(--t3);letter-spacing:0.04em;margin-bottom:3px;}
+  .stat-row{display:flex;align-items:center;gap:6px;padding:2px 0;}
+  .stat-headshot{width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#ddd,#eee);display:flex;align-items:center;justify-content:center;font-size:6px;font-weight:600;color:var(--t3);flex-shrink:0;}
+  .stat-name{font-size:9px;font-weight:600;width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .stat-bar{flex:1;height:4px;border-radius:2px;background:#f0f2f5;overflow:hidden;}
+  .stat-bar-fill{height:100%;border-radius:2px;}
+  .stat-pct{font-size:9px;font-weight:700;font-family:'JetBrains Mono',monospace;min-width:24px;text-align:right;}
+  .stat-team-dot{width:4px;height:4px;border-radius:50%;flex-shrink:0;}
+
+  /* ============================================ */
+  /*  NOVELTY — Fun visual cards                  */
+  /* ============================================ */
+  .novelty-scroll{display:flex;gap:6px;padding:0 16px 12px;overflow-x:auto;}
+  .novelty-scroll::-webkit-scrollbar{display:none;}
+  .novelty-card{min-width:140px;max-width:140px;border-radius:12px;overflow:hidden;flex-shrink:0;position:relative;}
+  .novelty-card-inner{padding:10px;display:flex;flex-direction:column;gap:4px;height:100%;min-height:76px;}
+  .novelty-emoji{font-size:18px;}
+  .novelty-title{font-size:10px;font-weight:700;line-height:1.3;color:white;}
+  .novelty-prob{font-size:14px;font-weight:900;font-family:'JetBrains Mono',monospace;color:white;margin-top:auto;}
+  .novelty-src{position:absolute;bottom:6px;right:6px;}
+
+  /* FOOTER */
+  .footer{text-align:center;padding:12px 16px;font-size:9px;color:var(--t3);line-height:1.5;}
+  .footer strong{color:var(--t2);}
+
+  /* DESIGN NOTES SIDEBAR */
+  .notes{position:fixed;top:20px;right:20px;width:340px;max-height:calc(100vh - 40px);overflow-y:auto;background:white;border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,0.08);font-size:12px;line-height:1.6;color:var(--t2);}
+  .notes::-webkit-scrollbar{width:4px;}
+  .notes::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px;}
+  .notes h3{font-size:14px;color:var(--text);margin:12px 0 4px;font-weight:700;}
+  .notes h3:first-child{margin-top:0;}
+  .notes ul{margin:0;padding-left:16px;}
+  .notes li{margin-bottom:4px;}
+  .notes code{background:#f0f2f5;padding:1px 4px;border-radius:3px;font-size:11px;}
+  .note-tag{display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-right:3px;}
+  .note-new{background:var(--green2);color:var(--green);}
+  .note-changed{background:var(--blue2);color:var(--blue);}
+  .note-kept{background:#f0f2f5;color:var(--t3);}
+
+  @media(max-width:900px){.notes{display:none;}}
+</style>
+</head>
+<body>
+
+<!-- ============================================ -->
+<!--  DESIGN NOTES SIDEBAR                        -->
+<!-- ============================================ -->
+<div class="notes">
+  <h3>v4 Changes from Feedback</h3>
+  <ul>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Hero source display</strong> &mdash; replaced text labels with concentric ring chart. Each source is a ring arc. Hover-free: all visible at once. Median probability shown in center.</li>
+    <li><span class="note-tag note-new">NEW</span> <strong>Score Differential</strong> &mdash; brought back score margin chart above total points. Shows margin over time with quarter markers. Current margin + projected final score prominently displayed.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Total Points pace</strong> &mdash; pace callout enlarged and placed directly above the spectrum so it's easy to compare pace vs thresholds below.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Player props clarity</strong> &mdash; each prop now reads like a sentence: "15 pts so far, needs 25.5 &rarr; 62% chance". Progress bar shows how close. Movement shown only if nonzero, as a delta badge.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Playoff cards movement</strong> &mdash; in-game movement shown as green/red delta badges next to probability, only when movement exists.</li>
+    <li><span class="note-tag note-kept">KEPT</span> <strong>Win Totals</strong> &mdash; "PERFECT" per feedback. No changes.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Finals Matchup</strong> &mdash; added team-colored logo squares + visual fill bars proportional to probability. Most likely matchup gets a gold highlight.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Awards</strong> &mdash; completely redesigned as horizontal-scroll player image cards (like trading cards). Player headshot, award name, probability, movement badge, and source dots.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Trade Watch</strong> &mdash; top player gets a larger headshot/image treatment.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Statistical Leaders</strong> &mdash; redesigned as grouped bars by category (PPG, RPG, APG, etc.) with player headshots and horizontal fill bars. Much more visual.</li>
+    <li><span class="note-tag note-changed">CHANGED</span> <strong>Novelty</strong> &mdash; redesigned as colorful gradient cards in a horizontal scroll (like Spotify "mood" cards). Each has an emoji, catchy title, probability, and source tag.</li>
+  </ul>
+
+  <h3>Hierarchy</h3>
+  <ul>
+    <li><strong>Level 1:</strong> Win probability (hero + chart)</li>
+    <li><strong>Level 2:</strong> Score differential + projected score</li>
+    <li><strong>Level 3:</strong> Total points spectrum, player props</li>
+    <li><strong>Level 4:</strong> Season context (playoff path, win totals, matchups, awards, trades, stats, novelty)</li>
+  </ul>
+
+  <h3>Data</h3>
+  <p>185 related futures from event 12080338 (BOS @ ATL), grouped into 12 visual sections. Every item accessible. Zero expandable/collapsible panels.</p>
+</div>
+
+<!-- ============================================ -->
+<!--  PHONE MOCKUP                                -->
+<!-- ============================================ -->
+<div class="frame">
+<div class="screen">
+
+  <!-- ============ HERO ============ -->
+  <div class="c">
+    <div class="hero">
+      <!-- Status line -->
+      <div class="hero-status">
+        <div class="live-dot"></div>
+        <span class="status-tag">LIVE</span>
+        <span class="quarter-tag">&bull; 3rd Quarter &bull; 6:55</span>
+        <div style="margin-left:auto;">
+          <span class="ei-badge">EI 72 &middot; Exciting</span>
+        </div>
+      </div>
+
+      <!-- Teams + Source Rings -->
+      <div class="hero-teams">
+        <!-- Away: Boston -->
+        <div class="hero-team">
+          <div class="team-logo" style="background:var(--bos);">BOS</div>
+          <span class="team-name">Celtics</span>
+          <span class="team-score">82</span>
+        </div>
+
+        <!-- Center: Source Ring Chart -->
+        <div class="hero-prob-center">
+          <div class="source-rings">
+            <svg class="ring-svg" viewBox="0 0 100 100">
+              <!-- Outer ring: ESPN 53.5% -->
+              <circle cx="50" cy="50" r="44" fill="none" stroke="#f0f2f5" stroke-width="5"/>
+              <circle cx="50" cy="50" r="44" fill="none" stroke="#f97316" stroke-width="5"
+                stroke-dasharray="${0.535 * 276.46} ${(1-0.535) * 276.46}"
+                stroke-linecap="round"/>
+              <!-- Middle ring: Kalshi 56.5% -->
+              <circle cx="50" cy="50" r="36" fill="none" stroke="#f0f2f5" stroke-width="5"/>
+              <circle cx="50" cy="50" r="36" fill="none" stroke="#0369a1" stroke-width="5"
+                stroke-dasharray="${0.565 * 226.19} ${(1-0.565) * 226.19}"
+                stroke-linecap="round"/>
+              <!-- Inner ring: Model 54% -->
+              <circle cx="50" cy="50" r="28" fill="none" stroke="#f0f2f5" stroke-width="5"/>
+              <circle cx="50" cy="50" r="28" fill="none" stroke="#7e22ce" stroke-width="5"
+                stroke-dasharray="${0.54 * 175.93} ${(1-0.54) * 175.93}"
+                stroke-linecap="round"/>
+            </svg>
+            <div class="ring-label">
+              <div class="ring-prob" style="color:var(--bos);">55%</div>
+              <div class="ring-sub">BOS win</div>
+            </div>
+          </div>
+          <!-- Ring legend -->
+          <div class="source-ring-legend">
+            <div class="srl-item"><div class="srl-dot" style="background:#f97316;"></div>ESPN</div>
+            <div class="srl-item"><div class="srl-dot" style="background:#0369a1;"></div>Kalshi</div>
+            <div class="srl-item"><div class="srl-dot" style="background:#7e22ce;"></div>Model</div>
+          </div>
+        </div>
+
+        <!-- Home: Atlanta -->
+        <div class="hero-team">
+          <div class="team-logo" style="background:var(--atl);">ATL</div>
+          <span class="team-name">Hawks</span>
+          <span class="team-score">74</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Win Probability Chart -->
+    <div class="chart">
+      <div class="chart-head">
+        <span class="chart-title">Win Probability</span>
+        <div class="pills">
+          <span class="pill pill-off">All</span>
+          <span class="pill pill-on">Since Start</span>
+        </div>
+      </div>
+      <div class="chart-area" style="background:linear-gradient(180deg,rgba(0,131,72,0.04) 0%,rgba(0,131,72,0.04) 49%,transparent 49%,transparent 51%,rgba(200,16,46,0.04) 51%,rgba(200,16,46,0.04) 100%);">
+        <!-- SVG chart would go here — mirrored 100-50-100 axis -->
+        <svg viewBox="0 0 360 140" style="width:100%;height:100%;">
+          <line x1="0" y1="70" x2="360" y2="70" stroke="#eaedf0" stroke-width="1"/>
+          <!-- Quarter markers -->
+          <line x1="90" y1="0" x2="90" y2="140" stroke="#eaedf0" stroke-width="0.5" stroke-dasharray="2,2"/>
+          <text x="90" y="136" text-anchor="middle" font-size="7" fill="#8899a6">Q2</text>
+          <line x1="180" y1="0" x2="180" y2="140" stroke="#eaedf0" stroke-width="0.5" stroke-dasharray="2,2"/>
+          <text x="180" y="136" text-anchor="middle" font-size="7" fill="#8899a6">HT</text>
+          <line x1="270" y1="0" x2="270" y2="140" stroke="#eaedf0" stroke-width="0.5" stroke-dasharray="2,2"/>
+          <text x="270" y="136" text-anchor="middle" font-size="7" fill="#8899a6">Q4</text>
+          <!-- Simulated probability line (BOS perspective) -->
+          <polyline fill="none" stroke="var(--bos)" stroke-width="2"
+            points="0,66 20,64 40,58 60,55 90,50 110,60 130,65 150,50 180,48 200,42 220,38 240,40 260,35 280,32 300,30 320,34 340,31 360,28"/>
+          <!-- Mirror for ATL -->
+          <polyline fill="none" stroke="var(--atl)" stroke-width="1.5" stroke-opacity="0.4"
+            points="0,74 20,76 40,82 60,85 90,90 110,80 130,75 150,90 180,92 200,98 220,102 240,100 260,105 280,108 300,110 320,106 340,109 360,112"/>
+          <!-- Y-axis labels -->
+          <text x="2" y="10" font-size="7" fill="var(--bos)" font-weight="600">100%</text>
+          <text x="2" y="73" font-size="7" fill="#8899a6">50%</text>
+          <text x="2" y="138" font-size="7" fill="var(--atl)" font-weight="600">100%</text>
+        </svg>
+      </div>
+      <div class="chart-legend">
+        <div class="leg"><div class="leg-dot" style="background:var(--bos);"></div>BOS (Odds + ESPN + Kalshi)</div>
+        <div class="leg"><div class="leg-dot" style="background:var(--atl);"></div>ATL</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- LEVEL 2: SCORE DIFFERENTIAL                -->
+  <!-- ========================================== -->
+  <div class="sec">
+    <span class="sec-num">2</span>
+    <span class="sec-label">Score Differential</span>
+    <span class="sec-line"></span>
+  </div>
+
+  <div class="c">
+    <div class="score-diff">
+      <div class="score-diff-header">
+        <span style="font-size:12px;font-weight:700;">Point Margin</span>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span class="src src-e">ESPN</span>
+          <span class="src src-k">Kalshi</span>
+        </div>
+      </div>
+      <div class="score-diff-chart">
+        <div class="score-diff-zero"></div>
+        <div class="score-diff-label-top">BOS leads</div>
+        <div class="score-diff-label-bot">ATL leads</div>
+        <!-- Quarter markers -->
+        <div class="q-marker" style="left:25%;"><div class="q-marker-label">Q2</div></div>
+        <div class="q-marker" style="left:50%;"><div class="q-marker-label">HT</div></div>
+        <div class="q-marker" style="left:75%;"><div class="q-marker-label">Q4</div></div>
+        <!-- SVG margin line -->
+        <svg viewBox="0 0 360 80" style="position:absolute;inset:0;width:100%;height:100%;" preserveAspectRatio="none">
+          <polyline fill="none" stroke="var(--bos)" stroke-width="2.5"
+            points="0,42 30,44 60,38 90,35 120,38 150,30 180,28 210,25 240,22 270,20 300,18 330,20 360,16"/>
+        </svg>
+        <!-- Current margin -->
+        <div class="score-diff-current">
+          <div class="score-diff-val" style="color:var(--bos);">+8</div>
+          <div class="score-diff-note">BOS leads</div>
+        </div>
+      </div>
+
+      <!-- Projected Final Score -->
+      <div class="proj-final">
+        <span class="proj-label">Projected Final</span>
+        <span class="proj-score" style="color:var(--bos);">112</span>
+        <span class="proj-dash">&ndash;</span>
+        <span class="proj-score" style="color:var(--atl);">104</span>
+        <span style="font-size:8px;color:var(--t3);margin-left:4px;">based on pace + market data</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- LEVEL 3: GAME MARKETS                      -->
+  <!-- ========================================== -->
+  <div class="sec">
+    <span class="sec-num">3</span>
+    <span class="sec-label">Game Markets</span>
+    <span class="sec-line"></span>
+    <span class="c-count">22 items</span>
+  </div>
+
+  <!-- Total Points Spectrum -->
+  <div class="c">
+    <div class="spectrum">
+      <div class="spectrum-header">
+        <span style="font-size:12px;font-weight:700;">Total Points</span>
+        <span class="src src-k">Kalshi &middot; 8 thresholds</span>
+      </div>
+
+      <!-- PACE — big and prominent, directly above spectrum -->
+      <div class="spectrum-pace">
+        <span class="pace-label">Current Pace</span>
+        <span class="pace-val">224</span>
+        <span class="pace-sub">156 scored &middot; 18:55 left</span>
+      </div>
+
+      <!-- Probability spectrum bar -->
+      <div class="spectrum-bar">
+        <!-- Color segments: red (unlikely low) → orange → yellow → green (likely) → yellow → orange → red -->
+        <div class="spectrum-segment" style="left:0%;width:12%;background:linear-gradient(90deg,#ef4444,#f97316);opacity:0.25;"></div>
+        <div class="spectrum-segment" style="left:12%;width:12%;background:linear-gradient(90deg,#f97316,#eab308);opacity:0.35;"></div>
+        <div class="spectrum-segment" style="left:24%;width:15%;background:linear-gradient(90deg,#eab308,#22c55e);opacity:0.5;"></div>
+        <div class="spectrum-segment" style="left:39%;width:22%;background:#22c55e;opacity:0.6;border-radius:4px;"></div>
+        <div class="spectrum-segment" style="left:61%;width:15%;background:linear-gradient(90deg,#22c55e,#eab308);opacity:0.5;"></div>
+        <div class="spectrum-segment" style="left:76%;width:12%;background:linear-gradient(90deg,#eab308,#f97316);opacity:0.35;"></div>
+        <div class="spectrum-segment" style="left:88%;width:12%;background:linear-gradient(90deg,#f97316,#ef4444);opacity:0.25;"></div>
+        <!-- Pace marker -->
+        <div class="spectrum-marker" style="left:55%;">
+          <div class="spectrum-marker-label">224 pace</div>
+        </div>
+      </div>
+
+      <!-- Tick marks -->
+      <div class="spectrum-ticks">
+        <div class="spectrum-tick">213.5<div class="spectrum-tick-pct" style="color:var(--green);">97%</div></div>
+        <div class="spectrum-tick">216.5<div class="spectrum-tick-pct" style="color:var(--green);">91%</div></div>
+        <div class="spectrum-tick">219.5<div class="spectrum-tick-pct" style="color:var(--green);">82%</div></div>
+        <div class="spectrum-tick" style="font-weight:700;color:var(--text);">222.5<div class="spectrum-tick-pct" style="color:var(--orange);">68%</div></div>
+        <div class="spectrum-tick" style="font-weight:700;color:var(--text);">225.5<div class="spectrum-tick-pct" style="color:var(--orange);">49%</div></div>
+        <div class="spectrum-tick">228.5<div class="spectrum-tick-pct" style="color:var(--red);">31%</div></div>
+        <div class="spectrum-tick">231.5<div class="spectrum-tick-pct" style="color:var(--red);">16%</div></div>
+        <div class="spectrum-tick">234.5<div class="spectrum-tick-pct" style="color:var(--red);">7%</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Player Props -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">Player Props</span>
+      <span class="c-count">14 props &middot; Kalshi</span>
+    </div>
+  </div>
+
+  <div class="props-grid">
+    <!-- Trae Young Points -->
+    <div class="prop-card">
+      <div class="prop-player">
+        <div class="prop-headshot" style="background:linear-gradient(135deg,var(--atl),#e8485a);">TY</div>
+        <div>
+          <div class="prop-name"><span class="prop-team-dot" style="background:var(--atl);"></span>Trae Young</div>
+        </div>
+      </div>
+      <div class="prop-stat">
+        <span class="prop-stat-val">18</span>
+        <span class="prop-stat-label">pts so far</span>
+      </div>
+      <div style="font-size:9px;color:var(--t2);margin-bottom:3px;">needs <strong>25.5</strong> for payout</div>
+      <div class="prop-progress"><div class="prop-progress-fill" style="width:70.6%;background:var(--atl);"></div></div>
+      <div class="prop-bottom">
+        <span class="prop-prob" style="color:var(--green);">62%</span>
+        <span class="prop-movement" style="color:var(--green);">+14% today</span>
+      </div>
+    </div>
+
+    <!-- Jalen Johnson Points -->
+    <div class="prop-card">
+      <div class="prop-player">
+        <div class="prop-headshot" style="background:linear-gradient(135deg,var(--atl),#e8485a);">JJ</div>
+        <div>
+          <div class="prop-name"><span class="prop-team-dot" style="background:var(--atl);"></span>Jalen Johnson</div>
+        </div>
+      </div>
+      <div class="prop-stat">
+        <span class="prop-stat-val">14</span>
+        <span class="prop-stat-label">pts so far</span>
+      </div>
+      <div style="font-size:9px;color:var(--t2);margin-bottom:3px;">needs <strong>22.5</strong> for payout</div>
+      <div class="prop-progress"><div class="prop-progress-fill" style="width:62.2%;background:var(--atl);"></div></div>
+      <div class="prop-bottom">
+        <span class="prop-prob" style="color:var(--orange);">45%</span>
+        <span class="prop-movement" style="color:var(--red);">-8% today</span>
+      </div>
+    </div>
+
+    <!-- Jaylen Brown Points -->
+    <div class="prop-card">
+      <div class="prop-player">
+        <div class="prop-headshot" style="background:linear-gradient(135deg,var(--bos),#00a85a);">JB</div>
+        <div>
+          <div class="prop-name"><span class="prop-team-dot" style="background:var(--bos);"></span>Jaylen Brown</div>
+        </div>
+      </div>
+      <div class="prop-stat">
+        <span class="prop-stat-val">22</span>
+        <span class="prop-stat-label">pts so far</span>
+      </div>
+      <div style="font-size:9px;color:var(--t2);margin-bottom:3px;">needs <strong>25.5</strong> for payout</div>
+      <div class="prop-progress"><div class="prop-progress-fill" style="width:86.3%;background:var(--bos);"></div></div>
+      <div class="prop-bottom">
+        <span class="prop-prob" style="color:var(--green);">78%</span>
+        <span class="prop-movement" style="color:var(--green);">+22% today</span>
+      </div>
+    </div>
+
+    <!-- Jayson Tatum Points -->
+    <div class="prop-card">
+      <div class="prop-player">
+        <div class="prop-headshot" style="background:linear-gradient(135deg,var(--bos),#00a85a);">JT</div>
+        <div>
+          <div class="prop-name"><span class="prop-team-dot" style="background:var(--bos);"></span>Jayson Tatum</div>
+        </div>
+      </div>
+      <div class="prop-stat">
+        <span class="prop-stat-val">16</span>
+        <span class="prop-stat-label">pts so far</span>
+      </div>
+      <div style="font-size:9px;color:var(--t2);margin-bottom:3px;">needs <strong>28.5</strong> for payout</div>
+      <div class="prop-progress"><div class="prop-progress-fill" style="width:56.1%;background:var(--bos);"></div></div>
+      <div class="prop-bottom">
+        <span class="prop-prob" style="color:var(--orange);">41%</span>
+        <span style="font-size:8px;color:var(--t3);">no change</span>
+      </div>
+    </div>
+
+    <!-- Trae Young Assists -->
+    <div class="prop-card">
+      <div class="prop-player">
+        <div class="prop-headshot" style="background:linear-gradient(135deg,var(--atl),#e8485a);">TY</div>
+        <div>
+          <div class="prop-name"><span class="prop-team-dot" style="background:var(--atl);"></span>Trae Young</div>
+        </div>
+      </div>
+      <div class="prop-stat">
+        <span class="prop-stat-val">7</span>
+        <span class="prop-stat-label">ast so far</span>
+      </div>
+      <div style="font-size:9px;color:var(--t2);margin-bottom:3px;">needs <strong>9.5</strong> for payout</div>
+      <div class="prop-progress"><div class="prop-progress-fill" style="width:73.7%;background:var(--atl);"></div></div>
+      <div class="prop-bottom">
+        <span class="prop-prob" style="color:var(--green);">58%</span>
+        <span class="prop-movement" style="color:var(--green);">+5% today</span>
+      </div>
+    </div>
+
+    <!-- Jalen Johnson Rebounds -->
+    <div class="prop-card">
+      <div class="prop-player">
+        <div class="prop-headshot" style="background:linear-gradient(135deg,var(--atl),#e8485a);">JJ</div>
+        <div>
+          <div class="prop-name"><span class="prop-team-dot" style="background:var(--atl);"></span>Jalen Johnson</div>
+        </div>
+      </div>
+      <div class="prop-stat">
+        <span class="prop-stat-val">5</span>
+        <span class="prop-stat-label">reb so far</span>
+      </div>
+      <div style="font-size:9px;color:var(--t2);margin-bottom:3px;">needs <strong>8.5</strong> for payout</div>
+      <div class="prop-progress"><div class="prop-progress-fill" style="width:58.8%;background:var(--atl);"></div></div>
+      <div class="prop-bottom">
+        <span class="prop-prob" style="color:var(--orange);">42%</span>
+        <span style="font-size:8px;color:var(--t3);">no change</span>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ========================================== -->
+  <!-- LEVEL 4: SEASON CONTEXT                    -->
+  <!-- ========================================== -->
+  <div class="sec">
+    <span class="sec-num">4</span>
+    <span class="sec-label">Season Context</span>
+    <span class="sec-line"></span>
+    <span class="c-count">163 items</span>
+  </div>
+
+  <!-- PLAYOFF PATH -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">Playoff Path</span>
+      <span class="c-count">3 sources</span>
+    </div>
+  </div>
+
+  <div class="playoff-pair">
+    <!-- Boston -->
+    <div class="playoff-card" style="border-top:3px solid var(--bos);">
+      <div class="playoff-card-header">
+        <div class="playoff-logo" style="background:var(--bos);">BOS</div>
+        <span class="playoff-team-name">Celtics</span>
+      </div>
+      <div class="playoff-stages">
+        <div class="playoff-stage">
+          <div class="playoff-dot playoff-dot-done"></div>
+          <span class="playoff-stage-name">Playoffs</span>
+          <div class="playoff-stage-bar"><div class="playoff-stage-fill" style="width:100%;background:var(--green);"></div></div>
+          <span class="playoff-stage-pct" style="color:var(--green);">100%</span>
+        </div>
+        <div class="playoff-stage">
+          <div class="playoff-dot playoff-dot-pending"></div>
+          <span class="playoff-stage-name">East Champ</span>
+          <div class="playoff-stage-bar"><div class="playoff-stage-fill" style="width:36%;background:var(--bos);"></div></div>
+          <span class="playoff-stage-pct">36%</span>
+          <span class="playoff-movement" style="color:var(--green);">+2%</span>
+        </div>
+        <div class="playoff-stage">
+          <div class="playoff-dot playoff-dot-pending"></div>
+          <span class="playoff-stage-name">NBA Champ</span>
+          <div class="playoff-stage-bar"><div class="playoff-stage-fill" style="width:13.5%;background:var(--bos);"></div></div>
+          <span class="playoff-stage-pct">13.5%</span>
+          <span class="playoff-movement" style="color:var(--green);">+1%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Atlanta -->
+    <div class="playoff-card" style="border-top:3px solid var(--atl);">
+      <div class="playoff-card-header">
+        <div class="playoff-logo" style="background:var(--atl);">ATL</div>
+        <span class="playoff-team-name">Hawks</span>
+      </div>
+      <div class="playoff-stages">
+        <div class="playoff-stage">
+          <div class="playoff-dot playoff-dot-pending"></div>
+          <span class="playoff-stage-name">Play-In</span>
+          <div class="playoff-stage-bar"><div class="playoff-stage-fill" style="width:30%;background:var(--atl);"></div></div>
+          <span class="playoff-stage-pct">30%</span>
+          <span class="playoff-movement" style="color:var(--red);">-3%</span>
+        </div>
+        <div class="playoff-stage">
+          <div class="playoff-dot playoff-dot-pending"></div>
+          <span class="playoff-stage-name">Playoffs</span>
+          <div class="playoff-stage-bar"><div class="playoff-stage-fill" style="width:18%;background:var(--atl);"></div></div>
+          <span class="playoff-stage-pct">18%</span>
+          <span class="playoff-movement" style="color:var(--red);">-2%</span>
+        </div>
+        <div class="playoff-stage">
+          <div class="playoff-dot playoff-dot-pending"></div>
+          <span class="playoff-stage-name">East Champ</span>
+          <div class="playoff-stage-bar"><div class="playoff-stage-fill" style="width:0.5%;background:var(--atl);"></div></div>
+          <span class="playoff-stage-pct" style="color:var(--t3);">0.5%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WIN TOTALS — kept exactly from v3 (PERFECT) -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">Win Totals</span>
+      <span class="c-count">2 sources &middot; 16 thresholds</span>
+    </div>
+  </div>
+
+  <div class="wt-pair">
+    <!-- Boston -->
+    <div class="wt-card">
+      <div class="wt-team" style="color:var(--bos);">Boston Celtics</div>
+      <div class="wt-gauge">
+        <div class="wt-gauge-bg"></div>
+        <div class="wt-gauge-fill" style="width:82%;background:linear-gradient(90deg,var(--bos),rgba(0,131,72,0.3));border-radius:4px;"></div>
+        <div class="wt-gauge-marker" style="left:82%;background:var(--bos);">
+          <div class="wt-gauge-label" style="left:82%;">53W</div>
+        </div>
+        <div class="wt-gauge-marker" style="left:67%;background:var(--orange);width:1px;height:20px;top:12px;">
+          <div class="wt-gauge-sub" style="left:67%;">55.5</div>
+        </div>
+      </div>
+      <div class="wt-interesting" style="color:var(--bos);">55.5+ wins: 42%</div>
+      <div class="wt-line">The interesting line</div>
+      <div class="wt-current">Currently 53-21 &middot; 8 games left</div>
+      <div class="wt-thresholds">
+        <span class="wt-thresh">45.5: 99%</span>
+        <span class="wt-thresh">47.5: 99%</span>
+        <span class="wt-thresh">50.5: 95%</span>
+        <span class="wt-thresh">52.5: 82%</span>
+        <span class="wt-thresh wt-thresh-hot">55.5: 42%</span>
+        <span class="wt-thresh">57.5: 14%</span>
+        <span class="wt-thresh">59.5: 2%</span>
+      </div>
+    </div>
+
+    <!-- Atlanta -->
+    <div class="wt-card">
+      <div class="wt-team" style="color:var(--atl);">Atlanta Hawks</div>
+      <div class="wt-gauge">
+        <div class="wt-gauge-bg"></div>
+        <div class="wt-gauge-fill" style="width:42%;background:linear-gradient(90deg,var(--atl),rgba(200,16,46,0.3));border-radius:4px;"></div>
+        <div class="wt-gauge-marker" style="left:42%;background:var(--atl);">
+          <div class="wt-gauge-label" style="left:42%;">34W</div>
+        </div>
+        <div class="wt-gauge-marker" style="left:56%;background:var(--orange);width:1px;height:20px;top:12px;">
+          <div class="wt-gauge-sub" style="left:56%;">37.5</div>
+        </div>
+      </div>
+      <div class="wt-interesting" style="color:var(--atl);">37.5+ wins: 22%</div>
+      <div class="wt-line">The interesting line</div>
+      <div class="wt-current">Currently 34-40 &middot; 8 games left</div>
+      <div class="wt-thresholds">
+        <span class="wt-thresh">25.5: 99%</span>
+        <span class="wt-thresh">30.5: 99%</span>
+        <span class="wt-thresh">32.5: 93%</span>
+        <span class="wt-thresh">35.5: 55%</span>
+        <span class="wt-thresh wt-thresh-hot">37.5: 22%</span>
+        <span class="wt-thresh">40.5: 3%</span>
+        <span class="wt-thresh">45.5: 0.5%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- NBA FINALS MATCHUP — with logos and visual bars -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">NBA Finals Matchup</span>
+      <span class="c-count">10 matchups &middot; Kalshi</span>
+    </div>
+    <div class="matchup-grid">
+      <!-- #1 — Gold highlight -->
+      <div class="matchup-row" style="background:#fefce8;border-radius:6px;padding:6px;border:1px solid #fde68a;">
+        <span class="matchup-rank">1</span>
+        <div class="matchup-logo" style="background:#ce1141;">HOU</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Houston vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:100%;background:linear-gradient(90deg,#ce1141,var(--bos));"></div></div>
+        <span class="matchup-pct" style="color:var(--gold);">20%</span>
+      </div>
+      <!-- #2 -->
+      <div class="matchup-row">
+        <span class="matchup-rank">2</span>
+        <div class="matchup-logo" style="background:#007ac1;">OKC</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">OKC vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:87%;background:linear-gradient(90deg,#007ac1,var(--bos));"></div></div>
+        <span class="matchup-pct">17.5%</span>
+      </div>
+      <!-- #3 -->
+      <div class="matchup-row">
+        <span class="matchup-rank">3</span>
+        <div class="matchup-logo" style="background:#c4ced4;">SAS</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">San Antonio vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:77%;background:linear-gradient(90deg,#c4ced4,var(--bos));"></div></div>
+        <span class="matchup-pct">15.5%</span>
+      </div>
+      <!-- #4 -->
+      <div class="matchup-row">
+        <span class="matchup-rank">4</span>
+        <div class="matchup-logo" style="background:#0e2240;">DEN</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Denver vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:60%;background:linear-gradient(90deg,#0e2240,var(--bos));"></div></div>
+        <span class="matchup-pct">12%</span>
+      </div>
+      <!-- #5 -->
+      <div class="matchup-row">
+        <span class="matchup-rank">5</span>
+        <div class="matchup-logo" style="background:#860038;">CLE</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Cleveland vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:45%;background:linear-gradient(90deg,#860038,var(--bos));"></div></div>
+        <span class="matchup-pct">9%</span>
+      </div>
+      <!-- #6-10 in compact -->
+      <div class="matchup-row" style="opacity:0.6;">
+        <span class="matchup-rank">6</span>
+        <div class="matchup-logo" style="background:#552583;font-size:6px;">LAL</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Lakers vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:30%;background:#aaa;"></div></div>
+        <span class="matchup-pct">6%</span>
+      </div>
+      <div class="matchup-row" style="opacity:0.6;">
+        <span class="matchup-rank">7</span>
+        <div class="matchup-logo" style="background:#1d1160;font-size:6px;">PHX</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Phoenix vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:20%;background:#aaa;"></div></div>
+        <span class="matchup-pct">4%</span>
+      </div>
+      <div class="matchup-row" style="opacity:0.5;">
+        <span class="matchup-rank">8</span>
+        <div class="matchup-logo" style="background:#006bb6;font-size:6px;">MIN</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Minnesota vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:15%;background:#aaa;"></div></div>
+        <span class="matchup-pct" style="color:var(--t3);">3%</span>
+      </div>
+      <div class="matchup-row" style="opacity:0.4;">
+        <span class="matchup-rank">9</span>
+        <div class="matchup-logo" style="background:#c8102e;font-size:5px;">CHI</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Chicago vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:7%;background:#aaa;"></div></div>
+        <span class="matchup-pct" style="color:var(--t3);">1.5%</span>
+      </div>
+      <div class="matchup-row" style="opacity:0.35;">
+        <span class="matchup-rank">10</span>
+        <div class="matchup-logo" style="background:#002d62;font-size:5px;">IND</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Indiana vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:5%;background:#aaa;"></div></div>
+        <span class="matchup-pct" style="color:var(--t3);">1%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- EAST CONF FINALS MATCHUP — same treatment -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">East Conf Finals Matchup</span>
+      <span class="c-count">6 matchups &middot; Kalshi</span>
+    </div>
+    <div class="matchup-grid">
+      <div class="matchup-row" style="background:#fefce8;border-radius:6px;padding:6px;border:1px solid #fde68a;">
+        <span class="matchup-rank">1</span>
+        <div class="matchup-logo" style="background:#860038;">CLE</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Cleveland vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:100%;background:linear-gradient(90deg,#860038,var(--bos));"></div></div>
+        <span class="matchup-pct" style="color:var(--gold);">38%</span>
+      </div>
+      <div class="matchup-row">
+        <span class="matchup-rank">2</span>
+        <div class="matchup-logo" style="background:#006bb6;">NYK</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">New York vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:68%;background:linear-gradient(90deg,#006bb6,var(--bos));"></div></div>
+        <span class="matchup-pct">26%</span>
+      </div>
+      <div class="matchup-row">
+        <span class="matchup-rank">3</span>
+        <div class="matchup-logo" style="background:#006bb6;">ORL</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Orlando vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:42%;background:linear-gradient(90deg,#006bb6,var(--bos));"></div></div>
+        <span class="matchup-pct">16%</span>
+      </div>
+      <div class="matchup-row" style="opacity:0.6;">
+        <span class="matchup-rank">4</span>
+        <div class="matchup-logo" style="background:#002b5c;">MIL</div>
+        <span style="font-size:9px;color:var(--t3);margin:0 -2px;">vs</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Milwaukee vs Boston</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:26%;background:#aaa;"></div></div>
+        <span class="matchup-pct">10%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- AWARDS — Player card carousel -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">Awards &amp; All-Team</span>
+      <span class="c-count">18 awards &middot; 3 sources</span>
+    </div>
+  </div>
+
+  <div class="awards-scroll">
+    <!-- MVP — Nikola Jokic -->
+    <div class="award-card">
+      <div class="award-img" style="background:linear-gradient(135deg,#0e2240,#418fde);">
+        <div class="award-trophy">&#127942;</div>
+        <div class="award-img-placeholder">NJ</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Nikola Jokic</div>
+        <div class="award-label">MVP</div>
+        <div class="award-prob-row">
+          <span class="award-prob" style="color:var(--green);">72%</span>
+          <span class="award-movement" style="color:var(--green);">+3%</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+          <span class="src src-p" style="font-size:7px;">P</span>
+          <span class="src src-o" style="font-size:7px;">O</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MVP — Shai -->
+    <div class="award-card">
+      <div class="award-img" style="background:linear-gradient(135deg,#007ac1,#ef6c00);">
+        <div class="award-img-placeholder">SGA</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Shai Gilgeous-A.</div>
+        <div class="award-label">MVP</div>
+        <div class="award-prob-row">
+          <span class="award-prob">18%</span>
+          <span class="award-movement" style="color:var(--red);">-2%</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+          <span class="src src-p" style="font-size:7px;">P</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- DPOY — Victor Wembanyama -->
+    <div class="award-card">
+      <div class="award-img" style="background:linear-gradient(135deg,#c4ced4,#000);">
+        <div class="award-trophy">&#128737;&#65039;</div>
+        <div class="award-img-placeholder">VW</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Victor Wembanyama</div>
+        <div class="award-label">DPOY</div>
+        <div class="award-prob-row">
+          <span class="award-prob" style="color:var(--green);">65%</span>
+          <span style="font-size:8px;color:var(--t3);">&mdash;</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+          <span class="src src-o" style="font-size:7px;">O</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MIP — Cade Cunningham -->
+    <div class="award-card">
+      <div class="award-img" style="background:linear-gradient(135deg,#c8102e,#1d42ba);">
+        <div class="award-img-placeholder">CC</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Cade Cunningham</div>
+        <div class="award-label">MIP</div>
+        <div class="award-prob-row">
+          <span class="award-prob" style="color:var(--green);">58%</span>
+          <span class="award-movement" style="color:var(--green);">+5%</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+          <span class="src src-p" style="font-size:7px;">P</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROY — Zach Edey (relevant: ATL!) -->
+    <div class="award-card" style="border-color:var(--atl);border-width:2px;">
+      <div class="award-img" style="background:linear-gradient(135deg,var(--atl),#e8485a);">
+        <div class="award-trophy">&#11088;</div>
+        <div class="award-img-placeholder">ZE</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Zach Edey</div>
+        <div class="award-label">ROY &middot; ATL</div>
+        <div class="award-prob-row">
+          <span class="award-prob" style="color:var(--green);">45%</span>
+          <span class="award-movement" style="color:var(--red);">-4%</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+          <span class="src src-o" style="font-size:7px;">O</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6MOY — Payton Pritchard (BOS!) -->
+    <div class="award-card" style="border-color:var(--bos);border-width:2px;">
+      <div class="award-img" style="background:linear-gradient(135deg,var(--bos),#00a85a);">
+        <div class="award-img-placeholder">PP</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Payton Pritchard</div>
+        <div class="award-label">6MOY &middot; BOS</div>
+        <div class="award-prob-row">
+          <span class="award-prob" style="color:var(--green);">82%</span>
+          <span style="font-size:8px;color:var(--t3);">&mdash;</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+          <span class="src src-o" style="font-size:7px;">O</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- All-NBA 1st — Jayson Tatum (BOS!) -->
+    <div class="award-card" style="border-color:var(--bos);border-width:2px;">
+      <div class="award-img" style="background:linear-gradient(135deg,var(--bos),#00a85a);">
+        <div class="award-img-placeholder">JT</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Jayson Tatum</div>
+        <div class="award-label">All-NBA 1st &middot; BOS</div>
+        <div class="award-prob-row">
+          <span class="award-prob">55%</span>
+          <span class="award-movement" style="color:var(--green);">+1%</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Clutch Player — Shai -->
+    <div class="award-card">
+      <div class="award-img" style="background:linear-gradient(135deg,#007ac1,#002d62);">
+        <div class="award-img-placeholder">SGA</div>
+      </div>
+      <div class="award-body">
+        <div class="award-name">Shai Gilgeous-A.</div>
+        <div class="award-label">Clutch Player</div>
+        <div class="award-prob-row">
+          <span class="award-prob">30%</span>
+          <span style="font-size:8px;color:var(--t3);">&mdash;</span>
+        </div>
+        <div class="award-sources">
+          <span class="src src-k" style="font-size:7px;">K</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- More indicator -->
+    <div class="award-card" style="border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;min-height:140px;">
+      <div style="text-align:center;padding:12px;">
+        <div style="font-size:20px;font-weight:800;color:var(--t3);">+10</div>
+        <div style="font-size:9px;color:var(--t3);font-weight:500;">more awards</div>
+        <div style="font-size:8px;color:var(--t3);margin-top:4px;">All-NBA, All-Defense,<br>Finals MVP, ECF MVP</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- East Conf Finals MVP -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">East Conf Finals MVP</span>
+      <span class="c-count">Kalshi</span>
+    </div>
+    <div class="matchup-grid">
+      <div class="matchup-row" style="background:#fefce8;border-radius:6px;padding:6px;border:1px solid #fde68a;">
+        <span class="matchup-rank">1</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Jayson Tatum</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:100%;background:var(--bos);"></div></div>
+        <span class="matchup-pct" style="color:var(--gold);">29%</span>
+      </div>
+      <div class="matchup-row">
+        <span class="matchup-rank">2</span>
+        <div class="matchup-logo" style="background:#860038;">CLE</div>
+        <span class="matchup-name">Donovan Mitchell</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:72%;background:#860038;"></div></div>
+        <span class="matchup-pct">21%</span>
+      </div>
+      <div class="matchup-row">
+        <span class="matchup-rank">3</span>
+        <div class="matchup-logo" style="background:var(--bos);">BOS</div>
+        <span class="matchup-name">Jaylen Brown</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:55%;background:var(--bos);"></div></div>
+        <span class="matchup-pct">16%</span>
+      </div>
+      <div class="matchup-row" style="opacity:0.6;">
+        <span class="matchup-rank">4</span>
+        <div class="matchup-logo" style="background:#006bb6;">NYK</div>
+        <span class="matchup-name">Jalen Brunson</span>
+        <div class="matchup-bar"><div class="matchup-bar-fill" style="width:34%;background:#aaa;"></div></div>
+        <span class="matchup-pct">10%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRADE WATCH — with featured headshot -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">Trade Watch</span>
+      <span class="c-count">7 players &middot; Kalshi</span>
+    </div>
+  </div>
+
+  <div class="trade-pair">
+    <!-- Traded TO Boston -->
+    <div class="trade-col" style="border-top:3px solid var(--bos);">
+      <div class="trade-col-head">
+        <div class="trade-col-logo" style="background:var(--bos);">BOS</div>
+        <span class="trade-col-title">Traded to Celtics</span>
+      </div>
+      <!-- Featured player with larger image -->
+      <div style="padding:8px;text-align:center;border-bottom:1px solid var(--border);">
+        <div style="width:44px;height:44px;border-radius:50%;margin:0 auto 4px;background:linear-gradient(135deg,var(--bos),#00a85a);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:white;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.15);">JG</div>
+        <div style="font-size:11px;font-weight:700;">Josh Giddey</div>
+        <div style="font-size:14px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--bos);">12%</div>
+      </div>
+      <div class="trade-item">
+        <div class="trade-headshot">JR</div>
+        <span class="trade-name">Julius Randle</span>
+        <span class="trade-pct">12%</span>
+      </div>
+      <div class="trade-item">
+        <div class="trade-headshot">JM</div>
+        <span class="trade-name">Ja Morant</span>
+        <span class="trade-pct">11%</span>
+      </div>
+      <div class="trade-item">
+        <div class="trade-headshot">DG</div>
+        <span class="trade-name">Draymond Green</span>
+        <span class="trade-pct">11%</span>
+      </div>
+      <div class="trade-item">
+        <div class="trade-headshot">JH</div>
+        <span class="trade-name">James Harden</span>
+        <span class="trade-pct" style="color:var(--t3);">7%</span>
+      </div>
+    </div>
+
+    <!-- Traded TO Atlanta -->
+    <div class="trade-col" style="border-top:3px solid var(--atl);">
+      <div class="trade-col-head">
+        <div class="trade-col-logo" style="background:var(--atl);">ATL</div>
+        <span class="trade-col-title">Traded to Hawks</span>
+      </div>
+      <!-- Featured player -->
+      <div style="padding:8px;text-align:center;border-bottom:1px solid var(--border);">
+        <div style="width:44px;height:44px;border-radius:50%;margin:0 auto 4px;background:linear-gradient(135deg,var(--atl),#e8485a);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:white;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.15);">ZW</div>
+        <div style="font-size:11px;font-weight:700;">Zion Williamson</div>
+        <div style="font-size:14px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--atl);">10%</div>
+      </div>
+      <div class="trade-item">
+        <div class="trade-headshot">JG</div>
+        <span class="trade-name">Josh Giddey</span>
+        <span class="trade-pct" style="color:var(--t3);">5%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATISTICAL LEADERS — grouped by category with bars -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">Statistical Leaders</span>
+      <span class="c-count">6 categories &middot; 3 sources</span>
+    </div>
+
+    <div class="stat-leaders">
+      <!-- PPG Leader -->
+      <div class="stat-cat">
+        <div class="stat-cat-label">Points Per Game Leader</div>
+        <div class="stat-row">
+          <div class="stat-team-dot" style="background:var(--bos);"></div>
+          <div class="stat-headshot" style="background:linear-gradient(135deg,var(--bos),#00a85a);color:white;font-size:5px;">JT</div>
+          <span class="stat-name">Jayson Tatum</span>
+          <div class="stat-bar"><div class="stat-bar-fill" style="width:35%;background:var(--bos);"></div></div>
+          <span class="stat-pct">7%</span>
+        </div>
+      </div>
+
+      <!-- RPG Leader -->
+      <div class="stat-cat">
+        <div class="stat-cat-label">Rebounds Per Game Leader</div>
+        <div class="stat-row">
+          <div class="stat-team-dot" style="background:var(--bos);"></div>
+          <div class="stat-headshot" style="background:linear-gradient(135deg,var(--bos),#00a85a);color:white;font-size:5px;">JT</div>
+          <span class="stat-name">Jayson Tatum</span>
+          <div class="stat-bar"><div class="stat-bar-fill" style="width:20%;background:var(--bos);"></div></div>
+          <span class="stat-pct">4%</span>
+        </div>
+      </div>
+
+      <!-- APG Leader -->
+      <div class="stat-cat">
+        <div class="stat-cat-label">Assists Per Game Leader</div>
+        <div class="stat-row">
+          <div class="stat-team-dot" style="background:var(--atl);"></div>
+          <div class="stat-headshot" style="background:linear-gradient(135deg,var(--atl),#e8485a);color:white;font-size:5px;">TY</div>
+          <span class="stat-name">Trae Young</span>
+          <div class="stat-bar"><div class="stat-bar-fill" style="width:55%;background:var(--atl);"></div></div>
+          <span class="stat-pct">11%</span>
+        </div>
+        <div class="stat-row">
+          <div class="stat-team-dot" style="background:var(--bos);"></div>
+          <div class="stat-headshot" style="background:linear-gradient(135deg,var(--bos),#00a85a);color:white;font-size:5px;">JT</div>
+          <span class="stat-name">Jayson Tatum</span>
+          <div class="stat-bar"><div class="stat-bar-fill" style="width:20%;background:var(--bos);"></div></div>
+          <span class="stat-pct">4%</span>
+        </div>
+      </div>
+
+      <!-- 3PM Leader -->
+      <div class="stat-cat">
+        <div class="stat-cat-label">Three-Pointers Made Leader</div>
+        <div class="stat-row">
+          <div class="stat-team-dot" style="background:var(--bos);"></div>
+          <div class="stat-headshot" style="background:linear-gradient(135deg,var(--bos),#00a85a);color:white;font-size:5px;">JB</div>
+          <span class="stat-name">Jaylen Brown</span>
+          <div class="stat-bar"><div class="stat-bar-fill" style="width:15%;background:var(--bos);"></div></div>
+          <span class="stat-pct">3%</span>
+        </div>
+      </div>
+
+      <!-- SPG Leader -->
+      <div class="stat-cat">
+        <div class="stat-cat-label">Steals Per Game Leader</div>
+        <div class="stat-row">
+          <div class="stat-team-dot" style="background:var(--atl);"></div>
+          <div class="stat-headshot" style="background:linear-gradient(135deg,var(--atl),#e8485a);color:white;font-size:5px;">DM</div>
+          <span class="stat-name">Dejounte Murray</span>
+          <div class="stat-bar"><div class="stat-bar-fill" style="width:25%;background:var(--atl);"></div></div>
+          <span class="stat-pct">5%</span>
+        </div>
+      </div>
+
+      <!-- BPG Leader -->
+      <div class="stat-cat">
+        <div class="stat-cat-label">Blocks Per Game Leader</div>
+        <div class="stat-row">
+          <div class="stat-team-dot" style="background:var(--atl);"></div>
+          <div class="stat-headshot" style="background:linear-gradient(135deg,var(--atl),#e8485a);color:white;font-size:5px;">CC</div>
+          <span class="stat-name">Clint Capela</span>
+          <div class="stat-bar"><div class="stat-bar-fill" style="width:30%;background:var(--atl);"></div></div>
+          <span class="stat-pct">6%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NOVELTY — Colorful gradient cards -->
+  <div class="c">
+    <div class="c-head">
+      <span class="c-title">Novelty &amp; Fun</span>
+      <span class="c-count">Kalshi</span>
+    </div>
+  </div>
+
+  <div class="novelty-scroll">
+    <div class="novelty-card" style="background:linear-gradient(135deg,#7c3aed,#ec4899);">
+      <div class="novelty-card-inner">
+        <div class="novelty-emoji">&#127918;</div>
+        <div class="novelty-title">NBA 2K Cover Athlete</div>
+        <div class="novelty-prob">Tatum 18%</div>
+        <span class="src src-k novelty-src" style="background:rgba(255,255,255,0.2);color:white;font-size:7px;">Kalshi</span>
+      </div>
+    </div>
+
+    <div class="novelty-card" style="background:linear-gradient(135deg,#0369a1,#06b6d4);">
+      <div class="novelty-card-inner">
+        <div class="novelty-emoji">&#127936;</div>
+        <div class="novelty-title">Knueppel 207th Three-Pointer by Season End</div>
+        <div class="novelty-prob">35%</div>
+        <span class="src src-k novelty-src" style="background:rgba(255,255,255,0.2);color:white;font-size:7px;">Kalshi</span>
+      </div>
+    </div>
+
+    <div class="novelty-card" style="background:linear-gradient(135deg,#dc2626,#f97316);">
+      <div class="novelty-card-inner">
+        <div class="novelty-emoji">&#128293;</div>
+        <div class="novelty-title">Best Record in NBA</div>
+        <div class="novelty-prob">CLE 45%</div>
+        <span class="src src-k novelty-src" style="background:rgba(255,255,255,0.2);color:white;font-size:7px;">Kalshi</span>
+      </div>
+    </div>
+
+    <div class="novelty-card" style="background:linear-gradient(135deg,#059669,#10b981);">
+      <div class="novelty-card-inner">
+        <div class="novelty-emoji">&#128064;</div>
+        <div class="novelty-title">Worst Record in NBA</div>
+        <div class="novelty-prob">WAS 55%</div>
+        <span class="src src-k novelty-src" style="background:rgba(255,255,255,0.2);color:white;font-size:7px;">Kalshi</span>
+      </div>
+    </div>
+
+    <div class="novelty-card" style="background:linear-gradient(135deg,#7e22ce,#a855f7);">
+      <div class="novelty-card-inner">
+        <div class="novelty-emoji">&#127942;</div>
+        <div class="novelty-title">East #1 Seed</div>
+        <div class="novelty-prob">CLE 85%</div>
+        <span class="src src-k novelty-src" style="background:rgba(255,255,255,0.2);color:white;font-size:7px;">Kalshi</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <strong>185 related futures</strong> from <strong>3 sources</strong> (Kalshi, Polymarket, Odds API)<br>
+    grouped into <strong>12 visual sections</strong> &middot; zero hidden items<br>
+    <span style="color:var(--t3);">BOS @ ATL &middot; Event 12080338 &middot; Real data</span>
+  </div>
+
+</div>
+</div>
+
+</body>
+</html>

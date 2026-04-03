@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BainLuck Event Detail v2 - Comprehensive Mockups</title>
+<style>
+  :root {
+    --bg: #f8f9fa;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #111827;
+    --text2: #6b7280;
+    --text3: #9ca3af;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --green: #059669;
+    --green-bg: #ecfdf5;
+    --orange: #d97706;
+    --orange-bg: #fffbeb;
+    --red: #dc2626;
+    --purple: #7c3aed;
+    --purple-bg: #f5f3ff;
+    --pink: #db2777;
+    --celtics: #007a33;
+    --hornets: #1d1160;
+    --r: 12px;
+    --sh: 0 1px 3px rgba(0,0,0,0.06);
+    --sh2: 0 4px 12px rgba(0,0,0,0.08);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    background: var(--bg); color: var(--text); line-height:1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Nav */
+  .nav {
+    position:sticky; top:0; z-index:100;
+    background: rgba(255,255,255,0.95); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border); padding:10px 20px;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  }
+  .nav h1 { font-size:13px; font-weight:600; color:var(--text2); margin-right:12px; }
+  .nav-btn {
+    padding:6px 14px; border:1px solid var(--border); border-radius:8px;
+    background:white; font-size:12px; font-weight:500; cursor:pointer;
+  }
+  .nav-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .nav-btn.active { background:var(--accent); color:white; border-color:var(--accent); }
+
+  /* Panels */
+  .panel { display:none; max-width:900px; margin:0 auto; padding:24px; }
+  .panel.active { display:block; }
+
+  .layout { display:flex; gap:32px; align-items:flex-start; }
+  .sidebar { width:320px; flex-shrink:0; position:sticky; top:64px; }
+  .main { flex:1; min-width:0; }
+
+  .label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--text3); margin-bottom:8px; }
+  .title { font-size:20px; font-weight:700; margin-bottom:4px; }
+  .desc { font-size:13px; color:var(--text2); line-height:1.6; margin-bottom:20px; }
+
+  /* Phone */
+  .phone {
+    width:390px; margin:0 auto; background:var(--bg);
+    border-radius:36px; border:6px solid #1a1a1a;
+    padding:16px 0; overflow:hidden; box-shadow:0 16px 48px rgba(0,0,0,0.12);
+  }
+  .phone-inner { height:780px; overflow-y:auto; padding:0 14px; }
+  .phone-inner::-webkit-scrollbar { display:none; }
+
+  /* Shared card */
+  .card {
+    background:white; border-radius:var(--r); box-shadow:var(--sh);
+    margin-bottom:10px; overflow:hidden;
+  }
+  .card-pad { padding:14px 16px; }
+
+  /* HERO */
+  .hero { padding:16px; }
+  .hero-top { display:flex; align-items:center; gap:6px; margin-bottom:14px; }
+  .badge { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; padding:2px 7px; border-radius:4px; }
+  .badge-final { background:#f3f4f6; color:#6b7280; }
+  .badge-live { background:#fef2f2; color:#dc2626; }
+  .hero-time { font-size:11px; color:var(--text3); }
+
+  .teams { display:flex; align-items:center; justify-content:space-between; }
+  .team { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1; }
+  .team-logo { width:48px; height:48px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; color:white; }
+  .team-name { font-size:13px; font-weight:600; }
+  .team-rec { font-size:11px; color:var(--text3); }
+  .team-score { font-size:26px; font-weight:700; }
+
+  .prob-center { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .prob-big { font-size:32px; font-weight:800; letter-spacing:-0.02em; }
+  .prob-bar { width:160px; height:5px; border-radius:3px; overflow:hidden; }
+  .prob-fill { height:100%; border-radius:3px; }
+  .prob-range { display:flex; justify-content:space-between; width:160px; }
+  .prob-sm { font-size:10px; color:var(--text3); }
+
+  /* Chart placeholder */
+  .chart-wrap { padding:14px 16px; }
+  .chart-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .chart-title { font-size:13px; font-weight:600; }
+  .pill-group { display:flex; gap:3px; }
+  .pill { font-size:10px; padding:3px 8px; border-radius:5px; cursor:pointer; font-weight:500; }
+  .pill-off { background:#f3f4f6; color:var(--text2); }
+  .pill-on { background:var(--accent); color:white; }
+  .chart-box { height:130px; border-bottom:1px solid var(--border); position:relative; margin-bottom:8px; }
+  .chart-legend { display:flex; gap:10px; flex-wrap:wrap; }
+  .legend-item { font-size:10px; color:var(--text2); display:flex; align-items:center; gap:3px; }
+  .legend-dot { width:7px; height:3px; border-radius:1px; }
+
+  /* SECTION HEADERS */
+  .section-head {
+    display:flex; align-items:center; gap:8px; padding:4px 0; margin-top:12px; margin-bottom:6px;
+  }
+  .section-title { font-size:12px; font-weight:600; color:var(--text2); text-transform:uppercase; letter-spacing:0.04em; }
+  .section-line { flex:1; height:1px; background:var(--border); }
+  .section-count { font-size:10px; color:var(--text3); }
+
+  /* Level 2: Score Markets */
+  .score-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; }
+  .score-cell { padding:12px; text-align:center; border-right:1px solid #f3f4f6; }
+  .score-cell:last-child { border-right:none; }
+  .score-label { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:2px; }
+  .score-value { font-size:18px; font-weight:700; }
+  .score-sub { font-size:10px; color:var(--text3); margin-top:1px; }
+  .score-actual { font-size:10px; font-weight:600; }
+  .score-source { font-size:9px; color:var(--text3); margin-top:2px; }
+
+  /* Level 3: Game Props */
+  .prop-row {
+    display:flex; align-items:center; padding:8px 16px; gap:10px;
+    border-bottom:1px solid #f9fafb;
+  }
+  .prop-row:last-child { border-bottom:none; }
+  .prop-name { flex:1; font-size:12px; font-weight:500; }
+  .prop-detail { font-size:11px; color:var(--text2); }
+  .prop-prob { font-size:13px; font-weight:600; min-width:40px; text-align:right; }
+  .prop-bar { width:50px; height:4px; background:#f3f4f6; border-radius:2px; overflow:hidden; }
+  .prop-bar-fill { height:100%; border-radius:2px; }
+  .prop-actual {
+    font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px;
+    background:var(--green-bg); color:var(--green);
+  }
+  .prop-source { font-size:9px; color:var(--text3); }
+
+  /* Level 4: Playoff Path (matches ProgressionLadder) */
+  .playoff-card {
+    background:white; border-radius:var(--r); box-shadow:var(--sh);
+    padding:12px 14px; margin-bottom:8px;
+    border-left:3px solid transparent;
+  }
+  .playoff-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .playoff-logo { width:24px; height:24px; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; color:white; }
+  .playoff-name { font-size:13px; font-weight:600; flex:1; }
+  .playoff-badge { font-size:9px; color:var(--text3); text-transform:uppercase; letter-spacing:0.04em; }
+
+  .stage-row { display:flex; align-items:center; gap:6px; padding:3px 0; }
+  .stage-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .stage-dot-done { background:var(--green); }
+  .stage-dot-pending { background:#d1d5db; }
+  .stage-dot-elim { background:var(--red); opacity:0.4; }
+  .stage-name { font-size:11px; color:var(--text2); flex:1; }
+  .stage-bar { width:36px; height:3px; background:#f3f4f6; border-radius:2px; overflow:hidden; }
+  .stage-bar-fill { height:100%; border-radius:2px; }
+  .stage-prob { font-size:11px; font-weight:600; font-family:'SF Mono',monospace; min-width:28px; text-align:right; }
+
+  /* Awards / Player Markets */
+  .award-row { display:flex; align-items:center; padding:8px 16px; gap:10px; border-bottom:1px solid #f9fafb; }
+  .award-row:last-child { border-bottom:none; }
+  .award-player { font-size:12px; font-weight:500; }
+  .award-name { font-size:11px; color:var(--text2); flex:1; }
+  .award-prob { font-size:13px; font-weight:600; color:var(--purple); }
+  .award-rank { font-size:10px; color:var(--text3); }
+  .award-sources { display:flex; gap:2px; }
+  .src-dot { width:5px; height:5px; border-radius:50%; }
+  .src-odds { background:var(--accent); }
+  .src-kalshi { background:var(--green); }
+  .src-poly { background:var(--purple); }
+
+  /* Matchup mini-grid */
+  .matchup-grid { display:grid; grid-template-columns:1fr 1fr; gap:0; }
+  .matchup-cell {
+    padding:8px 12px; border-bottom:1px solid #f9fafb; border-right:1px solid #f9fafb;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .matchup-cell:nth-child(2n) { border-right:none; }
+  .matchup-opp { font-size:11px; font-weight:500; }
+  .matchup-pct { font-size:12px; font-weight:600; color:var(--accent); }
+  .matchup-low { color:var(--text3); font-weight:400; }
+
+  /* Win Total inline */
+  .wt-highlight { padding:12px 16px; display:flex; align-items:center; gap:12px; }
+  .wt-big { font-size:22px; font-weight:700; color:var(--accent); }
+  .wt-detail { flex:1; }
+  .wt-line { font-size:12px; font-weight:500; }
+  .wt-context { font-size:11px; color:var(--text2); }
+  .wt-thresholds { padding:4px 16px 12px; display:flex; gap:6px; flex-wrap:wrap; }
+  .wt-chip {
+    font-size:10px; padding:3px 8px; border-radius:4px; background:#f3f4f6;
+    display:flex; gap:4px; align-items:center;
+  }
+  .wt-chip-val { font-weight:600; }
+  .wt-chip-dim { color:var(--text3); }
+  .wt-chip-hot { background:var(--accent-light); color:var(--accent); }
+
+  /* Source tag */
+  .src-tag {
+    font-size:9px; padding:1px 5px; border-radius:3px;
+    background:#f3f4f6; color:var(--text3); font-weight:500;
+  }
+
+  /* Trade */
+  .trade-row { display:flex; align-items:center; padding:8px 16px; gap:10px; border-bottom:1px solid #f9fafb; }
+  .trade-row:last-child { border-bottom:none; }
+  .trade-player { font-size:12px; font-weight:500; flex:1; }
+  .trade-to { font-size:11px; color:var(--text2); }
+  .trade-prob { font-size:13px; font-weight:600; color:var(--pink); }
+
+  /* "See more" link */
+  .see-more {
+    display:block; text-align:center; padding:8px;
+    font-size:11px; font-weight:500; color:var(--accent);
+    cursor:pointer; border-top:1px solid #f3f4f6;
+  }
+
+  /* Pro/Con box */
+  .note-box { padding:12px 16px; background:#fefce8; border-radius:8px; margin-bottom:16px; border-left:3px solid var(--orange); }
+  .note-box.blue { background:var(--accent-light); border-left-color:var(--accent); }
+  .note-title { font-size:12px; font-weight:600; margin-bottom:4px; }
+  .note-text { font-size:12px; color:var(--text2); }
+
+  .pros, .cons { list-style:none; padding:0; margin-bottom:10px; }
+  .pros li, .cons li { font-size:12px; color:var(--text2); padding:2px 0 2px 16px; position:relative; }
+  .pros li::before { content:"+"; position:absolute; left:0; color:var(--green); font-weight:700; }
+  .cons li::before { content:"-"; position:absolute; left:0; color:var(--red); font-weight:700; }
+
+  hr.divider { border:none; border-top:2px solid var(--border); margin:32px 0; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <h1>Event Detail v2</h1>
+  <button class="nav-btn active" onclick="show('overview')">Overview</button>
+  <button class="nav-btn" onclick="show('v1')">V1: Stacked Sections</button>
+  <button class="nav-btn" onclick="show('v2')">V2: Score-Forward</button>
+  <button class="nav-btn" onclick="show('v3')">V3: Live Dashboard</button>
+</nav>
+
+<!-- ===== OVERVIEW ===== -->
+<div id="p-overview" class="panel active">
+  <p class="label">Design Brief</p>
+  <h2 class="title">Comprehensive Event Detail Page</h2>
+  <p class="desc">
+    All three options share the same 4-level hierarchy and the same data. They differ in layout density,
+    visual emphasis, and how they handle the live-vs-completed distinction. All use the existing
+    ProgressionLadder cards for playoff path. All surface game-level props from Kalshi (spreads, totals,
+    1st half, player props) that we're currently ingesting but not displaying.
+  </p>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
+    <div class="note-box blue">
+      <div class="note-title">Level 1 -- Win Probability</div>
+      <div class="note-text">Hero section with probability, score, opening odds. Chart with quarter markers integrated into the chart line (not a ribbon). "Since Start" default for completed games.</div>
+    </div>
+    <div class="note-box blue">
+      <div class="note-title">Level 2 -- Projected Score</div>
+      <div class="note-text">Spread + Total from Kalshi/sportsbooks. Shows projected final score, actual vs predicted. For completed games: "Market said X, actual was Y."</div>
+    </div>
+    <div class="note-box blue">
+      <div class="note-title">Level 3 -- Game Props</div>
+      <div class="note-text">1st half winner, player stat props (30+ points, 10+ rebounds), game-specific markets from Kalshi. Show opening line, current, and actual result.</div>
+    </div>
+    <div class="note-box blue">
+      <div class="note-title">Level 4 -- Season Context</div>
+      <div class="note-text">Playoff path (ProgressionLadder cards), awards, stat leaders, matchup markets, win totals, trades. Grouped and deduped across sources. Fascinating when they move during a game.</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:14px; font-weight:600; margin-bottom:8px;">What's new vs. today</h3>
+  <ul class="pros">
+    <li>Spread + Total markets surfaced as "Projected Score" (Level 2 -- currently unused)</li>
+    <li>Player props + 1st half markets surfaced as "Game Props" (Level 3 -- currently unused)</li>
+    <li>Playoff path uses existing ProgressionLadder from MyStuff</li>
+    <li>Cross-source merge on Level 4 futures (3 NBA Champion rows become 1)</li>
+    <li>"Since Start" default for completed games</li>
+    <li>Actual vs predicted comparison on completed game props</li>
+    <li>Source dots on every merged item</li>
+  </ul>
+  <ul class="cons">
+    <li>Game props (spreads, totals, player props) are in futures_markets DB but not currently linked to events -- needs a new query path</li>
+    <li>Cross-source merge requires server-side grouping by merge_group (not done yet)</li>
+    <li>Some Kalshi game props might not have merge_group assigned</li>
+  </ul>
+</div>
+
+<!-- ===== V1: STACKED SECTIONS ===== -->
+<div id="p-v1" class="panel">
+  <div class="layout">
+    <div class="sidebar">
+      <p class="label">Version 1</p>
+      <h2 class="title">Stacked Sections</h2>
+      <p class="desc">
+        Clean vertical flow. Each level gets its own section with a clear header.
+        Scrolling down is a journey from "what's happening now" to "what does this mean
+        for the season." Good for both live and completed games.
+      </p>
+      <h4 style="font-size:12px; font-weight:600; margin-bottom:4px; color:var(--green);">Pros</h4>
+      <ul class="pros">
+        <li>Most natural reading order -- top to bottom = most to least important</li>
+        <li>Each section standalone, easy to scan</li>
+        <li>Section headers with counts give overview</li>
+        <li>Works well on narrow mobile screens</li>
+        <li>Easiest to implement -- just add sections below chart</li>
+      </ul>
+      <h4 style="font-size:12px; font-weight:600; margin-bottom:4px; color:var(--red);">Cons</h4>
+      <ul class="cons">
+        <li>Long page -- Level 4 is far down</li>
+        <li>Less information density than dashboard layout</li>
+        <li>May feel "listy" for the futures sections</li>
+      </ul>
+    </div>
+
+    <div class="main">
+      <div class="phone">
+        <div class="phone-inner">
+          <!-- HERO -->
+          <div class="card">
+            <div class="hero">
+              <div class="hero-top">
+                <span class="badge badge-final">Final</span>
+                <span class="hero-time">Mar 28 -- 7:00 PM ET</span>
+              </div>
+              <div class="teams">
+                <div class="team">
+                  <div class="team-logo" style="background:var(--celtics);">BOS</div>
+                  <div class="team-name">Celtics</div>
+                  <div class="team-rec">54-20</div>
+                  <div class="team-score">118</div>
+                </div>
+                <div class="prob-center">
+                  <div class="prob-big" style="color:var(--celtics);">84%</div>
+                  <div class="prob-bar" style="background:var(--hornets);">
+                    <div class="prob-fill" style="width:84%; background:var(--celtics);"></div>
+                  </div>
+                  <div class="prob-range">
+                    <span class="prob-sm">Open: 78%</span>
+                    <span class="prob-sm">Final: 100%</span>
+                  </div>
+                </div>
+                <div class="team">
+                  <div class="team-logo" style="background:var(--hornets);">CHA</div>
+                  <div class="team-name">Hornets</div>
+                  <div class="team-rec">19-55</div>
+                  <div class="team-score">108</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CHART -->
+          <div class="card">
+            <div class="chart-wrap">
+              <div class="chart-head">
+                <span class="chart-title">Win Probability</span>
+                <div class="pill-group">
+                  <span class="pill pill-off">All</span>
+                  <span class="pill pill-on">Since Start</span>
+                </div>
+              </div>
+              <div class="chart-box">
+                <svg viewBox="0 0 340 120" style="width:100%; height:120px;">
+                  <!-- Quarter markers integrated into chart -->
+                  <line x1="85" y1="0" x2="85" y2="120" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="85" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">Q2</text>
+                  <line x1="170" y1="0" x2="170" y2="120" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="170" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">HT</text>
+                  <line x1="255" y1="0" x2="255" y2="120" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="255" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">Q4</text>
+                  <!-- 50% line -->
+                  <line x1="0" y1="60" x2="340" y2="60" stroke="#e5e7eb" stroke-width="0.5" stroke-dasharray="3,3"/>
+                  <!-- Win prob lines -->
+                  <path d="M0,30 Q40,28 85,35 T170,25 T255,18 T340,5" stroke="var(--celtics)" fill="none" stroke-width="2"/>
+                  <path d="M0,90 Q40,92 85,85 T170,95 T255,102 T340,115" stroke="var(--hornets)" fill="none" stroke-width="1.5" opacity="0.6"/>
+                  <!-- Scoring play dots -->
+                  <circle cx="95" cy="32" r="3" fill="var(--celtics)" opacity="0.4"/>
+                  <circle cx="135" cy="28" r="3" fill="var(--celtics)" opacity="0.4"/>
+                  <circle cx="200" cy="22" r="3" fill="var(--celtics)" opacity="0.4"/>
+                </svg>
+              </div>
+              <div class="chart-legend">
+                <span class="legend-item"><span class="legend-dot" style="background:var(--accent);"></span>BainLuck</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--green);"></span>Kalshi</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--purple);"></span>Polymarket</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--orange);"></span>ESPN</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- LEVEL 2: PROJECTED SCORE -->
+          <div class="section-head">
+            <span class="section-title">Projected Score</span>
+            <span class="section-line"></span>
+            <span class="section-count">Level 2</span>
+          </div>
+
+          <div class="card">
+            <div class="score-grid">
+              <div class="score-cell">
+                <div class="score-label">Spread</div>
+                <div class="score-value">BOS -9.5</div>
+                <div class="score-actual" style="color:var(--green);">Actual: -10</div>
+                <div class="score-source"><span class="src-tag">Kalshi</span> <span class="src-tag">Odds API</span></div>
+              </div>
+              <div class="score-cell">
+                <div class="score-label">Total</div>
+                <div class="score-value">O/U 221.5</div>
+                <div class="score-actual" style="color:var(--green);">Actual: 226</div>
+                <div class="score-source"><span class="src-tag">Kalshi</span></div>
+              </div>
+              <div class="score-cell">
+                <div class="score-label">Projected</div>
+                <div class="score-value" style="font-size:14px;">BOS 115.5<br>CHA 106</div>
+                <div class="score-actual" style="color:var(--green);">118-108</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LEVEL 3: GAME PROPS -->
+          <div class="section-head">
+            <span class="section-title">Game Markets</span>
+            <span class="section-line"></span>
+            <span class="section-count">Level 3 -- 8 props</span>
+          </div>
+
+          <div class="card">
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">1st Half Winner: Celtics</div>
+                <div class="prop-detail">Opened 72% -- <span class="src-tag">Kalshi</span></div>
+              </div>
+              <div class="prop-prob">75%</div>
+              <span class="prop-actual">Yes</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Jayson Tatum 30+ Points</div>
+                <div class="prop-detail">Opened 28% -- <span class="src-tag">Kalshi</span></div>
+              </div>
+              <div class="prop-prob">32%</div>
+              <span class="prop-actual">Yes (34 pts)</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Jaylen Brown 25+ Points</div>
+                <div class="prop-detail">Opened 35% -- <span class="src-tag">Kalshi</span></div>
+              </div>
+              <div class="prop-prob">38%</div>
+              <span style="font-size:10px; color:var(--red); font-weight:600;">No (18 pts)</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Total Points Over 221.5</div>
+                <div class="prop-detail">Opened 52% -- <span class="src-tag">Kalshi</span></div>
+              </div>
+              <div class="prop-prob">55%</div>
+              <span class="prop-actual">Yes (226)</span>
+            </div>
+            <div class="prop-row" style="opacity:0.6;">
+              <div style="flex:1;">
+                <div class="prop-name">LaMelo Ball 20+ Points</div>
+                <div class="prop-detail">Opened 42% -- <span class="src-tag">Kalshi</span></div>
+              </div>
+              <div class="prop-prob">45%</div>
+              <span class="prop-actual">Yes (22 pts)</span>
+            </div>
+            <div class="see-more">+3 more game props</div>
+          </div>
+
+          <!-- LEVEL 4: SEASON CONTEXT -->
+          <div class="section-head">
+            <span class="section-title">Season Context</span>
+            <span class="section-line"></span>
+            <span class="section-count">Level 4 -- Celtics</span>
+          </div>
+
+          <!-- Playoff Path (ProgressionLadder style) -->
+          <div class="playoff-card" style="border-left-color:var(--celtics);">
+            <div class="playoff-header">
+              <div class="playoff-logo" style="background:var(--celtics);">BOS</div>
+              <span class="playoff-name">Boston Celtics</span>
+              <span class="playoff-badge">Playoffs</span>
+            </div>
+            <div class="stage-row">
+              <span class="stage-dot stage-dot-done"></span>
+              <span class="stage-name">Playoffs</span>
+              <div class="stage-bar"><div class="stage-bar-fill" style="width:100%; background:var(--green);"></div></div>
+              <span class="stage-prob" style="color:var(--green);">done</span>
+            </div>
+            <div class="stage-row">
+              <span class="stage-dot stage-dot-pending"></span>
+              <span class="stage-name">Division</span>
+              <div class="stage-bar"><div class="stage-bar-fill" style="width:88%; background:var(--accent);"></div></div>
+              <span class="stage-prob">88%</span>
+            </div>
+            <div class="stage-row">
+              <span class="stage-dot stage-dot-pending"></span>
+              <span class="stage-name">Conf Finals</span>
+              <div class="stage-bar"><div class="stage-bar-fill" style="width:36%; background:var(--accent);"></div></div>
+              <span class="stage-prob">36%</span>
+            </div>
+            <div class="stage-row">
+              <span class="stage-dot stage-dot-pending"></span>
+              <span class="stage-name">Champion</span>
+              <div class="stage-bar"><div class="stage-bar-fill" style="width:12%; background:var(--accent);"></div></div>
+              <span class="stage-prob">12%</span>
+            </div>
+            <div style="display:flex; gap:3px; margin-top:6px; padding-left:13px;">
+              <span class="src-dot src-odds"></span>
+              <span class="src-dot src-kalshi"></span>
+              <span class="src-dot src-poly"></span>
+              <span style="font-size:9px; color:var(--text3); margin-left:2px;">3 sources merged</span>
+            </div>
+          </div>
+
+          <!-- Win Total -->
+          <div class="card">
+            <div class="wt-highlight">
+              <div class="wt-big">58%</div>
+              <div class="wt-detail">
+                <div class="wt-line">55+ wins (key line)</div>
+                <div class="wt-context">Currently 54 wins, 8 games left -- <span class="src-tag">Kalshi</span></div>
+              </div>
+            </div>
+            <div class="wt-thresholds">
+              <span class="wt-chip"><span class="wt-chip-val">60+:</span> <span>12%</span></span>
+              <span class="wt-chip wt-chip-hot"><span class="wt-chip-val">55+:</span> <span>58%</span></span>
+              <span class="wt-chip wt-chip-dim"><span class="wt-chip-val">50+:</span> <span>97%</span></span>
+              <span class="wt-chip wt-chip-dim"><span class="wt-chip-val">45+:</span> <span>99.5%</span></span>
+            </div>
+          </div>
+
+          <!-- Finals Matchups -->
+          <div class="card">
+            <div class="card-pad" style="padding-bottom:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; font-weight:600;">NBA Finals Matchup</span>
+                <span style="font-size:10px; color:var(--text3);">16 matchups -- <span class="src-tag">Kalshi</span></span>
+              </div>
+            </div>
+            <div class="matchup-grid">
+              <div class="matchup-cell"><span class="matchup-opp">vs Houston</span><span class="matchup-pct">20%</span></div>
+              <div class="matchup-cell"><span class="matchup-opp">vs OKC</span><span class="matchup-pct">17.5%</span></div>
+              <div class="matchup-cell"><span class="matchup-opp">vs San Antonio</span><span class="matchup-pct">15.5%</span></div>
+              <div class="matchup-cell"><span class="matchup-opp">vs Denver</span><span class="matchup-pct">12%</span></div>
+              <div class="matchup-cell"><span class="matchup-opp">vs Memphis</span><span class="matchup-pct matchup-low">4%</span></div>
+              <div class="matchup-cell"><span class="matchup-opp">vs LAL</span><span class="matchup-pct matchup-low">3%</span></div>
+            </div>
+            <div class="see-more">+10 more matchups</div>
+          </div>
+
+          <!-- Awards -->
+          <div class="card">
+            <div class="card-pad" style="padding-bottom:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; font-weight:600;">Awards & Honors</span>
+                <span style="font-size:10px; color:var(--text3);">Celtics players</span>
+              </div>
+            </div>
+            <div class="award-row">
+              <span class="award-player" style="width:90px;">Tatum</span>
+              <span class="award-name">All-NBA 1st Team</span>
+              <div class="award-sources"><span class="src-dot src-kalshi"></span></div>
+              <span class="award-prob">45%</span>
+            </div>
+            <div class="award-row">
+              <span class="award-player" style="width:90px;">Tatum</span>
+              <span class="award-name">MVP</span>
+              <div class="award-sources"><span class="src-dot src-odds"></span><span class="src-dot src-kalshi"></span></div>
+              <span class="award-prob">8%</span>
+            </div>
+            <div class="award-row">
+              <span class="award-player" style="width:90px;">Tatum</span>
+              <span class="award-name">DPOY</span>
+              <div class="award-sources"><span class="src-dot src-kalshi"></span></div>
+              <span class="award-prob">3%</span>
+            </div>
+            <div class="award-row" style="opacity:0.5;">
+              <span class="award-player" style="width:90px;">Brown</span>
+              <span class="award-name">All-NBA 2nd Team</span>
+              <div class="award-sources"><span class="src-dot src-kalshi"></span></div>
+              <span class="award-prob">12%</span>
+            </div>
+            <div class="see-more">+4 more awards</div>
+          </div>
+
+          <!-- Trade Watch -->
+          <div class="card">
+            <div class="card-pad" style="padding-bottom:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; font-weight:600;">Trade Watch</span>
+                <span style="font-size:10px; color:var(--text3);">Probability traded TO Celtics -- <span class="src-tag">Kalshi</span></span>
+              </div>
+            </div>
+            <div class="trade-row">
+              <span class="trade-player">Josh Giddey</span>
+              <span class="trade-prob">12%</span>
+            </div>
+            <div class="trade-row">
+              <span class="trade-player">Julius Randle</span>
+              <span class="trade-prob">12%</span>
+            </div>
+            <div class="trade-row">
+              <span class="trade-player">Ja Morant</span>
+              <span class="trade-prob">11%</span>
+            </div>
+            <div class="see-more">+2 more</div>
+          </div>
+
+          <!-- Hornets section -->
+          <div class="section-head">
+            <span class="section-title">Season Context</span>
+            <span class="section-line"></span>
+            <span class="section-count">Hornets</span>
+          </div>
+
+          <div class="playoff-card" style="border-left-color:var(--hornets); opacity:0.7;">
+            <div class="playoff-header">
+              <div class="playoff-logo" style="background:var(--hornets);">CHA</div>
+              <span class="playoff-name">Charlotte Hornets</span>
+              <span class="playoff-badge">Playoffs</span>
+            </div>
+            <div class="stage-row">
+              <span class="stage-dot stage-dot-elim"></span>
+              <span class="stage-name">Playoffs</span>
+              <div class="stage-bar"><div class="stage-bar-fill" style="width:0.2%; background:var(--red);"></div></div>
+              <span class="stage-prob" style="color:var(--red);">0.2%</span>
+            </div>
+            <div class="stage-row">
+              <span class="stage-dot stage-dot-elim"></span>
+              <span class="stage-name">Champion</span>
+              <div class="stage-bar"><div class="stage-bar-fill" style="width:0%;"></div></div>
+              <span class="stage-prob" style="color:var(--text3);">0%</span>
+            </div>
+          </div>
+
+          <div style="height:32px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== V2: SCORE-FORWARD ===== -->
+<div id="p-v2" class="panel">
+  <div class="layout">
+    <div class="sidebar">
+      <p class="label">Version 2</p>
+      <h2 class="title">Score-Forward</h2>
+      <p class="desc">
+        Integrates the projected score directly into the hero, making it Level 1.5.
+        The hero becomes a "prediction card" that shows: actual score, win prob,
+        spread, and total in one block. Game props sit immediately below as a
+        natural extension of "what happened in this game." Season context follows.
+      </p>
+      <h4 style="font-size:12px; font-weight:600; margin-bottom:4px; color:var(--green);">Pros</h4>
+      <ul class="pros">
+        <li>Score context immediately visible -- user sees spread + total without scrolling</li>
+        <li>Hero tells a complete story: who won, by how much, vs prediction</li>
+        <li>Game props feel connected to the game, not separate</li>
+        <li>More compact -- less scrolling to reach Level 4</li>
+      </ul>
+      <h4 style="font-size:12px; font-weight:600; margin-bottom:4px; color:var(--red);">Cons</h4>
+      <ul class="cons">
+        <li>Denser hero might feel cluttered for casual users</li>
+        <li>Spread/total less relevant for sports without those markets</li>
+        <li>Score-forward emphasis may not work for pre-game state</li>
+      </ul>
+    </div>
+
+    <div class="main">
+      <div class="phone">
+        <div class="phone-inner">
+          <!-- HERO with integrated score context -->
+          <div class="card">
+            <div class="hero">
+              <div class="hero-top">
+                <span class="badge badge-final">Final</span>
+                <span class="hero-time">Mar 28 -- 7:00 PM ET</span>
+              </div>
+              <div class="teams">
+                <div class="team">
+                  <div class="team-logo" style="background:var(--celtics);">BOS</div>
+                  <div class="team-name">Celtics</div>
+                  <div class="team-score">118</div>
+                </div>
+                <div class="prob-center">
+                  <div class="prob-big" style="color:var(--celtics);">84%</div>
+                  <div class="prob-bar" style="background:var(--hornets);">
+                    <div class="prob-fill" style="width:84%; background:var(--celtics);"></div>
+                  </div>
+                  <div style="font-size:10px; color:var(--text3);">Open: 78%</div>
+                </div>
+                <div class="team">
+                  <div class="team-logo" style="background:var(--hornets);">CHA</div>
+                  <div class="team-name">Hornets</div>
+                  <div class="team-score">108</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Integrated score prediction strip -->
+            <div style="border-top:1px solid var(--border); display:flex; text-align:center;">
+              <div style="flex:1; padding:10px; border-right:1px solid #f3f4f6;">
+                <div style="font-size:9px; color:var(--text3); text-transform:uppercase;">Spread</div>
+                <div style="font-size:14px; font-weight:700;">BOS -9.5</div>
+                <div style="font-size:10px; color:var(--green); font-weight:600;">Won by 10</div>
+              </div>
+              <div style="flex:1; padding:10px; border-right:1px solid #f3f4f6;">
+                <div style="font-size:9px; color:var(--text3); text-transform:uppercase;">Total</div>
+                <div style="font-size:14px; font-weight:700;">O/U 221.5</div>
+                <div style="font-size:10px; color:var(--green); font-weight:600;">Over (226)</div>
+              </div>
+              <div style="flex:1; padding:10px;">
+                <div style="font-size:9px; color:var(--text3); text-transform:uppercase;">1st Half</div>
+                <div style="font-size:14px; font-weight:700;">BOS 75%</div>
+                <div style="font-size:10px; color:var(--green); font-weight:600;">Correct</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chart -->
+          <div class="card">
+            <div class="chart-wrap">
+              <div class="chart-head">
+                <span class="chart-title">Win Probability</span>
+                <div class="pill-group">
+                  <span class="pill pill-off">All</span>
+                  <span class="pill pill-on">Since Start</span>
+                </div>
+              </div>
+              <div class="chart-box">
+                <svg viewBox="0 0 340 120" style="width:100%; height:120px;">
+                  <line x1="85" y1="0" x2="85" y2="120" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="85" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">Q2</text>
+                  <line x1="170" y1="0" x2="170" y2="120" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="170" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">HT</text>
+                  <line x1="255" y1="0" x2="255" y2="120" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="255" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">Q4</text>
+                  <line x1="0" y1="60" x2="340" y2="60" stroke="#e5e7eb" stroke-width="0.5" stroke-dasharray="3,3"/>
+                  <path d="M0,30 Q40,28 85,35 T170,25 T255,18 T340,5" stroke="var(--celtics)" fill="none" stroke-width="2"/>
+                  <path d="M0,90 Q40,92 85,85 T170,95 T255,102 T340,115" stroke="var(--hornets)" fill="none" stroke-width="1.5" opacity="0.6"/>
+                </svg>
+              </div>
+              <div class="chart-legend">
+                <span class="legend-item"><span class="legend-dot" style="background:var(--accent);"></span>BainLuck</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--green);"></span>Kalshi</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--purple);"></span>Polymarket</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--orange);"></span>ESPN</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Game Props (Level 3) -->
+          <div class="section-head">
+            <span class="section-title">Player Props</span>
+            <span class="section-line"></span>
+            <span class="section-count">5 props</span>
+          </div>
+
+          <div class="card">
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Tatum 30+ Points</div>
+                <div class="prop-detail">Opened 28% -> moved to 32%</div>
+              </div>
+              <div class="prop-prob">32%</div>
+              <span class="prop-actual">Yes (34)</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Brown 25+ Points</div>
+                <div class="prop-detail">Opened 35% -> moved to 38%</div>
+              </div>
+              <div class="prop-prob">38%</div>
+              <span style="font-size:10px; color:var(--red); font-weight:600; padding:1px 5px; background:#fef2f2; border-radius:3px;">No (18)</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Ball 20+ Points</div>
+                <div class="prop-detail">Opened 42%</div>
+              </div>
+              <div class="prop-prob">45%</div>
+              <span class="prop-actual">Yes (22)</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Tatum 10+ Rebounds</div>
+                <div class="prop-detail">Opened 40%</div>
+              </div>
+              <div class="prop-prob">42%</div>
+              <span class="prop-actual">Yes (11)</span>
+            </div>
+          </div>
+
+          <!-- Level 4: Season -->
+          <div class="section-head">
+            <span class="section-title">Season Context</span>
+            <span class="section-line"></span>
+          </div>
+
+          <!-- Two playoff cards side by side -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+            <div class="playoff-card" style="border-left-color:var(--celtics); margin-bottom:0;">
+              <div class="playoff-header">
+                <div class="playoff-logo" style="background:var(--celtics); width:20px; height:20px; font-size:8px;">BOS</div>
+                <span class="playoff-name" style="font-size:12px;">Celtics</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-done"></span>
+                <span class="stage-name">Playoffs</span>
+                <span class="stage-prob" style="color:var(--green);">done</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-pending"></span>
+                <span class="stage-name">Division</span>
+                <span class="stage-prob">88%</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-pending"></span>
+                <span class="stage-name">Conf Finals</span>
+                <span class="stage-prob">36%</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-pending"></span>
+                <span class="stage-name">Champion</span>
+                <span class="stage-prob">12%</span>
+              </div>
+            </div>
+
+            <div class="playoff-card" style="border-left-color:var(--hornets); margin-bottom:0; opacity:0.7;">
+              <div class="playoff-header">
+                <div class="playoff-logo" style="background:var(--hornets); width:20px; height:20px; font-size:8px;">CHA</div>
+                <span class="playoff-name" style="font-size:12px;">Hornets</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-elim"></span>
+                <span class="stage-name">Playoffs</span>
+                <span class="stage-prob" style="color:var(--red);">0.2%</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-elim"></span>
+                <span class="stage-name">Champion</span>
+                <span class="stage-prob" style="color:var(--text3);">0%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Remaining Level 4 cards (compact) -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+            <!-- Win Total mini -->
+            <div class="card" style="margin-bottom:0;">
+              <div style="padding:10px 12px;">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.04em;">Win Total</div>
+                <div style="font-size:20px; font-weight:700; color:var(--accent);">58%</div>
+                <div style="font-size:11px; color:var(--text2);">55+ wins</div>
+                <div style="font-size:10px; color:var(--text3);">54W, 8 left</div>
+              </div>
+            </div>
+
+            <!-- Top matchup mini -->
+            <div class="card" style="margin-bottom:0;">
+              <div style="padding:10px 12px;">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.04em;">Top Finals Matchup</div>
+                <div style="font-size:20px; font-weight:700; color:var(--accent);">20%</div>
+                <div style="font-size:11px; color:var(--text2);">vs Houston</div>
+                <div style="font-size:10px; color:var(--text3);">16 matchups</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Awards compact -->
+          <div class="card">
+            <div class="card-pad" style="padding-bottom:4px;">
+              <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">Awards & Honors -- Celtics Players</div>
+            </div>
+            <div class="award-row">
+              <span class="award-player" style="width:70px;">Tatum</span>
+              <span class="award-name">All-NBA 1st</span>
+              <span class="award-prob">45%</span>
+            </div>
+            <div class="award-row">
+              <span class="award-player" style="width:70px;">Tatum</span>
+              <span class="award-name">MVP</span>
+              <span class="award-prob">8%</span>
+            </div>
+            <div class="award-row">
+              <span class="award-player" style="width:70px;">Brown</span>
+              <span class="award-name">All-NBA 2nd</span>
+              <span class="award-prob">12%</span>
+            </div>
+            <div class="see-more">+5 more awards | Trade Watch (5 players)</div>
+          </div>
+
+          <div style="height:32px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== V3: LIVE DASHBOARD ===== -->
+<div id="p-v3" class="panel">
+  <div class="layout">
+    <div class="sidebar">
+      <p class="label">Version 3</p>
+      <h2 class="title">Live Dashboard</h2>
+      <p class="desc">
+        Optimized for watching a live game. All 4 levels visible without scrolling.
+        Uses a compact 2-column grid for Level 3 and Level 4. The hero is slim,
+        the chart is taller (it's the star), and everything else packs below
+        in a dashboard-style grid. When a future MOVES during the game, it
+        gets a visual "movement" indicator.
+      </p>
+      <h4 style="font-size:12px; font-weight:600; margin-bottom:4px; color:var(--green);">Pros</h4>
+      <ul class="pros">
+        <li>Maximum information density -- all 4 levels in one viewport</li>
+        <li>Best for live games -- watch everything update in real-time</li>
+        <li>Movement indicators show which futures are shifting right now</li>
+        <li>Grid layout feels like a professional dashboard</li>
+        <li>Chart gets more vertical space (the hero product)</li>
+      </ul>
+      <h4 style="font-size:12px; font-weight:600; margin-bottom:4px; color:var(--red);">Cons</h4>
+      <ul class="cons">
+        <li>Very dense -- may overwhelm casual users on first visit</li>
+        <li>2-column grid tight on 375px phones</li>
+        <li>Harder to show all awards/trades without scrolling within cards</li>
+        <li>Movement indicators need real-time data to be meaningful</li>
+      </ul>
+
+      <div class="note-box" style="margin-top:16px;">
+        <div class="note-title">Movement indicators</div>
+        <div class="note-text">When a future's probability changes during a live game, it gets a colored arrow (green up, red down) and briefly highlights. This is the "FASCINATING when they move during a game" feature.</div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="phone">
+        <div class="phone-inner">
+          <!-- Slim hero -->
+          <div class="card">
+            <div style="padding:12px 16px;">
+              <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+                <span class="badge badge-live">Live -- Q3 4:22</span>
+              </div>
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div class="team-logo" style="background:var(--celtics); width:36px; height:36px; font-size:12px;">BOS</div>
+                  <div>
+                    <div style="font-size:14px; font-weight:700;">Celtics</div>
+                    <div style="font-size:20px; font-weight:800;">87</div>
+                  </div>
+                </div>
+                <div style="text-align:center;">
+                  <div class="prob-big" style="font-size:28px; color:var(--celtics);">82%</div>
+                  <div class="prob-bar" style="width:120px; background:var(--hornets);">
+                    <div class="prob-fill" style="width:82%; background:var(--celtics);"></div>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div style="text-align:right;">
+                    <div style="font-size:14px; font-weight:700;">Hornets</div>
+                    <div style="font-size:20px; font-weight:800;">71</div>
+                  </div>
+                  <div class="team-logo" style="background:var(--hornets); width:36px; height:36px; font-size:12px;">CHA</div>
+                </div>
+              </div>
+              <!-- Score strip -->
+              <div style="display:flex; justify-content:center; gap:16px; margin-top:8px; font-size:10px; color:var(--text3);">
+                <span>Spread: BOS -9.5</span>
+                <span>Total: O/U 221.5</span>
+                <span>1st Half: BOS 65%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Taller chart -->
+          <div class="card">
+            <div class="chart-wrap">
+              <div class="chart-head">
+                <span class="chart-title">Win Probability</span>
+                <div class="pill-group">
+                  <span class="pill pill-off">All</span>
+                  <span class="pill pill-on">Since Start</span>
+                </div>
+              </div>
+              <div class="chart-box" style="height:160px;">
+                <svg viewBox="0 0 340 150" style="width:100%; height:150px;">
+                  <line x1="113" y1="0" x2="113" y2="150" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="113" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">Q2</text>
+                  <line x1="226" y1="0" x2="226" y2="150" stroke="#e5e7eb" stroke-width="0.5"/>
+                  <text x="226" y="8" text-anchor="middle" font-size="7" fill="#9ca3af">HT</text>
+                  <line x1="0" y1="75" x2="340" y2="75" stroke="#e5e7eb" stroke-width="0.5" stroke-dasharray="3,3"/>
+                  <path d="M0,38 Q40,35 85,42 T140,30 T200,28 T260,22 T340,15" stroke="var(--celtics)" fill="none" stroke-width="2"/>
+                  <path d="M0,112 Q40,115 85,108 T140,120 T200,122 T260,128 T340,135" stroke="var(--hornets)" fill="none" stroke-width="1.5" opacity="0.6"/>
+                  <!-- Live indicator at end -->
+                  <circle cx="340" cy="15" r="4" fill="var(--celtics)"/>
+                  <circle cx="340" cy="15" r="7" fill="none" stroke="var(--celtics)" stroke-width="1" opacity="0.3"/>
+                </svg>
+              </div>
+              <div class="chart-legend">
+                <span class="legend-item"><span class="legend-dot" style="background:var(--accent);"></span>BainLuck</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--green);"></span>Kalshi</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--purple);"></span>Polymarket</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--orange);"></span>ESPN</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Level 3: Game Props inline -->
+          <div class="section-head">
+            <span class="section-title">Game Props</span>
+            <span class="section-line"></span>
+            <span class="section-count">Live</span>
+          </div>
+
+          <div class="card">
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Tatum 30+ Pts <span style="font-size:10px; color:var(--green);">-- 28 so far</span></div>
+              </div>
+              <div class="prop-prob" style="color:var(--green);">68%</div>
+              <span style="font-size:10px; color:var(--green);">+12</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Brown 25+ Pts <span style="font-size:10px; color:var(--text3);">-- 14 so far</span></div>
+              </div>
+              <div class="prop-prob" style="color:var(--orange);">22%</div>
+              <span style="font-size:10px; color:var(--red);">-16</span>
+            </div>
+            <div class="prop-row">
+              <div style="flex:1;">
+                <div class="prop-name">Total Over 221.5 <span style="font-size:10px; color:var(--green);">-- 158 pace: 228</span></div>
+              </div>
+              <div class="prop-prob" style="color:var(--green);">72%</div>
+              <span style="font-size:10px; color:var(--green);">+17</span>
+            </div>
+          </div>
+
+          <!-- Level 4: 2-column dashboard -->
+          <div class="section-head">
+            <span class="section-title">Season Context</span>
+            <span class="section-line"></span>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+            <!-- Playoff path mini (Celtics) -->
+            <div class="playoff-card" style="border-left-color:var(--celtics); margin-bottom:0; padding:10px 12px;">
+              <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                <div class="playoff-logo" style="background:var(--celtics); width:18px; height:18px; font-size:7px;">BOS</div>
+                <span style="font-size:11px; font-weight:600;">Celtics</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-done"></span>
+                <span class="stage-name">Playoffs</span>
+                <span class="stage-prob" style="color:var(--green); font-size:10px;">done</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-pending"></span>
+                <span class="stage-name">Conf Finals</span>
+                <span class="stage-prob" style="font-size:10px;">36%</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-pending"></span>
+                <span class="stage-name">Champion</span>
+                <span class="stage-prob" style="font-size:10px;">12%</span>
+              </div>
+              <div style="margin-top:4px; display:flex; gap:2px;">
+                <span class="src-dot src-odds"></span><span class="src-dot src-kalshi"></span><span class="src-dot src-poly"></span>
+              </div>
+            </div>
+
+            <!-- Win Total mini -->
+            <div class="card" style="margin-bottom:0;">
+              <div style="padding:10px 12px;">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase;">Win Total</div>
+                <div style="display:flex; align-items:baseline; gap:4px;">
+                  <span style="font-size:22px; font-weight:700; color:var(--accent);">58%</span>
+                  <span style="font-size:10px; color:var(--green);">+2</span>
+                </div>
+                <div style="font-size:11px; color:var(--text2);">55+ wins</div>
+                <div style="font-size:10px; color:var(--text3);">54W, 8 left</div>
+              </div>
+            </div>
+
+            <!-- Top matchup mini -->
+            <div class="card" style="margin-bottom:0;">
+              <div style="padding:10px 12px;">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase;">Finals Matchup</div>
+                <div style="font-size:22px; font-weight:700; color:var(--accent);">20%</div>
+                <div style="font-size:11px; color:var(--text2);">vs Houston</div>
+                <div style="font-size:10px; color:var(--text3);">16 total</div>
+              </div>
+            </div>
+
+            <!-- Awards mini -->
+            <div class="card" style="margin-bottom:0;">
+              <div style="padding:10px 12px;">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase;">Awards</div>
+                <div style="display:flex; align-items:baseline; gap:4px;">
+                  <span style="font-size:22px; font-weight:700; color:var(--purple);">45%</span>
+                  <span style="font-size:10px; color:var(--green);">+3</span>
+                </div>
+                <div style="font-size:11px; color:var(--text2);">Tatum All-NBA 1st</div>
+                <div style="font-size:10px; color:var(--text3);">8 awards tracked</div>
+              </div>
+            </div>
+
+            <!-- Trade mini -->
+            <div class="card" style="margin-bottom:0;">
+              <div style="padding:10px 12px;">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase;">Trade Watch</div>
+                <div style="font-size:22px; font-weight:700; color:var(--pink);">12%</div>
+                <div style="font-size:11px; color:var(--text2);">Giddey to BOS</div>
+                <div style="font-size:10px; color:var(--text3);">5 players linked</div>
+              </div>
+            </div>
+
+            <!-- Hornets -->
+            <div class="playoff-card" style="border-left-color:var(--hornets); margin-bottom:0; padding:10px 12px; opacity:0.6;">
+              <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                <div class="playoff-logo" style="background:var(--hornets); width:18px; height:18px; font-size:7px;">CHA</div>
+                <span style="font-size:11px; font-weight:600;">Hornets</span>
+              </div>
+              <div class="stage-row">
+                <span class="stage-dot stage-dot-elim"></span>
+                <span class="stage-name">Playoffs</span>
+                <span class="stage-prob" style="color:var(--red); font-size:10px;">0.2%</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="height:32px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function show(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('p-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

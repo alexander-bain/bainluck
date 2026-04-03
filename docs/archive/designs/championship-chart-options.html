@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Championship Grid Chart Redesign — 5 Options</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --card: #141419;
+    --border: rgba(255,255,255,0.08);
+    --text: #e8e8ed;
+    --text-muted: rgba(255,255,255,0.45);
+    --text-dim: rgba(255,255,255,0.25);
+    --accent: #3b82f6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.5;
+    padding: 20px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+  .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 32px; }
+  .option-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-top: 48px;
+    margin-bottom: 6px;
+  }
+  .option-header h2 {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .option-tag {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .tag-best { background: rgba(34,197,94,0.15); color: #22c55e; }
+  .tag-mobile { background: rgba(59,130,246,0.15); color: #3b82f6; }
+  .tag-desktop { background: rgba(168,85,247,0.15); color: #a855f7; }
+  .option-desc {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 16px;
+    max-width: 600px;
+  }
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 12px;
+  }
+  .pros-cons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  .pros-cons div { padding: 10px 12px; border-radius: 8px; }
+  .pros { background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.15); }
+  .cons { background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.15); }
+  .pros-cons h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .pros h4 { color: #22c55e; }
+  .cons h4 { color: #ef4444; }
+  .pros-cons li { color: var(--text-muted); margin-left: 14px; margin-bottom: 2px; }
+
+  /* Chart A - Bump Chart */
+  .bump-chart { position: relative; }
+  .bump-chart canvas { width: 100%; }
+
+  /* Chart B - Interactive */
+  .interactive-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .legend-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .legend-btn.active {
+    border-color: currentColor;
+    color: var(--text);
+    background: rgba(255,255,255,0.05);
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* Chart C - Sparklines */
+  .sparkline-grid {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .sparkline-grid th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-dim);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+  }
+  .sparkline-grid th:nth-child(n+3) { text-align: right; }
+  .sparkline-grid td {
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-size: 13px;
+    vertical-align: middle;
+  }
+  .sparkline-grid td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+  .sparkline-grid tr:hover { background: rgba(255,255,255,0.02); }
+  .team-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .team-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .trend-indicator {
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .trend-up { color: #22c55e; }
+  .trend-down { color: #ef4444; }
+  .trend-flat { color: var(--text-dim); }
+
+  /* Chart D - Small Multiples */
+  .small-multiples {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  @media (max-width: 600px) {
+    .small-multiples { grid-template-columns: repeat(2, 1fr); }
+  }
+  .mini-chart {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .mini-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .mini-chart-team {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .mini-chart-prob {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Chart E - Horizontal Bars */
+  .hbar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .hbar-rank {
+    font-size: 12px;
+    color: var(--text-dim);
+    width: 18px;
+    text-align: right;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .hbar-name {
+    width: 90px;
+    font-size: 12px;
+    font-weight: 500;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hbar-track {
+    flex: 1;
+    height: 24px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hbar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 6px;
+  }
+  .hbar-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  }
+  .hbar-label-outside {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-left: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .hbar-sparkline {
+    width: 70px;
+    flex-shrink: 0;
+  }
+  .hbar-trend {
+    width: 40px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 11px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Separator */
+  .separator {
+    height: 1px;
+    background: var(--border);
+    margin: 48px 0;
+  }
+
+  /* Current chart (for comparison) */
+  .current-label {
+    display: inline-block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(239,68,68,0.15);
+    color: #ef4444;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  /* Vote section */
+  .vote-section {
+    margin-top: 48px;
+    padding: 24px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    text-align: center;
+  }
+  .vote-section h2 { margin-bottom: 8px; }
+  .vote-section p { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; }
+  .vote-options {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+  .vote-btn {
+    padding: 8px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+  }
+  .vote-btn:hover {
+    background: rgba(59,130,246,0.1);
+    border-color: rgba(59,130,246,0.3);
+  }
+  .vote-btn.selected {
+    background: rgba(59,130,246,0.2);
+    border-color: #3b82f6;
+    color: #3b82f6;
+  }
+</style>
+</head>
+<body>
+
+<h1>Championship Grid Chart Redesign</h1>
+<p class="subtitle">MLB World Series odds — real data from bainluck.com (March 27 – April 2, 2026)</p>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- CURRENT CHART (for comparison) -->
+<!-- ═══════════════════════════════════════════════ -->
+<div style="margin-top: 24px;">
+  <span class="current-label">Current (broken)</span>
+  <p class="option-desc">The existing spaghetti chart. Lines are bunched together, no visible axes, impossible to read on mobile. This is what we're replacing.</p>
+</div>
+<div class="chart-card">
+  <canvas id="currentChart" height="200"></canvas>
+</div>
+
+<div class="separator"></div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- OPTION A: BUMP/RANK CHART -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="option-header">
+  <h2>Option A: Bump / Rank Chart</h2>
+  <span class="option-tag tag-best">Recommended</span>
+  <span class="option-tag tag-mobile">Mobile ✓</span>
+</div>
+<p class="option-desc">Y-axis shows rank (1st at top), not raw probability. Lines cross when teams swap positions. Eliminates the bunched-up spaghetti problem because vertical spacing is fixed.</p>
+<div class="chart-card">
+  <canvas id="bumpChart" height="280"></canvas>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>✓ Strengths</h4><ul>
+    <li>Always readable — fixed vertical spacing</li>
+    <li>Shows movement clearly (line crossings)</li>
+    <li>Works at any scale (1% and 30% are equally visible)</li>
+    <li>Great on mobile (no tiny differences to parse)</li>
+  </ul></div>
+  <div class="cons"><h4>✗ Weaknesses</h4><ul>
+    <li>Loses absolute probability info (rank ≠ probability)</li>
+    <li>A team going 5.0% → 5.2% could swap rank and look dramatic</li>
+    <li>Less familiar chart type for casual fans</li>
+  </ul></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- OPTION B: INTERACTIVE HIGHLIGHT -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="option-header">
+  <h2>Option B: Interactive Highlight</h2>
+  <span class="option-tag tag-desktop">Best on Desktop</span>
+</div>
+<p class="option-desc">All lines shown muted. Tap a team name to spotlight that line. Top 3 highlighted by default. Legend doubles as filter buttons.</p>
+<div class="chart-card">
+  <div class="interactive-legend" id="interactiveLegend"></div>
+  <canvas id="interactiveChart" height="220"></canvas>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>✓ Strengths</h4><ul>
+    <li>Shows real probabilities (not just rank)</li>
+    <li>Users can explore specific teams</li>
+    <li>Progressive disclosure — not overwhelming</li>
+  </ul></div>
+  <div class="cons"><h4>✗ Weaknesses</h4><ul>
+    <li>Requires interaction to be useful</li>
+    <li>Muted lines still look like spaghetti</li>
+    <li>Tap targets small on phone</li>
+    <li>Bunching problem persists for non-highlighted teams</li>
+  </ul></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- OPTION C: SPARKLINES IN GRID -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="option-header">
+  <h2>Option C: Sparklines in Grid</h2>
+  <span class="option-tag tag-mobile">Mobile ✓</span>
+</div>
+<p class="option-desc">Kill the standalone chart. Instead, embed a tiny sparkline next to each team's probability in the grid table itself. Each team's trend is self-contained.</p>
+<div class="chart-card" style="padding: 0; overflow: hidden;">
+  <table class="sparkline-grid" id="sparklineTable">
+    <thead>
+      <tr>
+        <th style="width:24px">#</th>
+        <th>Team</th>
+        <th>Prob</th>
+        <th>7d</th>
+        <th style="width:70px">Trend</th>
+      </tr>
+    </thead>
+    <tbody id="sparklineBody"></tbody>
+  </table>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>✓ Strengths</h4><ul>
+    <li>No separate chart — data and trend in one view</li>
+    <li>Each team's line is crystal clear</li>
+    <li>Scales to any number of teams</li>
+    <li>Extremely mobile-friendly</li>
+  </ul></div>
+  <div class="cons"><h4>✗ Weaknesses</h4><ul>
+    <li>Can't compare teams' trends visually against each other</li>
+    <li>Tiny sparklines have limited resolution</li>
+    <li>Loses the "story" of who's gaining vs falling</li>
+    <li>Might feel sterile — less visually exciting</li>
+  </ul></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- OPTION D: SMALL MULTIPLES -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="option-header">
+  <h2>Option D: Small Multiples</h2>
+  <span class="option-tag tag-desktop">Best on Desktop</span>
+</div>
+<p class="option-desc">Top 6 teams each get their own mini area chart in a 2×3 grid. Each chart has its own Y-axis scaled to the team's range. Clean and readable.</p>
+<div class="chart-card">
+  <div class="small-multiples" id="smallMultiples"></div>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>✓ Strengths</h4><ul>
+    <li>Each team's trend is perfectly clear</li>
+    <li>Area fills make movement feel tangible</li>
+    <li>Can see relative movement across teams at a glance</li>
+    <li>Familiar chart format (small multiples are well-understood)</li>
+  </ul></div>
+  <div class="cons"><h4>✗ Weaknesses</h4><ul>
+    <li>Uses significant vertical space (especially on mobile)</li>
+    <li>Y-axis scales differ per team — misleading if not careful</li>
+    <li>Only shows top N teams — others are invisible</li>
+    <li>2-column layout on phone means very small charts</li>
+  </ul></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- OPTION E: HORIZONTAL BARS + SPARKLINES -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="option-header">
+  <h2>Option E: Horizontal Bars + Sparklines</h2>
+  <span class="option-tag tag-best">Recommended</span>
+  <span class="option-tag tag-mobile">Mobile ✓</span>
+</div>
+<p class="option-desc">Current snapshot as a horizontal bar chart (biggest at top) with a 7-day sparkline next to each bar. Best of both worlds: current state + recent trend.</p>
+<div class="chart-card">
+  <div id="hbarContainer"></div>
+</div>
+<div class="pros-cons">
+  <div class="pros"><h4>✓ Strengths</h4><ul>
+    <li>Instantly shows who's leading (bar length)</li>
+    <li>Sparkline adds trend without complexity</li>
+    <li>Natural sort order (biggest at top)</li>
+    <li>Excellent on mobile — no interaction needed</li>
+    <li>Easy to scan 30+ teams</li>
+  </ul></div>
+  <div class="cons"><h4>✗ Weaknesses</h4><ul>
+    <li>Sparklines are tiny — limited trend detail</li>
+    <li>Doesn't show exact historical values</li>
+    <li>Bar dominance (Dodgers at 31%) makes other bars tiny</li>
+  </ul></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- VOTE -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="vote-section">
+  <h2>Which option(s) should we build?</h2>
+  <p>We can combine options (e.g., E for the grid page + C inline in the table). Tap your pick.</p>
+  <div class="vote-options">
+    <button class="vote-btn" onclick="this.classList.toggle('selected')">A — Bump Chart</button>
+    <button class="vote-btn" onclick="this.classList.toggle('selected')">B — Interactive</button>
+    <button class="vote-btn" onclick="this.classList.toggle('selected')">C — Sparklines</button>
+    <button class="vote-btn" onclick="this.classList.toggle('selected')">D — Small Multiples</button>
+    <button class="vote-btn" onclick="this.classList.toggle('selected')">E — Bars + Sparklines</button>
+  </div>
+</div>
+
+<div style="height: 60px;"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+// DATA
+// ═══════════════════════════════════════════════
+const TIMELINE = [
+  {"timestamp":"2026-03-27T00:00:00+00:00","outcomes":{"Boston Red Sox":0.058824,"Philadelphia Phillies":0.058824,"New York Yankees":0.090909,"New York Mets":0.071429,"Detroit Tigers":0.047619,"Atlanta Braves":0.047619,"Toronto Blue Jays":0.066667,"Seattle Mariners":0.076923,"Los Angeles Dodgers":0.307692,"Chicago Cubs":0.052632}},
+  {"timestamp":"2026-03-28T00:00:00+00:00","outcomes":{"Los Angeles Dodgers":0.307692,"Seattle Mariners":0.076923,"Detroit Tigers":0.047619,"Chicago Cubs":0.052632,"Boston Red Sox":0.058824,"New York Yankees":0.090909,"Atlanta Braves":0.047619,"Philadelphia Phillies":0.058824,"Toronto Blue Jays":0.066667,"New York Mets":0.071429}},
+  {"timestamp":"2026-03-29T00:00:00+00:00","outcomes":{"Boston Red Sox":0.058824,"Chicago Cubs":0.052632,"Philadelphia Phillies":0.058824,"New York Mets":0.071429,"Detroit Tigers":0.047619,"Toronto Blue Jays":0.066667,"Atlanta Braves":0.047619,"Seattle Mariners":0.076923,"New York Yankees":0.090909,"Los Angeles Dodgers":0.307692}},
+  {"timestamp":"2026-03-30T00:00:00+00:00","outcomes":{"New York Yankees":0.090909,"Los Angeles Dodgers":0.307692,"Seattle Mariners":0.083333,"New York Mets":0.076923,"Toronto Blue Jays":0.0625,"Philadelphia Phillies":0.058824,"Atlanta Braves":0.05,"Boston Red Sox":0.055556,"Chicago Cubs":0.052632,"Detroit Tigers":0.047619}},
+  {"timestamp":"2026-03-31T00:00:00+00:00","outcomes":{"Toronto Blue Jays":0.066667,"New York Yankees":0.090909,"Atlanta Braves":0.05,"Boston Red Sox":0.055556,"Chicago Cubs":0.05,"Philadelphia Phillies":0.058824,"Detroit Tigers":0.047619,"Los Angeles Dodgers":0.307692,"Seattle Mariners":0.083333,"New York Mets":0.066667}},
+  {"timestamp":"2026-04-01T00:00:00+00:00","outcomes":{"Atlanta Braves":0.047619,"Toronto Blue Jays":0.066667,"New York Mets":0.066667,"Los Angeles Dodgers":0.307692,"Detroit Tigers":0.05,"Philadelphia Phillies":0.058824,"New York Yankees":0.090909,"Chicago Cubs":0.05,"Boston Red Sox":0.055556,"Seattle Mariners":0.083333}},
+  {"timestamp":"2026-04-02T00:00:00+00:00","outcomes":{"Toronto Blue Jays":0.066667,"Seattle Mariners":0.083333,"New York Mets":0.066667,"Atlanta Braves":0.05,"Los Angeles Dodgers":0.307692,"Philadelphia Phillies":0.058824,"New York Yankees":0.090909,"Chicago Cubs":0.05,"Boston Red Sox":0.052632,"Detroit Tigers":0.047619}}
+];
+
+const COLORS = {
+  "Los Angeles Dodgers": "#005a9c",
+  "New York Yankees": "#132448",
+  "Seattle Mariners": "#005c5c",
+  "New York Mets": "#002d72",
+  "Toronto Blue Jays": "#134a8e",
+  "Philadelphia Phillies": "#e81828",
+  "Boston Red Sox": "#bd3039",
+  "Atlanta Braves": "#ce1141",
+  "Chicago Cubs": "#0e3386",
+  "Detroit Tigers": "#0a2240"
+};
+
+// Brighter versions for dark background
+const BRIGHT_COLORS = {
+  "Los Angeles Dodgers": "#3b9fe8",
+  "New York Yankees": "#7b9bc7",
+  "Seattle Mariners": "#00b3b3",
+  "New York Mets": "#4d7fd9",
+  "Toronto Blue Jays": "#4a8edc",
+  "Philadelphia Phillies": "#ff4d5e",
+  "Boston Red Sox": "#e84855",
+  "Atlanta Braves": "#ff4d6d",
+  "Chicago Cubs": "#4d7ae8",
+  "Detroit Tigers": "#6b8ab3"
+};
+
+const SHORT_NAMES = {
+  "Los Angeles Dodgers": "LAD",
+  "New York Yankees": "NYY",
+  "Seattle Mariners": "SEA",
+  "New York Mets": "NYM",
+  "Toronto Blue Jays": "TOR",
+  "Philadelphia Phillies": "PHI",
+  "Boston Red Sox": "BOS",
+  "Atlanta Braves": "ATL",
+  "Chicago Cubs": "CHC",
+  "Detroit Tigers": "DET"
+};
+
+const TEAMS = Object.keys(COLORS);
+
+function getTeamData(team) {
+  return TIMELINE.map(t => t.outcomes[team] || 0);
+}
+
+function formatPct(v) {
+  return (v * 100).toFixed(1) + '%';
+}
+
+function formatDate(ts) {
+  const d = new Date(ts);
+  return (d.getMonth()+1) + '/' + d.getDate();
+}
+
+const sortedTeams = [...TEAMS].sort((a,b) => {
+  const last = TIMELINE[TIMELINE.length-1].outcomes;
+  return (last[b]||0) - (last[a]||0);
+});
+
+// ═══════════════════════════════════════════════
+// CURRENT CHART (spaghetti)
+// ═══════════════════════════════════════════════
+function drawCurrentChart() {
+  const canvas = document.getElementById('currentChart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.offsetWidth * dpr;
+  canvas.height = 200 * dpr;
+  ctx.scale(dpr, dpr);
+  const W = canvas.offsetWidth, H = 200;
+  const pad = { left: 10, right: 10, top: 10, bottom: 10 };
+
+  // No axes — that's the point (it's the broken version)
+  const xScale = (i) => pad.left + (i / (TIMELINE.length-1)) * (W - pad.left - pad.right);
+  const yScale = (v) => pad.top + (1 - v / 0.35) * (H - pad.top - pad.bottom);
+
+  for (const team of TEAMS) {
+    const data = getTeamData(team);
+    ctx.beginPath();
+    ctx.strokeStyle = BRIGHT_COLORS[team] || '#888';
+    ctx.lineWidth = 1.5;
+    data.forEach((v, i) => {
+      const x = xScale(i), y = yScale(v);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// OPTION A: BUMP CHART
+// ═══════════════════════════════════════════════
+function drawBumpChart() {
+  const canvas = document.getElementById('bumpChart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.offsetWidth * dpr;
+  canvas.height = 280 * dpr;
+  ctx.scale(dpr, dpr);
+  const W = canvas.offsetWidth, H = 280;
+  const pad = { left: 8, right: 72, top: 24, bottom: 30 };
+  const n = TEAMS.length;
+
+  // Date labels
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = '11px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  TIMELINE.forEach((t, i) => {
+    const x = pad.left + (i / (TIMELINE.length-1)) * (W - pad.left - pad.right);
+    ctx.fillText(formatDate(t.timestamp), x, H - 8);
+  });
+
+  // Rank labels (left)
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  for (let r = 0; r < n; r++) {
+    const y = pad.top + (r / (n-1)) * (H - pad.top - pad.bottom);
+    // Subtle gridline
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.stroke();
+  }
+
+  // Compute ranks at each timestamp
+  const ranks = TIMELINE.map(t => {
+    const sorted = Object.entries(t.outcomes).sort((a,b) => b[1] - a[1]);
+    const rankMap = {};
+    sorted.forEach(([team], i) => rankMap[team] = i);
+    return rankMap;
+  });
+
+  const xScale = (i) => pad.left + (i / (TIMELINE.length-1)) * (W - pad.left - pad.right);
+  const yScale = (rank) => pad.top + (rank / (n-1)) * (H - pad.top - pad.bottom);
+
+  // Draw lines
+  for (const team of TEAMS) {
+    const teamRanks = ranks.map(r => r[team] ?? n-1);
+    ctx.beginPath();
+    ctx.strokeStyle = BRIGHT_COLORS[team];
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    teamRanks.forEach((rank, i) => {
+      const x = xScale(i), y = yScale(rank);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // End dot + label
+    const lastRank = teamRanks[teamRanks.length - 1];
+    const lastX = xScale(TIMELINE.length - 1);
+    const lastY = yScale(lastRank);
+
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+    ctx.fillStyle = BRIGHT_COLORS[team];
+    ctx.fill();
+
+    ctx.fillStyle = BRIGHT_COLORS[team];
+    ctx.font = '11px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    const lastProb = TIMELINE[TIMELINE.length-1].outcomes[team] || 0;
+    ctx.fillText(SHORT_NAMES[team] + ' ' + formatPct(lastProb), lastX + 8, lastY + 4);
+  }
+
+  // Title
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '11px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('RANK', 8, 14);
+}
+
+// ═══════════════════════════════════════════════
+// OPTION B: INTERACTIVE HIGHLIGHT
+// ═══════════════════════════════════════════════
+let activeTeams = new Set(sortedTeams.slice(0, 3));
+
+function buildInteractiveLegend() {
+  const container = document.getElementById('interactiveLegend');
+  container.innerHTML = '';
+  for (const team of sortedTeams) {
+    const btn = document.createElement('button');
+    btn.className = 'legend-btn' + (activeTeams.has(team) ? ' active' : '');
+    btn.style.color = activeTeams.has(team) ? BRIGHT_COLORS[team] : '';
+    btn.innerHTML = `<span class="legend-dot" style="background:${BRIGHT_COLORS[team]}"></span>${SHORT_NAMES[team]}`;
+    btn.onclick = () => {
+      if (activeTeams.has(team)) activeTeams.delete(team);
+      else activeTeams.add(team);
+      buildInteractiveLegend();
+      drawInteractiveChart();
+    };
+    container.appendChild(btn);
+  }
+}
+
+function drawInteractiveChart() {
+  const canvas = document.getElementById('interactiveChart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.offsetWidth * dpr;
+  canvas.height = 220 * dpr;
+  ctx.scale(dpr, dpr);
+  const W = canvas.offsetWidth, H = 220;
+  const pad = { left: 40, right: 10, top: 16, bottom: 30 };
+
+  // Y axis
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = '10px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  for (let v = 0; v <= 0.35; v += 0.05) {
+    const y = pad.top + (1 - v / 0.35) * (H - pad.top - pad.bottom);
+    ctx.fillText(Math.round(v*100) + '%', pad.left - 6, y + 3);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.stroke();
+  }
+
+  // X axis
+  ctx.textAlign = 'center';
+  TIMELINE.forEach((t, i) => {
+    const x = pad.left + (i / (TIMELINE.length-1)) * (W - pad.left - pad.right);
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText(formatDate(t.timestamp), x, H - 8);
+  });
+
+  const xScale = (i) => pad.left + (i / (TIMELINE.length-1)) * (W - pad.left - pad.right);
+  const yScale = (v) => pad.top + (1 - v / 0.35) * (H - pad.top - pad.bottom);
+
+  // Muted lines first
+  for (const team of TEAMS) {
+    if (activeTeams.has(team)) continue;
+    const data = getTeamData(team);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    data.forEach((v, i) => {
+      const x = xScale(i), y = yScale(v);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // Active lines on top
+  for (const team of activeTeams) {
+    const data = getTeamData(team);
+    ctx.beginPath();
+    ctx.strokeStyle = BRIGHT_COLORS[team];
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    data.forEach((v, i) => {
+      const x = xScale(i), y = yScale(v);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // End label
+    const lastV = data[data.length-1];
+    const lastX = xScale(data.length-1);
+    const lastY = yScale(lastV);
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI*2);
+    ctx.fillStyle = BRIGHT_COLORS[team];
+    ctx.fill();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// OPTION C: SPARKLINES IN GRID
+// ═══════════════════════════════════════════════
+function buildSparklineGrid() {
+  const tbody = document.getElementById('sparklineBody');
+  tbody.innerHTML = '';
+
+  sortedTeams.forEach((team, idx) => {
+    const data = getTeamData(team);
+    const latest = data[data.length - 1];
+    const first = data[0];
+    const change = latest - first;
+    const changeStr = change > 0 ? '+' + (change*100).toFixed(1) : (change*100).toFixed(1);
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="color:var(--text-dim)">${idx + 1}</td>
+      <td><div class="team-cell"><span class="team-dot" style="background:${BRIGHT_COLORS[team]}"></span>${team}</div></td>
+      <td>${formatPct(latest)}</td>
+      <td><span class="trend-indicator ${change > 0.001 ? 'trend-up' : change < -0.001 ? 'trend-down' : 'trend-flat'}">${changeStr}%</span></td>
+      <td>${buildSparklineSVG(data, BRIGHT_COLORS[team])}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function buildSparklineSVG(data, color) {
+  const w = 60, h = 20;
+  const min = Math.min(...data) * 0.9;
+  const max = Math.max(...data) * 1.1 || 0.01;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length-1)) * w;
+    const y = h - ((v - min) / (max - min)) * h;
+    return `${x},${y}`;
+  }).join(' ');
+
+  // Area fill
+  const areaPoints = points + ` ${w},${h} 0,${h}`;
+
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle">
+    <polygon points="${areaPoints}" fill="${color}" opacity="0.1"/>
+    <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+// ═══════════════════════════════════════════════
+// OPTION D: SMALL MULTIPLES
+// ═══════════════════════════════════════════════
+function buildSmallMultiples() {
+  const container = document.getElementById('smallMultiples');
+  container.innerHTML = '';
+  const top6 = sortedTeams.slice(0, 6);
+
+  for (const team of top6) {
+    const data = getTeamData(team);
+    const latest = data[data.length - 1];
+    const color = BRIGHT_COLORS[team];
+
+    const div = document.createElement('div');
+    div.className = 'mini-chart';
+    div.innerHTML = `
+      <div class="mini-chart-header">
+        <span class="mini-chart-team" style="color:${color}">${SHORT_NAMES[team]}</span>
+        <span class="mini-chart-prob">${formatPct(latest)}</span>
+      </div>
+      ${buildMiniAreaChart(data, color)}
+    `;
+    container.appendChild(div);
+  }
+}
+
+function buildMiniAreaChart(data, color) {
+  const w = 200, h = 60;
+  const min = Math.min(...data) * 0.8;
+  const max = Math.max(...data) * 1.15 || 0.01;
+  const range = max - min;
+
+  const points = data.map((v, i) => {
+    const x = (i / (data.length-1)) * w;
+    const y = h - ((v - min) / range) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const linePoints = points.join(' ');
+  const areaPoints = linePoints + ` ${w},${h} 0,${h}`;
+
+  // Y-axis labels
+  const yLabels = [min, (min+max)/2, max].map(v => {
+    const y = h - ((v - min) / range) * h;
+    return `<text x="-2" y="${y+3}" fill="rgba(255,255,255,0.2)" font-size="8" text-anchor="end">${(v*100).toFixed(0)}%</text>`;
+  }).join('');
+
+  return `<svg width="100%" viewBox="-24 -4 ${w+28} ${h+12}" preserveAspectRatio="xMidYMid meet">
+    ${yLabels}
+    <polygon points="${areaPoints}" fill="${color}" opacity="0.12"/>
+    <polyline points="${linePoints}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${w}" cy="${points[points.length-1].split(',')[1]}" r="2.5" fill="${color}"/>
+  </svg>`;
+}
+
+// ═══════════════════════════════════════════════
+// OPTION E: HORIZONTAL BARS + SPARKLINES
+// ═══════════════════════════════════════════════
+function buildHorizontalBars() {
+  const container = document.getElementById('hbarContainer');
+  container.innerHTML = '';
+  const maxProb = Math.max(...sortedTeams.map(t => TIMELINE[TIMELINE.length-1].outcomes[t] || 0));
+
+  sortedTeams.forEach((team, idx) => {
+    const data = getTeamData(team);
+    const latest = data[data.length - 1];
+    const first = data[0];
+    const change = latest - first;
+    const changeStr = change > 0.0005 ? '+' + (change*100).toFixed(1) + '%' : change < -0.0005 ? (change*100).toFixed(1) + '%' : '—';
+    const pct = (latest / maxProb) * 100;
+    const color = BRIGHT_COLORS[team];
+
+    const row = document.createElement('div');
+    row.className = 'hbar-row';
+    row.innerHTML = `
+      <span class="hbar-rank">${idx + 1}</span>
+      <span class="hbar-name" style="color:${color}">${SHORT_NAMES[team]}</span>
+      <div class="hbar-track">
+        <div class="hbar-fill" style="width:${pct}%; background:${color}">
+          ${pct > 15 ? `<span class="hbar-label">${formatPct(latest)}</span>` : ''}
+        </div>
+        ${pct <= 15 ? `<span class="hbar-label-outside">${formatPct(latest)}</span>` : ''}
+      </div>
+      <div class="hbar-sparkline">${buildSparklineSVG(data, color)}</div>
+      <span class="hbar-trend ${change > 0.0005 ? 'trend-up' : change < -0.0005 ? 'trend-down' : 'trend-flat'}">${changeStr}</span>
+    `;
+    container.appendChild(row);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+function init() {
+  drawCurrentChart();
+  drawBumpChart();
+  buildInteractiveLegend();
+  drawInteractiveChart();
+  buildSparklineGrid();
+  buildSmallMultiples();
+  buildHorizontalBars();
+}
+
+window.addEventListener('load', init);
+window.addEventListener('resize', () => {
+  drawCurrentChart();
+  drawBumpChart();
+  drawInteractiveChart();
+});
+</script>
+
+</body>
+</html>

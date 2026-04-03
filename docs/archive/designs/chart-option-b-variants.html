@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Option B Variants — Interactive Highlight Chart</title>
+<style>
+  :root {
+    --bg: #09090b;
+    --card: #111114;
+    --card-hover: #161619;
+    --border: rgba(255,255,255,0.06);
+    --text: #ebebef;
+    --text-secondary: rgba(255,255,255,0.55);
+    --text-dim: rgba(255,255,255,0.25);
+    --text-faint: rgba(255,255,255,0.12);
+    --accent: #3b82f6;
+    --surface: rgba(255,255,255,0.025);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  .page { max-width: 880px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  /* Header */
+  .page-header { margin-bottom: 48px; }
+  .page-header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  .page-header p {
+    color: var(--text-secondary);
+    font-size: 14px;
+    max-width: 520px;
+  }
+
+  /* Variant sections */
+  .variant {
+    margin-bottom: 64px;
+    opacity: 0;
+    transform: translateY(12px);
+    animation: fadeUp 0.5s ease forwards;
+  }
+  .variant:nth-child(2) { animation-delay: 0.05s; }
+  .variant:nth-child(3) { animation-delay: 0.1s; }
+  .variant:nth-child(4) { animation-delay: 0.15s; }
+  .variant:nth-child(5) { animation-delay: 0.2s; }
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .variant-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .variant-number {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+  }
+  .variant-badge {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .badge-rec { background: rgba(34,197,94,0.12); color: #4ade80; }
+  .badge-golf { background: rgba(168,85,247,0.12); color: #c084fc; }
+  .variant h2 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+  }
+  .variant > p {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-bottom: 16px;
+    max-width: 580px;
+    line-height: 1.6;
+  }
+
+  /* Chart cards */
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .chart-inner {
+    padding: 20px 20px 12px;
+  }
+  .chart-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Pill legend */
+  .pill-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 16px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 11px;
+    border-radius: 100px;
+    border: 1px solid transparent;
+    background: var(--surface);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    font-family: inherit;
+    letter-spacing: 0.01em;
+    user-select: none;
+  }
+  .pill:hover {
+    background: rgba(255,255,255,0.05);
+    color: var(--text-secondary);
+  }
+  .pill.active {
+    background: rgba(255,255,255,0.06);
+    border-color: var(--pill-color, var(--border));
+    color: var(--pill-color, var(--text));
+  }
+  .pill-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Sidebar legend (variant 2) */
+  .chart-with-sidebar {
+    display: flex;
+    gap: 0;
+  }
+  .chart-main { flex: 1; min-width: 0; }
+  .chart-sidebar {
+    width: 140px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .sidebar-item:hover { background: rgba(255,255,255,0.03); }
+  .sidebar-item.active {
+    color: var(--text);
+    background: rgba(255,255,255,0.04);
+  }
+  .sidebar-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .sidebar-prob {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  /* Search input (variant 4) */
+  .search-wrap {
+    position: relative;
+    margin-bottom: 14px;
+  }
+  .search-input {
+    width: 100%;
+    padding: 8px 12px 8px 32px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-input::placeholder { color: var(--text-dim); }
+  .search-input:focus { border-color: rgba(255,255,255,0.15); }
+  .search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+  .search-results {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 12px;
+    min-height: 28px;
+  }
+  .search-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .search-tag .x {
+    opacity: 0.5;
+    font-size: 10px;
+    margin-left: 2px;
+  }
+
+  /* Annotations */
+  .note {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    margin-top: 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .note-good { background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.1); }
+  .note-neutral { background: rgba(59,130,246,0.06); border: 1px solid rgba(59,130,246,0.1); }
+  .note-label { font-weight: 600; flex-shrink: 0; }
+  .note-good .note-label { color: #4ade80; }
+  .note-neutral .note-label { color: #60a5fa; }
+  .note-text { color: var(--text-secondary); }
+
+  /* Divider */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 48px 0;
+  }
+
+  /* Recommendation */
+  .rec-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    text-align: center;
+  }
+  .rec-box h2 {
+    font-size: 18px;
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+  .rec-box p {
+    color: var(--text-secondary);
+    font-size: 13px;
+    max-width: 480px;
+    margin: 0 auto 20px;
+    line-height: 1.6;
+  }
+  .rec-picks {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+  .rec-pick {
+    padding: 10px 22px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.25s;
+  }
+  .rec-pick:hover {
+    background: rgba(59,130,246,0.08);
+    border-color: rgba(59,130,246,0.25);
+  }
+  .rec-pick.sel {
+    background: rgba(59,130,246,0.12);
+    border-color: rgba(59,130,246,0.4);
+    color: #60a5fa;
+  }
+
+  @media (max-width: 640px) {
+    .chart-with-sidebar { flex-direction: column; }
+    .chart-sidebar {
+      width: 100%;
+      border-left: none;
+      border-top: 1px solid var(--border);
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .sidebar-item { font-size: 11px; padding: 4px 6px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="page-header">
+  <h1>Interactive Highlight — 4 Variants</h1>
+  <p>All use the same interaction model (muted field + highlighted teams) but differ in visual treatment, legend placement, and information density. Real MLB World Series data.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- VARIANT 1: ETHEREAL -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="variant" id="v1">
+  <div class="variant-label">
+    <span class="variant-number">Variant 1</span>
+    <span class="variant-badge badge-rec">Recommended</span>
+  </div>
+  <h2>Ethereal</h2>
+  <p>Smooth bezier curves, soft glow on highlighted lines, ghosted field. Minimal axis treatment — only what's needed. End-of-line labels with current probability. Feels premium and quiet.</p>
+  <div class="chart-card">
+    <div class="chart-inner">
+      <div class="pill-legend" id="legend1"></div>
+      <canvas id="chart1" height="240"></canvas>
+    </div>
+    <div class="chart-footer">
+      <span>World Series 2026</span>
+      <span>7-day trend &middot; Championship odds</span>
+    </div>
+  </div>
+  <div class="note note-good">
+    <span class="note-label">Best for</span>
+    <span class="note-text">Mobile + desktop. The glow effect and smooth curves feel polished without being busy. Pill toggles are easy tap targets. Works well with 10–50 teams/golfers.</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- VARIANT 2: EDITORIAL -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="variant" id="v2">
+  <div class="variant-label">
+    <span class="variant-number">Variant 2</span>
+  </div>
+  <h2>Editorial</h2>
+  <p>Sidebar legend with probabilities. Highlighted teams get a gradient area fill beneath the line. Heavier grid for precise reading. Bloomberg/FT data-viz aesthetic.</p>
+  <div class="chart-card">
+    <div class="chart-with-sidebar">
+      <div class="chart-main">
+        <div class="chart-inner">
+          <canvas id="chart2" height="260"></canvas>
+        </div>
+      </div>
+      <div class="chart-sidebar" id="sidebar2"></div>
+    </div>
+    <div class="chart-footer">
+      <span>World Series 2026</span>
+      <span>Mar 27 – Apr 2</span>
+    </div>
+  </div>
+  <div class="note note-neutral">
+    <span class="note-label">Trade-off</span>
+    <span class="note-text">Sidebar legend is great on desktop (always visible, shows probabilities) but collapses to a wrapped row on mobile. Area fills can overlap when multiple teams are selected.</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- VARIANT 3: FIELD + FOCUS -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="variant" id="v3">
+  <div class="variant-label">
+    <span class="variant-number">Variant 3</span>
+    <span class="variant-badge badge-golf">Best for Golf</span>
+  </div>
+  <h2>Field + Focus</h2>
+  <p>Non-highlighted teams collapse into a single translucent band showing the range of "the field." Highlighted teams stand out against this context. Perfect for golf where 40+ players are bunched between 1–8%.</p>
+  <div class="chart-card">
+    <div class="chart-inner">
+      <div class="pill-legend" id="legend3"></div>
+      <canvas id="chart3" height="240"></canvas>
+    </div>
+    <div class="chart-footer">
+      <span>World Series 2026</span>
+      <span>Shaded area = range of non-highlighted teams</span>
+    </div>
+  </div>
+  <div class="note note-good">
+    <span class="note-label">Best for</span>
+    <span class="note-text">Golf and other contexts with many participants. The "field" band answers "where does my player sit relative to everyone else?" without spaghetti. Also great for NFL/NCAA with 30+ teams.</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- VARIANT 4: CARD TIPS -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="variant" id="v4">
+  <div class="variant-label">
+    <span class="variant-number">Variant 4</span>
+  </div>
+  <h2>Card Tips</h2>
+  <p>Each highlighted team gets a floating stat card pinned to the end of its line — current probability, 7-day delta, and a mini trend word. Type to search and add teams. Most information-dense variant.</p>
+  <div class="chart-card">
+    <div class="chart-inner">
+      <div class="search-wrap">
+        <span class="search-icon">&#x1F50D;</span>
+        <input type="text" class="search-input" id="search4" placeholder="Type a team name..." autocomplete="off">
+      </div>
+      <div class="search-results" id="searchResults4"></div>
+      <canvas id="chart4" height="260"></canvas>
+    </div>
+    <div class="chart-footer">
+      <span>World Series 2026</span>
+      <span>Search to add teams &middot; Click tag to remove</span>
+    </div>
+  </div>
+  <div class="note note-neutral">
+    <span class="note-label">Trade-off</span>
+    <span class="note-text">Very information-rich but the floating cards can overlap when teams have similar probabilities. Search-first interaction means users must already know who they want to see — less good for browsing.</span>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- Recommendation -->
+<div class="rec-box">
+  <h2>Which variant(s) should we build?</h2>
+  <p>Variants can be combined — e.g., V1's pill legend with V3's field band. Tap your pick(s).</p>
+  <div class="rec-picks">
+    <button class="rec-pick" onclick="this.classList.toggle('sel')">V1 — Ethereal</button>
+    <button class="rec-pick" onclick="this.classList.toggle('sel')">V2 — Editorial</button>
+    <button class="rec-pick" onclick="this.classList.toggle('sel')">V3 — Field + Focus</button>
+    <button class="rec-pick" onclick="this.classList.toggle('sel')">V4 — Card Tips</button>
+  </div>
+</div>
+
+</div><!-- .page -->
+
+<script>
+// ═══════════════════════════════════════════════
+// DATA
+// ═══════════════════════════════════════════════
+const TIMELINE = [
+  {"ts":"Mar 27","outcomes":{"Boston Red Sox":0.058824,"Philadelphia Phillies":0.058824,"New York Yankees":0.090909,"New York Mets":0.071429,"Detroit Tigers":0.047619,"Atlanta Braves":0.047619,"Toronto Blue Jays":0.066667,"Seattle Mariners":0.076923,"Los Angeles Dodgers":0.307692,"Chicago Cubs":0.052632}},
+  {"ts":"Mar 28","outcomes":{"Los Angeles Dodgers":0.307692,"Seattle Mariners":0.076923,"Detroit Tigers":0.047619,"Chicago Cubs":0.052632,"Boston Red Sox":0.058824,"New York Yankees":0.090909,"Atlanta Braves":0.047619,"Philadelphia Phillies":0.058824,"Toronto Blue Jays":0.066667,"New York Mets":0.071429}},
+  {"ts":"Mar 29","outcomes":{"Boston Red Sox":0.058824,"Chicago Cubs":0.052632,"Philadelphia Phillies":0.058824,"New York Mets":0.071429,"Detroit Tigers":0.047619,"Toronto Blue Jays":0.066667,"Atlanta Braves":0.047619,"Seattle Mariners":0.076923,"New York Yankees":0.090909,"Los Angeles Dodgers":0.307692}},
+  {"ts":"Mar 30","outcomes":{"New York Yankees":0.090909,"Los Angeles Dodgers":0.307692,"Seattle Mariners":0.083333,"New York Mets":0.076923,"Toronto Blue Jays":0.0625,"Philadelphia Phillies":0.058824,"Atlanta Braves":0.05,"Boston Red Sox":0.055556,"Chicago Cubs":0.052632,"Detroit Tigers":0.047619}},
+  {"ts":"Mar 31","outcomes":{"Toronto Blue Jays":0.066667,"New York Yankees":0.090909,"Atlanta Braves":0.05,"Boston Red Sox":0.055556,"Chicago Cubs":0.05,"Philadelphia Phillies":0.058824,"Detroit Tigers":0.047619,"Los Angeles Dodgers":0.307692,"Seattle Mariners":0.083333,"New York Mets":0.066667}},
+  {"ts":"Apr 1","outcomes":{"Atlanta Braves":0.047619,"Toronto Blue Jays":0.066667,"New York Mets":0.066667,"Los Angeles Dodgers":0.307692,"Detroit Tigers":0.05,"Philadelphia Phillies":0.058824,"New York Yankees":0.090909,"Chicago Cubs":0.05,"Boston Red Sox":0.055556,"Seattle Mariners":0.083333}},
+  {"ts":"Apr 2","outcomes":{"Toronto Blue Jays":0.066667,"Seattle Mariners":0.083333,"New York Mets":0.066667,"Atlanta Braves":0.05,"Los Angeles Dodgers":0.307692,"Philadelphia Phillies":0.058824,"New York Yankees":0.090909,"Chicago Cubs":0.05,"Boston Red Sox":0.052632,"Detroit Tigers":0.047619}}
+];
+
+const COLORS = {
+  "Los Angeles Dodgers": "#3b9fe8",
+  "New York Yankees": "#8badd4",
+  "Seattle Mariners": "#00c9c9",
+  "New York Mets": "#5d8be8",
+  "Toronto Blue Jays": "#5a9eeb",
+  "Philadelphia Phillies": "#ff5c6a",
+  "Boston Red Sox": "#f06070",
+  "Atlanta Braves": "#ff6688",
+  "Chicago Cubs": "#5a84eb",
+  "Detroit Tigers": "#7a9ec4"
+};
+
+const SHORT = {
+  "Los Angeles Dodgers":"LAD","New York Yankees":"NYY","Seattle Mariners":"SEA",
+  "New York Mets":"NYM","Toronto Blue Jays":"TOR","Philadelphia Phillies":"PHI",
+  "Boston Red Sox":"BOS","Atlanta Braves":"ATL","Chicago Cubs":"CHC","Detroit Tigers":"DET"
+};
+
+const TEAMS = Object.keys(COLORS);
+const sortedTeams = [...TEAMS].sort((a,b) => {
+  const last = TIMELINE[TIMELINE.length-1].outcomes;
+  return (last[b]||0) - (last[a]||0);
+});
+
+function getData(team) { return TIMELINE.map(t => t.outcomes[team] || 0); }
+function pct(v) { return (v*100).toFixed(1)+'%'; }
+
+// ═══════════════════════════════════════════════
+// DRAWING HELPERS
+// ═══════════════════════════════════════════════
+function setupCanvas(id, height) {
+  const c = document.getElementById(id);
+  const dpr = window.devicePixelRatio || 1;
+  c.width = c.offsetWidth * dpr;
+  c.height = height * dpr;
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx, W: c.offsetWidth, H: height };
+}
+
+function bezierLine(ctx, points) {
+  if (points.length < 2) return;
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i-1], curr = points[i];
+    const cpx = (prev[0] + curr[0]) / 2;
+    ctx.bezierCurveTo(cpx, prev[1], cpx, curr[1], curr[0], curr[1]);
+  }
+}
+
+function drawAxes(ctx, W, H, pad, maxY, steps) {
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= steps; i++) {
+    const v = (maxY / steps) * i;
+    const y = pad.top + (1 - v/maxY) * (H - pad.top - pad.bottom);
+    // grid line
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.stroke();
+    // label
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    ctx.fillText(Math.round(v*100) + '%', pad.left - 8, y);
+  }
+  // date labels
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.font = '10px -apple-system, system-ui, sans-serif';
+  TIMELINE.forEach((t, i) => {
+    const x = pad.left + (i/(TIMELINE.length-1))*(W-pad.left-pad.right);
+    ctx.fillText(t.ts, x, H - pad.bottom + 8);
+  });
+}
+
+function getPoints(team, W, H, pad, maxY) {
+  const data = getData(team);
+  return data.map((v, i) => [
+    pad.left + (i/(TIMELINE.length-1))*(W-pad.left-pad.right),
+    pad.top + (1 - v/maxY)*(H-pad.top-pad.bottom)
+  ]);
+}
+
+// ═══════════════════════════════════════════════
+// VARIANT 1: ETHEREAL
+// ═══════════════════════════════════════════════
+const active1 = new Set(sortedTeams.slice(0,3));
+
+function buildLegend1() {
+  const el = document.getElementById('legend1');
+  el.innerHTML = '';
+  sortedTeams.forEach(team => {
+    const btn = document.createElement('button');
+    btn.className = 'pill' + (active1.has(team) ? ' active' : '');
+    btn.style.setProperty('--pill-color', COLORS[team]);
+    btn.innerHTML = `<span class="pill-dot" style="background:${COLORS[team]}${active1.has(team)?'':'55'}"></span>${SHORT[team]}`;
+    btn.onclick = () => { active1.has(team) ? active1.delete(team) : active1.add(team); buildLegend1(); drawChart1(); };
+    el.appendChild(btn);
+  });
+}
+
+function drawChart1() {
+  const {ctx,W,H} = setupCanvas('chart1', 240);
+  const pad = {left:38, right:56, top:16, bottom:28};
+  const maxY = 0.35;
+
+  drawAxes(ctx, W, H, pad, maxY, 7);
+
+  // Muted lines
+  TEAMS.forEach(team => {
+    if (active1.has(team)) return;
+    const pts = getPoints(team, W, H, pad, maxY);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    bezierLine(ctx, pts);
+    ctx.stroke();
+  });
+
+  // Active lines with glow
+  active1.forEach(team => {
+    const pts = getPoints(team, W, H, pad, maxY);
+    const color = COLORS[team];
+
+    // Glow layer
+    ctx.beginPath();
+    ctx.strokeStyle = color + '25';
+    ctx.lineWidth = 8;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // Mid glow
+    ctx.beginPath();
+    ctx.strokeStyle = color + '40';
+    ctx.lineWidth = 4;
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // Core line
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // End dot
+    const last = pts[pts.length-1];
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 3.5, 0, Math.PI*2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 1.5, 0, Math.PI*2);
+    ctx.fillStyle = '#111114';
+    ctx.fill();
+
+    // End label
+    const latestVal = getData(team).slice(-1)[0];
+    ctx.fillStyle = color;
+    ctx.font = '500 11px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${SHORT[team]} ${pct(latestVal)}`, last[0]+8, last[1]);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// VARIANT 2: EDITORIAL
+// ═══════════════════════════════════════════════
+const active2 = new Set(sortedTeams.slice(0,2));
+
+function buildSidebar2() {
+  const el = document.getElementById('sidebar2');
+  el.innerHTML = '';
+  sortedTeams.forEach(team => {
+    const latestVal = getData(team).slice(-1)[0];
+    const item = document.createElement('div');
+    item.className = 'sidebar-item' + (active2.has(team) ? ' active' : '');
+    item.innerHTML = `<span class="sidebar-dot" style="background:${COLORS[team]}${active2.has(team)?'':'44'}"></span>
+      <span>${SHORT[team]}</span>
+      <span class="sidebar-prob">${pct(latestVal)}</span>`;
+    item.onclick = () => { active2.has(team) ? active2.delete(team) : active2.add(team); buildSidebar2(); drawChart2(); };
+    el.appendChild(item);
+  });
+}
+
+function drawChart2() {
+  const {ctx,W,H} = setupCanvas('chart2', 260);
+  const pad = {left:38, right:12, top:12, bottom:28};
+  const maxY = 0.35;
+
+  // Heavier grid
+  for (let i = 0; i <= 7; i++) {
+    const v = (maxY/7)*i;
+    const y = pad.top + (1-v/maxY)*(H-pad.top-pad.bottom);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W-pad.right, y);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Math.round(v*100)+'%', pad.left-8, y);
+  }
+  // Vertical grid + dates
+  TIMELINE.forEach((t,i) => {
+    const x = pad.left + (i/(TIMELINE.length-1))*(W-pad.left-pad.right);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.moveTo(x, pad.top);
+    ctx.lineTo(x, H-pad.bottom);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(t.ts, x, H-pad.bottom+8);
+  });
+
+  // Muted lines
+  TEAMS.forEach(team => {
+    if (active2.has(team)) return;
+    const pts = getPoints(team, W, H, pad, maxY);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    bezierLine(ctx, pts);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Active: area fill + line
+  const activeArr = [...active2];
+  activeArr.forEach(team => {
+    const pts = getPoints(team, W, H, pad, maxY);
+    const color = COLORS[team];
+    const baseY = pad.top + (1-0/maxY)*(H-pad.top-pad.bottom);
+
+    // Gradient area
+    const grad = ctx.createLinearGradient(0, pad.top, 0, H-pad.bottom);
+    grad.addColorStop(0, color + '18');
+    grad.addColorStop(1, color + '02');
+    ctx.beginPath();
+    bezierLine(ctx, pts);
+    ctx.lineTo(pts[pts.length-1][0], baseY);
+    ctx.lineTo(pts[0][0], baseY);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // Dots at each point
+    pts.forEach(([x,y]) => {
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI*2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════
+// VARIANT 3: FIELD + FOCUS
+// ═══════════════════════════════════════════════
+const active3 = new Set(sortedTeams.slice(0,3));
+
+function buildLegend3() {
+  const el = document.getElementById('legend3');
+  el.innerHTML = '';
+  sortedTeams.forEach(team => {
+    const btn = document.createElement('button');
+    btn.className = 'pill' + (active3.has(team) ? ' active' : '');
+    btn.style.setProperty('--pill-color', COLORS[team]);
+    btn.innerHTML = `<span class="pill-dot" style="background:${COLORS[team]}${active3.has(team)?'':'55'}"></span>${SHORT[team]}`;
+    btn.onclick = () => { active3.has(team) ? active3.delete(team) : active3.add(team); buildLegend3(); drawChart3(); };
+    el.appendChild(btn);
+  });
+}
+
+function drawChart3() {
+  const {ctx,W,H} = setupCanvas('chart3', 240);
+  const pad = {left:38, right:56, top:16, bottom:28};
+  const maxY = 0.35;
+
+  drawAxes(ctx, W, H, pad, maxY, 7);
+
+  // Compute field band (min/max of non-active teams at each timestamp)
+  const fieldBandTop = [];
+  const fieldBandBottom = [];
+  TIMELINE.forEach((t,i) => {
+    const inactiveVals = TEAMS.filter(tm => !active3.has(tm)).map(tm => t.outcomes[tm]||0);
+    const mn = Math.min(...inactiveVals);
+    const mx = Math.max(...inactiveVals);
+    const x = pad.left + (i/(TIMELINE.length-1))*(W-pad.left-pad.right);
+    fieldBandTop.push([x, pad.top + (1-mx/maxY)*(H-pad.top-pad.bottom)]);
+    fieldBandBottom.push([x, pad.top + (1-mn/maxY)*(H-pad.top-pad.bottom)]);
+  });
+
+  // Draw field band
+  ctx.beginPath();
+  bezierLine(ctx, fieldBandTop);
+  // Continue along bottom in reverse
+  for (let i = fieldBandBottom.length-1; i >= 0; i--) {
+    ctx.lineTo(fieldBandBottom[i][0], fieldBandBottom[i][1]);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.04)';
+  ctx.fill();
+
+  // Field band border lines
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  bezierLine(ctx, fieldBandTop);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  bezierLine(ctx, fieldBandBottom);
+  ctx.stroke();
+
+  // "THE FIELD" label
+  const midIdx = Math.floor(TIMELINE.length / 2);
+  const fieldMidY = (fieldBandTop[midIdx][1] + fieldBandBottom[midIdx][1]) / 2;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.font = '500 9px -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.letterSpacing = '0.1em';
+  ctx.fillText('THE FIELD', fieldBandTop[midIdx][0], fieldMidY);
+
+  // Active lines with glow
+  active3.forEach(team => {
+    const pts = getPoints(team, W, H, pad, maxY);
+    const color = COLORS[team];
+
+    // Glow
+    ctx.beginPath();
+    ctx.strokeStyle = color + '20';
+    ctx.lineWidth = 7;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // End dot + label
+    const last = pts[pts.length-1];
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 4, 0, Math.PI*2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 1.8, 0, Math.PI*2);
+    ctx.fillStyle = '#111114';
+    ctx.fill();
+
+    const latestVal = getData(team).slice(-1)[0];
+    ctx.fillStyle = color;
+    ctx.font = '500 11px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${SHORT[team]} ${pct(latestVal)}`, last[0]+9, last[1]);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// VARIANT 4: CARD TIPS
+// ═══════════════════════════════════════════════
+const active4 = new Set(sortedTeams.slice(0,3));
+
+function buildSearchResults4() {
+  const el = document.getElementById('searchResults4');
+  el.innerHTML = '';
+  active4.forEach(team => {
+    const tag = document.createElement('span');
+    tag.className = 'search-tag';
+    tag.style.background = COLORS[team] + '18';
+    tag.style.color = COLORS[team];
+    tag.style.border = '1px solid ' + COLORS[team] + '30';
+    tag.innerHTML = `${SHORT[team]} <span class="x">&times;</span>`;
+    tag.onclick = () => { active4.delete(team); buildSearchResults4(); drawChart4(); };
+    el.appendChild(tag);
+  });
+}
+
+function setupSearch4() {
+  const input = document.getElementById('search4');
+  input.addEventListener('input', () => {
+    const q = input.value.toLowerCase();
+    if (!q) return;
+    const match = TEAMS.find(t => t.toLowerCase().includes(q) || SHORT[t].toLowerCase().includes(q));
+    if (match && !active4.has(match)) {
+      active4.add(match);
+      input.value = '';
+      buildSearchResults4();
+      drawChart4();
+    }
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const q = input.value.toLowerCase();
+      const match = TEAMS.find(t => t.toLowerCase().includes(q) || SHORT[t].toLowerCase().includes(q));
+      if (match) {
+        if (!active4.has(match)) active4.add(match);
+        input.value = '';
+        buildSearchResults4();
+        drawChart4();
+      }
+    }
+  });
+}
+
+function drawChart4() {
+  const {ctx,W,H} = setupCanvas('chart4', 260);
+  const pad = {left:38, right:90, top:16, bottom:28};
+  const maxY = 0.35;
+
+  drawAxes(ctx, W, H, pad, maxY, 7);
+
+  // Muted lines
+  TEAMS.forEach(team => {
+    if (active4.has(team)) return;
+    const pts = getPoints(team, W, H, pad, maxY);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    bezierLine(ctx, pts);
+    ctx.stroke();
+  });
+
+  // Active lines + floating cards
+  const cardPositions = [];
+  active4.forEach(team => {
+    const pts = getPoints(team, W, H, pad, maxY);
+    const color = COLORS[team];
+    const data = getData(team);
+    const latest = data[data.length-1];
+    const first = data[0];
+    const delta = latest - first;
+
+    // Glow
+    ctx.beginPath();
+    ctx.strokeStyle = color + '22';
+    ctx.lineWidth = 6;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    bezierLine(ctx, pts);
+    ctx.stroke();
+
+    // End dot
+    const last = pts[pts.length-1];
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 3, 0, Math.PI*2);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // Floating card
+    let cardY = last[1] - 18;
+    // Avoid overlap with other cards
+    cardPositions.forEach(cp => {
+      if (Math.abs(cardY - cp) < 30) cardY = cp - 32;
+    });
+    cardPositions.push(cardY);
+
+    const cardX = last[0] + 8;
+    const cardW = 74;
+    const cardH = 32;
+
+    // Card background
+    ctx.fillStyle = '#1a1a1f';
+    ctx.strokeStyle = color + '40';
+    ctx.lineWidth = 1;
+    roundRect(ctx, cardX, cardY, cardW, cardH, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    // Card content
+    ctx.fillStyle = color;
+    ctx.font = '600 11px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(SHORT[team], cardX+6, cardY+5);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    ctx.fillText(pct(latest), cardX+6, cardY+18);
+
+    // Delta
+    const deltaStr = delta >= 0 ? '+' + (delta*100).toFixed(1) : (delta*100).toFixed(1);
+    ctx.fillStyle = delta > 0.001 ? '#4ade80' : delta < -0.001 ? '#f87171' : 'rgba(255,255,255,0.3)';
+    ctx.textAlign = 'right';
+    ctx.fillText(deltaStr, cardX+cardW-6, cardY+18);
+
+    // Connector line
+    ctx.beginPath();
+    ctx.strokeStyle = color + '30';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2,2]);
+    ctx.moveTo(last[0], last[1]);
+    ctx.lineTo(cardX, cardY + cardH/2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+function init() {
+  buildLegend1(); drawChart1();
+  buildSidebar2(); drawChart2();
+  buildLegend3(); drawChart3();
+  buildSearchResults4(); drawChart4(); setupSearch4();
+}
+
+window.addEventListener('load', init);
+window.addEventListener('resize', () => {
+  drawChart1(); drawChart2(); drawChart3(); drawChart4();
+});
+</script>
+</body>
+</html>

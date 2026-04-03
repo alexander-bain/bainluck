@@ -1,0 +1,1673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BainLuck Event Detail - Design Options</title>
+<style>
+  :root {
+    --bg: #f8f9fa;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #111827;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --green: #059669;
+    --green-light: #ecfdf5;
+    --green-bg: #d1fae5;
+    --orange: #d97706;
+    --orange-light: #fffbeb;
+    --red: #dc2626;
+    --purple: #7c3aed;
+    --purple-light: #f5f3ff;
+    --celtics: #007a33;
+    --hornets: #1d1160;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-lg: 0 4px 12px rgba(0,0,0,0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Navigation between options */
+  .option-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .option-nav h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-right: 16px;
+  }
+  .option-btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: white;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .option-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .option-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  /* Shared layout */
+  .option-panel { display: none; padding: 24px; max-width: 800px; margin: 0 auto; }
+  .option-panel.active { display: block; }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+
+  .option-title {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .option-subtitle {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    line-height: 1.6;
+  }
+
+  /* ============================================ */
+  /* HERO SECTION (shared across options)         */
+  /* ============================================ */
+  .hero {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  .hero-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .status-badge {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+  .status-badge.final { background: #f3f4f6; color: #6b7280; }
+  .hero-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .hero-teams {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .hero-team {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+  }
+  .team-logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 700;
+    color: white;
+  }
+  .team-logo.celtics { background: var(--celtics); }
+  .team-logo.hornets { background: var(--hornets); }
+  .team-name { font-size: 14px; font-weight: 600; }
+  .team-record { font-size: 12px; color: var(--text-muted); }
+  .team-score { font-size: 28px; font-weight: 700; }
+
+  .hero-prob {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .prob-big {
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .prob-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .prob-bar {
+    width: 200px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--hornets);
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .prob-bar-fill {
+    height: 100%;
+    background: var(--celtics);
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+  .prob-source {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  /* Game state ribbon */
+  .game-ribbon {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .ribbon-phase {
+    flex: 1;
+    text-align: center;
+    padding: 6px 0;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: #f3f4f6;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .ribbon-phase.completed { background: #dbeafe; color: #2563eb; }
+  .ribbon-phase.active { background: #2563eb; color: white; }
+
+  /* ============================================ */
+  /* OPTION A: Grouped Cards                      */
+  /* ============================================ */
+  .card-group {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .card-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .card-group-header:hover { background: #fafbfc; }
+  .card-group-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .card-group-summary {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+  .card-group-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #f3f4f6;
+    color: var(--text-secondary);
+  }
+  .source-dots {
+    display: flex;
+    gap: 3px;
+    margin-top: 4px;
+  }
+  .source-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+  }
+  .source-dot.odds { background: #2563eb; }
+  .source-dot.kalshi { background: #059669; }
+  .source-dot.poly { background: #7c3aed; }
+
+  .card-group-body {
+    border-top: 1px solid var(--border);
+    padding: 0;
+    display: none;
+  }
+  .card-group.expanded .card-group-body { display: block; }
+
+  .progression-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    gap: 16px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .progression-row:last-child { border-bottom: none; }
+  .progression-label {
+    font-size: 13px;
+    font-weight: 500;
+    width: 140px;
+    flex-shrink: 0;
+  }
+  .progression-bar-track {
+    flex: 1;
+    height: 8px;
+    background: #f3f4f6;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .progression-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+  }
+  .progression-prob {
+    font-size: 14px;
+    font-weight: 600;
+    width: 50px;
+    text-align: right;
+  }
+  .progression-sources {
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 70px;
+    text-align: right;
+  }
+
+  /* Source breakdown (expanded within progression) */
+  .source-breakdown {
+    padding: 8px 20px 12px 176px;
+    display: none;
+  }
+  .source-breakdown.visible { display: block; }
+  .source-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .source-name {
+    width: 80px;
+    font-weight: 500;
+  }
+  .source-prob { font-weight: 600; color: var(--text); }
+
+  /* Matchup grid */
+  .matchup-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    gap: 12px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .matchup-item:last-child { border-bottom: none; }
+  .matchup-teams {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .matchup-prob {
+    font-size: 14px;
+    font-weight: 600;
+    width: 50px;
+    text-align: right;
+  }
+
+  /* Win total visualization */
+  .wintotal-viz {
+    padding: 16px 20px;
+  }
+  .wintotal-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .wintotal-marker {
+    position: relative;
+    flex: 1;
+    height: 32px;
+  }
+  .wintotal-track {
+    position: absolute;
+    top: 14px;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: #e5e7eb;
+    border-radius: 2px;
+  }
+  .wintotal-point {
+    position: absolute;
+    top: 6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    font-size: 9px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform: translateX(-50%);
+  }
+  .wintotal-point.current {
+    background: var(--green);
+  }
+  .wintotal-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .wintotal-highlight {
+    padding: 12px 16px;
+    background: var(--accent-light);
+    border-radius: 8px;
+    margin-top: 12px;
+  }
+  .wintotal-highlight-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+  }
+
+  /* Resolved / locked items */
+  .resolved-item {
+    opacity: 0.5;
+  }
+  .resolved-badge {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--green);
+    background: var(--green-light);
+    padding: 1px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.03em;
+  }
+
+  /* ============================================ */
+  /* OPTION B: Tabbed Categories                  */
+  /* ============================================ */
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 16px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab-item {
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.15s;
+  }
+  .tab-item:hover { color: var(--text); }
+  .tab-item.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .tab-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 4px;
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .list-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    background: white;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    box-shadow: var(--shadow);
+    gap: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .list-item:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+
+  .list-item-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .list-item-icon.trophy { background: #fef3c7; }
+  .list-item-icon.chart { background: #dbeafe; }
+  .list-item-icon.trade { background: #fce7f3; }
+  .list-item-icon.award { background: #f5f3ff; }
+
+  .list-item-content { flex: 1; min-width: 0; }
+  .list-item-title {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .list-item-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .list-item-prob {
+    font-size: 16px;
+    font-weight: 700;
+    text-align: right;
+    min-width: 50px;
+  }
+  .list-item-sources {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  /* Inline bar for tab items */
+  .inline-bar {
+    width: 60px;
+    height: 4px;
+    background: #f3f4f6;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .inline-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+  }
+
+  /* ============================================ */
+  /* OPTION C: Compact Dashboard                  */
+  /* ============================================ */
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .dashboard-card {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .dashboard-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+  .dashboard-card.full-width {
+    grid-column: 1 / -1;
+  }
+
+  .dash-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .dash-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+  }
+  .dash-count {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .dash-hero-stat {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 2px;
+  }
+  .dash-hero-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+
+  .dash-mini-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .dash-mini-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+  }
+  .dash-mini-label { color: var(--text-secondary); }
+  .dash-mini-value { font-weight: 600; }
+
+  /* Stacked bar for playoff path */
+  .stacked-bar {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    gap: 1px;
+    margin-bottom: 8px;
+  }
+  .stacked-segment {
+    height: 100%;
+    transition: width 0.3s;
+  }
+
+  /* Trade mini-avatars */
+  .trade-avatars {
+    display: flex;
+    gap: -4px;
+    margin-bottom: 8px;
+  }
+  .trade-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    border: 2px solid white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-left: -4px;
+  }
+  .trade-avatar:first-child { margin-left: 0; }
+
+  /* Phone frame for mobile preview */
+  .phone-frame {
+    width: 375px;
+    margin: 0 auto;
+    background: var(--bg);
+    border-radius: 40px;
+    border: 8px solid #1a1a1a;
+    padding: 20px 0;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  }
+  .phone-content {
+    height: 700px;
+    overflow-y: auto;
+    padding: 0 16px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .phone-content::-webkit-scrollbar { display: none; }
+
+  /* Side-by-side layout */
+  .comparison {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .comparison-desc {
+    flex: 1;
+    min-width: 300px;
+    position: sticky;
+    top: 80px;
+  }
+  .comparison-phone {
+    flex-shrink: 0;
+  }
+
+  .pro-con {
+    margin-top: 16px;
+  }
+  .pro-con h4 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .pro-con ul {
+    list-style: none;
+    padding: 0;
+  }
+  .pro-con li {
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 3px 0;
+    padding-left: 20px;
+    position: relative;
+  }
+  .pro-con li::before {
+    position: absolute;
+    left: 0;
+    font-size: 12px;
+  }
+  .pros li::before { content: "+"; color: var(--green); font-weight: 700; }
+  .cons li::before { content: "-"; color: var(--red); font-weight: 700; }
+
+  .divider {
+    border: none;
+    border-top: 2px solid var(--border);
+    margin: 40px 0;
+  }
+
+  /* Chevron */
+  .chevron {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--text-muted);
+    border-bottom: 2px solid var(--text-muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s;
+  }
+  .card-group.expanded .chevron {
+    transform: rotate(-135deg);
+  }
+
+  /* Interestingness dot */
+  .interest-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .interest-high { background: var(--accent); }
+  .interest-med { background: var(--orange); }
+  .interest-low { background: #d1d5db; }
+</style>
+</head>
+<body>
+
+<nav class="option-nav">
+  <h1>Event Detail Redesign</h1>
+  <button class="option-btn active" onclick="showOption('hero')">Hero + Chart</button>
+  <button class="option-btn" onclick="showOption('a')">Option A: Grouped Cards</button>
+  <button class="option-btn" onclick="showOption('b')">Option B: Tabbed View</button>
+  <button class="option-btn" onclick="showOption('c')">Option C: Dashboard</button>
+</nav>
+
+<!-- ================================================ -->
+<!-- HERO + CHART IMPROVEMENTS                        -->
+<!-- ================================================ -->
+<div id="panel-hero" class="option-panel active">
+  <div class="comparison">
+    <div class="comparison-desc">
+      <p class="section-label">Shared Across All Options</p>
+      <h2 class="option-title">Hero & Chart Improvements</h2>
+      <p class="option-subtitle">
+        These improvements apply regardless of which Related Futures layout we pick.
+        The hero section gets opening odds fallback, and the chart gets a game-state ribbon
+        and fixed time range controls.
+      </p>
+
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:12px;">Changes</h3>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:20px;">
+        <div style="padding:12px 16px; background:var(--green-light); border-radius:8px; border-left:3px solid var(--green);">
+          <div style="font-size:13px; font-weight:600;">A1. Opening odds fallback</div>
+          <div style="font-size:12px; color:var(--text-secondary);">When Odds API quota runs out, fall back to first win_prob_snapshot instead of showing "--% -- --%"</div>
+        </div>
+        <div style="padding:12px 16px; background:var(--green-light); border-radius:8px; border-left:3px solid var(--green);">
+          <div style="font-size:13px; font-weight:600;">A2. Game-state ribbon</div>
+          <div style="font-size:12px; color:var(--text-secondary);">Horizontal Q1/Q2/HT/Q3/Q4 strip. Tap a quarter to zoom the chart to that period.</div>
+        </div>
+        <div style="padding:12px 16px; background:var(--green-light); border-radius:8px; border-left:3px solid var(--green);">
+          <div style="font-size:13px; font-weight:600;">A3. "Since Start" default for completed games</div>
+          <div style="font-size:12px; color:var(--text-secondary);">Don't show pre-game polling noise. Default to "Since Start" when game is final.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="comparison-phone">
+      <div class="phone-frame">
+        <div class="phone-content">
+          <!-- Hero -->
+          <div class="hero" style="margin-top:8px;">
+            <div class="hero-status">
+              <span class="status-badge final">Final</span>
+              <span class="hero-meta">Mar 28, 2026 -- 7:00 PM ET</span>
+            </div>
+            <div class="hero-teams">
+              <div class="hero-team">
+                <div class="team-logo celtics">BOS</div>
+                <div class="team-name">Celtics</div>
+                <div class="team-record">54-20</div>
+                <div class="team-score">118</div>
+              </div>
+              <div class="hero-prob">
+                <div class="prob-big" style="color:var(--celtics);">84%</div>
+                <div class="prob-bar">
+                  <div class="prob-bar-fill" style="width:84%"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; width:200px; margin-top:4px;">
+                  <span class="prob-source">Open: 78%</span>
+                  <span class="prob-source">Final: 100%</span>
+                </div>
+              </div>
+              <div class="hero-team">
+                <div class="team-logo hornets">CHA</div>
+                <div class="team-name">Hornets</div>
+                <div class="team-record">19-55</div>
+                <div class="team-score">108</div>
+              </div>
+            </div>
+
+            <!-- Game State Ribbon -->
+            <div class="game-ribbon">
+              <div class="ribbon-phase completed">Q1</div>
+              <div class="ribbon-phase completed">Q2</div>
+              <div class="ribbon-phase completed">HT</div>
+              <div class="ribbon-phase completed">Q3</div>
+              <div class="ribbon-phase active">Q4</div>
+            </div>
+          </div>
+
+          <!-- Chart placeholder -->
+          <div style="background:white; border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; margin-bottom:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <span style="font-size:14px; font-weight:600;">Win Probability</span>
+              <div style="display:flex; gap:4px;">
+                <span style="font-size:11px; padding:4px 10px; border-radius:6px; background:#f3f4f6; color:var(--text-secondary); cursor:pointer;">All</span>
+                <span style="font-size:11px; padding:4px 10px; border-radius:6px; background:var(--accent); color:white; cursor:pointer; font-weight:600;">Since Start</span>
+              </div>
+            </div>
+            <!-- Simulated chart -->
+            <div style="height:160px; position:relative; border-bottom:1px solid #e5e7eb;">
+              <div style="position:absolute; left:0; right:0; top:0; font-size:10px; color:var(--text-muted);">100%</div>
+              <div style="position:absolute; left:0; right:0; top:50%; font-size:10px; color:var(--text-muted); border-top:1px dashed #e5e7eb;">50%</div>
+              <div style="position:absolute; left:0; right:0; bottom:0; font-size:10px; color:var(--text-muted);">0%</div>
+              <!-- Simulated line -->
+              <svg viewBox="0 0 300 140" style="width:100%; height:140px; margin-top:10px;">
+                <path d="M0,40 Q30,35 60,42 T120,30 T180,25 T240,15 T300,5" stroke="var(--celtics)" fill="none" stroke-width="2"/>
+                <path d="M0,100 Q30,105 60,98 T120,110 T180,115 T240,125 T300,135" stroke="var(--hornets)" fill="none" stroke-width="2"/>
+                <!-- Quarter markers -->
+                <line x1="75" y1="0" x2="75" y2="140" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="3,3"/>
+                <line x1="150" y1="0" x2="150" y2="140" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="3,3"/>
+                <line x1="225" y1="0" x2="225" y2="140" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="3,3"/>
+              </svg>
+            </div>
+            <!-- Source legend -->
+            <div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap;">
+              <span style="font-size:11px; color:var(--text-secondary); display:flex; align-items:center; gap:4px;">
+                <span style="width:8px; height:3px; background:#2563eb; border-radius:1px; display:inline-block;"></span> BainLuck
+              </span>
+              <span style="font-size:11px; color:var(--text-secondary); display:flex; align-items:center; gap:4px;">
+                <span style="width:8px; height:3px; background:#059669; border-radius:1px; display:inline-block;"></span> Kalshi
+              </span>
+              <span style="font-size:11px; color:var(--text-secondary); display:flex; align-items:center; gap:4px;">
+                <span style="width:8px; height:3px; background:#7c3aed; border-radius:1px; display:inline-block;"></span> Polymarket
+              </span>
+              <span style="font-size:11px; color:var(--text-secondary); display:flex; align-items:center; gap:4px;">
+                <span style="width:8px; height:3px; background:#d97706; border-radius:1px; display:inline-block;"></span> ESPN
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="divider">
+  <p style="text-align:center; color:var(--text-muted); font-size:14px; margin-bottom:24px;">Now for the main event: how should we organize the <strong>176 related futures</strong>?</p>
+</div>
+
+<!-- ================================================ -->
+<!-- OPTION A: Grouped Cards with Expandable Detail   -->
+<!-- ================================================ -->
+<div id="panel-a" class="option-panel">
+  <div class="comparison">
+    <div class="comparison-desc">
+      <p class="section-label">Option A</p>
+      <h2 class="option-title">Grouped Cards</h2>
+      <p class="option-subtitle">
+        176 items collapsed into ~12 smart cards. Each card shows a summary (best probability,
+        source count) and expands to reveal every outcome and per-source breakdown.
+        Cross-source items are merged into single rows with aggregated probability.
+      </p>
+
+      <div class="pro-con">
+        <h4>Key Behaviors</h4>
+        <ul class="pros" style="margin-bottom:12px;">
+          <li>Playoff Progression card shows path as a horizontal bar chart</li>
+          <li>Cross-source merge: "NBA Champion = 13.5% (3 sources)" instead of 3 separate rows</li>
+          <li>Source dots (blue/green/purple) at a glance show which sources have data</li>
+          <li>Matchup markets shown as ranked list within one card</li>
+          <li>Win totals show the "interesting threshold" (nearest 50%) prominently</li>
+          <li>Resolved items (>99% or <1%) render in muted style but remain visible</li>
+          <li>Tap any merged row to see per-source breakdown inline</li>
+        </ul>
+        <h4 style="color:var(--green);">Pros</h4>
+        <ul class="pros" style="margin-bottom:8px;">
+          <li>Most natural hierarchy -- summary to detail in one scroll</li>
+          <li>Best for the "176 items that feel like 15" goal</li>
+          <li>Progression visualization is compelling</li>
+          <li>Cards can be reordered by relevance dynamically</li>
+        </ul>
+        <h4 style="color:var(--red);">Cons</h4>
+        <ul class="cons">
+          <li>Long page when multiple cards expanded</li>
+          <li>Grouping logic must be very accurate -- wrong group = confusion</li>
+          <li>More complex server-side logic needed</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="comparison-phone">
+      <div class="phone-frame">
+        <div class="phone-content">
+          <p class="section-label" style="margin-top:16px;">Bigger Picture</p>
+
+          <!-- Card 1: Playoff Progression (expanded) -->
+          <div class="card-group expanded" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">Celtics Playoff Path</div>
+                <div class="card-group-summary">3 stages -- NBA Champion 13.5%</div>
+                <div class="source-dots">
+                  <span class="source-dot odds" title="Odds API"></span>
+                  <span class="source-dot kalshi" title="Kalshi"></span>
+                  <span class="source-dot poly" title="Polymarket"></span>
+                </div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+            <div class="card-group-body">
+              <div class="progression-row resolved-item">
+                <span class="progression-label">Make Playoffs <span class="resolved-badge">Locked</span></span>
+                <div class="progression-bar-track">
+                  <div class="progression-bar-fill" style="width:100%; background:var(--green);"></div>
+                </div>
+                <span class="progression-prob" style="color:var(--green);">100%</span>
+                <span class="progression-sources">3 sources</span>
+              </div>
+              <div class="progression-row">
+                <span class="progression-label">Eastern Conf</span>
+                <div class="progression-bar-track">
+                  <div class="progression-bar-fill" style="width:36%; background:var(--accent);"></div>
+                </div>
+                <span class="progression-prob">36%</span>
+                <span class="progression-sources">3 sources</span>
+              </div>
+              <div class="progression-row">
+                <span class="progression-label">NBA Champion</span>
+                <div class="progression-bar-track">
+                  <div class="progression-bar-fill" style="width:13.5%; background:var(--accent);"></div>
+                </div>
+                <span class="progression-prob">13.5%</span>
+                <span class="progression-sources">3 sources</span>
+              </div>
+              <!-- Source breakdown example -->
+              <div class="source-breakdown visible">
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px; font-weight:500;">NBA Champion -- per source:</div>
+                <div class="source-row">
+                  <span class="source-name" style="color:#2563eb;">Odds API</span>
+                  <span class="source-prob">13.53%</span>
+                </div>
+                <div class="source-row">
+                  <span class="source-name" style="color:#059669;">Kalshi</span>
+                  <span class="source-prob">13.5%</span>
+                </div>
+                <div class="source-row">
+                  <span class="source-name" style="color:#7c3aed;">Polymarket</span>
+                  <span class="source-prob">11.35%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: NBA Finals Matchup -->
+          <div class="card-group" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">NBA Finals Matchup</div>
+                <div class="card-group-summary">16 matchups involving Celtics</div>
+                <div class="source-dots">
+                  <span class="source-dot kalshi" title="Kalshi"></span>
+                </div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+            <div class="card-group-body">
+              <div class="matchup-item">
+                <span class="interest-dot interest-high"></span>
+                <span class="matchup-teams">Houston vs Boston</span>
+                <span class="matchup-prob">20%</span>
+              </div>
+              <div class="matchup-item">
+                <span class="interest-dot interest-high"></span>
+                <span class="matchup-teams">Oklahoma City vs Boston</span>
+                <span class="matchup-prob">17.5%</span>
+              </div>
+              <div class="matchup-item">
+                <span class="interest-dot interest-med"></span>
+                <span class="matchup-teams">San Antonio vs Boston</span>
+                <span class="matchup-prob">15.5%</span>
+              </div>
+              <div class="matchup-item">
+                <span class="interest-dot interest-med"></span>
+                <span class="matchup-teams">Denver vs Boston</span>
+                <span class="matchup-prob">12%</span>
+              </div>
+              <div class="matchup-item" style="opacity:0.6;">
+                <span class="interest-dot interest-low"></span>
+                <span class="matchup-teams">Memphis vs Boston</span>
+                <span class="matchup-prob">4%</span>
+              </div>
+              <div class="matchup-item" style="opacity:0.5;">
+                <span class="interest-dot interest-low"></span>
+                <span class="matchup-teams" style="color:var(--text-muted);">+11 more matchups</span>
+                <span class="matchup-prob" style="color:var(--text-muted);">&lt;3%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Awards -->
+          <div class="card-group" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">Awards (Celtics Players)</div>
+                <div class="card-group-summary">MVP, DPOY, All-NBA -- 8 categories</div>
+                <div class="source-dots">
+                  <span class="source-dot odds" title="Odds API"></span>
+                  <span class="source-dot kalshi" title="Kalshi"></span>
+                </div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+            <div class="card-group-body">
+              <div class="progression-row">
+                <span class="progression-label">MVP (Tatum)</span>
+                <div class="progression-bar-track">
+                  <div class="progression-bar-fill" style="width:8%; background:var(--purple);"></div>
+                </div>
+                <span class="progression-prob">8%</span>
+                <span class="progression-sources">2 sources</span>
+              </div>
+              <div class="progression-row">
+                <span class="progression-label">DPOY (Tatum)</span>
+                <div class="progression-bar-track">
+                  <div class="progression-bar-fill" style="width:3%; background:var(--purple);"></div>
+                </div>
+                <span class="progression-prob">3%</span>
+                <span class="progression-sources">1 source</span>
+              </div>
+              <div class="progression-row">
+                <span class="progression-label">All-NBA 1st (Tatum)</span>
+                <div class="progression-bar-track">
+                  <div class="progression-bar-fill" style="width:45%; background:var(--purple);"></div>
+                </div>
+                <span class="progression-prob">45%</span>
+                <span class="progression-sources">1 source</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4: Win Total -->
+          <div class="card-group" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">Celtics Win Total</div>
+                <div class="card-group-summary">Key line: 55+ wins at 58%</div>
+                <div class="source-dots">
+                  <span class="source-dot kalshi" title="Kalshi"></span>
+                </div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+            <div class="card-group-body">
+              <div class="wintotal-viz">
+                <div class="wintotal-highlight">
+                  <div class="wintotal-highlight-text">55+ wins: 58% -- currently at 54 wins, 8 games left</div>
+                </div>
+                <div style="margin-top:12px;">
+                  <div class="progression-row" style="padding:8px 0;">
+                    <span class="progression-label" style="width:80px; font-size:12px;">60+ wins</span>
+                    <div class="progression-bar-track">
+                      <div class="progression-bar-fill" style="width:12%; background:var(--orange);"></div>
+                    </div>
+                    <span class="progression-prob" style="font-size:13px;">12%</span>
+                  </div>
+                  <div class="progression-row" style="padding:8px 0;">
+                    <span class="progression-label" style="width:80px; font-size:12px; font-weight:600;">55+ wins</span>
+                    <div class="progression-bar-track">
+                      <div class="progression-bar-fill" style="width:58%; background:var(--accent);"></div>
+                    </div>
+                    <span class="progression-prob" style="font-size:13px; font-weight:700;">58%</span>
+                  </div>
+                  <div class="progression-row resolved-item" style="padding:8px 0;">
+                    <span class="progression-label" style="width:80px; font-size:12px;">50+ wins</span>
+                    <div class="progression-bar-track">
+                      <div class="progression-bar-fill" style="width:97%; background:var(--green);"></div>
+                    </div>
+                    <span class="progression-prob" style="font-size:13px;">97%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 5: Trade Watch -->
+          <div class="card-group" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">Trade Watch (to Celtics)</div>
+                <div class="card-group-summary">5 players linked -- highest 12%</div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+            <div class="card-group-body">
+              <div class="matchup-item">
+                <span class="matchup-teams">Josh Giddey traded to BOS</span>
+                <span class="matchup-prob">12%</span>
+              </div>
+              <div class="matchup-item">
+                <span class="matchup-teams">Julius Randle traded to BOS</span>
+                <span class="matchup-prob">12%</span>
+              </div>
+              <div class="matchup-item">
+                <span class="matchup-teams">Ja Morant traded to BOS</span>
+                <span class="matchup-prob">11%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 6: Stat Leaders -->
+          <div class="card-group" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">Statistical Leaders</div>
+                <div class="card-group-summary">PPG, APG, RPG -- 6 categories</div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+          </div>
+
+          <!-- Card 7: Hornets section -->
+          <p class="section-label" style="margin-top:20px;">Charlotte Hornets</p>
+
+          <div class="card-group" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">Hornets Playoff Path</div>
+                <div class="card-group-summary">Make Playoffs 0.2% -- Eliminated</div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+          </div>
+
+          <div class="card-group" onclick="this.classList.toggle('expanded')">
+            <div class="card-group-header">
+              <div>
+                <div class="card-group-title">Hornets Win Total</div>
+                <div class="card-group-summary">Key line: 25+ wins at 22.5%</div>
+              </div>
+              <span class="chevron"></span>
+            </div>
+          </div>
+
+          <div style="height:40px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================ -->
+<!-- OPTION B: Tabbed Categories                      -->
+<!-- ================================================ -->
+<div id="panel-b" class="option-panel">
+  <div class="comparison">
+    <div class="comparison-desc">
+      <p class="section-label">Option B</p>
+      <h2 class="option-title">Tabbed Categories</h2>
+      <p class="option-subtitle">
+        Horizontal tab bar segments futures by category: Playoff, Matchups, Awards,
+        Stats, Trades, Other. Each tab shows a flat list of merged items with
+        inline probability bars and source indicators. Cross-source merging still
+        happens, but grouping is flatter.
+      </p>
+
+      <div class="pro-con">
+        <h4 style="color:var(--green);">Pros</h4>
+        <ul class="pros" style="margin-bottom:8px;">
+          <li>Familiar pattern (like app store categories)</li>
+          <li>Tab counts show how many items per category at a glance</li>
+          <li>Each tab is focused -- no overwhelming scroll</li>
+          <li>Easier to implement than Option A (less grouping logic)</li>
+          <li>Works well on mobile -- tabs scroll horizontally</li>
+        </ul>
+        <h4 style="color:var(--red);">Cons</h4>
+        <ul class="cons">
+          <li>Harder to see relationships BETWEEN categories (playoff path spans multiple)</li>
+          <li>Progression visualization less natural in a flat list</li>
+          <li>Tab switching adds friction vs. scrolling</li>
+          <li>Doesn't reduce cognitive load as much as cards -- still a list</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="comparison-phone">
+      <div class="phone-frame">
+        <div class="phone-content">
+          <p class="section-label" style="margin-top:16px;">Bigger Picture -- Celtics</p>
+
+          <div class="tab-bar" id="tab-bar-b">
+            <div class="tab-item active" onclick="showTab(this, 'tab-playoff')">Playoff <span class="tab-count">4</span></div>
+            <div class="tab-item" onclick="showTab(this, 'tab-matchups')">Matchups <span class="tab-count">16</span></div>
+            <div class="tab-item" onclick="showTab(this, 'tab-awards')">Awards <span class="tab-count">12</span></div>
+            <div class="tab-item" onclick="showTab(this, 'tab-stats')">Stats <span class="tab-count">8</span></div>
+            <div class="tab-item" onclick="showTab(this, 'tab-trades')">Trades <span class="tab-count">5</span></div>
+          </div>
+
+          <!-- Playoff tab -->
+          <div class="tab-panel active" id="tab-playoff">
+            <div class="list-item resolved-item">
+              <div class="list-item-icon trophy" style="font-size:14px;">1.0</div>
+              <div class="list-item-content">
+                <div class="list-item-title">Make Playoffs <span class="resolved-badge">Locked</span></div>
+                <div class="list-item-meta">3 sources agree</div>
+              </div>
+              <div>
+                <div class="list-item-prob" style="color:var(--green);">100%</div>
+              </div>
+            </div>
+
+            <div class="list-item">
+              <div class="list-item-icon trophy">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:36%; background:var(--accent);"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">Eastern Conference Champion</div>
+                <div class="list-item-meta">3 sources -- Odds API, Kalshi, Polymarket</div>
+              </div>
+              <div>
+                <div class="list-item-prob">36%</div>
+                <div class="list-item-sources">Merged</div>
+              </div>
+            </div>
+
+            <div class="list-item">
+              <div class="list-item-icon trophy">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:13.5%; background:var(--accent);"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">NBA Champion</div>
+                <div class="list-item-meta">3 sources -- range: 11.4% - 13.5%</div>
+              </div>
+              <div>
+                <div class="list-item-prob">13.5%</div>
+                <div class="list-item-sources">Merged</div>
+              </div>
+            </div>
+
+            <div class="list-item">
+              <div class="list-item-icon chart">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:58%; background:var(--accent);"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">Win Total: 55+ wins</div>
+                <div class="list-item-meta">Currently 54 wins, 8 games left</div>
+              </div>
+              <div>
+                <div class="list-item-prob">58%</div>
+              </div>
+            </div>
+
+            <div class="list-item resolved-item">
+              <div class="list-item-icon chart" style="font-size:14px;">1.0</div>
+              <div class="list-item-content">
+                <div class="list-item-title">Win Total: 50+ wins <span class="resolved-badge">Locked</span></div>
+                <div class="list-item-meta">Effectively resolved</div>
+              </div>
+              <div>
+                <div class="list-item-prob" style="color:var(--green);">97%</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Matchups tab -->
+          <div class="tab-panel" id="tab-matchups">
+            <div class="list-item">
+              <div class="list-item-content">
+                <div class="list-item-title">Houston vs Boston</div>
+                <div class="list-item-meta">NBA Finals Matchup -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">20%</div>
+            </div>
+            <div class="list-item">
+              <div class="list-item-content">
+                <div class="list-item-title">Oklahoma City vs Boston</div>
+                <div class="list-item-meta">NBA Finals Matchup -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">17.5%</div>
+            </div>
+            <div class="list-item">
+              <div class="list-item-content">
+                <div class="list-item-title">San Antonio vs Boston</div>
+                <div class="list-item-meta">NBA Finals Matchup -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">15.5%</div>
+            </div>
+            <div class="list-item">
+              <div class="list-item-content">
+                <div class="list-item-title">Denver vs Boston</div>
+                <div class="list-item-meta">NBA Finals Matchup -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">12%</div>
+            </div>
+            <div class="list-item" style="opacity:0.6;">
+              <div class="list-item-content">
+                <div class="list-item-title">Cleveland vs Boston</div>
+                <div class="list-item-meta">East Finals Matchup -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">8%</div>
+            </div>
+          </div>
+
+          <!-- Awards tab -->
+          <div class="tab-panel" id="tab-awards">
+            <div class="list-item">
+              <div class="list-item-icon award">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:45%; background:var(--purple);"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">All-NBA 1st Team (Tatum)</div>
+                <div class="list-item-meta">Kalshi</div>
+              </div>
+              <div class="list-item-prob" style="color:var(--purple);">45%</div>
+            </div>
+            <div class="list-item">
+              <div class="list-item-icon award">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:8%; background:var(--purple);"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">MVP (Tatum)</div>
+                <div class="list-item-meta">Odds API + Kalshi</div>
+              </div>
+              <div class="list-item-prob" style="color:var(--purple);">8%</div>
+            </div>
+            <div class="list-item">
+              <div class="list-item-icon award">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:3%; background:var(--purple);"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">DPOY (Tatum)</div>
+                <div class="list-item-meta">Kalshi</div>
+              </div>
+              <div class="list-item-prob" style="color:var(--purple);">3%</div>
+            </div>
+          </div>
+
+          <!-- Stats tab -->
+          <div class="tab-panel" id="tab-stats">
+            <div class="list-item">
+              <div class="list-item-content">
+                <div class="list-item-title">PPG Leader (Tatum)</div>
+                <div class="list-item-meta">Kalshi</div>
+              </div>
+              <div class="list-item-prob">5%</div>
+            </div>
+          </div>
+
+          <!-- Trades tab -->
+          <div class="tab-panel" id="tab-trades">
+            <div class="list-item">
+              <div class="list-item-icon trade">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:12%; background:#db2777;"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">Josh Giddey to Celtics</div>
+                <div class="list-item-meta">Trade destination -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">12%</div>
+            </div>
+            <div class="list-item">
+              <div class="list-item-icon trade">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:12%; background:#db2777;"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">Julius Randle to Celtics</div>
+                <div class="list-item-meta">Trade destination -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">12%</div>
+            </div>
+            <div class="list-item">
+              <div class="list-item-icon trade">
+                <div class="inline-bar" style="width:36px;">
+                  <div class="inline-bar-fill" style="width:11%; background:#db2777;"></div>
+                </div>
+              </div>
+              <div class="list-item-content">
+                <div class="list-item-title">Ja Morant to Celtics</div>
+                <div class="list-item-meta">Trade destination -- Kalshi</div>
+              </div>
+              <div class="list-item-prob">11%</div>
+            </div>
+          </div>
+
+          <div style="height:40px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================ -->
+<!-- OPTION C: Compact Dashboard                      -->
+<!-- ================================================ -->
+<div id="panel-c" class="option-panel">
+  <div class="comparison">
+    <div class="comparison-desc">
+      <p class="section-label">Option C</p>
+      <h2 class="option-title">Compact Dashboard</h2>
+      <p class="option-subtitle">
+        A 2-column grid of compact cards, each showing a single "hero stat" for its
+        category. Tap any card to expand into a full detail view (modal or inline).
+        Inspired by Apple Health / Fitness app summary cards.
+      </p>
+
+      <div class="pro-con">
+        <h4 style="color:var(--green);">Pros</h4>
+        <ul class="pros" style="margin-bottom:8px;">
+          <li>Maximum information density -- see everything at a glance</li>
+          <li>Tappable cards feel modern and interactive</li>
+          <li>Each card can use custom visualization for its type</li>
+          <li>No scrolling past 20+ items to see the bottom categories</li>
+          <li>Best for users who want a quick overview, not deep exploration</li>
+        </ul>
+        <h4 style="color:var(--red);">Cons</h4>
+        <ul class="cons">
+          <li>Less room for detail in the summary view</li>
+          <li>Two-column grid might feel cramped on mobile (375px)</li>
+          <li>Expansion interaction needs careful design (modal vs inline?)</li>
+          <li>Harder to show the "progression" story inline</li>
+          <li>May feel more like a dashboard than a story about this team</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="comparison-phone">
+      <div class="phone-frame">
+        <div class="phone-content">
+          <p class="section-label" style="margin-top:16px;">Bigger Picture -- Celtics</p>
+
+          <div class="dashboard-grid">
+            <!-- Playoff Path card -->
+            <div class="dashboard-card full-width">
+              <div class="dash-header">
+                <span class="dash-title">Playoff Path</span>
+                <span class="dash-count">3 stages, 3 sources</span>
+              </div>
+              <div class="stacked-bar">
+                <div class="stacked-segment" style="width:100%; background:var(--green); opacity:0.3;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; font-size:12px;">
+                <div>
+                  <div style="font-weight:600;">Playoffs</div>
+                  <div style="color:var(--green); font-weight:700;">100%</div>
+                </div>
+                <div style="text-align:center;">
+                  <div style="font-weight:600;">East Champ</div>
+                  <div style="color:var(--accent); font-weight:700;">36%</div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-weight:600;">NBA Champ</div>
+                  <div style="color:var(--accent); font-weight:700;">13.5%</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Finals Matchups card -->
+            <div class="dashboard-card">
+              <div class="dash-header">
+                <span class="dash-title">Finals Matchup</span>
+                <span class="dash-count">16</span>
+              </div>
+              <div class="dash-hero-stat" style="color:var(--accent);">20%</div>
+              <div class="dash-hero-label">Houston (most likely)</div>
+              <div class="dash-mini-rows">
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">OKC</span>
+                  <span class="dash-mini-value">17.5%</span>
+                </div>
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">SA</span>
+                  <span class="dash-mini-value">15.5%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Win Total card -->
+            <div class="dashboard-card">
+              <div class="dash-header">
+                <span class="dash-title">Win Total</span>
+              </div>
+              <div class="dash-hero-stat" style="color:var(--accent);">58%</div>
+              <div class="dash-hero-label">to reach 55+ wins</div>
+              <div class="dash-mini-rows">
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">Current</span>
+                  <span class="dash-mini-value">54 W</span>
+                </div>
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">Games left</span>
+                  <span class="dash-mini-value">8</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Awards card -->
+            <div class="dashboard-card">
+              <div class="dash-header">
+                <span class="dash-title">Awards</span>
+                <span class="dash-count">8</span>
+              </div>
+              <div class="dash-hero-stat" style="color:var(--purple);">45%</div>
+              <div class="dash-hero-label">All-NBA 1st (Tatum)</div>
+              <div class="dash-mini-rows">
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">MVP</span>
+                  <span class="dash-mini-value">8%</span>
+                </div>
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">DPOY</span>
+                  <span class="dash-mini-value">3%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Trades card -->
+            <div class="dashboard-card">
+              <div class="dash-header">
+                <span class="dash-title">Trade Watch</span>
+                <span class="dash-count">5</span>
+              </div>
+              <div class="trade-avatars">
+                <div class="trade-avatar">JG</div>
+                <div class="trade-avatar">JR</div>
+                <div class="trade-avatar">JM</div>
+                <div class="trade-avatar">DG</div>
+                <div class="trade-avatar">JH</div>
+              </div>
+              <div class="dash-mini-rows">
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">Giddey</span>
+                  <span class="dash-mini-value">12%</span>
+                </div>
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">Randle</span>
+                  <span class="dash-mini-value">12%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stat Leaders card -->
+            <div class="dashboard-card">
+              <div class="dash-header">
+                <span class="dash-title">Stat Leaders</span>
+                <span class="dash-count">6</span>
+              </div>
+              <div class="dash-hero-stat" style="color:var(--orange);">5%</div>
+              <div class="dash-hero-label">PPG Leader (Tatum)</div>
+              <div class="dash-mini-rows">
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">3PM</span>
+                  <span class="dash-mini-value">3%</span>
+                </div>
+                <div class="dash-mini-row">
+                  <span class="dash-mini-label">APG</span>
+                  <span class="dash-mini-value">1%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Division / Other card -->
+            <div class="dashboard-card full-width" style="opacity:0.7;">
+              <div class="dash-header">
+                <span class="dash-title">Other Markets</span>
+                <span class="dash-count">12 more</span>
+              </div>
+              <div style="display:flex; gap:12px; font-size:12px; flex-wrap:wrap;">
+                <div style="background:#f3f4f6; padding:4px 10px; border-radius:6px;">
+                  <span style="color:var(--text-secondary);">Southeast Div:</span>
+                  <span style="font-weight:600;">0.1%</span>
+                </div>
+                <div style="background:#f3f4f6; padding:4px 10px; border-radius:6px;">
+                  <span style="color:var(--text-secondary);">Best Record:</span>
+                  <span style="font-weight:600;">8%</span>
+                </div>
+                <div style="background:#f3f4f6; padding:4px 10px; border-radius:6px;">
+                  <span style="color:var(--text-secondary);">#1 Seed:</span>
+                  <span style="font-weight:600;">22%</span>
+                </div>
+                <div style="background:#f3f4f6; padding:4px 10px; border-radius:6px;">
+                  <span style="color:var(--text-secondary);">Play-In:</span>
+                  <span style="font-weight:600;">0.5%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p class="section-label" style="margin-top:24px;">Charlotte Hornets</p>
+
+          <div class="dashboard-grid">
+            <div class="dashboard-card full-width" style="opacity:0.7;">
+              <div class="dash-header">
+                <span class="dash-title">Playoff Path</span>
+              </div>
+              <div style="display:flex; gap:16px; font-size:12px;">
+                <div>
+                  <div style="font-weight:600;">Playoffs</div>
+                  <div style="color:var(--red); font-weight:700;">0.2%</div>
+                </div>
+                <div>
+                  <div style="font-weight:600;">25+ Wins</div>
+                  <div style="color:var(--orange); font-weight:700;">22.5%</div>
+                </div>
+                <div>
+                  <div style="font-weight:600;">Worst Record</div>
+                  <div style="color:var(--text-muted); font-weight:700;">18%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="height:40px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showOption(id) {
+  document.querySelectorAll('.option-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function showTab(el, tabId) {
+  const bar = el.parentElement;
+  bar.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+
+  const panel = bar.parentElement;
+  panel.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(tabId).classList.add('active');
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evolution Chart — Light Mode Variants</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-page: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --border-light: #eef0f3;
+    --text: #1a1d23;
+    --text-secondary: #5a5f6b;
+    --text-dim: #8c919d;
+    --text-faint: #b5b9c3;
+    --grid-line: #eef0f3;
+    --grid-line-major: #e2e5ea;
+    --accent: #2563eb;
+    --accent-light: #eff4ff;
+    --green: #16a34a;
+    --red: #dc2626;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg-page);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
+
+  .page-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+    letter-spacing: -0.01em;
+  }
+  .page-subtitle {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 36px;
+  }
+
+  /* Section headers */
+  .section {
+    margin-bottom: 56px;
+  }
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .section h2 {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+    letter-spacing: -0.005em;
+  }
+  .section > p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+    max-width: 560px;
+    line-height: 1.55;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .card-body { padding: 16px 18px 10px; }
+  .card-footer {
+    padding: 8px 18px;
+    border-top: 1px solid var(--border-light);
+    background: #fafbfc;
+    font-size: 11px;
+    color: var(--text-faint);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Controls bar (DataGolf-style toggles) */
+  .controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .control-group-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-right: 8px;
+  }
+  .ctrl-btn {
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--border-light);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .ctrl-btn:last-child { border-right: none; }
+  .ctrl-btn:hover { background: #f5f6f8; }
+  .ctrl-btn.active {
+    background: var(--text);
+    color: white;
+    font-weight: 600;
+  }
+
+  /* Pill toggles */
+  .pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 12px;
+  }
+  .pill-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 11px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-dim);
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .pill-btn:hover {
+    border-color: #ccd0d8;
+    color: var(--text-secondary);
+  }
+  .pill-btn.on {
+    border-color: var(--pill-c, var(--border));
+    background: var(--pill-bg, #f0f4ff);
+    color: var(--pill-c, var(--text));
+    font-weight: 600;
+  }
+  .pill-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Player list (DataGolf-style) */
+  .player-list-wrap {
+    display: flex;
+    gap: 0;
+  }
+  .player-list-wrap .chart-area { flex: 1; min-width: 0; }
+  .player-list {
+    width: 155px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border-light);
+    padding: 10px 12px;
+  }
+  .player-list-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .player-search {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 12px;
+    color: var(--text);
+    font-family: inherit;
+    margin-bottom: 8px;
+    outline: none;
+    background: var(--bg);
+  }
+  .player-search::placeholder { color: var(--text-faint); }
+  .player-search:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37,99,235,0.1); }
+  .player-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 2px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: default;
+  }
+  .player-item .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .player-item .name { flex: 1; font-weight: 500; }
+  .player-item .remove {
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+  }
+  .player-item .remove:hover { color: var(--red); }
+
+  /* Dropdown selector */
+  .add-select {
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    background: var(--bg);
+    width: 100%;
+    cursor: pointer;
+    outline: none;
+  }
+  .add-select:focus { border-color: var(--accent); }
+
+  /* Notes */
+  .note {
+    display: flex;
+    gap: 8px;
+    padding: 9px 12px;
+    margin-top: 10px;
+    border-radius: 7px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .note-best { background: #f0fdf4; border: 1px solid #dcfce7; }
+  .note-info { background: #eff6ff; border: 1px solid #dbeafe; }
+  .note-label { font-weight: 600; flex-shrink: 0; }
+  .note-best .note-label { color: var(--green); }
+  .note-info .note-label { color: var(--accent); }
+  .note-text { color: var(--text-secondary); }
+
+  /* Separator */
+  .sep { height: 1px; background: var(--border-light); margin: 40px 0; }
+
+  /* Bottom vote */
+  .vote-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    text-align: center;
+  }
+  .vote-card h2 { font-size: 16px; margin-bottom: 6px; letter-spacing: -0.005em; }
+  .vote-card p { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+  .vote-btns { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .vote-btn {
+    padding: 8px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+  }
+  .vote-btn:hover { background: var(--accent-light); border-color: #bfdbfe; }
+  .vote-btn.picked { background: var(--accent-light); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+  @media (max-width: 640px) {
+    .player-list-wrap { flex-direction: column; }
+    .player-list {
+      width: 100%;
+      border-left: none;
+      border-top: 1px solid var(--border-light);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+    .player-list-title { margin-right: 8px; margin-bottom: 0; }
+    .player-search { width: 120px; margin-bottom: 0; }
+    .controls-bar { gap: 8px; }
+    .ctrl-btn { padding: 5px 10px; font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1 class="page-title">Evolution Chart — Light Mode</h1>
+<p class="page-subtitle">Modeled on DataGolf's live model chart. Real MLB data. All variants are light-background, clean, functional.</p>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- VARIANT A: DATAGOLF CLONE -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="section" id="secA">
+  <div class="section-label">Variant A</div>
+  <h2>DataGolf Style</h2>
+  <p>Closest match to the DataGolf reference. Segmented toggle controls at top. Sidebar with "Find Player" dropdown and selected player list with remove buttons. Clean gridlines, thin lines.</p>
+  <div class="card">
+    <div class="card-body">
+      <div class="controls-bar">
+        <span class="control-group-label">Time Range</span>
+        <div class="control-group">
+          <button class="ctrl-btn active" onclick="setActive(this)">7 Days</button>
+          <button class="ctrl-btn" onclick="setActive(this)">30 Days</button>
+          <button class="ctrl-btn" onclick="setActive(this)">Season</button>
+        </div>
+        <span class="control-group-label" style="margin-left:8px">Column</span>
+        <div class="control-group">
+          <button class="ctrl-btn" onclick="setActive(this)">Playoffs</button>
+          <button class="ctrl-btn" onclick="setActive(this)">Division</button>
+          <button class="ctrl-btn" onclick="setActive(this)">Pennant</button>
+          <button class="ctrl-btn active" onclick="setActive(this)">Win</button>
+        </div>
+      </div>
+      <div class="player-list-wrap">
+        <div class="chart-area">
+          <canvas id="chartA" height="260"></canvas>
+        </div>
+        <div class="player-list" id="sidebarA">
+          <div class="player-list-title">Plotted Teams</div>
+          <select class="add-select" id="addSelectA">
+            <option value="">Add team...</option>
+          </select>
+          <div id="playerListA" style="margin-top:6px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-footer">
+      <span>World Series 2026</span>
+      <span>Championship Odds</span>
+    </div>
+  </div>
+  <div class="note note-best">
+    <span class="note-label">Closest to DataGolf</span>
+    <span class="note-text">Sidebar dropdown is familiar to DataGolf users. Segmented controls for time range + grid column. Adapts well to golf (rounds as time range) and team sports (playoffs/division/pennant/win).</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- VARIANT B: PILL TOGGLES -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="section" id="secB">
+  <div class="section-label">Variant B</div>
+  <h2>Pill Toggles</h2>
+  <p>Same clean chart, but pill buttons replace the sidebar. Better touch targets for mobile — no dropdown needed. Top 3 pre-selected. All teams visible and tappable.</p>
+  <div class="card">
+    <div class="card-body">
+      <div class="controls-bar">
+        <span class="control-group-label">Time Range</span>
+        <div class="control-group">
+          <button class="ctrl-btn active" onclick="setActive(this)">7 Days</button>
+          <button class="ctrl-btn" onclick="setActive(this)">30 Days</button>
+          <button class="ctrl-btn" onclick="setActive(this)">Season</button>
+        </div>
+      </div>
+      <div class="pill-row" id="pillsB"></div>
+      <canvas id="chartB" height="260"></canvas>
+    </div>
+    <div class="card-footer">
+      <span>World Series 2026</span>
+      <span>Tap teams to show/hide</span>
+    </div>
+  </div>
+  <div class="note note-info">
+    <span class="note-label">Mobile advantage</span>
+    <span class="note-text">Pills are easier to tap on phones than dropdowns. Pre-selected top 3 means the chart is useful immediately with zero interaction. Scrollable row on narrow screens.</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- VARIANT C: SEARCH + TAGS -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="section" id="secC">
+  <div class="section-label">Variant C</div>
+  <h2>Search + Tags</h2>
+  <p>Type-ahead search above the chart to add teams. Selected teams shown as colored tags. Best for large fields (golf with 50+ players, NCAA with 64+ teams) where showing all as pills doesn't scale.</p>
+  <div class="card">
+    <div class="card-body">
+      <div class="controls-bar">
+        <span class="control-group-label">Time Range</span>
+        <div class="control-group">
+          <button class="ctrl-btn active" onclick="setActive(this)">7 Days</button>
+          <button class="ctrl-btn" onclick="setActive(this)">30 Days</button>
+          <button class="ctrl-btn" onclick="setActive(this)">Season</button>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-start; margin-bottom:10px; flex-wrap:wrap;">
+        <input type="text" class="player-search" id="searchC" placeholder="Find team..." style="width:160px; margin-bottom:0;">
+        <div id="tagsC" style="display:flex; flex-wrap:wrap; gap:4px; flex:1;"></div>
+      </div>
+      <canvas id="chartC" height="260"></canvas>
+    </div>
+    <div class="card-footer">
+      <span>World Series 2026</span>
+      <span>Type to search &middot; Click tag to remove</span>
+    </div>
+  </div>
+  <div class="note note-best">
+    <span class="note-label">Scales best</span>
+    <span class="note-text">When there are 50+ players or 30+ teams, pills don't fit. Search-to-add scales to any field size. Pre-populated with top 3 so the chart is never empty on load.</span>
+  </div>
+</div>
+
+<div class="sep"></div>
+
+<div class="vote-card">
+  <h2>Which interaction model?</h2>
+  <p>The chart itself is identical across all three — the difference is how you select teams/players. We can also combine (e.g., pills on desktop, search on mobile).</p>
+  <div class="vote-btns">
+    <button class="vote-btn" onclick="this.classList.toggle('picked')">A — Sidebar Dropdown</button>
+    <button class="vote-btn" onclick="this.classList.toggle('picked')">B — Pill Toggles</button>
+    <button class="vote-btn" onclick="this.classList.toggle('picked')">C — Search + Tags</button>
+  </div>
+</div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// DATA
+// ═══════════════════════════════════════════════
+const TIMELINE = [
+  {ts:"Mar 27",outcomes:{"Boston Red Sox":.058824,"Philadelphia Phillies":.058824,"New York Yankees":.090909,"New York Mets":.071429,"Detroit Tigers":.047619,"Atlanta Braves":.047619,"Toronto Blue Jays":.066667,"Seattle Mariners":.076923,"Los Angeles Dodgers":.307692,"Chicago Cubs":.052632}},
+  {ts:"Mar 28",outcomes:{"Los Angeles Dodgers":.307692,"Seattle Mariners":.076923,"Detroit Tigers":.047619,"Chicago Cubs":.052632,"Boston Red Sox":.058824,"New York Yankees":.090909,"Atlanta Braves":.047619,"Philadelphia Phillies":.058824,"Toronto Blue Jays":.066667,"New York Mets":.071429}},
+  {ts:"Mar 29",outcomes:{"Boston Red Sox":.058824,"Chicago Cubs":.052632,"Philadelphia Phillies":.058824,"New York Mets":.071429,"Detroit Tigers":.047619,"Toronto Blue Jays":.066667,"Atlanta Braves":.047619,"Seattle Mariners":.076923,"New York Yankees":.090909,"Los Angeles Dodgers":.307692}},
+  {ts:"Mar 30",outcomes:{"New York Yankees":.090909,"Los Angeles Dodgers":.307692,"Seattle Mariners":.083333,"New York Mets":.076923,"Toronto Blue Jays":.0625,"Philadelphia Phillies":.058824,"Atlanta Braves":.05,"Boston Red Sox":.055556,"Chicago Cubs":.052632,"Detroit Tigers":.047619}},
+  {ts:"Mar 31",outcomes:{"Toronto Blue Jays":.066667,"New York Yankees":.090909,"Atlanta Braves":.05,"Boston Red Sox":.055556,"Chicago Cubs":.05,"Philadelphia Phillies":.058824,"Detroit Tigers":.047619,"Los Angeles Dodgers":.307692,"Seattle Mariners":.083333,"New York Mets":.066667}},
+  {ts:"Apr 1",outcomes:{"Atlanta Braves":.047619,"Toronto Blue Jays":.066667,"New York Mets":.066667,"Los Angeles Dodgers":.307692,"Detroit Tigers":.05,"Philadelphia Phillies":.058824,"New York Yankees":.090909,"Chicago Cubs":.05,"Boston Red Sox":.055556,"Seattle Mariners":.083333}},
+  {ts:"Apr 2",outcomes:{"Toronto Blue Jays":.066667,"Seattle Mariners":.083333,"New York Mets":.066667,"Atlanta Braves":.05,"Los Angeles Dodgers":.307692,"Philadelphia Phillies":.058824,"New York Yankees":.090909,"Chicago Cubs":.05,"Boston Red Sox":.052632,"Detroit Tigers":.047619}}
+];
+
+// Colors tuned for light background (darker, more saturated)
+const COLORS = {
+  "Los Angeles Dodgers":"#005a9c",
+  "New York Yankees":"#003087",
+  "Seattle Mariners":"#005c5c",
+  "New York Mets":"#002d72",
+  "Toronto Blue Jays":"#134a8e",
+  "Philadelphia Phillies":"#e81828",
+  "Boston Red Sox":"#bd3039",
+  "Atlanta Braves":"#ce1141",
+  "Chicago Cubs":"#0e3386",
+  "Detroit Tigers":"#0d2b56"
+};
+
+const SHORT = {
+  "Los Angeles Dodgers":"LAD","New York Yankees":"NYY","Seattle Mariners":"SEA",
+  "New York Mets":"NYM","Toronto Blue Jays":"TOR","Philadelphia Phillies":"PHI",
+  "Boston Red Sox":"BOS","Atlanta Braves":"ATL","Chicago Cubs":"CHC","Detroit Tigers":"DET"
+};
+
+const TEAMS = Object.keys(COLORS);
+const sorted = [...TEAMS].sort((a,b) => {
+  const l = TIMELINE[TIMELINE.length-1].outcomes;
+  return (l[b]||0)-(l[a]||0);
+});
+
+function getData(t) { return TIMELINE.map(p=>p.outcomes[t]||0); }
+function pct(v) { return (v*100).toFixed(1)+'%'; }
+
+// Toggle helper
+function setActive(btn) {
+  const grp = btn.parentElement;
+  grp.querySelectorAll('.ctrl-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ═══════════════════════════════════════════════
+// SHARED CHART DRAWING (light mode, DataGolf-inspired)
+// ═══════════════════════════════════════════════
+function setupCanvas(id, h) {
+  const c = document.getElementById(id);
+  const dpr = window.devicePixelRatio||1;
+  c.width = c.offsetWidth*dpr;
+  c.height = h*dpr;
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr,dpr);
+  return {ctx, W:c.offsetWidth, H:h};
+}
+
+function drawLightChart(canvasId, activeSet, maxY, showEndLabels) {
+  const {ctx,W,H} = setupCanvas(canvasId, 260);
+  const pad = {left:42, right:(showEndLabels?60:14), top:12, bottom:28};
+
+  // Y gridlines + labels
+  const steps = maxY <= 0.15 ? 6 : 5;
+  for (let i = 0; i <= steps; i++) {
+    const v = (maxY/steps)*i;
+    const y = pad.top + (1-v/maxY)*(H-pad.top-pad.bottom);
+    ctx.beginPath();
+    ctx.strokeStyle = i===0 ? '#d1d5db' : '#eef0f3';
+    ctx.lineWidth = 1;
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W-pad.right, y);
+    ctx.stroke();
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Math.round(v*100)+'%', pad.left-8, y);
+  }
+
+  // X date labels
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#9ca3af';
+  ctx.font = '10px -apple-system, system-ui, sans-serif';
+  TIMELINE.forEach((t,i) => {
+    const x = pad.left + (i/(TIMELINE.length-1))*(W-pad.left-pad.right);
+    ctx.fillText(t.ts, x, H-pad.bottom+8);
+    // Light vertical tick
+    if (i>0 && i<TIMELINE.length-1) {
+      ctx.beginPath();
+      ctx.strokeStyle = '#f0f1f4';
+      ctx.moveTo(x, pad.top);
+      ctx.lineTo(x, H-pad.bottom);
+      ctx.stroke();
+    }
+  });
+
+  function getPoints(team) {
+    const data = getData(team);
+    return data.map((v,i) => [
+      pad.left + (i/(TIMELINE.length-1))*(W-pad.left-pad.right),
+      pad.top + (1-v/maxY)*(H-pad.top-pad.bottom)
+    ]);
+  }
+  function bezier(ctx, pts) {
+    if (pts.length<2) return;
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i=1;i<pts.length;i++) {
+      const p=pts[i-1], c=pts[i], cpx=(p[0]+c[0])/2;
+      ctx.bezierCurveTo(cpx,p[1],cpx,c[1],c[0],c[1]);
+    }
+  }
+
+  // Muted lines
+  TEAMS.forEach(team => {
+    if (activeSet.has(team)) return;
+    const pts = getPoints(team);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+    ctx.lineWidth = 1;
+    bezier(ctx, pts);
+    ctx.stroke();
+  });
+
+  // Active lines
+  activeSet.forEach(team => {
+    const pts = getPoints(team);
+    const color = COLORS[team];
+
+    // Thin shadow for depth
+    ctx.beginPath();
+    ctx.strokeStyle = color+'22';
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezier(ctx, pts);
+    ctx.stroke();
+
+    // Main line
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezier(ctx, pts);
+    ctx.stroke();
+
+    // End dot
+    const last = pts[pts.length-1];
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 3, 0, Math.PI*2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 1.2, 0, Math.PI*2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    // End label
+    if (showEndLabels) {
+      const latestV = getData(team).slice(-1)[0];
+      ctx.fillStyle = color;
+      ctx.font = '600 11px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(SHORT[team]+' '+pct(latestV), last[0]+7, last[1]);
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════
+// VARIANT A: DATAGOLF CLONE (sidebar dropdown)
+// ═══════════════════════════════════════════════
+const activeA = new Set(sorted.slice(0,3));
+
+function buildSidebarA() {
+  // Dropdown
+  const sel = document.getElementById('addSelectA');
+  sel.innerHTML = '<option value="">Add team...</option>';
+  sorted.forEach(t => {
+    if (activeA.has(t)) return;
+    const opt = document.createElement('option');
+    opt.value = t; opt.textContent = SHORT[t]+' — '+t;
+    sel.appendChild(opt);
+  });
+  sel.onchange = () => {
+    if (sel.value) { activeA.add(sel.value); buildSidebarA(); drawChartA(); }
+  };
+  // List
+  const list = document.getElementById('playerListA');
+  list.innerHTML = '';
+  activeA.forEach(team => {
+    const d = document.createElement('div');
+    d.className = 'player-item';
+    d.innerHTML = `<span class="dot" style="background:${COLORS[team]}"></span>
+      <span class="name">${SHORT[team]}</span>
+      <span class="remove" onclick="activeA.delete('${team}');buildSidebarA();drawChartA();">&times;</span>`;
+    list.appendChild(d);
+  });
+}
+
+function drawChartA() { drawLightChart('chartA', activeA, 0.35, false); }
+
+// ═══════════════════════════════════════════════
+// VARIANT B: PILL TOGGLES
+// ═══════════════════════════════════════════════
+const activeB = new Set(sorted.slice(0,3));
+
+function buildPillsB() {
+  const el = document.getElementById('pillsB');
+  el.innerHTML = '';
+  sorted.forEach(team => {
+    const btn = document.createElement('button');
+    const on = activeB.has(team);
+    btn.className = 'pill-btn' + (on?' on':'');
+    const c = COLORS[team];
+    if (on) {
+      btn.style.setProperty('--pill-c', c);
+      btn.style.setProperty('--pill-bg', c+'10');
+      btn.style.borderColor = c+'44';
+    }
+    btn.innerHTML = `<span class="pill-dot" style="background:${c}${on?'':'44'}"></span>${SHORT[team]}`;
+    btn.onclick = () => { activeB.has(team)?activeB.delete(team):activeB.add(team); buildPillsB(); drawChartB(); };
+    el.appendChild(btn);
+  });
+}
+
+function drawChartB() { drawLightChart('chartB', activeB, 0.35, true); }
+
+// ═══════════════════════════════════════════════
+// VARIANT C: SEARCH + TAGS
+// ═══════════════════════════════════════════════
+const activeC = new Set(sorted.slice(0,3));
+
+function buildTagsC() {
+  const el = document.getElementById('tagsC');
+  el.innerHTML = '';
+  activeC.forEach(team => {
+    const tag = document.createElement('span');
+    tag.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;cursor:pointer;background:${COLORS[team]}11;color:${COLORS[team]};border:1px solid ${COLORS[team]}33;font-family:inherit;`;
+    tag.innerHTML = `${SHORT[team]} <span style="opacity:0.5;font-size:10px;margin-left:1px">&times;</span>`;
+    tag.onclick = () => { activeC.delete(team); buildTagsC(); drawChartC(); };
+    el.appendChild(tag);
+  });
+}
+
+function drawChartC() { drawLightChart('chartC', activeC, 0.35, true); }
+
+function setupSearchC() {
+  const input = document.getElementById('searchC');
+  input.addEventListener('keydown', e => {
+    if (e.key==='Enter') {
+      const q = input.value.toLowerCase();
+      const m = TEAMS.find(t=>t.toLowerCase().includes(q)||SHORT[t].toLowerCase()===q);
+      if (m && !activeC.has(m)) { activeC.add(m); input.value=''; buildTagsC(); drawChartC(); }
+    }
+  });
+  // Auto-match on typing 3+ chars
+  input.addEventListener('input', () => {
+    const q = input.value.toLowerCase();
+    if (q.length < 3) return;
+    const m = TEAMS.find(t=>t.toLowerCase().includes(q)||SHORT[t].toLowerCase()===q);
+    if (m && !activeC.has(m)) { activeC.add(m); input.value=''; buildTagsC(); drawChartC(); }
+  });
+}
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+function init() {
+  buildSidebarA(); drawChartA();
+  buildPillsB(); drawChartB();
+  buildTagsC(); drawChartC(); setupSearchC();
+}
+window.addEventListener('load', init);
+window.addEventListener('resize', () => { drawChartA(); drawChartB(); drawChartC(); });
+</script>
+</body>
+</html>

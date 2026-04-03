@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BainLuck — Masters Tournament Experience</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+      colors: {
+        surface: { DEFAULT: '#0D1117', card: '#161B22', hover: '#1C2128' },
+        ink: { DEFAULT: '#E6EDF3', secondary: '#8B949E', tertiary: '#484F58', faint: '#30363D' },
+        // Augusta National Green
+        augusta: { DEFAULT: '#006747', light: '#00875F', dark: '#004D35', glow: 'rgba(0,103,71,0.15)', faint: 'rgba(0,103,71,0.08)' },
+        // Azalea pink (Augusta flower accent)
+        azalea: { DEFAULT: '#E91E8C', light: '#FF5CB8', faint: 'rgba(233,30,140,0.12)' },
+        positive: '#3FB950',
+        negative: '#F85149',
+        yellow: '#D29922',
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { -webkit-font-smoothing: antialiased; }
+  body { background: #0D1117; }
+  .tab-btn { transition: all 0.15s; }
+  .tab-btn.active { background: #006747; color: white; border-color: #00875F; }
+  .option-toggle { cursor: pointer; transition: all 0.15s; }
+  .option-toggle.active { background: rgba(0,103,71,0.2); color: #3FB950; border-color: rgba(0,103,71,0.5); }
+  .cutline { border-top: 2px dashed #D29922; }
+  .vs-badge { background: linear-gradient(135deg, #006747 0%, #004D35 100%); }
+  .prob-bar { transition: width 0.3s ease; }
+  .glow-green { box-shadow: 0 0 20px rgba(0,103,71,0.3); }
+  .hole-cell { min-width: 28px; }
+  @keyframes pulse-green { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .live-dot { animation: pulse-green 2s infinite; }
+  .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .scroll-x::-webkit-scrollbar { display: none; }
+
+  /* Device frame simulation */
+  .device-label {
+    position: absolute; top: -28px; left: 0;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+    text-transform: uppercase; color: #8B949E;
+  }
+</style>
+</head>
+<body class="font-sans text-ink min-h-screen p-4 md:p-8">
+
+<!-- ===================================================================== -->
+<!-- DESIGN OPTIONS SELECTOR                                                -->
+<!-- ===================================================================== -->
+
+<div class="max-w-6xl mx-auto mb-8">
+  <div class="flex items-center gap-3 mb-2">
+    <span class="text-3xl">⛳</span>
+    <h1 class="text-2xl font-bold">Masters Tournament Experience — Design Options</h1>
+  </div>
+  <p class="text-ink-secondary text-sm mb-6">
+    Mockups for desktop web, mobile web, and iOS. Toggle between sections below.
+    <br>All mockups simulate <strong>Round 2 in-progress</strong> (live leaderboard + cut line active).
+  </p>
+
+  <!-- Section toggles -->
+  <div class="flex flex-wrap gap-2 mb-6">
+    <button onclick="showSection('leaderboard')" class="tab-btn active text-xs px-3 py-1.5 rounded-full border border-ink-faint" id="tab-leaderboard">
+      Leaderboard + Odds
+    </button>
+    <button onclick="showSection('cutline')" class="tab-btn text-xs px-3 py-1.5 rounded-full border border-ink-faint text-ink-secondary" id="tab-cutline">
+      Bubble Watch / Cut Line
+    </button>
+    <button onclick="showSection('h2h')" class="tab-btn text-xs px-3 py-1.5 rounded-full border border-ink-faint text-ink-secondary" id="tab-h2h">
+      Head-to-Head Matchups
+    </button>
+    <button onclick="showSection('holebyhole')" class="tab-btn text-xs px-3 py-1.5 rounded-full border border-ink-faint text-ink-secondary" id="tab-holebyhole">
+      Hole-by-Hole Probability
+    </button>
+    <button onclick="showSection('movers')" class="tab-btn text-xs px-3 py-1.5 rounded-full border border-ink-faint text-ink-secondary" id="tab-movers">
+      Odds Movers
+    </button>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- SECTION 1: LEADERBOARD + ODDS GRID                                     -->
+<!-- ===================================================================== -->
+
+<div id="section-leaderboard" class="max-w-6xl mx-auto mb-16">
+  <h2 class="text-lg font-semibold mb-1 text-augusta-light">1. Leaderboard + Odds Grid</h2>
+  <p class="text-ink-secondary text-xs mb-6">The primary view. Shows live position, score, and probability data side by side.</p>
+
+  <!-- === DESKTOP === -->
+  <div class="relative mb-12">
+    <div class="device-label">Desktop (1200px)</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint p-6 glow-green" style="max-width:1100px">
+
+      <!-- Tournament Header -->
+      <div class="flex items-start justify-between mb-5">
+        <div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-augusta text-white uppercase tracking-wider">The Masters</span>
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-positive/20 text-positive flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-positive live-dot"></span> Round 2
+            </span>
+          </div>
+          <h3 class="text-xl font-bold text-ink">Masters Tournament 2026</h3>
+          <p class="text-sm text-ink-secondary">Augusta National Golf Club · Augusta, GA · Apr 10–13</p>
+        </div>
+        <div class="text-right">
+          <div class="flex gap-1.5">
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-surface border border-ink-faint text-ink-secondary">Kalshi</span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-surface border border-ink-faint text-ink-secondary">Polymarket</span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-surface border border-ink-faint text-ink-secondary">Sportsbooks</span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-surface border border-ink-faint text-ink-secondary">DataGolf</span>
+          </div>
+          <p class="text-[10px] text-ink-tertiary mt-1">Updated 2 min ago</p>
+        </div>
+      </div>
+
+      <!-- Grid Header -->
+      <div class="grid grid-cols-[32px_1fr_60px_50px_40px_80px_70px_70px_70px] gap-1 text-[10px] text-ink-tertiary uppercase tracking-wider font-medium px-2 mb-1">
+        <div>Pos</div>
+        <div>Golfer</div>
+        <div class="text-center">Score</div>
+        <div class="text-center">Today</div>
+        <div class="text-center">Thru</div>
+        <div class="text-center text-augusta-light font-semibold">Win</div>
+        <div class="text-center">Top 5</div>
+        <div class="text-center">Top 10</div>
+        <div class="text-center">Top 20</div>
+      </div>
+
+      <!-- Golfer rows -->
+      <div class="space-y-0.5">
+        <!-- Row 1: Leader -->
+        <div class="grid grid-cols-[32px_1fr_60px_50px_40px_80px_70px_70px_70px] gap-1 items-center bg-augusta-faint rounded-lg px-2 py-2 border border-augusta/20">
+          <div class="text-sm font-bold text-augusta-light">1</div>
+          <div>
+            <div class="text-sm font-semibold">Scottie Scheffler</div>
+            <div class="text-[10px] text-ink-tertiary">🇺🇸 World #1</div>
+          </div>
+          <div class="text-center font-mono text-sm font-bold text-positive">-9</div>
+          <div class="text-center font-mono text-xs text-positive">-4</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">14</div>
+          <div class="text-center">
+            <span class="text-sm font-bold text-augusta-light">18.2%</span>
+            <span class="text-[9px] text-positive ml-0.5">↑3.1</span>
+          </div>
+          <div class="text-center font-mono text-xs text-ink-secondary">52%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">71%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">89%</div>
+        </div>
+
+        <div class="grid grid-cols-[32px_1fr_60px_50px_40px_80px_70px_70px_70px] gap-1 items-center bg-surface-hover rounded-lg px-2 py-2">
+          <div class="text-sm font-bold text-ink-secondary">T2</div>
+          <div>
+            <div class="text-sm font-semibold">Rory McIlroy</div>
+            <div class="text-[10px] text-ink-tertiary">🇬🇧 World #3</div>
+          </div>
+          <div class="text-center font-mono text-sm font-bold text-positive">-7</div>
+          <div class="text-center font-mono text-xs text-positive">-3</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">F</div>
+          <div class="text-center">
+            <span class="text-sm font-bold">12.8%</span>
+            <span class="text-[9px] text-positive ml-0.5">↑4.2</span>
+          </div>
+          <div class="text-center font-mono text-xs text-ink-secondary">41%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">62%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">83%</div>
+        </div>
+
+        <div class="grid grid-cols-[32px_1fr_60px_50px_40px_80px_70px_70px_70px] gap-1 items-center bg-surface-hover rounded-lg px-2 py-2">
+          <div class="text-sm font-bold text-ink-secondary">T2</div>
+          <div>
+            <div class="text-sm font-semibold">Bryson DeChambeau</div>
+            <div class="text-[10px] text-ink-tertiary">🇺🇸 LIV Golf</div>
+          </div>
+          <div class="text-center font-mono text-sm font-bold text-positive">-7</div>
+          <div class="text-center font-mono text-xs text-positive">-5</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">16</div>
+          <div class="text-center">
+            <span class="text-sm font-bold">11.4%</span>
+            <span class="text-[9px] text-positive ml-0.5">↑5.8</span>
+          </div>
+          <div class="text-center font-mono text-xs text-ink-secondary">38%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">58%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">79%</div>
+        </div>
+
+        <div class="grid grid-cols-[32px_1fr_60px_50px_40px_80px_70px_70px_70px] gap-1 items-center bg-surface-hover rounded-lg px-2 py-2">
+          <div class="text-sm font-bold text-ink-secondary">4</div>
+          <div>
+            <div class="text-sm font-semibold">Jon Rahm</div>
+            <div class="text-[10px] text-ink-tertiary">🇪🇸 LIV Golf</div>
+          </div>
+          <div class="text-center font-mono text-sm font-bold text-positive">-6</div>
+          <div class="text-center font-mono text-xs text-negative">+1</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">F</div>
+          <div class="text-center">
+            <span class="text-sm font-bold">8.5%</span>
+            <span class="text-[9px] text-negative ml-0.5">↓2.1</span>
+          </div>
+          <div class="text-center font-mono text-xs text-ink-secondary">32%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">51%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">72%</div>
+        </div>
+
+        <div class="grid grid-cols-[32px_1fr_60px_50px_40px_80px_70px_70px_70px] gap-1 items-center bg-surface-hover rounded-lg px-2 py-2">
+          <div class="text-sm font-bold text-ink-secondary">T5</div>
+          <div>
+            <div class="text-sm font-semibold">Xander Schauffele</div>
+            <div class="text-[10px] text-ink-tertiary">🇺🇸 World #2</div>
+          </div>
+          <div class="text-center font-mono text-sm font-bold text-positive">-5</div>
+          <div class="text-center font-mono text-xs text-positive">-2</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">11</div>
+          <div class="text-center">
+            <span class="text-sm font-bold">7.1%</span>
+            <span class="text-[9px] text-ink-tertiary ml-0.5">—</span>
+          </div>
+          <div class="text-center font-mono text-xs text-ink-secondary">28%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">47%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">68%</div>
+        </div>
+
+        <div class="grid grid-cols-[32px_1fr_60px_50px_40px_80px_70px_70px_70px] gap-1 items-center bg-surface-hover rounded-lg px-2 py-2">
+          <div class="text-sm font-bold text-ink-secondary">T5</div>
+          <div>
+            <div class="text-sm font-semibold">Ludvig Åberg</div>
+            <div class="text-[10px] text-ink-tertiary">🇸🇪 World #5</div>
+          </div>
+          <div class="text-center font-mono text-sm font-bold text-positive">-5</div>
+          <div class="text-center font-mono text-xs text-positive">-3</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">F</div>
+          <div class="text-center">
+            <span class="text-sm font-bold">6.8%</span>
+            <span class="text-[9px] text-positive ml-0.5">↑1.2</span>
+          </div>
+          <div class="text-center font-mono text-xs text-ink-secondary">25%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">44%</div>
+          <div class="text-center font-mono text-xs text-ink-secondary">65%</div>
+        </div>
+
+        <!-- Separator showing more golfers -->
+        <div class="text-center py-1">
+          <span class="text-[10px] text-ink-tertiary">· · · 52 more golfers · · ·</span>
+        </div>
+      </div>
+
+      <!-- Source agreement indicator -->
+      <div class="mt-4 flex gap-4 text-[10px]">
+        <div class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-positive"></span>
+          <span class="text-ink-secondary">Sources agree (±2pp)</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-yellow"></span>
+          <span class="text-ink-secondary">Moderate disagreement (2-5pp)</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-negative"></span>
+          <span class="text-ink-secondary">Large disagreement (>5pp)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === MOBILE === -->
+  <div class="relative mb-12">
+    <div class="device-label">Mobile Web / iOS (390px)</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint glow-green" style="max-width:390px">
+
+      <!-- Compact Header -->
+      <div class="p-4 pb-3 border-b border-ink-faint">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-augusta text-white uppercase tracking-wider">The Masters</span>
+          <span class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-positive/20 text-positive flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-positive live-dot"></span> R2
+          </span>
+        </div>
+        <h3 class="text-base font-bold">Masters Tournament 2026</h3>
+        <p class="text-xs text-ink-secondary">Augusta National · Apr 10–13</p>
+      </div>
+
+      <!-- Mobile Leaderboard -->
+      <div class="p-3">
+        <!-- Column headers -->
+        <div class="flex items-center text-[9px] text-ink-tertiary uppercase tracking-wider font-medium px-1 mb-1">
+          <div class="w-7">Pos</div>
+          <div class="flex-1">Golfer</div>
+          <div class="w-10 text-center">Tot</div>
+          <div class="w-10 text-center">Tdy</div>
+          <div class="w-14 text-center text-augusta-light font-semibold">Win</div>
+          <div class="w-9 text-center">T5</div>
+        </div>
+
+        <div class="space-y-0.5">
+          <!-- Leader -->
+          <div class="flex items-center bg-augusta-faint rounded-lg px-2 py-2.5 border border-augusta/20">
+            <div class="w-7 text-xs font-bold text-augusta-light">1</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold truncate">Scheffler</div>
+              <div class="text-[9px] text-ink-tertiary">Thru 14</div>
+            </div>
+            <div class="w-10 text-center font-mono text-sm font-bold text-positive">-9</div>
+            <div class="w-10 text-center font-mono text-xs text-positive">-4</div>
+            <div class="w-14 text-center">
+              <div class="text-sm font-bold text-augusta-light">18.2%</div>
+              <div class="text-[8px] text-positive">↑3.1</div>
+            </div>
+            <div class="w-9 text-center font-mono text-xs text-ink-secondary">52%</div>
+          </div>
+
+          <div class="flex items-center bg-surface-hover rounded-lg px-2 py-2.5">
+            <div class="w-7 text-xs font-bold text-ink-secondary">T2</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold truncate">McIlroy</div>
+              <div class="text-[9px] text-ink-tertiary">F</div>
+            </div>
+            <div class="w-10 text-center font-mono text-sm font-bold text-positive">-7</div>
+            <div class="w-10 text-center font-mono text-xs text-positive">-3</div>
+            <div class="w-14 text-center">
+              <div class="text-sm font-bold">12.8%</div>
+              <div class="text-[8px] text-positive">↑4.2</div>
+            </div>
+            <div class="w-9 text-center font-mono text-xs text-ink-secondary">41%</div>
+          </div>
+
+          <div class="flex items-center bg-surface-hover rounded-lg px-2 py-2.5">
+            <div class="w-7 text-xs font-bold text-ink-secondary">T2</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold truncate">DeChambeau</div>
+              <div class="text-[9px] text-ink-tertiary">Thru 16</div>
+            </div>
+            <div class="w-10 text-center font-mono text-sm font-bold text-positive">-7</div>
+            <div class="w-10 text-center font-mono text-xs text-positive">-5</div>
+            <div class="w-14 text-center">
+              <div class="text-sm font-bold">11.4%</div>
+              <div class="text-[8px] text-positive">↑5.8</div>
+            </div>
+            <div class="w-9 text-center font-mono text-xs text-ink-secondary">38%</div>
+          </div>
+
+          <div class="flex items-center bg-surface-hover rounded-lg px-2 py-2.5">
+            <div class="w-7 text-xs font-bold text-ink-secondary">4</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold truncate">Rahm</div>
+              <div class="text-[9px] text-ink-tertiary">F</div>
+            </div>
+            <div class="w-10 text-center font-mono text-sm font-bold text-positive">-6</div>
+            <div class="w-10 text-center font-mono text-xs text-negative">+1</div>
+            <div class="w-14 text-center">
+              <div class="text-sm font-bold">8.5%</div>
+              <div class="text-[8px] text-negative">↓2.1</div>
+            </div>
+            <div class="w-9 text-center font-mono text-xs text-ink-secondary">32%</div>
+          </div>
+
+          <div class="flex items-center bg-surface-hover rounded-lg px-2 py-2.5">
+            <div class="w-7 text-xs font-bold text-ink-secondary">T5</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold truncate">Schauffele</div>
+              <div class="text-[9px] text-ink-tertiary">Thru 11</div>
+            </div>
+            <div class="w-10 text-center font-mono text-sm font-bold text-positive">-5</div>
+            <div class="w-10 text-center font-mono text-xs text-positive">-2</div>
+            <div class="w-14 text-center">
+              <div class="text-sm font-bold">7.1%</div>
+              <div class="text-[8px] text-ink-tertiary">—</div>
+            </div>
+            <div class="w-9 text-center font-mono text-xs text-ink-secondary">28%</div>
+          </div>
+        </div>
+
+        <div class="text-center py-2">
+          <span class="text-[10px] text-ink-tertiary">Tap any row to see full odds + scorecard</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- SECTION 2: BUBBLE WATCH / CUT LINE                                     -->
+<!-- ===================================================================== -->
+
+<div id="section-cutline" class="max-w-6xl mx-auto mb-16 hidden">
+  <h2 class="text-lg font-semibold mb-1 text-yellow">2. Bubble Watch — Cut Line Tracker</h2>
+  <p class="text-ink-secondary text-xs mb-2">Shows during Rounds 1 &amp; 2 only. Surfaces golfers near the projected cut line.</p>
+  <p class="text-ink-tertiary text-[10px] mb-6">
+    The cut typically falls at +3 to +5 over par at the Masters. DataGolf's <code>make_cut</code> probability is the signal.
+    <br>Shown as a dedicated section <strong>above</strong> the main leaderboard grid.
+  </p>
+
+  <!-- === DESKTOP === -->
+  <div class="relative mb-12">
+    <div class="device-label">Desktop</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint p-6" style="max-width:800px">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="text-base">✂️</span>
+        <h3 class="text-sm font-semibold text-yellow uppercase tracking-wider">Bubble Watch — Projected Cut: +4</h3>
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-yellow/10 text-yellow border border-yellow/20">Round 2 in progress</span>
+      </div>
+
+      <!-- Above the line -->
+      <div class="mb-1">
+        <div class="text-[9px] text-ink-tertiary uppercase tracking-wider font-medium mb-1 px-2">Safe — will make cut</div>
+      </div>
+
+      <div class="space-y-0.5 mb-2">
+        <div class="flex items-center justify-between bg-surface-hover rounded-lg px-3 py-2">
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-bold text-ink-secondary w-6">T42</span>
+            <span class="text-sm font-medium">Cameron Young</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="font-mono text-sm text-ink-secondary">+2</span>
+            <div class="w-24">
+              <div class="flex items-center justify-between text-xs mb-0.5">
+                <span class="text-positive font-semibold">88%</span>
+                <span class="text-[9px] text-ink-tertiary">make cut</span>
+              </div>
+              <div class="h-1.5 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-positive rounded-full prob-bar" style="width:88%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between bg-surface-hover rounded-lg px-3 py-2">
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-bold text-ink-secondary w-6">T42</span>
+            <span class="text-sm font-medium">Hideki Matsuyama</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="font-mono text-sm text-ink-secondary">+2</span>
+            <div class="w-24">
+              <div class="flex items-center justify-between text-xs mb-0.5">
+                <span class="text-positive font-semibold">85%</span>
+                <span class="text-[9px] text-ink-tertiary">make cut</span>
+              </div>
+              <div class="h-1.5 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-positive rounded-full prob-bar" style="width:85%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CUT LINE -->
+      <div class="relative my-3">
+        <div class="cutline"></div>
+        <div class="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-0.5 bg-surface-card border border-yellow/30 rounded-full">
+          <span class="text-[10px] font-bold text-yellow">✂️ PROJECTED CUT LINE · +4</span>
+        </div>
+      </div>
+
+      <!-- Below the line (bubble) -->
+      <div class="mb-1 mt-4">
+        <div class="text-[9px] text-ink-tertiary uppercase tracking-wider font-medium mb-1 px-2">On the bubble</div>
+      </div>
+
+      <div class="space-y-0.5">
+        <div class="flex items-center justify-between bg-negative/5 rounded-lg px-3 py-2 border border-negative/10">
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-bold text-ink-secondary w-6">T51</span>
+            <span class="text-sm font-medium">Justin Thomas</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="font-mono text-sm text-negative">+4</span>
+            <div class="w-24">
+              <div class="flex items-center justify-between text-xs mb-0.5">
+                <span class="text-yellow font-semibold">52%</span>
+                <span class="text-[9px] text-ink-tertiary">make cut</span>
+              </div>
+              <div class="h-1.5 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-yellow rounded-full prob-bar" style="width:52%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between bg-negative/5 rounded-lg px-3 py-2 border border-negative/10">
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-bold text-ink-secondary w-6">T51</span>
+            <span class="text-sm font-medium">Brooks Koepka</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="font-mono text-sm text-negative">+4</span>
+            <div class="w-24">
+              <div class="flex items-center justify-between text-xs mb-0.5">
+                <span class="text-yellow font-semibold">48%</span>
+                <span class="text-[9px] text-ink-tertiary">make cut</span>
+              </div>
+              <div class="h-1.5 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-yellow rounded-full prob-bar" style="width:48%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between bg-negative/5 rounded-lg px-3 py-2 border border-negative/10">
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-bold text-ink-secondary w-6">55</span>
+            <span class="text-sm font-medium">Jordan Spieth</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="font-mono text-sm text-negative">+5</span>
+            <div class="w-24">
+              <div class="flex items-center justify-between text-xs mb-0.5">
+                <span class="text-negative font-semibold">22%</span>
+                <span class="text-[9px] text-ink-tertiary">make cut</span>
+              </div>
+              <div class="h-1.5 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-negative rounded-full prob-bar" style="width:22%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-[10px] text-ink-tertiary mt-3 text-center">Showing 5 golfers nearest the cut. 47 projected to make cut, 41 projected to miss.</p>
+    </div>
+  </div>
+
+  <!-- === MOBILE === -->
+  <div class="relative mb-12">
+    <div class="device-label">Mobile / iOS</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint" style="max-width:390px">
+      <div class="p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <span>✂️</span>
+          <h3 class="text-xs font-semibold text-yellow uppercase tracking-wider">Bubble Watch</h3>
+          <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow/10 text-yellow">Cut: +4</span>
+        </div>
+
+        <!-- Compact bubble cards -->
+        <div class="space-y-1">
+          <div class="flex items-center justify-between px-2 py-1.5 rounded-lg bg-surface-hover">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold text-ink-secondary">T42</span>
+              <span class="text-xs font-medium">Young</span>
+              <span class="font-mono text-xs text-ink-secondary">+2</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="h-1 w-12 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-positive rounded-full" style="width:88%"></div>
+              </div>
+              <span class="text-xs font-semibold text-positive">88%</span>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between px-2 py-1.5 rounded-lg bg-surface-hover">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold text-ink-secondary">T42</span>
+              <span class="text-xs font-medium">Matsuyama</span>
+              <span class="font-mono text-xs text-ink-secondary">+2</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="h-1 w-12 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-positive rounded-full" style="width:85%"></div>
+              </div>
+              <span class="text-xs font-semibold text-positive">85%</span>
+            </div>
+          </div>
+
+          <!-- Cut line -->
+          <div class="relative my-2">
+            <div class="cutline"></div>
+            <div class="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 px-2 py-0.5 bg-surface-card border border-yellow/30 rounded-full">
+              <span class="text-[9px] font-bold text-yellow">✂️ CUT +4</span>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between px-2 py-1.5 rounded-lg bg-negative/5 border border-negative/10">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold text-ink-secondary">T51</span>
+              <span class="text-xs font-medium">Thomas</span>
+              <span class="font-mono text-xs text-negative">+4</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="h-1 w-12 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-yellow rounded-full" style="width:52%"></div>
+              </div>
+              <span class="text-xs font-semibold text-yellow">52%</span>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between px-2 py-1.5 rounded-lg bg-negative/5 border border-negative/10">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold text-ink-secondary">55</span>
+              <span class="text-xs font-medium">Spieth</span>
+              <span class="font-mono text-xs text-negative">+5</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="h-1 w-12 bg-ink-faint rounded-full overflow-hidden">
+                <div class="h-full bg-negative rounded-full" style="width:22%"></div>
+              </div>
+              <span class="text-xs font-semibold text-negative">22%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- SECTION 3: HEAD-TO-HEAD MATCHUPS                                        -->
+<!-- ===================================================================== -->
+
+<div id="section-h2h" class="max-w-6xl mx-auto mb-16 hidden">
+  <h2 class="text-lg font-semibold mb-1 text-azalea">3. Head-to-Head Matchups</h2>
+  <p class="text-ink-secondary text-xs mb-2">Kalshi has H2H markets for specific golfer pairings. Two presentation options below.</p>
+  <p class="text-ink-tertiary text-[10px] mb-6">
+    These are binary markets: "Will Player A finish higher than Player B in this tournament?"
+    <br>This is a <strong>persistent solution</strong> — works for any tournament with H2H markets, not just the Masters.
+  </p>
+
+  <!-- Option A: Versus Cards -->
+  <h3 class="text-sm font-medium text-ink-secondary mb-3 flex items-center gap-2">
+    <span class="text-[10px] px-1.5 py-0.5 rounded bg-azalea/20 text-azalea font-bold">OPTION A</span>
+    Versus Cards — Side-by-side comparison
+  </h3>
+
+  <!-- Desktop H2H Option A -->
+  <div class="relative mb-8">
+    <div class="device-label">Desktop</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint p-6" style="max-width:800px">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="text-base">⚔️</span>
+        <h3 class="text-sm font-semibold uppercase tracking-wider">Head-to-Head Matchups</h3>
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-ink-faint text-ink-secondary">Kalshi</span>
+      </div>
+
+      <div class="space-y-3">
+        <!-- Matchup 1 -->
+        <div class="rounded-xl border border-ink-faint overflow-hidden">
+          <div class="flex items-stretch">
+            <!-- Player A -->
+            <div class="flex-1 p-4 bg-augusta-faint">
+              <div class="text-xs text-ink-tertiary mb-1">Favored</div>
+              <div class="text-lg font-bold">Scheffler</div>
+              <div class="text-xs text-ink-secondary">-9 · Thru 14</div>
+              <div class="text-3xl font-black text-augusta-light mt-2">62%</div>
+            </div>
+            <!-- VS -->
+            <div class="flex items-center justify-center px-4 bg-surface">
+              <div class="vs-badge text-white text-xs font-black px-2.5 py-1 rounded-full">VS</div>
+            </div>
+            <!-- Player B -->
+            <div class="flex-1 p-4 text-right">
+              <div class="text-xs text-ink-tertiary mb-1">Underdog</div>
+              <div class="text-lg font-bold">McIlroy</div>
+              <div class="text-xs text-ink-secondary">-7 · F</div>
+              <div class="text-3xl font-black text-ink-secondary mt-2">38%</div>
+            </div>
+          </div>
+          <!-- Probability bar -->
+          <div class="h-1.5 flex">
+            <div class="bg-augusta-light prob-bar" style="width:62%"></div>
+            <div class="bg-ink-faint flex-1"></div>
+          </div>
+        </div>
+
+        <!-- Matchup 2 -->
+        <div class="rounded-xl border border-ink-faint overflow-hidden">
+          <div class="flex items-stretch">
+            <div class="flex-1 p-4 bg-azalea-faint">
+              <div class="text-xs text-ink-tertiary mb-1">Slight edge</div>
+              <div class="text-lg font-bold">Rahm</div>
+              <div class="text-xs text-ink-secondary">-6 · F</div>
+              <div class="text-3xl font-black text-azalea">54%</div>
+            </div>
+            <div class="flex items-center justify-center px-4 bg-surface">
+              <div class="vs-badge text-white text-xs font-black px-2.5 py-1 rounded-full">VS</div>
+            </div>
+            <div class="flex-1 p-4 text-right">
+              <div class="text-xs text-ink-tertiary mb-1">&nbsp;</div>
+              <div class="text-lg font-bold">DeChambeau</div>
+              <div class="text-xs text-ink-secondary">-7 · Thru 16</div>
+              <div class="text-3xl font-black text-ink-secondary">46%</div>
+            </div>
+          </div>
+          <div class="h-1.5 flex">
+            <div class="bg-azalea prob-bar" style="width:54%"></div>
+            <div class="bg-ink-faint flex-1"></div>
+          </div>
+        </div>
+
+        <!-- Matchup 3 -->
+        <div class="rounded-xl border border-ink-faint overflow-hidden">
+          <div class="flex items-stretch">
+            <div class="flex-1 p-4">
+              <div class="text-xs text-ink-tertiary mb-1">&nbsp;</div>
+              <div class="text-lg font-bold">Schauffele</div>
+              <div class="text-xs text-ink-secondary">-5 · Thru 11</div>
+              <div class="text-3xl font-black">51%</div>
+            </div>
+            <div class="flex items-center justify-center px-4 bg-surface">
+              <div class="vs-badge text-white text-xs font-black px-2.5 py-1 rounded-full">VS</div>
+            </div>
+            <div class="flex-1 p-4 text-right">
+              <div class="text-xs text-ink-tertiary mb-1">&nbsp;</div>
+              <div class="text-lg font-bold">Åberg</div>
+              <div class="text-xs text-ink-secondary">-5 · F</div>
+              <div class="text-3xl font-black text-ink-secondary">49%</div>
+            </div>
+          </div>
+          <div class="h-1.5 flex">
+            <div class="bg-ink prob-bar" style="width:51%"></div>
+            <div class="bg-ink-faint flex-1"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option B: Compact Table -->
+  <h3 class="text-sm font-medium text-ink-secondary mb-3 flex items-center gap-2">
+    <span class="text-[10px] px-1.5 py-0.5 rounded bg-azalea/20 text-azalea font-bold">OPTION B</span>
+    Compact Rows — Denser, shows more matchups
+  </h3>
+
+  <div class="relative mb-8">
+    <div class="device-label">Desktop + Mobile</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint p-5" style="max-width:600px">
+      <div class="flex items-center gap-2 mb-3">
+        <span>⚔️</span>
+        <h3 class="text-xs font-semibold uppercase tracking-wider">H2H Matchups</h3>
+        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-ink-faint text-ink-secondary">Kalshi</span>
+      </div>
+
+      <div class="space-y-1.5">
+        <div class="flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2">
+          <div class="flex-1 text-right">
+            <span class="text-sm font-semibold">Scheffler</span>
+            <span class="text-xs text-ink-secondary ml-1">(-9)</span>
+          </div>
+          <div class="w-20 flex items-center gap-1">
+            <span class="text-sm font-bold text-augusta-light">62%</span>
+            <span class="text-ink-tertiary text-xs">-</span>
+            <span class="text-sm font-bold text-ink-secondary">38%</span>
+          </div>
+          <div class="flex-1">
+            <span class="text-sm font-semibold">McIlroy</span>
+            <span class="text-xs text-ink-secondary ml-1">(-7)</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2">
+          <div class="flex-1 text-right">
+            <span class="text-sm font-semibold">Rahm</span>
+            <span class="text-xs text-ink-secondary ml-1">(-6)</span>
+          </div>
+          <div class="w-20 flex items-center gap-1">
+            <span class="text-sm font-bold text-azalea">54%</span>
+            <span class="text-ink-tertiary text-xs">-</span>
+            <span class="text-sm font-bold text-ink-secondary">46%</span>
+          </div>
+          <div class="flex-1">
+            <span class="text-sm font-semibold">DeChambeau</span>
+            <span class="text-xs text-ink-secondary ml-1">(-7)</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2">
+          <div class="flex-1 text-right">
+            <span class="text-sm font-semibold">Schauffele</span>
+            <span class="text-xs text-ink-secondary ml-1">(-5)</span>
+          </div>
+          <div class="w-20 flex items-center gap-1">
+            <span class="text-sm font-bold">51%</span>
+            <span class="text-ink-tertiary text-xs">-</span>
+            <span class="text-sm font-bold text-ink-secondary">49%</span>
+          </div>
+          <div class="flex-1">
+            <span class="text-sm font-semibold">Åberg</span>
+            <span class="text-xs text-ink-secondary ml-1">(-5)</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 bg-surface-hover rounded-lg px-3 py-2">
+          <div class="flex-1 text-right">
+            <span class="text-sm font-semibold">Koepka</span>
+            <span class="text-xs text-ink-secondary ml-1">(+4)</span>
+          </div>
+          <div class="w-20 flex items-center gap-1">
+            <span class="text-sm font-bold text-azalea">58%</span>
+            <span class="text-ink-tertiary text-xs">-</span>
+            <span class="text-sm font-bold text-ink-secondary">42%</span>
+          </div>
+          <div class="flex-1">
+            <span class="text-sm font-semibold">Cantlay</span>
+            <span class="text-xs text-ink-secondary ml-1">(+3)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- SECTION 4: HOLE-BY-HOLE PROBABILITY                                    -->
+<!-- ===================================================================== -->
+
+<div id="section-holebyhole" class="max-w-6xl mx-auto mb-16 hidden">
+  <h2 class="text-lg font-semibold mb-1 text-positive">4. Hole-by-Hole Probability Changes</h2>
+  <p class="text-ink-secondary text-xs mb-2">Shows how each hole changed a golfer's win probability in the current round.</p>
+  <p class="text-ink-tertiary text-[10px] mb-6">
+    Data from DataGolf's in-play endpoint which updates after each hole.
+    We'd compute deltas by tracking probability snapshots per-hole. Amen Corner (11-13) highlighted.
+  </p>
+
+  <!-- Desktop: Hole-by-Hole Scorecard Style -->
+  <div class="relative mb-12">
+    <div class="device-label">Desktop — Scorecard + Probability Sparkline</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint p-6" style="max-width:900px">
+      <!-- Golfer selector -->
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold">Scottie Scheffler</span>
+          <span class="text-xs text-ink-secondary">· Round 2 · -9 overall</span>
+        </div>
+        <div class="flex gap-1 ml-auto">
+          <span class="text-[10px] px-2 py-0.5 rounded-full bg-augusta/20 text-augusta-light border border-augusta/30">Win: 18.2%</span>
+          <span class="text-[10px] px-2 py-0.5 rounded-full bg-positive/10 text-positive">↑3.1% today</span>
+        </div>
+      </div>
+
+      <!-- Scorecard -->
+      <div class="scroll-x">
+        <table class="w-full text-center text-xs">
+          <thead>
+            <tr class="text-ink-tertiary text-[9px] uppercase tracking-wider">
+              <th class="text-left py-1 pr-4">Hole</th>
+              <th class="hole-cell py-1">1</th>
+              <th class="hole-cell py-1">2</th>
+              <th class="hole-cell py-1">3</th>
+              <th class="hole-cell py-1">4</th>
+              <th class="hole-cell py-1">5</th>
+              <th class="hole-cell py-1">6</th>
+              <th class="hole-cell py-1">7</th>
+              <th class="hole-cell py-1">8</th>
+              <th class="hole-cell py-1">9</th>
+              <th class="hole-cell py-1 text-ink-faint">|</th>
+              <th class="hole-cell py-1">10</th>
+              <th class="hole-cell py-1 border-l border-r border-azalea/20 text-azalea">11</th>
+              <th class="hole-cell py-1 border-l border-r border-azalea/20 text-azalea">12</th>
+              <th class="hole-cell py-1 border-l border-r border-azalea/20 text-azalea">13</th>
+              <th class="hole-cell py-1">14</th>
+              <th class="hole-cell py-1 text-ink-tertiary">15</th>
+              <th class="hole-cell py-1 text-ink-tertiary">16</th>
+              <th class="hole-cell py-1 text-ink-tertiary">17</th>
+              <th class="hole-cell py-1 text-ink-tertiary">18</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="text-left py-1.5 text-ink-secondary font-medium">Par</td>
+              <td class="text-ink-tertiary">4</td><td class="text-ink-tertiary">5</td><td class="text-ink-tertiary">4</td><td class="text-ink-tertiary">3</td>
+              <td class="text-ink-tertiary">4</td><td class="text-ink-tertiary">3</td><td class="text-ink-tertiary">4</td><td class="text-ink-tertiary">5</td>
+              <td class="text-ink-tertiary">4</td><td></td>
+              <td class="text-ink-tertiary">4</td>
+              <td class="text-ink-tertiary border-l border-r border-azalea/10">4</td>
+              <td class="text-ink-tertiary border-l border-r border-azalea/10">3</td>
+              <td class="text-ink-tertiary border-l border-r border-azalea/10">5</td>
+              <td class="text-ink-tertiary">4</td>
+              <td class="text-ink-tertiary/40">5</td><td class="text-ink-tertiary/40">3</td><td class="text-ink-tertiary/40">4</td><td class="text-ink-tertiary/40">4</td>
+            </tr>
+            <tr class="font-mono font-bold">
+              <td class="text-left py-1.5 text-ink-secondary font-medium font-sans">Score</td>
+              <td class="text-positive">3</td><td class="text-positive">4</td><td>4</td><td>3</td>
+              <td class="text-positive">3</td><td>3</td><td>4</td><td class="text-positive">4</td>
+              <td>4</td><td></td>
+              <td>4</td>
+              <td class="border-l border-r border-azalea/10 text-positive">3</td>
+              <td class="border-l border-r border-azalea/10 text-negative">4</td>
+              <td class="border-l border-r border-azalea/10 text-positive">4</td>
+              <td>4</td>
+              <td class="text-ink-tertiary/30">·</td><td class="text-ink-tertiary/30">·</td><td class="text-ink-tertiary/30">·</td><td class="text-ink-tertiary/30">·</td>
+            </tr>
+            <tr>
+              <td class="text-left py-1.5 text-ink-secondary font-medium">Win Δ</td>
+              <td class="text-positive text-[10px] font-semibold">+0.4</td>
+              <td class="text-positive text-[10px] font-semibold">+0.3</td>
+              <td class="text-ink-tertiary text-[10px]">—</td>
+              <td class="text-ink-tertiary text-[10px]">—</td>
+              <td class="text-positive text-[10px] font-semibold">+0.5</td>
+              <td class="text-ink-tertiary text-[10px]">—</td>
+              <td class="text-ink-tertiary text-[10px]">—</td>
+              <td class="text-positive text-[10px] font-semibold">+0.6</td>
+              <td class="text-ink-tertiary text-[10px]">—</td>
+              <td></td>
+              <td class="text-ink-tertiary text-[10px]">—</td>
+              <td class="border-l border-r border-azalea/10 text-positive text-[10px] font-bold">+0.8</td>
+              <td class="border-l border-r border-azalea/10 text-negative text-[10px] font-bold">-1.2</td>
+              <td class="border-l border-r border-azalea/10 text-positive text-[10px] font-bold">+0.7</td>
+              <td class="text-ink-tertiary text-[10px]">—</td>
+              <td></td><td></td><td></td><td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Amen Corner highlight -->
+      <div class="mt-4 p-3 rounded-xl bg-azalea-faint border border-azalea/20">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs font-bold text-azalea">Amen Corner (Holes 11-13)</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-positive/10 text-positive font-semibold">Net: +0.3%</span>
+        </div>
+        <p class="text-[10px] text-ink-secondary">
+          Birdie on 11 (+0.8%) · Bogey on 12's par-3 over the water (-1.2%) · Birdie on 13 (+0.7%)
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile: Compact Hole-by-Hole -->
+  <div class="relative mb-12">
+    <div class="device-label">Mobile / iOS</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint" style="max-width:390px">
+      <div class="p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <div class="text-sm font-bold">Scheffler — Round 2</div>
+            <div class="text-xs text-ink-secondary">Win: 18.2% · ↑3.1% today</div>
+          </div>
+        </div>
+
+        <!-- Horizontal scroll scorecard -->
+        <div class="scroll-x mb-3">
+          <div class="flex gap-1" style="min-width:500px">
+            <!-- Each hole as a mini card -->
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H1</div>
+              <div class="w-7 h-7 rounded-md bg-positive/20 flex items-center justify-center text-xs font-bold text-positive">3</div>
+              <div class="text-[8px] text-positive mt-0.5">+0.4</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H2</div>
+              <div class="w-7 h-7 rounded-md bg-positive/20 flex items-center justify-center text-xs font-bold text-positive">4</div>
+              <div class="text-[8px] text-positive mt-0.5">+0.3</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H3</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-secondary">4</div>
+              <div class="text-[8px] text-ink-tertiary mt-0.5">—</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H4</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-secondary">3</div>
+              <div class="text-[8px] text-ink-tertiary mt-0.5">—</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H5</div>
+              <div class="w-7 h-7 rounded-md bg-positive/20 flex items-center justify-center text-xs font-bold text-positive">3</div>
+              <div class="text-[8px] text-positive mt-0.5">+0.5</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H6</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-secondary">3</div>
+              <div class="text-[8px] text-ink-tertiary mt-0.5">—</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H7</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-secondary">4</div>
+              <div class="text-[8px] text-ink-tertiary mt-0.5">—</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H8</div>
+              <div class="w-7 h-7 rounded-md bg-positive/20 flex items-center justify-center text-xs font-bold text-positive">4</div>
+              <div class="text-[8px] text-positive mt-0.5">+0.6</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H9</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-secondary">4</div>
+              <div class="text-[8px] text-ink-tertiary mt-0.5">—</div>
+            </div>
+            <div class="flex items-center px-1 text-ink-faint text-[10px]">|</div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H10</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-secondary">4</div>
+              <div class="text-[8px] text-ink-tertiary mt-0.5">—</div>
+            </div>
+            <!-- Amen Corner highlighted -->
+            <div class="text-center">
+              <div class="text-[8px] text-azalea font-bold">H11</div>
+              <div class="w-7 h-7 rounded-md bg-positive/20 border border-azalea/30 flex items-center justify-center text-xs font-bold text-positive">3</div>
+              <div class="text-[8px] text-positive font-bold mt-0.5">+0.8</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-azalea font-bold">H12</div>
+              <div class="w-7 h-7 rounded-md bg-negative/20 border border-azalea/30 flex items-center justify-center text-xs font-bold text-negative">4</div>
+              <div class="text-[8px] text-negative font-bold mt-0.5">-1.2</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-azalea font-bold">H13</div>
+              <div class="w-7 h-7 rounded-md bg-positive/20 border border-azalea/30 flex items-center justify-center text-xs font-bold text-positive">4</div>
+              <div class="text-[8px] text-positive font-bold mt-0.5">+0.7</div>
+            </div>
+            <div class="text-center">
+              <div class="text-[8px] text-ink-tertiary">H14</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-secondary">4</div>
+              <div class="text-[8px] text-ink-tertiary mt-0.5">—</div>
+            </div>
+            <!-- Remaining holes grayed -->
+            <div class="text-center opacity-30">
+              <div class="text-[8px] text-ink-tertiary">H15</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-tertiary">·</div>
+            </div>
+            <div class="text-center opacity-30">
+              <div class="text-[8px] text-ink-tertiary">H16</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-tertiary">·</div>
+            </div>
+            <div class="text-center opacity-30">
+              <div class="text-[8px] text-ink-tertiary">H17</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-tertiary">·</div>
+            </div>
+            <div class="text-center opacity-30">
+              <div class="text-[8px] text-ink-tertiary">H18</div>
+              <div class="w-7 h-7 rounded-md bg-surface-hover flex items-center justify-center text-xs font-bold text-ink-tertiary">·</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Amen Corner callout -->
+        <div class="p-2.5 rounded-lg bg-azalea-faint border border-azalea/20">
+          <div class="flex items-center gap-1.5 mb-0.5">
+            <span class="text-[10px] font-bold text-azalea">Amen Corner</span>
+            <span class="text-[9px] px-1 py-0.5 rounded bg-positive/10 text-positive font-semibold">+0.3% net</span>
+          </div>
+          <p class="text-[9px] text-ink-secondary">
+            🟢 11: birdie (+0.8) · 🔴 12: bogey (-1.2) · 🟢 13: birdie (+0.7)
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- SECTION 5: ODDS MOVERS                                                  -->
+<!-- ===================================================================== -->
+
+<div id="section-movers" class="max-w-6xl mx-auto mb-16 hidden">
+  <h2 class="text-lg font-semibold mb-1 text-ink">5. Odds Movers</h2>
+  <p class="text-ink-secondary text-xs mb-6">Biggest win probability changes. Timeframe toggle: "Since R1" / "Last 24h" / "Today".</p>
+
+  <div class="relative mb-12">
+    <div class="device-label">Desktop + Mobile (same layout, max-width constrained)</div>
+    <div class="bg-surface-card rounded-2xl border border-ink-faint p-5" style="max-width:500px">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span>📈</span>
+          <h3 class="text-xs font-semibold uppercase tracking-wider">Biggest Movers</h3>
+        </div>
+        <div class="flex gap-1">
+          <button class="text-[10px] px-2 py-0.5 rounded-full bg-augusta/20 text-augusta-light border border-augusta/30 font-medium">Since R1</button>
+          <button class="text-[10px] px-2 py-0.5 rounded-full bg-surface text-ink-secondary border border-ink-faint">24h</button>
+          <button class="text-[10px] px-2 py-0.5 rounded-full bg-surface text-ink-secondary border border-ink-faint">Today</button>
+        </div>
+      </div>
+
+      <!-- Rising -->
+      <div class="mb-3">
+        <div class="text-[9px] text-positive uppercase tracking-wider font-medium mb-1.5">🔥 Rising</div>
+        <div class="space-y-1">
+          <div class="flex items-center justify-between bg-positive/5 rounded-lg px-3 py-2 border border-positive/10">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold">DeChambeau</span>
+              <span class="text-xs text-ink-secondary">T2 · -7</span>
+            </div>
+            <div class="text-right">
+              <span class="text-sm font-bold text-positive">↑ 5.8%</span>
+              <span class="text-[10px] text-ink-tertiary ml-1">→ 11.4%</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between bg-positive/5 rounded-lg px-3 py-2 border border-positive/10">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold">McIlroy</span>
+              <span class="text-xs text-ink-secondary">T2 · -7</span>
+            </div>
+            <div class="text-right">
+              <span class="text-sm font-bold text-positive">↑ 4.2%</span>
+              <span class="text-[10px] text-ink-tertiary ml-1">→ 12.8%</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between bg-positive/5 rounded-lg px-3 py-2 border border-positive/10">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold">Scheffler</span>
+              <span class="text-xs text-ink-secondary">1 · -9</span>
+            </div>
+            <div class="text-right">
+              <span class="text-sm font-bold text-positive">↑ 3.1%</span>
+              <span class="text-[10px] text-ink-tertiary ml-1">→ 18.2%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Falling -->
+      <div>
+        <div class="text-[9px] text-negative uppercase tracking-wider font-medium mb-1.5">📉 Falling</div>
+        <div class="space-y-1">
+          <div class="flex items-center justify-between bg-negative/5 rounded-lg px-3 py-2 border border-negative/10">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold">Morikawa</span>
+              <span class="text-xs text-ink-secondary">T22 · +1</span>
+            </div>
+            <div class="text-right">
+              <span class="text-sm font-bold text-negative">↓ 3.4%</span>
+              <span class="text-[10px] text-ink-tertiary ml-1">→ 2.1%</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between bg-negative/5 rounded-lg px-3 py-2 border border-negative/10">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold">Rahm</span>
+              <span class="text-xs text-ink-secondary">4 · -6</span>
+            </div>
+            <div class="text-right">
+              <span class="text-sm font-bold text-negative">↓ 2.1%</span>
+              <span class="text-[10px] text-ink-tertiary ml-1">→ 8.5%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- PAGE LAYOUT: How sections compose together                              -->
+<!-- ===================================================================== -->
+
+<div class="max-w-6xl mx-auto mb-16 border-t border-ink-faint pt-8">
+  <h2 class="text-lg font-semibold mb-2">Page Composition — How It All Fits Together</h2>
+  <p class="text-ink-secondary text-xs mb-6">Order of sections on the actual /playoffs/golf page when the Masters is live:</p>
+
+  <div class="grid md:grid-cols-2 gap-6">
+    <!-- Desktop layout -->
+    <div>
+      <h3 class="text-xs font-medium text-ink-secondary uppercase tracking-wider mb-3">Desktop Layout</h3>
+      <div class="space-y-2">
+        <div class="px-4 py-3 rounded-lg bg-augusta/10 border border-augusta/20 text-sm">
+          <span class="text-augusta-light font-semibold">1. Tournament Header</span>
+          <span class="text-ink-secondary"> — Masters branding, status, round, sources</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-surface-card border border-ink-faint text-sm">
+          <span class="font-semibold">2. Odds Movers</span>
+          <span class="text-ink-secondary"> — Compact pills, biggest swings</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-yellow/10 border border-yellow/20 text-sm">
+          <span class="text-yellow font-semibold">3. Bubble Watch</span>
+          <span class="text-ink-secondary"> — Only during R1-R2, 5 golfers near cut</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-azalea-faint border border-azalea/20 text-sm">
+          <span class="text-azalea font-semibold">4. H2H Matchups</span>
+          <span class="text-ink-secondary"> — Versus cards (if markets exist)</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-surface-card border border-ink-faint text-sm">
+          <span class="font-semibold">5. Leaderboard + Odds Grid</span>
+          <span class="text-ink-secondary"> — Main table, full field</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-positive/10 border border-positive/20 text-sm">
+          <span class="text-positive font-semibold">6. Hole-by-Hole</span>
+          <span class="text-ink-secondary"> — Expandable per golfer (tap a row → scorecard)</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-surface-card border border-ink-faint text-sm opacity-60">
+          <span class="font-semibold">7. Trend Chart</span>
+          <span class="text-ink-secondary"> — Top 8 golfers win% over time (already exists)</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-surface-card border border-ink-faint text-sm opacity-60">
+          <span class="font-semibold">8. Other Tours</span>
+          <span class="text-ink-secondary"> — DP World, KFT, LIV grids below</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile layout -->
+    <div>
+      <h3 class="text-xs font-medium text-ink-secondary uppercase tracking-wider mb-3">Mobile / iOS Layout</h3>
+      <div class="space-y-2">
+        <div class="px-4 py-3 rounded-lg bg-augusta/10 border border-augusta/20 text-sm">
+          <span class="text-augusta-light font-semibold">1. Header</span>
+          <span class="text-ink-secondary"> — Compact, one line</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-surface-card border border-ink-faint text-sm">
+          <span class="font-semibold">2. Movers</span>
+          <span class="text-ink-secondary"> — Horizontal scroll pills</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-yellow/10 border border-yellow/20 text-sm">
+          <span class="text-yellow font-semibold">3. Bubble Watch</span>
+          <span class="text-ink-secondary"> — Collapsible, 3 golfers visible</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-azalea-faint border border-azalea/20 text-sm">
+          <span class="text-azalea font-semibold">4. H2H</span>
+          <span class="text-ink-secondary"> — Compact rows (Option B)</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-surface-card border border-ink-faint text-sm">
+          <span class="font-semibold">5. Leaderboard</span>
+          <span class="text-ink-secondary"> — Compact rows, tap to expand</span>
+        </div>
+        <div class="px-4 py-3 rounded-lg bg-positive/10 border border-positive/20 text-sm">
+          <span class="text-positive font-semibold">6. Hole-by-Hole</span>
+          <span class="text-ink-secondary"> — Horizontal scroll scorecard</span>
+        </div>
+      </div>
+
+      <div class="mt-4 p-3 rounded-lg bg-surface-card border border-ink-faint">
+        <h4 class="text-[10px] font-bold text-ink-secondary uppercase tracking-wider mb-1">iOS App Note</h4>
+        <p class="text-[10px] text-ink-tertiary">
+          Same data, native SwiftUI components. The iOS app currently uses the same API —
+          all these features would be available. Native touches: haptic feedback on movers,
+          pull-to-refresh, widget for home screen showing leader + win%.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- DESIGN NOTES                                                            -->
+<!-- ===================================================================== -->
+
+<div class="max-w-6xl mx-auto mb-16 border-t border-ink-faint pt-8">
+  <h2 class="text-lg font-semibold mb-4">Design Notes & Open Questions</h2>
+
+  <div class="grid md:grid-cols-2 gap-6 text-sm">
+    <div class="p-4 rounded-xl bg-surface-card border border-ink-faint">
+      <h3 class="font-semibold mb-2 text-augusta-light">Green Jacket Theme</h3>
+      <p class="text-ink-secondary text-xs mb-2">
+        The Augusta green (#006747) accent is applied throughout this mockup. On the live site,
+        this would only apply when viewing the Masters — other tournaments keep the default emerald.
+      </p>
+      <p class="text-ink-tertiary text-[10px]">
+        Implementation: detect tournament name, swap CSS vars. Pure frontend change.
+      </p>
+    </div>
+
+    <div class="p-4 rounded-xl bg-surface-card border border-ink-faint">
+      <h3 class="font-semibold mb-2">H2H: Option A vs B?</h3>
+      <p class="text-ink-secondary text-xs mb-2">
+        <strong>Option A</strong> (versus cards) is more dramatic and engaging — great for 3-5 marquee matchups.
+        <strong>Option B</strong> (compact rows) is denser — better when there are 10+ matchups.
+      </p>
+      <p class="text-ink-tertiary text-[10px]">
+        Recommendation: Option A for desktop (top 3), Option B for mobile (all matchups).
+        This is a persistent solution — the H2H ticker prefix <code>kxpgah2h</code> maps to any golf tournament.
+      </p>
+    </div>
+
+    <div class="p-4 rounded-xl bg-surface-card border border-ink-faint">
+      <h3 class="font-semibold mb-2">Hole-by-Hole: Data Source</h3>
+      <p class="text-ink-secondary text-xs mb-2">
+        DataGolf's in-play endpoint updates probabilities after each hole, but doesn't give us per-hole scores.
+        We'd compute probability deltas between snapshots. For the actual scores (birdie/bogey),
+        we'd need ESPN play-by-play or StatPal.
+      </p>
+      <p class="text-ink-tertiary text-[10px]">
+        DataGolf gives: position, total_score, today_score, thru, round, win/top5/10/20/make_cut probabilities.
+        <br>ESPN gives: hole-by-hole scores (from competitor detail endpoint).
+      </p>
+    </div>
+
+    <div class="p-4 rounded-xl bg-surface-card border border-ink-faint">
+      <h3 class="font-semibold mb-2">Bubble Watch Timing</h3>
+      <p class="text-ink-secondary text-xs mb-2">
+        Show the bubble watch section during R1 and R2 only — it disappears after the cut is made.
+        DataGolf's <code>make_cut</code> probability is the signal. Projected cut line estimated from the
+        median of golfers with ~50% make_cut probability.
+      </p>
+      <p class="text-ink-tertiary text-[10px]">
+        Post-cut: replace with "Moving Day" section (R3 movers) and "Sunday Contenders" (R4 top 10).
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+function showSection(id) {
+  // Hide all sections
+  document.querySelectorAll('[id^="section-"]').forEach(el => el.classList.add('hidden'));
+  // Deactivate all tabs
+  document.querySelectorAll('.tab-btn').forEach(el => {
+    el.classList.remove('active');
+    el.classList.add('text-ink-secondary');
+  });
+  // Show selected
+  document.getElementById('section-' + id).classList.remove('hidden');
+  const tab = document.getElementById('tab-' + id);
+  tab.classList.add('active');
+  tab.classList.remove('text-ink-secondary');
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evolution Chart — Final Design</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --border-light: #eef0f3;
+    --text: #1a1d23;
+    --text-sec: #5a5f6b;
+    --text-dim: #8c919d;
+    --text-faint: #b5b9c3;
+    --accent: #2563eb;
+    --accent-bg: #eff4ff;
+    --green: #16a34a;
+    --red: #dc2626;
+    --grid: #eef0f3;
+    --grid-major: #dde0e5;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  .page { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
+  .page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .page-sub { font-size: 13px; color: var(--text-dim); margin-bottom: 32px; }
+
+  /* ── Demo tabs (golf vs MLB) ── */
+  .demo-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--card);
+    width: fit-content;
+  }
+  .demo-tab {
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-sec);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    border-right: 1px solid var(--border-light);
+    transition: all 0.15s;
+  }
+  .demo-tab:last-child { border-right: none; }
+  .demo-tab:hover { background: #f9fafb; }
+  .demo-tab.active { background: var(--text); color: white; font-weight: 600; }
+
+  /* ── Chart card ── */
+  .evo-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+  }
+
+  /* ── Fullscreen mode ── */
+  .evo-card.fullscreen {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 9999;
+    border-radius: 0;
+    border: none;
+    display: flex;
+    flex-direction: column;
+  }
+  .evo-card.fullscreen .card-top { flex-shrink: 0; }
+  .evo-card.fullscreen .card-main { flex: 1; min-height: 0; }
+  .evo-card.fullscreen .card-main canvas { height: 100% !important; }
+  .evo-card.fullscreen .card-footer { flex-shrink: 0; }
+  body.fs-active { overflow: hidden; }
+
+  /* ── Card header ── */
+  .card-top {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .card-top-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Controls (DataGolf toggles) ── */
+  .ctrl-group {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .ctrl-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    align-self: center;
+    margin-right: 6px;
+  }
+  .ctrl {
+    padding: 4px 12px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-sec);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--border-light);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.12s;
+    white-space: nowrap;
+  }
+  .ctrl:last-child { border-right: none; }
+  .ctrl:hover { background: #f5f6f8; }
+  .ctrl.on { background: var(--text); color: white; font-weight: 600; }
+
+  /* ── Expand button ── */
+  .expand-btn {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .expand-btn:hover { background: #f5f6f8; border-color: #ccd0d8; }
+  .expand-btn svg { width: 16px; height: 16px; stroke: var(--text-sec); stroke-width: 2; fill: none; }
+
+  /* ── Main area (chart + sidebar) ── */
+  .card-main {
+    display: flex;
+  }
+  .chart-area {
+    flex: 1;
+    min-width: 0;
+    padding: 14px 16px 8px;
+    position: relative;
+  }
+  .chart-area canvas { width: 100%; display: block; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 150px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border-light);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .sb-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .sb-select {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 11.5px;
+    color: var(--text);
+    font-family: inherit;
+    background: var(--card);
+    cursor: pointer;
+    outline: none;
+    margin-bottom: 6px;
+  }
+  .sb-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37,99,235,0.08); }
+  .sb-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 4px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .sb-item:hover { background: #f5f6f8; }
+  .sb-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .sb-name { flex: 1; font-weight: 500; }
+  .sb-val { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; margin-right: 2px; }
+  .sb-x {
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+    border-radius: 3px;
+  }
+  .sb-x:hover { color: var(--red); background: #fef2f2; }
+
+  /* ── Footer ── */
+  .card-footer {
+    padding: 7px 16px;
+    border-top: 1px solid var(--border-light);
+    background: #fafbfc;
+    font-size: 11px;
+    color: var(--text-faint);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ── Section labels ── */
+  .demo-label {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+    margin-top: 36px;
+  }
+  .demo-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    max-width: 560px;
+  }
+  .marker-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 10px 14px;
+    background: var(--card);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--text-sec);
+  }
+  .marker-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .ml-line {
+    width: 16px;
+    height: 0;
+    border-top: 1.5px dashed;
+  }
+
+  @media (max-width: 680px) {
+    .card-main { flex-direction: column; }
+    .sidebar {
+      width: 100%;
+      border-left: none;
+      border-top: 1px solid var(--border-light);
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 8px 12px;
+      align-items: center;
+    }
+    .sb-title { margin-bottom: 0; margin-right: 6px; }
+    .sb-select { width: 110px; margin-bottom: 0; }
+    .ctrl { padding: 4px 9px; font-size: 11px; }
+    .card-top { padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1 class="page-title">Evolution Chart — Final</h1>
+<p class="page-sub">Variant A (DataGolf-style) with fullscreen expand, round/season markers, responsive across all platforms.</p>
+
+<!-- Demo mode selector -->
+<div class="demo-tabs">
+  <button class="demo-tab active" onclick="switchDemo('golf',this)">Golf (Tournament)</button>
+  <button class="demo-tab" onclick="switchDemo('mlb',this)">MLB (Season)</button>
+  <button class="demo-tab" onclick="switchDemo('nba',this)">NBA (Season)</button>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- THE CHART CARD -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="evo-card" id="evoCard">
+  <!-- Header -->
+  <div class="card-top">
+    <div class="card-top-left">
+      <span class="ctrl-label" id="timeLabel">Time Range</span>
+      <div class="ctrl-group" id="timeControls"></div>
+      <span class="ctrl-label" id="colLabel" style="margin-left:6px">Position</span>
+      <div class="ctrl-group" id="colControls"></div>
+    </div>
+    <button class="expand-btn" id="expandBtn" onclick="toggleFullscreen()" title="Expand">
+      <svg id="expandIcon" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
+      <svg id="collapseIcon" viewBox="0 0 24 24" style="display:none"><path d="M4 14h6v6m10-10h-6V4m0 16l6-6M14 4l-6 6"/></svg>
+    </button>
+  </div>
+
+  <!-- Chart + Sidebar -->
+  <div class="card-main">
+    <div class="chart-area">
+      <canvas id="mainChart" height="300"></canvas>
+    </div>
+    <div class="sidebar">
+      <div class="sb-title" id="sbTitle">Add Teams</div>
+      <select class="sb-select" id="addSelect"><option value="">Find team...</option></select>
+      <div id="playerList"></div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="card-footer">
+    <span id="footerLeft">The Masters 2026</span>
+    <span id="footerRight">Win Probability</span>
+  </div>
+</div>
+
+<!-- Marker legend -->
+<div class="marker-legend" id="markerLegend"></div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- DESIGN NOTES -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="demo-label" style="margin-top:40px">Platform Behavior</div>
+<div class="demo-desc">
+  <strong>Desktop (web):</strong> Sidebar visible. Hover for tooltips. Expand goes true fullscreen — ideal for TV mode.<br>
+  <strong>Mobile (web + iOS):</strong> Sidebar collapses below chart as a horizontal row. Expand hides browser chrome. Touch targets are 44pt+.<br>
+  <strong>iOS native:</strong> Same layout via SwiftUI Charts. Sidebar becomes a sheet or inline row. Expand uses .fullScreenCover().<br>
+  <strong>TV mode:</strong> Fullscreen + auto-cycle highlighted teams every 10s.
+</div>
+
+<div class="demo-label">Marker Reference</div>
+<div class="demo-desc" style="margin-bottom:6px">Vertical dashed lines orient the user within the timeline. They're subtle enough to not compete with the data.</div>
+<div class="marker-legend">
+  <div class="marker-legend-item"><span class="ml-line" style="border-color:#9ca3af"></span> Golf: R1, R2, Cut, R3, R4</div>
+  <div class="marker-legend-item"><span class="ml-line" style="border-color:#d97706"></span> MLB: Opening Day, All-Star, Trade Deadline</div>
+  <div class="marker-legend-item"><span class="ml-line" style="border-color:#7c3aed"></span> NBA: All-Star, Trade Deadline, Play-In, Playoffs</div>
+  <div class="marker-legend-item"><span class="ml-line" style="border-color:#059669"></span> NHL: All-Star, Trade Deadline, Playoffs</div>
+</div>
+
+</div><!-- .page -->
+
+<script>
+// ═══════════════════════════════════════════════
+// DEMO DATA
+// ═══════════════════════════════════════════════
+
+// Golf: simulated Masters tournament (R1-R4)
+const GOLF_PLAYERS = {
+  "Scottie Scheffler":"#c41e3a", "Rory McIlroy":"#005eb8", "Xander Schauffele":"#1d4ed8",
+  "Collin Morikawa":"#0e7490", "Jon Rahm":"#b91c1c", "Ludvig Aberg":"#0369a1",
+  "Bryson DeChambeau":"#92400e", "Brooks Koepka":"#4338ca", "Viktor Hovland":"#be185d",
+  "Hideki Matsuyama":"#065f46", "Tommy Fleetwood":"#7c2d12", "Justin Thomas":"#1e40af"
+};
+const GOLF_SHORT = {
+  "Scottie Scheffler":"Scheffler","Rory McIlroy":"McIlroy","Xander Schauffele":"Schauffele",
+  "Collin Morikawa":"Morikawa","Jon Rahm":"Rahm","Ludvig Aberg":"Aberg",
+  "Bryson DeChambeau":"DeChambeau","Brooks Koepka":"Koepka","Viktor Hovland":"Hovland",
+  "Hideki Matsuyama":"Matsuyama","Tommy Fleetwood":"Fleetwood","Justin Thomas":"Thomas"
+};
+// Simulate 4-round tournament data (more movement than MLB season)
+const GOLF_TIMELINE = [];
+const golfBase = {"Scottie Scheffler":.18,"Rory McIlroy":.095,"Xander Schauffele":.085,"Collin Morikawa":.065,"Jon Rahm":.06,"Ludvig Aberg":.055,"Bryson DeChambeau":.05,"Brooks Koepka":.045,"Viktor Hovland":.04,"Hideki Matsuyama":.038,"Tommy Fleetwood":.032,"Justin Thomas":.03};
+function jitter(base, round, player) {
+  // Create interesting movement per round
+  const seed = (player.charCodeAt(0)*7 + round*13) % 100;
+  const drift = (seed - 50) / 500;
+  let v = base + drift * (round + 1);
+  // Scheffler surges in R3-R4
+  if (player === "Scottie Scheffler" && round >= 12) v += 0.12 * ((round-11)/8);
+  if (player === "Scottie Scheffler" && round >= 16) v += 0.15;
+  // McIlroy fades R4
+  if (player === "Rory McIlroy" && round >= 16) v -= 0.04;
+  // Morikawa surges R2-R3
+  if (player === "Collin Morikawa" && round >= 6 && round < 16) v += 0.04;
+  // Rahm drops after cut
+  if (player === "Jon Rahm" && round >= 10) v -= 0.03;
+  return Math.max(0.005, Math.min(0.95, v));
+}
+const golfLabels = [];
+for (let h = 0; h < 24; h++) {
+  const round = Math.floor(h / 6); // 0-3 = R1-R4
+  const hInRound = h % 6;
+  const outcomes = {};
+  Object.keys(golfBase).forEach(p => { outcomes[p] = jitter(golfBase[p], h, p); });
+  // Normalize
+  const sum = Object.values(outcomes).reduce((a,b)=>a+b,0);
+  Object.keys(outcomes).forEach(p => { outcomes[p] /= sum; });
+  let label;
+  if (hInRound === 0) label = ['R1 Start','R2 Start','R3 Start','R4 Start'][round];
+  else if (hInRound === 5) label = ['R1 End','R2 End','R3 End','Final'][round];
+  else label = '';
+  GOLF_TIMELINE.push({ ts: label || `R${round+1}`, outcomes, hour: h });
+  golfLabels.push(label || '');
+}
+const GOLF_MARKERS = [
+  { hour: 0, label: 'R1', color: '#6b7280' },
+  { hour: 6, label: 'R2', color: '#6b7280' },
+  { hour: 10, label: 'Cut', color: '#dc2626' },
+  { hour: 12, label: 'R3', color: '#6b7280' },
+  { hour: 18, label: 'R4', color: '#6b7280' },
+];
+
+// MLB season data
+const MLB_TEAMS = {
+  "Los Angeles Dodgers":"#005a9c","New York Yankees":"#003087","Seattle Mariners":"#005c5c",
+  "New York Mets":"#002d72","Toronto Blue Jays":"#134a8e","Philadelphia Phillies":"#e81828",
+  "Boston Red Sox":"#bd3039","Atlanta Braves":"#ce1141","Chicago Cubs":"#0e3386","Detroit Tigers":"#0d2b56"
+};
+const MLB_SHORT = {
+  "Los Angeles Dodgers":"LAD","New York Yankees":"NYY","Seattle Mariners":"SEA",
+  "New York Mets":"NYM","Toronto Blue Jays":"TOR","Philadelphia Phillies":"PHI",
+  "Boston Red Sox":"BOS","Atlanta Braves":"ATL","Chicago Cubs":"CHC","Detroit Tigers":"DET"
+};
+const MLB_TIMELINE = [
+  {ts:"Mar 27",outcomes:{"Boston Red Sox":.058824,"Philadelphia Phillies":.058824,"New York Yankees":.090909,"New York Mets":.071429,"Detroit Tigers":.047619,"Atlanta Braves":.047619,"Toronto Blue Jays":.066667,"Seattle Mariners":.076923,"Los Angeles Dodgers":.307692,"Chicago Cubs":.052632}},
+  {ts:"Mar 28",outcomes:{"Los Angeles Dodgers":.307692,"Seattle Mariners":.076923,"Detroit Tigers":.047619,"Chicago Cubs":.052632,"Boston Red Sox":.058824,"New York Yankees":.090909,"Atlanta Braves":.047619,"Philadelphia Phillies":.058824,"Toronto Blue Jays":.066667,"New York Mets":.071429}},
+  {ts:"Mar 29",outcomes:{"Boston Red Sox":.058824,"Chicago Cubs":.052632,"Philadelphia Phillies":.058824,"New York Mets":.071429,"Detroit Tigers":.047619,"Toronto Blue Jays":.066667,"Atlanta Braves":.047619,"Seattle Mariners":.076923,"New York Yankees":.090909,"Los Angeles Dodgers":.307692}},
+  {ts:"Apr 15",outcomes:{"New York Yankees":.095,"Los Angeles Dodgers":.29,"Seattle Mariners":.088,"New York Mets":.078,"Toronto Blue Jays":.065,"Philadelphia Phillies":.062,"Atlanta Braves":.055,"Boston Red Sox":.058,"Chicago Cubs":.056,"Detroit Tigers":.05}},
+  {ts:"May 1",outcomes:{"Los Angeles Dodgers":.28,"New York Yankees":.10,"Seattle Mariners":.09,"Philadelphia Phillies":.072,"New York Mets":.07,"Toronto Blue Jays":.068,"Boston Red Sox":.065,"Atlanta Braves":.06,"Chicago Cubs":.055,"Detroit Tigers":.048}},
+  {ts:"Jun 1",outcomes:{"Los Angeles Dodgers":.26,"New York Yankees":.11,"Seattle Mariners":.095,"Philadelphia Phillies":.08,"New York Mets":.075,"Boston Red Sox":.07,"Toronto Blue Jays":.065,"Atlanta Braves":.058,"Chicago Cubs":.052,"Detroit Tigers":.045}},
+  {ts:"Jul 1",outcomes:{"Los Angeles Dodgers":.25,"New York Yankees":.115,"Seattle Mariners":.10,"Philadelphia Phillies":.085,"New York Mets":.08,"Boston Red Sox":.072,"Toronto Blue Jays":.062,"Atlanta Braves":.06,"Chicago Cubs":.048,"Detroit Tigers":.042}},
+  {ts:"Jul 15",outcomes:{"Los Angeles Dodgers":.27,"New York Yankees":.12,"Seattle Mariners":.095,"Philadelphia Phillies":.082,"New York Mets":.075,"Boston Red Sox":.068,"Toronto Blue Jays":.06,"Atlanta Braves":.055,"Chicago Cubs":.045,"Detroit Tigers":.04}},
+  {ts:"Aug 1",outcomes:{"Los Angeles Dodgers":.30,"New York Yankees":.13,"Seattle Mariners":.09,"Philadelphia Phillies":.078,"New York Mets":.072,"Boston Red Sox":.062,"Toronto Blue Jays":.055,"Atlanta Braves":.052,"Chicago Cubs":.04,"Detroit Tigers":.035}},
+  {ts:"Sep 1",outcomes:{"Los Angeles Dodgers":.32,"New York Yankees":.14,"Seattle Mariners":.085,"Philadelphia Phillies":.08,"New York Mets":.07,"Boston Red Sox":.06,"Toronto Blue Jays":.05,"Atlanta Braves":.048,"Chicago Cubs":.035,"Detroit Tigers":.03}},
+];
+const MLB_MARKERS = [
+  { idx: 0, label: 'Opening Day', color: '#d97706' },
+  { idx: 6, label: 'All-Star Break', color: '#d97706' },
+  { idx: 7, label: 'Trade Deadline', color: '#b91c1c' },
+];
+
+// NBA season data (simulated)
+const NBA_TEAMS = {
+  "Boston Celtics":"#007a33","Oklahoma City Thunder":"#007ac1","Denver Nuggets":"#0e2240",
+  "Milwaukee Bucks":"#00471b","New York Knicks":"#f58426","Dallas Mavericks":"#00538c",
+  "Golden State Warriors":"#1d428a","Phoenix Suns":"#e56020","Philadelphia 76ers":"#006bb6",
+  "Cleveland Cavaliers":"#6f263d"
+};
+const NBA_SHORT = {
+  "Boston Celtics":"BOS","Oklahoma City Thunder":"OKC","Denver Nuggets":"DEN",
+  "Milwaukee Bucks":"MIL","New York Knicks":"NYK","Dallas Mavericks":"DAL",
+  "Golden State Warriors":"GSW","Phoenix Suns":"PHX","Philadelphia 76ers":"PHI",
+  "Cleveland Cavaliers":"CLE"
+};
+const NBA_TIMELINE = [
+  {ts:"Oct",outcomes:{"Boston Celtics":.22,"Oklahoma City Thunder":.15,"Denver Nuggets":.12,"Milwaukee Bucks":.10,"New York Knicks":.08,"Dallas Mavericks":.07,"Golden State Warriors":.06,"Phoenix Suns":.05,"Philadelphia 76ers":.045,"Cleveland Cavaliers":.04}},
+  {ts:"Nov",outcomes:{"Boston Celtics":.24,"Oklahoma City Thunder":.16,"Denver Nuggets":.11,"Milwaukee Bucks":.09,"New York Knicks":.085,"Dallas Mavericks":.065,"Golden State Warriors":.055,"Phoenix Suns":.045,"Philadelphia 76ers":.04,"Cleveland Cavaliers":.042}},
+  {ts:"Dec",outcomes:{"Boston Celtics":.23,"Oklahoma City Thunder":.17,"Denver Nuggets":.105,"Milwaukee Bucks":.088,"New York Knicks":.09,"Dallas Mavericks":.06,"Golden State Warriors":.058,"Phoenix Suns":.042,"Philadelphia 76ers":.038,"Cleveland Cavaliers":.048}},
+  {ts:"Jan",outcomes:{"Oklahoma City Thunder":.19,"Boston Celtics":.21,"Denver Nuggets":.10,"New York Knicks":.095,"Milwaukee Bucks":.082,"Dallas Mavericks":.058,"Golden State Warriors":.052,"Cleveland Cavaliers":.055,"Phoenix Suns":.04,"Philadelphia 76ers":.035}},
+  {ts:"Feb",outcomes:{"Oklahoma City Thunder":.20,"Boston Celtics":.20,"Denver Nuggets":.098,"New York Knicks":.10,"Milwaukee Bucks":.078,"Cleveland Cavaliers":.06,"Dallas Mavericks":.055,"Golden State Warriors":.048,"Phoenix Suns":.038,"Philadelphia 76ers":.032}},
+  {ts:"Mar",outcomes:{"Oklahoma City Thunder":.22,"Boston Celtics":.19,"New York Knicks":.11,"Denver Nuggets":.09,"Milwaukee Bucks":.075,"Cleveland Cavaliers":.065,"Dallas Mavericks":.052,"Golden State Warriors":.045,"Phoenix Suns":.035,"Philadelphia 76ers":.03}},
+  {ts:"Apr",outcomes:{"Oklahoma City Thunder":.24,"Boston Celtics":.18,"New York Knicks":.12,"Denver Nuggets":.085,"Cleveland Cavaliers":.072,"Milwaukee Bucks":.07,"Dallas Mavericks":.048,"Golden State Warriors":.042,"Phoenix Suns":.032,"Philadelphia 76ers":.028}},
+];
+const NBA_MARKERS = [
+  { idx: 4, label: 'All-Star Break', color: '#7c3aed' },
+  { idx: 4.5, label: 'Trade Deadline', color: '#b91c1c' },
+  { idx: 5.8, label: 'Play-In', color: '#7c3aed' },
+  { idx: 6, label: 'Playoffs', color: '#7c3aed' },
+];
+
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let currentDemo = 'golf';
+let activeSet = new Set();
+let demoConfig = {};
+
+function getDemoConfig(demo) {
+  if (demo === 'golf') return {
+    teams: GOLF_PLAYERS, short: GOLF_SHORT, timeline: GOLF_TIMELINE,
+    markers: GOLF_MARKERS, markerMode: 'hour',
+    maxY: 0.5, defaultActive: ["Scottie Scheffler","Rory McIlroy","Xander Schauffele"],
+    timeButtons: [{l:'Full Event',active:true},{l:'Current Round'}],
+    colButtons: [{l:'Top 20'},{l:'Top 10'},{l:'Top 5'},{l:'Win',active:true}],
+    colLabel: 'Position', sbTitle: 'Add Players',
+    footerLeft: 'The Masters 2026', footerRight: 'Win Probability',
+    timeLabel: 'Time Range',
+  };
+  if (demo === 'mlb') return {
+    teams: MLB_TEAMS, short: MLB_SHORT, timeline: MLB_TIMELINE,
+    markers: MLB_MARKERS, markerMode: 'idx',
+    maxY: 0.38, defaultActive: ["Los Angeles Dodgers","New York Yankees","Seattle Mariners"],
+    timeButtons: [{l:'30 Days'},{l:'Season',active:true}],
+    colButtons: [{l:'Playoffs'},{l:'Division'},{l:'Pennant'},{l:'Win',active:true}],
+    colLabel: 'Column', sbTitle: 'Add Teams',
+    footerLeft: 'World Series 2026', footerRight: 'Championship Odds',
+    timeLabel: 'Time Range',
+  };
+  if (demo === 'nba') return {
+    teams: NBA_TEAMS, short: NBA_SHORT, timeline: NBA_TIMELINE,
+    markers: NBA_MARKERS, markerMode: 'idx',
+    maxY: 0.30, defaultActive: ["Oklahoma City Thunder","Boston Celtics","New York Knicks"],
+    timeButtons: [{l:'30 Days'},{l:'Season',active:true}],
+    colButtons: [{l:'Playoffs'},{l:'Conference'},{l:'Win',active:true}],
+    colLabel: 'Column', sbTitle: 'Add Teams',
+    footerLeft: 'NBA Finals 2026', footerRight: 'Championship Odds',
+    timeLabel: 'Time Range',
+  };
+}
+
+// ═══════════════════════════════════════════════
+// SWITCH DEMO
+// ═══════════════════════════════════════════════
+function switchDemo(demo, btn) {
+  currentDemo = demo;
+  demoConfig = getDemoConfig(demo);
+  activeSet = new Set(demoConfig.defaultActive);
+
+  // Tab styling
+  document.querySelectorAll('.demo-tab').forEach(t=>t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  // Build controls
+  buildControls('timeControls', demoConfig.timeButtons);
+  buildControls('colControls', demoConfig.colButtons);
+  document.getElementById('timeLabel').textContent = demoConfig.timeLabel;
+  document.getElementById('colLabel').textContent = demoConfig.colLabel;
+  document.getElementById('sbTitle').textContent = demoConfig.sbTitle;
+  document.getElementById('footerLeft').textContent = demoConfig.footerLeft;
+  document.getElementById('footerRight').textContent = demoConfig.footerRight;
+
+  buildSidebar();
+  drawChart();
+  buildMarkerLegend();
+}
+
+function buildControls(containerId, buttons) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  buttons.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'ctrl' + (b.active ? ' on' : '');
+    btn.textContent = b.l;
+    btn.onclick = () => {
+      el.querySelectorAll('.ctrl').forEach(c=>c.classList.remove('on'));
+      btn.classList.add('on');
+    };
+    el.appendChild(btn);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// SIDEBAR
+// ═══════════════════════════════════════════════
+function buildSidebar() {
+  const allTeams = Object.keys(demoConfig.teams);
+  const sorted = [...allTeams].sort((a,b) => {
+    const last = demoConfig.timeline[demoConfig.timeline.length-1].outcomes;
+    return (last[b]||0) - (last[a]||0);
+  });
+
+  // Dropdown
+  const sel = document.getElementById('addSelect');
+  sel.innerHTML = '<option value="">Find ' + (currentDemo==='golf'?'player':'team') + '...</option>';
+  sorted.forEach(t => {
+    if (activeSet.has(t)) return;
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = (demoConfig.short[t]||t) + ' — ' + t;
+    sel.appendChild(opt);
+  });
+  sel.onchange = () => {
+    if (sel.value) { activeSet.add(sel.value); buildSidebar(); drawChart(); }
+  };
+
+  // List
+  const list = document.getElementById('playerList');
+  list.innerHTML = '';
+  activeSet.forEach(team => {
+    const latest = demoConfig.timeline[demoConfig.timeline.length-1].outcomes[team] || 0;
+    const d = document.createElement('div');
+    d.className = 'sb-item';
+    d.innerHTML = `<span class="sb-dot" style="background:${demoConfig.teams[team]}"></span>
+      <span class="sb-name">${demoConfig.short[team]||team}</span>
+      <span class="sb-val">${(latest*100).toFixed(1)}%</span>
+      <span class="sb-x" data-team="${team}">&times;</span>`;
+    d.querySelector('.sb-x').addEventListener('click', function() {
+      activeSet.delete(this.dataset.team);
+      buildSidebar();
+      drawChart();
+    });
+    list.appendChild(d);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// CHART DRAWING
+// ═══════════════════════════════════════════════
+function drawChart() {
+  const canvas = document.getElementById('mainChart');
+  const card = document.getElementById('evoCard');
+  const isFS = card.classList.contains('fullscreen');
+  const chartH = isFS ? canvas.parentElement.offsetHeight : 300;
+
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.offsetWidth * dpr;
+  canvas.height = chartH * dpr;
+  canvas.style.height = chartH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = canvas.offsetWidth, H = chartH;
+  const pad = { left: 42, right: 14, top: 14, bottom: 30 };
+  const maxY = demoConfig.maxY;
+  const timeline = demoConfig.timeline;
+  const allTeams = Object.keys(demoConfig.teams);
+
+  // ── Gridlines ──
+  const steps = maxY <= 0.15 ? 6 : maxY <= 0.3 ? 6 : 5;
+  for (let i = 0; i <= steps; i++) {
+    const v = (maxY / steps) * i;
+    const y = pad.top + (1 - v / maxY) * (H - pad.top - pad.bottom);
+    ctx.beginPath();
+    ctx.strokeStyle = i === 0 ? '#d1d5db' : '#eef0f3';
+    ctx.lineWidth = 1;
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.stroke();
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Math.round(v * 100) + '%', pad.left - 8, y);
+  }
+
+  // ── X-axis labels ──
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.font = '10px -apple-system, system-ui, sans-serif';
+  ctx.fillStyle = '#9ca3af';
+
+  if (demoConfig.markerMode === 'hour') {
+    // Golf: show round labels at key points
+    const roundStarts = [0, 6, 12, 18];
+    const roundLabels = ['Thursday', 'Friday', 'Saturday', 'Sunday'];
+    roundStarts.forEach((h, ri) => {
+      const midH = h + 2.5;
+      const x = pad.left + (midH / (timeline.length - 1)) * (W - pad.left - pad.right);
+      ctx.fillText(roundLabels[ri], x, H - pad.bottom + 10);
+    });
+  } else {
+    timeline.forEach((t, i) => {
+      const x = pad.left + (i / (timeline.length - 1)) * (W - pad.left - pad.right);
+      ctx.fillText(t.ts, x, H - pad.bottom + 10);
+    });
+  }
+
+  // ── State markers (vertical dashed lines) ──
+  const markers = demoConfig.markers;
+  markers.forEach(m => {
+    let xPos;
+    if (demoConfig.markerMode === 'hour') {
+      xPos = pad.left + (m.hour / (timeline.length - 1)) * (W - pad.left - pad.right);
+    } else {
+      xPos = pad.left + (m.idx / (timeline.length - 1)) * (W - pad.left - pad.right);
+    }
+    // Dashed line
+    ctx.beginPath();
+    ctx.strokeStyle = m.color + '55';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.moveTo(xPos, pad.top);
+    ctx.lineTo(xPos, H - pad.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Label at top
+    ctx.fillStyle = m.color;
+    ctx.font = '600 9px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+
+    // Background pill for label
+    const tw = ctx.measureText(m.label).width + 8;
+    const lx = xPos - tw / 2;
+    const ly = pad.top - 2;
+    ctx.fillStyle = m.color + '12';
+    ctx.beginPath();
+    roundRect(ctx, lx, ly - 13, tw, 14, 3);
+    ctx.fill();
+    ctx.fillStyle = m.color;
+    ctx.fillText(m.label, xPos, pad.top - 3);
+  });
+
+  // ── Helper functions ──
+  function getPoints(team) {
+    return timeline.map((t, i) => [
+      pad.left + (i / (timeline.length - 1)) * (W - pad.left - pad.right),
+      pad.top + (1 - (t.outcomes[team] || 0) / maxY) * (H - pad.top - pad.bottom)
+    ]);
+  }
+  function bezier(ctx, pts) {
+    if (pts.length < 2) return;
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1], c = pts[i], cpx = (p[0] + c[0]) / 2;
+      ctx.bezierCurveTo(cpx, p[1], cpx, c[1], c[0], c[1]);
+    }
+  }
+
+  // ── Muted lines ──
+  allTeams.forEach(team => {
+    if (activeSet.has(team)) return;
+    const pts = getPoints(team);
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+    ctx.lineWidth = 1;
+    bezier(ctx, pts);
+    ctx.stroke();
+  });
+
+  // ── Active lines ──
+  activeSet.forEach(team => {
+    const pts = getPoints(team);
+    const color = demoConfig.teams[team];
+
+    // Subtle shadow
+    ctx.beginPath();
+    ctx.strokeStyle = color + '20';
+    ctx.lineWidth = 5;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezier(ctx, pts);
+    ctx.stroke();
+
+    // Main line
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    bezier(ctx, pts);
+    ctx.stroke();
+
+    // End dot
+    const last = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+  ctx.quadraticCurveTo(x+w,y,x+w,y+r); ctx.lineTo(x+w,y+h-r);
+  ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r);
+  ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+}
+
+// ═══════════════════════════════════════════════
+// FULLSCREEN
+// ═══════════════════════════════════════════════
+function toggleFullscreen() {
+  const card = document.getElementById('evoCard');
+  const isFS = card.classList.contains('fullscreen');
+  if (isFS) {
+    card.classList.remove('fullscreen');
+    document.body.classList.remove('fs-active');
+    document.getElementById('expandIcon').style.display = '';
+    document.getElementById('collapseIcon').style.display = 'none';
+  } else {
+    card.classList.add('fullscreen');
+    document.body.classList.add('fs-active');
+    document.getElementById('expandIcon').style.display = 'none';
+    document.getElementById('collapseIcon').style.display = '';
+  }
+  setTimeout(drawChart, 50);
+}
+
+// ESC to exit fullscreen
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const card = document.getElementById('evoCard');
+    if (card.classList.contains('fullscreen')) toggleFullscreen();
+  }
+});
+
+// ═══════════════════════════════════════════════
+// MARKER LEGEND
+// ═══════════════════════════════════════════════
+function buildMarkerLegend() {
+  const el = document.getElementById('markerLegend');
+  el.innerHTML = '';
+  demoConfig.markers.forEach(m => {
+    el.innerHTML += `<div class="marker-legend-item"><span class="ml-line" style="border-color:${m.color}"></span>${m.label}</div>`;
+  });
+}
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+window.addEventListener('load', () => switchDemo('golf', document.querySelector('.demo-tab.active')));
+window.addEventListener('resize', drawChart);
+</script>
+</body>
+</html>
