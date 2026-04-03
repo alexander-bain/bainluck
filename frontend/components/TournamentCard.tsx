@@ -23,6 +23,14 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   const slug = tournament.slug || tournament.key.replace(/_/g, "-");
   const href = hrefOverride || `/categories/golf/tournaments/${slug}`;
 
+  // Cup events (Ryder Cup, Presidents Cup, etc.) with exactly 2 teams
+  // get a head-to-head layout instead of leader + chasers
+  const isCupH2H = _isCupEvent(tournament) && tournament.golfers.length === 2;
+
+  if (isCupH2H) {
+    return <CupCard tournament={tournament} href={href} />;
+  }
+
   // Determine live status
   const isLive = _isLive(tournament);
   const tourLabel = tournament.tour_label || tournament.tour?.toUpperCase() || "Golf";
@@ -59,7 +67,6 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                 <div className="text-[11px] text-text-tertiary">{tournament.venue}</div>
               )}
             </div>
-            {/* TV badge placeholder — would come from ESPN data */}
           </div>
 
           {/* Hero probability — leader */}
@@ -138,6 +145,111 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
 }
 
 // ============================================================================
+// Cup / Head-to-Head Card (Ryder Cup, Presidents Cup, etc.)
+// ============================================================================
+
+function CupCard({ tournament, href }: { tournament: GolfTournament; href: string }) {
+  const isLive = _isLive(tournament);
+  const [teamA, teamB] = tournament.golfers;
+  const probA = teamA.probability * 100;
+  const probB = teamB.probability * 100;
+
+  // Color mapping for known cup teams
+  const teamColors: Record<string, { bg: string; text: string; bar: string }> = {
+    "usa": { bg: "bg-blue-50", text: "text-blue-800", bar: "bg-blue-500" },
+    "united states": { bg: "bg-blue-50", text: "text-blue-800", bar: "bg-blue-500" },
+    "u.s.": { bg: "bg-blue-50", text: "text-blue-800", bar: "bg-blue-500" },
+    "europe": { bg: "bg-amber-50", text: "text-amber-800", bar: "bg-amber-500" },
+    "international": { bg: "bg-emerald-50", text: "text-emerald-800", bar: "bg-emerald-500" },
+    "great britain & ireland": { bg: "bg-red-50", text: "text-red-800", bar: "bg-red-500" },
+  };
+  const defaultColor = { bg: "bg-gray-50", text: "text-gray-800", bar: "bg-gray-500" };
+  const colorA = teamColors[teamA.name.toLowerCase()] || defaultColor;
+  const colorB = teamColors[teamB.name.toLowerCase()] || defaultColor;
+
+  return (
+    <Link href={href} className="block">
+      <div className="bg-white border border-border rounded-[10px] overflow-hidden hover:shadow-sm hover:border-gray-300 transition-all cursor-pointer">
+        <div className="p-3.5 px-4">
+          {/* Header */}
+          <div className="mb-3">
+            <div className="text-[11px] font-medium text-text-secondary flex items-center gap-1.5">
+              <span>⛳ Cup</span>
+              {isLive && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
+                  <span className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />
+                  LIVE
+                </span>
+              )}
+              {!isLive && (tournament.start_date || tournament.commence_time) && (
+                <span className="text-text-tertiary">
+                  {_formatTournamentDate(tournament.start_date || tournament.commence_time, tournament.end_date)}
+                </span>
+              )}
+            </div>
+            <div className="text-sm font-bold mt-0.5">{tournament.name}</div>
+            {tournament.venue && (
+              <div className="text-[11px] text-text-tertiary">{tournament.venue}</div>
+            )}
+          </div>
+
+          {/* Head-to-head: Team A — bar — Team B */}
+          <div className="flex items-center gap-3 mb-1">
+            {/* Team A (left) */}
+            <div className="flex-1 text-left">
+              <div className={`text-xs font-semibold ${colorA.text}`}>{teamA.name}</div>
+              <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
+                {probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
+              </div>
+            </div>
+
+            {/* VS divider */}
+            <div className="text-[10px] font-bold text-text-tertiary uppercase">vs</div>
+
+            {/* Team B (right) */}
+            <div className="flex-1 text-right">
+              <div className={`text-xs font-semibold ${colorB.text}`}>{teamB.name}</div>
+              <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
+                {probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Probability bar */}
+          <div className="flex h-2 rounded-full overflow-hidden">
+            <div className={`${colorA.bar} transition-all`} style={{ width: `${probA}%` }} />
+            <div className={`${colorB.bar} transition-all`} style={{ width: `${probB}%` }} />
+          </div>
+
+          {/* Prop markets below */}
+          {tournament.prop_markets && tournament.prop_markets.length > 0 && (
+            <div className="border-t border-border-light pt-2 mt-3 space-y-1.5">
+              {tournament.prop_markets.slice(0, 3).map((pm) => (
+                <div key={pm.name} className="px-0.5">
+                  <div className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-0.5">
+                    {_cleanPropLabel(pm.name, tournament.name)}
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    {pm.outcomes.slice(0, 3).map((o) => (
+                      <span key={o.name} className="text-[11px] text-text-primary">
+                        {o.name}{" "}
+                        <span className="font-semibold tabular-nums">
+                          {(o.probability * 100).toFixed(0)}%
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+// ============================================================================
 // Internal helpers
 // ============================================================================
 
@@ -182,6 +294,12 @@ function _buildChasers(tournament: GolfTournament, leaderboard?: GolfLeaderboard
     name: g.name,
     winProb: g.probability * 100,
   }));
+}
+
+function _isCupEvent(tournament: GolfTournament): boolean {
+  const key = tournament.key.toLowerCase();
+  return key.includes("ryder") || key.includes("presidents") ||
+    key.includes("walker") || key.includes("solheim");
 }
 
 function _isLive(tournament: GolfTournament): boolean {

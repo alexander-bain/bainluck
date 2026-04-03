@@ -167,6 +167,12 @@ TOURNAMENT_DISPLAY_NAMES = {
     "liv": "LIV Golf",
     "tgl": "TGL",
     "other": "Other Tournaments",
+    # Women's variants — separated from men's to prevent cross-contamination
+    "masters_womens": "The Masters (Women's)",
+    "pga_championship_womens": "KPMG Women's PGA Championship",
+    "us_open_womens": "U.S. Women's Open",
+    "the_open_womens": "AIG Women's Open",
+    "players_womens": "The Players Championship (Women's)",
 }
 
 MAJOR_TOURNAMENTS = {"masters", "pga_championship", "us_open", "the_open"}
@@ -201,7 +207,10 @@ def _clean_slug(name: str) -> str:
 
 TOURNAMENT_ORDER = [
     "masters", "pga_championship", "us_open", "the_open",
-    "players", "ryder_cup", "presidents_cup", "liv", "tgl", "other",
+    "players", "ryder_cup", "presidents_cup",
+    # Women's majors after men's majors
+    "masters_womens", "pga_championship_womens", "us_open_womens", "the_open_womens",
+    "liv", "tgl", "other",
 ]
 
 # Max golfers to return per tournament
@@ -696,6 +705,11 @@ async def get_golf(
             per_market_key = f"other_{market.id}"
             tournament_markets[per_market_key].append(market)
         else:
+            # Separate men's and women's majors that share the same base key.
+            # E.g., "PGA Championship" and "KPMG Women's PGA Championship" both
+            # normalize to "pga_championship" — append "_womens" to distinguish.
+            if _WOMENS_RE.search(market.name):
+                tournament_key = tournament_key + "_womens"
             tournament_markets[tournament_key].append(market)
 
     # Build tournament response with cross-source aggregation
