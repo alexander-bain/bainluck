@@ -12,6 +12,7 @@ import type {
 } from "@/lib/types";
 import { TOURNAMENT_EMOJI } from "@/lib/golfData";
 import { EvolutionView } from "@/components/EvolutionView";
+import type { PositionOption } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
@@ -262,6 +263,25 @@ export default function GolfTournamentPage() {
     return () => clearInterval(interval);
   }, [load]);
 
+  // Build position options for the evolution chart toggle (must be before early returns)
+  const positionOptions = useMemo(() => {
+    if (!data) return [];
+    const opts: PositionOption[] = [];
+    const typeMap: { type: string; key: string; label: string }[] = [
+      { type: "top_20", key: "top_20", label: "Top 20" },
+      { type: "top_10", key: "top_10", label: "Top 10" },
+      { type: "top_5", key: "top_5", label: "Top 5" },
+      { type: "winner", key: "win", label: "Win" },
+    ];
+    for (const { type, key, label } of typeMap) {
+      const group = data.markets.find((g) => g.type === type);
+      if (group && group.market_ids.length > 0) {
+        opts.push({ key, label, marketId: group.market_ids[0] });
+      }
+    }
+    return opts;
+  }, [data]);
+
   if (loading) return <LoadingSkeleton />;
   if (error && !data) return <ErrorState message={error} />;
   if (!data) return <ErrorState message="Tournament not found" />;
@@ -397,7 +417,18 @@ export default function GolfTournamentPage() {
         </header>
 
         {/* Evolution Chart */}
-        {evolutionMarketIds.length > 0 && (
+        {positionOptions.length > 0 && (
+          <section>
+            <EvolutionView
+              marketId={positionOptions[positionOptions.length - 1].marketId}
+              marketName={tournament.name}
+              defaultTopN={8}
+              hours={168}
+              positionOptions={positionOptions.length > 1 ? positionOptions : undefined}
+            />
+          </section>
+        )}
+        {positionOptions.length === 0 && evolutionMarketIds.length > 0 && (
           <section>
             <EvolutionViewWithFallback
               marketIds={evolutionMarketIds}

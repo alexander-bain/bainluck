@@ -8,12 +8,19 @@ import { fetchFuturesHistory } from "@/lib/api";
 
 type TimeRange = "full" | "7d" | "24h" | "today";
 
+export interface PositionOption {
+  key: string;   // "win", "top_5", "top_10", "top_20"
+  label: string;  // "Win", "Top 5", "Top 10", "Top 20"
+  marketId: number;
+}
+
 interface EvolutionViewProps {
   marketId: number;
   marketName?: string;
   defaultTopN?: number;
   hours?: number;
   className?: string;
+  positionOptions?: PositionOption[];
 }
 
 export function EvolutionView({
@@ -22,11 +29,29 @@ export function EvolutionView({
   defaultTopN = 8,
   hours = 168,
   className,
+  positionOptions,
 }: EvolutionViewProps) {
   const [highlightedOutcomeId, setHighlightedOutcomeId] = useState<number | null>(null);
   const [selectedOutcomeIds, setSelectedOutcomeIds] = useState<Set<number> | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("full");
+  const [selectedPosition, setSelectedPosition] = useState<string>(
+    positionOptions?.[positionOptions.length - 1]?.key || "win"
+  );
+
+  // Determine active market ID from position selection
+  const activeMarketId = useMemo(() => {
+    if (positionOptions) {
+      const pos = positionOptions.find((p) => p.key === selectedPosition);
+      if (pos) return pos.marketId;
+    }
+    return marketId;
+  }, [positionOptions, selectedPosition, marketId]);
+
+  // Reset selected outcomes when position changes
+  useEffect(() => {
+    setSelectedOutcomeIds(null);
+  }, [activeMarketId]);
 
   // ESC to exit fullscreen
   useEffect(() => {
@@ -35,7 +60,6 @@ export function EvolutionView({
       if (e.key === "Escape") setIsFullscreen(false);
     };
     document.addEventListener("keydown", handler);
-    // Prevent body scroll in fullscreen
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", handler);
@@ -45,8 +69,8 @@ export function EvolutionView({
 
   // Fetch history data
   const { data, error, isLoading } = useSWR(
-    `futures-evolution-${marketId}-${hours}`,
-    () => fetchFuturesHistory(marketId, hours, undefined, 30),
+    `futures-evolution-${activeMarketId}-${hours}`,
+    () => fetchFuturesHistory(activeMarketId, hours, undefined, 30),
     { refreshInterval: 60_000 }
   );
 
@@ -100,6 +124,10 @@ export function EvolutionView({
     return null;
   }
 
+  // Current position label for footer
+  const activePositionLabel =
+    positionOptions?.find((p) => p.key === selectedPosition)?.label || "Win";
+
   const cardClasses = isFullscreen
     ? "fixed inset-0 z-[9999] bg-white flex flex-col"
     : "bg-white border border-gray-200 rounded-[10px] overflow-hidden";
@@ -135,6 +163,30 @@ export function EvolutionView({
                 </button>
               ))}
             </div>
+
+            {/* Position control group — only when multiple markets available */}
+            {positionOptions && positionOptions.length > 1 && (
+              <>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                  Position
+                </span>
+                <div className="flex border border-gray-200 rounded-md overflow-hidden">
+                  {positionOptions.map((pos) => (
+                    <button
+                      key={pos.key}
+                      onClick={() => setSelectedPosition(pos.key)}
+                      className={`px-3 py-1 text-[11.5px] font-medium border-r border-gray-100 last:border-r-0 transition-colors ${
+                        selectedPosition === pos.key
+                          ? "bg-gray-900 text-white font-semibold"
+                          : "text-gray-500 hover:bg-gray-50"
+                      }`}
+                    >
+                      {pos.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Expand/collapse button */}
@@ -187,7 +239,7 @@ export function EvolutionView({
 
         {/* ── Footer ── */}
         <div className="px-3 sm:px-4 py-1.5 border-t border-gray-100 bg-gray-50/80 flex justify-between text-[11px] text-gray-400">
-          <span>{marketName || "Win Probability"}</span>
+          <span>{marketName || "Win Probability"} — {activePositionLabel}</span>
           <span>
             {effectiveSelectedIds.size} of {data.outcomes.length}
             {selectedOutcomeIds !== null && (
