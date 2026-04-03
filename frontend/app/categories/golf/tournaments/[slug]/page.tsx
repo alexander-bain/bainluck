@@ -75,7 +75,7 @@ function EvolutionViewWithCallback({
     fetchFuturesHistory(marketId, hours, undefined, 30)
       .then((data) => {
         if (cancelled) return;
-        if (data.outcomes.length === 0) {
+        if (data.outcomes.length < 3) {
           setHasData(false);
           onEmpty();
         } else {

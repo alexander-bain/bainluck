@@ -1171,7 +1171,7 @@ def _build_current_event(t: dict) -> dict:
 
 # Market type detection patterns for sub-grouping
 _MARKET_TYPE_PATTERNS = [
-    (re.compile(r"\bWinner\b(?!.*Round)", re.I), "winner", "Winner"),
+    (re.compile(r"\b(?:Winner|Champion)\b(?!.*Round)", re.I), "winner", "Winner"),
     (re.compile(r"\bTop\s+5\b", re.I), "top_5", "Top 5"),
     (re.compile(r"\bTop\s+10\b", re.I), "top_10", "Top 10"),
     (re.compile(r"\bTop\s+20\b", re.I), "top_20", "Top 20"),
