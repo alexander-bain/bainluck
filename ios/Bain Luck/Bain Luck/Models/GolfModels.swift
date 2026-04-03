@@ -9,6 +9,7 @@ nonisolated struct GolfLeaderboardResponse: Decodable, Sendable {
     let lastUpdated: String?
     let tour: String?
     let playerCount: Int?
+    let hasSnapshot: Bool?
     let players: [GolfLeaderboardPlayer]
     let message: String?
 
@@ -20,12 +21,13 @@ nonisolated struct GolfLeaderboardResponse: Decodable, Sendable {
         lastUpdated = try container.decodeIfPresent(String.self, forKey: .lastUpdated)
         tour = try container.decodeIfPresent(String.self, forKey: .tour)
         playerCount = try container.decodeIfPresent(Int.self, forKey: .playerCount)
+        hasSnapshot = try container.decodeIfPresent(Bool.self, forKey: .hasSnapshot)
         players = (try? container.decodeIfPresent([GolfLeaderboardPlayer].self, forKey: .players)) ?? []
         message = try container.decodeIfPresent(String.self, forKey: .message)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case status, eventName, currentRound, lastUpdated, tour, playerCount, players, message
+        case status, eventName, currentRound, lastUpdated, tour, playerCount, hasSnapshot, players, message
     }
 }
 
@@ -39,6 +41,8 @@ nonisolated struct GolfLeaderboardPlayer: Decodable, Sendable, Identifiable {
     let thru: String
     let hole: String
     let winProb: Double
+    let winProbChange: Double?
+    let positionChange: Int?
     let top5Prob: Double?
     let top10Prob: Double?
     let makeCutProb: Double?

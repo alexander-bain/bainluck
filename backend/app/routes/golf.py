@@ -723,6 +723,20 @@ async def get_golf(
                 if outcome.opening_probability is not None and golfer_data[key]["opening_probability"] is None:
                     golfer_data[key]["opening_probability"] = round(float(outcome.opening_probability), 3)
 
+        # Filter to invitees only — when DataGolf field data exists for a
+        # tournament, only include golfers who appear in the DataGolf field.
+        # Prevents non-invitees from sportsbooks polluting the landing page
+        # (e.g., Gary Woodland showing 8.7% to "win Masters" because sportsbooks
+        # still have odds on him even though he's not invited).
+        has_datagolf = "datagolf" in market_sources
+        if has_datagolf:
+            datagolf_keys = {k for k, v in golfer_data.items() if "datagolf_model" in v["sources"]}
+            if datagolf_keys:  # Only filter if DataGolf actually has outcomes
+                filtered_count = len(golfer_data) - len(datagolf_keys)
+                if filtered_count > 0:
+                    logger.info("Golf invitee filter: removed %d non-field golfers from %s", filtered_count, tourn_key)
+                golfer_data = {k: v for k, v in golfer_data.items() if k in datagolf_keys}
+
         # Compute average probability
         golfers = []
         for data in golfer_data.values():
@@ -1280,6 +1294,39 @@ async def get_golf_leaderboard(
 
     players.sort(key=_pos_sort_key)
 
+    # ----------------------------------------------------------------
+    # Load start-of-day snapshot for delta computation
+    # ----------------------------------------------------------------
+    snapshot_lookup: dict[str, dict] = {}  # player_name -> {position, win_prob, ...}
+    try:
+        from app.models.models import GolfLeaderboardSnapshot
+        from app.services import get_db as _get_db
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select as sa_select
+        from zoneinfo import ZoneInfo
+
+        et_now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+        today_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Use a fresh DB session for snapshot lookup
+        from app.services.database import async_session_maker
+        async with async_session_maker() as snap_session:
+            snap_result = await snap_session.execute(
+                sa_select(GolfLeaderboardSnapshot).where(
+                    GolfLeaderboardSnapshot.tour == tour,
+                    GolfLeaderboardSnapshot.snapshot_date == today_start,
+                    GolfLeaderboardSnapshot.snapshot_type == "start_of_day",
+                )
+            )
+            snapshot = snap_result.scalar_one_or_none()
+            if snapshot and snapshot.data:
+                for entry in snapshot.data:
+                    name = entry.get("player_name", "")
+                    snapshot_lookup[name.lower()] = entry
+                logger.info("Leaderboard: loaded %d-player start-of-day snapshot", len(snapshot_lookup))
+    except Exception as e:
+        logger.warning("Leaderboard: could not load snapshot: %s", e)
+
     # Build response
     leaderboard = []
     for p in players:
@@ -1305,6 +1352,28 @@ async def get_golf_leaderboard(
         else:
             today_display = "—"
 
+        win_prob = round(p.win * 100, 1) if p.win else 0.0
+
+        # Compute deltas from start-of-day snapshot
+        position_change = None
+        win_prob_change = None
+        snap_entry = snapshot_lookup.get(p.player_name.lower())
+        if snap_entry:
+            # Position change: positive = moved up the leaderboard
+            snap_pos = snap_entry.get("position", "")
+            if snap_pos and p.position:
+                try:
+                    snap_pos_num = int(str(snap_pos).lstrip("T"))
+                    cur_pos_num = int(str(p.position).lstrip("T"))
+                    position_change = snap_pos_num - cur_pos_num  # positive = climbed
+                except (ValueError, TypeError):
+                    pass
+
+            # Win probability change
+            snap_wp = snap_entry.get("win_prob")
+            if snap_wp is not None:
+                win_prob_change = round(win_prob - snap_wp, 1)
+
         leaderboard.append({
             "position": p.position or "—",
             "name": p.player_name,
@@ -1314,7 +1383,9 @@ async def get_golf_leaderboard(
             "today_raw": p.today_score,
             "thru": thru or "—",
             "hole": hole_display,
-            "win_prob": round(p.win * 100, 1) if p.win else 0.0,
+            "win_prob": win_prob,
+            "win_prob_change": win_prob_change,
+            "position_change": position_change,
             "top_5_prob": round(p.top_5 * 100, 1) if p.top_5 else None,
             "top_10_prob": round(p.top_10 * 100, 1) if p.top_10 else None,
             "make_cut_prob": round(p.make_cut * 100, 1) if p.make_cut else None,
@@ -1328,6 +1399,7 @@ async def get_golf_leaderboard(
         "last_updated": info.get("last_updated") or datetime.now(timezone.utc).isoformat(),
         "tour": tour,
         "player_count": len(leaderboard),
+        "has_snapshot": bool(snapshot_lookup),
         "players": leaderboard,
     }
 

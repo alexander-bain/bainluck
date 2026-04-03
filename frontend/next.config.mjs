@@ -2,6 +2,15 @@
 const nextConfig = {
   // Enable React strict mode for better development experience
   reactStrictMode: true,
+  async redirects() {
+    return [
+      {
+        source: "/playoffs/golf",
+        destination: "/categories/golf",
+        permanent: true,
+      },
+    ];
+  },
   typescript: {
     // Firebase v12 ships without bundled type declarations, causing
     // build failures when node_modules is freshly installed. The actual

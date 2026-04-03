@@ -467,3 +467,102 @@ def _get_prob(player, market_type: str) -> Optional[float]:
         "make_cut": player.make_cut,
     }
     return mapping.get(market_type)
+
+
+# ---------------------------------------------------------------------------
+# Start-of-day leaderboard snapshot
+# ---------------------------------------------------------------------------
+
+async def _snapshot_leaderboard() -> dict:
+    """Snapshot current leaderboard positions + probabilities for "today" deltas.
+
+    Called once per day at ~6am ET (10/11 UTC). For each active tour with a
+    live event, stores the full leaderboard in golf_leaderboard_snapshots so
+    the /leaderboard endpoint can compute position_change and win_prob_change.
+    """
+    from app.services.datagolf_api import DataGolfAPIService
+    from app.models.models import GolfLeaderboardSnapshot
+    from app.tasks.redis_state import get_redis_client
+
+    service = DataGolfAPIService()
+    stats = {"tours_checked": 0, "snapshots_created": 0, "skipped": 0}
+
+    try:
+        r = get_redis_client()
+
+        async with get_task_session() as session:
+            for tour in POLL_TOURS:
+                stats["tours_checked"] += 1
+
+                # Only snapshot tours with a live event
+                is_live = r.get(f"{LIVE_KEY_PREFIX}:{tour}")
+                if not is_live:
+                    stats["skipped"] += 1
+                    continue
+
+                try:
+                    players, info = await service.get_in_play_with_info(tour)
+                    if not players:
+                        stats["skipped"] += 1
+                        continue
+
+                    # Build snapshot data
+                    now = datetime.now(timezone.utc)
+                    snapshot_data = []
+                    for p in players:
+                        snapshot_data.append({
+                            "player_name": p.player_name,
+                            "dg_id": p.dg_id,
+                            "position": p.position,
+                            "total_score": p.total_score,
+                            "today_score": p.today_score,
+                            "thru": p.thru,
+                            "current_round": p.current_round,
+                            "win_prob": round(p.win * 100, 1) if p.win else 0.0,
+                            "top_5_prob": round(p.top_5 * 100, 1) if p.top_5 else None,
+                            "top_10_prob": round(p.top_10 * 100, 1) if p.top_10 else None,
+                        })
+
+                    # Use today's date (in ET) for the snapshot_date
+                    # ET is UTC-5 in winter, UTC-4 in summer
+                    from zoneinfo import ZoneInfo
+                    et_now = now.astimezone(ZoneInfo("America/New_York"))
+                    snapshot_date = et_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                    # Check if we already have a snapshot for today
+                    from sqlalchemy import select as sa_select
+                    existing = await session.execute(
+                        sa_select(GolfLeaderboardSnapshot).where(
+                            GolfLeaderboardSnapshot.tour == tour,
+                            GolfLeaderboardSnapshot.snapshot_date == snapshot_date,
+                            GolfLeaderboardSnapshot.snapshot_type == "start_of_day",
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        logger.info("Leaderboard snapshot already exists for tour=%s date=%s", tour, snapshot_date.date())
+                        continue
+
+                    snap = GolfLeaderboardSnapshot(
+                        tour=tour,
+                        event_name=info.get("event_name", "Unknown"),
+                        snapshot_date=snapshot_date,
+                        snapshot_type="start_of_day",
+                        data=snapshot_data,
+                    )
+                    session.add(snap)
+                    await session.flush()
+                    stats["snapshots_created"] += 1
+                    logger.info(
+                        "Leaderboard snapshot created: tour=%s event=%s players=%d",
+                        tour, info.get("event_name"), len(snapshot_data),
+                    )
+
+                except Exception as e:
+                    logger.error("Leaderboard snapshot error for tour=%s: %s", tour, e)
+                    continue
+
+    finally:
+        await service.close()
+
+    logger.info("Leaderboard snapshot complete: %s", stats)
+    return stats

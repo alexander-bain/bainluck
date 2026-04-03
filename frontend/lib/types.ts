@@ -1064,6 +1064,8 @@ export interface GolfTournament {
   is_major: boolean;
   is_tour_event?: boolean;
   is_womens?: boolean;
+  tour?: string;
+  tour_label?: string;
   commence_time: string | null;
   resolution_date: string | null;
   start_date?: string | null;
@@ -1073,6 +1075,7 @@ export interface GolfTournament {
   schedule_status?: string | null;
   market_ids: number[];
   market_names?: string[];
+  market_sources?: string[];
   golfers: GolfGolfer[];
 }
 
@@ -1172,6 +1175,8 @@ export interface GolfLeaderboardPlayer {
   thru: string;
   hole: string;
   win_prob: number;
+  win_prob_change: number | null;
+  position_change: number | null;
   top_5_prob: number | null;
   top_10_prob: number | null;
   make_cut_prob: number | null;
@@ -1185,6 +1190,7 @@ export interface GolfLeaderboardResponse {
   last_updated: string | null;
   tour: string;
   player_count: number;
+  has_snapshot: boolean;
   players: GolfLeaderboardPlayer[];
   message?: string;
 }

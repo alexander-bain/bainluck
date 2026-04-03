@@ -569,6 +569,15 @@ def poll_datagolf_live(self):
     return _tracked_run("datagolf_live", _poll_datagolf_live())
 
 
+# --- Golf Leaderboard Snapshot ---
+
+@celery_app.task(bind=True, name="app.tasks.snapshot_golf_leaderboard")
+def snapshot_golf_leaderboard(self):
+    """Snapshot golf leaderboard positions/probs at start of day for delta computation."""
+    from app.tasks.datagolf import _snapshot_leaderboard
+    return _tracked_run("golf_leaderboard_snapshot", _snapshot_leaderboard())
+
+
 # --- March Madness Bracket Sync ---
 
 @celery_app.task(bind=True, name="app.tasks.sync_mm_bracket")
@@ -863,6 +872,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.audit_canonical_keys",
         "schedule": crontab(minute=0, hour=9),  # Daily at 9:00 AM UTC
         "kwargs": {"limit": 50},
+    },
+    "snapshot-golf-leaderboard-daily": {
+        "task": "app.tasks.snapshot_golf_leaderboard",
+        "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC (~6am ET) — before tournament rounds start
     },
     "audit-prediction-market-links-daily": {
         "task": "app.tasks.audit_prediction_market_links",

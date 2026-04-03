@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { fetchGolfData, fetchFuturesHistory, fetchProgression } from "@/lib/api";
 import type {
@@ -129,6 +129,9 @@ function EvolutionViewWithCallback({
   );
 }
 
+// Tour display order for per-tour sections
+const TOUR_ORDER = ["major", "pga", "dp_world", "lpga", "liv", "korn_ferry", "sunshine", "asian", "tgl"];
+
 // ============================================================================
 // Main Page
 // ============================================================================
@@ -228,19 +231,60 @@ export default function GolfPage() {
       .catch(() => {});
   }, [data?.current_event, progressionData]);
 
-  // Derived data
-  const majors = data?.tournaments.filter((t) => t.is_major) ?? [];
-  const pgaTourEvents =
-    data?.tournaments.filter((t) => !t.is_major && t.is_tour_event && !t.is_womens) ?? [];
-  const lpgaTourEvents =
-    data?.tournaments.filter((t) => !t.is_major && t.is_tour_event && t.is_womens) ?? [];
-  const otherTournaments =
-    data?.tournaments.filter((t) => !t.is_major && !t.is_tour_event) ?? [];
+  // Group tournaments by tour for per-tour sections
+  const tourSections = useMemo(() => {
+    if (!data) return [];
+    const grouped: Record<string, GolfTournament[]> = {};
+    for (const t of data.tournaments) {
+      const tour = t.tour || "other";
+      if (!grouped[tour]) grouped[tour] = [];
+      grouped[tour].push(t);
+    }
+    const sections: { tour: string; label: string; tournaments: GolfTournament[] }[] = [];
+    for (const tour of TOUR_ORDER) {
+      if (grouped[tour]) {
+        sections.push({
+          tour,
+          label: grouped[tour][0]?.tour_label || tour,
+          tournaments: grouped[tour],
+        });
+        delete grouped[tour];
+      }
+    }
+    // Remaining tours not in predefined order
+    for (const [tour, tournaments] of Object.entries(grouped)) {
+      sections.push({
+        tour,
+        label: tournaments[0]?.tour_label || tour,
+        tournaments,
+      });
+    }
+    return sections;
+  }, [data]);
 
   // Next Major countdown
+  const majors = data?.tournaments.filter((t) => t.is_major) ?? [];
   const nextMajor = majors.find(
     (t) => t.commence_time && new Date(t.commence_time) > new Date()
   );
+
+  // Per-tour follow state (localStorage)
+  const [followedTours, setFollowedTours] = useState<Set<string>>(new Set(["pga"]));
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("bainluck_golf_followed_tours");
+      if (stored) setFollowedTours(new Set(JSON.parse(stored)));
+    } catch {}
+  }, []);
+  const toggleFollow = (tour: string) => {
+    setFollowedTours((prev) => {
+      const next = new Set(prev);
+      if (next.has(tour)) next.delete(tour);
+      else next.add(tour);
+      try { localStorage.setItem("bainluck_golf_followed_tours", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
 
   return (
     <div className="min-h-screen">
@@ -354,81 +398,18 @@ export default function GolfPage() {
             {/* Source Legend — shown before first section using source dots */}
             <SourceLegend />
 
-            {/* The Majors */}
-            {majors.length > 0 && (
-              <section>
-                <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
-                  <span className="text-[#006747]">&#x2B50;</span>
-                  The Majors
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {majors.map((tournament) => (
-                    <TournamentCard
-                      key={tournament.key}
-                      tournament={tournament}
-                      onClick={() => setModalTournament(tournament)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Tour Events (PGA) */}
-            {pgaTourEvents.length > 0 && (
-              <section>
-                <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
-                  <span className="text-[#006747]">&#x1F3CC;&#xFE0F;</span>
-                  Tour Events
-                </h2>
-                <div className="space-y-2">
-                  {pgaTourEvents.map((tournament) => (
-                    <ExpandableTournamentRow
-                      key={tournament.key}
-                      tournament={tournament}
-                      onClickFull={() => setModalTournament(tournament)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* LPGA & Women's Events */}
-            {lpgaTourEvents.length > 0 && (
-              <section>
-                <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
-                  <span className="text-[#006747]">&#x1F3CC;&#xFE0F;&#x200D;&#x2640;&#xFE0F;</span>
-                  LPGA &amp; Women&apos;s Events
-                </h2>
-                <div className="space-y-2">
-                  {lpgaTourEvents.map((tournament) => (
-                    <ExpandableTournamentRow
-                      key={tournament.key}
-                      tournament={tournament}
-                      onClickFull={() => setModalTournament(tournament)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Other Markets */}
-            {otherTournaments.length > 0 && (
-              <section>
-                <h2 className="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
-                  <span className="text-text-secondary">&#x26F3;</span>
-                  Other Markets
-                </h2>
-                <div className="space-y-2">
-                  {otherTournaments.map((tournament) => (
-                    <ExpandableTournamentRow
-                      key={tournament.key}
-                      tournament={tournament}
-                      onClickFull={() => setModalTournament(tournament)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* Per-Tour Sections */}
+            {tourSections.map((section) => (
+              <TourSection
+                key={section.tour}
+                tour={section.tour}
+                label={section.label}
+                tournaments={section.tournaments}
+                isFollowing={followedTours.has(section.tour)}
+                onToggleFollow={() => toggleFollow(section.tour)}
+                onClickTournament={setModalTournament}
+              />
+            ))}
 
             {/* Schedule */}
             {data.upcoming_events.length > 0 && (
@@ -781,6 +762,88 @@ function SourceLegend() {
         <span className="text-amber-400/60 text-[9px]">(model)</span>
       </span>
     </div>
+  );
+}
+
+// ============================================================================
+// Tour Section — per-tour grouping with follow button
+// ============================================================================
+
+const TOUR_EMOJI: Record<string, string> = {
+  major: "\u2B50",
+  pga: "\uD83C\uDFCC\uFE0F",
+  dp_world: "\uD83C\uDF0D",
+  lpga: "\uD83C\uDFCC\uFE0F\u200D\u2640\uFE0F",
+  liv: "\u26A1",
+  korn_ferry: "\uD83C\uDF31",
+  sunshine: "\u2600\uFE0F",
+  asian: "\uD83C\uDF0F",
+  tgl: "\uD83C\uDFAE",
+};
+
+function TourSection({
+  tour,
+  label,
+  tournaments,
+  isFollowing,
+  onToggleFollow,
+  onClickTournament,
+}: {
+  tour: string;
+  label: string;
+  tournaments: GolfTournament[];
+  isFollowing: boolean;
+  onToggleFollow: () => void;
+  onClickTournament: (t: GolfTournament) => void;
+}) {
+  const emoji = TOUR_EMOJI[tour] || "\u26F3";
+  const isMajors = tour === "major";
+
+  return (
+    <section>
+      {/* Tour header with follow button */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold text-text-primary flex items-center gap-2">
+          <span className="text-[#006747]">{emoji}</span>
+          {isMajors ? "The Majors" : label}
+        </h2>
+        {!isMajors && (
+          <button
+            onClick={onToggleFollow}
+            className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-all ${
+              isFollowing
+                ? "text-[#006747] bg-[#006747]/10 border-[#006747]/30"
+                : "text-text-muted bg-surface-card border-surface-border hover:border-[#006747]/30 hover:text-[#006747]"
+            }`}
+          >
+            {isFollowing ? "\u2713 Following" : "+ Follow"}
+          </button>
+        )}
+      </div>
+
+      {/* Majors use card grid, other tours use expandable rows */}
+      {isMajors ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {tournaments.map((tournament) => (
+            <TournamentCard
+              key={tournament.key}
+              tournament={tournament}
+              onClick={() => onClickTournament(tournament)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {tournaments.map((tournament) => (
+            <ExpandableTournamentRow
+              key={tournament.key}
+              tournament={tournament}
+              onClickFull={() => onClickTournament(tournament)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

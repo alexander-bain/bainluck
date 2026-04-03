@@ -195,6 +195,7 @@ class TestBeatScheduleCompleteness:
         "turbo-collapse-odds",
         "transition-event-statuses",
         "track-statpal-usage",
+        "snapshot-golf-leaderboard-daily",
     }
 
     def test_no_missing_entries(self):

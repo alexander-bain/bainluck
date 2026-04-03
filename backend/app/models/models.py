@@ -875,3 +875,33 @@ class MatchingOverride(Base):
     __table_args__ = (
         UniqueConstraint("league_slug", "override_type", "source_name", name="uq_override_key"),
     )
+
+
+class GolfLeaderboardSnapshot(Base):
+    """Start-of-day leaderboard snapshot for computing "today" deltas.
+
+    Stores full leaderboard state (position, score, win probability per player)
+    at a point in time — typically the start of each tournament day. The
+    leaderboard endpoint uses this to compute position_change and win_prob_change.
+    """
+
+    __tablename__ = "golf_leaderboard_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tour: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    event_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    snapshot_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    snapshot_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="start_of_day"
+    )
+    # JSONB array of {player_name, position, total_score, win_prob, ...}
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tour", "snapshot_date", "snapshot_type", name="uq_golf_snapshot"),
+    )
