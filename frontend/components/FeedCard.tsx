@@ -282,6 +282,12 @@ function _tournamentName(marketName: string): string {
     .trim();
 }
 
+/** Extract tour label from market name, e.g. "PGA Tour: Valero..." → "PGA Tour" */
+function _tourLabel(marketName: string): string {
+  const match = marketName.match(/^(PGA Tour|LPGA|European Tour|DP World Tour|LIV Golf)[:\s]/i);
+  return match ? match[1] : "Golf";
+}
+
 // ============================================================================
 // Golf Tournament Feed Card
 // ============================================================================
@@ -300,6 +306,7 @@ function GolfTournamentFeedCard({
   category?: string;
 }) {
   const tournamentName = _tournamentName(data.name);
+  const tourLabel = _tourLabel(data.name);
   const leader = data.top_outcomes?.[0];
   const chasers = data.top_outcomes?.slice(1, 5) ?? [];
   const resolvesText = formatResolutionDate(data.resolution_date);
@@ -317,7 +324,7 @@ function GolfTournamentFeedCard({
           <div className="flex justify-between items-start mb-2">
             <div>
               <div className="text-[11px] font-medium text-text-secondary flex items-center gap-1.5">
-                <span>⛳ Golf</span>
+                <span>⛳ {tourLabel}</span>
                 {isThisWeek && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
                     <span className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />

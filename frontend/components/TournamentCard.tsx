@@ -1,76 +1,35 @@
 "use client";
 
 import Link from "next/link";
+import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-interface TournamentGolfer {
-  name: string;
-  probability: number;
-  rank: number;
-  movement_24h?: number;
-  sources?: Record<string, number>;
-}
-
-interface TournamentCardData {
-  name: string;
-  slug: string;
-  venue?: string | null;
-  tour?: string;
-  tour_label?: string;
-  is_major?: boolean;
-  schedule_status?: string | null;
-  start_date?: string | null;
-  end_date?: string | null;
-  golfers: TournamentGolfer[];
-  current_round?: number | null;
-  /** Optional: leaderboard data for live events */
-  leaderboard?: {
-    position: string;
-    name: string;
-    score: string;
-    hole: string;
-    win_prob: number;
-  }[];
-  /** Optional: TV channel */
-  broadcast?: string | null;
-}
-
 interface TournamentCardProps {
-  tournament: TournamentCardData;
-  /** Override link destination (default: /categories/golf/tournaments/{slug}) */
+  tournament: GolfTournament;
+  /** Optional leaderboard data (score, hole, position) from DataGolf */
+  leaderboard?: GolfLeaderboardPlayer[];
+  /** Override link destination */
   href?: string;
 }
 
 // ============================================================================
-// Main Component — Feed-Native Hero Card
+// Main Component — Feed-Native Hero (Variant 3)
 // ============================================================================
 
-export default function TournamentCard({ tournament, href: hrefOverride }: TournamentCardProps) {
-  const href = hrefOverride || `/categories/golf/tournaments/${tournament.slug}`;
-  const isLive = tournament.schedule_status === "in-progress";
-  const leader = tournament.leaderboard?.[0] || (tournament.golfers[0] ? {
-    position: "1",
-    name: tournament.golfers[0].name,
-    score: "—",
-    hole: "—",
-    win_prob: tournament.golfers[0].probability * 100,
-  } : null);
+export default function TournamentCard({ tournament, leaderboard, href: hrefOverride }: TournamentCardProps) {
+  const slug = tournament.slug || tournament.key.replace(/_/g, "-");
+  const href = hrefOverride || `/categories/golf/tournaments/${slug}`;
 
-  const chasers = tournament.leaderboard
-    ? tournament.leaderboard.slice(1, 5)
-    : tournament.golfers.slice(1, 5).map((g) => ({
-        position: String(g.rank),
-        name: g.name,
-        score: "—",
-        hole: "—",
-        win_prob: g.probability * 100,
-      }));
-
+  // Determine live status
+  const isLive = _isLive(tournament);
   const tourLabel = tournament.tour_label || tournament.tour?.toUpperCase() || "Golf";
-  const movement = tournament.golfers[0]?.movement_24h;
+
+  // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
+  const leader = _buildLeader(tournament, leaderboard);
+  const chasers = _buildChasers(tournament, leaderboard);
 
   return (
     <Link href={href} className="block">
@@ -79,44 +38,46 @@ export default function TournamentCard({ tournament, href: hrefOverride }: Tourn
           {/* Header row */}
           <div className="flex justify-between items-start mb-2">
             <div>
-              <div className="text-[11px] font-medium text-text-secondary">
-                ⛳ {tourLabel}
+              <div className="text-[11px] font-medium text-text-secondary flex items-center gap-1.5">
+                <span>⛳ {tourLabel}</span>
                 {isLive && (
-                  <span className="ml-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
                     <span className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />
-                    Round {tournament.current_round || "?"}
+                    {tournament.schedule_status === "in-progress" && tournament.start_date
+                      ? `Round ${_currentRound(tournament)}`
+                      : "LIVE"}
                   </span>
                 )}
                 {!isLive && tournament.start_date && (
-                  <span className="ml-1.5 text-text-tertiary">
-                    {formatTournamentDate(tournament.start_date, tournament.end_date)}
+                  <span className="text-text-tertiary">
+                    {_formatTournamentDate(tournament.start_date, tournament.end_date)}
                   </span>
                 )}
               </div>
               <div className="text-sm font-bold mt-0.5">{tournament.name}</div>
+              {tournament.venue && (
+                <div className="text-[11px] text-text-tertiary">{tournament.venue}</div>
+              )}
             </div>
-            {tournament.broadcast && (
-              <span className="text-[10px] font-semibold text-text-secondary px-1.5 py-0.5 rounded bg-gray-100 tracking-tight shrink-0">
-                {tournament.broadcast}
-              </span>
-            )}
+            {/* TV badge placeholder — would come from ESPN data */}
           </div>
 
-          {/* Hero probability */}
+          {/* Hero probability — leader */}
           {leader && (
             <div className="flex items-center gap-3 py-2.5 px-3 bg-gray-50 rounded-lg mb-2.5">
               <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
-                {leader.win_prob.toFixed(1)}
+                {leader.winProb.toFixed(1)}
                 <span className="text-base font-semibold">%</span>
               </div>
               <div>
                 <div className="text-sm font-semibold">{leader.name}</div>
                 <div className="text-xs text-text-secondary">
                   Leader
-                  {isLive && <> · {leader.score} · {leader.hole}</>}
-                  {movement != null && Math.abs(movement) > 0.001 && (
-                    <span className={movement > 0 ? " text-green-600 font-semibold" : " text-red-600 font-semibold"}>
-                      {" "}{movement > 0 ? "+" : ""}{(movement * 100).toFixed(1)}% today
+                  {leader.score && <> · {leader.score}</>}
+                  {leader.hole && <> · {leader.hole}</>}
+                  {leader.movement != null && Math.abs(leader.movement) > 0.001 && (
+                    <span className={leader.movement > 0 ? " text-green-600 font-semibold" : " text-red-600 font-semibold"}>
+                      {" "}{leader.movement > 0 ? "+" : ""}{(leader.movement * 100).toFixed(1)}% today
                     </span>
                   )}
                 </div>
@@ -133,14 +94,14 @@ export default function TournamentCard({ tournament, href: hrefOverride }: Tourn
                   className={`flex-1 text-center py-1 ${i < chasers.length - 1 ? "border-r border-border-light" : ""}`}
                 >
                   <div className="text-[11px] font-medium text-text-secondary truncate px-1">
-                    {lastName(c.name)}
+                    {_lastName(c.name)}
                   </div>
                   <div className="text-[15px] font-bold tabular-nums">
-                    {c.win_prob.toFixed(1)}%
+                    {c.winProb.toFixed(1)}%
                   </div>
-                  {isLive && (
+                  {(c.score || c.hole) && (
                     <div className="text-[10px] text-text-tertiary">
-                      {c.score} · {c.hole}
+                      {c.score}{c.score && c.hole ? " · " : ""}{c.hole}
                     </div>
                   )}
                 </div>
@@ -154,15 +115,78 @@ export default function TournamentCard({ tournament, href: hrefOverride }: Tourn
 }
 
 // ============================================================================
-// Helpers
+// Internal helpers
 // ============================================================================
 
-function lastName(name: string): string {
+interface CardGolfer {
+  name: string;
+  winProb: number;
+  score?: string | null;
+  hole?: string | null;
+  movement?: number | null;
+}
+
+function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardPlayer[]): CardGolfer | null {
+  if (leaderboard?.length) {
+    const lb = leaderboard[0];
+    return {
+      name: lb.name,
+      winProb: lb.win_prob,
+      score: lb.score,
+      hole: lb.thru && lb.thru !== "F" ? `H${lb.thru}` : (lb.thru === "F" ? "F" : undefined),
+      movement: lb.win_prob_change,
+    };
+  }
+  const g = tournament.golfers[0];
+  if (!g) return null;
+  return {
+    name: g.name,
+    winProb: g.probability * 100,
+    movement: g.movement_24h,
+  };
+}
+
+function _buildChasers(tournament: GolfTournament, leaderboard?: GolfLeaderboardPlayer[]): CardGolfer[] {
+  if (leaderboard && leaderboard.length > 1) {
+    return leaderboard.slice(1, 5).map((lb) => ({
+      name: lb.name,
+      winProb: lb.win_prob,
+      score: lb.score,
+      hole: lb.thru && lb.thru !== "F" ? `H${lb.thru}` : (lb.thru === "F" ? "F" : undefined),
+    }));
+  }
+  return tournament.golfers.slice(1, 5).map((g) => ({
+    name: g.name,
+    winProb: g.probability * 100,
+  }));
+}
+
+function _isLive(tournament: GolfTournament): boolean {
+  if (tournament.schedule_status === "in-progress") return true;
+  // Fallback: significant movement = in progress
+  if (tournament.golfers.some((g) => g.movement_24h !== null && Math.abs(g.movement_24h) >= 0.01)) return true;
+  // Fallback: between start_date and end_date
+  if (tournament.start_date && tournament.end_date) {
+    const now = new Date();
+    return now >= new Date(tournament.start_date) && now <= new Date(tournament.end_date);
+  }
+  return false;
+}
+
+function _currentRound(tournament: GolfTournament): string {
+  if (!tournament.start_date) return "?";
+  const start = new Date(tournament.start_date);
+  const now = new Date();
+  const daysDiff = Math.floor((now.getTime() - start.getTime()) / 86400000) + 1;
+  return String(Math.min(Math.max(daysDiff, 1), 4));
+}
+
+function _lastName(name: string): string {
   const parts = name.split(" ");
   return parts.length > 1 ? parts[parts.length - 1] : name;
 }
 
-function formatTournamentDate(start: string | null, end: string | null): string {
+function _formatTournamentDate(start: string | null, end: string | null): string {
   if (!start) return "";
   try {
     const s = new Date(start);
@@ -178,6 +202,3 @@ function formatTournamentDate(start: string | null, end: string | null): string 
     return "";
   }
 }
-
-// Re-export types for use by other components
-export type { TournamentCardData, TournamentGolfer };

@@ -21,6 +21,7 @@ import {
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
+import TournamentCard from "@/components/TournamentCard";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // ============================================================================
@@ -407,7 +408,6 @@ export default function GolfPage() {
                 tournaments={section.tournaments}
                 isFollowing={followedTours.has(section.tour)}
                 onToggleFollow={() => toggleFollow(section.tour)}
-                onClickTournament={setModalTournament}
               />
             ))}
 
@@ -787,14 +787,12 @@ function TourSection({
   tournaments,
   isFollowing,
   onToggleFollow,
-  onClickTournament,
 }: {
   tour: string;
   label: string;
   tournaments: GolfTournament[];
   isFollowing: boolean;
   onToggleFollow: () => void;
-  onClickTournament: (t: GolfTournament) => void;
 }) {
   const emoji = TOUR_EMOJI[tour] || "\u26F3";
   const isMajors = tour === "major";
@@ -821,28 +819,15 @@ function TourSection({
         )}
       </div>
 
-      {/* Majors use card grid, other tours use expandable rows */}
-      {isMajors ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {tournaments.map((tournament) => (
-            <TournamentCard
-              key={tournament.key}
-              tournament={tournament}
-              onClick={() => onClickTournament(tournament)}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {tournaments.map((tournament) => (
-            <ExpandableTournamentRow
-              key={tournament.key}
-              tournament={tournament}
-              onClickFull={() => onClickTournament(tournament)}
-            />
-          ))}
-        </div>
-      )}
+      {/* Tournament cards — same Variant 3 card used in feed */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {tournaments.map((tournament) => (
+          <TournamentCard
+            key={tournament.key}
+            tournament={tournament}
+          />
+        ))}
+      </div>
     </section>
   );
 }
