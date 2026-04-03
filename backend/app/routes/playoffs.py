@@ -517,7 +517,7 @@ _NON_PLAYOFF_MARKET_RE = re.compile(
     \bfreshmen\b          |   # Draft props
     \bupset\b             |   # "1+ upsets" props
     \bseed\s+margin\b     |   # "Biggest Upset Seed Margin"
-    \b#\d+\s+seed\b       |   # "#1 Seed", "#2 Seed" — regular season finish, not playoffs
+    \#\d+\s+seed\b        |   # "#1 Seed", "#2 Seed" — regular season finish, not playoffs
     \btop\s+seed\b        |   # "Top Seed" markets
     \bpick\b              |   # Draft pick markets
     \ball[- ]star\b       |   # All-Star markets
