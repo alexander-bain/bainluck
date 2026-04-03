@@ -30,7 +30,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 // Adapters
 // ============================================================================
 
-/** Convert ChampionshipGridResponse → ProgressionResponse for TournamentProgressionTable */
+/** Convert ChampionshipGridResponse -> ProgressionResponse for TournamentProgressionTable */
 function gridToProgression(grid: ChampionshipGridResponse): ProgressionResponse {
   const stages: ProgressionStage[] = grid.columns.map((c) => ({
     key: c.key,
@@ -83,7 +83,6 @@ function gridToProgression(grid: ChampionshipGridResponse): ProgressionResponse 
 // Helpers
 // ============================================================================
 
-/** Classify a tournament's status relative to now */
 function tournamentStatus(t: GolfTournament): "live" | "completed" | "upcoming" {
   const now = new Date();
   const start = t.start_date ? new Date(t.start_date) : t.commence_time ? new Date(t.commence_time) : null;
@@ -94,7 +93,6 @@ function tournamentStatus(t: GolfTournament): "live" | "completed" | "upcoming" 
   return "upcoming";
 }
 
-/** Sort tournaments: live first, then upcoming by date, then completed reverse-chronologically */
 function sortTournaments(a: GolfTournament, b: GolfTournament): number {
   const sa = tournamentStatus(a);
   const sb = tournamentStatus(b);
@@ -103,8 +101,8 @@ function sortTournaments(a: GolfTournament, b: GolfTournament): number {
 
   const dateA = a.commence_time ? new Date(a.commence_time).getTime() : 0;
   const dateB = b.commence_time ? new Date(b.commence_time).getTime() : 0;
-  if (sa === "completed") return dateB - dateA; // Most recent first
-  return dateA - dateB; // Soonest first
+  if (sa === "completed") return dateB - dateA;
+  return dateA - dateB;
 }
 
 // ============================================================================
@@ -164,7 +162,6 @@ export default function LeagueShowcasePage() {
         try {
           const sportKey = l.sport_keys[0];
           if (sportKey) {
-            // Map sport_key to grid slug (e.g., "basketball_nba" -> "nba")
             const gridSlug = sportKey.split("_").slice(1).join("_") || sportKey;
             const gridData = await fetchChampionshipGrid(gridSlug);
             if (!cancelled) setGrid(gridData);
@@ -182,11 +179,9 @@ export default function LeagueShowcasePage() {
     return () => { cancelled = true; };
   }, [sportSlug, leagueSlug]);
 
-  // Filter tournaments for this specific league/tour
   const { liveTournaments, upcomingTournaments, completedTournaments } = useMemo(() => {
     if (!golfData) return { liveTournaments: [] as GolfTournament[], upcomingTournaments: [] as GolfTournament[], completedTournaments: [] as GolfTournament[] };
 
-    // Filter by tour for golf
     const tourFilter = leagueSlug === "dpworld" ? "dp_world"
       : leagueSlug === "kft" ? "korn_ferry"
       : leagueSlug;
@@ -206,7 +201,6 @@ export default function LeagueShowcasePage() {
       else if (s === "upcoming") upcoming.push(t);
       else completed.push(t);
     }
-    // If no tour-specific filtering matched, show all (fallback for PGA which may not have tour field)
     if (live.length === 0 && upcoming.length === 0 && completed.length === 0 && leagueSlug === "pga") {
       const allSorted = [...golfData.tournaments].sort(sortTournaments);
       for (const t of allSorted) {
@@ -219,7 +213,6 @@ export default function LeagueShowcasePage() {
     return { liveTournaments: live, upcomingTournaments: upcoming, completedTournaments: completed };
   }, [golfData, leagueSlug]);
 
-  // Evolution chart market IDs from the current/first live tournament
   const evolutionMarketIds = useMemo(() => {
     const hero = liveTournaments[0] || upcomingTournaments[0];
     return hero?.market_ids || [];
@@ -227,18 +220,18 @@ export default function LeagueShowcasePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-        <div className="animate-pulse text-gray-400">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-text-muted">Loading...</div>
       </div>
     );
   }
 
   if (error || !league) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-400 mb-4">{error || "League not found"}</p>
-          <Link href={`/sport/${sportSlug}`} className="text-blue-400 hover:text-blue-300">
+          <p className="text-text-muted mb-4">{error || "League not found"}</p>
+          <Link href={`/sport/${sportSlug}`} className="text-accent-brand hover:underline">
             Back to {hierarchy?.name || sportSlug}
           </Link>
         </div>
@@ -249,26 +242,26 @@ export default function LeagueShowcasePage() {
   const heroTournament = liveTournaments[0] || upcomingTournaments[0];
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="min-h-screen">
       {/* Header */}
-      <div className="bg-gradient-to-b from-gray-900 to-gray-950 border-b border-gray-800">
+      <div className="border-b border-surface-border">
         <div className="max-w-5xl mx-auto px-4 py-8">
-          <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
-            <Link href="/" className="hover:text-white transition-colors">Home</Link>
+          <div className="flex items-center gap-2 text-sm text-text-muted mb-4">
+            <Link href="/" className="hover:text-text-primary transition-colors">Home</Link>
             <span>/</span>
-            <Link href={`/sport/${sportSlug}`} className="hover:text-white transition-colors">
+            <Link href={`/sport/${sportSlug}`} className="hover:text-text-primary transition-colors">
               {hierarchy?.name || sportSlug}
             </Link>
             <span>/</span>
-            <span className="text-white">{league.name}</span>
+            <span className="text-text-primary">{league.name}</span>
           </div>
-          <h1 className="text-3xl font-bold">{league.name}</h1>
+          <h1 className="text-3xl font-bold text-text-primary">{league.name}</h1>
           {golfData && (
-            <p className="text-gray-400 mt-2">
+            <p className="text-text-secondary mt-2">
               {liveTournaments.length > 0 && `${liveTournaments.length} live`}
-              {liveTournaments.length > 0 && upcomingTournaments.length > 0 && " · "}
+              {liveTournaments.length > 0 && upcomingTournaments.length > 0 && " \u00b7 "}
               {upcomingTournaments.length > 0 && `${upcomingTournaments.length} upcoming`}
-              {(liveTournaments.length > 0 || upcomingTournaments.length > 0) && completedTournaments.length > 0 && " · "}
+              {(liveTournaments.length > 0 || upcomingTournaments.length > 0) && completedTournaments.length > 0 && " \u00b7 "}
               {completedTournaments.length > 0 && `${completedTournaments.length} completed`}
             </p>
           )}
@@ -280,7 +273,7 @@ export default function LeagueShowcasePage() {
         {/* Hero: Current/Live Tournament */}
         {heroTournament && (
           <section>
-            <h2 className="text-lg font-semibold text-gray-300 mb-4">
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
               {liveTournaments.length > 0 ? "Live Now" : "Next Up"}
             </h2>
             <TournamentCard
@@ -291,10 +284,10 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
-        {/* Evolution Chart — championship race */}
+        {/* Evolution Chart */}
         {evolutionMarketIds.length > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-gray-300 mb-4">Odds Movement</h2>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Odds Movement</h2>
             <EvolutionView
               marketId={evolutionMarketIds[0]}
               marketName={heroTournament?.name || "Championship"}
@@ -307,7 +300,7 @@ export default function LeagueShowcasePage() {
         {/* Championship Grid (inline) */}
         {grid && grid.teams && grid.teams.length > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-gray-300 mb-4">Championship Odds</h2>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Championship Odds</h2>
             <TournamentProgressionTable
               data={gridToProgression(grid)}
               pageType="sport_league"
@@ -318,7 +311,7 @@ export default function LeagueShowcasePage() {
         {/* Upcoming Tournaments */}
         {upcomingTournaments.length > (heroTournament && tournamentStatus(heroTournament) === "upcoming" ? 1 : 0) && (
           <section>
-            <h2 className="text-lg font-semibold text-gray-300 mb-4">Upcoming</h2>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Upcoming</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {upcomingTournaments
                 .filter((t: GolfTournament) => t !== heroTournament)
@@ -336,8 +329,8 @@ export default function LeagueShowcasePage() {
         {/* Recently Completed */}
         {completedTournaments.length > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-gray-300 mb-4">Recently Completed</h2>
-            <p className="text-gray-500 text-sm mb-4">Showing pre-tournament odds</p>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Recently Completed</h2>
+            <p className="text-text-muted text-sm mb-4">Showing pre-tournament odds</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {completedTournaments.slice(0, 6).map((t: GolfTournament) => (
                 <TournamentCard
@@ -350,13 +343,13 @@ export default function LeagueShowcasePage() {
           </section>
         )}
 
-        {/* Empty state for non-golf sports (data coming soon) */}
+        {/* Empty state for non-golf sports */}
         {sportSlug !== "golf" && !grid && (
           <div className="text-center py-16">
-            <p className="text-gray-500 text-lg">
+            <p className="text-text-secondary text-lg">
               {league.name} page coming soon
             </p>
-            <p className="text-gray-600 text-sm mt-2">
+            <p className="text-text-muted text-sm mt-2">
               Event cards and championship grid will appear here
             </p>
           </div>

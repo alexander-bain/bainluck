@@ -10,13 +10,70 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 
 // Showcase event type groupings for display
 const SHOWCASE_TYPE_ORDER = [
-  { type: "major", label: "Men's Majors" },
-  { type: "womens_major", label: "Women's Majors" },
+  { type: "major", label: "Men\u2019s Majors" },
+  { type: "womens_major", label: "Women\u2019s Majors" },
   { type: "cup", label: "Cups & Team Events" },
   { type: "grand_slam", label: "Grand Slams" },
   { type: "tournament", label: "Tournaments" },
   { type: "championship", label: "Championships" },
 ];
+
+// League accent colors for visual cards
+const LEAGUE_COLORS: Record<string, { bg: string; accent: string; icon: string }> = {
+  // Golf
+  pga: { bg: "bg-emerald-50", accent: "text-emerald-700", icon: "\u26f3" },
+  dpworld: { bg: "bg-blue-50", accent: "text-blue-700", icon: "\u26f3" },
+  lpga: { bg: "bg-pink-50", accent: "text-pink-700", icon: "\u26f3" },
+  liv: { bg: "bg-orange-50", accent: "text-orange-700", icon: "\u26f3" },
+  kft: { bg: "bg-teal-50", accent: "text-teal-700", icon: "\u26f3" },
+  // Basketball
+  nba: { bg: "bg-orange-50", accent: "text-orange-700", icon: "\ud83c\udfc0" },
+  wnba: { bg: "bg-orange-50", accent: "text-orange-700", icon: "\ud83c\udfc0" },
+  ncaab: { bg: "bg-blue-50", accent: "text-blue-700", icon: "\ud83c\udfc0" },
+  wncaab: { bg: "bg-blue-50", accent: "text-blue-700", icon: "\ud83c\udfc0" },
+  // Football
+  nfl: { bg: "bg-green-50", accent: "text-green-800", icon: "\ud83c\udfc8" },
+  ncaaf: { bg: "bg-red-50", accent: "text-red-700", icon: "\ud83c\udfc8" },
+  cfl: { bg: "bg-red-50", accent: "text-red-700", icon: "\ud83c\udfc8" },
+  ufl: { bg: "bg-indigo-50", accent: "text-indigo-700", icon: "\ud83c\udfc8" },
+  // Hockey
+  nhl: { bg: "bg-sky-50", accent: "text-sky-700", icon: "\ud83c\udfd2" },
+  // Baseball
+  mlb: { bg: "bg-red-50", accent: "text-red-700", icon: "\u26be" },
+  ncaa: { bg: "bg-blue-50", accent: "text-blue-700", icon: "\u26be" },
+  // Soccer
+  epl: { bg: "bg-purple-50", accent: "text-purple-700", icon: "\u26bd" },
+  mls: { bg: "bg-blue-50", accent: "text-blue-700", icon: "\u26bd" },
+  laliga: { bg: "bg-orange-50", accent: "text-orange-700", icon: "\u26bd" },
+  bundesliga: { bg: "bg-red-50", accent: "text-red-700", icon: "\u26bd" },
+  seriea: { bg: "bg-green-50", accent: "text-green-700", icon: "\u26bd" },
+  ligue1: { bg: "bg-blue-50", accent: "text-blue-700", icon: "\u26bd" },
+  ucl: { bg: "bg-indigo-50", accent: "text-indigo-700", icon: "\u26bd" },
+  // Tennis
+  atp: { bg: "bg-green-50", accent: "text-green-700", icon: "\ud83c\udfbe" },
+  wta: { bg: "bg-purple-50", accent: "text-purple-700", icon: "\ud83c\udfbe" },
+  // MMA
+  ufc: { bg: "bg-red-50", accent: "text-red-700", icon: "\ud83e\udd4a" },
+};
+
+const DEFAULT_LEAGUE_COLOR = { bg: "bg-surface-elevated", accent: "text-text-primary", icon: "\ud83c\udfc6" };
+
+// Showcase event estimated dates (approximate, for display when no odds yet)
+const SHOWCASE_DATES: Record<string, string> = {
+  "The Masters": "April 2026",
+  "PGA Championship": "May 2026",
+  "U.S. Open": "June 2026",
+  "The Open Championship": "July 2026",
+  "Chevron Championship": "April 2026",
+  "KPMG Women's PGA Championship": "June 2026",
+  "U.S. Women's Open": "June 2026",
+  "AIG Women's Open": "August 2026",
+  "The Evian Championship": "July 2026",
+  "Ryder Cup": "September 2027",
+  "Presidents Cup": "September 2026",
+  "Walker Cup": "September 2027",
+  "Solheim Cup": "September 2027",
+};
 
 export default function SportHubPage() {
   const params = useParams();
@@ -62,18 +119,18 @@ export default function SportHubPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-        <div className="animate-pulse text-gray-400">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-text-muted">Loading...</div>
       </div>
     );
   }
 
   if (error || !hierarchy) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-400 mb-4">{error || "Sport not found"}</p>
-          <Link href="/" className="text-blue-400 hover:text-blue-300">
+          <p className="text-text-muted mb-4">{error || "Sport not found"}</p>
+          <Link href="/" className="text-accent-brand hover:underline">
             Back to home
           </Link>
         </div>
@@ -94,7 +151,6 @@ export default function SportHubPage() {
     const nameLower = eventName.toLowerCase();
     return golfTournaments.find((t: GolfTournament) => {
       const tName = t.name.toLowerCase();
-      // Fuzzy match: "The Masters" matches "Masters Tournament", etc.
       return tName.includes(nameLower) || nameLower.includes(tName)
         || (nameLower.includes("masters") && tName.includes("masters"))
         || (nameLower.includes("open") && tName.includes("open") && !tName.includes("women"))
@@ -104,17 +160,17 @@ export default function SportHubPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="min-h-screen">
       {/* Header */}
-      <div className="bg-gradient-to-b from-gray-900 to-gray-950 border-b border-gray-800">
+      <div className="border-b border-surface-border">
         <div className="max-w-5xl mx-auto px-4 py-8">
-          <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
-            <Link href="/" className="hover:text-white transition-colors">Home</Link>
+          <div className="flex items-center gap-2 text-sm text-text-muted mb-4">
+            <Link href="/" className="hover:text-text-primary transition-colors">Home</Link>
             <span>/</span>
-            <span className="text-white">{hierarchy.name}</span>
+            <span className="text-text-primary">{hierarchy.name}</span>
           </div>
-          <h1 className="text-3xl font-bold">{hierarchy.name}</h1>
-          <p className="text-gray-400 mt-2">
+          <h1 className="text-3xl font-bold text-text-primary">{hierarchy.name}</h1>
+          <p className="text-text-secondary mt-2">
             {hierarchy.leagues.length} league{hierarchy.leagues.length !== 1 ? "s" : ""}
           </p>
         </div>
@@ -123,36 +179,43 @@ export default function SportHubPage() {
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-10">
         {/* Leagues */}
         <section>
-          <h2 className="text-lg font-semibold text-gray-300 mb-4">Leagues</h2>
+          <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">Leagues</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {hierarchy.leagues.map((league: SportLeague) => (
-              <Link
-                key={league.slug}
-                href={`/sport/${sportSlug}/${league.slug}`}
-                className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 hover:bg-gray-800/50 transition-all group"
-              >
-                <h3 className="text-white font-semibold text-lg group-hover:text-blue-400 transition-colors">
-                  {league.name}
-                </h3>
-                <p className="text-gray-500 text-sm mt-1">
-                  View schedule & odds
-                </p>
-              </Link>
-            ))}
+            {hierarchy.leagues.map((league: SportLeague) => {
+              const colors = LEAGUE_COLORS[league.slug] || DEFAULT_LEAGUE_COLOR;
+              return (
+                <Link
+                  key={league.slug}
+                  href={`/sport/${sportSlug}/${league.slug}`}
+                  className={`${colors.bg} rounded-xl p-5 border border-surface-border hover:shadow-md hover:-translate-y-0.5 transition-all group`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{colors.icon}</span>
+                    <div>
+                      <h3 className={`${colors.accent} font-semibold text-lg group-hover:underline`}>
+                        {league.name}
+                      </h3>
+                      <p className="text-text-muted text-sm">
+                        View schedule & odds
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </section>
 
         {/* Showcase Events (Majors, Cups, etc.) */}
         {showcaseGroups.map((group) => (
           <section key={group.type}>
-            <h2 className="text-lg font-semibold text-gray-300 mb-4">{group.label}</h2>
+            <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">{group.label}</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {group.events.map((event: SportShowcaseEvent) => {
                 const tournament = sportSlug === "golf" ? findGolfTournament(event.name) : undefined;
 
                 if (tournament && tournament.golfers && tournament.golfers.length > 0) {
                   const slug = tournament.slug || tournament.key.replace(/_/g, "-");
-                  // Rich card with odds data
                   return (
                     <TournamentCard
                       key={event.name}
@@ -162,15 +225,19 @@ export default function SportHubPage() {
                   );
                 }
 
-                // Fallback: simple card
+                // Fallback card for events without odds yet
+                const estimatedDate = SHOWCASE_DATES[event.name];
                 return (
                   <div
                     key={event.name}
-                    className="bg-gray-900 border border-gray-800 rounded-xl p-5"
+                    className="bg-surface-card border border-surface-border rounded-xl p-5"
                   >
-                    <h3 className="text-white font-medium">{event.name}</h3>
-                    <p className="text-gray-500 text-sm mt-1 capitalize">
-                      {event.type.replace(/_/g, " ")}
+                    <h3 className="text-text-primary font-medium">{event.name}</h3>
+                    <p className="text-text-muted text-sm mt-1">
+                      {estimatedDate || "Date TBD"}
+                    </p>
+                    <p className="text-text-muted text-xs mt-2">
+                      Odds available closer to the event
                     </p>
                   </div>
                 );
