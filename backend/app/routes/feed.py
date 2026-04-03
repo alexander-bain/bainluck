@@ -173,6 +173,11 @@ async def get_feed(
                     if away_team:
                         d["away_team_data"] = _format_team_data(away_team)
 
+    # === SCORE GOLF TOURNAMENTS ===
+    tournament_items = await _score_golf_tournaments(db, now, sport)
+    if tournament_items:
+        feed_items.extend(tournament_items)
+
     # === SCORE FUTURES ===
     if include_futures:
         futures_items = await _score_futures(db, now, sport, ctx, my_teams_only=my_teams_only, my_team_names=my_team_names, tag_filter=dynamic_tag_filter or None, static_tag_filter=static_tag_filter or None)
@@ -1274,6 +1279,207 @@ def _outcomes_overlap(item_a: dict, item_b: dict) -> bool:
     if not names_a or not names_b:
         return True
     return bool(names_a & names_b)
+
+
+# ============================================================================
+# Golf Tournament Feed Items
+# ============================================================================
+
+# In-memory cache for golf tournament data (avoids re-querying every feed call)
+_golf_cache: dict[str, tuple[float, list[dict]]] = {}
+_GOLF_CACHE_TTL = 120  # 2 minutes
+
+
+async def _score_golf_tournaments(
+    db: AsyncSession,
+    now: datetime,
+    sport_filter: Optional[str],
+) -> list[dict]:
+    """Score golf tournaments for the unified feed.
+
+    Calls the golf landing page endpoint internally to get tournament data,
+    caches the result, and scores each tournament for feed ranking.
+    Returns feed items with type="tournament".
+    """
+    # If sport filter is set and doesn't match golf, skip
+    if sport_filter and sport_filter not in ("golf", "all"):
+        return []
+
+    import time as _time
+
+    cache_key = "golf_tournaments"
+    if cache_key in _golf_cache:
+        cached_at, cached_items = _golf_cache[cache_key]
+        if _time.time() - cached_at < _GOLF_CACHE_TTL:
+            return cached_items
+
+    try:
+        from app.routes.golf import get_golf
+        golf_data = await get_golf(db=db)
+    except Exception as e:
+        logger.warning("Feed: failed to load golf tournaments: %s", e)
+        return []
+
+    tournaments = golf_data.get("tournaments", [])
+    if not tournaments:
+        _golf_cache[cache_key] = (_time.time(), [])
+        return []
+
+    feed_items: list[dict] = []
+
+    for t in tournaments:
+        # Only include tournaments with golfer data
+        golfers = t.get("golfers", [])
+        if not golfers:
+            continue
+
+        # Only include winner/outright markets (skip top-20, make-cut, etc.)
+        is_winner_market = t.get("is_tour_event", False) or t.get("is_major", False)
+        # For non-tour events, check market names for winner pattern
+        if not is_winner_market:
+            market_names = t.get("market_names", [])
+            is_winner_market = any(
+                "winner" in n.lower() or "outright" in n.lower()
+                for n in market_names
+            )
+        if not is_winner_market:
+            continue
+
+        # Score the tournament
+        score = _score_tournament(t, now)
+        if score <= 0:
+            continue
+
+        # Build the reason text
+        leader = golfers[0]
+        leader_pct = round(leader["probability"] * 100, 1)
+        reason = f"{t.get('tour_label', 'Golf')}: {leader['name']} leads at {leader_pct}%"
+        if leader.get("movement_24h") and abs(leader["movement_24h"]) >= 0.01:
+            mv = leader["movement_24h"]
+            direction = "up" if mv > 0 else "down"
+            reason += f" ({direction} {abs(round(mv * 100, 1))}% today)"
+
+        # Build headline
+        headline = None
+        is_live = _tournament_is_live(t, now)
+        if is_live:
+            headline = "Live"
+        elif t.get("start_date"):
+            start = datetime.fromisoformat(t["start_date"])
+            days_until = (start.date() - now.date()).days
+            if days_until <= 0:
+                headline = "Today"
+            elif days_until == 1:
+                headline = "Tomorrow"
+            elif days_until <= 7:
+                headline = "This week"
+
+        # Build tournament feed item data
+        data = {
+            "key": t.get("key"),
+            "name": t.get("name"),
+            "slug": t.get("slug"),
+            "tour": t.get("tour"),
+            "tour_label": t.get("tour_label"),
+            "is_major": t.get("is_major", False),
+            "venue": t.get("venue"),
+            "location": t.get("location"),
+            "start_date": t.get("start_date"),
+            "end_date": t.get("end_date"),
+            "schedule_status": t.get("schedule_status"),
+            "commence_time": t.get("commence_time"),
+            "resolution_date": t.get("resolution_date"),
+            "golfers": [
+                {
+                    "name": g["name"],
+                    "probability": g["probability"],
+                    "rank": g["rank"],
+                    "movement_24h": g.get("movement_24h"),
+                }
+                for g in golfers[:10]  # Top 10 for feed
+            ],
+            "market_ids": t.get("market_ids", []),
+            "source_count": len(set(t.get("market_sources", []))),
+        }
+
+        feed_items.append({
+            "type": "tournament",
+            "score": score,
+            "reason": reason,
+            "headline": headline,
+            "data": data,
+            "_sort_time": (
+                datetime.fromisoformat(t["commence_time"]).timestamp()
+                if t.get("commence_time") else 0
+            ),
+        })
+
+    _golf_cache[cache_key] = (_time.time(), feed_items)
+    return feed_items
+
+
+def _tournament_is_live(t: dict, now: datetime) -> bool:
+    """Check if a tournament is currently live."""
+    if t.get("schedule_status") == "in-progress":
+        return True
+    if t.get("start_date") and t.get("end_date"):
+        try:
+            start = datetime.fromisoformat(t["start_date"]).replace(tzinfo=timezone.utc)
+            end = datetime.fromisoformat(t["end_date"]).replace(tzinfo=timezone.utc)
+            if start <= now <= end + timedelta(hours=12):
+                return True
+        except (ValueError, TypeError):
+            pass
+    # Fallback: significant movement = in progress
+    golfers = t.get("golfers", [])
+    if any(g.get("movement_24h") and abs(g["movement_24h"]) >= 0.01 for g in golfers):
+        return True
+    return False
+
+
+def _score_tournament(t: dict, now: datetime) -> int:
+    """Score a golf tournament for feed ranking (0-100)."""
+    score = 30  # Base score
+
+    # Live tournaments score high
+    if _tournament_is_live(t, now):
+        score += 35
+
+    # Majors get a boost
+    if t.get("is_major"):
+        score += 15
+
+    # Tournaments starting soon get a boost
+    if t.get("start_date"):
+        try:
+            start = datetime.fromisoformat(t["start_date"])
+            days_until = (start.date() - now.date()).days
+            if days_until <= 0:
+                score += 20
+            elif days_until <= 3:
+                score += 15
+            elif days_until <= 7:
+                score += 10
+        except (ValueError, TypeError):
+            pass
+
+    # Movement in leader odds = more interesting
+    golfers = t.get("golfers", [])
+    if golfers and golfers[0].get("movement_24h"):
+        mv = abs(golfers[0]["movement_24h"])
+        if mv >= 0.05:
+            score += 10
+        elif mv >= 0.02:
+            score += 5
+
+    # Multi-source data = more reliable = more interesting
+    sources = set(t.get("market_sources", []))
+    if len(sources) >= 3:
+        score += 5
+    elif len(sources) >= 2:
+        score += 3
+
+    return min(score, 100)
 
 
 @router.get("/tag-counts")

@@ -912,12 +912,36 @@ export interface FeedFuturesData {
   market_tags?: string[];
 }
 
+export interface FeedTournamentData {
+  key: string;
+  name: string;
+  slug?: string;
+  tour?: string;
+  tour_label?: string;
+  is_major: boolean;
+  venue?: string | null;
+  location?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  schedule_status?: string | null;
+  commence_time?: string | null;
+  resolution_date?: string | null;
+  golfers: {
+    name: string;
+    probability: number;
+    rank: number;
+    movement_24h: number | null;
+  }[];
+  market_ids: number[];
+  source_count: number;
+}
+
 export interface FeedItem {
-  type: "event" | "futures";
+  type: "event" | "futures" | "tournament";
   score: number;
   reason: string;
   headline: string | null;
-  data: FeedEventData | FeedFuturesData;
+  data: FeedEventData | FeedFuturesData | FeedTournamentData;
   // Personalization fields (only present when authenticated + score was adjusted)
   personalized?: boolean;
   base_score?: number;

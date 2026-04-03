@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, GolfTournament } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
+import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
 
@@ -30,25 +31,41 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
     );
   }
 
-  const futuresData = item.data as FeedFuturesData;
-
-  // Golf tournament winner markets render as tournament cards
-  if (_isGolfTournamentMarket(futuresData)) {
-    return (
-      <GolfTournamentFeedCard
-        item={item}
-        data={futuresData}
-        onThumbsUp={onThumbsUp}
-        onThumbsDown={onThumbsDown}
-        category={category}
-      />
-    );
+  if (item.type === "tournament") {
+    const td = item.data as FeedTournamentData;
+    // Adapt FeedTournamentData → GolfTournament shape for TournamentCard
+    const tournament: GolfTournament = {
+      key: td.key,
+      name: td.name,
+      slug: td.slug,
+      is_major: td.is_major,
+      tour: td.tour,
+      tour_label: td.tour_label,
+      commence_time: td.commence_time ?? null,
+      resolution_date: td.resolution_date ?? null,
+      start_date: td.start_date,
+      end_date: td.end_date,
+      venue: td.venue,
+      location: td.location,
+      schedule_status: td.schedule_status,
+      market_ids: td.market_ids,
+      golfers: td.golfers.map((g) => ({
+        name: g.name,
+        probability: g.probability,
+        rank: g.rank,
+        movement_24h: g.movement_24h,
+        american_odds: null,
+        opening_probability: null,
+        sources: {},
+      })),
+    };
+    return <TournamentCard tournament={tournament} />;
   }
 
   return (
     <FuturesFeedCard
       item={item}
-      data={futuresData}
+      data={item.data as FeedFuturesData}
       onThumbsUp={onThumbsUp}
       onThumbsDown={onThumbsDown}
       category={category}
@@ -255,150 +272,6 @@ function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | un
     >
       {initials}
     </div>
-  );
-}
-
-// ============================================================================
-// Golf Tournament Detection
-// ============================================================================
-
-/** Is this futures market a golf tournament winner/outright market? */
-function _isGolfTournamentMarket(data: FeedFuturesData): boolean {
-  if (data.llm_sport_category !== "golf") return false;
-  const name = data.name.toLowerCase();
-  // Match winner/outright markets, not top-20, make-cut, matchups, etc.
-  return (
-    name.includes("winner") ||
-    name.includes("outright") ||
-    (name.includes("champion") && !name.includes("championship"))
-  );
-}
-
-/** Extract a clean tournament name from a market name like "Valero Texas Open - Winner" */
-function _tournamentName(marketName: string): string {
-  return marketName
-    .replace(/\s*[-–:]\s*(Winner|Outright|Champion|To Win).*$/i, "")
-    .replace(/^(?:PGA Tour|LPGA|European Tour|DP World Tour|LIV Golf)[:\s]+/i, "")
-    .trim();
-}
-
-/** Extract tour label from market name, e.g. "PGA Tour: Valero..." → "PGA Tour" */
-function _tourLabel(marketName: string): string {
-  const match = marketName.match(/^(PGA Tour|LPGA|European Tour|DP World Tour|LIV Golf)[:\s]/i);
-  return match ? match[1] : "Golf";
-}
-
-// ============================================================================
-// Golf Tournament Feed Card
-// ============================================================================
-
-function GolfTournamentFeedCard({
-  item,
-  data,
-  onThumbsUp,
-  onThumbsDown,
-  category,
-}: {
-  item: FeedItem;
-  data: FeedFuturesData;
-  onThumbsUp?: (category: string) => void;
-  onThumbsDown?: (category: string) => void;
-  category?: string;
-}) {
-  const tournamentName = _tournamentName(data.name);
-  const tourLabel = _tourLabel(data.name);
-  const leader = data.top_outcomes?.[0];
-  const chasers = data.top_outcomes?.slice(1, 5) ?? [];
-  const resolvesText = formatResolutionDate(data.resolution_date);
-
-  // Detect if resolving soon (proxy for "live" — tournament is this week)
-  const isThisWeek = data.resolution_date
-    ? new Date(data.resolution_date).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000
-    : false;
-
-  return (
-    <Link href={`/futures/${data.id}`}>
-      <div className="rounded-card border border-surface-border bg-surface-card hover:bg-surface-elevated transition-all cursor-pointer overflow-hidden">
-        <div className="p-3.5 px-4">
-          {/* Header */}
-          <div className="flex justify-between items-start mb-2">
-            <div>
-              <div className="text-[11px] font-medium text-text-secondary flex items-center gap-1.5">
-                <span>⛳ {tourLabel}</span>
-                {isThisWeek && (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
-                    <span className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />
-                    LIVE
-                  </span>
-                )}
-                {!isThisWeek && resolvesText && (
-                  <span className="text-text-tertiary">{resolvesText.replace("Resolves ", "")}</span>
-                )}
-              </div>
-              <div className="text-sm font-bold mt-0.5">{tournamentName}</div>
-            </div>
-            {data.source_count > 1 && (
-              <span className="text-[10px] font-semibold text-text-secondary px-1.5 py-0.5 rounded bg-gray-100 tracking-tight shrink-0">
-                {data.source_count} sources
-              </span>
-            )}
-          </div>
-
-          {/* Hero probability — leader */}
-          {leader && leader.probability !== null && (
-            <div className="flex items-center gap-3 py-2.5 px-3 bg-gray-50 rounded-lg mb-2.5">
-              <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
-                {(leader.probability * 100).toFixed(1)}
-                <span className="text-base font-semibold">%</span>
-              </div>
-              <div>
-                <div className="text-sm font-semibold">{leader.name}</div>
-                <div className="text-xs text-text-secondary">
-                  Leader
-                  {leader.movement !== null && leader.movement !== undefined && leader.movement !== 0 && (
-                    <span className={leader.movement > 0 ? " text-green-600 font-semibold" : " text-red-600 font-semibold"}>
-                      {" "}{leader.movement > 0 ? "+" : ""}{(leader.movement * 100).toFixed(1)}% today
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Chasers strip */}
-          {chasers.length > 0 && (
-            <div className="flex border-t border-surface-border/50 pt-2">
-              {chasers.map((c, i) => (
-                <div
-                  key={c.name}
-                  className={`flex-1 text-center py-1 ${i < chasers.length - 1 ? "border-r border-surface-border/50" : ""}`}
-                >
-                  <div className="text-[11px] font-medium text-text-secondary truncate px-1">
-                    {c.name.split(" ").pop()}
-                  </div>
-                  <div className="text-[15px] font-bold tabular-nums">
-                    {c.probability !== null ? `${(c.probability * 100).toFixed(1)}%` : "—"}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Bottom: reason + thumbs */}
-          {item.reason && (
-            <div className="flex items-center justify-between gap-2 mt-2">
-              <ReasonBadge text={item.reason} truncate />
-              <ThumbButtons category={category} onThumbsUp={onThumbsUp} onThumbsDown={onThumbsDown} />
-            </div>
-          )}
-          {!item.reason && (
-            <div className="flex items-center justify-end mt-1">
-              <ThumbButtons category={category} onThumbsUp={onThumbsUp} onThumbsDown={onThumbsDown} />
-            </div>
-          )}
-        </div>
-      </div>
-    </Link>
   );
 }
 
