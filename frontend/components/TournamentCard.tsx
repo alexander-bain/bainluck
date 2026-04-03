@@ -48,9 +48,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                       : "LIVE"}
                   </span>
                 )}
-                {!isLive && tournament.start_date && (
+                {!isLive && (tournament.start_date || tournament.commence_time) && (
                   <span className="text-text-tertiary">
-                    {_formatTournamentDate(tournament.start_date, tournament.end_date)}
+                    {_formatTournamentDate(tournament.start_date || tournament.commence_time, tournament.end_date)}
                   </span>
                 )}
               </div>

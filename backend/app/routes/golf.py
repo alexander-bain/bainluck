@@ -236,7 +236,8 @@ _NON_WINNER_MARKET_RE = re.compile(
     r"\bnumber\s+of\b|"          # "Number of birdies" etc.
     r"\bhole[- ]in[- ]one\b|"    # Hole-in-one props
     r"\bplayoff\b|"              # "Will there be a playoff"
-    r"\bwill\b.*\bplay\b"        # "Will X play in..."
+    r"\bwill\b.*\bplay\b|"       # "Will X play in..."
+    r"\bcaptain\b"               # "U.S. Team Captain at 2027 Ryder Cup"
     r")",
     re.I,
 )
@@ -572,7 +573,32 @@ def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) 
         key = re.sub(r"[^a-z0-9]+", "_", tour_event.lower()).strip("_")
         return key
 
+    # Priority 4: Generic tournament name extraction — strip market type
+    # suffixes (" - Winner", " - Top 5 Finish", etc.) and slugify.
+    # Handles DataGolf markets ("LECOM Suncoast Classic - Winner") and other
+    # well-structured names that don't match hardcoded patterns.
+    clean = re.sub(
+        r"\s*[-–]\s*(?:Winner|Top\s+\d+(?:\s+Finish)?|Make\s+(?:the\s+)?Cut|Round\s+\d+\s+Leader)\s*$",
+        "", market_name, flags=re.I,
+    )
+    # Also strip "Winner" / "Champion" without dash separator
+    clean = re.sub(r"\s+(?:Winner|Champion)\s*\??\s*$", "", clean, flags=re.I)
+    # Strip common prefixes
+    clean = re.sub(r"^(?:PGA\s+Tour|DP\s+World\s+Tour|European\s+Tour):\s*", "", clean, flags=re.I)
+    # Strip trailing "?"
+    clean = re.sub(r"\s*\?\s*$", "", clean)
+    key = re.sub(r"[^a-z0-9]+", "_", clean.lower()).strip("_")
+    if key and len(key) >= 3:
+        return key
+
     return "other"
+
+
+# Maximum probability for any single golfer from Odds API in a winner market.
+# The Odds API can return stale/erroneous bookmaker lines (e.g., a single
+# bookmaker listing Tiger Woods at 41% for The Open). No golfer realistically
+# exceeds 25% pre-tournament odds from sportsbooks alone.
+_MAX_ODDS_API_GOLF_PROB = 0.25
 
 
 @router.get("")
@@ -716,6 +742,16 @@ async def get_golf(
                     continue
 
                 prob = float(outcome.current_probability)
+
+                # Odds API sanity cap: stale bookmaker lines can show absurd
+                # values (e.g., Tiger Woods at 41% for The Open from one book).
+                if source == "odds_api" and prob > _MAX_ODDS_API_GOLF_PROB:
+                    logger.warning(
+                        "Golf sanity: capping %s from %.1f%% to %.1f%% (source=%s, tournament=%s)",
+                        outcome.name, prob * 100, _MAX_ODDS_API_GOLF_PROB * 100,
+                        source, tourn_key,
+                    )
+                    prob = _MAX_ODDS_API_GOLF_PROB
 
                 # Skip Kalshi entries at exactly 0.5 — illiquid binary markets
                 if source == "kalshi" and prob == 0.5:
