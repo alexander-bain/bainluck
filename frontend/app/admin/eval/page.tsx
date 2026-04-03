@@ -77,6 +77,16 @@ const NON_SPORTS_CATEGORIES = [
   "other",
 ];
 
+interface Override {
+  id: number;
+  type: string;
+  source_name: string;
+  target_name: string | null;
+  decision: string;
+  context: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
 function getStoredDecisions(): EvalDecision[] {
@@ -97,6 +107,48 @@ function storeDecision(decision: EvalDecision) {
 function getSeenIds(): Set<string> {
   const decisions = getStoredDecisions();
   return new Set(decisions.map((d) => d.market_name));
+}
+
+// ─── Override API ─────────────────────────────────────────────────────────────
+
+async function createOverride(
+  league: string,
+  overrideType: string,
+  sourceName: string,
+  reason: string,
+  decision: string = "approved",
+) {
+  const params = new URLSearchParams({
+    secret: "any",
+    override_type: overrideType,
+    source_name: sourceName,
+    decision,
+    reason,
+  });
+  const res = await fetch(
+    `${API_URL}/api/admin/matching-review/${league}/override?${params}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(`Override API error: ${res.status}`);
+  return res.json();
+}
+
+async function fetchOverrides(league: string): Promise<Override[]> {
+  const res = await fetch(
+    `${API_URL}/api/admin/matching-review/${league}?secret=any`,
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.overrides || [];
+}
+
+async function deleteOverride(league: string, id: number) {
+  const res = await fetch(
+    `${API_URL}/api/admin/matching-review/${league}/override/${id}?secret=any`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(`Delete override error: ${res.status}`);
+  return res.json();
 }
 
 // ─── Components ───────────────────────────────────────────────────────────────
@@ -600,16 +652,49 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
     never: decisions.filter((d) => d.decision === "never").length,
   };
 
+  // Active overrides from the database
+  const [overrides, setOverrides] = useState<Record<string, Override[]>>({});
+  const [overridesLoading, setOverridesLoading] = useState(true);
+  const [selectedLeague, setSelectedLeague] = useState("golf");
+
+  const loadOverrides = useCallback(async () => {
+    setOverridesLoading(true);
+    try {
+      const results: Record<string, Override[]> = {};
+      for (const l of GRID_LEAGUES) {
+        results[l.slug] = await fetchOverrides(l.slug);
+      }
+      setOverrides(results);
+    } finally {
+      setOverridesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadOverrides();
+  }, [loadOverrides]);
+
+  const handleDeleteOverride = async (league: string, id: number) => {
+    try {
+      await deleteOverride(league, id);
+      loadOverrides();
+    } catch {
+      // ignore
+    }
+  };
+
+  const leagueOverrides = overrides[selectedLeague] || [];
+  const totalOverrides = Object.values(overrides).reduce((s, arr) => s + arr.length, 0);
+
   return (
     <div>
       {/* Stats */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {[
-          { label: "Correct", value: stats.correct, color: "#4ade80" },
-          { label: "Wrong", value: stats.wrong, color: "#f87171" },
+          { label: "Merge OK", value: stats.correct, color: "#4ade80" },
+          { label: "Bad Match", value: stats.wrong, color: "#f87171" },
           { label: "Feature", value: stats.interesting, color: "#60a5fa" },
           { label: "Skip", value: stats.skip, color: "#94a3b8" },
-          { label: "Never", value: stats.never, color: "#f87171" },
         ].map((s) => (
           <div
             key={s.label}
@@ -626,6 +711,96 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
             <div style={{ fontSize: 11, color: "#64748b" }}>{s.label}</div>
           </div>
         ))}
+      </div>
+
+      {/* Active Overrides from DB */}
+      <div style={{ marginBottom: 24 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: "#93c5fd", marginBottom: 10 }}>
+          Active Overrides ({totalOverrides})
+        </h3>
+        <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
+          {GRID_LEAGUES.map((l) => {
+            const count = (overrides[l.slug] || []).length;
+            return (
+              <button
+                key={l.slug}
+                onClick={() => setSelectedLeague(l.slug)}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  border: selectedLeague === l.slug ? "2px solid #3b82f6" : "1px solid #333",
+                  background: selectedLeague === l.slug ? "#1e3a5f" : "transparent",
+                  color: selectedLeague === l.slug ? "#93c5fd" : "#888",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                {l.emoji} {l.label} {count > 0 && <span style={{ color: "#64748b" }}>({count})</span>}
+              </button>
+            );
+          })}
+        </div>
+        {overridesLoading ? (
+          <div style={{ color: "#64748b", fontSize: 13, padding: 10 }}>Loading overrides...</div>
+        ) : leagueOverrides.length === 0 ? (
+          <div style={{ color: "#64748b", fontSize: 13, padding: 10 }}>
+            No overrides for {selectedLeague.toUpperCase()}.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {leagueOverrides.map((o) => (
+              <div
+                key={o.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px",
+                  background: "#161b22",
+                  borderRadius: 8,
+                  borderLeft: `3px solid ${o.decision === "approved" ? "#4ade80" : o.decision === "rejected" ? "#f87171" : "#64748b"}`,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 600 }}>
+                    {o.source_name}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, fontSize: 11, color: "#64748b", flexWrap: "wrap" }}>
+                    <span style={{
+                      fontWeight: 600,
+                      color: o.decision === "approved" ? "#4ade80" : "#fca5a5",
+                    }}>
+                      {o.decision}
+                    </span>
+                    <span style={{ textTransform: "capitalize" }}>{o.type.replace(/_/g, " ")}</span>
+                    {o.context && (o.context as Record<string, string>).reason && (
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+                        {(o.context as Record<string, string>).reason}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDeleteOverride(selectedLeague, o.id)}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #475569",
+                    background: "transparent",
+                    color: "#94a3b8",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    marginLeft: 8,
+                    flexShrink: 0,
+                  }}
+                >
+                  Undo
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Export button */}
@@ -653,10 +828,10 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
           minHeight: 44,
         }}
       >
-        Export Decisions as JSON ({sorted.length} total)
+        Export Local Decisions as JSON ({sorted.length} total)
       </button>
 
-      {/* Recent decisions */}
+      {/* Recent local decisions */}
       {sorted.slice(0, 50).map((d, i) => (
         <div
           key={i}
@@ -695,7 +870,7 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
                         : "#94a3b8",
               }}
             >
-              {d.decision}
+              {d.decision === "correct" ? "merge ok" : d.decision === "wrong" ? "bad match" : d.decision}
             </span>
             <span>{d.context}</span>
             <span>{new Date(d.timestamp).toLocaleDateString()}</span>
@@ -760,15 +935,53 @@ function GridMatchingTab() {
       .catch(() => setLoading(false));
   }, [league]);
 
-  const handleDecision = (decision: "correct" | "wrong" | "skip") => {
+  const [lastAction, setLastAction] = useState<{ type: string; msg: string } | null>(null);
+
+  const handleDecision = async (decision: "correct" | "wrong" | "skip") => {
     const item = candidates[currentIndex];
     if (!item) return;
+
+    const sourceInfo = item.cell.sources
+      .map((s) => `${s.source}=${(s.probability * 100).toFixed(0)}%`)
+      .join(", ");
+    const marketNames = item.cell.sources
+      .filter((s) => s.market_name)
+      .map((s) => `${s.source}: "${s.market_name}"`)
+      .join(" | ");
+
+    // Store locally for history
     storeDecision({
       market_name: `${league}:${item.team}:${item.column}`,
       decision,
-      context: `${league} grid, ${item.cell.sources.length} sources, merged=${(item.cell.merged_probability * 100).toFixed(1)}%`,
+      context: `${league} grid, ${sourceInfo}${marketNames ? ` [${marketNames}]` : ""}`,
       timestamp: new Date().toISOString(),
     });
+
+    // Create real override in the database
+    if (decision !== "skip") {
+      try {
+        const reason = decision === "correct"
+          ? `Reviewed: merge OK (${sourceInfo})`
+          : `Reviewed: bad match (${sourceInfo})${marketNames ? ` — ${marketNames}` : ""}`;
+
+        await createOverride(
+          league,
+          "dismiss",
+          `${item.team}:${item.column}`,
+          reason,
+          decision === "correct" ? "approved" : "rejected",
+        );
+        setLastAction({
+          type: decision === "correct" ? "ok" : "bad",
+          msg: decision === "correct" ? "Saved: merge approved" : "Flagged as bad match",
+        });
+      } catch {
+        setLastAction({ type: "error", msg: "Override failed to save" });
+      }
+      // Auto-clear after 2s
+      setTimeout(() => setLastAction(null), 2000);
+    }
+
     setCurrentIndex((i) => i + 1);
   };
 
@@ -803,6 +1016,22 @@ function GridMatchingTab() {
       {loading && (
         <div style={{ textAlign: "center", padding: 40, color: "#64748b" }}>
           Loading {league.toUpperCase()} grid...
+        </div>
+      )}
+
+      {/* Action feedback toast */}
+      {lastAction && (
+        <div style={{
+          textAlign: "center",
+          padding: "8px 16px",
+          marginBottom: 8,
+          borderRadius: 8,
+          fontSize: 13,
+          fontWeight: 600,
+          background: lastAction.type === "ok" ? "#14532d" : lastAction.type === "bad" ? "#7f1d1d" : "#78350f",
+          color: lastAction.type === "ok" ? "#4ade80" : lastAction.type === "bad" ? "#fca5a5" : "#fcd34d",
+        }}>
+          {lastAction.msg}
         </div>
       )}
 
