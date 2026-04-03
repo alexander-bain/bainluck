@@ -817,24 +817,33 @@ export default function EventPage({ params }: EventPageProps) {
             )}
           </div>
 
-          {/* Broadcast + date + time */}
+          {/* Broadcast + date/time + freshness */}
           <div className="flex items-center gap-2">
             {event.espn?.broadcast && (
               <span className="px-1.5 py-0.5 rounded bg-surface-elevated text-[10px] font-semibold text-text-secondary tracking-wide">
                 {event.espn.broadcast}
               </span>
             )}
-            <span className="text-[10px] text-text-muted">
-              {new Date(event.commence_time).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })} · {new Date(event.commence_time).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-                timeZoneName: "short",
-              })}
-            </span>
+            {effectivelyLive ? (
+              <span className="text-[10px] text-text-muted flex items-center gap-1">
+                <svg className="w-3 h-3 text-text-quaternary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span className="tabular-nums font-mono">{countdown}s</span>
+              </span>
+            ) : (
+              <span className="text-[10px] text-text-muted">
+                {new Date(event.commence_time).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })} · {new Date(event.commence_time).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZoneName: "short",
+                })}
+              </span>
+            )}
           </div>
         </div>
 
@@ -1002,6 +1011,34 @@ export default function EventPage({ params }: EventPageProps) {
                   %
                 </span>
               </div>
+
+              {/* Trend indicator — change since opening */}
+              {openingHomeProb !== null && homeProb !== null && (() => {
+                const delta = homeProb - openingHomeProb;
+                const absDelta = Math.abs(delta);
+                if (absDelta < 0.01) return null; // Less than 1% change — not meaningful
+                const homeShort = event.home_team.split(" ").pop() || event.home_team;
+                const isPositive = delta > 0;
+                return (
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <svg
+                      className={`w-3.5 h-3.5 ${isPositive ? "text-emerald-500" : "text-red-500"}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      {isPositive ? (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                      ) : (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                      )}
+                    </svg>
+                    <span className={`text-xs font-semibold ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
+                      {isPositive ? "+" : ""}{Math.round(delta * 100)}% {homeShort} since{isFinished ? " open" : " start"}
+                    </span>
+                  </div>
+                );
+              })()}
 
               {/* Opening odds (faint) */}
               {openingHomeProb !== null && (
