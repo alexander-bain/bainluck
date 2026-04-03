@@ -477,6 +477,43 @@ def _normalize_golfer_name(name: str) -> str:
     return name
 
 
+# Common first-name aliases for golfer dedup across sources.
+# Maps short/informal name → canonical form used in match keys.
+_NAME_ALIASES: dict[str, str] = {
+    "matt": "matthew",
+    "mike": "michael",
+    "alex": "alexander",
+    "dan": "daniel",
+    "bob": "robert",
+    "rob": "robert",
+    "will": "william",
+    "bill": "william",
+    "billy": "william",
+    "chris": "christopher",
+    "dave": "david",
+    "tony": "anthony",
+    "tom": "thomas",
+    "tommy": "thomas",
+    "rick": "richard",
+    "dick": "richard",
+    "nick": "nicholas",
+    "ben": "benjamin",
+    "sam": "samuel",
+    "joe": "joseph",
+    "jim": "james",
+    "jimmy": "james",
+    "jake": "jacob",
+    "ed": "edward",
+    "pat": "patrick",
+    "steve": "steven",
+    "charlie": "charles",
+    "max": "maximilian",
+    "cam": "cameron",
+    "si": "simon",
+    "sepp": "josef",
+}
+
+
 def _match_key(name: str) -> str:
     """
     Create a matching key from a golfer name for cross-source dedup.
@@ -487,6 +524,7 @@ def _match_key(name: str) -> str:
     - Kalshi: "Yes: Scottie Scheffler" → "scottie scheffler"
     - Odds API: "S. Scheffler" → "s scheffler"
     - Diacritics: "Skarsgård" → "skarsgard"
+    - Aliases: "Matt Fitzpatrick" → "matthew fitzpatrick"
     """
     clean = _normalize_golfer_name(name)
     clean = re.split(r"\s+[-\u2013]\s+|\s+for\s+", clean, maxsplit=1)[0]
@@ -498,6 +536,11 @@ def _match_key(name: str) -> str:
     clean = re.sub(r"\b(?:jr|sr|iii|ii|iv)\.?\b", "", clean)
     clean = re.sub(r"[^a-z0-9\s]", "", clean).strip()
     clean = re.sub(r"\s+", " ", clean)
+    # Expand first-name aliases for cross-source dedup
+    parts = clean.split()
+    if parts and parts[0] in _NAME_ALIASES:
+        parts[0] = _NAME_ALIASES[parts[0]]
+        clean = " ".join(parts)
     return clean
 
 
@@ -754,21 +797,13 @@ async def get_golf(
 
         # Keep full list for detail pages, cap for landing page cards
         all_golfers = golfers
-        golfers = golfers[:_MAX_GOLFERS]
 
-        # Normalize probabilities so they sum to ~100%
-        total_prob = sum(g["probability"] for g in all_golfers)
-        if total_prob > 0:
-            norm_scale = 1.0 / total_prob
-            for g in all_golfers:
-                g["probability"] = round(g["probability"] / total_prob, 3)
-                g["american_odds"] = probability_to_american(g["probability"])
-                # movement_24h stays as raw delta — normalizing it inflates
-                # movements by 1.5-2x and isn't applied to historical values
-        else:
-            for g in all_golfers:
-                g["probability"] = round(g["probability"], 3)
-                g["american_odds"] = probability_to_american(g["probability"])
+        # Round probabilities (no renormalization — raw source averages are
+        # already meaningful and renormalizing across 144 golfers dilutes
+        # the top contenders to unrealistically low values)
+        for g in all_golfers:
+            g["probability"] = round(g["probability"], 3)
+            g["american_odds"] = probability_to_american(g["probability"])
 
         # Assign ranks (full list)
         for i, g in enumerate(all_golfers):
