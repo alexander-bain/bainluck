@@ -1498,6 +1498,7 @@ async def _build_golf_tour_grid(
                     "probability": prob,
                     "market_id": market.id,
                     "outcome_id": outcome.id,
+                    "market_name": market.name,
                 })
                 all_outcome_ids.append(outcome.id)
                 outcome_id_to_name[outcome.id] = oname
@@ -1546,6 +1547,7 @@ async def _build_golf_tour_grid(
                     "probability": prob,
                     "market_id": None,
                     "outcome_id": dg_oid,
+                    "market_name": f"DataGolf {'In-Play' if is_live else 'Pre-Tournament'} Model",
                 })
 
         # Deduplicate within same source per golfer+column (keep lowest prob)
@@ -1585,10 +1587,13 @@ async def _build_golf_tour_grid(
 
                 sources = []
                 for e in entries:
-                    sources.append({
+                    src = {
                         "source": e["source"],
                         "probability": round(e["probability"], 4),
-                    })
+                    }
+                    if e.get("market_name"):
+                        src["market_name"] = e["market_name"]
+                    sources.append(src)
 
                 # 24h trend
                 trend_24h = None
@@ -1900,6 +1905,7 @@ async def _build_upcoming_golf_event_grid(
                 "probability": prob,
                 "market_id": market.id,
                 "outcome_id": outcome.id,
+                "market_name": market.name,
             })
             all_outcome_ids.append(outcome.id)
             outcome_id_to_name[outcome.id] = oname
@@ -1950,10 +1956,13 @@ async def _build_upcoming_golf_event_grid(
 
             sources = []
             for e in entries:
-                sources.append({
+                src = {
                     "source": e["source"],
                     "probability": round(e["probability"], 4),
-                })
+                }
+                if e.get("market_name"):
+                    src["market_name"] = e["market_name"]
+                sources.append(src)
 
             # 24h trend
             trend_24h = None
@@ -2448,6 +2457,7 @@ async def get_playoff_grid(
                 "probability": float(outcome.current_probability),
                 "market_id": market.id,
                 "outcome_id": outcome.id,
+                "market_name": market.name,
             }
 
             grid_raw[norm][col_key].append(source_entry)
@@ -2661,6 +2671,8 @@ async def get_playoff_grid(
                     "source": e["source"],
                     "probability": round(corrected_p, 4),
                 }
+                if e.get("market_name"):
+                    src["market_name"] = e["market_name"]
                 sources.append(src)
 
             # Compute 24h trend from the championship outcome
@@ -3215,6 +3227,7 @@ async def get_team_progression_for_event(
                     else (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2,
                 "market_id": market.id,
                 "outcome_id": outcome.id,
+                "market_name": market.name,
             }
             grid_raw[norm][col_key].append(source_entry)
             all_outcome_ids.append(outcome.id)
@@ -3350,10 +3363,13 @@ async def get_team_progression_for_event(
 
             sources = []
             for e, corrected_p in zip(entries, corrected):
-                sources.append({
+                src = {
                     "source": e["source"],
                     "probability": round(corrected_p, 4),
-                })
+                }
+                if e.get("market_name"):
+                    src["market_name"] = e["market_name"]
+                sources.append(src)
 
             trend_24h = None
             oid = entries[0]["outcome_id"]

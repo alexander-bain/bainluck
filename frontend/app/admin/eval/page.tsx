@@ -10,6 +10,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 interface GridSource {
   source: string;
   probability: number;
+  market_name?: string;
 }
 
 interface GridCell {
@@ -241,30 +242,45 @@ function GridMatchCard({
         </div>
       </div>
 
-      {/* Source comparison — visual bar */}
+      {/* Source comparison — with market names */}
       <div style={{ marginBottom: 16 }}>
         {cell.sources.map((s) => (
           <div
             key={s.source}
             style={{
-              marginBottom: 8,
+              marginBottom: 10,
+              padding: "8px 10px",
+              background: "#0d1117",
+              borderRadius: 8,
+              borderLeft: `3px solid ${s === highSource && spread > 0.15 ? "#3b82f6" : s === lowSource && spread > 0.15 ? "#ef4444" : "#3b82f6"}`,
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-              <span style={{ fontSize: 13, color: "#8b949e", textTransform: "capitalize" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", textTransform: "capitalize" }}>
                 {s.source}
               </span>
-              <span style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>
                 {(s.probability * 100).toFixed(1)}%
               </span>
             </div>
+            {/* Raw market name — the key context */}
+            {s.market_name && (
+              <div style={{
+                fontSize: 11,
+                color: "#64748b",
+                lineHeight: 1.3,
+                marginTop: 2,
+              }}>
+                &ldquo;{s.market_name}&rdquo;
+              </div>
+            )}
             {/* Probability bar */}
-            <div style={{ height: 6, borderRadius: 3, background: "#21262d", overflow: "hidden" }}>
+            <div style={{ height: 4, borderRadius: 2, background: "#21262d", overflow: "hidden", marginTop: 4 }}>
               <div
                 style={{
                   height: "100%",
                   width: `${Math.min(s.probability * 100, 100)}%`,
-                  borderRadius: 3,
+                  borderRadius: 2,
                   background: s === highSource && spread > 0.15 ? "#3b82f6" : s === lowSource && spread > 0.15 ? "#ef4444" : "#3b82f6",
                 }}
               />
