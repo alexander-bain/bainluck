@@ -594,13 +594,6 @@ def _normalize_tournament(market_name: str, schedule: list[dict] | None = None) 
     return "other"
 
 
-# Maximum probability for any single golfer from Odds API in a winner market.
-# The Odds API can return stale/erroneous bookmaker lines (e.g., a single
-# bookmaker listing Tiger Woods at 41% for The Open). No golfer realistically
-# exceeds 25% pre-tournament odds from sportsbooks alone.
-_MAX_ODDS_API_GOLF_PROB = 0.25
-
-
 @router.get("")
 async def get_golf(
     db: AsyncSession = Depends(get_db),
@@ -742,16 +735,6 @@ async def get_golf(
                     continue
 
                 prob = float(outcome.current_probability)
-
-                # Odds API sanity cap: stale bookmaker lines can show absurd
-                # values (e.g., Tiger Woods at 41% for The Open from one book).
-                if source == "odds_api" and prob > _MAX_ODDS_API_GOLF_PROB:
-                    logger.warning(
-                        "Golf sanity: capping %s from %.1f%% to %.1f%% (source=%s, tournament=%s)",
-                        outcome.name, prob * 100, _MAX_ODDS_API_GOLF_PROB * 100,
-                        source, tourn_key,
-                    )
-                    prob = _MAX_ODDS_API_GOLF_PROB
 
                 # Skip Kalshi entries at exactly 0.5 — illiquid binary markets
                 if source == "kalshi" and prob == 0.5:
