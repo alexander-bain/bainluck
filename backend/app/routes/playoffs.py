@@ -1402,12 +1402,17 @@ async def _build_golf_tour_grid(
             tourney_tokens = [tournament_name.lower().strip()]
 
         def _market_matches_tournament(market_name: str) -> bool:
-            """Check if a market name references the current tournament."""
+            """Check if a market name references the current tournament.
+
+            Requires ALL distinctive tournament tokens to appear in the market
+            name. Using 'any' caused cross-tournament contamination — e.g.,
+            "Valero Texas Open" token "texas" matched "Texas Children's Houston
+            Open" from a different week.
+            """
             if not tourney_tokens:
                 return True  # Can't filter without tournament name
             name_lower = market_name.lower() if market_name else ""
-            # At least one distinctive tournament token must appear
-            return any(tok in name_lower for tok in tourney_tokens)
+            return all(tok in name_lower for tok in tourney_tokens)
 
         db_markets_name_matched = [
             m for m in all_db_markets
