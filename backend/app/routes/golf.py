@@ -749,27 +749,33 @@ async def get_golf(
                 "opening_probability": data["opening_probability"],
             })
 
-        # Sort by probability descending, cap at max
+        # Sort by probability descending
         golfers.sort(key=lambda g: g["probability"], reverse=True)
+
+        # Keep full list for detail pages, cap for landing page cards
+        all_golfers = golfers
         golfers = golfers[:_MAX_GOLFERS]
 
         # Normalize probabilities so they sum to ~100%
-        total_prob = sum(g["probability"] for g in golfers)
+        total_prob = sum(g["probability"] for g in all_golfers)
         if total_prob > 0:
             norm_scale = 1.0 / total_prob
-            for g in golfers:
+            for g in all_golfers:
                 g["probability"] = round(g["probability"] / total_prob, 3)
                 g["american_odds"] = probability_to_american(g["probability"])
                 # movement_24h stays as raw delta — normalizing it inflates
                 # movements by 1.5-2x and isn't applied to historical values
         else:
-            for g in golfers:
+            for g in all_golfers:
                 g["probability"] = round(g["probability"], 3)
                 g["american_odds"] = probability_to_american(g["probability"])
 
-        # Assign ranks
-        for i, g in enumerate(golfers):
+        # Assign ranks (full list)
+        for i, g in enumerate(all_golfers):
             g["rank"] = i + 1
+
+        # Landing page cards use the capped list
+        golfers = all_golfers[:_MAX_GOLFERS]
 
         order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 50
         display_name = TOURNAMENT_DISPLAY_NAMES.get(
@@ -824,6 +830,7 @@ async def get_golf(
             "market_sources": market_sources,
             "market_names": market_names,
             "golfers": golfers,
+            "_all_golfers": all_golfers,  # Full list for detail endpoint
         })
 
     # Sort tournaments by order, then by resolution date for tour events
@@ -1230,7 +1237,7 @@ async def get_golf_tournament(
             "commence_time": tournament.get("commence_time"),
             "resolution_date": tournament.get("resolution_date"),
         },
-        "golfers": tournament.get("golfers", []),
+        "golfers": tournament.get("_all_golfers", tournament.get("golfers", [])),
         "markets": sorted_groups,
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,

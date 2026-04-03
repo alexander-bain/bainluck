@@ -203,7 +203,6 @@ function PreTournamentView({ data }: { data: GolfTournamentDetailResponse | null
                   <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Score</th>
                   <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Thru</th>
                   <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Win%</th>
-                  <th className="text-right text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1.5">Odds</th>
                 </tr>
               </thead>
               <tbody>
@@ -214,12 +213,6 @@ function PreTournamentView({ data }: { data: GolfTournamentDetailResponse | null
                     <td className="px-2 py-1.5 text-right tabular-nums text-text-quaternary">—</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-text-quaternary">—</td>
                     <td className="px-2 py-1.5 text-right tabular-nums font-bold">{(golfer.probability * 100).toFixed(1)}%</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-text-secondary">
-                      {golfer.american_odds != null
-                        ? `+${golfer.american_odds}`
-                        : "—"
-                      }
-                    </td>
                   </tr>
                 ))}
               </tbody>
