@@ -396,6 +396,18 @@ export default function GolfTournamentPage() {
           </div>
         </header>
 
+        {/* Evolution Chart */}
+        {evolutionMarketIds.length > 0 && (
+          <section>
+            <EvolutionViewWithFallback
+              marketIds={evolutionMarketIds}
+              marketName={`${tournament.name} - Winner`}
+              defaultTopN={8}
+              hours={168}
+            />
+          </section>
+        )}
+
         {/* Bubble Watch — Rounds 1-2 only */}
         {showBubbleWatch && leaderboard && (
           <BubbleWatch players={leaderboard.players} currentRound={currentRound} />
@@ -408,18 +420,6 @@ export default function GolfTournamentPage() {
           isLive={isLive}
           hasSnapshot={leaderboard?.has_snapshot || false}
         />
-
-        {/* Evolution Chart */}
-        {evolutionMarketIds.length > 0 && (
-          <section>
-            <EvolutionViewWithFallback
-              marketIds={evolutionMarketIds}
-              marketName={`${tournament.name} - Winner`}
-              defaultTopN={8}
-              hours={168}
-            />
-          </section>
-        )}
 
         {/* Footer */}
         <p className="text-center text-[11px] text-gray-400">
