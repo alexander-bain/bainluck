@@ -256,6 +256,25 @@ Kalshi-only sports (no Odds API coverage): `esports`, `icehockey_ncaa`, `icehock
 - **Swift**: `nonisolated struct` for models, `@MainActor` only on async methods
 - **Commits**: Descriptive messages, reference session URLs
 
+### Frontend Design System (MANDATORY)
+
+The site is **light mode only**. Never use dark Tailwind color classes. Always use the design system tokens defined in `globals.css`:
+
+| What | Use | NEVER use |
+|------|-----|-----------|
+| Page background | (inherits from body) | `bg-gray-950`, `bg-gray-900`, `bg-black` |
+| Card background | `bg-surface-card` | `bg-gray-800`, `bg-gray-900` |
+| Elevated surface | `bg-surface-elevated` | `bg-gray-800/50` |
+| Primary text | `text-text-primary` | `text-white` |
+| Secondary text | `text-text-secondary` | `text-gray-300`, `text-gray-400` |
+| Muted text | `text-text-muted` | `text-gray-500`, `text-gray-600` |
+| Borders | `border-surface-border` | `border-gray-800`, `border-gray-700` |
+| Live accent | `text-accent-live` / `bg-accent-live/15` | `text-green-400`, `bg-green-500/20` |
+| Brand accent | `text-accent-brand` | `text-blue-400` |
+| Danger | `text-accent-danger` | `text-red-400` |
+
+When creating new pages or components, copy the color patterns from existing pages (e.g., `app/page.tsx`, `app/playoffs/[sport]/page.tsx`). Never default to dark mode.
+
 ### Analytics Instrumentation (MANDATORY)
 
 Every frontend page MUST include 3 GA4 hooks before any conditional return:

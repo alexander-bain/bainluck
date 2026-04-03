@@ -92,6 +92,13 @@ During each Masters round, check these:
 | 11 | Redirect `/playoffs/golf` → `/categories/golf` | Kill the "playoffs" framing for golf |
 | 12 | Tour-based following + onboarding | "Which tours do you follow?" |
 | 13 | Freshness-weighted source blending | Stale Kalshi prices diluting fresh DataGolf — see design notes below |
+| 14 | `/sport` index page improvements | Add "happening now" live events across sports, trending movers, featured matchups. Make it a destination, not just a directory |
+| 15 | League page evolution chart for team sports | NBA/NHL/MLB championship evolution chart needs explicit market ID lookup (not dependent on grid data). May need a `/api/futures/championship/{league}` endpoint |
+| 16 | Team landing pages | `/sport/basketball/nba/teams/celtics` — recent/upcoming event cards + team futures. Clickable from championship grid team names |
+| 17 | Season props on league pages | Win totals, awards, stat props alongside championship grid. Extend grid API or add separate section |
+| 18 | Championship grid cell colors | Current colors not intuitively mapping to high/low probability. Need clearer gradient (e.g., stronger green = higher prob, or use opacity-based shading) |
+| 19 | Ryder Cup card layout | Show teams left/right with bar summing to 100% (like standard event cards) instead of rows. Keep captain props below |
+| 20 | SEO: sitemap, structured data | Add sitemap.xml for `/sport/*` routes, JSON-LD structured data for events |
 
 ---
 

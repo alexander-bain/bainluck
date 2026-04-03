@@ -146,16 +146,46 @@ export default function SportHubPage() {
     }))
     .filter((group) => group.events.length > 0);
 
-  // For golf, match showcase events to tournament data for richer cards
+  // For golf, match showcase events to tournament data for richer cards.
+  // Uses strict keyword matching to avoid cross-contamination (e.g., men's odds on women's majors).
   function findGolfTournament(eventName: string): GolfTournament | undefined {
     const nameLower = eventName.toLowerCase();
+
+    // Women's events must match women's tournaments only
+    const isWomens = nameLower.includes("women") || nameLower.includes("kpmg")
+      || nameLower.includes("chevron") || nameLower.includes("evian")
+      || nameLower.includes("aig");
+
     return golfTournaments.find((t: GolfTournament) => {
       const tName = t.name.toLowerCase();
-      return tName.includes(nameLower) || nameLower.includes(tName)
-        || (nameLower.includes("masters") && tName.includes("masters"))
-        || (nameLower.includes("open") && tName.includes("open") && !tName.includes("women"))
-        || (nameLower.includes("pga championship") && tName.includes("pga championship"))
-        || (nameLower.includes("u.s. open") && tName.includes("u.s. open"));
+      const tIsWomens = t.is_womens === true || tName.includes("women") || tName.includes("lpga")
+        || tName.includes("kpmg") || tName.includes("chevron") || tName.includes("evian")
+        || tName.includes("aig");
+
+      // Gender must match
+      if (isWomens !== tIsWomens) return false;
+
+      // Exact name containment (strict)
+      if (tName === nameLower) return true;
+
+      // Specific keyword matches
+      if (nameLower === "the masters" && tName.includes("masters") && !tName.includes("women")) return true;
+      if (nameLower === "pga championship" && tName.includes("pga championship")) return true;
+      if (nameLower === "u.s. open" && tName.includes("u.s. open") && !tIsWomens) return true;
+      if (nameLower === "the open championship" && (tName.includes("the open") || tName.includes("open championship")) && !tName.includes("women") && !tName.includes("u.s.")) return true;
+      if (nameLower === "ryder cup" && tName.includes("ryder")) return true;
+      if (nameLower === "presidents cup" && tName.includes("presidents")) return true;
+      if (nameLower === "walker cup" && tName.includes("walker")) return true;
+      if (nameLower === "solheim cup" && tName.includes("solheim")) return true;
+
+      // Women's specific
+      if (nameLower.includes("chevron") && tName.includes("chevron")) return true;
+      if (nameLower.includes("kpmg") && tName.includes("kpmg")) return true;
+      if (nameLower === "u.s. women's open" && tName.includes("u.s. women")) return true;
+      if (nameLower.includes("aig") && tName.includes("aig")) return true;
+      if (nameLower.includes("evian") && tName.includes("evian")) return true;
+
+      return false;
     });
   }
 
@@ -166,6 +196,8 @@ export default function SportHubPage() {
         <div className="max-w-5xl mx-auto px-4 py-8">
           <div className="flex items-center gap-2 text-sm text-text-muted mb-4">
             <Link href="/" className="hover:text-text-primary transition-colors">Home</Link>
+            <span>/</span>
+            <Link href="/sport" className="hover:text-text-primary transition-colors">Sports</Link>
             <span>/</span>
             <span className="text-text-primary">{hierarchy.name}</span>
           </div>
