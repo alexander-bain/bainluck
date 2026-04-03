@@ -1060,8 +1060,6 @@ function SourceDots({ sources }: { sources: Record<string, number> }) {
 // (Local TournamentCard removed — using shared @/components/TournamentCard)
 
 // (ExpandableTournamentRow removed — using shared @/components/TournamentCard)
-  );
-}
 
 // ============================================================================
 // Tournament Modal
