@@ -436,6 +436,10 @@ export default function GolfTournamentPage() {
 // Leaderboard Grid
 // ============================================================================
 
+// Grid template columns for desktop
+const GRID_LIVE = "grid-cols-[40px_1fr_64px_56px_48px_88px_72px_72px_72px]";
+const GRID_PRE = "grid-cols-[40px_1fr_88px_72px]";
+
 function LeaderboardGrid({
   golfers,
   accentColor,
@@ -450,90 +454,79 @@ function LeaderboardGrid({
   const [showAll, setShowAll] = useState(false);
   const INITIAL_SHOW = 30;
   const displayGolfers = showAll ? golfers : golfers.slice(0, INITIAL_SHOW);
+  const gridCols = isLive ? GRID_LIVE : GRID_PRE;
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-          {isLive ? "Leaderboard" : "Field & Odds"}
-        </h2>
-        <span className="text-[10px] text-gray-400">
-          {golfers.length} golfer{golfers.length !== 1 ? "s" : ""}
-        </span>
-      </div>
+      {/* ── Desktop grid ── */}
+      <div className="hidden sm:block border border-gray-200 rounded-xl overflow-hidden bg-white">
+        {/* Header row */}
+        <div className={`grid ${gridCols} gap-1 text-[10px] text-gray-400 uppercase tracking-wider font-semibold px-3 py-2.5 border-b border-gray-200`}>
+          <div>Pos</div>
+          <div>Golfer</div>
+          {isLive && (
+            <>
+              <div className="text-center">Score</div>
+              <div className="text-center">Today</div>
+              <div className="text-center">Thru</div>
+            </>
+          )}
+          <div className="text-center" style={{ color: accentColor }}>Win</div>
+          {isLive && (
+            <>
+              <div className="text-center">Top 5</div>
+              <div className="text-center">Top 10</div>
+              <div className="text-center">Top 20</div>
+            </>
+          )}
+          {!isLive && <div className="text-center">24h</div>}
+        </div>
 
-      {/* ── Desktop table ── */}
-      <div className="hidden sm:block border border-gray-200 rounded-xl overflow-hidden">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b-2 border-gray-200 bg-gray-50/80">
-              <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-3 py-2.5 w-10">
-                Pos
-              </th>
-              <th className="text-left text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-3 py-2.5">
-                Golfer
-              </th>
-              {isLive && (
-                <>
-                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
-                    Score
-                  </th>
-                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-12">
-                    Today
-                  </th>
-                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-10">
-                    Thru
-                  </th>
-                </>
-              )}
-              <th
-                className="text-center text-[10px] font-semibold uppercase tracking-wide px-2 py-2.5 w-20"
-                style={{ color: accentColor }}
-              >
-                Win
-              </th>
-              {isLive && (
-                <>
-                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
-                    Top 5
-                  </th>
-                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
-                    Top 10
-                  </th>
-                  <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
-                    Top 20
-                  </th>
-                </>
-              )}
-              {!isLive && (
-                <th className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 px-2 py-2.5 w-14">
-                  24h
-                </th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {displayGolfers.map((golfer, i) => (
-              <DesktopRow
-                key={`${golfer.name}-${i}`}
-                golfer={golfer}
-                isLeader={i === 0}
-                accentColor={accentColor}
-                isLive={isLive}
-                hasSnapshot={hasSnapshot}
-              />
-            ))}
-          </tbody>
-        </table>
+        {/* Golfer rows */}
+        <div className="space-y-0.5 p-1">
+          {displayGolfers.map((golfer, i) => (
+            <DesktopRow
+              key={`${golfer.name}-${i}`}
+              golfer={golfer}
+              isLeader={i === 0}
+              accentColor={accentColor}
+              isLive={isLive}
+              hasSnapshot={hasSnapshot}
+              gridCols={gridCols}
+            />
+          ))}
+        </div>
+
+        {/* Show more / show less */}
         {golfers.length > INITIAL_SHOW && (
-          <div className="px-3 py-2 border-t border-gray-100 text-center">
+          <div className="py-3 text-center border-t border-gray-100">
             <button
               onClick={() => setShowAll((s) => !s)}
               className="text-xs font-medium hover:underline"
               style={{ color: accentColor }}
             >
-              {showAll ? "Show top 30" : `Show all ${golfers.length} golfers`}
+              {showAll
+                ? "Show top 30"
+                : `\u00B7 \u00B7 \u00B7 ${golfers.length - INITIAL_SHOW} more golfers \u00B7 \u00B7 \u00B7`}
             </button>
+          </div>
+        )}
+
+        {/* Source agreement legend */}
+        {isLive && (
+          <div className="flex gap-5 px-4 py-3 border-t border-gray-100 text-[10px] text-gray-500">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-green-500" />
+              Sources agree (&plusmn;2pp)
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              Moderate disagreement (2-5pp)
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-red-500" />
+              Large disagreement (&gt;5pp)
+            </div>
           </div>
         )}
       </div>
@@ -590,19 +583,19 @@ function DesktopRow({
   accentColor,
   isLive,
   hasSnapshot,
+  gridCols,
 }: {
   golfer: MergedGolfer;
   isLeader: boolean;
   accentColor: string;
   isLive: boolean;
   hasSnapshot: boolean;
+  gridCols: string;
 }) {
   const scoreColor =
     golfer.totalScoreRaw != null && golfer.totalScoreRaw < 0
-      ? "text-green-600 font-semibold"
-      : golfer.totalScoreRaw != null && golfer.totalScoreRaw > 0
-        ? "font-semibold"
-        : "";
+      ? "text-green-600"
+      : "";
 
   const todayColor =
     golfer.todayRaw != null && golfer.todayRaw < 0
@@ -627,61 +620,76 @@ function DesktopRow({
   const mvUp = hasMv && mv! > 0;
 
   return (
-    <tr
-      className={`border-b border-gray-100 ${isLeader ? "border-l-2" : "hover:bg-gray-50/50"}`}
+    <div
+      className={`grid ${gridCols} gap-1 items-center rounded-lg px-3 py-3 ${
+        isLeader ? "border" : "hover:bg-gray-50"
+      }`}
       style={
         isLeader
-          ? { borderLeftColor: accentColor, backgroundColor: `${accentColor}08` }
+          ? { backgroundColor: `${accentColor}08`, borderColor: `${accentColor}25` }
           : undefined
       }
     >
-      <td
-        className="px-3 py-2.5 font-semibold tabular-nums"
+      {/* Position */}
+      <div
+        className="text-sm font-bold tabular-nums"
         style={{ color: isLeader ? accentColor : "#9ca3af" }}
       >
         {golfer.position}
-      </td>
-      <td className="px-3 py-2.5 font-medium text-gray-900">{golfer.name}</td>
+      </div>
+
+      {/* Name */}
+      <div>
+        <div className="text-sm font-semibold text-gray-900">{golfer.name}</div>
+      </div>
+
+      {/* Score / Today / Thru — live only */}
       {isLive && (
         <>
-          <td className={`px-2 py-2.5 text-center font-mono text-sm tabular-nums ${scoreColor}`}>
+          <div className={`text-center font-mono text-sm font-bold tabular-nums ${scoreColor}`}>
             {golfer.score}
-          </td>
-          <td className={`px-2 py-2.5 text-center font-mono text-xs tabular-nums ${todayColor}`}>
+          </div>
+          <div className={`text-center font-mono text-xs tabular-nums ${todayColor}`}>
             {golfer.today}
-          </td>
-          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-400">
+          </div>
+          <div className="text-center font-mono text-xs tabular-nums text-gray-400">
             {golfer.thru}
-          </td>
+          </div>
         </>
       )}
-      <td className="px-2 py-2.5 text-center tabular-nums">
+
+      {/* Win probability */}
+      <div className="text-center">
         <span
-          className="text-sm font-bold"
+          className="text-sm font-bold tabular-nums"
           style={isLeader ? { color: accentColor } : undefined}
         >
           {golfer.winProb.toFixed(1)}%
         </span>
         {wpcDisplay && (
-          <span className={`text-[9px] ml-0.5 ${wpcColor}`}>{wpcDisplay}</span>
+          <span className={`text-[9px] ml-1 ${wpcColor}`}>{wpcDisplay}</span>
         )}
-      </td>
+      </div>
+
+      {/* Top 5 / Top 10 / Top 20 — live only */}
       {isLive && (
         <>
-          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-500">
+          <div className="text-center font-mono text-xs tabular-nums text-gray-500">
             {golfer.top5Prob != null ? `${Math.round(golfer.top5Prob)}%` : "\u2014"}
-          </td>
-          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-500">
+          </div>
+          <div className="text-center font-mono text-xs tabular-nums text-gray-500">
             {golfer.top10Prob != null ? `${Math.round(golfer.top10Prob)}%` : "\u2014"}
-          </td>
-          <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-gray-500">
+          </div>
+          <div className="text-center font-mono text-xs tabular-nums text-gray-500">
             {golfer.top20Prob != null ? `${Math.round(golfer.top20Prob)}%` : "\u2014"}
-          </td>
+          </div>
         </>
       )}
+
+      {/* 24h movement — pre-tournament only */}
       {!isLive && (
-        <td
-          className={`px-2 py-2.5 text-center tabular-nums text-xs ${
+        <div
+          className={`text-center tabular-nums text-xs ${
             hasMv
               ? mvUp
                 ? "text-green-600 font-semibold"
@@ -690,9 +698,9 @@ function DesktopRow({
           }`}
         >
           {hasMv ? (mvUp ? `\u25B2${mvDelta}%` : `\u25BC${mvDelta}%`) : "\u2014"}
-        </td>
+        </div>
       )}
-    </tr>
+    </div>
   );
 }
 
