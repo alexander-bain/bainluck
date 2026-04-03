@@ -226,8 +226,8 @@ _NON_WINNER_MARKET_RE = re.compile(
     r"\bcompete\s+in\b|"         # "Golfers to compete in The Masters"
     r"\bplay\s+in\b|"            # "Will Tiger Woods play in..."
     r"\bparticipat|"             # "participate in"
-    r"\bmake\s+cut\b|"           # "Make Cut" placement markets
-    r"\bmade\s+cut\b|"           # "Made Cut" (past tense)
+    r"\bmake\s+(?:the\s+)?cut\b|" # "Make Cut" / "Make the Cut" placement markets
+    r"\bmade\s+(?:the\s+)?cut\b|" # "Made Cut" / "Made the Cut" (past tense)
     r"\bTop\s+\d+\b|"            # "Top 5/10/20 Finishers"
     r"\bRound\s+\d+\s+Leader\b|" # "Round 1 Leader"
     r"\bfirst\s+round\s+leader\b|"
