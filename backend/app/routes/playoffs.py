@@ -1499,6 +1499,7 @@ async def _build_golf_tour_grid(
                     "market_id": market.id,
                     "outcome_id": outcome.id,
                     "market_name": market.name,
+                    "last_updated": outcome.last_updated.isoformat() if outcome.last_updated else None,
                 })
                 all_outcome_ids.append(outcome.id)
                 outcome_id_to_name[outcome.id] = oname
@@ -1542,12 +1543,18 @@ async def _build_golf_tour_grid(
                     all_outcome_ids.append(dg_oid)
                     outcome_id_to_name[dg_oid] = dg_display_names.get(norm_name, norm_name)
 
+                col_label = col_key.replace("_", " ").title()
+                event_name = current_event.event_name or "Tournament"
+                mode = "In-Play" if is_live else "Pre-Tournament"
+                dg_label = f"{event_name}: To {col_label} ({mode} statistical model)"
+
                 grid_raw[col_key][norm_name].append({
                     "source": "datagolf",
                     "probability": prob,
                     "market_id": None,
                     "outcome_id": dg_oid,
-                    "market_name": f"DataGolf {'In-Play' if is_live else 'Pre-Tournament'} Model",
+                    "market_name": dg_label,
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
                 })
 
         # Deduplicate within same source per golfer+column (keep lowest prob)
@@ -1593,6 +1600,8 @@ async def _build_golf_tour_grid(
                     }
                     if e.get("market_name"):
                         src["market_name"] = e["market_name"]
+                    if e.get("last_updated"):
+                        src["last_updated"] = e["last_updated"]
                     sources.append(src)
 
                 # 24h trend

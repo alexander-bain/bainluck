@@ -11,6 +11,7 @@ interface GridSource {
   source: string;
   probability: number;
   market_name?: string;
+  last_updated?: string;
 }
 
 interface GridCell {
@@ -23,6 +24,11 @@ interface GridTeam {
   short_name: string;
   logo_url: string | null;
   cells: Record<string, GridCell>;
+  position?: string;
+  total_score?: number | null;
+  today_score?: number | null;
+  thru?: string | null;
+  current_round?: number | null;
 }
 
 interface GridData {
@@ -31,6 +37,12 @@ interface GridData {
   columns: { key: string; label: string }[];
   teams: GridTeam[];
   sources_available: string[];
+  tournament?: {
+    name?: string;
+    status?: string;
+    current_round?: number | null;
+    course?: string;
+  };
 }
 
 interface FuturesMarket {
@@ -87,25 +99,48 @@ interface Override {
   created_at: string | null;
 }
 
-// ─── Persistence ──────────────────────────────────────────────────────────────
+// ─── Persistence (backend API, works cross-device) ───────────────────────────
 
-function getStoredDecisions(): EvalDecision[] {
-  if (typeof window === "undefined") return [];
+async function fetchEvalDecisions(category?: "grid" | "futures"): Promise<EvalDecision[]> {
   try {
-    return JSON.parse(localStorage.getItem("bainluck_eval_decisions") || "[]");
+    const params = new URLSearchParams({ secret: "any" });
+    if (category) params.set("category", category);
+    const res = await fetch(`${API_URL}/api/admin/eval/decisions?${params}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.decisions || []).map((d: Record<string, unknown>) => ({
+      market_name: d.source_name as string,
+      decision: d.decision as EvalDecision["decision"],
+      context: (d.context as Record<string, string>)?.reason || "",
+      timestamp: (d.created_at as string) || "",
+    }));
   } catch {
     return [];
   }
 }
 
-function storeDecision(decision: EvalDecision) {
-  const existing = getStoredDecisions();
-  existing.push(decision);
-  localStorage.setItem("bainluck_eval_decisions", JSON.stringify(existing));
+async function saveEvalDecision(
+  sourceName: string,
+  decision: string,
+  category: "grid" | "futures",
+  reason: string,
+) {
+  const params = new URLSearchParams({
+    secret: "any",
+    source_name: sourceName,
+    decision,
+    category,
+    reason,
+  });
+  try {
+    await fetch(`${API_URL}/api/admin/eval/decision?${params}`, { method: "POST" });
+  } catch {
+    // Silently fail — not critical
+  }
 }
 
-function getSeenIds(): Set<string> {
-  const decisions = getStoredDecisions();
+async function fetchSeenIds(): Promise<Set<string>> {
+  const decisions = await fetchEvalDecisions();
   return new Set(decisions.map((d) => d.market_name));
 }
 
@@ -149,6 +184,18 @@ async function deleteOverride(league: string, id: number) {
   );
   if (!res.ok) throw new Error(`Delete override error: ${res.status}`);
   return res.json();
+}
+
+/** Format an ISO timestamp as a short relative time, e.g. "2m ago", "3h ago", "4d ago" */
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
 // ─── Components ───────────────────────────────────────────────────────────────
@@ -216,6 +263,11 @@ function GridMatchCard({
   league,
   gridName,
   onDecision,
+  position,
+  totalScore,
+  thru,
+  tournamentStatus,
+  currentRound,
 }: {
   team: string;
   column: string;
@@ -223,6 +275,11 @@ function GridMatchCard({
   league: string;
   gridName: string;
   onDecision: (decision: "correct" | "wrong" | "skip") => void;
+  position?: string;
+  totalScore?: number | null;
+  thru?: string | null;
+  tournamentStatus?: string;
+  currentRound?: number | null;
 }) {
   const [acting, setActing] = useState(false);
 
@@ -273,7 +330,29 @@ function GridMatchCard({
               <span style={{ fontSize: 12, color: "#64748b" }}>
                 {gridName || league.toUpperCase()}
               </span>
+              {tournamentStatus === "live" && (
+                <span style={{
+                  padding: "2px 7px",
+                  borderRadius: 5,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  background: "#14532d",
+                  color: "#4ade80",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                }}>
+                  Live{currentRound ? ` · R${currentRound}` : ""}
+                </span>
+              )}
             </div>
+            {/* Leaderboard position context (golf) */}
+            {position && (
+              <div style={{ fontSize: 12, color: "#93c5fd", marginTop: 4 }}>
+                Currently {position}
+                {totalScore != null && ` (${totalScore > 0 ? "+" : ""}${totalScore})`}
+                {thru && ` thru ${thru}`}
+              </div>
+            )}
           </div>
           {/* Disagreement badge */}
           {spread > 0.15 && (
@@ -315,15 +394,32 @@ function GridMatchCard({
                 {(s.probability * 100).toFixed(1)}%
               </span>
             </div>
-            {/* Raw market name — the key context */}
+            {/* Raw market name + freshness */}
             {s.market_name && (
               <div style={{
                 fontSize: 11,
                 color: "#64748b",
                 lineHeight: 1.3,
                 marginTop: 2,
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 6,
               }}>
-                &ldquo;{s.market_name}&rdquo;
+                <span>&ldquo;{s.market_name}&rdquo;</span>
+                {s.last_updated && (
+                  <span style={{
+                    flexShrink: 0,
+                    color: (() => {
+                      const mins = (Date.now() - new Date(s.last_updated).getTime()) / 60_000;
+                      if (mins < 60) return "#4ade80";       // green: fresh
+                      if (mins < 24 * 60) return "#fbbf24";  // yellow: hours old
+                      return "#f87171";                       // red: days old (stale!)
+                    })(),
+                    fontWeight: 600,
+                  }}>
+                    {relativeTime(s.last_updated)}
+                  </span>
+                )}
               </div>
             )}
             {/* Probability bar */}
@@ -828,7 +924,7 @@ function HistoryView({ decisions }: { decisions: EvalDecision[] }) {
           minHeight: 44,
         }}
       >
-        Export Local Decisions as JSON ({sorted.length} total)
+        Export Decisions as JSON ({sorted.length} total)
       </button>
 
       {/* Recent local decisions */}
@@ -895,20 +991,26 @@ function GridMatchingTab() {
   const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [candidates, setCandidates] = useState<
-    { team: string; column: string; cell: GridCell; gridName: string }[]
+    { team: string; column: string; cell: GridCell; gridName: string; position?: string; totalScore?: number | null; thru?: string | null; tournamentStatus?: string; currentRound?: number | null }[]
   >([]);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setCurrentIndex(0);
-    fetch(`${API_URL}/api/playoffs/${league}`)
-      .then((r) => r.json())
-      .then((data: GridData) => {
+
+    (async () => {
+      try {
+        const [gridRes, seen] = await Promise.all([
+          fetch(`${API_URL}/api/playoffs/${league}`).then((r) => r.json()),
+          fetchSeenIds(),
+        ]);
+        if (cancelled) return;
+        const data = gridRes as GridData;
         setGridData(data);
 
         // Build eval candidates: team×column combos with multiple sources (disagreement opportunity)
-        const seen = getSeenIds();
-        const items: { team: string; column: string; cell: GridCell; gridName: string }[] = [];
+        const items: { team: string; column: string; cell: GridCell; gridName: string; position?: string; totalScore?: number | null; thru?: string | null; tournamentStatus?: string; currentRound?: number | null }[] = [];
         for (const team of data.teams || []) {
           for (const col of data.columns || []) {
             const cell = team.cells?.[col.key];
@@ -918,7 +1020,11 @@ function GridMatchingTab() {
             // Prioritize disagreements
             const probs = cell.sources.map((s) => s.probability);
             const spread = Math.max(...probs) - Math.min(...probs);
-            items.push({ team: team.name, column: col.key, cell, gridName: data.name || league.toUpperCase() });
+            items.push({
+              team: team.name, column: col.key, cell, gridName: data.name || league.toUpperCase(),
+              position: team.position, totalScore: team.total_score, thru: team.thru,
+              tournamentStatus: data.tournament?.status, currentRound: data.tournament?.current_round,
+            });
             // Attach spread for sorting
             (items[items.length - 1] as Record<string, unknown>)._spread = spread;
           }
@@ -930,9 +1036,14 @@ function GridMatchingTab() {
           return bs - as;
         });
         setCandidates(items);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [league]);
 
   const [lastAction, setLastAction] = useState<{ type: string; msg: string } | null>(null);
@@ -949,18 +1060,20 @@ function GridMatchingTab() {
       .map((s) => `${s.source}: "${s.market_name}"`)
       .join(" | ");
 
-    // Store locally for history
-    storeDecision({
-      market_name: `${league}:${item.team}:${item.column}`,
-      decision,
-      context: `${league} grid, ${sourceInfo}${marketNames ? ` [${marketNames}]` : ""}`,
-      timestamp: new Date().toISOString(),
-    });
+    const reason = `${league} grid, ${sourceInfo}${marketNames ? ` [${marketNames}]` : ""}`;
 
-    // Create real override in the database
+    // Save eval decision to backend (works cross-device)
+    await saveEvalDecision(
+      `${league}:${item.team}:${item.column}`,
+      decision,
+      "grid",
+      reason,
+    );
+
+    // Also create a matching override for non-skip decisions
     if (decision !== "skip") {
       try {
-        const reason = decision === "correct"
+        const overrideReason = decision === "correct"
           ? `Reviewed: merge OK (${sourceInfo})`
           : `Reviewed: bad match (${sourceInfo})${marketNames ? ` — ${marketNames}` : ""}`;
 
@@ -968,7 +1081,7 @@ function GridMatchingTab() {
           league,
           "dismiss",
           `${item.team}:${item.column}`,
-          reason,
+          overrideReason,
           decision === "correct" ? "approved" : "rejected",
         );
         setLastAction({
@@ -1047,6 +1160,11 @@ function GridMatchingTab() {
             league={league}
             gridName={current.gridName}
             onDecision={handleDecision}
+            position={current.position}
+            totalScore={current.totalScore}
+            thru={current.thru}
+            tournamentStatus={current.tournamentStatus}
+            currentRound={current.currentRound}
           />
         </>
       )}
@@ -1102,7 +1220,7 @@ function FuturesInterestingTab() {
         // Fetch non-sports futures: politics, entertainment, economy, etc.
         const categories = NON_SPORTS_CATEGORIES;
         const allMarkets: FuturesMarket[] = [];
-        const seen = getSeenIds();
+        const seen = await fetchSeenIds();
 
         for (const cat of categories) {
           try {
@@ -1153,16 +1271,11 @@ function FuturesInterestingTab() {
     loadMarkets(page);
   }, [page, loadMarkets]);
 
-  const handleDecision = (decision: "interesting" | "skip" | "never") => {
+  const handleDecision = async (decision: "interesting" | "skip" | "never") => {
     const market = markets[currentIndex];
     if (!market) return;
-    storeDecision({
-      market_id: market.id,
-      market_name: `futures:${market.id}`,
-      decision,
-      context: `${market.source}: "${market.name}" (${market.llm_sport_category || "uncategorized"})`,
-      timestamp: new Date().toISOString(),
-    });
+    const reason = `${market.source}: "${market.name}" (${market.llm_sport_category || "uncategorized"})`;
+    await saveEvalDecision(`futures:${market.id}`, decision, "futures", reason);
     setCurrentIndex((i) => i + 1);
   };
 
@@ -1244,11 +1357,14 @@ export default function EvalPage() {
   const [tab, setTab] = useState<"grid" | "futures" | "history">("grid");
   const [decisions, setDecisions] = useState<EvalDecision[]>([]);
 
-  // Refresh decision count periodically
+  // Refresh decision count from backend
   useEffect(() => {
-    const update = () => setDecisions(getStoredDecisions());
+    const update = async () => {
+      const d = await fetchEvalDecisions();
+      setDecisions(d);
+    };
     update();
-    const interval = setInterval(update, 5000);
+    const interval = setInterval(update, 10000);
     return () => clearInterval(interval);
   }, []);
 

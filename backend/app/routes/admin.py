@@ -6025,6 +6025,86 @@ async def delete_matching_override(
     return {"status": "deleted", "id": override_id}
 
 
+# ── Eval Decisions (persisted, cross-device) ─────────────────────────────────
+
+@router.get("/eval/decisions")
+async def get_eval_decisions(
+    category: Optional[str] = Query(default=None, description="Filter by category: grid, futures"),
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all eval decisions. Used by frontend to check 'already seen' across devices."""
+    stmt = select(MatchingOverride).where(
+        MatchingOverride.override_type.in_(["eval_grid", "eval_futures"])
+    )
+    if category == "grid":
+        stmt = stmt.where(MatchingOverride.override_type == "eval_grid")
+    elif category == "futures":
+        stmt = stmt.where(MatchingOverride.override_type == "eval_futures")
+    stmt = stmt.order_by(MatchingOverride.created_at.desc())
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+    return {
+        "decisions": [
+            {
+                "id": r.id,
+                "source_name": r.source_name,
+                "decision": r.decision,
+                "context": r.context,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
+@router.post("/eval/decision")
+async def save_eval_decision(
+    source_name: str = Query(..., description="Unique key: 'league:team:column' for grid, 'futures:market_id' for futures"),
+    decision: str = Query(..., description="correct, wrong, interesting, skip, never"),
+    category: str = Query(default="grid", description="grid or futures"),
+    reason: Optional[str] = Query(default=None, description="Context about the decision"),
+    secret: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save an eval decision to the database. Replaces localStorage persistence."""
+    valid_decisions = {"correct", "wrong", "interesting", "skip", "never"}
+    if decision not in valid_decisions:
+        raise HTTPException(400, f"Invalid decision. Must be one of: {valid_decisions}")
+
+    override_type = "eval_grid" if category == "grid" else "eval_futures"
+
+    context: dict = {}
+    if reason:
+        context["reason"] = reason
+    context["decided_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Upsert by source_name + override_type
+    stmt = select(MatchingOverride).where(
+        MatchingOverride.override_type == override_type,
+        MatchingOverride.source_name == source_name,
+    )
+    result = await db.execute(stmt)
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.decision = decision
+        existing.context = context
+    else:
+        override = MatchingOverride(
+            league_slug="_eval",
+            override_type=override_type,
+            source_name=source_name,
+            decision=decision,
+            context=context,
+        )
+        db.add(override)
+
+    await db.commit()
+    return {"status": "saved", "source_name": source_name, "decision": decision}
+
+
 @router.get("/matching-review/{league_slug}/playoffstatus")
 async def get_playoffstatus_comparison(
     league_slug: str,
